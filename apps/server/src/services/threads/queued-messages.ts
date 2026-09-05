@@ -51,7 +51,7 @@ function promptText(content: PromptInput[]): string {
 
 function toQueuedMessage(
   input: PromptInput[],
-  extras?: Partial<Pick<ThreadQueuedMessage, 'model' | 'reasoningLevel' | 'permissionMode' | 'serviceTier'>>
+  extras?: Partial<Pick<ThreadQueuedMessage, 'model' | 'reasoningLevel' | 'permissionMode' | 'serviceTier' | 'senderThreadId'>>
 ): ThreadQueuedMessage {
   const now = Date.now();
   return {
@@ -62,6 +62,7 @@ function toQueuedMessage(
     permissionMode: extras?.permissionMode ?? 'accept-edits',
     serviceTier: extras?.serviceTier ?? 'default',
     groupWithNext: false,
+    senderThreadId: extras?.senderThreadId ?? null,
     createdAt: now,
     updatedAt: now
   };
@@ -75,7 +76,7 @@ export function createQueuedMessage(
   dataDir: string,
   threadId: string,
   input: PromptInput[],
-  extras?: Partial<Pick<ThreadQueuedMessage, 'model' | 'reasoningLevel' | 'permissionMode' | 'serviceTier'>>
+  extras?: Partial<Pick<ThreadQueuedMessage, 'model' | 'reasoningLevel' | 'permissionMode' | 'serviceTier' | 'senderThreadId'>>
 ): Promise<ThreadQueuedMessage> {
   if (input.length === 0) {
     throw new ThreadCreateError(400, 'invalid-input', 'queued message input is required');

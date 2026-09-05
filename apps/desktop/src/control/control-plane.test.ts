@@ -110,6 +110,26 @@ describe('authorizeRequest', () => {
       expect(r).toMatchObject({ ok: true, caller: 'orchestrator' });
     }
   );
+  it.each(['plugin.reload', 'plugin.install', 'plugin.logs', 'marketplace.list'])(
+    'allows an agent-class caller the plugin control op %s',
+    (op) => {
+      const r = authorizeRequest({ ...EXPECTED, op, callerSessionId: 'sess-1' }, EXPECTED);
+      expect(r).toMatchObject({ ok: true, caller: 'agent' });
+    }
+  );
+
+  it.each(['plugin.reload', 'plugin.install'])(
+    'allows an orchestrator the plugin control op %s',
+    (op) => {
+      const r = authorizeRequest(
+        { ...EXPECTED, op, callerSessionId: 'orch-1', callerCredential: 'bound-token' },
+        EXPECTED,
+        isOrch,
+        verify
+      );
+      expect(r).toMatchObject({ ok: true, caller: 'orchestrator' });
+    }
+  );
   it.each(['term.reply', 'agent.send', 'sched.runNow', 'sched.setEnabled'])(
     'still refuses an orchestrator the operator-only op %s',
     (op) => {
@@ -453,6 +473,38 @@ describe('startControlPlane (real socket)', () => {
     ]);
     expect(allowed).toMatchObject({ ok: true, value: true });
     expect(closeTerminal).toHaveBeenCalledWith('s1');
+  });
+
+  it('runs plugin.reload without native confirmation', async () => {
+    const reload = vi.fn(async () => ({ id: 'demo' }));
+    const confirmOperatorMutation = vi.fn(async () => false);
+    const { socketPath, tokenPath } = await boot({
+      confirmOperatorMutation,
+      pluginHost: {
+        install: vi.fn(),
+        enable: vi.fn(),
+        disable: vi.fn(),
+        remove: vi.fn(),
+        reload,
+        search: vi.fn(),
+        outdated: vi.fn(),
+        update: vi.fn(),
+        listMarketplaces: vi.fn(),
+        addMarketplace: vi.fn(),
+        refreshMarketplace: vi.fn(),
+        removeMarketplace: vi.fn(),
+        cliContributions: vi.fn(),
+        runCliCommand: vi.fn(),
+        logs: vi.fn()
+      }
+    });
+    const tok = JSON.parse(readFileSync(tokenPath, 'utf8'));
+    const allowed = await rawRequest(socketPath, [
+      JSON.stringify({ token: tok.token, nonce: tok.nonce, op: 'plugin.reload', args: { id: 'demo' } }) + '\n'
+    ]);
+    expect(allowed).toMatchObject({ ok: true, value: { id: 'demo' } });
+    expect(confirmOperatorMutation).not.toHaveBeenCalled();
+    expect(reload).toHaveBeenCalledWith('demo');
   });
 
   it('removes the socket + token file on close', async () => {

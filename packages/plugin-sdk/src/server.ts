@@ -7,6 +7,17 @@
  * receive host-daemon tokens or signing keys.
  */
 
+import {
+  parsePluginAgentToolPresentation,
+  type PluginAgentToolPresentation
+} from './plugin-agent-tool-presentation.js';
+
+export {
+  PLUGIN_AGENT_STATUS_LABEL_MAX_CHARS,
+  parsePluginAgentToolPresentation,
+  type PluginAgentToolPresentation
+} from './plugin-agent-tool-presentation.js';
+
 export interface PluginLogger {
   debug(message: string): void;
   info(message: string): void;
@@ -167,6 +178,9 @@ export interface PluginThreadEvent {
   name: PluginThreadEventName;
   threadId: string;
   projectId?: string;
+  thread?: PluginSdkThreadSummary;
+  lastAssistantText?: string | null;
+  error?: string | null;
 }
 
 export interface PluginEvents {
@@ -180,6 +194,12 @@ export interface PluginSdkThreadSummary {
   environmentId: string | null;
   providerId: string;
   status: string;
+  originKind?: string | null;
+  originPluginId?: string | null;
+  visibility?: string;
+  archivedAt?: number | null;
+  createdAt?: number;
+  parentThreadId?: string | null;
 }
 
 export interface PluginSdkThreadEventRow {
@@ -204,16 +224,55 @@ export interface PluginSdkThreadIdArgs {
   threadId: string;
 }
 
+export interface PluginSdkAgentContextSeed {
+  type: 'text';
+  text: string;
+  mentions: unknown[];
+  visibility: 'agent-only';
+}
+
+export interface PluginSdkThreadForkArgs {
+  threadId?: string;
+  sourceThreadId?: string;
+  sourceSeqEnd?: number;
+  visibility?: 'visible' | 'hidden';
+  workspace?: 'reuse' | 'isolated';
+  agentContextSeed?: readonly PluginSdkAgentContextSeed[];
+  title?: string;
+}
+
+export interface PluginSdkThreadListArgs {
+  includeHidden?: boolean;
+  originKind?: 'fork';
+  originPluginId?: string;
+  archived?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export interface PluginSdkQueuedMessage {
+  id: string;
+}
+
 export interface PluginSdkThreads {
-  spawn(args: { projectId: string; prompt: string; providerId?: string }): Promise<{ id: string }>;
+  spawn(args: { projectId: string; prompt: string; providerId?: string; parentThreadId?: string }): Promise<{ id: string }>;
   get(args: { threadId: string }): Promise<PluginSdkThreadSummary | null>;
+  list(args?: PluginSdkThreadListArgs): Promise<PluginSdkThreadSummary[]>;
   events: {
     list(args: PluginSdkThreadEventListArgs): Promise<PluginSdkThreadEventRow[]>;
   };
   send(args: PluginSdkThreadSendArgs): Promise<{ id: string }>;
   archive(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
-  fork(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
+  fork(args: PluginSdkThreadForkArgs | PluginSdkThreadIdArgs): Promise<{ id: string }>;
   unarchive(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
+  queuedMessages: {
+    list(args: PluginSdkThreadIdArgs): Promise<PluginSdkQueuedMessage[]>;
+    create(args: {
+      threadId: string;
+      input: unknown[];
+      senderThreadId?: string;
+    }): Promise<PluginSdkQueuedMessage>;
+  };
 }
 
 export interface PluginSdkInboxPushArgs {
@@ -260,6 +319,7 @@ export interface PluginAgentToolRegistration {
   name: string;
   description: string;
   inputSchema?: unknown;
+  presentation?: PluginAgentToolPresentation;
   execute(input: unknown, ctx: PluginAgentToolContext): unknown | Promise<unknown>;
 }
 

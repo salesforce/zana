@@ -85,6 +85,17 @@ describe('ExtensionsView aurora background', () => {
     expect(css).toContain('.ext-install-split > .settings-btn:first-of-type {\n  border-radius: 8px 0 0 8px;');
   });
 
+  it('keeps Browse Create a plugin on the page with an example card grid', () => {
+    expect(marketplace).toContain("searchParams.get('view') === 'create'");
+    expect(marketplace).toContain('HomeAgentComposer');
+    expect(marketplace).toContain('Back to Browse');
+    expect(marketplace).toContain('ext-install-split');
+    expect(marketplace).not.toContain('onCreate');
+    expect(css).toContain(
+      '.create-plugin-examples {\n  display: grid;\n  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));'
+    );
+  });
+
   it('surfaces plugin enable/disable failures instead of swallowing them', () => {
     expect(hub).toContain('reportPluginEnabledFailure');
     expect(hub).toContain('setHubRowEnabled');

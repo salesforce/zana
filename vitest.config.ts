@@ -178,7 +178,7 @@ export default defineConfig({
       },
       {
         find: /^@zana-ai\/zcc-plugin-sdk\/testing\/app$/,
-        replacement: resolve(__dirname, 'packages/plugin-sdk/src/testing/app.ts')
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/testing/app-entry.ts')
       },
       {
         find: /^@zana-ai\/zcc-plugin-sdk\/testing$/,

@@ -34,8 +34,31 @@ export function threadWorkingIndicatorLabel(thinking: boolean, phrase: string): 
   return thinking ? 'Thinking…' : `${phrase}…`;
 }
 
+export function isRunningThreadRuntimeDisplayStatus(status: string): boolean {
+  switch (status) {
+    case 'active':
+    case 'host-reconnecting':
+    case 'provisioning':
+    case 'starting':
+    case 'stopping':
+      return true;
+    default:
+      return false;
+  }
+}
+
 export function isBusyThreadStatus(status: string): boolean {
-  return status === 'starting' || status === 'active' || status === 'stopping';
+  return isRunningThreadRuntimeDisplayStatus(status);
+}
+
+/** BB showOngoingIndicator: leftover thinking does not keep a dead turn live. */
+export function showOngoingThreadWork(
+  status: string,
+  waitingOnUser = false
+): boolean {
+  if (waitingOnUser) return false;
+  if (status === 'stopping') return false;
+  return isRunningThreadRuntimeDisplayStatus(status);
 }
 
 /** True when the latest timeline row is a retry/reconnect still in flight. */
@@ -102,6 +125,8 @@ export function threadStatusLabel(
   const trimmed = status.trim();
   if (!trimmed) return '';
   if (trimmed === 'error') return 'Error';
+  if (trimmed === 'host-reconnecting') return 'Waiting for reconnection';
+  if (trimmed === 'waiting-for-host') return 'Waiting for host';
   if (waitingOnUser) return 'Needs you';
   if (isBusyThreadStatus(trimmed)) return thinking ? 'Thinking' : workingPhrase;
   if (trimmed === 'idle') return 'Idle';
@@ -161,7 +186,9 @@ export function workRowBody(row: {
       return typeof row.output === 'string' ? row.output : '';
     case 'file-change': {
       const stats = row.change?.diffStats;
-      const tally = stats ? `+${stats.added} −${stats.removed}` : '';
+      const tally = stats && (stats.added > 0 || stats.removed > 0)
+        ? `+${stats.added} −${stats.removed}`
+        : '';
       return [row.change?.path, tally, row.change?.diff].filter(Boolean).join('\n');
     }
     case 'web-search':

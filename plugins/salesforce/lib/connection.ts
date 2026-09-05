@@ -33,6 +33,9 @@ export class ConnectionManager {
 
   async listOrgs() {
     const result = await this.deps.execSf(['org', 'list', '--json']);
+    if (result.code === 127) {
+      throw new ConnectionError('Salesforce CLI (sf) was not found on PATH.', 'cli_missing');
+    }
     if (result.code !== 0) return [];
     return parseOrgList(result.stdout);
   }
@@ -42,7 +45,7 @@ export class ConnectionManager {
     const alias = await this.resolveAlias();
     if (!alias) {
       throw new ConnectionError(
-        'No target org. Set defaultOrg under Plugins → Salesforce or SF_TARGET_ORG, then run zcc sf doctor.',
+        'No target org. Pick a CLI-connected org on the Salesforce tab, or set defaultOrg / SF_TARGET_ORG, then run zcc sf doctor.',
         'no_org'
       );
     }
@@ -57,7 +60,13 @@ export class ConnectionManager {
 
   async request(
     path: string,
-    init: { method?: 'GET' | 'POST'; query?: Record<string, string>; body?: unknown; apiVersion?: string }
+    init: {
+      method?: 'GET' | 'POST';
+      query?: Record<string, string>;
+      body?: unknown;
+      apiVersion?: string;
+      signal?: AbortSignal;
+    }
   ) {
     let org = await this.connect();
     const req = {
@@ -65,10 +74,11 @@ export class ConnectionManager {
       path,
       query: init.query,
       body: init.body,
-      apiVersion: init.apiVersion
+      apiVersion: init.apiVersion,
+      signal: init.signal
     };
     let response = await this.deps.request(org, req);
-    if (response.status === 401) {
+    if (response.status === 401 && !init.signal?.aborted) {
       this.invalidate(org.alias);
       org = await this.connect(true);
       response = await this.deps.request(org, req);

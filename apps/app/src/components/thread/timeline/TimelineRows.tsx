@@ -10,6 +10,7 @@ import {
   type TimelineViewWorkRow
 } from '@zana-ai/zcc-thread-view';
 import type { ReactNode } from 'react';
+import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { ExpandableTimelineRow } from './ExpandableTimelineRow.js';
 import { ConversationRow } from './ConversationRow.js';
 import { TimelineTitleView } from './TimelineTitleView.js';
@@ -24,6 +25,7 @@ import {
 } from './timeline-auto-expand.js';
 import { pastRowDimClassName } from './timeline-title.js';
 import { TimelineDetailScroll } from './TimelineDetailScroll.js';
+import { stickyTurnRanges } from './timeline-sticky-user.js';
 import type { TimelineTitleActionHandler, TimelineTitleLinkHandler } from './TimelineTitleView.js';
 
 const TITLE_OPTIONS = { summaryStyle: 'bundle' as const, workStyle: 'default' as const };
@@ -64,39 +66,55 @@ interface TimelineRowsProps {
   parentThreadId?: string | null;
   threadIdle?: boolean;
   onFork?: (sourceSeqEnd?: number) => void;
+  /** Present-tense bundle titles are only for an active scope. */
+  scopeActive?: boolean;
+  messageActions?: readonly ThreadChatMessageAction[];
+  includePluginMessageActions?: boolean;
 }
 
 export function TimelineRows(props: TimelineRowsProps) {
-  const { rows, unreadRowId, nested } = props;
+  const { rows, unreadRowId, nested, scopeActive = false } = props;
   const activeLatestBundleId = findActiveLatestBundleId(rows);
-  const list = (
-    <>
-      {rows.map((row) => {
-        const title = buildTimelineRowTitle(row, {
-          ...TITLE_OPTIONS,
-          isActiveLatestBundle: row.kind === 'bundle-summary' && row.id === activeLatestBundleId
-        });
-        return (
-          <div
-            key={row.id}
-            className={`thread-timeline-item${row.kind === 'conversation' ? ` is-${row.role}` : ''}`}
-          >
-            {unreadRowId === row.id ? (
-              <div className="thread-unread-divider" data-testid="thread-unread-divider">
-                New
-              </div>
-            ) : null}
-            <TimelineRowView
-              {...props}
-              row={row}
-              title={title}
-              activeLatestBundleId={activeLatestBundleId}
-            />
+  const renderItems = (slice: ThreadTimelineViewRow[]) =>
+    slice.map((row) => {
+      const title = buildTimelineRowTitle(row, {
+        ...TITLE_OPTIONS,
+        isActiveLatestBundle: scopeActive && row.kind === 'bundle-summary' && row.id === activeLatestBundleId
+      });
+      return (
+        <div
+          key={row.id}
+          className={`thread-timeline-item${row.kind === 'conversation' ? ` is-${row.role}` : ''}`}
+        >
+          {unreadRowId === row.id ? (
+            <div className="thread-unread-divider" data-testid="thread-unread-divider">
+              New
+            </div>
+          ) : null}
+          <TimelineRowView
+            {...props}
+            row={row}
+            title={title}
+            activeLatestBundleId={activeLatestBundleId}
+          />
+        </div>
+      );
+    });
+  const turns = stickyTurnRanges(rows);
+  const list = (() => {
+    if (turns.length === 0) return renderItems(rows);
+    const prefix = turns[0]!.start > 0 ? renderItems(rows.slice(0, turns[0]!.start)) : null;
+    return (
+      <>
+        {prefix}
+        {turns.map((turn) => (
+          <div key={`sticky-turn:${rows[turn.start]!.id}`} className="thread-timeline-current-turn">
+            {renderItems(rows.slice(turn.start, turn.end))}
           </div>
-        );
-      })}
-    </>
-  );
+        ))}
+      </>
+    );
+  })();
   if (nested) {
     return <div className="thread-timeline-nested">{list}</div>;
   }
@@ -121,7 +139,9 @@ function TimelineRowView({
   projectId,
   parentThreadId,
   threadIdle,
-  onFork
+  onFork,
+  messageActions,
+  includePluginMessageActions
 }: TimelineRowsProps & {
   row: ThreadTimelineViewRow;
   title: TimelineTitle;
@@ -152,7 +172,9 @@ function TimelineRowView({
     projectId,
     parentThreadId,
     threadIdle,
-    onFork
+    onFork,
+    messageActions,
+    includePluginMessageActions
   };
 
   if (row.kind === 'conversation') {
@@ -166,11 +188,32 @@ function TimelineRowView({
         threadIdle={threadIdle}
         streaming={row.role === 'assistant' && row.id === streamingAssistantMessageId}
         onFork={onFork}
+        messageActions={messageActions}
+        includePluginMessageActions={includePluginMessageActions}
       />
     );
   }
 
   if (row.kind === 'system') {
+    const label = systemRowLabel(row);
+    const isError = row.systemKind === 'error' || row.systemKind === 'reconnect';
+    if (isError && row.detail) {
+      return (
+        <ExpandableTimelineRow
+          dim={dim}
+          testId="thread-system-row"
+          status={row.status ?? undefined}
+          rowId={row.id}
+          expandable
+          autoExpanded={row.systemKind === 'reconnect'}
+          summary={
+            <span className="thread-timeline-system-title">{row.title}</span>
+          }
+        >
+          <pre className="thread-timeline-system-detail">{row.detail}</pre>
+        </ExpandableTimelineRow>
+      );
+    }
     return (
       <p
         className={`thread-timeline-system${dim ? ' is-dim' : ''}`}
@@ -178,7 +221,7 @@ function TimelineRowView({
         data-row-id={row.id}
         data-status={row.status ?? undefined}
       >
-        {systemRowLabel(row)}
+        {label}
       </p>
     );
   }
@@ -203,6 +246,8 @@ function TimelineRowView({
         parentThreadId={parentThreadId}
         threadIdle={threadIdle}
         onFork={onFork}
+        messageActions={messageActions}
+        includePluginMessageActions={includePluginMessageActions}
       />
     );
   }
@@ -231,9 +276,9 @@ function TimelineRowView({
   }
 
   const nestedList = row.kind === 'work' && row.workKind === 'delegation'
-    ? <TimelineRows rows={row.childRows} nested {...nestedProps} />
+    ? <TimelineRows rows={row.childRows} nested {...nestedProps} scopeActive={row.status === 'pending'} />
     : row.kind === 'bundle-summary' || row.kind === 'step-summary'
-      ? <TimelineRows rows={row.children} nested {...nestedProps} />
+      ? <TimelineRows rows={row.children} nested {...nestedProps} scopeActive={false} />
       : null;
   const nestedStreaming = expansion.liveFrontierRowIds.has(row.id);
   const nested = capNestedList(row, nestedList, nestedStreaming);
@@ -248,9 +293,6 @@ function TimelineRowView({
     )
     : null;
 
-  const pending = 'status' in row && row.status === 'pending';
-  const awaitingUser = row.kind === 'work'
-    && (row.workKind === 'question' || row.workKind === 'approval');
   const expandable = isRowExpandable(row);
   const hasBody = Boolean(body) || Boolean(nested);
   const glyph = row.kind === 'work' ? workRowGlyph(row) : null;
@@ -261,7 +303,7 @@ function TimelineRowView({
       rowId={row.id}
       status={'status' in row ? row.status : undefined}
       dim={dim}
-      autoExpanded={autoOpen || (pending && !awaitingUser)}
+      autoExpanded={autoOpen}
       terminalAutoExpanded={expansion.terminalFrontierRowIds.has(row.id)}
       forceExpanded={forceExpandedRowIds?.has(row.id) === true}
       expandable={expandable && hasBody}

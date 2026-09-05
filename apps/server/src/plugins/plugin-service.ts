@@ -258,7 +258,13 @@ export interface PluginServiceOptions {
     signal?: AbortSignal;
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginInteractionResult>;
   interruptPluginInteractions?: (pluginId: string) => void;
-  spawnThread?: (args: { pluginId: string; projectId: string; prompt: string; providerId?: string }) => Promise<{ id: string }>;
+  spawnThread?: (args: {
+    pluginId: string;
+    projectId: string;
+    prompt: string;
+    providerId?: string;
+    parentThreadId?: string;
+  }) => Promise<{ id: string }>;
   getThread?: (args: { pluginId: string; threadId: string }) => Promise<
     import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSummary | null
   >;
@@ -271,7 +277,30 @@ export interface PluginServiceOptions {
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadEventRow[]>;
   sendThread?: (args: { pluginId: string; threadId: string; prompt: string }) => Promise<{ id: string }>;
   archiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
-  forkThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+  forkThread?: (args: {
+    pluginId: string;
+    threadId: string;
+    sourceSeqEnd?: number;
+    visibility?: 'visible' | 'hidden';
+    agentContextSeed?: unknown[];
+    title?: string;
+  }) => Promise<{ id: string }>;
+  listThreads?: (args: {
+    pluginId: string;
+    includeHidden?: boolean;
+    originKind?: 'fork';
+    originPluginId?: string;
+    archived?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSummary[]>;
+  listQueuedMessages?: (args: { pluginId: string; threadId: string }) => Promise<Array<{ id: string }>>;
+  createQueuedMessage?: (args: {
+    pluginId: string;
+    threadId: string;
+    input: unknown[];
+    senderThreadId?: string;
+  }) => Promise<{ id: string }>;
   unarchiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
   pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
   listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
@@ -664,6 +693,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       sendThread: opts.sendThread,
       archiveThread: opts.archiveThread,
       forkThread: opts.forkThread,
+      listThreads: opts.listThreads,
+      listQueuedMessages: opts.listQueuedMessages,
+      createQueuedMessage: opts.createQueuedMessage,
       unarchiveThread: opts.unarchiveThread,
       pushInbox: opts.pushInbox,
       listProjects: opts.listProjects,
@@ -1154,8 +1186,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     async reconcileBuiltins() {
       for (const row of store.list()) {
         if (row.sourceKind !== 'builtin') continue;
+        if (isRetiredFirstPartyPluginId(row.id)) continue;
         const name = row.source.startsWith('builtin:') ? row.source.slice('builtin:'.length) : row.id;
-        const expected = resolveBundledDir(opts.bundledRoot, name);
+        let expected: string;
+        try {
+          expected = resolveBundledDir(opts.bundledRoot, name);
+        } catch {
+          continue;
+        }
         if (existsSync(expected) && resolve(row.rootDir) !== resolve(expected)) {
           await store.upsert({ ...row, rootDir: expected, updatedAt: now() });
         }

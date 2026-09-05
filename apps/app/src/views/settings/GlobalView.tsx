@@ -92,12 +92,30 @@ export function GlobalView({
           checked={markdownInPrompt}
           onChange={setMarkdownInPrompt}
         />
-        <CheckboxField
-          label="Steer running agents on Enter"
-          help="When an agent is running, Enter steers the current turn and Cmd/Ctrl+Enter queues the next message. Off keeps Enter as auto-send."
-          checked={config.steerActiveThreadOnEnter ?? false}
-          onChange={(v) => onUpdate({ steerActiveThreadOnEnter: v })}
-        />
+        <Field
+          label="Send mode"
+          help="Auto starts a new turn. Steer uses Enter to interrupt a running turn (Cmd/Ctrl+Enter queues). Queue holds the next message until the current turn finishes. Default is Auto."
+        >
+          <PopoverPicklist
+            ariaLabel="Send mode"
+            value={
+              config.composerSendMode
+              ?? (config.steerActiveThreadOnEnter ? 'steer' : 'auto')
+            }
+            options={[
+              { value: 'auto', label: 'Auto' },
+              { value: 'steer', label: 'Steer' },
+              { value: 'queue-if-active', label: 'Queue' }
+            ]}
+            searchable={false}
+            onChange={(value) => {
+              void onUpdate({
+                composerSendMode: value as 'auto' | 'steer' | 'queue-if-active',
+                steerActiveThreadOnEnter: value === 'steer'
+              });
+            }}
+          />
+        </Field>
         <CheckboxField
           label="Rewrite localhost links"
           help="Replace localhost and 127.0.0.1 in agent markdown links with this window’s hostname so a remote viewer reaches the machine they’re looking at."
@@ -173,7 +191,7 @@ export function GlobalView({
         </SettingsActionRow>
         <SettingsActionRow
           label="Check setup"
-          help="Verify the Claude Code CLI and Zana, and set up anything that’s missing."
+          help="Verify agent and Salesforce CLIs are installed."
         >
           <button
             type="button"

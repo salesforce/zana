@@ -3,6 +3,8 @@ import {
   Fragment,
   useSyncExternalStore,
   type HTMLAttributes,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode
 } from 'react';
@@ -24,6 +26,10 @@ import {
   SortableSidebarSection,
   useSortableSidebarNav
 } from './sidebarSortable.js';
+import { usePaneContentSplitDrag } from './sidebar/useThreadRowSplitDrag.js';
+import { usePaneContentSplitIndicator } from './sidebar/paneContentSplitIndicator.js';
+import { SplitPaneMiniMap } from './sidebar/SplitPaneMiniMap.js';
+import type { PaneContent } from '../lib/split-layout/types.js';
 
 export interface SidebarRailRow {
   kind: 'row';
@@ -36,7 +42,9 @@ export interface SidebarRailRow {
   title?: string;
   badge?: ReactNode;
   running?: boolean;
-  onClick?: (event: { preventDefault: () => void }) => void;
+  onClick?: (event: { preventDefault: () => void; metaKey?: boolean; ctrlKey?: boolean }) => void;
+  /** When set, cmd-click and drag-to-edge open this content in the split workspace. */
+  splitContent?: PaneContent;
 }
 
 export interface SidebarRailSection {
@@ -58,6 +66,7 @@ export function SidebarRail({
   navAriaLabel,
   storageKey,
   pinnedIds,
+  trailingIds = [],
   items,
   header,
   utilityStart
@@ -66,6 +75,7 @@ export function SidebarRail({
   navAriaLabel: string;
   storageKey: string;
   pinnedIds: readonly string[];
+  trailingIds?: readonly string[];
   items: readonly SidebarRailItem[];
   header?: ReactNode;
   utilityStart?: ReactNode;
@@ -82,6 +92,7 @@ export function SidebarRail({
   const {
     pinnedNavIds,
     sortableNavIds,
+    trailingNavIds,
     sensors,
     collisionDetection,
     onDragStart,
@@ -91,7 +102,8 @@ export function SidebarRail({
   } = useSortableSidebarNav(
     storageKey,
     items.map((item) => item.id),
-    pinnedIds
+    pinnedIds,
+    trailingIds
   );
 
   const onNavigate = (event: { preventDefault: () => void }) => {
@@ -110,7 +122,11 @@ export function SidebarRail({
         { onNavigate }
       );
       if (!sortable) {
-        return <Fragment key={id}>{section}</Fragment>;
+        return (
+          <div key={id} className="sidebar-section-sortable">
+            {section}
+          </div>
+        );
       }
       return (
         <SortableSidebarSection key={id} id={id}>
@@ -118,7 +134,13 @@ export function SidebarRail({
         </SortableSidebarSection>
       );
     }
-    const row = (
+    const row = item.splitContent ? (
+      <SplitEnabledNavRow
+        item={item}
+        collapsed={collapsed}
+        consumeNavClick={consumeNavClick}
+      />
+    ) : (
       <SidebarNavRow
         label={item.label}
         icon={item.icon}
@@ -166,6 +188,7 @@ export function SidebarRail({
             <SortableContext items={sortableNavIds} strategy={verticalListSortingStrategy}>
               {sortableNavIds.map((id) => renderItem(id, true))}
             </SortableContext>
+            {trailingNavIds.map((id) => renderItem(id, false))}
           </nav>
         </div>
       </DndContext>
@@ -218,6 +241,58 @@ export function SidebarRail({
 
 /** Must forward extra props — SortableNavItem cloneElement's dnd-kit
  *  listeners onto this component, not onto a host <a>. */
+function SplitEnabledNavRow({
+  item,
+  collapsed,
+  consumeNavClick,
+  onPointerDown,
+  ...sortableRest
+}: {
+  item: SidebarRailRow;
+  collapsed: boolean;
+  consumeNavClick: () => boolean;
+} & Omit<HTMLAttributes<HTMLAnchorElement>, 'onClick' | 'children' | 'title'>) {
+  const splitContent = item.splitContent;
+  const { onPointerDown: onSplitPointerDown, openInSplit } = usePaneContentSplitDrag({
+    content: splitContent ?? { kind: 'home' },
+    title: item.label
+  });
+  const indicator = usePaneContentSplitIndicator(splitContent ?? { kind: 'home' }, splitContent !== undefined);
+  return (
+    <SidebarNavRow
+      {...sortableRest}
+      label={item.label}
+      icon={item.icon}
+      active={item.active}
+      collapsed={collapsed}
+      title={item.title}
+      testId={item.testId}
+      badge={item.badge}
+      running={item.running}
+      to={item.to}
+      accessory={
+        indicator.miniMap ? (
+          <SplitPaneMiniMap slots={indicator.miniMap} label={`${item.label} split layout`} />
+        ) : undefined
+      }
+      onPointerDown={onPointerDown}
+      onSplitPointerDown={splitContent ? onSplitPointerDown : undefined}
+      onClick={(event) => {
+        if (consumeNavClick()) {
+          event.preventDefault();
+          return;
+        }
+        if (event.metaKey || event.ctrlKey) {
+          event.preventDefault();
+          openInSplit();
+          return;
+        }
+        item.onClick?.(event);
+      }}
+    />
+  );
+}
+
 function SidebarNavRow({
   label,
   icon,
@@ -228,7 +303,10 @@ function SidebarNavRow({
   badge,
   running,
   to,
+  accessory,
   onClick,
+  onPointerDown,
+  onSplitPointerDown,
   ...rest
 }: {
   label: string;
@@ -240,8 +318,14 @@ function SidebarNavRow({
   badge?: ReactNode;
   running?: boolean;
   to: string;
-  onClick?: (event: { preventDefault: () => void }) => void;
-} & Omit<HTMLAttributes<HTMLAnchorElement>, 'onClick' | 'children' | 'title'>): ReactElement {
+  accessory?: ReactNode;
+  onClick?: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
+  onPointerDown?: (event: ReactPointerEvent<HTMLAnchorElement>) => void;
+  onSplitPointerDown?: (event: ReactPointerEvent<HTMLElement>) => void;
+} & Omit<
+  HTMLAttributes<HTMLAnchorElement>,
+  'onClick' | 'onPointerDown' | 'children' | 'title'
+>): ReactElement {
   return (
     <Link
       to={to}
@@ -249,6 +333,10 @@ function SidebarNavRow({
       data-testid={testId}
       className={`nav-item ${active ? 'active' : ''}`}
       onClick={onClick}
+      onPointerDown={(event) => {
+        onPointerDown?.(event);
+        onSplitPointerDown?.(event);
+      }}
       aria-current={active ? 'page' : undefined}
       aria-label={collapsed ? label : undefined}
       title={title ?? label}
@@ -259,6 +347,7 @@ function SidebarNavRow({
       </span>
       <span className="nav-item-label">{label}</span>
       {badge}
+      {accessory}
     </Link>
   );
 }

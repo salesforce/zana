@@ -375,7 +375,7 @@
     {
       "id": "salesforce",
       "displayName": "Salesforce",
-      "description": "Org identity, doctor, Agent Script editor, and API-native SOQL/Apex/LWC/Agent Script tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
+      "description": "Org identity, doctor, Agentforce Playground and Preview, and API-native SOQL/Apex/LWC/Agentforce tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
       "icon": {
         "lucide": "Cloud"
       },

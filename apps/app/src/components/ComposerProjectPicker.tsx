@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FolderPlus, FolderX } from 'lucide-react';
+import { FolderPlus, FolderX, Network } from 'lucide-react';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import { hasDesktopBridge } from '../lib/app-surface.js';
 import { product } from '../lib/product-client.js';
@@ -9,6 +9,7 @@ import {
   COMPOSER_NEW_PROJECT_LABEL,
   COMPOSER_NO_PROJECT_LABEL,
   composerProjectPickerRows,
+  composerProjectRemoteDescription,
   resolveComposerProjectPickerChange
 } from './composer-project-picker.js';
 import { DEFAULT_COMPOSER_WORKSPACE_LABEL } from './composer-project-default.js';
@@ -31,6 +32,9 @@ export function ComposerProjectPicker({
   const addProjectByPath = useData((s) => s.addProjectByPath);
   const [showLocalDialog, setShowLocalDialog] = useState(false);
   const rows = useMemo(() => composerProjectPickerRows(projects), [projects]);
+  const selectedRemoteHint = composerProjectRemoteDescription(
+    projects.find((project) => project.id === value)
+  );
 
   const selectProject = (projectId: string) => {
     if (projectId === value) return;
@@ -53,13 +57,14 @@ export function ComposerProjectPicker({
         ariaLabel="Project"
         placeholder={DEFAULT_COMPOSER_WORKSPACE_LABEL}
         disabled={disabled}
-        title={title}
+        title={title ?? selectedRemoteHint}
         minWidth={280}
         emptyHint="No matching projects"
         options={rows.map((row) => ({
           value: row.value,
           label: row.label,
           sticky: row.sticky,
+          description: row.description,
           content: row.action === 'new-project'
             ? (
               <span className="composer-project-picker-option">
@@ -74,7 +79,14 @@ export function ComposerProjectPicker({
                   {COMPOSER_NO_PROJECT_LABEL}
                 </span>
               )
-              : undefined
+              : row.remote
+                ? (
+                  <span className="composer-project-picker-option">
+                    <Network size={14} strokeWidth={2} className="project-remote-icon" aria-hidden="true" />
+                    {row.label}
+                  </span>
+                )
+                : undefined
         }))}
         onChange={(next) => {
           const resolved = resolveComposerProjectPickerChange(next, projects);

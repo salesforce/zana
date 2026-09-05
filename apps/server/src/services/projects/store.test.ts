@@ -82,12 +82,21 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'providerBridgeRecordingEnabled',
     'enableUpdateSimulation',
     'microVmEnabled',
-    'followupsFromIdle'
+    'followupsFromIdle',
+    'autoOpenThreadPlanPanel'
   ] as const)('persists %s', (flag) => {
     store.setConfig({ [flag]: true });
     expect(store.getConfig()[flag]).toBe(true);
     store.setConfig({ [flag]: false });
     expect(store.getConfig()[flag]).toBe(false);
+  });
+
+  it('persists composerSendMode without inventing a default for existing installs', () => {
+    expect(store.getConfig().composerSendMode).toBeUndefined();
+    store.setConfig({ composerSendMode: 'queue-if-active' });
+    expect(store.getConfig().composerSendMode).toBe('queue-if-active');
+    store.setConfig({ composerSendMode: 'auto' });
+    expect(store.getConfig().composerSendMode).toBe('auto');
   });
 
   // Menu-bar popover is ON by default (like autoModeEnabled):

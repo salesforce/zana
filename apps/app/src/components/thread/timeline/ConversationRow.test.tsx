@@ -7,14 +7,45 @@ import { ConversationRow } from './ConversationRow.js';
 
 const editMessage = vi.fn(async (_threadId: string, _body: unknown) => ({ ok: true }));
 
-vi.mock('../../../lib/product-client.js', () => ({
-  product: {
-    threads: {
-      editMessage: (threadId: string, body: unknown) => editMessage(threadId, body),
-      createQueuedMessage: vi.fn(async () => ({ ok: true })),
-      fork: vi.fn(async () => ({ ok: true }))
-    }
-  }
+    vi.mock('../../../lib/product-client.js', () => ({
+      product: {
+        threads: {
+          editMessage: (threadId: string, body: unknown) => editMessage(threadId, body),
+          createQueuedMessage: vi.fn(async () => ({ ok: true })),
+          fork: vi.fn(async () => ({ ok: true })),
+          hostFileContent: vi.fn(async () => ({
+            content: 'abc',
+            encoding: 'base64',
+            contentType: 'image/png'
+          }))
+        }
+      }
+    }));
+
+const pluginMessageActions = vi.hoisted(() => ({
+  current: [] as Array<{
+    pluginId: string;
+    id: string;
+    title: string;
+    generation: number;
+    run: (context: {
+      threadId: string;
+      message: { text: string };
+      selectedText?: string;
+      openPanel: (options: { actionId: string }) => boolean;
+    }) => void;
+  }>
+}));
+
+const EMPTY_DIRECTIVES: unknown[] = [];
+
+vi.mock('../../../plugins/plugin-slots.js', () => ({
+  subscribePluginSlots: (listener: () => void) => {
+    listener();
+    return () => undefined;
+  },
+  listMessageActions: () => pluginMessageActions.current,
+  listMessageDirectives: () => EMPTY_DIRECTIVES
 }));
 
 const userRow = {
@@ -140,5 +171,120 @@ describe('ConversationRow message edit', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('thread-message-edit')).toBeNull();
     });
+  });
+});
+
+const assistantRow = {
+  ...userRow,
+  id: 'a-1',
+  role: 'assistant' as const,
+  text: 'whole message text',
+  sourceSeqEnd: 42,
+  initiator: 'agent' as const,
+  mentions: undefined
+};
+
+describe('ConversationRow plugin message actions', () => {
+  afterEach(() => {
+    cleanup();
+    pluginMessageActions.current = [];
+    vi.unstubAllGlobals();
+  });
+
+  it('passes selectedText when the host has a selection', () => {
+    const run = vi.fn();
+    pluginMessageActions.current = [{
+      pluginId: 'demo',
+      id: 'reply',
+      title: 'Reply in side chat',
+      generation: 1,
+      run
+    }];
+    vi.stubGlobal('getSelection', () => ({ toString: () => 'just this part' }));
+    render(
+      <ConversationRow
+        threadId="t1"
+        threadIdle
+        onCopy={() => undefined}
+        row={assistantRow}
+      />
+    );
+    fireEvent.click(screen.getByLabelText('Reply in side chat'));
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      selectedText: 'just this part',
+      message: expect.objectContaining({ text: 'whole message text', sourceSeqEnd: 42 })
+    }));
+  });
+
+  it('hides plugin message actions when includePluginMessageActions is false', () => {
+    pluginMessageActions.current = [{
+      pluginId: 'demo',
+      id: 'reply',
+      title: 'Reply in side chat',
+      generation: 1,
+      run: vi.fn()
+    }];
+    render(
+      <ConversationRow
+        threadId="t1"
+        threadIdle
+        onCopy={() => undefined}
+        row={assistantRow}
+        includePluginMessageActions={false}
+        messageActions={[{
+          id: 'send-to-main',
+          title: 'Send to main thread',
+          roles: ['assistant'],
+          run: () => undefined
+        }]}
+      />
+    );
+    expect(screen.queryByLabelText('Reply in side chat')).toBeNull();
+    expect(screen.getByTestId('thread-chat-message-action-send-to-main')).toBeTruthy();
+  });
+
+  it('opens an attached image in a modal', () => {
+    render(
+      <ConversationRow
+        projectId="proj-1"
+        onCopy={() => undefined}
+        row={{
+          ...userRow,
+          id: 'u-img',
+          text: '',
+          attachments: {
+            webImages: 0,
+            localImages: 1,
+            localFiles: 0,
+            imageUrls: [],
+            localImagePaths: ['shot-1.png'],
+            localFilePaths: []
+          }
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'shot-1.png' }));
+    const dialog = screen.getByRole('dialog', { name: 'shot-1.png' });
+    expect(dialog.className).toContain('thread-image-modal');
+    expect(dialog.querySelector('img')?.getAttribute('src'))
+      .toContain('/api/v1/projects/proj-1/attachments/content?path=shot-1.png');
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'shot-1.png' })).toBeNull();
+  });
+
+  it('opens a markdown image in a modal', () => {
+    render(
+      <ConversationRow
+        onCopy={() => undefined}
+        row={{
+          ...userRow,
+          text: '![cat](https://example.com/cat.png)'
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'View cat' }));
+    expect(screen.getByRole('dialog', { name: 'cat' })).toBeTruthy();
+    expect(screen.getByRole('dialog').querySelector('img')?.getAttribute('src'))
+      .toBe('https://example.com/cat.png');
   });
 });

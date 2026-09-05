@@ -14,8 +14,8 @@ import {
 import { HarnessSettingsTabs, mergeBuiltinThreadProviders, ThreadProviderCatalog } from './HarnessView.js';
 
 const catalog = [
-  { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-claude-code' },
-  { id: 'codex', displayName: 'Codex', pluginId: 'provider-codex' },
+  { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-acp' },
+  { id: 'codex', displayName: 'Codex', pluginId: 'provider-acp' },
   { id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' },
   { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' },
   { id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' }
@@ -53,9 +53,9 @@ describe('ThreadProviderCatalog', () => {
   it('keeps the display name and plugin id in separate cells', () => {
     const html = renderToStaticMarkup(<ThreadProviderCatalog providers={catalog} />);
 
-    expect(html).not.toContain('Claude Codeprovider-claude-code');
+    expect(html).not.toContain('Claude Codeprovider-acp');
     expect(html).toContain('class="opener-row-name">Claude Code<');
-    expect(html).toContain('class="thread-provider-id" title="provider-claude-code">provider-claude-code<');
+    expect(html).toContain('class="thread-provider-id" title="provider-acp">provider-acp<');
     expect(html).toContain('the default Modern provider.');
     expect(html).toContain('Agent Client Protocol');
     expect(html).toContain('Codex coding CLI');
@@ -69,8 +69,8 @@ describe('ThreadProviderCatalog', () => {
 
   it('inserts OpenCode when a stale catalog omits it', () => {
     const merged = mergeBuiltinThreadProviders([
-      { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-claude-code' },
-      { id: 'codex', displayName: 'Codex', pluginId: 'provider-codex' },
+      { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-acp' },
+      { id: 'codex', displayName: 'Codex', pluginId: 'provider-acp' },
       { id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' },
       { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' }
     ]);

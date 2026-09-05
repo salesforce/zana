@@ -635,14 +635,24 @@ describe('host command dispatch', () => {
   it('lazily resumes a missing thread runtime before turn.submit', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-lazy-resume-'));
     const resumed: Array<{ threadId: string; providerThreadId: string }> = [];
-    const submitted: Array<{ input: string[]; clientRequestId?: string }> = [];
+    const submitted: Array<{
+      input: string[];
+      clientRequestId?: string;
+      permissionMode?: string;
+      permissionEscalation?: string;
+    }> = [];
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,
       resumeWork: async (input) => {
         resumed.push({ threadId: input.threadId, providerThreadId: input.providerThreadId });
       },
       submitTurn: async (input) => {
-        submitted.push({ input: input.input, clientRequestId: input.clientRequestId });
+        submitted.push({
+          input: input.input,
+          clientRequestId: input.clientRequestId,
+          permissionMode: input.permissionMode,
+          permissionEscalation: input.permissionEscalation
+        });
       }
     });
     const environmentId = randomUUID();
@@ -666,15 +676,22 @@ describe('host command dispatch', () => {
       environmentId,
       input: ['hello again'],
       clientRequestId: 'creq_23456789ab',
+      permissionEscalation: 'ask',
       resume: {
         projectId: 'proj-1',
         providerId: 'claude',
         providerThreadId: 'prov-1',
-        cwd: project
+        cwd: project,
+        permissionMode: 'accept-edits'
       }
     })).resolves.toMatchObject({ accepted: true });
     expect(resumed).toEqual([{ threadId, providerThreadId: 'prov-1' }]);
-    expect(submitted).toEqual([{ input: ['hello again'], clientRequestId: 'creq_23456789ab' }]);
+    expect(submitted).toEqual([{
+      input: ['hello again'],
+      clientRequestId: 'creq_23456789ab',
+      permissionMode: 'accept-edits',
+      permissionEscalation: 'ask'
+    }]);
     expect(runtime.threads.has(threadId)).toBe(true);
   });
 

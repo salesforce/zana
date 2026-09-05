@@ -6,6 +6,9 @@ describe('useThreadComposerOptions', () => {
     const source = readFileSync(new URL('./useThreadComposerOptions.ts', import.meta.url), 'utf8');
     expect(source).toContain('prefetchThreadModelCatalog');
     expect(source).toContain('ensureThreadProviderModels');
+    expect(source).toContain('if (cached) return');
+    expect(source).toContain('[providerId, cached]');
+    expect(source).toContain('catalog.inflight.has(providerId)');
     expect(source).toContain('getThreadModelCatalog');
     expect(source).toContain('reconcileReasoningLevel');
     expect(source).toContain('if (input.threadId || input.lockedProviderId) return');
@@ -39,6 +42,9 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain("const acpModeOptions = cached?.acpMode?.options ?? []");
     expect(source).toContain('setAcpMode(current)');
     expect(source).toContain('acpModeOptions.some((option) => option.value === acpMode)');
+    expect(source).toContain('initialAcpMode');
+    expect(source).toContain('requestedValid');
+    expect(source).toContain('appliedRequestedAcpModeRef');
     expect(source).toContain('reloadThreadProviderModels(providerId)');
     expect(source).toContain('refreshAcpModeOptions');
   });

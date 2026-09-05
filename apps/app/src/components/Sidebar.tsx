@@ -19,7 +19,7 @@ import {
   type NavId
 } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
-import { getNavRoutePath } from '../lib/route-paths.js';
+import { DEFAULT_PLUGIN_PANEL_PATH, getNavRoutePath } from '../lib/route-paths.js';
 import { hrefForPluginNavPanel } from '../plugins/plugin-nav-href.js';
 import { useMergedModules } from '../modules/index.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
@@ -35,6 +35,7 @@ import {
   type SidebarRailItem
 } from './SidebarRail.js';
 import { listNavPanels, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import type { PaneContent } from '../lib/split-layout/types.js';
 
 interface NavEntry {
   id: NavId;
@@ -62,6 +63,16 @@ const followupsNavItem: NavEntry = { id: 'followups', label: 'Follow-ups', icon:
 // install, the VSCode-style store), so it earns a system-level rail entry
 // alongside Settings.
 const extensionsNavItem: NavEntry = { id: 'extensions', label: 'Plugins', icon: Blocks };
+
+/** Core destinations that stay full-main (no split-pane drag payload). */
+const NON_SPLITTABLE_NAV_IDS = new Set<string>([
+  'extensions',
+  'settings',
+  'suggestions',
+  'followups',
+  'projects',
+  'goals'
+]);
 
 export function Sidebar() {
   const route = useRouteState();
@@ -150,6 +161,23 @@ export function Sidebar() {
         />
       );
     }
+    const splitContent: PaneContent | undefined =
+      item.id === 'home'
+        ? { kind: 'home' }
+        : item.id === 'inbox'
+          ? { kind: 'inbox' }
+          : item.id === 'agents'
+            ? { kind: 'agents' }
+            : item.id === 'scheduler'
+              ? { kind: 'scheduler' }
+              : NON_SPLITTABLE_NAV_IDS.has(item.id)
+                ? undefined
+                : {
+                    kind: 'plugin-panel',
+                    pluginId: item.id,
+                    panelPath: DEFAULT_PLUGIN_PANEL_PATH,
+                    subPath: ''
+                  };
     return {
       kind: 'row',
       id: item.id,
@@ -160,6 +188,7 @@ export function Sidebar() {
       active: nav === item.id,
       running,
       badge,
+      splitContent,
       title: collapsed
         ? running
           ? `${item.label} — ${isAgents ? agentsTitle : scheduleTitle}`
@@ -189,7 +218,13 @@ export function Sidebar() {
         to: hrefForPluginNavPanel(panel.pluginId, path),
         testId: `nav-${id}`,
         active,
-        title: collapsed ? panel.title : undefined
+        title: collapsed ? panel.title : undefined,
+        splitContent: {
+          kind: 'plugin-panel',
+          pluginId: panel.pluginId,
+          panelPath: path,
+          subPath: ''
+        }
       };
     }),
     {

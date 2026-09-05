@@ -100,6 +100,14 @@ export default definePluginApp((app) => {
     icon: 'Plus',
     run: () => {}
   });
+  app.slots.experimental_createProjectAction({
+    id: 'notes-project',
+    title: 'Notes project',
+    icon: 'Notebook',
+    run: (ctx) => {
+      ctx.openDialog();
+    }
+  });
 });
 ```
 

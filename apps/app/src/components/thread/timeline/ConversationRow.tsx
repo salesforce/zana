@@ -6,8 +6,9 @@ import { PluginMarkdownDirectives } from '../../../plugins/PluginMarkdownDirecti
 import { PluginSlotBoundary } from '../../../plugins/PluginSlotBoundary.js';
 import { listMessageActions, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import { openPluginThreadPanel } from '../../../plugins/plugin-thread-panel.js';
-import { ComposerImageThumbs, type ComposerImageThumb } from '../../composer/ComposerImageThumbs.js';
 import { conversationImageSrc } from '../../../lib/prompt-attachments.js';
+import { extractInlineThreadImages, threadImageStubLabel } from './thread-inline-images.js';
+import { ThreadDisplayedImage } from './ThreadDisplayedImage.js';
 import { splitStreamingMarkdown } from './streaming-markdown-split.js';
 import {
   canEditConversationMessage,
@@ -17,7 +18,8 @@ import {
 } from './MessageActionBar.js';
 import { resolveIcon } from '../../../lib/resolveIcon.js';
 import { product } from '../../../lib/product-client.js';
-import { SecondaryPanelSelectionActions } from '../secondary-panel/SecondaryPanelSelectionActions.js';
+import { SecondaryPanelSelectionActions, readTrimmedSelection } from '../secondary-panel/SecondaryPanelSelectionActions.js';
+import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { conversationFilePreviewPaths } from '../../markdown-local-file.js';
 import { dispatchThreadOpenFile } from '../secondary-panel/useThreadOpenFileSignal.js';
 import { ThreadOpenFilePreviewButton } from './TimelineTitleView.js';
@@ -43,7 +45,9 @@ export const ConversationRow = memo(function ConversationRow({
   parentThreadId,
   threadIdle = false,
   streaming = false,
-  onFork
+  onFork,
+  messageActions,
+  includePluginMessageActions = true
 }: {
   row: Extract<ThreadTimelineViewRow, { kind: 'conversation' }>;
   onCopy?: (text: string) => void;
@@ -53,6 +57,8 @@ export const ConversationRow = memo(function ConversationRow({
   threadIdle?: boolean;
   streaming?: boolean;
   onFork?: (sourceSeqEnd?: number) => void;
+  messageActions?: readonly ThreadChatMessageAction[];
+  includePluginMessageActions?: boolean;
 }) {
   const testId = row.role === 'assistant' ? 'thread-assistant-text' : 'thread-user-text';
   const mentions = row.role === 'user' ? row.mentions : [];
@@ -60,22 +66,31 @@ export const ConversationRow = memo(function ConversationRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(row.text ?? '');
   const [saving, setSaving] = useState(false);
-  const [lightbox, setLightbox] = useState<ComposerImageThumb | null>(null);
-  const text = row.text?.trim() ?? '';
-  const visibleText = visibleMessageText(row.text ?? '', expanded);
-  const imageThumbs = row.role === 'user'
-    ? [
-        ...(row.attachments?.imageUrls ?? []).map((src, index) => ({
-          id: `url-${index}`,
-          name: 'Attached image',
-          src
-        })),
-        ...(row.attachments?.localImagePaths ?? []).flatMap((path, index) => {
-          const src = conversationImageSrc(projectId, path);
-          return src ? [{ id: `local-${index}`, name: path.split(/[\\/]/u).pop() ?? 'Attached image', src }] : [];
-        })
-      ]
-    : [];
+  const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
+  const extracted = useMemo(() => extractInlineThreadImages(row.text ?? ''), [row.text]);
+  const text = extracted.text.trim();
+  const visibleText = visibleMessageText(extracted.text, expanded);
+  const imageRefs = useMemo(() => {
+    const refs: Array<{ id: string; name: string; path: string }> = [];
+    const seen = new Set<string>();
+    const push = (id: string, path: string, name: string) => {
+      if (!path || seen.has(path)) return;
+      seen.add(path);
+      refs.push({ id, name, path });
+    };
+    if (row.role === 'user') {
+      for (const [index, src] of (row.attachments?.imageUrls ?? []).entries()) {
+        push(`url-${index}`, src, 'Attached image');
+      }
+      for (const [index, path] of (row.attachments?.localImagePaths ?? []).entries()) {
+        push(`local-${index}`, path, path.split(/[\\/]/u).pop() ?? 'Attached image');
+      }
+    }
+    for (const [index, image] of extracted.images.entries()) {
+      push(`inline-${index}`, image.src, image.alt || threadImageStubLabel(image.src));
+    }
+    return refs;
+  }, [extracted.images, row.attachments, row.role]);
   const fileNames = row.role === 'user' ? (row.attachments?.localFilePaths ?? []) : [];
   const previewPaths = useMemo(
     () => conversationFilePreviewPaths(row.text ?? '', fileNames),
@@ -83,15 +98,16 @@ export const ConversationRow = memo(function ConversationRow({
   );
   const actions = useSyncExternalStore(subscribePluginSlots, listMessageActions, listMessageActions);
   const streamingSplit = useMemo(
-    () => (streaming && row.role === 'assistant' ? splitStreamingMarkdown(row.text ?? '') : null),
-    [row.role, row.text, streaming]
+    () => (streaming && row.role === 'assistant' ? splitStreamingMarkdown(extracted.text) : null),
+    [extracted.text, row.role, streaming]
   );
   const requestLabel = userRequestLabel(row);
   const cancelEdit = () => {
     setEditing(false);
     setDraft(row.text ?? '');
   };
-  const pluginActions = actions.map((action) => {
+  const pluginActions = includePluginMessageActions
+    ? actions.map((action) => {
     const Icon = action.icon ? resolveIcon(action.icon) : null;
     return (
       <PluginSlotBoundary
@@ -105,6 +121,7 @@ export const ConversationRow = memo(function ConversationRow({
           aria-label={action.title}
           title={action.title}
           onClick={() => {
+            const selectedText = readTrimmedSelection() ?? undefined;
             void action.run({
               threadId: threadId ?? '',
               message: {
@@ -114,6 +131,7 @@ export const ConversationRow = memo(function ConversationRow({
                 text,
                 sourceSeqEnd: row.sourceSeqEnd ?? 0
               },
+              ...(selectedText ? { selectedText } : {}),
               openPanel(options) {
                 return openPluginThreadPanel({
                   pluginId: action.pluginId,
@@ -130,7 +148,34 @@ export const ConversationRow = memo(function ConversationRow({
         </button>
       </PluginSlotBoundary>
     );
-  });
+  })
+    : [];
+  const localActions = (messageActions ?? [])
+    .filter((action) => !action.roles || action.roles.includes(row.role))
+    .map((action) => {
+      const Icon = action.icon ? resolveIcon(action.icon) : null;
+      return (
+        <button
+          key={action.id}
+          type="button"
+          className="thread-message-action"
+          data-testid={`thread-chat-message-action-${action.id}`}
+          aria-label={action.title}
+          title={action.title}
+          onClick={() => {
+            void action.run({
+              id: row.id,
+              threadId: threadId ?? '',
+              role: row.role,
+              text,
+              sourceSeqEnd: row.sourceSeqEnd ?? 0
+            });
+          }}
+        >
+          {Icon ? <Icon size={12} /> : action.title}
+        </button>
+      );
+    });
   return (
     <article
       className={`thread-timeline-row is-${row.role}${editing ? ' is-editing' : ''}`}
@@ -145,8 +190,34 @@ export const ConversationRow = memo(function ConversationRow({
       ) : null}
       <SecondaryPanelSelectionActions threadId={threadId}>
         <div className="thread-timeline-bubble">
-          {imageThumbs.length > 0 ? (
-            <ComposerImageThumbs images={imageThumbs} onOpen={setLightbox} />
+          {imageRefs.length > 0 ? (
+            <div className="composer-image-thumbs" aria-label="Attached images">
+              {imageRefs.map((image) => {
+                const readySrc = conversationImageSrc(projectId, image.path);
+                return (
+                  <div key={image.id} className="composer-image-thumb">
+                    {readySrc ? (
+                      <button
+                        type="button"
+                        className="composer-image-thumb-preview"
+                        title={image.name}
+                        onClick={() => setLightbox({ src: readySrc, name: image.name })}
+                      >
+                        <img src={readySrc} alt={image.name} loading="lazy" decoding="async" />
+                      </button>
+                    ) : (
+                      <ThreadDisplayedImage
+                        path={image.path}
+                        threadId={threadId}
+                        alt={image.name}
+                        variant="thumb"
+                        onOpen={(src, name) => setLightbox({ src, name })}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           ) : null}
           {fileNames.length > 0 ? (
             <ul className="thread-message-files">
@@ -252,7 +323,7 @@ export const ConversationRow = memo(function ConversationRow({
             )
           ) : null}
           {(threadId && previewPaths.length > 0 && !editing)
-            || ((row.text ?? '').length > MESSAGE_OVERFLOW_CAP && !editing) ? (
+            || (extracted.text.length > MESSAGE_OVERFLOW_CAP && !editing) ? (
             <div className="thread-message-overflow-row">
               {threadId && previewPaths.length > 0 && !editing ? (
                 previewPaths.map((path) => (
@@ -262,7 +333,7 @@ export const ConversationRow = memo(function ConversationRow({
                   />
                 ))
               ) : null}
-              {(row.text ?? '').length > MESSAGE_OVERFLOW_CAP && !editing ? (
+              {extracted.text.length > MESSAGE_OVERFLOW_CAP && !editing ? (
                 <button
                   type="button"
                   className="thread-message-overflow"
@@ -286,12 +357,12 @@ export const ConversationRow = memo(function ConversationRow({
             setDraft(row.text ?? '');
             setEditing(true);
           } : undefined}
-          onSendToMain={row.role === 'assistant' && parentThreadId ? () => {
+          onSendToMain={row.role === 'assistant' && parentThreadId && includePluginMessageActions ? () => {
             void product.threads.createQueuedMessage(parentThreadId, { text });
           } : undefined}
           onFork={onFork}
           showFork={row.role === 'assistant'}
-          pluginActions={pluginActions}
+          pluginActions={[...localActions, ...pluginActions]}
         />
       )}
       {lightbox ? (

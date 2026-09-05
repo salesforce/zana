@@ -122,12 +122,18 @@ export interface PopoverPicklistProps<T extends string> {
   placeholder?: string;
   disabled?: boolean;
   title?: string;
+  /** Optional aria-keyshortcuts on the trigger (e.g. Shift+Tab). */
+  ariaKeyshortcuts?: string;
   searchable?: boolean;
   searchPlaceholder?: string;
   emptyHint?: string;
   className?: string;
   /** Class on the trigger button; defaults to the bordered field look. */
   triggerClassName?: string;
+  /** Optional data-testid on the trigger button. */
+  triggerTestId?: string;
+  /** Optional leading icon inside the trigger. */
+  triggerIcon?: ReactNode;
   /** Minimum popover width in px; defaults to 200. */
   minWidth?: number;
   /**
@@ -205,11 +211,14 @@ export function PopoverPicklist<T extends string>({
   placeholder = 'Select…',
   disabled,
   title,
+  ariaKeyshortcuts,
   searchable = true,
   searchPlaceholder = 'Search…',
   emptyHint = 'No matches',
   className = '',
   triggerClassName = 'launch-model-picker-trigger',
+  triggerTestId,
+  triggerIcon,
   minWidth = 200,
   anchorToParent = false
 }: PopoverPicklistProps<T>) {
@@ -342,6 +351,7 @@ export function PopoverPicklist<T extends string>({
         className={`${triggerClassName} ${className}${selected?.tone === 'warning' ? ' is-warning' : ''}`}
         disabled={disabled}
         title={title}
+        aria-keyshortcuts={ariaKeyshortcuts}
         onClick={() => setOpen((current) => !current)}
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -353,7 +363,9 @@ export function PopoverPicklist<T extends string>({
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         aria-label={ariaLabel}
+        data-testid={triggerTestId}
       >
+        {triggerIcon}
         <span>{selected?.compactLabel ?? selected?.label ?? placeholder}</span>
         <ChevronDown size={14} aria-hidden="true" />
       </button>

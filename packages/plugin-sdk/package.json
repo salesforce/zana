@@ -52,36 +52,36 @@
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
-  "types": "./src/index.ts",
+  "types": "./bundled-types/zcc-plugin-sdk.d.ts",
   "files": ["dist", "bundled-types", "README.md"],
   "exports": {
     ".": {
       "source": "./src/index.ts",
-      "types": "./src/index.ts",
+      "types": "./bundled-types/zcc-plugin-sdk.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./app": {
       "source": "./src/app.ts",
-      "types": "./src/app.ts",
+      "types": "./bundled-types/zcc-plugin-sdk-app.d.ts",
       "import": "./dist/app.js",
       "default": "./dist/app.js"
     },
     "./server": {
       "source": "./src/server.ts",
-      "types": "./src/server.ts",
+      "types": "./bundled-types/zcc-plugin-sdk-server.d.ts",
       "import": "./dist/server.js",
       "default": "./dist/server.js"
     },
     "./testing": {
       "source": "./src/testing/index.ts",
-      "types": "./src/testing/index.ts",
+      "types": "./bundled-types/zcc-plugin-sdk-testing.d.ts",
       "import": "./dist/testing/index.js",
       "default": "./dist/testing/index.js"
     },
     "./testing/app": {
-      "source": "./src/testing/app.ts",
-      "types": "./src/testing/app.ts",
+      "source": "./src/testing/app-entry.ts",
+      "types": "./bundled-types/zcc-plugin-sdk-testing-app.d.ts",
       "import": "./dist/testing/app.js",
       "default": "./dist/testing/app.js"
     },
@@ -101,24 +101,33 @@
   "scripts": {
     "build": "node scripts/build-runtime.mjs",
     "prepack": "node scripts/build-runtime.mjs",
-    "test": "vitest run --config ../../vitest.config.ts src/testing/index.test.ts src/app.test.ts src/provider-bridge.test.ts",
+    "test": "vitest run --config ../../vitest.config.ts src/testing/index.test.ts src/testing/app-render.test.tsx src/app.test.ts src/provider-bridge.test.ts src/pack.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "peerDependencies": {
-    "react": "^19"
+    "@testing-library/react": "^16",
+    "jsdom": ">=24",
+    "react": "^19",
+    "react-dom": "^19"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true }
+    "@testing-library/react": { "optional": true },
+    "jsdom": { "optional": true },
+    "react": { "optional": true },
+    "react-dom": { "optional": true }
   },
-  "dependencies": {
+  "devDependencies": {
     "@zana-ai/zcc-agent-process-utils": "workspace:*",
     "@zana-ai/zcc-domain": "workspace:*",
     "@zana-ai/zcc-host-daemon-contract": "workspace:*",
-    "@zana-ai/zcc-provider-bridge-protocol": "workspace:*"
-  },
-  "devDependencies": {
+    "@zana-ai/zcc-provider-bridge-protocol": "workspace:*",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "esbuild": "^0.25.0",
+    "jsdom": "^26.1.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

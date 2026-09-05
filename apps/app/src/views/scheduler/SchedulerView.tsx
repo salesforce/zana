@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Clock, Plus, Sparkles, Pause, PlayCircle, AlertTriangle, Activity, Settings } from 'lucide-react';
 import type { ScheduledTask, ScheduleTemplate } from '@zana-ai/zcc-domain/product';
+import { AuroraGrid } from '@/components/AuroraGrid';
 import { useData, useScheduler, useScheduleGroups, useUi } from '@/store';
 import { EmptyStateWithFeatured } from '@/components/scheduler/EmptyStateWithFeatured';
 import { openScheduledLive } from '@/components/scheduler/openScheduledLive';
@@ -166,10 +167,11 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
 
   return (
     <div
-      className={`settings-panel scheduler-panel${
+      className={`settings-panel scheduler-panel aurora-host${
         lockedProject ? ' scheduler-panel--embedded' : ' scheduler-page'
       }`}
     >
+      <AuroraGrid />
       <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">

@@ -119,6 +119,26 @@ describe('connection manager', () => {
     expect(seen).toEqual(['63.0']);
   });
 
+  it('forwards an AbortSignal on REST requests', async () => {
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    const manager = new ConnectionManager(
+      deps({
+        exec: (args) => {
+          if (args.includes('display')) return { code: 0, stdout: displayJson(), stderr: '' };
+          return { code: 1, stdout: '', stderr: 'no' };
+        },
+        request: (req) => {
+          seen = req.signal;
+          return { status: 200, json: {}, text: '{}' };
+        }
+      }),
+      async () => ({ defaultOrg: 'dev', apiVersion: '62.0' })
+    );
+    await manager.request('/query', { method: 'GET', signal: controller.signal });
+    expect(seen).toBe(controller.signal);
+  });
+
   it('fails closed when CLI is missing', async () => {
     const manager = new ConnectionManager(
       deps({
@@ -126,6 +146,17 @@ describe('connection manager', () => {
       }),
       async () => ({ defaultOrg: 'dev', apiVersion: '62.0' })
     );
+    await expect(manager.connect()).rejects.toMatchObject({ code: 'cli_missing' } satisfies Partial<ConnectionError>);
+  });
+
+  it('reports a missing CLI when listing orgs', async () => {
+    const manager = new ConnectionManager(
+      deps({
+        exec: () => ({ code: 127, stdout: '', stderr: '' })
+      }),
+      async () => ({ defaultOrg: '', apiVersion: '62.0' })
+    );
+    await expect(manager.listOrgs()).rejects.toMatchObject({ code: 'cli_missing' } satisfies Partial<ConnectionError>);
     await expect(manager.connect()).rejects.toMatchObject({ code: 'cli_missing' } satisfies Partial<ConnectionError>);
   });
 

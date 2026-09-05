@@ -791,6 +791,18 @@ describe('PluginService', () => {
     expect(service.get('keep')?.id).toBe('keep');
   });
 
+  it('start uninstalls leftover native Thread plugins even if their tree is gone', async () => {
+    const dataDir = root();
+    const leftover = writePlugin(join(root(), 'provider-claude-code'), 'provider-claude-code');
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.install(leftover);
+    rmSync(leftover, { recursive: true, force: true });
+    await service.start();
+    expect(service.get('provider-claude-code')).toBeUndefined();
+  });
+
   it('leaves a local-authored retired id in place', async () => {
     const dataDir = root();
     const sidecar = join(dataDir, 'extensions', 'zana');

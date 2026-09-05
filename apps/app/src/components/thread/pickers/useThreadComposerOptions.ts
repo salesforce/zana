@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   reconcileReasoningLevel,
   reasoningLevelSchema,
@@ -61,6 +61,7 @@ export function useThreadComposerOptions(input: {
   lockedProviderId?: string;
   initialModel?: string | null;
   initialReasoningLevel?: string | null;
+  initialAcpMode?: string | null;
 }) {
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
@@ -82,7 +83,10 @@ export function useThreadComposerOptions(input: {
     const provider = input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code';
     return restoreProviderSelection(provider).reasoningLevel;
   });
-  const [acpMode, setAcpMode] = useState<string | undefined>();
+  const [acpMode, setAcpMode] = useState<string | undefined>(
+    () => input.initialAcpMode?.trim() || undefined
+  );
+  const appliedRequestedAcpModeRef = useRef<string | undefined>();
   const persistSelection = !input.threadId;
 
   const setModel = useCallback((value: string) => {
@@ -130,10 +134,6 @@ export function useThreadComposerOptions(input: {
     void prefetchThreadModelCatalog();
   }, []);
 
-  useEffect(() => {
-    void ensureThreadProviderModels(providerId);
-  }, [providerId]);
-
   const providers = composerProvidersFromCatalog(
     catalog.providers,
     Boolean(input.threadId || input.lockedProviderId),
@@ -144,16 +144,38 @@ export function useThreadComposerOptions(input: {
   const cached = catalog.byProvider[providerId];
   const models = cached?.models ?? fallbackModelsForProvider(providerId);
   const moreModels = cached?.selectedOnlyModels ?? fallbackMoreModelsForProvider(providerId);
-  const loading = !cached;
+  const loading = !cached && catalog.inflight.has(providerId);
   const modelLoadError = cached?.modelLoadError ?? null;
   const acpModeOptions = cached?.acpMode?.options ?? [];
 
   useEffect(() => {
+    if (cached) return;
+    void ensureThreadProviderModels(providerId);
+  }, [providerId, cached]);
+
+  useEffect(() => {
+    appliedRequestedAcpModeRef.current = undefined;
+  }, [input.threadId]);
+
+  useEffect(() => {
+    const requested = input.initialAcpMode?.trim() || undefined;
+    const requestedValid = Boolean(
+      requested && acpModeOptions.some((option) => option.value === requested)
+    );
+    const currentValid = Boolean(
+      acpMode && acpModeOptions.some((option) => option.value === acpMode)
+    );
+    if (requestedValid && requested !== appliedRequestedAcpModeRef.current) {
+      appliedRequestedAcpModeRef.current = requested;
+      if (acpMode !== requested) setAcpMode(requested);
+      return;
+    }
+    if (currentValid) return;
     const current = cached?.acpMode?.currentValue;
-    if (current && !acpModeOptions.some((option) => option.value === acpMode)) {
+    if (current && acpModeOptions.some((option) => option.value === current)) {
       setAcpMode(current);
     }
-  }, [acpMode, acpModeOptions, cached?.acpMode?.currentValue]);
+  }, [acpMode, acpModeOptions, cached?.acpMode?.currentValue, input.initialAcpMode]);
 
   useEffect(() => {
     if (input.threadId || input.lockedProviderId) return;

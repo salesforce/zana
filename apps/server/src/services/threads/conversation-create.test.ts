@@ -220,7 +220,17 @@ describe('unmanaged environment reuse', () => {
     expect(source).toContain('titleFromPrompt');
     expect(source).toContain('reasoningLevel: args.input.reasoningLevel');
     expect(source).toContain("...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})");
+    expect(source).toContain('recordThreadExecutionMode');
+    expect(source).toContain('requestedExecutionModeFromTurn');
     expect(source).toContain('clientRequestId');
+    expect(source).toContain("from './conversation-live-turn.js'");
+    expect(source).toContain('startLiveTurnCommand');
+    expect(source).toContain('settleLiveTurnCommandFailure');
+    expect(source).not.toMatch(/import \{[\s\S]*startLiveTurnCommand[\s\S]*\} from '\.\/conversation-turn-settlement\.js'/);
+    expect(source).toContain("from './conversation-thread-view.js'");
+    const outcome = readFileSync(new URL('./conversation-lifecycle-outcome.ts', import.meta.url), 'utf8');
+    expect(outcome).toContain("from './conversation-thread-view.js'");
+    expect(outcome).not.toContain("from './conversation-create.js'");
   });
 });
 
@@ -237,10 +247,11 @@ describe('thread title namer wiring', () => {
 describe('SSH remotes', () => {
   it('run on this machine with remote tools unless the enrolled host is selected', () => {
     const source = readFileSync(new URL('./conversation-create.ts', import.meta.url), 'utf8');
+    const view = readFileSync(new URL('./conversation-thread-view.ts', import.meta.url), 'utf8');
     expect(source).toContain('conversationThreadViews');
-    expect(source).toContain('peekThreadReadSeq');
-    expect(source).toContain('maxConversationEventSequenceByThreadIds');
-    expect(source).toContain('threadActivityForConversation');
+    expect(view).toContain('peekThreadReadSeq');
+    expect(view).toContain('maxConversationEventSequenceByThreadIds');
+    expect(view).toContain('threadActivityForConversation');
     expect(source).toContain('isRemoteToolProxyActive(project, input.hostId)');
     expect(source).toContain('remoteWorkspacePath(project, remoteToolProxy)');
     expect(source).toContain('resolveSpawnChoiceForHost');

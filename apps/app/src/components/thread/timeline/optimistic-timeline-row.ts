@@ -16,8 +16,10 @@ export function buildOptimisticUserTimelineRow(args: {
   text: string;
   now?: number;
   id?: string;
+  localImagePaths?: readonly string[];
 }): TimelineUserConversationRow {
   const now = args.now ?? Date.now();
+  const localImagePaths = [...(args.localImagePaths ?? [])];
   return {
     id: args.id ?? `${OPTIMISTIC_TIMELINE_ROW_ID_PREFIX}${args.threadId}-${now}`,
     threadId: args.threadId,
@@ -29,7 +31,16 @@ export function buildOptimisticUserTimelineRow(args: {
     kind: 'conversation',
     role: 'user',
     text: args.text,
-    attachments: null,
+    attachments: localImagePaths.length > 0
+      ? {
+        webImages: 0,
+        localImages: localImagePaths.length,
+        localFiles: 0,
+        imageUrls: [],
+        localImagePaths,
+        localFilePaths: []
+      }
+      : null,
     initiator: 'user',
     senderThreadId: null,
     systemMessageKind: 'unlabeled',
@@ -76,11 +87,15 @@ export function mergeOptimisticTimelineRows(
 ): TimelineRow[] {
   if (!optimistic || !isOptimisticTimelineRowId(optimistic.id)) return [...serverRows];
   if (optimistic.kind !== 'conversation' || optimistic.role !== 'user') return [...serverRows];
-  const matched = serverRows.some((row) => (
-    row.kind === 'conversation'
-    && row.role === 'user'
-    && row.text === optimistic.text
-  ));
+  const matched = serverRows.some((row) => {
+    if (row.kind !== 'conversation' || row.role !== 'user' || row.text !== optimistic.text) {
+      return false;
+    }
+    const expected = optimistic.attachments?.localImagePaths ?? [];
+    if (expected.length === 0) return true;
+    const actual = row.attachments?.localImagePaths ?? [];
+    return expected.every((path) => actual.includes(path));
+  });
   if (matched) return [...serverRows];
   return [...serverRows, optimistic];
 }

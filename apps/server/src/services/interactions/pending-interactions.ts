@@ -33,6 +33,7 @@ import { HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHub } from '../../http/product-hub.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { toPendingInteraction } from './pending-interaction-serialization.js';
+import { snapshotApprovedPlan } from '../threads/conversation-plan.js';
 import { appendPendingInteractionTimelineEvent } from './pending-interaction-timeline.js';
 import {
   pendingInteractionResolutionEquals,
@@ -77,6 +78,10 @@ export interface PendingInteractionLifecycleDeps {
     threadId: string;
     status: PendingInteraction['status'];
     statusReason: string | null;
+  }) => void;
+  onPendingInteractionCreated?: (args: {
+    threadId: string;
+    interaction: PendingInteraction;
   }) => void;
 }
 
@@ -224,6 +229,10 @@ export class PendingInteractionLifecycle {
     if (registered.outcome === 'created') {
       appendPendingInteractionTimelineEvent(this.deps.db, this.deps.hub, pendingInteraction);
       notifyThread(this.deps, pendingInteraction.threadId);
+      this.deps.onPendingInteractionCreated?.({
+        threadId: pendingInteraction.threadId,
+        interaction: pendingInteraction
+      });
     }
     return {
       outcome: registered.outcome,
@@ -306,6 +315,10 @@ export class PendingInteractionLifecycle {
     try {
       appendPendingInteractionTimelineEvent(this.deps.db, this.deps.hub, interaction);
       notifyThread(this.deps, interaction.threadId);
+      this.deps.onPendingInteractionCreated?.({
+        threadId: interaction.threadId,
+        interaction
+      });
     } catch (error) {
       setPendingInteractionInterrupted(this.deps.db, {
         id: interaction.id,
@@ -434,6 +447,20 @@ export class PendingInteractionLifecycle {
       resolution: JSON.stringify(args.resolution)
     });
     const interaction = toPendingInteraction(completed ?? resolving);
+    if (
+      isApprovalPendingInteractionPayload(current.payload)
+      && current.payload.subject.kind === 'plan'
+      && args.resolution
+      && typeof args.resolution === 'object'
+      && 'decision' in args.resolution
+      && String((args.resolution as { decision?: unknown }).decision).startsWith('allow')
+    ) {
+      snapshotApprovedPlan(this.deps.db, {
+        threadId: interaction.threadId,
+        markdown: current.payload.subject.plan,
+        source: 'approval'
+      });
+    }
     this.settleTerminal(interaction);
     return interaction;
   }

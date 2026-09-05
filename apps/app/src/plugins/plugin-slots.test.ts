@@ -13,8 +13,11 @@ import {
   listSidebarFooterActions,
   listTimelineRenderers,
   listProjectMenuActions,
+  listCreateProjectActions,
   listAgentCardActions,
-  listAgentsBoardActions
+  listAgentsBoardActions,
+  listProjectTabs,
+  projectTabView
 } from './plugin-slots.js';
 
 describe('plugin slot registry', () => {
@@ -49,6 +52,11 @@ describe('plugin slot registry', () => {
           placement: 'project',
           run: () => undefined
         });
+        app.slots.experimental_createProjectAction({
+          id: 'new-notes',
+          title: 'Notes project',
+          run: () => undefined
+        });
         app.slots.experimental_agentCardAction({
           id: 'card',
           title: 'Card',
@@ -67,6 +75,8 @@ describe('plugin slot registry', () => {
     expect(listCommandPaletteActions()).toHaveLength(1);
     expect(listTimelineRenderers()).toHaveLength(1);
     expect(listProjectMenuActions()).toHaveLength(1);
+    expect(listCreateProjectActions()).toHaveLength(1);
+    expect(listCreateProjectActions()).toBe(listCreateProjectActions());
     expect(listAgentCardActions()).toHaveLength(1);
     expect(listAgentsBoardActions()).toHaveLength(1);
     expect(listNavPanels()[0]?.generation).toBe(2);
@@ -135,5 +145,30 @@ describe('plugin slot registry', () => {
     clearPluginSlots('absent');
 
     expect(listHomepageSections()).toBe(before);
+  });
+
+  it('names a second project tab pluginId:tabId so it does not collide with terminals', () => {
+    clearPluginSlots('salesforce');
+    interpretPluginApp(
+      'salesforce',
+      definePluginApp((app) => {
+        app.slots.projectTab({
+          id: 'salesforce',
+          label: 'Salesforce',
+          icon: 'Cloud',
+          component: () => null
+        });
+        app.slots.projectTab({
+          id: 'soql',
+          label: 'SOQL',
+          icon: 'Database',
+          component: () => null
+        });
+      })
+    );
+    const tabs = listProjectTabs();
+    expect(projectTabView(tabs[0]!, tabs)).toBe('salesforce');
+    expect(projectTabView(tabs[1]!, tabs)).toBe('salesforce:soql');
+    clearPluginSlots('salesforce');
   });
 });

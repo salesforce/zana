@@ -227,7 +227,7 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
       return await live(dataDir, 'sched.setEnabled', { id, enabled: subcommand === 'enable' }, jsonOutput);
     } else if (command === 'plugin') {
       const { runPluginCommand } = await import('./plugin-commands.js');
-      return await runPluginCommand(dataDir, subcommand, rest, jsonOutput);
+      return await runPluginCommand(dataDir, subcommand, rest, jsonOutput, httpDeps);
     } else if (command === 'marketplace') {
       const { runMarketplaceCommand } = await import('./plugin-commands.js');
       return await runMarketplaceCommand(dataDir, subcommand, rest, jsonOutput);
@@ -272,6 +272,8 @@ OFFLINE (no app required):
   plugin build [dir]       Bundle zcc.app / zcc.server for CI
 
 PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:8780):
+  plugin reload <id>       Reload a plugin (rebuild is not implied)
+  plugin dev [dir]         Watch, rebuild UI, reload on save [--once]
   status                   Live dashboard: projects and threads
   thread list [--project ID]
   thread spawn --project <id> --prompt "..." [--provider <id>] [--wait]
@@ -298,7 +300,7 @@ FILE READS (work if the app is down; prefer HTTP groups above when it is up):
        [--project ID] [--status open|resolved|dismissed] [--all]
 
 LIVE CONTROL PLANE (app must be running):
-  plugin ls|install|enable|disable|reload|remove|dev|search|outdated|update|run|logs
+  plugin ls|install|enable|disable|remove|search|outdated|update|run|logs
   marketplace ls|add|refresh|remove|install
   agent ls                 List live agents + their state
   team ls                  List the team catalogue

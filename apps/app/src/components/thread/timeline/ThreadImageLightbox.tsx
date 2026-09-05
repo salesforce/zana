@@ -1,3 +1,5 @@
+import { Modal } from '../../Modal.js';
+
 export function ThreadImageLightbox({
   src,
   alt,
@@ -7,12 +9,15 @@ export function ThreadImageLightbox({
   alt: string;
   onClose: () => void;
 }) {
+  const title = alt.trim() || 'Image';
   return (
-    <div className="thread-image-lightbox" role="dialog" aria-label={alt}>
-      <button type="button" className="thread-image-lightbox-close" onClick={onClose}>
-        Close
-      </button>
-      <img src={src} alt={alt} />
-    </div>
+    <Modal
+      title={title}
+      onClose={onClose}
+      className="thread-image-modal"
+      bodyClassName="thread-image-modal-body"
+    >
+      <img src={src} alt={title} />
+    </Modal>
   );
 }

@@ -1,12 +1,14 @@
-import { getEnvironment, type ConversationThreadRow } from '@zana-ai/zcc-db';
+import { getEnvironment, listConversationThreadEvents, type ConversationThreadRow } from '@zana-ai/zcc-db';
 import type { ThreadResumeFields } from '@zana-ai/zcc-contracts/host-rpc';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
-import { safePackPluginSession } from '../../plugins/plugin-agent-tools.js';
+import { packConversationSessionTooling } from './conversation-session-tools.js';
 import {
   bridgeLaunchForProvider,
+  getThreadProvider,
   permissionModeForLaunchProfile
 } from './thread-provider-catalog.js';
+import { latestProviderCheckpoint } from './conversation-edit-message.js';
 
 export function isUnknownThreadHostError(error: unknown): boolean {
   return Boolean(
@@ -23,11 +25,10 @@ export async function threadResumeFields(
 ): Promise<ThreadResumeFields | undefined> {
   if (!thread.providerThreadId) return undefined;
   const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : undefined;
-  const sessionTooling = await safePackPluginSession(
-    ctx.plugins
-      ? () => ctx.plugins!.sessionTools({ threadId: thread.id, projectId: thread.projectId })
-      : undefined
-  );
+  const sessionTooling = await packConversationSessionTooling(ctx, {
+    threadId: thread.id,
+    projectId: thread.projectId
+  });
   return {
     projectId: thread.projectId,
     providerId: thread.providerId,
@@ -35,7 +36,13 @@ export async function threadResumeFields(
     cwd: environment?.path ?? undefined,
     bridgeLaunch: bridgeLaunchForProvider(thread.providerId, ctx.pluginHostArtifacts),
     permissionMode: permissionModeForLaunchProfile(thread.providerId),
-    ...sessionTooling
+    ...sessionTooling,
+    ...(getThreadProvider(thread.providerId)?.capabilities.fork === 'checkpoint'
+      ? (() => {
+        const checkpoint = latestProviderCheckpoint(listConversationThreadEvents(ctx.db, thread.id));
+        return checkpoint ? { providerCheckpointId: checkpoint.checkpoint } : {};
+      })()
+      : {})
   };
 }
 

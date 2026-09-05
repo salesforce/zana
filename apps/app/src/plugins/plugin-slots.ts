@@ -21,6 +21,7 @@ import type {
   PluginPendingInteractionRegistration,
   PluginProjectTabRegistration,
   PluginProjectMenuActionRegistration,
+  PluginCreateProjectActionRegistration,
   PluginProviderIconRegistration,
   PluginRegistrationSet,
   PluginSettingsSectionRegistration,
@@ -55,6 +56,7 @@ function emptySnapshot() {
     settingsSections: [] as PluginSettingsSectionRegistration[],
     projectTabs: [] as PluginProjectTabRegistration[],
     projectMenuActions: [] as PluginProjectMenuActionRegistration[],
+    createProjectActions: [] as PluginCreateProjectActionRegistration[],
     sidebarFooterActions: [] as PluginSidebarFooterActionRegistration[],
     pendingInteractions: [] as PluginPendingInteractionRegistration[],
     threadPanelActions: [] as PluginThreadPanelActionRegistration[],
@@ -86,6 +88,7 @@ function rebuildSnapshot(): void {
     settingsSections: orderedSets.flatMap((set) => set.settingsSections),
     projectTabs: orderedSets.flatMap((set) => set.projectTabs),
     projectMenuActions: orderedSets.flatMap((set) => set.projectMenuActions),
+    createProjectActions: orderedSets.flatMap((set) => set.createProjectActions),
     sidebarFooterActions: orderedSets.flatMap((set) => set.sidebarFooterActions),
     pendingInteractions: orderedSets.flatMap((set) => set.pendingInteractions),
     threadPanelActions: orderedSets.flatMap((set) => set.threadPanelActions),
@@ -176,6 +179,10 @@ export function listProjectTabs(): PluginProjectTabRegistration[] {
 
 export function listProjectMenuActions(): PluginProjectMenuActionRegistration[] {
   return snapshot.projectMenuActions;
+}
+
+export function listCreateProjectActions(): PluginCreateProjectActionRegistration[] {
+  return snapshot.createProjectActions;
 }
 
 export function projectTabView(

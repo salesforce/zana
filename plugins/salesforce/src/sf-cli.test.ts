@@ -21,8 +21,24 @@ describe('sf CLI parsers', () => {
       })
     );
     expect(listed).toEqual([
-      { alias: 'prod', username: 'a@example.com', kind: 'production', isDefault: true },
-      { alias: 'scratch', username: 's@example.com', kind: 'scratch', isDefault: false }
+      {
+        alias: 'prod',
+        username: 'a@example.com',
+        kind: 'production',
+        isDefault: true,
+        orgId: '',
+        instanceUrl: 'https://org.my.salesforce.com',
+        connectedStatus: ''
+      },
+      {
+        alias: 'scratch',
+        username: 's@example.com',
+        kind: 'scratch',
+        isDefault: false,
+        orgId: '',
+        instanceUrl: '',
+        connectedStatus: ''
+      }
     ]);
     expect(defaultCliAlias(listed)).toBe('prod');
   });
@@ -55,6 +71,35 @@ describe('sf CLI parsers', () => {
     expect(listed[0]?.username).toBe('a@x.com');
     expect(parseOrgList('{"result":[null, 3, {"alias":""}]}')).toEqual([]);
     expect(parseOrgList('[]')).toEqual([]);
+  });
+
+  it('dedupes the same username across CLI buckets and keeps default/id', () => {
+    const listed = parseOrgList(
+      JSON.stringify({
+        result: {
+          nonScratchOrgs: [
+            { alias: 'prod', username: 'a@example.com', orgId: '00Daa', instanceUrl: 'https://org.my.salesforce.com' }
+          ],
+          devHubs: [
+            {
+              alias: 'prod',
+              username: 'a@example.com',
+              isDefaultDevHubUsername: true,
+              isSandbox: false,
+              isScratch: false
+            }
+          ]
+        }
+      })
+    );
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({
+      alias: 'prod',
+      username: 'a@example.com',
+      isDefault: true,
+      orgId: '00Daa',
+      kind: 'production'
+    });
   });
 
   it('returns null when display JSON is missing credentials', () => {

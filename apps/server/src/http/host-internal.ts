@@ -20,6 +20,10 @@ import { headerValue } from './browser-request-guard.js';
 import { readJsonBody, sendJson } from './json.js';
 import { sendHostArtifactFile } from './host-artifact-response.js';
 import type { ProductHttpContext } from './product-context.js';
+import {
+  invokeHostSessionTool,
+  isHostSessionTool
+} from '../services/threads/host-session-tools.js';
 
 function tokenMatches(received: string, expected: string): boolean {
   const left = Buffer.from(received);
@@ -275,6 +279,17 @@ async function handleHostToolCall(
   }
   if (thread.hostId !== auth.hostId) {
     sendJson(response, 403, { error: 'thread does not belong to this host' });
+    return true;
+  }
+  if (isHostSessionTool(parsed.data.tool)) {
+    sendJson(response, 200, hostDaemonToolCallResponseSchema.parse(
+      await invokeHostSessionTool(ctx, {
+        name: parsed.data.tool,
+        threadId: thread.id,
+        projectId: thread.projectId,
+        input: parsed.data.arguments
+      })
+    ));
     return true;
   }
   if (!ctx.plugins) {

@@ -40,8 +40,11 @@ import {
 } from '../lib/route-paths.js';
 import {
   PINNED_PROJECT_NAV_IDS,
-  PROJECT_NAV_ORDER_KEY
+  PROJECT_NAV_ORDER_KEY,
+  PROJECT_SESSIONS_SECTION_SORT_ID,
+  TRAILING_PROJECT_NAV_IDS
 } from './sidebarSortable.js';
+import { ProjectSessionRail } from './listpane/project-session-rail.js';
 import {
   SidebarCountBadge,
   SidebarRail,
@@ -50,12 +53,14 @@ import {
 
 /**
  * The left nav rail for a single-project FOCUSED VIEW. Replaces the global
- * {@link Sidebar} with the same chrome, flat destination list, utility dock,
- * and drag-and-drop reorder — only the destinations change (this project's
- * views instead of Home / Projects).
+ * {@link Sidebar} with the same chrome, destination list, a bottom Project
+ * session tree, utility dock, and drag-and-drop reorder — only the destinations
+ * change (this project's views instead of Home / Projects).
  *
  * Inbox is pinned (same as the global rail). Everything else, including
  * Agents, can be reordered and is persisted separately from the global sidebar.
+ * Live agents and recent threads sit in a Project collection at the bottom of
+ * the rail — the same spot as the global Projects tree, without filter / sort.
  *
  * Inbox switches `nav`; project views set `nav='projects'` + the project's
  * `projectView`. Agents is an ordinary destination: it opens this project's
@@ -146,6 +151,7 @@ export function ProjectScopedNav({
       testId: 'project-nav-inbox',
       active: nav === 'inbox',
       title: 'Inbox for this project',
+      splitContent: { kind: 'inbox' },
       badge:
         unreadInbox > 0 ? (
           <SidebarCountBadge
@@ -236,7 +242,8 @@ export function ProjectScopedNav({
         testId: `project-nav-${item.mode}`,
         active,
         running: agentsLive || goalsActive || followupsOpen || terminalsRunning,
-        badge
+        badge,
+        splitContent: { kind: 'project-view', projectId: project.id, mode: item.mode }
       };
     }),
     ...diskProjectTabModules.map((m): SidebarRailItem => {
@@ -250,7 +257,8 @@ export function ProjectScopedNav({
         icon: <Icon size={16} />,
         to: getProjectModeRoutePath(project.id, m.id),
         testId: `project-nav-${m.id}`,
-        active: onProjects && (mode === m.id || extActive)
+        active: onProjects && (mode === m.id || extActive),
+        splitContent: { kind: 'project-view', projectId: project.id, mode: m.id }
       };
     }),
     ...slotTabs.map((tab): SidebarRailItem => {
@@ -263,9 +271,15 @@ export function ProjectScopedNav({
         icon: <Icon size={16} />,
         to: getProjectModeRoutePath(project.id, railId),
         testId: `project-nav-${railId}`,
-        active: onProjects && mode === railId
+        active: onProjects && mode === railId,
+        splitContent: { kind: 'project-view', projectId: project.id, mode: railId }
       };
-    })
+    }),
+    {
+      kind: 'section',
+      id: PROJECT_SESSIONS_SECTION_SORT_ID,
+      node: <ProjectSessionRail project={project} />
+    }
   ];
 
   return (
@@ -276,6 +290,7 @@ export function ProjectScopedNav({
       navAriaLabel={`${project.name} navigation`}
       storageKey={PROJECT_NAV_ORDER_KEY}
       pinnedIds={PINNED_PROJECT_NAV_IDS}
+      trailingIds={TRAILING_PROJECT_NAV_IDS}
       items={items}
       header={
         isFocus ? (

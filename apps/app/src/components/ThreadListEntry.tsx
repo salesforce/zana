@@ -2,10 +2,15 @@ import { useNavigate } from 'react-router-dom';
 import type { MouseEvent } from 'react';
 import type { ThreadListItem } from '../thread-store.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
-import { isBusyThreadStatus, threadStatusLabel, threadStatusTone } from './thread/thread-timeline-model.js';
+import { showOngoingThreadWork, threadStatusLabel, threadStatusTone } from './thread/thread-timeline-model.js';
 import { useThreadWorkingPhrase } from './thread/useThreadWorkingPhrase.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { FleetKindChip } from './FleetKindChip.js';
+import {
+  getThreadListIndicatorLabel,
+  resolveThreadListIndicator,
+  threadListIndicatorState
+} from './thread-list-indicator.js';
 import { useThreadRowSplitDrag } from './sidebar/useThreadRowSplitDrag.js';
 import { usePaneContentSplitIndicator } from './sidebar/paneContentSplitIndicator.js';
 import { SplitPaneMiniMap } from './sidebar/SplitPaneMiniMap.js';
@@ -24,18 +29,21 @@ export function ThreadListEntry({
   onContextMenu?: (e: MouseEvent) => void;
 }) {
   const navigate = useNavigate();
-  const waitingOnUser = thread.status !== 'error' && Boolean(thread.hasPendingInteraction);
-  const working = isBusyThreadStatus(thread.status) && !waitingOnUser;
+  const displayStatus = thread.runtime?.displayStatus ?? thread.status;
+  const waitingOnUser = displayStatus !== 'error' && Boolean(thread.hasPendingInteraction);
+  const working = showOngoingThreadWork(displayStatus, waitingOnUser);
   const workingPhrase = useThreadWorkingPhrase(working);
-  const tone = threadStatusTone(thread.status, waitingOnUser);
-  const statusLabel = threadStatusLabel(thread.status, waitingOnUser, null, workingPhrase);
+  const tone = threadStatusTone(displayStatus, waitingOnUser);
+  const statusLabel = threadStatusLabel(displayStatus, waitingOnUser, null, workingPhrase);
   const resolvedProjectId = projectId ?? thread.projectId;
+  const listIndicator = resolveThreadListIndicator(threadListIndicatorState(thread));
+  const listIndicatorLabel = getThreadListIndicatorLabel(listIndicator);
   const { onPointerDown, openInSplit } = useThreadRowSplitDrag({
     projectId: resolvedProjectId,
     threadId: thread.id,
     title: thread.title ?? 'Untitled agent'
   });
-  const indicator = usePaneContentSplitIndicator({
+  const splitIndicator = usePaneContentSplitIndicator({
     kind: 'thread',
     projectId: resolvedProjectId,
     threadId: thread.id
@@ -68,8 +76,17 @@ export function ThreadListEntry({
           <span className={`tab-agent-dot agent-${tone}`} aria-hidden="true" />
           <span className="agents-row-title">{thread.title ?? 'Untitled agent'}</span>
           <FleetKindChip kind="thread" />
-          {indicator.miniMap ? (
-            <SplitPaneMiniMap slots={indicator.miniMap} label="Split position" isWorking={working} />
+          {listIndicator !== 'none' ? (
+            <span
+              className={`thread-list-indicator is-${listIndicator}`}
+              data-testid="thread-list-indicator"
+              data-kind={listIndicator}
+              title={listIndicatorLabel ?? undefined}
+              aria-label={listIndicatorLabel ?? undefined}
+            />
+          ) : null}
+          {splitIndicator.miniMap ? (
+            <SplitPaneMiniMap slots={splitIndicator.miniMap} label="Split position" isWorking={working} />
           ) : null}
         </span>
         <span className="agents-row-meta">

@@ -28,6 +28,7 @@ import { ComposerProjectPicker } from './ComposerProjectPicker.js';
 import { composerProjectOptions, resolveComposerProjectId } from './composer-project-default.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
+import { consumeComposerModeCycle } from './thread/pickers/composer-mode.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
@@ -164,6 +165,12 @@ export function LegacyAgentHomeComposer({
     onSubmit: () => {
       launchRef.current();
     },
+    interceptKeyDown: (event) => consumeComposerModeCycle(event, {
+      kind: 'native',
+      options: roleOptions,
+      current: roleTargetId,
+      onChange: setRoleTargetId
+    }),
     onError: setError
   });
   const voice = useVoiceInput({ onTranscript: field.insertText });

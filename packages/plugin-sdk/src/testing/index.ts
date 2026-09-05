@@ -1,4 +1,5 @@
 import type {
+  PluginCliExecutionResult,
   PluginInteractionRequest,
   PluginInteractionResult,
   PluginSettingDescriptor,
@@ -6,6 +7,7 @@ import type {
   ZccPluginApi,
   ZccPluginFactory
 } from '../server.js';
+import { enforcePluginCliOutputLimit } from '../server.js';
 
 export class PluginContextStaleError extends Error {
   constructor(pluginId: string) {
@@ -19,7 +21,7 @@ export interface FakePluginHarness {
   settings: Record<string, PluginSettingDescriptor>;
   kv: Map<string, unknown>;
   published: Array<{ event: string; payload: unknown }>;
-  schedules: Array<{ cron: string; job: () => void | Promise<void> }>;
+  schedules: Array<{ name: string; cron: string; job: () => void | Promise<void> }>;
   extraSkillRoots: string[];
   extraInstructions: string[];
   mentionProviders: import('../server.js').PluginMentionProviderRegistration[];
@@ -47,6 +49,8 @@ export interface FakePluginHarness {
   needsConfiguration: string | null;
   setSettings(values: Record<string, PluginSettingValue | undefined>): void;
   callRpc(name: string, args?: unknown): Promise<unknown>;
+  runSchedule(name?: string): Promise<void>;
+  runCli(argv: string[]): Promise<PluginCliExecutionResult>;
   submitInteraction(value: unknown): void;
   cancelInteraction(): void;
   reload(factory: ZccPluginFactory): Promise<void>;
@@ -60,7 +64,12 @@ export interface FakePluginHost {
 
 export interface FakePluginHostOptions {
   pluginId?: string;
-  spawnThread?: (args: { projectId: string; prompt: string; providerId?: string }) => Promise<{ id: string }>;
+  spawnThread?: (args: {
+    projectId: string;
+    prompt: string;
+    providerId?: string;
+    parentThreadId?: string;
+  }) => Promise<{ id: string }>;
   getThread?: (args: { threadId: string }) => Promise<
     import('../server.js').PluginSdkThreadSummary | null
   >;
@@ -72,7 +81,27 @@ export interface FakePluginHostOptions {
   }) => Promise<import('../server.js').PluginSdkThreadEventRow[]>;
   sendThread?: (args: { threadId: string; prompt: string }) => Promise<{ id: string }>;
   archiveThread?: (args: { threadId: string }) => Promise<{ id: string }>;
-  forkThread?: (args: { threadId: string }) => Promise<{ id: string }>;
+  forkThread?: (args: {
+    threadId: string;
+    sourceSeqEnd?: number;
+    visibility?: 'visible' | 'hidden';
+    agentContextSeed?: unknown[];
+    title?: string;
+  }) => Promise<{ id: string }>;
+  listThreads?: (args: {
+    includeHidden?: boolean;
+    originKind?: 'fork';
+    originPluginId?: string;
+    archived?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => Promise<import('../server.js').PluginSdkThreadSummary[]>;
+  listQueuedMessages?: (args: { threadId: string }) => Promise<Array<{ id: string }>>;
+  createQueuedMessage?: (args: {
+    threadId: string;
+    input: unknown[];
+    senderThreadId?: string;
+  }) => Promise<{ id: string }>;
   unarchiveThread?: (args: { threadId: string }) => Promise<{ id: string }>;
   pushInbox?: (args: { projectId: string; comments: string }) => Promise<{ id: string }>;
   listProjects?: () =>
@@ -88,7 +117,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   let settingValues: Record<string, PluginSettingValue | undefined> = {};
   const settingListeners: Array<(next: Record<string, PluginSettingValue | undefined>) => void> = [];
   const published: Array<{ event: string; payload: unknown }> = [];
-  const schedules: Array<{ cron: string; job: () => void | Promise<void> }> = [];
+  const schedules: Array<{ name: string; cron: string; job: () => void | Promise<void> }> = [];
   const extraSkillRoots: string[] = [];
   const extraInstructions: string[] = [];
   const mentionProviders: FakePluginHarness['mentionProviders'] = [];
@@ -224,7 +253,44 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
           if (!options?.forkThread) {
             throw new Error('zcc.sdk is not available in this runtime');
           }
-          return options.forkThread(args);
+          const record = args as {
+            sourceThreadId?: string;
+            threadId?: string;
+            sourceSeqEnd?: number;
+            visibility?: 'visible' | 'hidden';
+            agentContextSeed?: unknown[];
+            title?: string;
+          };
+          const threadId = typeof record.sourceThreadId === 'string' && record.sourceThreadId.trim()
+            ? record.sourceThreadId.trim()
+            : record.threadId ?? '';
+          return options.forkThread({
+            threadId,
+            ...(typeof record.sourceSeqEnd === 'number' ? { sourceSeqEnd: record.sourceSeqEnd } : {}),
+            ...(record.visibility ? { visibility: record.visibility } : {}),
+            ...(record.agentContextSeed ? { agentContextSeed: record.agentContextSeed } : {}),
+            ...(record.title ? { title: record.title } : {})
+          });
+        },
+        async list(args) {
+          if (!options?.listThreads) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.listThreads(args ?? {});
+        },
+        queuedMessages: {
+          async list(args) {
+            if (!options?.listQueuedMessages) {
+              throw new Error('zcc.sdk is not available in this runtime');
+            }
+            return options.listQueuedMessages(args);
+          },
+          async create(args) {
+            if (!options?.createQueuedMessage) {
+              throw new Error('zcc.sdk is not available in this runtime');
+            }
+            return options.createQueuedMessage(args);
+          }
         },
         async unarchive(args) {
           if (!options?.unarchiveThread) {
@@ -293,7 +359,11 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         const cron = named ? jobOrCron : cronOrName;
         const job = named ? maybeJob : jobOrCron;
         if (typeof job === 'function') {
-          schedules.push({ cron, job: job as () => void | Promise<void> });
+          schedules.push({
+            name: named ? cronOrName : '',
+            cron,
+            job: job as () => void | Promise<void>
+          });
         }
       }
     },
@@ -378,6 +448,21 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       const handler = rpc.get(name);
       if (!handler) throw new Error(`unknown rpc ${name}`);
       return handler(args);
+    },
+    async runSchedule(name) {
+      const jobs = typeof name === 'string'
+        ? schedules.filter((row) => row.name === name)
+        : schedules;
+      if (typeof name === 'string' && jobs.length === 0) {
+        throw new Error(`unknown schedule ${name}`);
+      }
+      for (const row of jobs) await row.job();
+    },
+    async runCli(argv) {
+      if (!cliRegistration) throw new Error('no cli command registered');
+      return enforcePluginCliOutputLimit(
+        await cliRegistration.run(argv, { pluginId, argv })
+      );
     },
     submitInteraction(value) {
       pendingInteraction?.resolve({ outcome: 'submitted', value: value as PluginInteractionResult extends { value: infer V } ? V : never } as PluginInteractionResult);

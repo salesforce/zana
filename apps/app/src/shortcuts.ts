@@ -55,13 +55,6 @@ export function installShortcuts(): () => void {
       ui.setQuickOpenOpen(true);
       return;
     }
-    // cmd+r — resume Claude session picker
-    if (e.key === 'r' && !e.shiftKey) {
-      if (!projectId) return;
-      e.preventDefault();
-      ui.setResumeOpen(true);
-      return;
-    }
     // cmd+shift+r — restart active terminal (kill+respawn for live, or
     // resurrect for exited). Pairs with cmd+w (close) so revival is one
     // chord; especially useful after a dev server crashes mid-session.

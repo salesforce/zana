@@ -7,7 +7,11 @@ export {
   createThreadId,
   createEventId,
   createPendingInteractionId,
-  createDeferredThreadMessageId
+  createDeferredThreadMessageId,
+  createThreadPlanId,
+  createThreadPlanRevisionId,
+  createThreadPlanTaskId,
+  createThreadPlanReferenceId
 } from './ids.js';
 export {
   getHost,
@@ -63,16 +67,26 @@ export {
   listConversationThreadsByProject,
   listLiveConversationThreads,
   listLiveConversationThreadsForHost,
+  listConversationThreadsForHost,
   listVisibleConversationThreads,
+  queryConversationThreads,
   updateConversationThreadStatus,
+  applyConversationThreadLifecycleEvent,
+  applyConversationThreadLifecycleEventOnRow,
   updateConversationThreadParent,
   updateConversationThreadTitle,
   setConversationProviderThreadId,
   archiveConversationThread,
   unarchiveConversationThread,
+  pinConversationThread,
+  unpinConversationThread,
+  reorderPinnedConversationThread,
   countLiveConversationThreadsForEnvironment,
   type ConversationThreadRow,
-  type ConversationThreadStatus
+  type ConversationThreadListQuery,
+  type ConversationThreadStatus,
+  type ApplyConversationThreadLifecycleEventOutcome,
+  type ApplyConversationThreadLifecycleEventArgs
 } from './data/conversation-threads.js';
 export {
   appendThreadEvent,
@@ -116,10 +130,45 @@ export {
 } from './data/pending-interactions.js';
 export {
   DEFERRED_THREAD_MESSAGE_CAP,
+  countActiveConversationTurns,
   countDeferredThreadMessages,
   createDeferredThreadMessage,
   deleteDeferredThreadMessage,
   deleteDeferredThreadMessagesForThread,
+  isThreadQueueAutoSendPaused,
   listDeferredThreadMessages,
-  type DeferredThreadMessageRow
+  listDueDeferredThreadMessages,
+  markDeferredThreadMessageDispatching,
+  markDeferredThreadMessageFailed,
+  pauseDeferredThreadMessagesForThread,
+  requeueDeferredThreadMessagesForThread,
+  resumeDeferredThreadMessagesForThread,
+  type DeferredThreadMessageRow,
+  type NextTurnSendStatus
 } from './data/deferred-thread-messages.js';
+export {
+  addThreadPlanReference,
+  appendThreadPlanRevision,
+  createThreadPlan,
+  createThreadPlanTask,
+  getThreadExecutionState,
+  getThreadPlan,
+  getThreadPlanByRootThread,
+  getThreadPlanTask,
+  latestThreadPlanRevision,
+  listThreadPlanReferences,
+  listThreadPlanRevisions,
+  listThreadPlanTasks,
+  touchThreadPlan,
+  updateThreadPlanFilePath,
+  updateThreadPlanTask,
+  upsertThreadExecutionState,
+  type ThreadExecutionStateRow,
+  type ThreadPlanReferenceRow,
+  type ThreadPlanRevisionRow,
+  type ThreadPlanRow,
+  type ThreadPlanStatus,
+  type ThreadPlanTaskOwnerKind,
+  type ThreadPlanTaskRow,
+  type ThreadPlanTaskStatus
+} from './data/thread-plans.js';

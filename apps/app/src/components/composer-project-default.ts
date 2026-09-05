@@ -8,7 +8,7 @@ export const DEFAULT_COMPOSER_WORKSPACE_LABEL = DEFAULT_PROJECT_DISPLAY_NAME;
 
 const SCRATCH_FOLDER_NAMES = new Set([SCRATCH_WORKSPACE_NAME, 'cc-workspace']);
 
-export type ComposerProject = Pick<Project, 'id' | 'name' | 'quickAgent'>;
+export type ComposerProject = Pick<Project, 'id' | 'name' | 'quickAgent' | 'remote'>;
 
 export function isScratchWorkspaceProject(project: ComposerProject): boolean {
   return Boolean(project.quickAgent) || project.name === SCRATCH_WORKSPACE_NAME;

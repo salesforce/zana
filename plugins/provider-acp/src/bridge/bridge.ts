@@ -71,8 +71,12 @@ import {
 import { resolveAcpDialect } from "../dialect.js";
 import {
   buildAcpPermissionInteractionPayload,
+  extractAcpWritePaths,
+  isAcpFileChangePermission,
   resolveAcpPermissionDecision,
+  type AcpPermissionToolCall,
 } from "../interactions.js";
+import { isPlanAcpMode, isPlanArtifactWritePath } from "../plan-write-policy.js";
 import { acpProfileFromLaunchSpec, type AcpAgentProfile } from "../profiles.js";
 import {
   buildAcpModelListParams,
@@ -1517,6 +1521,27 @@ function handlePermissionRequest(
     options: parsed.data.options,
   };
 
+  const rawToolCall = parsed.data.toolCall;
+  if (isPlanAcpMode(session.acpMode) && rawToolCall) {
+    const mapped: AcpPermissionToolCall = {
+      toolCallId: rawToolCall.toolCallId ?? "acp-permission",
+      ...(rawToolCall.title ? { title: rawToolCall.title } : {}),
+      ...(rawToolCall.kind ? { kind: rawToolCall.kind } : {}),
+      ...(rawToolCall.locations ? { locations: rawToolCall.locations } : {}),
+      ...(rawToolCall.content ? { content: rawToolCall.content } : {}),
+    };
+    if (isAcpFileChangePermission(mapped)) {
+      const paths = extractAcpWritePaths(mapped);
+      const allowed =
+        paths.length > 0 &&
+        paths.every((path) => isPlanArtifactWritePath(session.cwd, path));
+      if (!allowed) {
+        respondPermission(pending, "deny");
+        return;
+      }
+    }
+  }
+
   if (session.policy.permissionMode === "full") {
     respondPermission(pending, "allow_once");
     return;
@@ -1639,6 +1664,17 @@ async function handleFsWriteTextFile(
   const parsed = acpWriteTextFileParamsSchema.safeParse(params);
   if (!parsed.success) {
     responder.error(-32602, "Invalid fs/write_text_file params");
+    return;
+  }
+
+  if (
+    isPlanAcpMode(session.acpMode) &&
+    !isPlanArtifactWritePath(session.cwd, parsed.data.path)
+  ) {
+    responder.error(
+      -32000,
+      `Plan mode only allows writes under .zcc/plans: ${parsed.data.path}`,
+    );
     return;
   }
 

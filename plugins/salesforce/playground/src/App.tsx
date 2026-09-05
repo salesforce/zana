@@ -1,19 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { editor } from 'monaco-editor';
 import { parseAgentScriptSource } from '../../lib/agent-script-parse.js';
-import { AGENT_SCRIPT_DIALECTS, type AgentScriptDialect } from '../../lib/types.js';
+import { queryAgentScriptLsp } from '../../lib/agent-script-lsp.js';
+import { dialectLabel, normalizePlaygroundView, type PlaygroundView } from '../../lib/agent-script-chrome.js';
+import {
+  DEFAULT_SPLIT_RATIO,
+  splitRatioFromClientX,
+  splitRatioFromKey
+} from '../../lib/agent-script-split.js';
+import type { AgentScriptDialect } from '../../lib/types.js';
 import {
   graphFromAgentSource,
   type AgentGraphEdge,
-  type AgentGraphNode,
-  type AgentScriptExample
+  type AgentGraphNode
 } from '../../lib/agent-script-model.js';
 import {
   isHostToPlayground,
   PLAYGROUND_BRIDGE_SOURCE,
   type HostToPlayground
 } from '../../src/app/playground-bridge.js';
-import { applyDiagnostics, ensureAgentScriptMonaco } from './editor';
+import { applyDiagnostics, ensureAgentScriptMonaco, setAgentScriptLspDialect } from './editor';
 import { AgentGraph } from './graph';
 
 function postToHost(message: Record<string, unknown>): void {
@@ -28,19 +34,26 @@ export default function App() {
   const dialectRef = useRef<AgentScriptDialect>('agentforce');
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [dialect, setDialect] = useState<AgentScriptDialect>('agentforce');
+  const [view, setView] = useState<PlaygroundView>('script');
   const [graph, setGraph] = useState<{ nodes: AgentGraphNode[]; edges: AgentGraphEdge[] }>({
     nodes: [],
     edges: []
   });
   const [issueCount, setIssueCount] = useState(0);
-  const [examples, setExamples] = useState<readonly AgentScriptExample[]>([]);
-  const [exampleId, setExampleId] = useState('');
+  const [errorCount, setErrorCount] = useState(0);
+  const [splitRatio, setSplitRatio] = useState(DEFAULT_SPLIT_RATIO);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
 
   const refreshAnalysis = useCallback((source: string, nextDialect: AgentScriptDialect) => {
+    setAgentScriptLspDialect(nextDialect);
     const parsed = parseAgentScriptSource(source, nextDialect);
+    const lsp = queryAgentScriptLsp({ source, dialect: nextDialect, query: 'diagnostics' });
+    const diagnostics = lsp.ok ? lsp.result.diagnostics : parsed.diagnostics;
     setGraph(parsed.graph.nodes.length > 0 ? parsed.graph : graphFromAgentSource(source));
-    setIssueCount(parsed.diagnostics.length);
-    if (modelRef.current) applyDiagnostics(modelRef.current, parsed.diagnostics);
+    setIssueCount(diagnostics.length);
+    setErrorCount(diagnostics.filter((row) => row.severity === 'error').length);
+    if (modelRef.current) applyDiagnostics(modelRef.current, diagnostics);
   }, []);
 
   useEffect(() => {
@@ -57,8 +70,19 @@ export default function App() {
       theme: theme === 'light' ? 'agentscript-light' : 'agentscript-dark',
       automaticLayout: true,
       minimap: { enabled: false },
-      fontSize: 13,
-      scrollBeyondLastLine: false
+      fontSize: 14,
+      lineNumbers: 'on',
+      wordWrap: 'on',
+      scrollBeyondLastLine: false,
+      padding: { top: 8, bottom: 12 },
+      renderLineHighlight: 'line',
+      cursorBlinking: 'smooth',
+      smoothScrolling: true,
+      overviewRulerLanes: 0,
+      hideCursorInOverviewRuler: true,
+      wordBasedSuggestions: 'off',
+      quickSuggestions: true,
+      fixedOverflowWidgets: true
     });
     editorRef.current = instance;
     const sub = instance.onDidChangeModelContent(() => {
@@ -85,22 +109,26 @@ export default function App() {
       if (message.type === 'init') {
         setTheme(message.theme);
         setDialect(message.dialect);
-        setExamples(message.examples);
+        if (message.view) setView(normalizePlaygroundView(message.view));
         return;
       }
       if (message.type === 'setTheme') {
         setTheme(message.theme);
         return;
       }
+      if (message.type === 'setView') {
+        setView(normalizePlaygroundView(message.view));
+        return;
+      }
       if (message.type === 'setDialect') {
         setDialect(message.dialect);
+        setAgentScriptLspDialect(message.dialect);
         refreshAnalysis(editorRef.current?.getValue() ?? '', message.dialect);
         return;
       }
       if (message.type === 'setFile') {
         pathRef.current = message.path;
         setDialect(message.dialect);
-        setExampleId('');
         const value = message.content;
         const model = modelRef.current;
         if (model && model.getValue() !== value) model.setValue(value);
@@ -131,69 +159,85 @@ export default function App() {
     return () => window.removeEventListener('message', onMessage);
   }, [applyHostMessage]);
 
+  const applySplitFromClientX = useCallback((clientX: number) => {
+    const rect = splitRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setSplitRatio(splitRatioFromClientX(clientX, rect.left, rect.width));
+  }, []);
+
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      if (!draggingRef.current) return;
+      event.preventDefault();
+      applySplitFromClientX(event.clientX);
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+      document.body.classList.remove('is-resizing-split');
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, [applySplitFromClientX]);
+
   return (
-    <div className={`ide ${theme}`}>
-      <div className="toolbar">
-        <span>Agent Script playground</span>
-        <label>
-          Dialect
-          <select
-            aria-label="Agent Script dialect"
-            value={dialect}
-            onChange={(event) => {
-              const next = event.target.value as AgentScriptDialect;
-              setDialect(next);
-              refreshAnalysis(editorRef.current?.getValue() ?? '', next);
-            }}
-          >
-            {AGENT_SCRIPT_DIALECTS.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-          </select>
-        </label>
-        {examples.length > 0 ? (
-          <label>
-            Example
-            <select
-              aria-label="Agent Script example"
-              value={exampleId}
-              onChange={(event) => {
-                const next = event.target.value;
-                const example = examples.find((row) => row.id === next);
-                if (!example) {
-                  setExampleId('');
-                  return;
-                }
-                setExampleId(example.id);
-                setDialect(example.dialect);
-                pathRef.current = null;
-                const model = modelRef.current;
-                if (model) model.setValue(example.source);
-                refreshAnalysis(example.source, example.dialect);
-                postToHost({ type: 'dirty', dirty: true });
-              }}
-            >
-              <option value="">Current buffer</option>
-              {examples.map((example) => (
-                <option key={example.id} value={example.id}>
-                  {example.title}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        <span>
-          {issueCount} diagnostic{issueCount === 1 ? '' : 's'}
+    <div
+      className={`ide ${theme}`}
+      data-view={view}
+      data-testid="agent-script-ide"
+      style={{ ['--split-editor' as string]: String(splitRatio) }}
+    >
+      <div className="split" ref={splitRef}>
+        <section className="pane editor">
+          <header className="pane-header">Agent Definition</header>
+          <div className="pane-body" id="editor-host" />
+        </section>
+        <div
+          className="split-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize Script and Graph"
+          aria-valuemin={28}
+          aria-valuemax={72}
+          aria-valuenow={Math.round(splitRatio * 100)}
+          tabIndex={0}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            draggingRef.current = true;
+            document.body.classList.add('is-resizing-split');
+            applySplitFromClientX(event.clientX);
+          }}
+          onDoubleClick={() => setSplitRatio(DEFAULT_SPLIT_RATIO)}
+          onKeyDown={(event) => {
+            const next = splitRatioFromKey(splitRatio, event.key);
+            if (next == null) return;
+            event.preventDefault();
+            setSplitRatio(next);
+          }}
+        />
+        <section className="pane graph">
+          <header className="pane-header">Graph</header>
+          <div className="pane-body">
+            <AgentGraph nodes={graph.nodes} edges={graph.edges} />
+          </div>
+        </section>
+      </div>
+      <footer className="statusbar">
+        <span className="statusbar-left">
+          <span className={`diag-dot ${errorCount > 0 ? 'is-error' : issueCount > 0 ? '' : 'is-ok'}`} />
+          <span>
+            {issueCount === 0
+              ? 'No problems'
+              : `${issueCount} diagnostic${issueCount === 1 ? '' : 's'}`}
+          </span>
         </span>
-      </div>
-      <div className="split">
-        <div className="editor" id="editor-host" />
-        <div className="graph">
-          <AgentGraph nodes={graph.nodes} edges={graph.edges} />
-        </div>
-      </div>
+        <span className="statusbar-right">{dialectLabel(dialect)}</span>
+      </footer>
     </div>
   );
 }

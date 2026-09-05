@@ -199,6 +199,41 @@ export function ThreadNewTabPage({
 
   const matches = useMemo(() => matchNewTabFiles(files, query), [files, query]);
 
+  const handleOpenPlugin = (moduleId: string, title: string, options?: OpenPluginOptions) => {
+    const actionId = options?.actionId;
+    const threadAction = threadActions.find((row) => row.pluginId === moduleId && row.id === actionId);
+    if (threadAction?.run) {
+      void threadAction.run({
+        threadId: threadId ?? '',
+        openPanel: (openOptions) => {
+          onOpenPlugin(moduleId, openOptions?.title ?? title, {
+            actionId: threadAction.id,
+            params: openOptions?.params ?? null,
+            layout: threadAction.layout
+          });
+          return true;
+        }
+      });
+      return;
+    }
+    const composeAction = composeActions.find((row) => row.pluginId === moduleId && row.id === actionId);
+    if (composeAction?.run) {
+      void composeAction.run({
+        projectId,
+        openPanel: (openOptions) => {
+          onOpenPlugin(moduleId, openOptions?.title ?? title, {
+            actionId: composeAction.id,
+            params: openOptions?.params ?? null,
+            layout: composeAction.layout
+          });
+          return true;
+        }
+      });
+      return;
+    }
+    onOpenPlugin(moduleId, title, options);
+  };
+
   return (
     <ThreadNewTabView
       query={query}
@@ -216,7 +251,7 @@ export function ThreadNewTabPage({
       onOpenBrowser={onOpenBrowser}
       onOpenExplorer={onOpenExplorer}
       onStartTerminal={onStartTerminal}
-      onOpenPlugin={onOpenPlugin}
+      onOpenPlugin={handleOpenPlugin}
       onOpenRecent={onOpenRecent}
       allowSidecarTerminal={allowSidecarTerminal}
       allowExplorer={Boolean(projectId)}

@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { useData, useUi } from '../store.js';
 import type { SplitLayout } from '../store.js';
 import { TerminalView } from './TerminalView.js';
-import { agentSessionAnchorId, pickAgentSessionPortalTarget } from '../lib/split-layout/agentSessionPortal.js';
+import { agentSessionAnchorId, pickAgentSessionPortalTarget, pickProjectTerminalsPortalTarget, projectTerminalsAnchorId } from '../lib/split-layout/agentSessionPortal.js';
 import { paneContentForPathname } from '../lib/split-layout/splitThreadNavigation.js';
 import { useSplitWorkspace } from '../lib/split-layout/store.js';
 
@@ -68,7 +68,7 @@ export const AGENT_MONITOR_TERMINAL_ANCHOR_ID = 'cc-terminal-anchor-agent-monito
 // the same session without a second PTY.
 export const THREAD_PANEL_TERMINAL_ANCHOR_ID = 'cc-terminal-anchor-thread-panel';
 
-export { agentSessionAnchorId };
+export { agentSessionAnchorId, projectTerminalsAnchorId };
 
 export function TerminalSurface() {
   const terminals = useData((s) => s.terminals);
@@ -83,6 +83,10 @@ export function TerminalSurface() {
   const location = useLocation();
   const splitLayout = useSplitWorkspace((s) => s.layout);
   const agentSession = pickAgentSessionPortalTarget(
+    splitLayout,
+    paneContentForPathname(location.pathname)
+  );
+  const projectTerminals = pickProjectTerminalsPortalTarget(
     splitLayout,
     paneContentForPathname(location.pathname)
   );
@@ -109,7 +113,14 @@ export function TerminalSurface() {
   const modalSessionId = agentModal?.sessionId ?? null;
   const agentSessionId = !modalSessionId ? agentSession?.sessionId ?? null : null;
   const monitorSessionId = agentMonitor?.sessionId ?? null;
-  const threadPanelSessionId = threadPanelTerminal?.sessionId ?? null;
+  const threadPanelSessionId =
+    !modalSessionId && !agentSessionId && !monitorSessionId
+      ? threadPanelTerminal?.sessionId ?? null
+      : null;
+  const projectTerminalsPaneId =
+    !modalSessionId && !agentSessionId && !monitorSessionId && !threadPanelSessionId
+      ? projectTerminals?.paneId ?? null
+      : null;
   useLayoutEffect(() => {
     const node = portalNodeRef.current;
     if (!node) return;
@@ -125,17 +136,36 @@ export function TerminalSurface() {
         ? document.getElementById(AGENT_MONITOR_TERMINAL_ANCHOR_ID)
         : null;
     const threadPanelAnchor =
-      !modalAnchor && !agentSessionAnchor && !monitorAnchor && threadPanelSessionId
+      !modalAnchor &&
+      !agentSessionAnchor &&
+      !monitorAnchor &&
+      threadPanelSessionId
         ? document.getElementById(THREAD_PANEL_TERMINAL_ANCHOR_ID)
+        : null;
+    const projectTerminalsAnchor =
+      !modalAnchor &&
+      !agentSessionAnchor &&
+      !monitorAnchor &&
+      !threadPanelAnchor &&
+      projectTerminalsPaneId
+        ? document.getElementById(projectTerminalsAnchorId(projectTerminalsPaneId))
         : null;
     const anchor =
       modalAnchor ??
       agentSessionAnchor ??
       monitorAnchor ??
       threadPanelAnchor ??
+      projectTerminalsAnchor ??
       document.getElementById(PROJECTS_TERMINAL_ANCHOR_ID);
     if (anchor && node.parentElement !== anchor) anchor.appendChild(node);
-  }, [modalSessionId, agentSessionId, monitorSessionId, threadPanelSessionId, splitLayout]);
+  }, [
+    modalSessionId,
+    agentSessionId,
+    monitorSessionId,
+    threadPanelSessionId,
+    projectTerminalsPaneId,
+    splitLayout
+  ]);
 
   // Build a tab-id → area map for the layout. The agent modal wins: when open,
   // it forces a single pane showing ONLY its session (so the live xterm appears
@@ -167,6 +197,10 @@ export function TerminalSurface() {
     layout = 'single';
   } else if (threadPanelTerminal) {
     areaByTabId.set(threadPanelTerminal.sessionId, 'a');
+    layout = 'single';
+  } else if (projectTerminals) {
+    const activeTabId = selectedTabId[projectTerminals.projectId];
+    if (activeTabId) areaByTabId.set(activeTabId, 'a');
     layout = 'single';
   } else if (nav === 'projects') {
     const activeTabId = selectedProjectId ? selectedTabId[selectedProjectId] : undefined;
@@ -200,6 +234,10 @@ export function TerminalSurface() {
           // resolve by id alone.
           const area = byIdSelection
             ? areaByTabId.get(s.id)
+            : projectTerminals
+              ? projectId === projectTerminals.projectId
+                ? areaByTabId.get(s.id)
+                : undefined
             : projectId === selectedProjectId
               ? areaByTabId.get(s.id)
               : undefined;

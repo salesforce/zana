@@ -166,6 +166,7 @@ export function prefetchThreadModelCatalog(): Promise<void> {
     } while (prefetchDirty);
   })().finally(() => {
     prefetchInflight = null;
+    if (prefetchDirty) return prefetchThreadModelCatalog();
   });
   return prefetchInflight;
 }

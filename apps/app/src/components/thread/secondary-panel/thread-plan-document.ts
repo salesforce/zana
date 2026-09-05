@@ -2,13 +2,12 @@ import {
   isApprovalPendingInteractionPayload,
   type PendingInteraction
 } from '@zana-ai/zcc-domain/thread-runtime';
-import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 
 export type ThreadPlanDocument = {
   markdown: string | null;
   filePath: string | null;
   prompt: string | null;
-  source: 'approval' | 'live' | 'empty';
+  source: 'approval' | 'durable' | 'empty';
 };
 
 export function planFileTabTitle(path: string): string {
@@ -30,34 +29,23 @@ export function pendingPlanApprovalSubject(
   return null;
 }
 
-export function latestAssistantConversationText(rows: readonly TimelineRow[]): string | null {
-  let latest: string | null = null;
-  const visit = (list: readonly TimelineRow[] | null | undefined) => {
-    if (!list) return;
-    for (const row of list) {
-      if (row.kind === 'turn') {
-        visit(row.children);
-        continue;
-      }
-      if (row.kind !== 'conversation' || row.role !== 'assistant') continue;
-      const text = row.text.trim();
-      if (text) latest = row.text;
-    }
-  };
-  visit(rows);
-  return latest;
-}
-
 export function resolveThreadPlanDocument(args: {
   promptMode: { mode: string; prompt?: string } | null | undefined;
   pendingInteractions: readonly PendingInteraction[];
-  rows: readonly TimelineRow[];
+  durablePlan?: {
+    markdown: string | null;
+    filePath?: string | null;
+    requestedExecutionMode?: string | null;
+    effectiveExecutionMode?: string | null;
+    executionModeMismatch?: boolean;
+  } | null;
 }): ThreadPlanDocument | null {
   const inPlanMode = args.promptMode?.mode === 'plan';
+  const durable = args.durablePlan;
   const approval = pendingPlanApprovalSubject(args.pendingInteractions);
-  if (!inPlanMode && !approval) return null;
+  if (!inPlanMode && !approval && !durable) return null;
   const prompt = inPlanMode ? (args.promptMode?.prompt?.trim() || null) : null;
-  const liveDraft = inPlanMode ? latestAssistantConversationText(args.rows) : null;
+  const durableFilePath = durable?.filePath?.trim() ? durable.filePath : null;
   if (approval) {
     return {
       markdown: approval.plan,
@@ -66,18 +54,18 @@ export function resolveThreadPlanDocument(args: {
       source: 'approval'
     };
   }
-  if (liveDraft) {
+  if (durable?.markdown) {
     return {
-      markdown: liveDraft,
-      filePath: null,
+      markdown: durable.markdown,
+      filePath: durableFilePath,
       prompt,
-      source: 'live'
+      source: 'durable'
     };
   }
   return {
-    markdown: null,
-    filePath: null,
+    markdown: durable?.markdown ?? null,
+    filePath: durableFilePath,
     prompt,
-    source: 'empty'
+    source: durable ? 'durable' : 'empty'
   };
 }

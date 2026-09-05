@@ -917,6 +917,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.feedNoiseClassifierEnabled === 'boolean') {
     normalized.feedNoiseClassifierEnabled = input.feedNoiseClassifierEnabled;
   }
+  if (typeof input.autoOpenThreadPlanPanel === 'boolean') {
+    normalized.autoOpenThreadPlanPanel = input.autoOpenThreadPlanPanel;
+  }
   if (typeof input.autoReportLinkEnabled === 'boolean') {
     normalized.autoReportLinkEnabled = input.autoReportLinkEnabled;
   }
@@ -1015,6 +1018,13 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.steerActiveThreadOnEnter === 'boolean') {
     normalized.steerActiveThreadOnEnter = input.steerActiveThreadOnEnter;
+  }
+  if (
+    input.composerSendMode === 'auto'
+    || input.composerSendMode === 'steer'
+    || input.composerSendMode === 'queue-if-active'
+  ) {
+    normalized.composerSendMode = input.composerSendMode;
   }
   if (typeof input.showUnhandledProviderEvents === 'boolean') {
     normalized.showUnhandledProviderEvents = input.showUnhandledProviderEvents;

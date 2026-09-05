@@ -25,20 +25,6 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     category: 'Context & knowledge'
   },
   {
-    name: 'provider-claude-code',
-    pluginId: 'provider-claude-code',
-    autoInstall: true,
-    defaultEnabled: true,
-    category: 'Agent interaction'
-  },
-  {
-    name: 'provider-codex',
-    pluginId: 'provider-codex',
-    autoInstall: true,
-    defaultEnabled: true,
-    category: 'Agent interaction'
-  },
-  {
     name: 'provider-pi',
     pluginId: 'provider-pi',
     autoInstall: true,
@@ -48,6 +34,41 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
   {
     name: 'provider-acp',
     pluginId: 'provider-acp',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'harness-claude',
+    pluginId: 'harness-claude',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'harness-cursor',
+    pluginId: 'harness-cursor',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'harness-codex',
+    pluginId: 'harness-codex',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'harness-opencode',
+    pluginId: 'harness-opencode',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'harness-pi',
+    pluginId: 'harness-pi',
     autoInstall: true,
     defaultEnabled: true,
     category: 'Agent interaction'
@@ -179,7 +200,14 @@ export function bundledPluginByName(name: string): BundledPluginDefinition | und
  * and no longer ship. Start() uninstalls them so leftover hub rows cannot
  * come back. Local-authored working dirs (local.json) are left alone.
  */
-export const RETIRED_FIRST_PARTY_PLUGIN_IDS = ['consensus', 'slack', 'zana', 'zana-hub'] as const;
+export const RETIRED_FIRST_PARTY_PLUGIN_IDS = [
+  'consensus',
+  'slack',
+  'zana',
+  'zana-hub',
+  'provider-claude-code',
+  'provider-codex'
+] as const;
 
 export function isRetiredFirstPartyPluginId(id: string): boolean {
   return (RETIRED_FIRST_PARTY_PLUGIN_IDS as readonly string[]).includes(id);

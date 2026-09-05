@@ -36,9 +36,9 @@ const entries = [
     external: []
   },
   {
-    source: 'src/testing/app.ts',
+    source: 'src/testing/app-entry.ts',
     output: 'dist/testing/app.js',
-    external: ['react', 'react/*']
+    external: ['react', 'react/*', '@testing-library/react', '@testing-library/react/*']
   }
 ];
 

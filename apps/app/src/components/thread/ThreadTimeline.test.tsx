@@ -31,6 +31,8 @@ describe('thread timeline model', () => {
   it('treats starting/active/stopping as busy', () => {
     expect(isBusyThreadStatus('active')).toBe(true);
     expect(isBusyThreadStatus('idle')).toBe(false);
+    expect(isBusyThreadStatus('host-reconnecting')).toBe(true);
+    expect(isBusyThreadStatus('waiting-for-host')).toBe(false);
   });
 
   it('shows Stop only while a thread round is in flight', () => {
@@ -258,6 +260,7 @@ describe('ThreadTimeline', () => {
     );
     expect(html).toContain('thread-detail-timeline thread-scrollbar');
     expect(html).toContain('data-testid="thread-user-text"');
+    expect(html).toContain('thread-timeline-current-turn');
     expect(html).toContain('thread-timeline-item is-user');
     expect(html).toContain('Read README.md');
     expect(html).toContain('data-testid="thread-assistant-text"');
@@ -364,7 +367,11 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('README.md');
     expect(html).toContain('+1 −0');
     expect(html).toContain('data-testid="thread-system-row"');
-    expect(html).toContain('Reconnected — host online');
+    expect(html).toContain('thread-timeline-system-title');
+    expect(html).toContain('Reconnected');
+    expect(html).toContain('thread-timeline-system-detail');
+    expect(html).toContain('host online');
+    expect(html).not.toContain('Reconnected — host online');
     expect(html).not.toContain('data-testid="thread-todos"');
     expect(html).not.toContain('data-testid="thread-thinking"');
   });
@@ -444,6 +451,16 @@ describe('ThreadTimeline', () => {
     );
     expect(html).toContain('data-testid="thread-work-row"');
     expect(html).toContain(workingCopy);
+    expect(html).toContain('is-shimmer">Running</span><span class="is-em is-truncate">2 commands');
+    const errorHtml = renderToStaticMarkup(
+      <ThreadTimeline
+        rows={[command('c-a', 'ls'), command('c-b', 'pwd')]}
+        status="error"
+        thinking={null}
+      />
+    );
+    expect(errorHtml).not.toContain('is-shimmer">Running</span><span class="is-em is-truncate">2 commands');
+    expect(errorHtml).toContain('2 commands');
     expect(renderToStaticMarkup(
       <ThreadTimeline
         rows={[command('c-a', 'ls'), command('c-b', 'pwd')]}

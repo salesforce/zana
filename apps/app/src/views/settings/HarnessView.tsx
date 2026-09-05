@@ -421,8 +421,8 @@ type ThreadProviderListItem = {
 };
 
 const BUILTIN_THREAD_PROVIDERS: readonly ThreadProviderListItem[] = [
-  { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-claude-code' },
-  { id: 'codex', displayName: 'Codex', pluginId: 'provider-codex' },
+  { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-acp' },
+  { id: 'codex', displayName: 'Codex', pluginId: 'provider-acp' },
   { id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' },
   { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' },
   { id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' }

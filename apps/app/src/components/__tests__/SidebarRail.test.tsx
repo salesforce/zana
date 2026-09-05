@@ -137,6 +137,25 @@ describe('SidebarRail', () => {
     expect(inboxTag).not.toContain('aria-roledescription="sortable"');
   });
 
+  it('renders trailing sections last and not sortable', () => {
+    const markup = renderRail(
+      <SidebarRail
+        className="sidebar"
+        navAriaLabel="Nav"
+        storageKey="zcc.testSidebarNavOrder"
+        pinnedIds={['inbox']}
+        trailingIds={['sidebar-section:agents']}
+        items={items}
+      />
+    );
+
+    expect(markup).not.toContain('data-sortable-sidebar-section-id="sidebar-section:agents"');
+    expect(markup).toContain('data-testid="agents-section"');
+    expect(markup.indexOf('data-sortable-nav-id="feed"')).toBeLessThan(
+      markup.indexOf('data-testid="agents-section"')
+    );
+  });
+
   it('puts dnd-kit listeners on the Link itself and consumes post-drag clicks', () => {
     const source = readFileSync(new URL('../SidebarRail.tsx', import.meta.url), 'utf8');
 
@@ -147,5 +166,9 @@ describe('SidebarRail', () => {
     expect(source).toContain('Report a bug');
     expect(source).toContain('<DndContext');
     expect(source).toContain('onNavigate');
+    expect(source).toContain('splitContent');
+    expect(source).toContain('onSplitPointerDown');
+    expect(source).toContain('event.metaKey || event.ctrlKey');
+    expect(source).toContain('openInSplit()');
   });
 });

@@ -75,6 +75,12 @@ describe('ThreadModal', () => {
     expect(css).toContain('.thread-detail-split {');
     expect(css).toContain('.agent-terminal-modal > .modal-header');
     expect(css).toContain('.agent-modal-header.thread-modal-header');
+    const inspectorModal = css.slice(
+      css.indexOf('.agent-terminal-modal {'),
+      css.indexOf('.agent-terminal-modal.is-fullscreen {')
+    );
+    expect(inspectorModal).toContain('background: var(--bg-panel);');
+    expect(css).toContain('.thread-detail-view--modal .thread-timeline-current-turn > .thread-timeline-item.is-user {\n  background: var(--bg-panel);\n}');
   });
 
   it('is opened from the kanban inspect path and hosted beside the agent modal', () => {

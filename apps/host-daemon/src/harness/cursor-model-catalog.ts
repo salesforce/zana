@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { HarnessModelTarget } from '@zana-ai/zcc-domain/harness-adapter';
+import { CURSOR_EVIDENCE_VERSION } from './cursor/provider.js';
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const MODEL_LINE_PATTERN = /^(\S+) - (.+)$/;
@@ -33,7 +34,12 @@ export function cursorModelsFromListOutput(stdout: string): readonly HarnessMode
       ?? members.find((member) => member.effort !== 'none')
       ?? members[0];
     return chosen
-      ? [{ id: chosen.id, label: chosen.label, scope: ['local'] as const }]
+      ? [{
+          id: chosen.id,
+          label: chosen.label,
+          scope: ['local'] as const,
+          evidenceVersion: CURSOR_EVIDENCE_VERSION
+        }]
       : [];
   });
 }

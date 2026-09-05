@@ -130,7 +130,7 @@ export default defineConfig({
       __ZCC_BUNDLED_APP_URL__: JSON.stringify(process.env.ZCC_APP_URL ?? ''),
       __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify(process.env.ZCC_RELAY_TOKEN ?? '')
     },
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['jiti'] })],
     resolve: { alias: sdkAlias, conditions: ['source'] },
     build: {
       // Pin this absolutely. Vite 8/rolldown has dumped named entries

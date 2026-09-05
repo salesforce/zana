@@ -573,13 +573,15 @@ function watchSkillsTarget(target: string): FSWatcher | null {
 
 function startSkillsWatchers() {
   const home = homedir();
+  const configHome = process.env.XDG_CONFIG_HOME?.trim() || join(home, '.config');
   const targets = [
     join(home, '.claude', 'skills'),
     join(home, '.claude', 'plugins'),
     join(home, '.claude', 'settings.json'),
     // ~/.claude.json is the canonical source for user-scope MCP servers;
     // without watching it, McpPanel goes stale after `claude mcp add`.
-    join(home, '.claude.json')
+    join(home, '.claude.json'),
+    join(configHome, 'opencode', 'skills')
   ];
   for (const target of targets) {
     const w = watchSkillsTarget(target);
@@ -685,21 +687,23 @@ function stopActiveProjectSkillsWatcher() {
 /**
  * The per-project skill directories to watch, across every agent tool. Kept in
  * sync with the `SKILL_PROVIDERS` registry's project-scope roots — Claude's
- * `.claude/skills` and Cursor's `.cursor/rules`. Listed here (rather than
- * imported from the providers) because a watcher only needs the well-known
- * relative dirs, not the discovery logic; if a new tool adds a project root,
- * add it here too so live updates light up.
+ * `.claude/skills`, Cursor's `.cursor/rules`, and OpenCode's `.opencode/skills`.
+ * Listed here (rather than imported from the providers) because a watcher only
+ * needs the well-known relative dirs, not the discovery logic; if a new tool
+ * adds a project root, add it here too so live updates light up.
  */
 const PROJECT_SKILL_WATCH_DIRS: readonly string[][] = [
   ['.claude', 'skills'],
-  ['.cursor', 'rules']
+  ['.cursor', 'rules'],
+  ['.opencode', 'skills']
 ];
 
 /**
  * Re-point the per-project skills watchers at the currently active project.
  * Called from the `projects.touch` IPC handler so that switching projects
  * (or selecting one for the first time) lights up live updates for files
- * dropped into `<project>/.claude/skills/` or `<project>/.cursor/rules/`.
+ * dropped into `<project>/.claude/skills/`, `<project>/.cursor/rules/`, or
+ * `<project>/.opencode/skills/`.
  */
 function setActiveProjectSkillsWatcher(
   projectPath: string | null,
@@ -4454,7 +4458,7 @@ function createWindow(projectId?: string, repairOnly = false) {
     minHeight: projectId || repairOnly ? 600 : restored.minHeight,
     title: 'Zana',
     icon: productIconImage(),
-    backgroundColor: '#0b0f15',
+    backgroundColor: '#181818',
     // E2E ONLY: never auto-show the window. Playwright drives the renderer over
     // CDP, so a hidden window still runs and is fully controllable, but a shown
     // one repeatedly steals macOS focus from the developer during a local run.
@@ -6329,15 +6333,16 @@ async function bootstrapNormal() {
     logMainError('whats-new boot check', err);
   }
 
-  // First-run dependency doctor: detect the companion CLIs / MCP / plugins /
-  // extensions the installer normally sets up, and surface anything missing so
-  // the user can auto-install (or copy the manual command) from the in-app
-  // setup checklist. The renderer subscribes via IPC.deps.onStatus and decides
-  // whether to auto-open the checklist (only when something is missing AND the
-  // user hasn't dismissed it — gated on AppConfig.setupDismissed in the store
-  // init, mirroring the walkthrough). Best-effort — a failed check never blocks
-  // boot. The check runs once here; the periodic poll lives in the updater, not
-  // here, since dependency state only changes on explicit user action.
+  // First-run dependency doctor: detect companion CLIs (Claude Code, Cursor,
+  // OpenCode, Pi, Codex, Salesforce) and surface anything missing so the user
+  // can auto-install or copy the manual command from the in-app setup
+  // checklist. The renderer subscribes via IPC.deps.onStatus and decides
+  // whether to auto-open the checklist (only when a *required* CLI is missing
+  // AND the user hasn't dismissed it — gated on AppConfig.setupDismissed in
+  // the store init, mirroring the walkthrough). Best-effort — a failed check
+  // never blocks boot. The check runs once here; the periodic poll lives in
+  // the updater, not here, since dependency state only changes on explicit
+  // user action.
   doctor = createDoctor({
     safeSend,
     log: logMainError,

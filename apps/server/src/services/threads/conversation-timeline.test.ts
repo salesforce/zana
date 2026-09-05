@@ -16,10 +16,17 @@ vi.mock('@zana-ai/zcc-db', () => ({
   getEnvironment: vi.fn(() => null),
   listConversationThreadEvents: vi.fn(() => []),
   listConversationThreadEventsWindow: vi.fn(() => []),
-  countConversationThreadEvents: vi.fn(() => 0)
+  countConversationThreadEvents: vi.fn(() => 0),
+  getThreadPlanByRootThread: vi.fn(() => null),
+  getThreadExecutionState: vi.fn(() => null),
+  latestThreadPlanRevision: vi.fn(() => null),
+  listThreadPlanTasks: vi.fn(() => []),
+  listThreadPlanReferences: vi.fn(() => []),
+  isThreadQueueAutoSendPaused: vi.fn(() => false),
+  listDeferredThreadMessages: vi.fn(() => [])
 }));
 
-import { getConversationThread, listConversationThreadEvents, listConversationThreadEventsWindow, countConversationThreadEvents } from '@zana-ai/zcc-db';
+import { getConversationThread, getThreadExecutionState, listConversationThreadEvents, listConversationThreadEventsWindow, countConversationThreadEvents } from '@zana-ai/zcc-db';
 
 afterEach(() => {
   resetTimelineLatestRowsCache();
@@ -399,5 +406,26 @@ describe('activePromptMode plan detection', () => {
     } finally {
       handle.unregister();
     }
+  });
+
+  it('keeps activePromptMode after the turn completes when requested execution mode is plan', () => {
+    vi.mocked(getThreadExecutionState).mockReturnValueOnce({
+      threadId,
+      requestedMode: 'plan',
+      effectiveMode: 'plan',
+      updatedAt: 1
+    });
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([]);
+    const timeline = conversationTimeline({ db: {}, dataDir: '/tmp' } as ProductHttpContext, threadId);
+    expect(timeline.activePromptMode).toEqual({
+      mode: 'plan',
+      providerId: 'claude-code',
+      prompt: ''
+    });
+    expect(timeline.executionMode).toEqual({
+      requested: 'plan',
+      effective: 'plan',
+      mismatch: false
+    });
   });
 });

@@ -12,6 +12,7 @@ import { fingerprint, listFilesRecursive, parsePackageDirectories, readJsonObjec
 export type AgentAction =
   | 'compile'
   | 'inspect'
+  | 'diagnose'
   | 'preview.start'
   | 'preview.send'
   | 'preview.end'
@@ -20,10 +21,15 @@ export type AgentAction =
   | 'lifecycle.publish'
   | 'lifecycle.activate';
 
+export type AgentLspQuery = 'diagnostics' | 'hover' | 'complete' | 'definition' | 'symbols';
+
 export interface AgentInput {
   action?: string;
   apiName?: string;
   path?: string;
+  query?: string;
+  line?: number;
+  column?: number;
   sessionId?: string;
   utterance?: string;
   specPath?: string;
@@ -32,12 +38,16 @@ export interface AgentInput {
   versionNumber?: number;
   allow_untested?: boolean;
   published?: boolean;
+  live?: boolean;
 }
 
 export interface AgentPlan {
   action: AgentAction;
   apiName?: string;
   path?: string;
+  query?: AgentLspQuery;
+  line?: number;
+  column?: number;
   sessionId?: string;
   utterance?: string;
   specPath?: string;
@@ -46,6 +56,7 @@ export interface AgentPlan {
   versionNumber?: number;
   allowUntested: boolean;
   published: boolean;
+  live: boolean;
 }
 
 export interface AgentBundle {
@@ -69,6 +80,7 @@ export type EvidenceKv = {
 const ACTIONS: readonly AgentAction[] = [
   'compile',
   'inspect',
+  'diagnose',
   'preview.start',
   'preview.send',
   'preview.end',
@@ -77,6 +89,9 @@ const ACTIONS: readonly AgentAction[] = [
   'lifecycle.publish',
   'lifecycle.activate'
 ];
+
+const LSP_QUERIES: readonly AgentLspQuery[] = ['diagnostics', 'hover', 'complete', 'definition', 'symbols'];
+const LSP_POSITION_QUERIES = new Set<AgentLspQuery>(['hover', 'complete', 'definition']);
 
 const COMPILER_BINS = ['agent-script', 'agentscript'];
 
@@ -92,6 +107,21 @@ export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } |
   }
   const apiName = typeof raw.apiName === 'string' ? raw.apiName.trim() : '';
   const path = typeof raw.path === 'string' ? raw.path.trim() : '';
+  const queryRaw = typeof raw.query === 'string' ? raw.query.trim() : '';
+  const query = queryRaw
+    ? LSP_QUERIES.includes(queryRaw as AgentLspQuery)
+      ? (queryRaw as AgentLspQuery)
+      : undefined
+    : action === 'diagnose'
+      ? 'diagnostics'
+      : undefined;
+  if (action === 'diagnose' && queryRaw && !query) {
+    return { ok: false, error: `diagnose query must be ${LSP_QUERIES.join(', ')}.` };
+  }
+  const line =
+    typeof raw.line === 'number' && Number.isFinite(raw.line) ? Math.max(0, Math.floor(raw.line)) : undefined;
+  const column =
+    typeof raw.column === 'number' && Number.isFinite(raw.column) ? Math.max(0, Math.floor(raw.column)) : undefined;
   const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId.trim() : '';
   const utterance = typeof raw.utterance === 'string' ? raw.utterance : '';
   const specPath = typeof raw.specPath === 'string' ? raw.specPath.trim() : '';
@@ -103,8 +133,15 @@ export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } |
       ? Math.floor(raw.versionNumber)
       : undefined;
 
-  if ((action === 'compile' || action === 'preview.start' || action === 'lifecycle.publish') && !apiName && !path) {
+  if (
+    (action === 'compile' || action === 'diagnose' || action === 'preview.start' || action === 'lifecycle.publish') &&
+    !apiName &&
+    !path
+  ) {
     return { ok: false, error: `${action} requires apiName or path.` };
+  }
+  if (action === 'diagnose' && query && LSP_POSITION_QUERIES.has(query) && (line === undefined || column === undefined)) {
+    return { ok: false, error: `diagnose ${query} requires line and column (0-based).` };
   }
   if (action === 'preview.send' && (!sessionId || !utterance.trim())) {
     return { ok: false, error: 'preview.send requires sessionId and utterance.' };
@@ -128,6 +165,9 @@ export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } |
       action: action as AgentAction,
       apiName: apiName || undefined,
       path: path || undefined,
+      query,
+      line,
+      column,
       sessionId: sessionId || undefined,
       utterance: utterance || undefined,
       specPath: specPath || undefined,
@@ -135,7 +175,8 @@ export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } |
       botVersionId: botVersionId || undefined,
       versionNumber,
       allowUntested: raw.allow_untested === true,
-      published: raw.published === true
+      published: raw.published === true,
+      live: raw.live === true
     }
   };
 }
@@ -193,7 +234,7 @@ export function diagnoseAgentBundle(bundle: AgentBundle): string[] {
   const issues: string[] = [];
   if (!bundle.hasConfig) issues.push('Missing config block.');
   if (!bundle.hasStartAgent) issues.push('Missing start_agent or orchestrator entry.');
-  if (bundle.lines < 2) issues.push('Agent Script file looks empty.');
+  if (bundle.lines < 2) issues.push('Agentforce file looks empty.');
   return issues;
 }
 
@@ -381,14 +422,14 @@ export function agentCliOpts(projectRoot?: string | null): ExecSfOptions {
 
 export function previewArgs(
   verb: 'start' | 'send' | 'end',
-  plan: Pick<AgentPlan, 'sessionId' | 'utterance'>,
+  plan: Pick<AgentPlan, 'sessionId' | 'utterance' | 'live'>,
   alias: string,
   identity?: AgentPreviewIdentity
 ): string[] {
   const args = ['agent', 'preview', verb, '--json', '--target-org', alias];
   if (identity?.flag === 'authoring-bundle') {
     args.push('--authoring-bundle', identity.apiName);
-    if (verb === 'start') args.push('--simulate-actions');
+    if (verb === 'start') args.push(plan.live ? '--use-live-actions' : '--simulate-actions');
   } else if (identity?.flag === 'api-name') {
     args.push('--api-name', identity.apiName);
   }

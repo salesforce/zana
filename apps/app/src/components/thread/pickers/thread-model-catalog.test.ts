@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
@@ -251,5 +251,46 @@ describe('thread model catalog', () => {
     release();
     await first;
     expect(getThreadModelCatalog().byProvider.codex).toBeDefined();
+  });
+
+  it('refills after reload wipes an in-flight provider fetch', async () => {
+    let releaseClaude: () => void = () => undefined;
+    const claudeGate = new Promise<void>((resolve) => {
+      releaseClaude = resolve;
+    });
+    let claudeFetches = 0;
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      if (query?.providerId === 'claude-code') {
+        claudeFetches += 1;
+        if (claudeFetches === 1) await claudeGate;
+      }
+      return optionsBody(['claude-code'], query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+    const first = prefetchThreadModelCatalog();
+    await vi.waitFor(() => expect(claudeFetches).toBe(1));
+    const reloaded = reloadThreadModelCatalog();
+    expect(getThreadModelCatalog().byProvider['claude-code']).toBeUndefined();
+    releaseClaude();
+    await reloaded;
+    await vi.waitFor(() => {
+      expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+    });
+    expect(claudeFetches).toBeGreaterThanOrEqual(2);
+  });
+
+  it('refills when reload races prefetch settle', async () => {
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => (
+      optionsBody(['claude-code'], query?.providerId ?? 'roster')
+    );
+    resetThreadModelCatalog(fetcher);
+    const first = prefetchThreadModelCatalog();
+    queueMicrotask(() => {
+      void reloadThreadModelCatalog();
+    });
+    await first;
+    await vi.waitFor(() => {
+      expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+    });
   });
 });

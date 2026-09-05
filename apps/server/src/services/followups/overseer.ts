@@ -200,7 +200,7 @@ export function writeTargetPath(toolName: string, input: Record<string, unknown>
  * `projects.json` (the path-confinement trust anchor, rule 2), `extensions/`,
  * `modules/`, `mcp/`, `schedules/`, `personas/`, `teams/` … — stays hard-denied.
  */
-const ZCC_AGENT_DATA_DIRS = new Set(['library', 'followups', 'goals']);
+const ZCC_AGENT_DATA_DIRS = new Set(['library', 'followups', 'goals', 'plans']);
 
 /**
  * Resolve a path into its significant segments, collapsing `.` and `..` LEXICALLY

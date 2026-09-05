@@ -282,6 +282,7 @@ async function startThread(args?: StartThreadArgs): Promise<{
               additionalWorkspaceWriteRoots: args.additionalWorkspaceWriteRoots,
             }
           : {}),
+        ...(args?.acpMode ? { acpMode: args.acpMode } : {}),
       },
     }),
     ...(args?.dynamicTools ? { dynamicTools: args.dynamicTools } : {}),
@@ -1956,6 +1957,52 @@ describe("acp bridge", () => {
     } finally {
       rmSync(outsideDir, { recursive: true, force: true });
     }
+  });
+
+  it("allows plan-mode client fs writes under .zcc/plans", async () => {
+    const targetPath = join(workspaceDir, ".zcc", "plans", "ship.plan.md");
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+      acpMode: "plan",
+      envVars: { FAKE_ACP_WRITE_PATH: targetPath },
+    });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "write-file", mentions: [] }],
+      options: executionOptions({
+        permissionMode: "accept-edits",
+        permissionEscalation: "ask",
+        providerOptions: { acpMode: "plan" },
+      }),
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("write:ok");
+    expect(readFileSync(targetPath, "utf8")).toBe("hello from agent\n");
+  });
+
+  it("denies plan-mode client fs writes outside .zcc/plans", async () => {
+    const targetPath = join(workspaceDir, "src", "foo.ts");
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+      acpMode: "plan",
+      envVars: { FAKE_ACP_WRITE_PATH: targetPath },
+    });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "write-file", mentions: [] }],
+      options: executionOptions({
+        permissionMode: "accept-edits",
+        permissionEscalation: "ask",
+        providerOptions: { acpMode: "plan" },
+      }),
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("write:denied");
+    expect(existsSync(targetPath)).toBe(false);
   });
 
   // The canonical wire has no core field for the daemon's extra write roots;

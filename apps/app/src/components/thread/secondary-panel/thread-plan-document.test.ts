@@ -1,21 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ApprovalPendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
-import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 import {
-  latestAssistantConversationText,
   pendingPlanApprovalSubject,
   planFileTabTitle,
   resolveThreadPlanDocument
 } from './thread-plan-document.js';
-
-const rowBase = {
-  threadId: 't1',
-  turnId: 'turn-1',
-  sourceSeqStart: 1,
-  sourceSeqEnd: 1,
-  startedAt: 1,
-  createdAt: 1
-};
 
 function planInteraction(over: { plan?: string; planFilePath?: string | null } = {}): ApprovalPendingInteraction {
   return {
@@ -50,18 +39,6 @@ function planInteraction(over: { plan?: string; planFilePath?: string | null } =
   };
 }
 
-function assistantRow(id: string, text: string): TimelineRow {
-  return {
-    ...rowBase,
-    id,
-    kind: 'conversation',
-    role: 'assistant',
-    text,
-    attachments: null,
-    turnRequest: null
-  };
-}
-
 describe('thread plan document', () => {
   it('names a plan file tab from the basename', () => {
     expect(planFileTabTitle('/tmp/plans/ship.md')).toBe('ship.md');
@@ -92,37 +69,17 @@ describe('thread plan document', () => {
     expect(pendingPlanApprovalSubject([command])).toBeNull();
   });
 
-  it('walks nested turns for the latest assistant text', () => {
-    const rows: TimelineRow[] = [
-      assistantRow('a1', 'old draft'),
-      {
-        ...rowBase,
-        id: 'turn-wrap',
-        kind: 'turn',
-        turnId: 'turn-1',
-        status: 'completed',
-        summaryCount: 1,
-        completedAt: 2,
-        children: [assistantRow('a2', '  live plan  ')]
-      }
-    ];
-    expect(latestAssistantConversationText(rows)).toBe('  live plan  ');
-    expect(latestAssistantConversationText([])).toBeNull();
-  });
-
   it('returns null when neither plan mode nor a plan approval is present', () => {
     expect(resolveThreadPlanDocument({
       promptMode: { mode: 'ask', prompt: 'hello' },
-      pendingInteractions: [],
-      rows: [assistantRow('a1', 'not a plan')]
+      pendingInteractions: []
     })).toBeNull();
   });
 
   it('keeps an empty plan-mode document so the pin can appear before markdown', () => {
     expect(resolveThreadPlanDocument({
       promptMode: { mode: 'plan', prompt: ' inspect the failing command ' },
-      pendingInteractions: [],
-      rows: []
+      pendingInteractions: []
     })).toEqual({
       markdown: null,
       filePath: null,
@@ -131,11 +88,11 @@ describe('thread plan document', () => {
     });
   });
 
-  it('prefers the approval markdown over a live assistant draft', () => {
+  it('prefers the approval markdown over a durable draft', () => {
     expect(resolveThreadPlanDocument({
       promptMode: { mode: 'plan', prompt: 'inspect' },
       pendingInteractions: [planInteraction({ plan: 'Approved body', planFilePath: null })],
-      rows: [assistantRow('a1', 'Draft body')]
+      durablePlan: { markdown: 'Stale durable' }
     })).toEqual({
       markdown: 'Approved body',
       filePath: null,
@@ -144,24 +101,22 @@ describe('thread plan document', () => {
     });
   });
 
-  it('uses live assistant text while planning before an approval arrives', () => {
+  it('does not treat assistant chat as the plan while planning', () => {
     expect(resolveThreadPlanDocument({
       promptMode: { mode: 'plan' },
-      pendingInteractions: [],
-      rows: [assistantRow('a1', 'Draft body')]
+      pendingInteractions: []
     })).toEqual({
-      markdown: 'Draft body',
+      markdown: null,
       filePath: null,
       prompt: null,
-      source: 'live'
+      source: 'empty'
     });
   });
 
   it('shows a pending plan after plan mode has ended', () => {
     expect(resolveThreadPlanDocument({
       promptMode: null,
-      pendingInteractions: [planInteraction()],
-      rows: [assistantRow('a1', 'stale assistant')]
+      pendingInteractions: [planInteraction()]
     })).toEqual({
       markdown: 'Ship it',
       filePath: '/tmp/plan.md',
@@ -169,4 +124,18 @@ describe('thread plan document', () => {
       source: 'approval'
     });
   });
+
+  it('keeps a durable plan after plan mode ends', () => {
+    expect(resolveThreadPlanDocument({
+      promptMode: null,
+      pendingInteractions: [],
+      durablePlan: { markdown: 'Persisted plan', filePath: '/tmp/plans/ship.plan.md' }
+    })).toEqual({
+      markdown: 'Persisted plan',
+      filePath: '/tmp/plans/ship.plan.md',
+      prompt: null,
+      source: 'durable'
+    });
+  });
+
 });

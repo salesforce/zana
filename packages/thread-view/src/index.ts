@@ -81,4 +81,5 @@ export type {
   TimelineViewWorkRow,
 } from "./timeline-view.js";
 export { compactThreadTimelineSummaryEvents } from "./summary-event-compaction.js";
+export { parseCompactionLifecycleEvent } from "./compaction-lifecycle.js";
 export type { ThreadEventWithMeta } from "./group-event-projection-turns.js";

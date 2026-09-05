@@ -42,6 +42,7 @@ import {
   ThreadTodoCard,
   ThreadStatusBadge
 } from './timeline/ThreadBanners.js';
+import { BackgroundCommandsCard } from './timeline/ComposerStackCards.js';
 
 function file(overrides: Partial<WorkspaceFileStatus> & Pick<WorkspaceFileStatus, 'path'>): WorkspaceFileStatus {
   return {
@@ -90,6 +91,49 @@ describe('workspace banner', () => {
     expect(html).toContain('title="apps/app/src/components/AgentBoard.tsx"');
     expect(html).not.toContain('Workspace changed');
     expect(html).not.toContain('View all');
+  });
+
+  it('sits inside the composer dock as the top of the same rounded box', () => {
+    const detail = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    const dockAt = detail.indexOf('className="thread-composer-dock"');
+    const bannerAt = detail.indexOf('<ThreadWorkspaceBanner');
+    const composerAt = detail.indexOf('<ThreadCommandComposer');
+    expect(dockAt).toBeGreaterThan(-1);
+    expect(bannerAt).toBeGreaterThan(dockAt);
+    expect(composerAt).toBeGreaterThan(bannerAt);
+
+    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const linked = css.slice(
+      css.indexOf('.thread-composer-dock > .thread-workspace-banner {'),
+      css.indexOf('.thread-workspace-banner.is-open {')
+    );
+    expect(linked).toContain('border: 1px solid var(--border);');
+    expect(linked).toContain('border-bottom: 0;');
+    expect(linked).toContain('border-radius: 12px 12px 0 0;');
+    expect(css).toContain('.thread-composer-dock:has(> .thread-workspace-banner + .thread-command-composer) .thread-command-composer .ui-command-composer');
+    const flatten = css.slice(
+      css.indexOf('.thread-composer-dock:has(> .thread-workspace-banner + .thread-command-composer) .thread-command-composer .ui-command-composer {'),
+      css.indexOf('.thread-prompt-mode-card,')
+    );
+    expect(flatten).toContain('box-shadow: none;');
+    expect(css).not.toContain('.thread-detail-column > .thread-workspace-banner');
+    const bannerPad = css.slice(
+      css.indexOf('.thread-workspace-banner {'),
+      css.indexOf('.thread-composer-dock > .thread-workspace-banner {')
+    );
+    expect(bannerPad).toContain('margin-left: 1rem;');
+    expect(bannerPad).toContain('width: calc(100% - 2rem);');
+    expect(bannerPad).toContain('padding: 6px 24px 4px;');
+    const openPad = css.slice(
+      css.indexOf('.thread-workspace-banner.is-open {'),
+      css.indexOf('.thread-workspace-banner-summary {')
+    );
+    expect(openPad).toContain('padding: 8px 24px 6px;');
+    const filesPad = css.slice(
+      css.indexOf('.thread-workspace-files {'),
+      css.indexOf('.thread-workspace-files[hidden] {')
+    );
+    expect(filesPad).toContain('padding: 0 4px 6px 16px;');
   });
 
   it('marks a truncated list as a lower bound and keeps the more-changes hint', () => {
@@ -217,6 +261,7 @@ describe('diff hunk helper', () => {
     expect(source).toContain('title={label}');
     expect(source).toContain('DiffToolbarButton');
     expect(source).toContain('Diff scope');
+    expect(source).toContain('setInterval');
     expect(source).not.toContain('Show {hiddenCount} more');
     expect(source).not.toMatch(/environments\.diff\(/);
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
@@ -224,6 +269,12 @@ describe('diff hunk helper', () => {
     expect(css).toContain('.thread-diff-cards {');
     expect(css).toContain('.thread-diff-skeleton');
     expect(css).toContain('.thread-diff-skel');
+    expect(css).toContain('.thread-diff-hunk-code code.hljs {');
+    expect(css).toContain("color: var(--text-primary);");
+    expect(css).toContain(":root[data-theme='light'] .thread-diff-hunks .hljs-keyword");
+    expect(css).toContain(":root[data-theme='light'] .thread-diff-hunk-line.is-add");
+    expect(css).toContain('background: #dafbe1;');
+    expect(css).toContain('background: #ffebe9;');
     expect(css).not.toContain('.thread-diff-list-pane');
     expect(css).not.toContain('.thread-diff-list-search');
     expect(changeKindLetter('added')).toBe('A');
@@ -452,23 +503,33 @@ describe('expandable row and chips', () => {
     expect(renderToStaticMarkup(
       <ThreadPromptModeCard
         mode={{ mode: 'plan', prompt: 'Write a plan' }}
-        isExpanded
-        onToggle={() => undefined}
+        onOpenPlan={() => undefined}
         onExitPlanMode={() => undefined}
       />
-    )).toContain('Write a plan');
+    )).toContain('data-testid="thread-open-plan"');
+    expect(renderToStaticMarkup(
+      <ThreadPromptModeCard
+        mode={{ mode: 'plan', prompt: 'Write a plan' }}
+        onOpenPlan={() => undefined}
+        onExitPlanMode={() => undefined}
+      />
+    )).not.toContain('Write a plan');
     expect(renderToStaticMarkup(
       <ThreadPromptModeCard
         mode={{ mode: 'plan', prompt: '' }}
-        isExpanded
-        onToggle={() => undefined}
+        onOpenPlan={() => undefined}
       />
-    )).toContain('No prompt text.');
+    )).not.toContain('No prompt text.');
+    expect(renderToStaticMarkup(
+      <ThreadPromptModeCard
+        mode={{ mode: 'plan', prompt: '' }}
+        onOpenPlan={() => undefined}
+      />
+    )).not.toContain('thread-prompt-mode-card-body');
     expect(renderToStaticMarkup(
       <ThreadPromptModeCard
         mode={{ mode: 'plan' }}
-        isExpanded={false}
-        onToggle={() => undefined}
+        onOpenPlan={() => undefined}
         onExitPlanMode={() => undefined}
       />
     )).toContain('data-testid="thread-exit-plan"');
@@ -499,6 +560,8 @@ describe('expandable row and chips', () => {
     );
     expect(allComplete).toContain('1/1 complete');
     expect(allComplete).toContain('Ship it');
+    expect(allComplete).toContain('class="thread-todo-checklist"');
+    expect(allComplete).toContain('data-status="completed"');
     expect(renderToStaticMarkup(
       <ThreadWorkflowChips workflows={[{
         id: 'wf',
@@ -550,6 +613,61 @@ describe('expandable row and chips', () => {
         thinking={{ id: 'th', text: 'plan', startedAt: 1, updatedAt: 1 }}
       />
     )).toContain('Needs you');
+    expect(renderToStaticMarkup(<BackgroundCommandsCard commands={[]} workflows={[]} />)).toBe('');
+    const backgroundHtml = renderToStaticMarkup(
+      <BackgroundCommandsCard
+        workflows={[{
+          id: 'wf',
+          threadId: 't',
+          turnId: 'turn',
+          sourceSeqStart: 1,
+          sourceSeqEnd: 1,
+          startedAt: 1,
+          createdAt: 1,
+          kind: 'work',
+          workKind: 'workflow',
+          status: 'pending',
+          itemId: 'wf',
+          taskType: 'local_workflow',
+          workflowName: 'Build plugin',
+          description: 'Ship',
+          model: null,
+          taskStatus: 'running',
+          workflow: null,
+          usage: null,
+          summary: null,
+          error: null,
+          completedAt: null
+        }]}
+        commands={[{
+          id: 'bash',
+          threadId: 't',
+          turnId: 'turn',
+          sourceSeqStart: 1,
+          sourceSeqEnd: 1,
+          startedAt: 1,
+          createdAt: 1,
+          kind: 'work',
+          workKind: 'workflow',
+          status: 'pending',
+          itemId: 'bash',
+          taskType: 'local_bash',
+          workflowName: null,
+          description: 'zcc plugin dev',
+          model: null,
+          taskStatus: 'running',
+          workflow: null,
+          usage: null,
+          summary: null,
+          error: null,
+          completedAt: null
+        }]}
+      />
+    );
+    expect(backgroundHtml).toContain('data-testid="thread-background-commands"');
+    expect(backgroundHtml).toContain('Background activity');
+    expect(backgroundHtml).toContain('Build plugin');
+    expect(backgroundHtml).toContain('zcc plugin dev');
   });
 
   it('keeps the thread title and overflow on the left, with search and status as actions', () => {
@@ -605,10 +723,9 @@ describe('expandable row and chips', () => {
     expect(source).toContain("selectPin('diff')");
     expect(source).toContain("selectPin('plan')");
     expect(source).toContain('<ThreadPlanPanel');
-    expect(source).not.toContain('[panel, pin, planDocument]');
-    expect(source).toContain('[pin, planDocument, selectPin]');
+    expect(source).not.toContain('shouldAutoOpenThreadPlanPanel');
+    expect(source).toContain('showPlanPin');
     expect(source).toContain('<ThreadExplorerTab');
-    expect(source).toContain('showPlanPin={showPlanPin}');
     expect(source).toContain('thread-secondary-show');
     expect(source).toContain('<ThreadDetailHeading');
     expect(source).toContain('<ThreadDetailSearch');
@@ -629,7 +746,7 @@ describe('expandable row and chips', () => {
     expect(source).toContain('thread-detail-main');
     expect(source).toContain('thread-detail-split');
     expect(source).toContain('<ThreadSecondaryPanel');
-    const mountAt = source.indexOf('{hostedSecondary ? null : secondaryPanelNode}');
+    const mountAt = source.indexOf('{hostedSecondary || embedded ? null : secondaryPanelNode}');
     const splitAt = source.indexOf('className="thread-detail-split"');
     const mainAt = source.indexOf('className="thread-detail-main"');
     const bodyAt = source.indexOf('className="thread-detail-body"');
@@ -662,9 +779,12 @@ describe('expandable row and chips', () => {
     const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
     const columnAt = source.indexOf('className="thread-detail-column"');
     expect(columnAt).toBeGreaterThan(-1);
-    expect(source).not.toContain('ThreadConversationToc');
     expect(source).not.toContain('ThreadTableOfContents');
     expect(source).not.toContain('thread-toc');
+    expect(source).not.toContain('useThreadGitActions');
+    expect(source).not.toContain('Rewind');
+    expect(source).not.toContain('side-chat');
+    expect(source).not.toContain('ThreadConversationToc');
     expect(source).toContain('TIMELINE_SEGMENT_LIMIT = 10_000');
     expect(source).not.toContain('onLoadOlder');
     expect(source).not.toContain('thread-load-older');
@@ -672,9 +792,15 @@ describe('expandable row and chips', () => {
     expect(column).toContain('<ThreadTimeline');
     expect(column).toContain('<ThreadWorkspaceBanner');
     expect(column).toContain('<ThreadCommandComposer');
+    expect(source).toContain('executionModeRequested={executionModeRequested}');
     expect(source).toContain('inFlightRetry={inFlightRetry}');
     expect(source).toContain('autoFocus={!embedded && pane?.isFocused !== false && pendingInteractions.length === 0}');
     expect(column).toContain('thread-composer-dock');
+    const dockAt = column.indexOf('thread-composer-dock');
+    const bannerAt = column.indexOf('<ThreadWorkspaceBanner');
+    const composerAt = column.indexOf('<ThreadCommandComposer');
+    expect(bannerAt).toBeGreaterThan(dockAt);
+    expect(composerAt).toBeGreaterThan(bannerAt);
     expect(column).toContain('<ThreadPromptModeCard');
     expect(column).toContain('<ThreadTodoCard');
     expect(source).toContain('product.threads.cancelPlan');
@@ -683,7 +809,7 @@ describe('expandable row and chips', () => {
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
     const columnCss = css.slice(
       css.indexOf('.thread-detail-column {'),
-      css.indexOf('.thread-detail-column > .thread-command-composer')
+      css.indexOf('.thread-detail-column > .thread-composer-dock')
     );
     expect(columnCss).toContain('height: 100%;');
     expect(columnCss).toContain('overflow: hidden;');
@@ -692,6 +818,7 @@ describe('expandable row and chips', () => {
     expect(css).toContain('.thread-prompt-mode-card');
     expect(css).toContain('.thread-pending-banner-plan');
     expect(css).toContain('.thread-plan-panel');
+    expect(css).toContain('.thread-todo-checklist');
     const mentionPopover = css.slice(
       css.indexOf('.thread-detail-view .mention-popover {'),
       css.indexOf('.composer-typeahead-heading {')
@@ -721,14 +848,37 @@ describe('expandable row and chips', () => {
       css.indexOf('.thread-unread-divider {')
     );
     expect(actionBtn).toContain('padding: 4px;');
-    expect(css).toContain('.thread-timeline-item.is-assistant {\n  align-items: flex-start;');
-    const bubbles = css.slice(
-      css.indexOf('.thread-timeline-row.is-user .thread-timeline-bubble,'),
+    expect(css).toContain('.thread-timeline-item.is-user,\n.thread-timeline-item.is-assistant {\n  align-items: flex-start;');
+    expect(css).toContain('.thread-timeline-row.is-user {\n  position: relative;\n  width: 100%;\n  max-width: 100%;');
+    const timelinePane = css.slice(
+      css.indexOf('.thread-detail-timeline {\n  flex: 1 1 auto;'),
+      css.indexOf('.thread-detail-timeline > * + * {')
+    );
+    expect(timelinePane).toContain('display: block;');
+    expect(timelinePane).toContain('overflow-x: clip;');
+    expect(timelinePane).toContain('overflow-y: auto;');
+    expect(timelinePane).not.toContain('display: flex;');
+    const stickyUser = css.slice(
+      css.indexOf('.thread-timeline-current-turn > .thread-timeline-item.is-user {'),
+      css.indexOf('.thread-timeline-row {')
+    );
+    expect(stickyUser).toContain('position: sticky;');
+    expect(stickyUser).toContain('top: 0;');
+    expect(stickyUser).toContain('z-index: 4;');
+    expect(stickyUser).toContain('background: var(--bg-base);');
+    const assistantBubble = css.slice(
+      css.indexOf('.thread-timeline-row.is-assistant .thread-timeline-bubble {'),
+      css.indexOf('.thread-timeline-row.is-user .thread-timeline-bubble {')
+    );
+    expect(assistantBubble).toContain('border-radius: 16px;');
+    expect(assistantBubble).not.toContain('border: 1px solid var(--border);');
+    const userBubble = css.slice(
+      css.indexOf('.thread-timeline-row.is-user .thread-timeline-bubble {'),
       css.indexOf('.thread-timeline-row .inbox-md,')
     );
-    expect(bubbles).toContain('.thread-timeline-row.is-assistant .thread-timeline-bubble');
-    expect(bubbles).toContain('border-radius: 16px;');
-    expect(bubbles).toContain('border: 1px solid var(--border);');
+    expect(userBubble).toContain('border: 1px solid var(--border);');
+    expect(userBubble).toContain('background: var(--bg-elevated, var(--bg-background));');
+    expect(userBubble).toContain('border-radius: 12px;');
     expect(css).toContain('.thread-timeline-item:hover,\n.thread-timeline-item:focus-within {\n  z-index: 1;');
     expect(css).toContain('.thread-detail-timeline {\n  user-select: text;');
     expect(css).not.toContain('.thread-toc');
@@ -795,6 +945,7 @@ describe('expandable row and chips', () => {
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
     expect(css).toContain('.thread-detail-view--embedded');
     expect(css).toContain('.thread-detail-view--modal');
+    expect(css).toContain('.thread-detail-view--modal .thread-timeline-current-turn > .thread-timeline-item.is-user {\n  background: var(--bg-panel);\n}');
     expect(css).toContain('.agent-monitor.is-thread');
     expect(css).toContain('.agent-monitor.is-agent-session');
     expect(css).toContain('.agent-monitor-terminal.is-thread');

@@ -6,13 +6,29 @@ import {
   COMPOSER_NO_PROJECT_LABEL,
   COMPOSER_NO_PROJECT_VALUE,
   composerProjectPickerRows,
+  composerProjectRemoteDescription,
   resolveComposerProjectPickerChange
 } from './composer-project-picker.js';
 import { DEFAULT_COMPOSER_WORKSPACE_LABEL, SCRATCH_WORKSPACE_NAME } from './composer-project-default.js';
+import { picklistOptionVisible } from './ui/PopoverPicklist.js';
 
 const alpha = { id: 'alpha', name: 'alpha-repo' };
 const scratch = { id: 'scratch-1', name: SCRATCH_WORKSPACE_NAME, quickAgent: true };
 const coreRepo = { id: 'core-repo', name: 'zana-command-center' };
+const remoteBox = {
+  id: 'pony',
+  name: 'limited-pony',
+  remote: { host: 'limited-pony', user: 'sfwork' }
+};
+
+describe('composerProjectRemoteDescription', () => {
+  it('labels SSH-backed projects with host, and skips local ones', () => {
+    expect(composerProjectRemoteDescription(remoteBox)).toBe('Remote · sfwork@limited-pony');
+    expect(composerProjectRemoteDescription({ remote: { host: 'devbox' } })).toBe('Remote · devbox');
+    expect(composerProjectRemoteDescription(alpha)).toBeUndefined();
+    expect(composerProjectRemoteDescription(undefined)).toBeUndefined();
+  });
+});
 
 describe('composerProjectPickerRows', () => {
   it('lists projects then New project and Do not work in a project', () => {
@@ -33,6 +49,22 @@ describe('composerProjectPickerRows', () => {
         action: 'no-project'
       }
     ]);
+  });
+
+  it('marks remote projects so the list and search can tell them apart', () => {
+    const rows = composerProjectPickerRows([alpha, remoteBox]);
+    expect(rows.find((row) => row.value === 'pony')).toEqual({
+      value: 'pony',
+      label: 'limited-pony',
+      remote: true,
+      description: 'Remote · sfwork@limited-pony'
+    });
+    expect(rows.find((row) => row.value === 'alpha')?.remote).toBeUndefined();
+    expect(picklistOptionVisible(
+      { label: 'limited-pony', description: 'Remote · sfwork@limited-pony' },
+      'remote'
+    )).toBe(true);
+    expect(picklistOptionVisible({ label: 'alpha-repo' }, 'remote')).toBe(false);
   });
 });
 
@@ -74,6 +106,10 @@ describe('ComposerProjectPicker', () => {
     expect(source).toContain('product.projects.pickDirectory()');
     expect(source).toContain('FolderPlus');
     expect(source).toContain('FolderX');
+    expect(source).toContain('Network');
+    expect(source).toContain('composerProjectRemoteDescription');
+    expect(source).toContain('row.description');
+    expect(source).toContain('row.remote');
     expect(source).toContain('COMPOSER_NEW_PROJECT_LABEL');
     expect(source).toContain('COMPOSER_NO_PROJECT_LABEL');
     expect(source).toContain('emptyHint="No matching projects"');

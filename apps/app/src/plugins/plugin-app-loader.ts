@@ -90,10 +90,12 @@ function moduleFromSet(entry: PluginAppEntry, set: PluginRegistrationSet): Plugi
     return React.createElement('div', { className: 'module-no-panel', role: 'status' }, 'This plugin is available per project.');
   };
 
+  // Plugin identity is the catalog name/icon. A plugin's first project tab or
+  // nav panel is a destination, not the installed plugin name.
   return {
     id: entry.id,
-    title: nav?.title ?? entry.name,
-    icon: nav?.icon ?? entry.icon,
+    title: entry.name,
+    icon: entry.icon,
     panel: Panel,
     projectTab: projectTab
       ? {
@@ -142,6 +144,17 @@ const appliedAppUrls = new Map<string, string>();
 const loadedModules = new Map<string, PluginAppModule | null>();
 
 /**
+ * Renderer bundles for plugins that are live enough to own UI. `needs-configuration`
+ * is still a running factory — Salesforce (and anything that flags setup) must
+ * mount so the user can actually configure it. Disabled / degraded stay out.
+ */
+export function pluginAppIsLoadable(
+  entry: Pick<PluginAppEntry, 'status' | 'appUrl'>
+): boolean {
+  return (entry.status === 'running' || entry.status === 'needs-configuration') && Boolean(entry.appUrl);
+}
+
+/**
  * Replaces visible server-plugin app registrations. Unchanged `appUrl`s skip
  * re-import so a reload of one plugin does not remount every other panel.
  */
@@ -150,7 +163,7 @@ export async function reconcilePluginApps(
   options: { importer?: PluginAppImporter } = {}
 ): Promise<void> {
   const sequence = ++reconcileSequence;
-  const wanted = entries.filter((entry) => entry.status === 'running' && entry.appUrl);
+  const wanted = entries.filter(pluginAppIsLoadable);
   const wantedIds = new Set(wanted.map((entry) => entry.id));
   const importer = options.importer ?? importPluginApp;
   const modules: PluginAppModule[] = [];

@@ -1144,6 +1144,25 @@ describe("acp delta translation (moved from the legacy adapter suite)", () => {
     );
   });
 
+  it("maps a passthrough plan explanation onto the planSteps item", () => {
+    const harness = startedHarness();
+    const events = harness.translate(
+      updateEvent({
+        sessionUpdate: "plan",
+        explanation: "Ship the widget by writing tests first.",
+        entries: [{ content: "Write tests", status: "pending" }],
+      }),
+    );
+    expect(events[0]).toMatchObject({
+      type: "item/completed",
+      item: {
+        type: "planSteps",
+        explanation: "Ship the widget by writing tests first.",
+        steps: [{ step: "Write tests", status: "pending" }],
+      },
+    });
+  });
+
   it("translates bridge warnings", () => {
     const harness = createHarness();
 

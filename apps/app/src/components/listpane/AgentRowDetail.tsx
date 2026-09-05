@@ -53,7 +53,8 @@ export function AgentRowDetail({
       ? 'starting…'
       : `started ${timeAgo(session.createdAt)}`;
   const runtime = agentCardRuntimeLabel({ profile: session.profile, remote: projectRemote });
-  const detailParts = [runtime, subagentText, timeText].filter(Boolean);
+  const origin = session.scheduled ? 'Scheduled' : '';
+  const detailParts = [origin, runtime, subagentText, timeText].filter(Boolean);
   if (!stateText && detailParts.length === 0) return null;
   return (
     <span className="project-terminal-detail">

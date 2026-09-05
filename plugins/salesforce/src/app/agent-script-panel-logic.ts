@@ -16,9 +16,14 @@ export function saveIsDisabled(saveEnabled: boolean, activePath: string | null, 
   return !saveEnabled || !activePath || busy;
 }
 
-export function playgroundHint(hasStatus: boolean, dxProject: boolean | undefined): string | null {
+export function playgroundHint(
+  hasStatus: boolean,
+  dxProject: boolean | undefined,
+  hasProjectFolder?: boolean
+): string | null {
+  if (hasProjectFolder) return null;
   if (hasStatus && !dxProject) {
-    return 'Examples are in-memory until you set a DX project root under Plugins → Salesforce.';
+    return 'Examples are in-memory until you open a project with .agent files, or set a DX project root under Plugins → Salesforce.';
   }
   return null;
 }
@@ -26,7 +31,7 @@ export function playgroundHint(hasStatus: boolean, dxProject: boolean | undefine
 export const PLAYGROUND_READY_MS = 12_000;
 
 export const PLAYGROUND_LOAD_ERROR =
-  'Could not load the Agent Script playground. Rebuild the Salesforce plugin (`pnpm --dir plugins/salesforce run build`) or reinstall it.';
+  'Could not load the Agentforce playground. Rebuild the Salesforce plugin (`pnpm --dir plugins/salesforce run build`) or reinstall it.';
 
 export function shouldShowPlaygroundFailure(args: {
   ready: boolean;

@@ -197,6 +197,11 @@ declare module '@zana-ai/zcc-plugin-sdk/testing' {
     zcc: import('@zana-ai/zcc-plugin-sdk/server').ZccPluginApi;
     harness: {
       callRpc(name: string, args?: unknown): Promise<unknown>;
+      runCli(argv: string[]): Promise<{
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+      }>;
       setSettings(values: Record<string, string | boolean | undefined>): void;
       extraInstructions: string[];
       cli: { name: string; run: (...args: never[]) => unknown } | null;
@@ -214,8 +219,37 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
   ): {
     pluginId: string;
     generation: number;
-    navPanels: Array<{ id: string; title: string }>;
+    navPanels: Array<{ id: string; title: string; component: unknown }>;
     settingsSections: Array<{ id: string; title?: string }>;
     pendingInteractions: Array<{ id: string }>;
+  };
+  export function installTestPluginRuntime(options?: {
+    rpc?: Record<string, (input: unknown) => unknown | Promise<unknown>>;
+  }): {
+    rpcCalls: Array<{ method: string; input: unknown }>;
+    navigateCalls: Array<{ method: string }>;
+    emitRealtime(channel: string, payload?: unknown): void;
+  };
+  export function loadPluginApp(
+    source: unknown | (() => Promise<unknown>),
+    pluginId?: string,
+    generation?: number
+  ): Promise<{
+    pluginId: string;
+    navPanels: Array<{ id: string; title: string; component: unknown }>;
+  }>;
+  export function renderSlot(
+    registration: { component: unknown },
+    props: object,
+    options?: {
+      rpc?: Record<string, (input: unknown) => unknown | Promise<unknown>>;
+    }
+  ): {
+    findByText: (text: string | RegExp) => Promise<unknown>;
+    inspection: {
+      rpcCalls: Array<{ method: string; input: unknown }>;
+      navigateCalls: Array<{ method: string }>;
+    };
+    lifecycle: { unmount(): void };
   };
 }

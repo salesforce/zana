@@ -49,6 +49,7 @@ import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
 import { product } from './lib/product-client.js';
+import { subscribeProductEvent } from './lib/product-ws.js';
 import { prefetchThreadModelCatalog, reloadThreadModelCatalog } from './components/thread/pickers/thread-model-catalog.js';
 import { decodeRoutePath } from './lib/decode-route.js';
 import {
@@ -92,6 +93,10 @@ import {
   useUpdates,
   useWhatsNew
 } from './stores/live.js';
+import {
+  resolvedComposerSendMode,
+  type ComposerSendMode
+} from './lib/thread-composer-preferences.js';
 
 /**
  * localStorage key for the sidebar-collapsed preference. A per-project window
@@ -747,11 +752,14 @@ function mirroredConfigFlags(config: AppConfig) {
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
     includeScheduledAgentsInAgentView: config.includeScheduledAgentsInAgentView ?? true,
     voiceInputEnabled: config.voiceInputEnabled ?? false,
+    steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false,
+    composerSendMode: resolvedComposerSendMode(config),
     autoCloseIdleEnabled: config.autoCloseIdleEnabled ?? false,
     overseerMode: config.overseerMode ?? 'off',
     catchUpSummaryEnabled: config.catchUpSummaryEnabled ?? false,
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
+    autoOpenThreadPlanPanel: config.autoOpenThreadPlanPanel ?? false,
     structuredQuestionsEnabled: config.structuredQuestionsEnabled ?? true,
     reviewerApprovalMode: config.reviewerApprovalMode ?? 'ask',
     worktreeIsolationDefault: config.worktreeIsolationDefault ?? false,
@@ -762,7 +770,6 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
     openerHiddenTargets: config.openerHiddenTargets ?? [],
-    steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false
   };
 }
 
@@ -1428,6 +1435,9 @@ interface DataState {
   voiceInputEnabled: boolean;
   /** Mirror of AppConfig.steerActiveThreadOnEnter — Enter steers a running thread. */
   steerActiveThreadOnEnter: boolean;
+  /** Mirror of AppConfig.composerSendMode — Auto | Steer | Queue picker. */
+  composerSendMode: ComposerSendMode;
+  setComposerSendMode: (mode: ComposerSendMode) => Promise<void>;
   /** Mirror of AppConfig.autoCloseIdleEnabled — the master switch for closing
    *  idle agents on a timer. Backs the sidebar one-click toggle (near Agents)
    *  and the Settings toggle. Hydrated on init, kept live by both. Default off. */
@@ -1453,6 +1463,10 @@ interface DataState {
    *  Settings toggle. Default off; when off, no classify call runs and every
    *  report stays inline. */
   feedNoiseClassifierEnabled: boolean;
+  /** Mirror of AppConfig.autoOpenThreadPlanPanel — experimental. When on, Plan
+   *  mode (native ACP Plan, /plan, or a durable plan) opens the thread side
+   *  panel on the Plan pin. Default off. Approvals still open the panel. */
+  autoOpenThreadPlanPanel: boolean;
   /** Mirror of AppConfig.suggestionsEnabled — gates the Suggested Actions launcher
    *  rail entry + view (EXPERIMENTAL). Hydrated on init, kept live by the Settings
    *  toggle. Default off; when off the "Suggestions" nav entry is absent. */
@@ -1506,6 +1520,7 @@ interface DataState {
   setCatchUpSummaryEnabled: (on: boolean) => void;
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
+  setAutoOpenThreadPlanPanel: (on: boolean) => void;
   setSuggestionsEnabled: (on: boolean) => void;
   setStructuredQuestionsEnabled: (on: boolean) => void;
   setHarnessCursorEnabled: (on: boolean) => void;
@@ -1753,14 +1768,14 @@ export function agentViewTerminals(
 }
 
 /**
- * Live sessions for a project's inline rail expansion: listed (non-scheduler)
- * sessions whose pty hasn't exited. Exited/dismissed agents drop out of the
- * rail automatically so it stays a view of what's actually running — the full
- * history (including exited tombstones) still lives in the project's drill-in
- * focus view. Feeds the Projects rail's per-project session tree.
+ * Live sessions for a project's inline rail expansion, including scheduler
+ * jobs while they are running. The project rollup includes those jobs, so the
+ * matching row must remain visible instead of leaving an unexplained status
+ * dot. Exited/dismissed agents drop out automatically; scheduler history still
+ * stays out of the project's drill-in focus view.
  */
-export function liveTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
-  return listedTerminals(list).filter((t) => t.status !== 'exited');
+export function projectRailTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
+  return (list ?? []).filter((t) => t.status !== 'exited');
 }
 
 /**
@@ -1818,12 +1833,14 @@ export const useData = create<DataState>((set, get) => ({
   includeScheduledAgentsInAgentView: true,
   voiceInputEnabled: false,
   steerActiveThreadOnEnter: false,
+  composerSendMode: 'auto',
   autoCloseIdleEnabled: false,
   overseerMode: 'off',
   reviewerApprovalMode: 'ask',
   catchUpSummaryEnabled: false,
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
+  autoOpenThreadPlanPanel: false,
   suggestionsEnabled: false,
   structuredQuestionsEnabled: true,
   defaultHarness: null,
@@ -1873,6 +1890,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setFeedNoiseClassifierEnabled(on) {
     set({ feedNoiseClassifierEnabled: on });
+  },
+
+  setAutoOpenThreadPlanPanel(on) {
+    set({ autoOpenThreadPlanPanel: on });
   },
 
   setSuggestionsEnabled(on) {
@@ -1962,6 +1983,21 @@ export const useData = create<DataState>((set, get) => ({
 
   setVoiceInputEnabled(on) {
     set({ voiceInputEnabled: on });
+  },
+
+  async setComposerSendMode(mode) {
+    const prev = get().composerSendMode;
+    const prevSteer = get().steerActiveThreadOnEnter;
+    set({ composerSendMode: mode, steerActiveThreadOnEnter: mode === 'steer' });
+    try {
+      await product.config.set({
+        composerSendMode: mode,
+        steerActiveThreadOnEnter: mode === 'steer'
+      });
+    } catch (err) {
+      pushErrorToast(errorMessage(err, 'Failed to save send mode'));
+      set({ composerSendMode: prev, steerActiveThreadOnEnter: prevSteer });
+    }
   },
 
   async setAutoCloseIdleEnabled(on) {
@@ -2200,6 +2236,18 @@ export const useData = create<DataState>((set, get) => ({
     product.inbox.onAppended((entry) => {
       if (scopedProjectId && entry.projectId !== scopedProjectId) return;
       useInbox.getState().prepend(entry);
+      if (
+        entry.notify === 'loud'
+        && typeof document !== 'undefined'
+        && document.visibilityState !== 'visible'
+        && typeof Notification !== 'undefined'
+      ) {
+        try {
+          new Notification(entry.subject ?? 'Zana', { body: entry.comments ?? 'Needs your attention' });
+        } catch {
+          /* OS notify is best-effort */
+        }
+      }
     });
     product.inbox.onRemoved((id) => {
       useInbox.getState().removeLocal(id);
@@ -2373,6 +2421,16 @@ export const useData = create<DataState>((set, get) => ({
     }
     product.scheduler.onChanged((tasks) => {
       useScheduler.setState({ tasks });
+    });
+    subscribeProductEvent<{ action?: string; id?: string; enabled?: boolean }>('scheduler:command', (payload) => {
+      if (!payload?.id) return;
+      if (payload.action === 'run-now') {
+        void product.scheduler.runNow(payload.id);
+        return;
+      }
+      if (payload.action === 'set-enabled' && typeof payload.enabled === 'boolean') {
+        void product.scheduler.setEnabled(payload.id, payload.enabled);
+      }
     });
 
     // Goals: one-shot list + push subscription, mirroring the scheduler. Main

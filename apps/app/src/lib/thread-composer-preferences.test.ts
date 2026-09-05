@@ -2,30 +2,45 @@ import { Editor } from '@tiptap/core';
 import { describe, expect, it } from 'vitest';
 import { findActiveTrigger } from '../components/composer/find-active-trigger.js';
 import { COMPOSER_TRIGGERS } from '../components/composer/types.js';
-import { composerPromptExtensions, resolveThreadSendMode } from './thread-composer-preferences.js';
+import { composerPromptExtensions, resolveThreadSendMode, resolvedComposerSendMode } from './thread-composer-preferences.js';
 
 describe('resolveThreadSendMode', () => {
-  it('uses auto unless steer-on-enter is on and the thread is running', () => {
+  it('maps absent composerSendMode from the legacy steer boolean without flipping false', () => {
+    expect(resolvedComposerSendMode({})).toBe('auto');
+    expect(resolvedComposerSendMode({ steerActiveThreadOnEnter: false })).toBe('auto');
+    expect(resolvedComposerSendMode({ steerActiveThreadOnEnter: true })).toBe('steer');
+    expect(resolvedComposerSendMode({
+      composerSendMode: 'queue-if-active',
+      steerActiveThreadOnEnter: true
+    })).toBe('queue-if-active');
+  });
+
+  it('uses auto unless the picker is Steer/Queue and the thread is running', () => {
     expect(resolveThreadSendMode({
-      steerOnEnter: false,
+      pickerMode: 'auto',
       threadRunning: true,
       modifierEnter: false
     })).toBe('auto');
     expect(resolveThreadSendMode({
-      steerOnEnter: true,
+      pickerMode: 'steer',
       threadRunning: false,
       modifierEnter: false
     })).toBe('auto');
   });
 
-  it('steers on Enter and queues on modifier+Enter when the thread is running', () => {
+  it('inverts Steer to Queue only on modifier+Enter', () => {
     expect(resolveThreadSendMode({
-      steerOnEnter: true,
+      pickerMode: 'steer',
       threadRunning: true,
       modifierEnter: false
     })).toBe('steer');
     expect(resolveThreadSendMode({
-      steerOnEnter: true,
+      pickerMode: 'steer',
+      threadRunning: true,
+      modifierEnter: true
+    })).toBe('queue-if-active');
+    expect(resolveThreadSendMode({
+      pickerMode: 'queue-if-active',
       threadRunning: true,
       modifierEnter: true
     })).toBe('queue-if-active');

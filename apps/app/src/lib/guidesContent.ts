@@ -22,11 +22,12 @@ The agent loads the plugin-authoring skill and runs:
 zcc plugin new hello --app
 cd zcc-plugin-hello
 zcc plugin install .
-zcc plugin dev
 \`\`\`
 
-Edits to \`server.ts\` reload from source. App changes remount live. Use
-\`zcc plugin list\` and \`zcc plugin logs <id> -f\` to verify.
+After install the plugin is live. Unit-test with vitest (no app). Backend
+edits: \`zcc plugin reload <id>\`. UI watch: optional \`zcc plugin dev\`. Compile:
+\`zcc plugin build\` (no app). Use \`zcc plugin list\` and \`zcc plugin logs <id> -f\`
+to verify.
 
 ## 3. Install from source (not create)
 

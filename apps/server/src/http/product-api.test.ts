@@ -1022,6 +1022,19 @@ describe('product HTTP thread reasoning', () => {
     expect(source).toContain('parseReasoningLevel(body.reasoningLevel)');
     expect(source).toContain("routeParams(path, '/api/v1/threads/:id/plan/cancel')");
     expect(source).toContain('cancelConversationPlan');
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/plan')");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/plan/tasks')");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/next-turn/flush')");
+    expect(source).toContain('flushHeldConversationSends');
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/next-turn/:itemId')");
+    expect(source).toContain('dropDeferredConversationMessage');
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/compact')");
+    expect(source).toContain('compactConversation');
+    expect(source).toContain("path === '/api/v1/threads/search'");
+    expect(source).toContain("path === '/api/v1/threads/resolve-mentions'");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/prompt-history')");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/pin')");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/child-summary')");
   });
 });
 

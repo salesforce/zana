@@ -344,6 +344,9 @@ const api: CcApi = {
     deleteQueuedMessage: async () => {
       throw new Error('threads require the product server');
     },
+    deleteNextTurn: async () => {
+      throw new Error('threads require the product server');
+    },
     sendQueuedMessage: async () => {
       throw new Error('threads require the product server');
     },

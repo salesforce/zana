@@ -19,6 +19,22 @@ describe('createFakePluginHost', () => {
     expect(harness.published).toEqual([{ event: 'tick', payload: { ok: true } }]);
   });
 
+  it('runs a registered CLI command', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
+    zcc.cli.register({
+      name: 'notes',
+      summary: 'Notes CLI',
+      async run(argv) {
+        return { exitCode: 0, stdout: argv.join(' ') };
+      }
+    });
+    await expect(harness.runCli(['list'])).resolves.toEqual({
+      exitCode: 0,
+      stdout: 'list',
+      stderr: ''
+    });
+  });
+
   it('poisons the api after dispose', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'gone' });
     await harness.dispose();
@@ -69,5 +85,38 @@ describe('createFakePluginHost sdk stubs', () => {
     await expect(wired.zcc.sdk.threads.archive({ threadId: 't1' })).resolves.toEqual({ id: 't1' });
     await expect(wired.zcc.sdk.threads.fork({ threadId: 't1' })).resolves.toEqual({ id: 'fork:t1' });
     await expect(wired.zcc.sdk.threads.unarchive({ threadId: 't1' })).resolves.toEqual({ id: 't1' });
+  });
+
+  it('lists hidden forks and queued messages when callbacks are wired', async () => {
+    const wired = createFakePluginHost({
+      pluginId: 'wired',
+      forkThread: async (args) => ({ id: `fork:${args.threadId}` }),
+      listThreads: async () => [{
+        id: 'thr-h',
+        projectId: 'p1',
+        hostId: 'h1',
+        environmentId: 'e1',
+        providerId: 'codex',
+        status: 'idle',
+        originKind: 'fork',
+        originPluginId: 'wired',
+        visibility: 'hidden',
+        archivedAt: null,
+        createdAt: 1,
+        parentThreadId: 't1'
+      }],
+      listQueuedMessages: async () => [{ id: 'qm-1' }],
+      createQueuedMessage: async () => ({ id: 'qm-2' })
+    });
+    await expect(wired.zcc.sdk.threads.fork({ sourceThreadId: 't1', visibility: 'hidden' })).resolves.toEqual({
+      id: 'fork:t1'
+    });
+    await expect(wired.zcc.sdk.threads.list({ includeHidden: true })).resolves.toHaveLength(1);
+    await expect(wired.zcc.sdk.threads.queuedMessages.list({ threadId: 't1' })).resolves.toEqual([{ id: 'qm-1' }]);
+    await expect(wired.zcc.sdk.threads.queuedMessages.create({
+      threadId: 't1',
+      input: [],
+      senderThreadId: 'thr-h'
+    })).resolves.toEqual({ id: 'qm-2' });
   });
 });

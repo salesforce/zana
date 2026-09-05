@@ -169,6 +169,7 @@ function buildCommandPlan(command: AdapterCommand): ProviderCommandPlan {
           input: flattenPromptInputGroups(command.input, command.inputGroups),
           providerThreadId: command.providerThreadId,
           threadId: command.threadId,
+          clientRequestId: command.clientRequestId,
         },
       };
     case "thread/stop":
@@ -644,8 +645,23 @@ export function createFakeAdapter(
     translateEvent(event) {
       return translateEventMessage(event);
     },
-    translateAcceptedCommand() {
-      return [];
+    translateAcceptedCommand({ command }) {
+      if (command.type !== "turn/steer" && command.type !== "turn/start") {
+        return [];
+      }
+      const parsedId = clientTurnRequestIdSchema.safeParse(command.clientRequestId);
+      if (!parsedId.success) return [];
+      const turnId = command.type === "turn/steer" ? command.expectedTurnId : undefined;
+      if (!turnId) return [];
+      return [
+        {
+          type: "turn/input/accepted",
+          threadId: command.threadId,
+          providerThreadId: command.providerThreadId,
+          scope: turnScope(turnId),
+          clientRequestId: parsedId.data,
+        },
+      ];
     },
     buildInteractiveResponse: supportsNativeUserQuestion
       ? buildInteractiveResponse

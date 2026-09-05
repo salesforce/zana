@@ -152,6 +152,55 @@ describe('definePluginApp', () => {
     ).toThrow(/"run" must be a function/);
   });
 
+  it('collects experimental_createProjectAction and rejects a missing run', () => {
+    const def = definePluginApp((app) => {
+      app.slots.experimental_createProjectAction({
+        id: 'dx-project',
+        title: 'Salesforce DX project',
+        icon: 'Cloud',
+        component: () => null,
+        run: (ctx) => {
+          ctx.openDialog();
+        }
+      });
+    });
+    const set = collectPluginApp('salesforce', 1, def);
+    expect(set.createProjectActions).toHaveLength(1);
+    expect(set.createProjectActions[0]).toMatchObject({
+      id: 'dx-project',
+      title: 'Salesforce DX project',
+      icon: 'Cloud',
+      pluginId: 'salesforce'
+    });
+    expect(typeof set.createProjectActions[0]?.component).toBe('function');
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.experimental_createProjectAction({
+            id: 'dx-project',
+            title: 'Broken'
+          } as never);
+        })
+      )
+    ).toThrow(/"run" must be a function/);
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.experimental_createProjectAction({
+            id: 'dx-project',
+            title: 'Broken',
+            component: 'not-a-component' as never,
+            run: () => undefined
+          });
+        })
+      )
+    ).toThrow(/"component" must be a React component function/);
+  });
+
   it('defaults navPanel path to id and rejects duplicate slot ids', () => {
     const def = definePluginApp((app) => {
       app.slots.navPanel({

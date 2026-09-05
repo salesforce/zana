@@ -90,6 +90,11 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain("familyId === 'opencode' ? (");
     expect(source).toContain('value={roleTargetId}');
     expect(source).toContain('onChange={setRoleTargetId}');
+    expect(source).toContain('consumeComposerModeCycle');
+    expect(source).toContain('interceptKeyDown');
+    expect(source).toContain("kind: 'native'");
+    expect(source).toContain('options: roleOptions');
+    expect(source).toContain('onChange: setRoleTargetId');
   });
 
   it('defaults the harness like Modern via resolveCliAgentFamily (current → remembered → effectiveDefault)', () => {

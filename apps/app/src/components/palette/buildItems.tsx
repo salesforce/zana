@@ -417,7 +417,6 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
         key: 'action:resume-claude',
         icon: <History size={14} />,
         label: `Resume Claude session in ${selectedProject.name}…`,
-        hint: '⌘R',
         category: 'Actions',
         source: 'core',
         run: () => {

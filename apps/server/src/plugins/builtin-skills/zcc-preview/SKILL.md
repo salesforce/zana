@@ -1,6 +1,6 @@
 ---
 name: zcc-preview
-description: Open a file in Zana's thread side-panel preview. Use when the user should see a file you wrote or found — a report, diagram, config, or source file. Prefer Read for your own inspection.
+description: Open a file in Zana's thread side-panel preview. Use whenever the user asks you to open, show, or preview a file — a report, diagram, config, or source file. Never open files in Cursor, VS Code, or via the open/cursor/code CLI. Prefer Read only for your own inspection.
 ---
 
 # zcc-preview — visible file preview
@@ -8,6 +8,10 @@ description: Open a file in Zana's thread side-panel preview. Use when the user 
 Use **`preview_file`** to open a file in this thread's right-hand **preview**
 tab so the user can look at it. This is a show-the-user action, not a substitute
 for `Read`.
+
+When the user says "open this file", call `preview_file`. Do **not** open the
+file in Cursor, VS Code, or with `open` / `cursor` / `code` — those leave this
+app.
 
 `Read` stays the tool for **your** inspection. Do not preview every file you
 touch — only files the user should see.

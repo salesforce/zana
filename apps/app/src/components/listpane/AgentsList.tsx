@@ -262,17 +262,20 @@ export function AgentsListPane() {
     [threads, scopedProjectId]
   );
 
+  const pinnedThreads = visibleThreads.filter((thread) => thread.pinnedAt != null);
+  const unpinnedThreads = visibleThreads.filter((thread) => thread.pinnedAt == null);
+
   const liveEntries = useMemo<LiveEntry[]>(() => {
     const nameById = new Map(projects.map((p) => [p.id, p.name]));
     const agents: LiveEntry[] = live.map((row) => ({ kind: 'agent', row }));
-    const threadEntries: LiveEntry[] = visibleThreads.map((thread) => ({
+    const threadEntries: LiveEntry[] = unpinnedThreads.map((thread) => ({
       kind: 'thread',
       thread,
       projectName: nameById.get(thread.projectId) ?? 'Unknown',
       state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity)
     }));
     return [...agents, ...threadEntries];
-  }, [live, visibleThreads, projects]);
+  }, [live, unpinnedThreads, projects]);
 
   const entryNeedsYou = (entry: LiveEntry): boolean => {
     if (entry.kind === 'thread') return entry.state === 'blocked';
@@ -285,7 +288,16 @@ export function AgentsListPane() {
   // `unknown` collapse into the Idle bucket — neither is actively running nor
   // waiting, so they read as "at rest" alongside idle. Order: most-urgent first.
   // Each group is mutually exclusive: a promoted card is in "Needs you", not Idle.
+  const nameById = new Map(projects.map((p) => [p.id, p.name]));
+  const pinnedEntries: LiveEntry[] = pinnedThreads.map((thread) => ({
+    kind: 'thread' as const,
+    thread,
+    projectName: nameById.get(thread.projectId) ?? 'Unknown',
+    state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity)
+  }));
+
   const liveGroups: Array<{ key: string; label: string; entries: LiveEntry[] }> = [
+    { key: 'pinned', label: 'Pinned', entries: pinnedEntries },
     { key: 'blocked', label: 'Needs you', entries: liveEntries.filter(entryNeedsYou) },
     { key: 'working', label: 'Working', entries: liveEntries.filter((entry) => entryState(entry) === 'working') },
     {

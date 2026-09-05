@@ -53,4 +53,19 @@ describe('ThreadWorkingIndicator', () => {
     expect(screen.getByText(`${THREAD_WORKING_PHRASES[1]}…`)).toBeTruthy();
     expect(screen.queryByText('Planning next move…')).toBeNull();
   });
+
+  it('hides leftover thinking when the thread is idle or waiting for the host', () => {
+    const { rerender } = render(
+      <ThreadWorkingIndicator status="idle" thinking={thinkingWithText} />
+    );
+    expect(screen.queryByTestId('thread-thinking')).toBeNull();
+    rerender(<ThreadWorkingIndicator status="waiting-for-host" thinking={thinkingWithText} />);
+    expect(screen.queryByTestId('thread-thinking')).toBeNull();
+  });
+
+  it('shows Waiting for reconnection instead of a planning phrase', () => {
+    render(<ThreadWorkingIndicator status="host-reconnecting" thinking={null} />);
+    expect(screen.getByText('Waiting for reconnection…')).toBeTruthy();
+    expect(screen.queryByText('Planning next move…')).toBeNull();
+  });
 });

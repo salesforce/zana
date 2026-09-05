@@ -11,6 +11,7 @@ import {
   publisherLabel,
   rowEnabled,
   shouldMountHostSettings,
+  withPluginIdentity,
   type HubRow
 } from './installed-plugins.js';
 
@@ -60,6 +61,21 @@ describe('buildHubRows — PluginService snapshot union', () => {
     expect(rows[0]?.module.panel).toBeUndefined();
     expect(rows[0]?.plugin?.enabled).toBe(false);
     expect(rowEnabled(rows[0]!)).toBe(false);
+  });
+
+  it('keeps the catalog name when the loaded module is titled after a nav panel', () => {
+    const panel = () => null;
+    const rows = buildHubRows(
+      [mod('salesforce', 'SOQL', { icon: 'FileCode', panel })],
+      [],
+      [plugin('salesforce', { name: 'Salesforce', icon: 'Cloud' })]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.module.id).toBe('salesforce');
+    expect(rows[0]?.module.title).toBe('Salesforce');
+    expect(rows[0]?.module.icon).toBe('Cloud');
+    expect(rows[0]?.module.panel).toBe(panel);
+    expect(rows[0]?.plugin?.name).toBe('Salesforce');
   });
 
   it('dedupes a plugin that is also a loaded module and a disk entry', () => {
@@ -118,6 +134,19 @@ describe('filterInstalledRows', () => {
     const found = filterInstalledRows(rows, 'pi', 'all', 'asc');
     expect(found.map((row) => row.module.id)).toEqual(['pi']);
     expect(rowEnabled(found[0]!)).toBe(false);
+  });
+
+  it('finds a plugin by catalog name even when the row still carries a nav title', () => {
+    const mismatched: HubRow[] = [
+      {
+        module: mod('salesforce', 'SOQL'),
+        entry: null,
+        plugin: plugin('salesforce', { name: 'Salesforce', description: 'Org identity' })
+      }
+    ];
+    expect(filterInstalledRows(mismatched, 'salesforce', 'all', 'asc').map((row) => row.module.id)).toEqual([
+      'salesforce'
+    ]);
   });
 
   it('filters by publisher chip and sorts by name, not enabled state', () => {
@@ -208,6 +237,18 @@ describe('displayIcon', () => {
   it('falls back for path-like branding icons', () => {
     expect(displayIcon('./icons/claude-code.svg')).toBe('Puzzle');
     expect(displayIcon('Library')).toBe('Library');
+  });
+});
+
+describe('withPluginIdentity', () => {
+  it('leaves a disk-only row unchanged', () => {
+    const module = mod('acme', 'Acme');
+    expect(withPluginIdentity(module, null)).toBe(module);
+  });
+
+  it('keeps the loaded title when the catalog name is blank', () => {
+    const module = mod('salesforce', 'SOQL');
+    expect(withPluginIdentity(module, plugin('salesforce', { name: '   ' })).title).toBe('SOQL');
   });
 });
 

@@ -23,6 +23,9 @@ export interface ThreadRuntimeAdapter {
     reasoningLevel?: ReasoningLevel;
     acpMode?: string;
     clientRequestId?: string;
+    permissionMode?: 'accept-edits' | 'auto' | 'full';
+    permissionEscalation?: 'ask' | 'deny';
+    expectedTurnId?: string;
   }): Promise<void>;
   resumeWork(input: ThreadResumeInput): Promise<{ providerThreadId?: string } | void>;
   resizeWork(input: { threadId: string; cols: number; rows: number }): Promise<void>;

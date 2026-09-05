@@ -43,8 +43,10 @@ import { HOST_ARTIFACT_MAX_BYTES } from '@zana-ai/zcc-host-daemon-contract';
  * 19: host FS discovery (list_paths, read_path, file_metadata, pick_folder).
  * 20: optional terminal.start command (login shell -lc).
  * 21: project-authorized native harness agent descriptor discovery.
+ * 22: optional providerCheckpointId on thread.start/resume; permissionEscalation
+ * and expectedTurnId on turn.submit.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 21;
+export const HOST_RPC_PROTOCOL_VERSION = 22;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -292,7 +294,8 @@ export const ThreadStartCommandSchema = z.object({
   clientRequestId: clientTurnRequestIdSchema.optional(),
   /** Plugin-registered ACP tools attached via bb-bridge for this session. */
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
-  instructions: z.string().max(100_000).optional()
+  instructions: z.string().max(100_000).optional(),
+  providerCheckpointId: z.string().min(1).max(200).optional()
 }).strict();
 
 export const ThreadResizeCommandSchema = z.object({
@@ -330,7 +333,8 @@ export const ThreadResumeFieldsSchema = z.object({
   reasoningLevel: reasoningLevelSchema.optional(),
   acpMode: z.string().min(1).max(200).optional(),
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
-  instructions: z.string().max(100_000).optional()
+  instructions: z.string().max(100_000).optional(),
+  providerCheckpointId: z.string().min(1).max(200).optional()
 }).strict();
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
 
@@ -344,7 +348,9 @@ export const TurnSubmitCommandSchema = z.object({
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
   acpMode: z.string().min(1).max(200).optional(),
-  clientRequestId: clientTurnRequestIdSchema.optional()
+  clientRequestId: clientTurnRequestIdSchema.optional(),
+  permissionEscalation: z.enum(['ask', 'deny']).optional(),
+  expectedTurnId: z.string().min(1).max(200).optional()
 }).strict();
 
 export const ThreadResumeCommandSchema = ThreadResumeFieldsSchema.extend({

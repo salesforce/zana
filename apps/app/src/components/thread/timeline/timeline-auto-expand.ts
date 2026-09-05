@@ -77,16 +77,18 @@ function shouldAutoExpandLiveFrontierRow(row: ThreadTimelineViewRow): boolean {
   switch (row.kind) {
     case 'system':
       return row.status === 'pending';
-    case 'bundle-summary':
-      return true;
     case 'work':
+      // Tool/command rows stay collapsed; the user opens them. Only rows that
+      // are themselves a container (delegation) or a live progress surface
+      // (workflow / image) auto-open at the frontier. Bundle summaries
+      // ("Running N tools") stay collapsed until clicked.
       return (
         row.workKind === 'delegation'
         || row.workKind === 'image-view'
         || (row.workKind === 'workflow' && row.status === 'pending')
-        || row.status === 'pending'
       );
     case 'conversation':
+    case 'bundle-summary':
     case 'step-summary':
     case 'turn':
       return false;
@@ -96,7 +98,9 @@ function shouldAutoExpandLiveFrontierRow(row: ThreadTimelineViewRow): boolean {
 }
 
 function shouldAutoExpandTerminalFrontierRow(row: ThreadTimelineViewRow): boolean {
-  return isRowExpandable(row) && row.kind === 'system' && row.status === 'error';
+  if (!isRowExpandable(row)) return false;
+  if (row.kind === 'system' && row.status === 'error') return true;
+  return row.kind === 'turn' && row.status === 'interrupted';
 }
 
 function visitForTerminalFrontierAutoExpand(
@@ -107,6 +111,10 @@ function visitForTerminalFrontierAutoExpand(
   if (tail && shouldAutoExpandTerminalFrontierRow(tail)) {
     ids.add(tail.id);
   }
+  const latestInterrupted = [...rows].reverse().find(
+    (row) => row.kind === 'turn' && row.status === 'interrupted'
+  );
+  if (latestInterrupted) ids.add(latestInterrupted.id);
   for (const row of rows) {
     if (row.kind === 'work' && row.workKind === 'delegation' && row.status === 'pending') {
       visitForTerminalFrontierAutoExpand(row.childRows, ids);

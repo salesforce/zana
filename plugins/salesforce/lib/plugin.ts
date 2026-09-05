@@ -39,6 +39,7 @@ import { CONSTITUTION_INSTRUCTIONS, shouldContributeConstitution } from './const
 import { ConnectionError, ConnectionManager } from './connection.js';
 import { formatDoctor, runDoctor } from './doctor.js';
 import { compactError, fingerprint, isDxProject, resolveUnderRoot } from './dx-project.js';
+import { generatedOutputPath, parseGenerateInput } from './project-generate.js';
 import {
   AgentFilesError,
   listAgentFiles,
@@ -46,12 +47,15 @@ import {
   writeAgentFile
 } from './agent-files.js';
 import { parseAgentScriptSource } from './agent-script-parse.js';
+import { isAgentScriptLspQuery, queryAgentScriptLsp } from './agent-script-lsp.js';
 import { AGENT_SCRIPT_EXAMPLES } from './agent-script-model.js';
 import { envelopeTitle, Guardrail } from './guardrail.js';
 import { diagnoseLwc, findLwcComponent, inspectLwc, parseLwcInput, resolveJestBin, scanLwcComponents } from './lwc.js';
 import { createNodeDeps } from './node-deps.js';
+import { formatOrgRoster, orgRosterInstructions } from './org-list.js';
 import { publicOrgView } from './org-resolution.js';
 import { applyLimit, parseSoqlInput, previewRecords } from './soql.js';
+import { SoqlExplorer } from './soql-explorer.js';
 import {
   DEFAULT_API_VERSION,
   EVAL_API_VERSION,
@@ -78,7 +82,8 @@ const SETTINGS = {
   [SETTING_DEFAULT_ORG]: {
     type: 'string' as const,
     label: 'Default org alias',
-    description: 'Salesforce CLI alias used by family tools. Blank falls back to SF_TARGET_ORG, then the CLI default.'
+    description:
+      'Salesforce CLI alias used by SOQL, Apex, LWC, and Agentforce. Pick from CLI-connected orgs on the Salesforce tab. Blank falls back to SF_TARGET_ORG, then the CLI default.'
   },
   [SETTING_API_VERSION]: {
     type: 'string' as const,
@@ -89,11 +94,11 @@ const SETTINGS = {
   [SETTING_PROJECT_ROOT]: {
     type: 'string' as const,
     label: 'DX project root',
-    description: 'Local Salesforce DX project path (the folder that contains sfdx-project.json). Used for LWC and Agent Script bundles.'
+    description: 'Local Salesforce DX project path (the folder that contains sfdx-project.json). Used for LWC and Agentforce bundles.'
   },
   [SETTING_AGENT_SCRIPT_DIALECT]: {
     type: 'select' as const,
-    label: 'Agent Script dialect',
+    label: 'Agentforce dialect',
     description: 'Parser and playground dialect for .agent files.',
     options: [...AGENT_SCRIPT_DIALECTS],
     default: DEFAULT_AGENT_SCRIPT_DIALECT
@@ -120,6 +125,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   });
   const guardrail = new Guardrail(async (envelope, threadId) => confirmEnvelope(zcc, envelope, threadId));
   const evalEvidence = new EvalEvidenceStore(zcc.storage.kv);
+  const explorer = new SoqlExplorer(connections, zcc.storage.kv, deps.now);
   let lastDoctor: DoctorReport | null = null;
 
   const readSettings = async (): Promise<PluginSettingsValues> => {
@@ -135,8 +141,30 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   const applyStatus = async () => {
     const snapshot = await readSettings();
     if (!snapshot.defaultOrg) {
-      zcc.status.needsConfiguration('Set a default org alias under Plugins → Salesforce, then run zcc sf doctor.');
+      zcc.status.needsConfiguration('Pick a CLI-connected org on the Salesforce tab, or set a default org alias, then run zcc sf doctor.');
     }
+  };
+
+  const resolveAgentFilesRoot = async (
+    args: unknown
+  ): Promise<{ root: string; options?: { allowNonDx?: boolean } }> => {
+    const projectId = rpcString(args, 'projectId');
+    if (projectId) {
+      let projects: Array<{ id: string; path?: string }> = [];
+      try {
+        projects = await zcc.sdk.projects.list();
+      } catch {
+        throw new AgentFilesError('not_configured', 'Project list is not available.');
+      }
+      const match = projects.find((row) => row.id === projectId);
+      if (!match) throw new AgentFilesError('not_found', `Project not found: ${projectId}`);
+      if (!match.path?.trim()) {
+        throw new AgentFilesError('not_configured', 'This project has no local folder to scan for .agent files.');
+      }
+      return { root: match.path, options: { allowNonDx: true } };
+    }
+    const snapshot = await readSettings();
+    return { root: snapshot.projectRoot };
   };
 
   await applyStatus();
@@ -152,35 +180,85 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   });
   zcc.rpc.method('status', async () => {
     const snapshot = await readSettings();
+    const listed = await listOrgsSafe(connections);
     return {
       defaultOrg: snapshot.defaultOrg,
+      selectedAlias: listed.selectedAlias,
       apiVersion: snapshot.apiVersion,
       projectRoot: snapshot.projectRoot,
       agentScriptDialect: snapshot.agentScriptDialect,
       dxProject: isDxProject(snapshot.projectRoot, deps.exists),
-      lastDoctor
+      lastDoctor,
+      orgs: listed.orgs
     };
   });
-  zcc.rpc.method('agentFiles.list', async () => {
-    const snapshot = await readSettings();
+  zcc.rpc.method('orgs', async () => {
     try {
-      return { ok: true, files: listAgentFiles(snapshot.projectRoot, deps) };
+      const orgs = await connections.listOrgs();
+      const selectedAlias = await connections.resolveAlias();
+      return { ok: true, orgs, selectedAlias };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = error instanceof ConnectionError ? error.code : 'orgs_failed';
+      return { ok: false, error: message, code, orgs: [], selectedAlias: null };
+    }
+  });
+  zcc.rpc.method('project.generate', async (args) => {
+    const parsed = parseGenerateInput(args);
+    if (!parsed.ok) return { ok: false, code: parsed.code, error: parsed.error };
+    const result = await deps.execSf([
+      'project',
+      'generate',
+      '--name',
+      parsed.name,
+      '--output-dir',
+      parsed.outputDir,
+      '--json'
+    ]);
+    if (result.code === 127) {
+      return {
+        ok: false,
+        code: 'cli_missing',
+        error: result.stderr.trim() || result.stdout.trim() || 'Salesforce CLI missing. Install sf, then retry.'
+      };
+    }
+    const cli = parseSfJson(result.stdout);
+    if (result.code !== 0 || cli.status !== 0) {
+      return {
+        ok: false,
+        code: 'generate_failed',
+        error:
+          cli.message ||
+          result.stderr.trim() ||
+          result.stdout.trim() ||
+          `sf project generate failed (${result.code})`
+      };
+    }
+    return {
+      ok: true,
+      name: parsed.name,
+      path: generatedOutputPath(cli.result, parsed.outputDir, parsed.name)
+    };
+  });
+  zcc.rpc.method('agentFiles.list', async (args) => {
+    try {
+      const resolved = await resolveAgentFilesRoot(args);
+      return { ok: true, files: listAgentFiles(resolved.root, deps, resolved.options) };
     } catch (error) {
       return agentFilesFailure(error);
     }
   });
   zcc.rpc.method('agentFiles.read', async (args) => {
-    const snapshot = await readSettings();
     const path = rpcString(args, 'path');
     if (!path) return { ok: false, code: 'invalid_input', error: 'read requires path.' };
     try {
-      return { ok: true, file: readAgentFile(snapshot.projectRoot, path, deps) };
+      const resolved = await resolveAgentFilesRoot(args);
+      return { ok: true, file: readAgentFile(resolved.root, path, deps, resolved.options) };
     } catch (error) {
       return agentFilesFailure(error);
     }
   });
   zcc.rpc.method('agentFiles.write', async (args) => {
-    const snapshot = await readSettings();
     const path = rpcString(args, 'path');
     const content = args && typeof args === 'object' && 'content' in args ? (args as { content?: unknown }).content : undefined;
     const expectedSha256 = rpcString(args, 'expectedSha256') || undefined;
@@ -188,7 +266,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return { ok: false, code: 'invalid_input', error: 'write requires path and string content.' };
     }
     try {
-      return { ok: true, file: writeAgentFile(snapshot.projectRoot, path, content, deps, expectedSha256) };
+      const resolved = await resolveAgentFilesRoot(args);
+      return { ok: true, file: writeAgentFile(resolved.root, path, content, deps, expectedSha256, resolved.options) };
     } catch (error) {
       return agentFilesFailure(error);
     }
@@ -205,7 +284,38 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     );
     return { ok: true, result: parseAgentScriptSource(source, dialect) };
   });
+  zcc.rpc.method('agentScript.query', async (args) => {
+    const snapshot = await readSettings();
+    const source = args && typeof args === 'object' && typeof (args as { source?: unknown }).source === 'string'
+      ? (args as { source: string }).source
+      : '';
+    const dialect = dialectSetting(
+      args && typeof args === 'object' && 'dialect' in args
+        ? (args as { dialect?: unknown }).dialect
+        : snapshot.agentScriptDialect
+    );
+    const query = args && typeof args === 'object' && 'query' in args ? (args as { query?: unknown }).query : undefined;
+    const line = args && typeof args === 'object' && 'line' in args ? (args as { line?: unknown }).line : undefined;
+    const column = args && typeof args === 'object' && 'column' in args ? (args as { column?: unknown }).column : undefined;
+    const result = queryAgentScriptLsp({
+      source,
+      dialect,
+      ...(isAgentScriptLspQuery(query) ? { query } : {}),
+      line: typeof line === 'number' ? line : undefined,
+      column: typeof column === 'number' ? column : undefined
+    });
+    return result.ok ? { ok: true, result: result.result } : { ok: false, error: result.error };
+  });
   zcc.rpc.method('agentScript.examples', async () => ({ ok: true, examples: AGENT_SCRIPT_EXAMPLES }));
+  zcc.rpc.method('agentPreview.start', (args) =>
+    runUiPreview('preview.start', args, connections, guardrail, artifacts, deps, readSettings)
+  );
+  zcc.rpc.method('agentPreview.send', (args) =>
+    runUiPreview('preview.send', args, connections, guardrail, artifacts, deps, readSettings)
+  );
+  zcc.rpc.method('agentPreview.end', (args) =>
+    runUiPreview('preview.end', args, connections, guardrail, artifacts, deps, readSettings)
+  );
   zcc.rpc.method('org', async () => {
     try {
       const org = publicOrgView(await connections.connect());
@@ -216,13 +326,24 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return { ok: false, error: message, code };
     }
   });
+  zcc.rpc.method('soql.describeGlobal', (args) => explorer.describeGlobal(args));
+  zcc.rpc.method('soql.describeSObject', (args) => explorer.describeSObject(args));
+  zcc.rpc.method('soql.query', (args) => explorer.query(args));
+  zcc.rpc.method('soql.queryMore', (args) => explorer.queryMore(args));
+  zcc.rpc.method('soql.explain', (args) => explorer.explain(args));
+  zcc.rpc.method('soql.limits', () => explorer.limits());
+  zcc.rpc.method('soql.abort', (args) => explorer.abort(args));
+  zcc.rpc.method('soql.history.list', () => explorer.historyList());
+  zcc.rpc.method('soql.history.save', (args) => explorer.historySave(args));
+  zcc.rpc.method('soql.history.remove', (args) => explorer.historyRemove(args));
+  zcc.onDispose(() => explorer.dispose());
 
   zcc.cli.register({
     name: 'sf',
-    summary: 'Salesforce DX doctor, org status, and Agent Script lint',
+    summary: 'Salesforce DX doctor, org status, and Agentforce lint',
     commands: [
       { name: 'doctor', summary: 'Check Salesforce CLI, aliases, and the target org', usage: 'zcc sf doctor' },
-      { name: 'org', summary: 'Show the resolved target org (no token)', usage: 'zcc sf org' },
+      { name: 'org', summary: 'List CLI-connected orgs and the resolved target (no token)', usage: 'zcc sf org' },
       { name: 'lint', summary: 'Lint a confined .agent file (or every bundle)', usage: 'zcc sf lint [path]' }
     ],
     async run(argv) {
@@ -236,17 +357,30 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         return { exitCode: lastDoctor.cliOk ? 0 : 1, stdout: formatDoctor(lastDoctor) };
       }
       if (command === 'org') {
+        let listed: Awaited<ReturnType<ConnectionManager['listOrgs']>> = [];
+        let selectedAlias: string | null = null;
         try {
-          const org = publicOrgView(await connections.connect());
-          return {
-            exitCode: 0,
-            stdout: `${org.alias}  ${org.username}  ${org.kind}  ${org.instanceUrl}  api ${org.apiVersion}\n`
-          };
+          listed = await connections.listOrgs();
+          selectedAlias = await connections.resolveAlias();
         } catch (error) {
           return {
             exitCode: 1,
             stderr: `${error instanceof Error ? error.message : String(error)}\n`
           };
+        }
+        const roster = `${formatOrgRoster(listed, selectedAlias)}\n`;
+        try {
+          const org = publicOrgView(await connections.connect());
+          return {
+            exitCode: 0,
+            stdout: `${roster}Target: ${org.alias}  ${org.username}  ${org.kind}  ${org.instanceUrl}  api ${org.apiVersion}\n`
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (listed.length === 0) {
+            return { exitCode: 1, stderr: `${message}\n` };
+          }
+          return { exitCode: 1, stdout: roster, stderr: `${message}\n` };
         }
       }
       if (command === 'lint') {
@@ -264,8 +398,9 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     })) {
       return {};
     }
+    const listed = await listOrgsSafe(connections);
     return {
-      instructions: CONSTITUTION_INSTRUCTIONS,
+      instructions: CONSTITUTION_INSTRUCTIONS + orgRosterInstructions(listed.orgs, listed.selectedAlias),
       tools: ['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent'],
       skills: ['salesforce-constitution', 'salesforce-dx']
     };
@@ -328,7 +463,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   zcc.agents.registerTool({
     name: 'sf_agent',
     description:
-      'Agentforce Agent Script lifecycle: compile/inspect a confined .agent file, live preview, eval via a confined spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate. Edit source in the Agent Script panel or file tools. Publish and activate always confirm.',
+      'Agentforce lifecycle: LSP diagnose (diagnostics/hover/complete/definition/symbols) on a confined .agent file, compile/inspect, preview (simulate by default; live confirms), eval via a confined spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate. Edit source in the Agentforce Playground side panel or file tools. Publish, activate, and live preview always confirm.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -337,6 +472,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
           enum: [
             'compile',
             'inspect',
+            'diagnose',
             'preview.start',
             'preview.send',
             'preview.end',
@@ -348,6 +484,9 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         },
         apiName: { type: 'string' },
         path: { type: 'string' },
+        query: { type: 'string', enum: ['diagnostics', 'hover', 'complete', 'definition', 'symbols'] },
+        line: { type: 'number' },
+        column: { type: 'number' },
         sessionId: { type: 'string' },
         utterance: { type: 'string' },
         specPath: { type: 'string' },
@@ -355,7 +494,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         botVersionId: { type: 'string' },
         versionNumber: { type: 'number' },
         allow_untested: { type: 'boolean' },
-        published: { type: 'boolean' }
+        published: { type: 'boolean' },
+        live: { type: 'boolean' }
       },
       required: ['action']
     },
@@ -692,6 +832,9 @@ async function runAgent(
     if (parsed.plan.action === 'compile' || parsed.plan.action === 'inspect') {
       return await runAgentLocal(parsed.plan, snapshot, deps);
     }
+    if (parsed.plan.action === 'diagnose') {
+      return await runAgentDiagnose(parsed.plan, snapshot, deps);
+    }
     if (parsed.plan.action === 'eval.run') {
       return await runAgentEval(parsed.plan, ctx, connections, guardrail, artifacts, deps, snapshot, evalEvidence);
     }
@@ -730,11 +873,11 @@ async function runAgentLocal(
   if (plan.action === 'inspect' && !plan.apiName && !plan.path) {
     return {
       ok: true,
-      summary: `${loaded.bundles.length} Agent Script bundle(s)`,
+      summary: `${loaded.bundles.length} Agentforce bundle(s)`,
       data: loaded.bundles
     };
   }
-  if (!loaded.bundle) return fail('not_found', `Agent Script bundle not found: ${plan.apiName ?? plan.path}`);
+  if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.apiName ?? plan.path}`);
   if (plan.action === 'inspect') {
     const issues = diagnoseAgentBundle(loaded.bundle);
     return {
@@ -750,7 +893,7 @@ async function runAgentLocal(
   if (probed.compiler === 'missing') {
     return fail(
       'compiler_missing',
-      'No Agent Script compiler. Install the official compiler under the DX project node_modules or the sf agent plugin, then retry compile.'
+      'No Agentforce compiler. Install the official compiler under the DX project node_modules or the sf agent plugin, then retry compile.'
     );
   }
   const bin = resolveAgentCompilerBin(loaded.projectRoot, deps);
@@ -788,6 +931,47 @@ async function runAgentLocal(
   };
 }
 
+async function runAgentDiagnose(
+  plan: AgentPlan,
+  snapshot: PluginSettingsValues,
+  deps: SalesforceDeps
+): Promise<ToolResult> {
+  try {
+    const loaded = await loadAgentBundles(plan, snapshot, deps);
+    if (!('projectRoot' in loaded)) return loaded;
+    if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.apiName ?? plan.path}`);
+    const file = readAgentFile(snapshot.projectRoot, loaded.bundle.path, deps);
+    const queried = queryAgentScriptLsp({
+      source: file.content,
+      dialect: snapshot.agentScriptDialect,
+      uri: `file://${file.path}`,
+      query: plan.query ?? 'diagnostics',
+      line: plan.line,
+      column: plan.column
+    });
+    if (!queried.ok) return fail('invalid_input', queried.error);
+    const result = queried.result;
+    const query = result.query;
+    const summary =
+      query === 'hover'
+        ? result.hover
+          ? `${file.apiName}: hover`
+          : `${file.apiName}: no hover`
+        : query === 'complete'
+          ? `${file.apiName}: ${result.completions?.length ?? 0} completion(s)`
+          : query === 'definition'
+            ? result.definition
+              ? `${file.apiName}: definition`
+              : `${file.apiName}: no definition`
+            : query === 'symbols'
+              ? `${file.apiName}: ${result.symbols?.length ?? 0} symbol(s)`
+              : `${file.apiName}: ${result.diagnostics.length} diagnostic(s)`;
+    return { ok: true, summary, data: { path: file.path, apiName: file.apiName, ...result } };
+  } catch (error) {
+    return agentFilesFailure(error);
+  }
+}
+
 async function loadAgentBundles(
   plan: Pick<AgentPlan, 'apiName' | 'path'>,
   snapshot: PluginSettingsValues,
@@ -800,7 +984,7 @@ async function loadAgentBundles(
   if (!('projectRoot' in root)) return root;
   if (plan.path) {
     const confined = resolveUnderRoot(root.projectRoot, plan.path, deps.realpath);
-    if (!confined) return fail('path_refused', 'Agent Script path must stay inside the configured DX project root.');
+    if (!confined) return fail('path_refused', 'Agentforce path must stay inside the configured DX project root.');
   }
   const bundles = scanAgentBundles(root.projectRoot, deps);
   return {
@@ -833,6 +1017,43 @@ async function mediateOrgRead(
   return { org, mediated };
 }
 
+async function runUiPreview(
+  action: 'preview.start' | 'preview.send' | 'preview.end',
+  args: unknown,
+  connections: ConnectionManager,
+  guardrail: Guardrail,
+  artifacts: ArtifactStore,
+  deps: SalesforceDeps,
+  readSettings: () => Promise<PluginSettingsValues>
+): Promise<ToolResult> {
+  const threadId = rpcString(args, 'threadId');
+  if (!threadId) return fail('refused', 'Preview requires an open thread.');
+  const parsed = parseAgentInput({
+    action,
+    apiName: rpcString(args, 'apiName') || undefined,
+    path: rpcString(args, 'path') || undefined,
+    sessionId: rpcString(args, 'sessionId') || undefined,
+    utterance:
+      args && typeof args === 'object' && typeof (args as { utterance?: unknown }).utterance === 'string'
+        ? (args as { utterance: string }).utterance
+        : undefined,
+    published: Boolean(args && typeof args === 'object' && (args as { published?: unknown }).published === true),
+    live: Boolean(args && typeof args === 'object' && (args as { live?: unknown }).live === true)
+  });
+  if (!parsed.ok) return fail('invalid_input', parsed.error);
+  const snapshot = await readSettings();
+  const ctx: PluginAgentToolContext = {
+    threadId,
+    projectId: rpcString(args, 'projectId'),
+    signal: new AbortController().signal
+  };
+  try {
+    return await runAgentPreview(parsed.plan, ctx, connections, guardrail, artifacts, deps, snapshot);
+  } catch (error) {
+    return connectionFailure(error);
+  }
+}
+
 async function runAgentPreview(
   plan: AgentPlan,
   ctx: PluginAgentToolContext,
@@ -850,7 +1071,9 @@ async function runAgentPreview(
     ctx,
     connections,
     guardrail,
-    (connected) => `${plan.action} ${label} on ${connected.alias} (${connected.kind})`
+    (connected) => `${plan.live ? 'Live ' : ''}${plan.action} ${label} on ${connected.alias} (${connected.kind})`,
+    plan.live ? 'agent.preview.live' : undefined,
+    { preview: label }
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} ${plan.action}.`);
   const result = await deps.execSf(
@@ -1062,12 +1285,12 @@ async function runAgentPublish(
   if (!('projectRoot' in loaded)) return loaded;
   const apiName = loaded.bundle?.apiName ?? plan.apiName;
   if (!apiName) return fail('invalid_input', 'lifecycle.publish requires apiName or path.');
-  if (!loaded.bundle) return fail('not_found', `Agent Script bundle not found: ${plan.apiName ?? plan.path}`);
+  if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.apiName ?? plan.path}`);
   const { org, mediated } = await mediateOrgRead(
     ctx,
     connections,
     guardrail,
-    (connected) => `Publish inactive Agent Script version ${apiName} on ${connected.alias} (${connected.kind})`,
+    (connected) => `Publish inactive Agentforce version ${apiName} on ${connected.alias} (${connected.kind})`,
     'agent.publish',
     { preview: apiName }
   );
@@ -1115,7 +1338,7 @@ async function runAgentActivate(
     connections,
     guardrail,
     (connected) =>
-      `Activate Agent Script ${apiName || botVersionId} (${gate.untested ? 'untested intent' : 'eval evidence'}) on ${connected.alias} (${connected.kind})`,
+      `Activate Agentforce ${apiName || botVersionId} (${gate.untested ? 'untested intent' : 'eval evidence'}) on ${connected.alias} (${connected.kind})`,
     'agent.activate',
     { preview: apiName || botVersionId }
   );
@@ -1159,7 +1382,7 @@ async function resolvePreviewIdentity(
   if (plan.path) {
     const loaded = await loadAgentBundles(plan, snapshot, deps);
     if (!('projectRoot' in loaded)) return loaded;
-    if (!loaded.bundle) return fail('not_found', `Agent Script bundle not found: ${plan.path}`);
+    if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.path}`);
     return {
       identity: { flag: 'authoring-bundle', apiName: loaded.bundle.apiName },
       projectRoot: loaded.projectRoot
@@ -1184,6 +1407,18 @@ function readConfinedFile(projectRoot: string, relativePath: string, deps: Sales
   const resolved = resolveUnderRoot(projectRoot, relativePath, deps.realpath);
   if (!resolved) return null;
   return deps.readFile(resolved);
+}
+
+async function listOrgsSafe(
+  connections: ConnectionManager
+): Promise<{ orgs: Awaited<ReturnType<ConnectionManager['listOrgs']>>; selectedAlias: string | null }> {
+  try {
+    const orgs = await connections.listOrgs();
+    const selectedAlias = await connections.resolveAlias();
+    return { orgs, selectedAlias };
+  } catch {
+    return { orgs: [], selectedAlias: null };
+  }
 }
 
 function rpcString(args: unknown, key: string): string {

@@ -40,6 +40,17 @@ describe('CREATE_PLUGIN_PROMPT', () => {
     expect(source).toContain('Install from repository');
   });
 
+  it('Browse Create a plugin stays on the page until send', () => {
+    const source = readFileSync(new URL('../views/extensions/MarketplaceView.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('CREATE_PLUGIN_PROMPT');
+    expect(source).toContain("searchParams.get('view') === 'create'");
+    expect(source).toContain('HomeAgentComposer');
+    expect(source).toContain('key={prompt}');
+    expect(source).toContain('Back to Browse');
+    expect(source).not.toContain('createPluginComposeNavigation');
+    expect(source).not.toContain('onCreate');
+  });
+
   it('composer Create plugin action inserts the shared prefix on new-thread only', () => {
     const source = readFileSync(new URL('../plugins/PluginComposerChrome.tsx', import.meta.url), 'utf8');
     expect(source).toContain('data-testid="composer-create-plugin"');

@@ -122,11 +122,20 @@ export function threadExecutionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
   reasoningLevel?: ReasoningLevel;
+  permissionEscalation?: 'ask' | 'deny' | null;
 }): RuntimeThreadExecutionOptions {
   const mode = input.permissionMode ?? DEFAULT_THREAD_EXECUTION_OPTIONS.permissionMode;
+  const policy = permissionPolicy(mode);
+  const permissionEscalation =
+    policy.permissionEscalation === null
+      ? null
+      : input.permissionEscalation === 'ask' || input.permissionEscalation === 'deny'
+        ? input.permissionEscalation
+        : policy.permissionEscalation;
   return {
     ...DEFAULT_THREAD_EXECUTION_OPTIONS,
-    ...permissionPolicy(mode),
+    ...policy,
+    permissionEscalation,
     ...(input.model ? { model: input.model } : {}),
     ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {})
   } as RuntimeThreadExecutionOptions;
@@ -137,6 +146,7 @@ function executionOptions(input: {
   model?: string;
   reasoningLevel?: ReasoningLevel;
   acpMode?: string;
+  permissionEscalation?: 'ask' | 'deny' | null;
 }): RuntimeThreadExecutionOptions {
   return {
     ...threadExecutionOptions(input),
@@ -255,6 +265,7 @@ export function createAgentRuntimeAdapter(options: {
   const runtimeMeta = new Map<string, { catalogHash: string; cwd: string }>();
   const threadLocation = new Map<string, { environmentId: string; cwd: string }>();
   const remoteProxyByThread = new Map<string, ThreadRemoteProxy>();
+  const submitByThread = new Map<string, Promise<void>>();
   const createRuntime = options.createRuntime
     ?? (fakeProviderEnabled() ? createFakeAgentRuntime : createAgentRuntime);
   const bridgeBundleDir = options.bridgeBundleDir ?? packedBridgeBundleDir();
@@ -403,6 +414,14 @@ export function createAgentRuntimeAdapter(options: {
           reasoningLevel: input.reasoningLevel,
           acpMode: input.acpMode
         }),
+        ...(input.providerThreadId ? {
+          fork: {
+            sourceProviderThreadId: input.providerThreadId,
+            ...(input.providerCheckpointId
+              ? { sourceProviderCheckpointId: input.providerCheckpointId }
+              : {})
+          }
+        } : {}),
         ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
         ...mergeSessionTooling({
           remoteProxy,
@@ -413,17 +432,43 @@ export function createAgentRuntimeAdapter(options: {
       return { providerThreadId: result.providerThreadId };
     },
     async submitTurn(input) {
-      const runtime = runtimeForThread(input.threadId);
-      await runtime.runTurn({
-        threadId: input.threadId,
-        input: textInput(input.input),
-        clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
-        options: executionOptions({
+      const previous = submitByThread.get(input.threadId) ?? Promise.resolve();
+      const run = previous.catch(() => undefined).then(async () => {
+        const runtime = runtimeForThread(input.threadId);
+        const options = executionOptions({
+          permissionMode: input.permissionMode,
           model: input.model,
           reasoningLevel: input.reasoningLevel,
-          acpMode: input.acpMode
-        })
+          acpMode: input.acpMode,
+          permissionEscalation: input.permissionEscalation
+        });
+        const payload = {
+          threadId: input.threadId,
+          input: textInput(input.input),
+          clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
+          options
+        };
+        const mode = input.mode;
+        const activeTurnId = input.expectedTurnId
+          ?? runtime.getActiveTurnId?.(input.threadId)
+          ?? null;
+        const explicitSteer = mode === 'steer' || mode === 'steer-if-active';
+        const autoSteer = (mode == null || mode === 'auto') && Boolean(activeTurnId);
+        if ((explicitSteer || autoSteer) && activeTurnId) {
+          await runtime.steerTurn({
+            ...payload,
+            expectedTurnId: activeTurnId
+          });
+          return;
+        }
+        await runtime.runTurn(payload);
       });
+      submitByThread.set(input.threadId, run);
+      try {
+        await run;
+      } finally {
+        if (submitByThread.get(input.threadId) === run) submitByThread.delete(input.threadId);
+      }
     },
     async resumeWork(input: ThreadResumeInput) {
       syncProviderBridgeRecording();

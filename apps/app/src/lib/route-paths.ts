@@ -55,6 +55,14 @@ export type ProjectMode = (typeof PROJECT_MODES)[number];
 
 export const PROJECT_MODE_SET = new Set<string>(PROJECT_MODES);
 
+/** First path segments under `/projects/:id/` that are not project-view modes. */
+export const PROJECT_VIEW_RESERVED_SEGMENTS = new Set([
+  'settings',
+  'threads',
+  'sessions',
+  'schedules'
+]);
+
 export interface PluginPanelRoutePathArgs {
   pluginId: string;
   /** The nav panel's registered path segment (validated: [a-zA-Z0-9_-]+). */
@@ -191,6 +199,15 @@ export function getProjectRoutePath(projectId: string): string {
 export function getProjectModeRoutePath(projectId: string, mode: string): string {
   if (mode === 'agents') return getProjectRoutePath(projectId);
   return `/projects/${encodeURIComponent(projectId)}/${encodeURIComponent(mode)}`;
+}
+
+/** Undo `encodeURIComponent` on a route param. React Router leaves `%3A` encoded. */
+export function decodeRouteParam(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 /**

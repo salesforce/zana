@@ -949,12 +949,19 @@ export function createAcpDeltaTranslator(
               : {}),
           }),
         );
+        const explanation = typeof (parsed.data as { explanation?: unknown }).explanation === "string"
+          ? (parsed.data as { explanation: string }).explanation.trim()
+          : "";
         return [
           {
             kind: "item.close",
             key: { channel: PLAN_STEPS_CHANNEL },
             status: "completed",
-            item: { type: "planSteps", steps },
+            item: {
+              type: "planSteps",
+              steps,
+              ...(explanation ? { explanation } : {}),
+            },
             presentation: planStepsPresentation(steps),
             noTurnFallback: noTurnFallbackFor(rawEvent),
           },

@@ -32,7 +32,8 @@ export function appendClientTurnRequested(
     threadId: string;
     prompt: readonly string[];
     promptInput?: unknown;
-    kind: 'thread-start' | 'new-turn';
+    kind: 'thread-start' | 'new-turn' | 'steer';
+    expectedTurnId?: string | null;
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
@@ -54,7 +55,9 @@ export function appendClientTurnRequested(
     initiator: 'user',
     senderThreadId: null,
     input,
-    target: { kind: args.kind },
+    target: args.kind === 'steer'
+      ? { kind: 'steer', expectedTurnId: args.expectedTurnId ?? null }
+      : { kind: args.kind },
     request: {
       method: args.kind === 'thread-start' ? 'thread/start' : 'turn/start',
       params: {}

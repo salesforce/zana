@@ -20,6 +20,8 @@ export type ProductEventType =
   | 'threads:updated'
   | 'threads:event'
   | 'threads:open'
+  | 'threads:browser'
+  | 'scheduler:command'
   | 'projects:cloneProgress'
   | 'library:changed'
   | 'hosts:changed'

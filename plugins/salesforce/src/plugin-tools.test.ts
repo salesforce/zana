@@ -162,6 +162,12 @@ describe('salesforce family tools', () => {
     expect(doctor).toMatchObject({ cliOk: true });
     const status = await harness.callRpc('status');
     expect(status).toMatchObject({ defaultOrg: 'dev', dxProject: true });
+    expect(status).toMatchObject({
+      orgs: [expect.objectContaining({ alias: 'dev', username: 'dev@example.com' })]
+    });
+    const listedOrgs = await harness.callRpc('orgs');
+    expect(listedOrgs).toMatchObject({ ok: true, selectedAlias: 'dev' });
+    expect(JSON.stringify(listedOrgs)).not.toContain('SECRET_TOKEN');
     const org = await harness.callRpc('org');
     expect(org).toMatchObject({ ok: true });
     expect(JSON.stringify(org)).not.toContain('SECRET_TOKEN');
@@ -173,6 +179,12 @@ describe('salesforce family tools', () => {
     expect((listed as { files: Array<{ apiName: string }> }).files.some((row) => row.apiName === 'MyBot')).toBe(true);
     const parsed = await harness.callRpc('agentScript.parse', { source: AGENT_SCRIPT_EXAMPLES[0]!.source, dialect: 'agentforce' });
     expect(parsed).toMatchObject({ ok: true });
+    const queried = await harness.callRpc('agentScript.query', {
+      source: AGENT_SCRIPT_EXAMPLES[0]!.source,
+      dialect: 'agentforce',
+      query: 'symbols'
+    });
+    expect(queried).toMatchObject({ ok: true });
     const lint = await harness.cli!.run(['lint', 'force-app/main/default/agents/MyBot.agent'], {
       pluginId: 'salesforce',
       argv: ['lint', 'force-app/main/default/agents/MyBot.agent']
@@ -215,6 +227,30 @@ describe('salesforce family tools', () => {
     expect(unknown.exitCode).toBe(2);
     const soql = harness.agentTools.find((row) => row.name === 'sf_soql')!;
     await expect(soql.execute({ action: 'nope' }, ctx)).resolves.toMatchObject({ code: 'invalid_input' });
+  });
+
+  it('lists .agent files from a ZCC project folder without a DX setting', async () => {
+    const { zcc, harness } = createFakePluginHost({
+      pluginId: 'salesforce',
+      listProjects: async () => [{ id: 'p1', name: 'Agents', path: '/src' }]
+    });
+    await createSalesforcePlugin(
+      zcc,
+      mockDeps({
+        extraFiles: { '/src/bots/QC.agent': 'config:\n    agent_name: "QC"\n' },
+        extraDirs: { '/src': ['bots'], '/src/bots': ['QC.agent'] }
+      })
+    );
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '' });
+    const listed = await harness.callRpc('agentFiles.list', { projectId: 'p1' });
+    expect(listed).toMatchObject({ ok: true });
+    expect((listed as { files: Array<{ path: string }> }).files.some((row) => row.path === 'bots/QC.agent')).toBe(
+      true
+    );
+    await expect(harness.callRpc('agentFiles.list', { projectId: 'missing' })).resolves.toMatchObject({
+      ok: false,
+      code: 'not_found'
+    });
   });
 
   it('searches, describes, and validates SOQL', async () => {
@@ -450,9 +486,29 @@ describe('salesforce family tools', () => {
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     await expect(agent.execute({ action: 'inspect' }, ctx)).resolves.toMatchObject({
       ok: true,
-      summary: expect.stringMatching(/1 Agent Script/)
+      summary: expect.stringMatching(/1 Agentforce/)
     });
     await expect(agent.execute({ action: 'inspect', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({ ok: true });
+    await expect(agent.execute({ action: 'diagnose', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({
+      ok: true,
+      data: expect.objectContaining({ query: 'diagnostics', diagnostics: expect.any(Array) })
+    });
+    await expect(
+      agent.execute({ action: 'diagnose', apiName: 'MyBot', query: 'symbols' }, ctx)
+    ).resolves.toMatchObject({
+      ok: true,
+      data: expect.objectContaining({ query: 'symbols', symbols: expect.any(Array) })
+    });
+    await expect(
+      agent.execute({ action: 'diagnose', apiName: 'MyBot', query: 'complete', line: 0, column: 0 }, ctx)
+    ).resolves.toMatchObject({
+      ok: true,
+      data: expect.objectContaining({ query: 'complete', completions: expect.any(Array) })
+    });
+    await expect(agent.execute({ action: 'diagnose', path: '/etc/passwd' }, ctx)).resolves.toMatchObject({
+      code: 'path_refused'
+    });
+    await expect(agent.execute({ action: 'diagnose' }, ctx)).resolves.toMatchObject({ code: 'invalid_input' });
     await expect(agent.execute({ action: 'inspect', path: '/etc/passwd' }, ctx)).resolves.toMatchObject({
       code: 'path_refused'
     });
@@ -606,6 +662,57 @@ describe('salesforce family tools', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     harness2.submitInteraction({ approved: true });
     await expect(approved).resolves.toMatchObject({ ok: true, summary: expect.stringMatching(/inactive/) });
+  });
+
+  it('starts simulate preview from RPC and always confirms live preview', async () => {
+    const seen: string[] = [];
+    const base = mockDeps();
+    const deps: SalesforceDeps = {
+      ...base,
+      execSf: async (args, opts) => {
+        if (args[1] === 'preview') seen.push(...args);
+        return base.execSf(args, opts);
+      }
+    };
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zcc, deps);
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    await expect(
+      harness.callRpc('agentPreview.start', {
+        threadId: 'thr-1',
+        projectId: 'p1',
+        path: 'force-app/main/default/agents/MyBot.agent'
+      })
+    ).resolves.toMatchObject({ ok: true, data: { sessionId: 'sess-1' } });
+    expect(seen).toContain('--simulate-actions');
+    await expect(
+      harness.callRpc('agentPreview.send', {
+        threadId: 'thr-1',
+        sessionId: 'sess-1',
+        utterance: 'hi',
+        path: 'force-app/main/default/agents/MyBot.agent'
+      })
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      harness.callRpc('agentPreview.end', {
+        threadId: 'thr-1',
+        sessionId: 'sess-1',
+        path: 'force-app/main/default/agents/MyBot.agent'
+      })
+    ).resolves.toMatchObject({ ok: true });
+
+    const live = harness.callRpc('agentPreview.start', {
+      threadId: 'thr-1',
+      path: 'force-app/main/default/agents/MyBot.agent',
+      live: true
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    harness.submitInteraction({ approved: true });
+    await expect(live).resolves.toMatchObject({ ok: true });
+    expect(seen).toContain('--use-live-actions');
+    await expect(
+      harness.callRpc('agentPreview.start', { path: 'force-app/main/default/agents/MyBot.agent' })
+    ).resolves.toMatchObject({ code: 'refused' });
   });
 
   it('gates activate on eval evidence and still confirms untested intent', async () => {
@@ -970,6 +1077,7 @@ describe('salesforce helpers', () => {
     expect(envelopeTitle('soql.export')).toMatch(/export/i);
     expect(envelopeTitle('agent.publish')).toMatch(/publish/i);
     expect(envelopeTitle('agent.activate')).toMatch(/activate/i);
+    expect(envelopeTitle('agent.preview.live')).toMatch(/live preview/i);
   });
 
   it('round-trips kv artifacts and formats API errors', async () => {

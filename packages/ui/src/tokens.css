@@ -1,10 +1,10 @@
 :root {
-  --zcc-canvas: #0b0f15;
-  --zcc-surface: #10151c;
-  --zcc-surface-raised: #161c25;
-  --zcc-surface-hover: #1a212c;
-  --zcc-border: #1f2731;
-  --zcc-border-strong: #2a3340;
+  --zcc-canvas: #181818;
+  --zcc-surface: #1e1e1e;
+  --zcc-surface-raised: #242424;
+  --zcc-surface-hover: #2a2a2a;
+  --zcc-border: #2e2e2e;
+  --zcc-border-strong: #3a3a3a;
   --zcc-foreground: #e6edf3;
   --zcc-foreground-muted: #8b949e;
   --zcc-primary: #2f81f7;

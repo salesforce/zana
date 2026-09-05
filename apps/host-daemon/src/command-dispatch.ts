@@ -146,6 +146,9 @@ export interface CommandRuntime {
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
     acpMode?: string;
     clientRequestId?: ThreadWorkInput['clientRequestId'];
+    permissionMode?: ThreadWorkInput['permissionMode'];
+    permissionEscalation?: 'ask' | 'deny';
+    expectedTurnId?: string;
   }) => Promise<void>;
   resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
@@ -192,6 +195,9 @@ export function createCommandRuntime(options: {
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
     acpMode?: string;
     clientRequestId?: ThreadWorkInput['clientRequestId'];
+    permissionMode?: ThreadWorkInput['permissionMode'];
+    permissionEscalation?: 'ask' | 'deny';
+    expectedTurnId?: string;
   }) => Promise<void>;
   resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
@@ -769,7 +775,10 @@ export async function dispatchHostCommand(
           model: command.model,
           reasoningLevel: command.reasoningLevel,
           acpMode: command.acpMode,
-          clientRequestId: command.clientRequestId
+          clientRequestId: command.clientRequestId,
+          permissionMode: command.resume?.permissionMode,
+          permissionEscalation: command.permissionEscalation,
+          expectedTurnId: command.expectedTurnId
         });
       } else {
         runtime.emit({ threadId: command.threadId, kind: 'turn.completed' });

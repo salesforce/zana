@@ -311,7 +311,7 @@ export function InboxSidebar({
 
   // NOTE: we intentionally do NOT default-select the newest entry on first
   // load. With nothing selected, the detail column renders the Inbox Overview
-  // (AI summary + Questions/Reports/Ideas/Goals rollups) as the landing page —
+  // (AI summary + Reports/Ideas/Goals rollups) as the landing page —
   // see `InboxView`. The user drops into a selected entry by clicking a row or
   // pressing j/k; both go through `selectAndRead` below. (Historically this
   // component force-selected `visibleIds[0]`, which pre-empted the Overview.)

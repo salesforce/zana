@@ -52,7 +52,8 @@ export function toDynamicTool(registration: PluginAgentToolRegistration): Dynami
   return {
     name: registration.name,
     description: registration.description,
-    inputSchema: registration.inputSchema ?? { type: 'object', properties: {} }
+    inputSchema: registration.inputSchema ?? { type: 'object', properties: {} },
+    ...(registration.presentation ? { presentation: registration.presentation } : {})
   };
 }
 

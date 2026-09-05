@@ -117,7 +117,7 @@ describe('doctor', () => {
     expect(report.org?.kind).toBe('sandbox');
     expect(report.agentCompiler).toBe('cli');
     expect(report.agentPluginOk).toBe(true);
-    expect(formatDoctor(report)).toContain('Agent Script:');
+    expect(formatDoctor(report)).toContain('Agentforce:');
     expect(formatDoctor(report)).toContain('run-eval ok');
     expect(formatDoctor(report)).toContain('Agent CLI cwd:');
     expect(formatDoctor(report)).toContain('Publish/activate:');
@@ -156,7 +156,9 @@ describe('doctor', () => {
         kind: 'sandbox',
         isDefault: false
       },
-      aliases: [{ alias: 'other', username: 'o@x.com', kind: 'scratch', isDefault: false }],
+      aliases: [
+        { alias: 'other', username: 'o@x.com', kind: 'scratch', isDefault: false, orgId: '', instanceUrl: '', connectedStatus: '' }
+      ],
       dxProject: true,
       projectRoot: null,
       ...agentFields({ agentCompiler: 'cli', agentPluginOk: true, agentBundleCount: 2 }),

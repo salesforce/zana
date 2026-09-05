@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { TimelineWorkGlyph } from './TimelineWorkGlyph.js';
 import type { TimelineWorkRowGlyph } from '@zana-ai/zcc-thread-view';
@@ -97,7 +97,9 @@ export function ExpandableTimelineRow({
           else setManualExpansionOverride(next);
         }}
       >
-        <ChevronRight size={12} className="thread-timeline-work-chevron" aria-hidden="true" />
+        {isExpanded
+          ? <ChevronDown size={12} className="thread-timeline-work-chevron" aria-hidden="true" />
+          : <ChevronRight size={12} className="thread-timeline-work-chevron" aria-hidden="true" />}
         {header}
       </button>
       {children != null ? (

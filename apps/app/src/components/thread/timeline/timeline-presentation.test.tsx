@@ -23,6 +23,7 @@ const workBase = {
 describe('timeline title helpers', () => {
   it('formats decorations and CSS classes', () => {
     expect(decorationText({ kind: 'diff-stats', added: 1, removed: 0 }, 0)).toBe('+1 −0');
+    expect(decorationText({ kind: 'diff-stats', added: 0, removed: 0 }, 0)).toBeNull();
     expect(decorationText({ kind: 'status', status: 'error', durationMs: null, emphasis: false }, 0)).toBe('error');
     expect(decorationText({
       kind: 'summary-status',
@@ -167,7 +168,6 @@ describe('WorkRowBody', () => {
     );
     expect(html).toContain('README.md');
     expect(html).toContain('+1');
-    expect(html).toContain('@@');
   });
 
   it('renders workflow progress and image stubs', () => {
@@ -489,6 +489,32 @@ describe('conversation and banners', () => {
     expect(html).toContain('/api/v1/projects/proj-1/attachments/content?path=shot-1.png');
   });
 
+  it('lifts a dumped data-URL in the message body into a thumb', () => {
+    const html = renderToStaticMarkup(
+      <ConversationRow
+        projectId="proj-1"
+        row={{
+          ...workBase,
+          id: 'u-img-data',
+          kind: 'conversation',
+          role: 'user',
+          text: 'see this\ndata:image/png;base64,iVBORw0KGgo=',
+          attachments: null,
+          initiator: 'user',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(html).toContain('composer-image-thumbs');
+    expect(html).toContain('data:image/png;base64,iVBORw0KGgo=');
+    expect(html).toContain('see this');
+    expect(html).not.toContain('>data:image/png;base64,iVBORw0KGgo=</');
+  });
+
   it('offers edit on idle user messages and fork/send-to-main on assistant child threads', () => {
     const user = renderToStaticMarkup(
       <ConversationRow
@@ -537,10 +563,11 @@ describe('conversation and banners', () => {
     expect(assistant).toContain('thread-timeline-row is-assistant');
   });
 
-  it('skips absolute local image paths that the renderer cannot fetch', () => {
+  it('renders host-backed thumbs for absolute local image paths instead of dumping the path', () => {
     const html = renderToStaticMarkup(
       <ConversationRow
         projectId="proj-1"
+        threadId="t1"
         row={{
           ...workBase,
           id: 'u-img-abs',
@@ -564,8 +591,10 @@ describe('conversation and banners', () => {
         }}
       />
     );
-    expect(html).not.toContain('composer-image-thumbs');
+    expect(html).toContain('composer-image-thumbs');
     expect(html).toContain('see this');
+    expect(html).toContain('thread-image-stub');
+    expect(html).not.toContain('/tmp/shot.png');
   });
 
   it('labels mentions from resource fields', () => {
@@ -579,6 +608,8 @@ describe('conversation and banners', () => {
   it('builds image data URLs and question answers', () => {
     expect(imagePreviewSrc({ contentType: 'image/svg+xml', content: '<svg />' })).toContain('data:image/svg+xml');
     expect(imagePreviewSrc({ contentType: 'image/png', content: 'x' })).toBeNull();
+    expect(imagePreviewSrc({ contentType: 'image/png', content: 'data:image/png;base64,abc' }))
+      .toBe('data:image/png;base64,abc');
     expect(imagePreviewSrc({ contentType: 'image/png', content: 'abc', encoding: 'base64' }))
       .toBe('data:image/png;base64,abc');
     expect(imagePreviewSrc({ contentType: 'image/jpeg', content: 'abc', encoding: 'base64' }))

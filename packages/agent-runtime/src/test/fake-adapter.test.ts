@@ -67,3 +67,29 @@ describe("fake adapter thread/delta", () => {
     expect(events.map((event) => event.type)).toEqual(["turn/started"]);
   });
 });
+
+describe("fake adapter translateAcceptedCommand", () => {
+  it("synthesizes turn/input/accepted for a steered client request", () => {
+    const adapter = createFakeAdapter();
+    const events = adapter.translateAcceptedCommand({
+      command: {
+        type: "turn/steer",
+        threadId: "t1",
+        providerThreadId: "prov-1",
+        expectedTurnId: "turn-1",
+        input: [{ type: "text", text: "nudge", mentions: [] }],
+        clientRequestId: "creq_23456789ac",
+        options: { envVars: {} }
+      }
+    });
+    expect(events).toEqual([
+      {
+        type: "turn/input/accepted",
+        threadId: "t1",
+        providerThreadId: "prov-1",
+        scope: { kind: "turn", turnId: "turn-1" },
+        clientRequestId: "creq_23456789ac"
+      }
+    ]);
+  });
+});

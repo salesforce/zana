@@ -91,6 +91,15 @@ describe('structured providers final local argv', () => {
     });
   });
 
+  it('omits --model when Cursor Auto sentinels are selected', () => {
+    expect(spawn('cursor', routing('cursor', {
+      modelTargetId: 'auto'
+    }))).toEqual({
+      command: 'cursor-agent',
+      args: []
+    });
+  });
+
   it('emits OpenCode model and execution policy in final order', () => {
     expect(spawn('opencode', routing('opencode', {
       modelTargetId: 'llmgw/gpt-5.6-sol-1M',

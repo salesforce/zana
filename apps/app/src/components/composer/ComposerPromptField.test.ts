@@ -6,6 +6,8 @@ describe('ComposerPromptField', () => {
     const ui = readFileSync(new URL('./ComposerPromptField.tsx', import.meta.url), 'utf8');
     const field = readFileSync(new URL('./use-composer-prompt-field.ts', import.meta.url), 'utf8');
     expect(ui).toContain('ComposerImageThumbs');
+    expect(ui).toContain('onOpen');
+    expect(ui).toContain('ThreadImageLightbox');
     expect(ui).toContain('ComposerTypeaheadMenu');
     expect(ui).toContain('Make prompt box larger');
     expect(ui).toContain('EditorContent');
@@ -18,5 +20,7 @@ describe('ComposerPromptField', () => {
     expect(field).not.toContain('createTerminal');
     expect(field).not.toContain('product.threads.create');
     expect(field).not.toContain('ComposerModePicker');
+    expect(field).toContain('Parameters<ComposerKeyInterceptor>[0]');
+    expect(field).toContain('interceptKeyDownRef.current?.(event)');
   });
 });

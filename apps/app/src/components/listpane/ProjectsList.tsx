@@ -28,45 +28,39 @@ import {
   sortProjectsForDisplay,
   sortProjectsAlphabetically,
   listedTerminals,
-  liveTerminals
+  projectRailTerminals
 } from '../../store.js';
 import type { OpenTarget, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
-import { profileIcon } from '../../lib/profileIcon.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
 import { PROJECT_COLORS } from '@zana-ai/zcc-domain/project-colors';
 import { ListPaneResizer } from '../ListPaneResizer.js';
 import { AddRemoteProjectDialog } from '../AddRemoteProjectDialog.js';
 import { AddGitProjectDialog } from '../AddGitProjectDialog.js';
 import { AddLocalProjectDialog } from '../AddLocalProjectDialog.js';
-import { AgentRowDetail } from './AgentRowDetail.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
 import { isProjectRailExpanded, pinFavoriteProjectsFirst } from './project-rail.js';
-import { useAgentCardActions, AgentCardMenu, AgentDeleteQuickAction, clampMenuAnchor } from '../agentCardActions.js';
-import { useThreadCardActions, ThreadCardMenu, ThreadArchiveQuickAction, openThreadMenu } from '../threadCardActions.js';
+import { ProjectAgentRailRow, ProjectThreadRailRow } from './project-session-rail-rows.js';
+import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
+import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '../threadCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
-import { useThreads, type ThreadListItem } from '../../thread-store.js';
+import { useThreads } from '../../thread-store.js';
 import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { copyText } from '../../lib/copy-text.js';
 import { getAgentSessionRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
-import { usePaneContentSplitDrag, useThreadRowSplitDrag } from '../sidebar/useThreadRowSplitDrag.js';
-import { usePaneContentSplitIndicator } from '../sidebar/paneContentSplitIndicator.js';
-import { SplitPaneMiniMap } from '../sidebar/SplitPaneMiniMap.js';
-import { ProviderIcon } from '../thread/pickers/ProviderIcon.js';
-import {
-  fleetKindLabel,
-  railThreadsForProject,
-  threadIsLiveForRail,
-  threadRailStatus,
-  threadRailStatusClass,
-  threadTitle
-} from '../fleet-item.js';
+import { railThreadsForProject, threadIsLiveForRail } from '../fleet-item.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../lib/suppress-post-drag-click.js';
 import { composerProjectLabel } from '../composer-project-default.js';
 import { resolveIcon } from '../../lib/resolveIcon.js';
-import { listProjectMenuActions, subscribePluginSlots } from '../../plugins/plugin-slots.js';
+import { listCreateProjectActions, listProjectMenuActions, subscribePluginSlots } from '../../plugins/plugin-slots.js';
+import { createProjectActionContext, projectMenuNavigateContext } from '../../plugins/plugin-nav-href.js';
+import {
+  PluginCreateProjectDialog,
+  runCreateProjectAction,
+  type PluginCreateProjectDialogState
+} from '../../plugins/PluginCreateProjectDialog.js';
 
 interface MenuState {
   projectId: string;
@@ -199,6 +193,11 @@ export function ProjectsList({
     listProjectMenuActions,
     listProjectMenuActions
   );
+  const createProjectActions = useSyncExternalStore(
+    subscribePluginSlots,
+    listCreateProjectActions,
+    listCreateProjectActions
+  );
   const headerMenuActions = projectMenuActions.filter((row) => row.placement === 'workspace');
   const rowMenuActions = projectMenuActions.filter((row) => row.placement === 'project');
   const threads = useThreads((s) => s.threads);
@@ -247,12 +246,42 @@ export function ProjectsList({
   const [showRemoteDialog, setShowRemoteDialog] = useState(false);
   const [showGitDialog, setShowGitDialog] = useState(false);
   const [showLocalDialog, setShowLocalDialog] = useState(false);
+  const [createProjectDialog, setCreateProjectDialog] = useState<PluginCreateProjectDialogState | null>(null);
   const [sidebarAddOpen, setSidebarAddOpen] = useState(false);
   const [sidebarOrganizeOpen, setSidebarOrganizeOpen] = useState(false);
   const sidebarAddRef = useRef<HTMLDivElement | null>(null);
   const sidebarOrganizeRef = useRef<HTMLDivElement | null>(null);
   const [sidebarProjectSort, setSidebarProjectSort] = useState<SidebarProjectSort>(readSidebarProjectSort);
   const [refreshing, setRefreshing] = useState(false);
+  const launchCreateProjectAction = (action: (typeof createProjectActions)[number]) => {
+    setSidebarAddOpen(false);
+    runCreateProjectAction(
+      action,
+      createProjectActionContext(action.pluginId, {
+        pickDirectory: () => product.projects.pickDirectory(),
+        addProject: async (path) => {
+          const project = await addProjectByPath(path);
+          return project ? { id: project.id } : null;
+        },
+        cloneRoot: async () => {
+          const root = await product.projects.cloneRoot().catch(() => '');
+          return root.trim() || null;
+        },
+        navigate: (to) => {
+          void navigate(to);
+        },
+        openDialog: (options) => {
+          if (!action.component) return false;
+          setCreateProjectDialog({
+            action,
+            title: options?.title?.trim() || action.title,
+            params: options?.params ?? null
+          });
+          return true;
+        }
+      })
+    );
+  };
   // Nested session rows share the board/list lifecycle menu (Stop / Restart /
   // Rename / Delete). Distinct from `menu` below, which is the project-row
   // overflow. Opening one closes the other so they never stack.
@@ -364,16 +393,15 @@ export function ProjectsList({
     return pinFavoriteProjectsFirst(sorted);
   }, [inSidebar, projects, sidebarProjectSort]);
 
-  // A project is "active" when it has at least one live session — any listed
-  // (visible or hidden-but-running) session whose pty hasn't exited. Keeps the
-  // selected project visible regardless, so toggling the filter never hides the
-  // row the user is currently in.
+  // A project is "active" when it has at least one live session, including a
+  // scheduled run, or a live thread. Keeps the selected project visible
+  // regardless, so toggling the filter never hides the row the user is in.
   const projectHasRunningAgents = (p: Project) =>
-    listedTerminals(terminals[p.id]).some((t) => t.status !== 'exited') ||
+    projectRailTerminals(terminals[p.id]).length > 0 ||
     (liveThreadsByProject.get(p.id)?.length ?? 0) > 0;
 
   const projectHasNestableSessions = (p: Project) =>
-    liveTerminals(terminals[p.id]).length > 0 ||
+    projectRailTerminals(terminals[p.id]).length > 0 ||
     (railThreadsByProject.get(p.id)?.length ?? 0) > 0;
 
   // Nested rows show live agents plus recent threads. Auto-expand any project
@@ -577,7 +605,7 @@ export function ProjectsList({
   const renderProject = (group: RailGroup, p: Project) => {
     const sortable = canReorder && renamingId !== p.id;
     const labelClass = sortable ? 'project-label project-label--sortable' : 'project-label';
-    const liveList = liveTerminals(terminals[p.id]);
+    const liveList = projectRailTerminals(terminals[p.id]);
     const railThreads = railThreadsByProject.get(p.id) ?? [];
     const nestedCount = liveList.length + railThreads.length;
     const displayName = composerProjectLabel(p);
@@ -864,7 +892,9 @@ export function ProjectsList({
                               role="menuitem"
                               onClick={() => {
                                 setSidebarOrganizeOpen(false);
-                                void action.run({ projectId: null });
+                                void action.run(projectMenuNavigateContext(action.pluginId, null, (to) => {
+                                  void navigate(to);
+                                }));
                               }}
                             >
                               <Icon size={14} />
@@ -924,6 +954,19 @@ export function ProjectsList({
                       <Network size={14} />
                       <span>Add remote project</span>
                     </button>
+                    {createProjectActions.map((action) => {
+                      const Icon = resolveIcon(action.icon ?? 'Puzzle');
+                      return (
+                        <button
+                          key={`${action.pluginId}:${action.id}:${action.generation}`}
+                          type="button"
+                          onClick={() => launchCreateProjectAction(action)}
+                        >
+                          <Icon size={14} />
+                          <span>{action.title}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -980,6 +1023,22 @@ export function ProjectsList({
           <Network size={14} />
           <span>Remote</span>
         </button>
+        {createProjectActions.map((action) => {
+          const Icon = resolveIcon(action.icon ?? 'Puzzle');
+          return (
+            <button
+              key={`${action.pluginId}:${action.id}:${action.generation}`}
+              type="button"
+              className="list-add-btn"
+              aria-label={action.title}
+              title={action.title}
+              onClick={() => launchCreateProjectAction(action)}
+            >
+              <Icon size={14} />
+              <span>{action.title}</span>
+            </button>
+          );
+        })}
       </div>
       {projects.length > 0 && (
         <div className={inSidebar ? 'sidebar-projects-filter list-filter' : 'list-filter'}>
@@ -1180,7 +1239,9 @@ export function ProjectsList({
                         className="project-menu-item"
                         onClick={() => {
                           setMenu(null);
-                          void action.run({ projectId: p.id });
+                          void action.run(projectMenuNavigateContext(action.pluginId, p.id, (to) => {
+                            void navigate(to);
+                          }));
                         }}
                       >
                         <Icon size={12} />
@@ -1210,7 +1271,7 @@ export function ProjectsList({
               </button>
               {(() => {
                 const armed = confirmDeleteId === p.id;
-                const running = listedTerminals(terminals[p.id]).filter((t) => t.status !== 'exited').length;
+                const running = projectRailTerminals(terminals[p.id]).length;
                 return (
                   <button
                     className={`project-menu-item danger ${armed ? 'project-delete-armed' : ''}`}
@@ -1312,139 +1373,24 @@ export function ProjectsList({
           }}
         />
       )}
+      {createProjectDialog && (
+        <PluginCreateProjectDialog
+          state={createProjectDialog}
+          onClose={() => setCreateProjectDialog(null)}
+          pickDirectory={() => product.projects.pickDirectory()}
+          addProject={async (path) => {
+            const project = await addProjectByPath(path);
+            return project ? { id: project.id } : null;
+          }}
+          cloneRoot={async () => {
+            const root = await product.projects.cloneRoot().catch(() => '');
+            return root.trim() || null;
+          }}
+          navigate={(to) => {
+            void navigate(to);
+          }}
+        />
+      )}
     </section>
-  );
-}
-
-function ProjectAgentRailRow({
-  session,
-  projectId,
-  projectRemote = false,
-  isUnread,
-  active,
-  onOpen,
-  onContextMenu
-}: {
-  session: TerminalSession;
-  projectId: string;
-  projectRemote?: boolean;
-  isUnread: boolean;
-  active: boolean;
-  onOpen: () => void;
-  onContextMenu: (e: MouseEvent) => void;
-}) {
-  const { onPointerDown, openInSplit } = usePaneContentSplitDrag({
-    content: { kind: 'agent-session', projectId, sessionId: session.id },
-    title: session.title
-  });
-  const indicator = usePaneContentSplitIndicator({
-    kind: 'agent-session',
-    projectId,
-    sessionId: session.id
-  });
-  return (
-    <div role="listitem" className="project-thread-row-wrap">
-      <button
-        type="button"
-        className={`project-terminal-row ${isUnread ? 'unread' : ''}${active ? ' active' : ''}`}
-        data-kind="agent"
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          onPointerDown?.(e);
-        }}
-        onClick={(e) => {
-          if (e.metaKey || e.ctrlKey) {
-            e.preventDefault();
-            openInSplit();
-            return;
-          }
-          onOpen();
-        }}
-        onContextMenu={onContextMenu}
-        aria-label={isUnread ? `${session.title}, unread output` : session.title}
-        aria-current={active ? 'true' : undefined}
-        title={isUnread ? `${session.title} · unread output` : session.title}
-      >
-        <span className={`tab-profile-icon profile-${session.profile}`} aria-hidden="true">
-          {profileIcon(session.profile)}
-        </span>
-        <span className="project-terminal-text">
-          <span className="project-terminal-name">{session.title}</span>
-          <AgentRowDetail session={session} projectRemote={projectRemote} />
-        </span>
-        {indicator.miniMap ? (
-          <SplitPaneMiniMap slots={indicator.miniMap} label={`${session.title} split position`} />
-        ) : null}
-      </button>
-      <AgentDeleteQuickAction session={session} projectId={projectId} />
-    </div>
-  );
-}
-
-function ProjectThreadRailRow({
-  thread,
-  active,
-  projectId,
-  onOpen,
-  onContextMenu
-}: {
-  thread: ThreadListItem;
-  active: boolean;
-  projectId: string;
-  onOpen: () => void;
-  onContextMenu: (e: MouseEvent) => void;
-}) {
-  const title = threadTitle(thread);
-  const status = threadRailStatus(thread);
-  const { onPointerDown, openInSplit } = useThreadRowSplitDrag({
-    projectId,
-    threadId: thread.id,
-    title
-  });
-  const indicator = usePaneContentSplitIndicator({
-    kind: 'thread',
-    projectId,
-    threadId: thread.id
-  });
-  return (
-    <div role="listitem" className="project-thread-row-wrap">
-      <button
-        type="button"
-        className={`project-terminal-row is-thread${active ? ' active' : ''}`}
-        data-kind="thread"
-        data-testid="project-thread-row"
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          onPointerDown?.(e);
-        }}
-        onClick={(e) => {
-          if (e.metaKey || e.ctrlKey) {
-            e.preventDefault();
-            openInSplit();
-            return;
-          }
-          onOpen();
-        }}
-        onContextMenu={onContextMenu}
-        aria-label={title}
-        aria-current={active ? 'true' : undefined}
-        title={`${title} · ${thread.status}`}
-      >
-        <span className="tab-profile-icon" aria-hidden="true">
-          <ProviderIcon providerId={thread.providerId} size={14} />
-        </span>
-        <span className="project-terminal-text">
-          <span className="project-terminal-name">{title}</span>
-          <span className="project-terminal-detail">
-            <span className={threadRailStatusClass(status)}>{status}</span>
-            {` · ${fleetKindLabel('thread')}`}
-          </span>
-        </span>
-        {indicator.miniMap ? (
-          <SplitPaneMiniMap slots={indicator.miniMap} label={`${title} split position`} />
-        ) : null}
-      </button>
-      <ThreadArchiveQuickAction thread={thread} />
-    </div>
   );
 }

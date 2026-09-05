@@ -122,36 +122,6 @@ writePlugin('workflows', {
   'src/plugin-contract.test.ts': testFile('workflows', `expect(set.navPanels[0]?.title).toBe('Workflows');`)
 });
 
-writePlugin('side-chat', {
-  'package.json': pkg('side-chat', 'Side chat', 'Open a compact ThreadChat panel beside the current thread.', 'MessagesSquare'),
-  'server.mjs': `export default function plugin(zcc) {
-  zcc.log.info('side-chat plugin loaded');
-}
-`,
-  'app.js': `export default {
-  __zccPluginApp: true,
-  setup(app) {
-    app.slots.threadPanelAction({
-      id: 'chat',
-      title: 'Side chat',
-      icon: 'MessagesSquare',
-      layout: 'flush',
-      component: function SideChat(props) {
-        const React = globalThis.__ZCC_HOST_REACT__;
-        const ThreadChat = globalThis.__ZCC_PLUGIN_RUNTIME__?.ThreadChat;
-        if (!React) return null;
-        if (!ThreadChat) {
-          return React.createElement('p', { style: { padding: 16 } }, 'Side chat is unavailable.');
-        }
-        return React.createElement(ThreadChat, { threadId: props.threadId, variant: 'compact' });
-      }
-    });
-  }
-};
-`,
-  'src/plugin-contract.test.ts': testFile('side-chat', `expect(set.threadPanelActions[0]?.id).toBe('chat');`)
-});
-
 writePlugin('inline-vis', {
   'package.json': pkg('inline-vis', 'Inline vis', 'Render ::chart{title} leaves in assistant messages.', 'ChartColumn'),
   'server.mjs': `export default function plugin(zcc) {

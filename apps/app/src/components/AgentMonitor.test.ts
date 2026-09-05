@@ -15,7 +15,7 @@ describe('AgentMonitor thread selection', () => {
 
   it('mounts the live thread in the monitor instead of an open-elsewhere placeholder', () => {
     const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('<ThreadDetail threadId={thread.id} embedded />');
+    expect(source).toContain('<ThreadDetail key={thread.id} threadId={thread.id} embedded />');
     expect(source).toContain("selected?.kind === 'thread' ? 'is-thread'");
     expect(source).toContain("selected?.kind === 'agent' ? 'is-agent-session'");
     expect(source).toContain('<AgentSessionView');

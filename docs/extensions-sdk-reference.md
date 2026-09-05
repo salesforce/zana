@@ -31,7 +31,8 @@ Slots (also mapped in the in-app Plugin Guide):
 - `settingsSection` — plugin settings on the Plugins hub detail (Configure)
 - `homepageSection` — Home dashboard
 - `projectTab` — per-project tab (`global: false` hides the sidebar entry)
-- `experimental_projectMenuAction` — project row overflow or workspace organize menu
+- `experimental_projectMenuAction` — project row overflow or workspace organize menu (`toProject` opens a `projectTab`)
+- `experimental_createProjectAction` — Add project (+) menu (`openDialog` mounts an optional create wizard; `addProject` registers the folder)
 - `sidebarFooterAction` — host-rendered footer icon
 - `pendingInteraction` / `threadPanelAction` (thread side-panel tabs; optional
   `scopes` include `"agent-session"` for the CLI-agent inspector) /

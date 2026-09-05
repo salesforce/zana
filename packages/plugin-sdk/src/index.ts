@@ -51,6 +51,7 @@ export type {
   PluginCliOutputLimitError,
   PluginAgents,
   PluginAgentToolRegistration,
+  PluginAgentToolPresentation,
   PluginAgentToolContext,
   PluginEvents,
   PluginThreadEvent,
@@ -63,6 +64,8 @@ export type {
   PluginSdkThreadEventListArgs,
   PluginSdkThreadEventRow,
   PluginSdkThreadIdArgs,
+  PluginSdkThreadForkArgs,
+  PluginSdkThreadListArgs,
   PluginSdkThreadSendArgs,
   PluginSdkThreadSummary,
   PluginSdkThreads,
@@ -89,7 +92,9 @@ export type {
 export {
   PLUGIN_CLI_OUTPUT_MAX_BYTES,
   PLUGIN_MENTION_TRIGGERS,
+  PLUGIN_AGENT_STATUS_LABEL_MAX_CHARS,
   enforcePluginCliOutputLimit,
+  parsePluginAgentToolPresentation,
   experimental_defineHostEntry,
   isPluginHostEntryDefinition
 } from './server.js';
@@ -108,6 +113,9 @@ export type {
   PluginProjectTabRegistration,
   PluginProjectMenuActionRegistration,
   PluginProjectMenuActionContext,
+  PluginCreateProjectActionRegistration,
+  PluginCreateProjectActionContext,
+  PluginCreateProjectDialogProps,
   PluginSidebarFooterActionRegistration,
   PluginSidebarFooterActionContext,
   PluginPendingInteractionRegistration,

@@ -657,6 +657,44 @@ function httpProduct(): Pick<
         apiJson(`/threads/${encodeURIComponent(threadId)}/stop`, { method: 'POST', body: '{}' }),
       cancelPlan: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/plan/cancel`, { method: 'POST', body: '{}' }),
+      plan: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/plan`),
+      updatePlan: async (threadId: string, markdown: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/plan`, {
+          method: 'PATCH',
+          body: JSON.stringify({ markdown })
+        }),
+      addPlanTask: async (threadId: string, text: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/plan/tasks`, {
+          method: 'POST',
+          body: JSON.stringify({ text })
+        }),
+      flushNextTurn: async (threadId: string, force = true) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/flush`, {
+          method: 'POST',
+          body: JSON.stringify({ force })
+        }),
+      deleteNextTurn: async (threadId: string, itemId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}`, {
+          method: 'DELETE'
+        }),
+      nextTurn: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn`),
+      compact: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/compact`, { method: 'POST', body: '{}' }),
+      promptHistory: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/prompt-history`),
+      pin: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/pin`, { method: 'POST', body: '{}' }),
+      unpin: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/unpin`, { method: 'POST', body: '{}' }),
+      search: async (query: string, projectId?: string) => {
+        const params = new URLSearchParams({ q: query });
+        if (projectId) params.set('projectId', projectId);
+        return apiJson(`/threads/search?${params.toString()}`);
+      },
+      childSummary: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/child-summary`),
       resume: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/resume`, { method: 'POST', body: '{}' }),
       timeline: async (threadId, query) => {

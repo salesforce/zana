@@ -34,7 +34,7 @@ describe('openThreadInSplit', () => {
       projectId: 'p1',
       threadId: 't1',
       isCompact: false,
-      currentPathname: '/inbox'
+      currentPathname: '/settings'
     });
     expect(routes).toEqual(['/projects/p1/threads/t1']);
     expect(useSplitWorkspace.getState().layout).toBeNull();
@@ -59,6 +59,28 @@ describe('openThreadInSplit', () => {
     expect(findPaneByContent(layout.root, { kind: 'agents' })).not.toBeNull();
     expect(findPaneByThread(layout.root, 'p1', 't1')).not.toBeNull();
     expect(listPanes(layout.root)[0]?.content).toEqual({ kind: 'agents' });
+    expect(routes).toEqual(['/projects/p1/threads/t1']);
+  });
+
+  it('keeps inbox in a left pane when opening a thread from /inbox', () => {
+    const routes: string[] = [];
+    useSplitWorkspace.setState({ layout: null });
+    openThreadInSplit({
+      navigate: (route) => {
+        routes.push(route);
+      },
+      projectId: 'p1',
+      threadId: 't1',
+      isCompact: false,
+      currentPathname: '/inbox'
+    });
+    const layout = useSplitWorkspace.getState().layout;
+    expect(layout).not.toBeNull();
+    if (!layout) return;
+    expect(countPanes(layout.root)).toBe(2);
+    expect(findPaneByContent(layout.root, { kind: 'inbox' })).not.toBeNull();
+    expect(findPaneByThread(layout.root, 'p1', 't1')).not.toBeNull();
+    expect(listPanes(layout.root)[0]?.content).toEqual({ kind: 'inbox' });
     expect(routes).toEqual(['/projects/p1/threads/t1']);
   });
 

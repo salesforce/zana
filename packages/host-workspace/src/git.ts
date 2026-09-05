@@ -440,9 +440,10 @@ export async function readWorkspaceStatus(cwd: string, maxFiles = DEFAULT_MAX_FI
   };
 }
 
-function diffArgsFor(target: WorkspaceDiffTarget): string[] {
+function diffArgsFor(target: WorkspaceDiffTarget, mergeBaseRef: string | null): string[] {
   if (target.type === 'uncommitted') return ['diff', 'HEAD'];
   if (target.type === 'commit') return ['show', '--format=', target.sha];
+  if (target.type === 'all') return ['diff', mergeBaseRef ?? 'HEAD'];
   return ['diff', `${target.mergeBaseBranch}...HEAD`];
 }
 
@@ -459,7 +460,7 @@ export async function readWorkspaceDiff(
     const mb = await runGit(cwd, ['merge-base', target.mergeBaseBranch, 'HEAD'], { allowFail: true });
     mergeBaseRef = mb.code === 0 ? mb.stdout.trim() || null : null;
   }
-  const args = diffArgsFor(target);
+  const args = diffArgsFor(target, mergeBaseRef);
   const result = await runGit(cwd, args, {
     allowFail: true,
     maxBuffer: maxDiffBytes + 1,
