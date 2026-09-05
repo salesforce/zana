@@ -27,7 +27,7 @@
     "@sf-agentscript/agentforce": "2.10.38",
     "@sf-agentscript/monaco": "2.4.39",
     "@xyflow/react": "^12.10.0",
-    "monaco-editor": "^0.54.0"
+    "monaco-editor": "^0.56.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
