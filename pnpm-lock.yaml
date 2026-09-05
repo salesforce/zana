@@ -1166,13 +1166,13 @@ importers:
         version: 2.10.38
       '@sf-agentscript/monaco':
         specifier: 2.4.39
-        version: 2.4.39(monaco-editor@0.54.0)
+        version: 2.4.39(monaco-editor@0.56.0)
       '@xyflow/react':
         specifier: ^12.10.0
         version: 12.11.5(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       monaco-editor:
-        specifier: ^0.54.0
-        version: 0.54.0
+        specifier: ^0.56.0
+        version: 0.56.0
     devDependencies:
       '@types/react':
         specifier: ^19.2.18
@@ -4372,9 +4372,6 @@ packages:
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
 
-  dompurify@3.1.7:
-    resolution: {integrity: sha512-VaTstWtsneJY8xzy7DekmYWEOZcmzIe3Qb3zPd4STve1OBTa+e+WmS1ITQec1fZYXI3HCsOZZiSMpG6oxoWMWQ==}
-
   dompurify@3.4.13:
     resolution: {integrity: sha512-2vmYIoqjze2d+kakP8S/nS5shfsl587kzwEjcGlTdiksUVgFHnFCsLYDVj/JNqJVOQZGSYBTmuycv0PodwmnMQ==}
 
@@ -5562,9 +5559,6 @@ packages:
   mkdirp@0.5.6:
     resolution: {integrity: sha512-FP+p8RB8OWpF3YZBCrP5gtADmtXApB5AMLn+vdyA+PyxCjrCs00mjyUozssO33cwDeT3wNGdLxJ5M//YqtHAJw==}
     hasBin: true
-
-  monaco-editor@0.54.0:
-    resolution: {integrity: sha512-hx45SEUoLatgWxHKCmlLJH81xBo0uXP4sRkESUpmDQevfi+e7K1VuiSprK6UpQ8u4zOcKNiH0pMvHvlMWA/4cw==}
 
   monaco-editor@0.56.0:
     resolution: {integrity: sha512-sXboRm3BeBeLm938eaiyLMe0OxzfXIlZvbv4ir/jVgQy1zDhWjgmny0WoN45fuDKhCCQsYMbBJrv/A6jd8aCUg==}
@@ -8443,11 +8437,11 @@ snapshots:
     dependencies:
       '@sf-agentscript/types': 0.4.0
 
-  '@sf-agentscript/monaco@2.4.39(monaco-editor@0.54.0)':
+  '@sf-agentscript/monaco@2.4.39(monaco-editor@0.56.0)':
     dependencies:
       '@sf-agentscript/language': 3.2.3
       '@sf-agentscript/parser': 4.0.19
-      monaco-editor: 0.54.0
+      monaco-editor: 0.56.0
     transitivePeerDependencies:
       - '@sf-agentscript/parser-tree-sitter'
       - tree-sitter
@@ -9937,8 +9931,6 @@ snapshots:
       - supports-color
 
   dom-accessibility-api@0.5.16: {}
-
-  dompurify@3.1.7: {}
 
   dompurify@3.4.13:
     optionalDependencies:
@@ -11455,11 +11447,6 @@ snapshots:
   mkdirp@0.5.6:
     dependencies:
       minimist: 1.2.8
-
-  monaco-editor@0.54.0:
-    dependencies:
-      dompurify: 3.1.7
-      marked: 14.0.0
 
   monaco-editor@0.56.0:
     dependencies:
