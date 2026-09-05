@@ -20,7 +20,7 @@
     "@types/react": "^19.0.0",
     "react": "^19.0.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10",
+    "vitest": "^4.1.11",
     "@zana-ai/zcc-domain": "workspace:*"
   },
   "dependencies": {
