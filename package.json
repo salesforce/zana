@@ -89,7 +89,7 @@
     "zustand": "^5.0.0"
   },
   "optionalDependencies": {
-    "microsandbox": "0.6.10"
+    "microsandbox": "0.6.16"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
