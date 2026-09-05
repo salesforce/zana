@@ -277,4 +277,28 @@ describe('soql explorer RPC registration', () => {
       aborted: false
     });
   });
+
+  it('lists CLI orgs and accepts sql.describeGlobal as an alias of soql.describeGlobal', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(
+      zcc,
+      mockDeps((req) => {
+        if (req.path.endsWith('/sobjects') || req.path.endsWith('/tooling/sobjects')) {
+          return {
+            status: 200,
+            json: { sobjects: [{ name: 'Account', label: 'Account', keyPrefix: '001', queryable: true }] },
+            text: '{}'
+          };
+        }
+        return { status: 200, json: { totalSize: 1, done: true, records: [{ Id: '001' }] }, text: '{}' };
+      })
+    );
+    harness.setSettings({ defaultOrg: 'dev' });
+    await expect(harness.callRpc('orgs')).resolves.toMatchObject({ ok: true, selectedAlias: 'dev' });
+    const fromSoql = await harness.callRpc('soql.describeGlobal', {});
+    const fromSql = await harness.callRpc('sql.describeGlobal', {});
+    expect(fromSoql).toMatchObject({ ok: true, org: { alias: 'dev' } });
+    expect(fromSql).toEqual(fromSoql);
+    expect(JSON.stringify(fromSql)).not.toContain('SECRET_TOKEN');
+  });
 });

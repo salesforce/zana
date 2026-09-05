@@ -191,8 +191,13 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
   }
 ];
 
+export const BUNDLED_PLUGINS: readonly BundledPluginDefinition[] = [
+  ...BUILTIN_PLUGINS,
+  ...OFFICIAL_PLUGINS
+];
+
 export function bundledPluginByName(name: string): BundledPluginDefinition | undefined {
-  return [...BUILTIN_PLUGINS, ...OFFICIAL_PLUGINS].find((plugin) => plugin.name === name);
+  return BUNDLED_PLUGINS.find((plugin) => plugin.name === name);
 }
 
 /**

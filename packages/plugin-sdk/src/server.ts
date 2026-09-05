@@ -378,6 +378,20 @@ export interface PluginProviderHandle {
   unregister(): void;
 }
 
+export interface PluginPtyHarnessProfile {
+  id: string;
+  label: string;
+}
+
+export interface PluginPtyHarnessDeclaration {
+  id: string;
+  displayName: string;
+  icon?: string;
+  profiles: PluginPtyHarnessProfile[];
+  alwaysEnabled?: boolean;
+  enableConfigKey?: string;
+}
+
 export interface PluginAgentConfigureContext {
   threadId?: string;
   projectId?: string;
@@ -394,6 +408,7 @@ export interface PluginAgents {
   contributeSkills(rootPaths: string[]): void;
   registerTool(registration: PluginAgentToolRegistration): void;
   experimental_registerProvider(declaration: PluginProviderDeclaration): PluginProviderHandle;
+  experimental_registerPtyHarness(declaration: PluginPtyHarnessDeclaration): PluginProviderHandle;
   configure(
     provider: (
       ctx: PluginAgentConfigureContext

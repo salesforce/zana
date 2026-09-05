@@ -1351,6 +1351,13 @@ export interface TerminalSession {
    */
   remoteTunnel?: { ok: boolean; reason?: string };
   /**
+   * Local CLI + SSH remote tools (Experimental). Set when this session was
+   * spawned on this machine with `zcc-inbox` `remote_*` tools instead of
+   * `ssh -t`. Board labels use this rather than {@link Project.remote} so an
+   * SSH project can show **Local agent · remote tools** vs **Remote host**.
+   */
+  remoteToolProxy?: boolean;
+  /**
    * Per-agent opt-in for the Heartbeat feature (absent/false = off). When true
    * AND the global {@link AppConfig.heartbeatEnabled} master switch is on, this
    * session is nudged to continue after it stays idle for the configured delay.
@@ -2164,6 +2171,15 @@ export interface AppConfig {
    */
   goalsEnabled?: boolean;
   /**
+   * EXPERIMENTAL — CLI Agent on an SSH project can run the CLI on this machine
+   * and execute file/shell tools over SSH (`zcc-inbox` `remote_*`), same as
+   * Modern's local-agent / remote-tools path. Unlocks a New Chat picker
+   * (Remote host vs Local agent · remote tools). Default OFF: CLI Agent on
+   * SSH always uses `ssh -t` (Remote host). Main re-authorizes the pick
+   * (Rule 1); the renderer never sends host credentials.
+   */
+  cliRemoteToolProxyEnabled?: boolean;
+  /**
    * Master switch for the EXPERIMENTAL Follow-ups feature: when ON, the
    * "Follow-ups" project-scoped nav tab appears (durable parked questions from
    * idle-triage and other origins). Under evaluation, so it's hidden by default
@@ -2752,6 +2768,13 @@ export interface CreateTerminalRequest {
   microVmImage?: string;
   microVmCpus?: number;
   microVmMemoryMib?: number;
+  /**
+   * Renderer INTENT: run this CLI launch as local agent + remote SSH tools
+   * instead of `ssh -t`. Main honors it only when
+   * {@link AppConfig.cliRemoteToolProxyEnabled} is on AND the store project
+   * has `remote` (Rule 1). Never send host / credentials from the renderer.
+   */
+  remoteToolProxy?: boolean;
 }
 
 export interface FsEntry {

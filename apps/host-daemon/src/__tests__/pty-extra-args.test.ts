@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // lands as a stray positional.
 interface FakeProc {
   pid: number;
+  command: string;
   args: string[];
   write: () => void;
   onData: () => void;
@@ -17,9 +18,10 @@ interface FakeProc {
 const spawned: FakeProc[] = [];
 
 vi.mock('node-pty', () => ({
-  spawn: (_command: string, args: string[]) => {
+  spawn: (command: string, args: string[]) => {
     const proc: FakeProc = {
       pid: 2000 + spawned.length,
+      command,
       args,
       write() {},
       onData() {},
@@ -322,5 +324,51 @@ describe('PtyManager.create — per-tab claude session id', () => {
     });
     expect(spawned[0].args).not.toContain('--session-id');
     expect(session.claudeSessionId).toBeUndefined();
+  });
+});
+
+describe('PtyManager.create — CLI remote tools', () => {
+  beforeEach(() => {
+    spawned.length = 0;
+  });
+
+  it('stays local, denies native fs/shell, and pre-allows zcc-inbox remote_*', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl('http://127.0.0.1:3000');
+    const session = mgr.create({
+      projectId: 'p1',
+      profile: 'claude',
+      cwd: '/tmp',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      remoteToolProxy: true
+    });
+    expect(session.remoteToolProxy).toBe(true);
+    expect(spawned[0].command).not.toBe('ssh');
+    const allowed = flagValue(spawned[0].args, '--allowedTools') ?? '';
+    expect(allowed).toContain('mcp__zcc-inbox__remote_read');
+    expect(allowed).toContain('mcp__zcc-inbox__remote_write');
+    expect(allowed).not.toContain('mcp__zcc-inbox__remote_exec');
+    const denied = flagValue(spawned[0].args, '--disallowedTools') ?? '';
+    expect(denied).toContain('Read');
+    expect(denied).toContain('Bash');
+    expect(spawned[0].args.join(' ')).toContain('mcp__zcc-inbox__remote_read');
+  });
+
+  it('does not wrap remote_* into a local spawn when remoteToolProxy is off', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl('http://127.0.0.1:3000');
+    const session = mgr.create({
+      projectId: 'p1',
+      profile: 'claude',
+      cwd: '/tmp',
+      cols: 80,
+      rows: 24,
+      config: CONFIG
+    });
+    expect(session.remoteToolProxy).toBeUndefined();
+    const allowed = flagValue(spawned[0].args, '--allowedTools') ?? '';
+    expect(allowed).not.toContain('mcp__zcc-inbox__remote_read');
   });
 });

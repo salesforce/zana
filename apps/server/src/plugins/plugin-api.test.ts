@@ -499,6 +499,31 @@ describe('resolveCreateJiti', () => {
   });
 });
 
+describe('pty harness registration', () => {
+  it('accepts a CLI Agent family declaration', () => {
+    const handle = createPluginApi('harness-claude', '/tmp');
+    const registered = handle.api.agents.experimental_registerPtyHarness({
+      id: 'claude',
+      displayName: 'Claude Code',
+      profiles: [{ id: 'claude', label: 'Claude' }],
+      alwaysEnabled: true
+    });
+    expect(registered.id).toBe('claude');
+    expect(() => registered.unregister()).not.toThrow();
+  });
+
+  it('rejects a declaration without id or displayName', () => {
+    const handle = createPluginApi('harness-claude', '/tmp');
+    expect(() =>
+      handle.api.agents.experimental_registerPtyHarness({
+        id: '',
+        displayName: 'Claude Code',
+        profiles: []
+      })
+    ).toThrow(/id and displayName/);
+  });
+});
+
 describe('importServerFactory', () => {
   it('loads a TypeScript factory when jiti only exposes a default export', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-ts-factory-'));

@@ -29,7 +29,15 @@ describe('readPluginManifest', () => {
     expect(manifest.id).toBe('tasks');
     expect(manifest.serverEntry).toBe('./server.ts');
     expect(manifest.appEntry).toBe('./app.tsx');
+    expect(manifest.hostEntry).toBeNull();
+    expect(manifest.ptyEntry).toBeNull();
     expect(manifest.projectTab?.global).toBe(false);
+  });
+
+  it('parses optional host and pty entries', () => {
+    const manifest = readPluginManifest(baseZcc({ host: './host.ts', pty: './pty.ts' }));
+    expect(manifest.hostEntry).toBe('./host.ts');
+    expect(manifest.ptyEntry).toBe('./pty.ts');
   });
 
   it('defaults skills roots to ["skills"] when omitted', () => {

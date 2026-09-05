@@ -1,6 +1,6 @@
 import { useMemo, type HTMLAttributes, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, MessageCirclePlus } from 'lucide-react';
+import { ChevronRight, MessageCirclePlus, Network } from 'lucide-react';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   projectRailTerminals,
@@ -14,7 +14,7 @@ import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { getAgentSessionRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { railThreadsForProject } from '../fleet-item.js';
-import { composerProjectLabel } from '../composer-project-default.js';
+import { composerProjectLabel, isRemoteWorkspaceProject } from '../composer-project-default.js';
 import {
   AgentCardMenu,
   clampMenuAnchor,
@@ -156,6 +156,9 @@ export function ProjectSessionRail({
           />
           <span className="project-meta project-meta--inline">
             <span className="project-name">{displayName}</span>
+            {isRemoteWorkspaceProject(project) && (
+              <Network size={11} strokeWidth={2} className="project-remote-icon" aria-label="Remote SSH project" />
+            )}
           </span>
           {nestedCount > 0 ? <span className="project-badge">{nestedCount}</span> : null}
           <button

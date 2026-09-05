@@ -138,6 +138,7 @@ export const pluginZccManifestSchema = z
     server: requiredManifestString.optional(),
     app: requiredManifestString.optional(),
     host: requiredManifestString.optional(),
+    pty: requiredManifestString.optional(),
     skills: z.array(requiredManifestString).optional(),
     mcpServers: pluginMcpServersSchema.optional(),
     extra: pluginExtraSchema.optional(),
@@ -198,6 +199,7 @@ export interface PluginManifest {
   serverEntry: string | null;
   appEntry: string | null;
   hostEntry: string | null;
+  ptyEntry: string | null;
   skillsRootPaths: string[];
   skillNames: string[];
   mcpServers: PluginMcpServerContribution[];
@@ -226,6 +228,7 @@ export function readPluginManifest(packageJson: unknown): PluginManifest {
     serverEntry: parsed.zcc.server ?? null,
     appEntry: parsed.zcc.app ?? null,
     hostEntry: parsed.zcc.host ?? null,
+    ptyEntry: parsed.zcc.pty ?? null,
     skillsRootPaths: normalizeSkillsRootPaths(parsed.zcc.skills),
     skillNames: [],
     mcpServers,

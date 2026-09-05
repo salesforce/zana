@@ -39,6 +39,16 @@ export const REMOTE_TOOL_PROXY_INSTRUCTIONS = [
   'pass a host or credentials.'
 ].join(' ');
 
+export const CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS = [
+  'This project’s files live on a remote SSH host. Native filesystem and shell',
+  'tools (Read, Write, Edit, Glob, Grep, Bash, LS) operate on a local placeholder',
+  'and are disabled. Use mcp__zcc-inbox__remote_read, mcp__zcc-inbox__remote_write,',
+  'mcp__zcc-inbox__remote_edit, mcp__zcc-inbox__remote_glob, mcp__zcc-inbox__remote_grep,',
+  'and mcp__zcc-inbox__remote_exec instead (ToolSearch select:mcp__zcc-inbox__remote_exec',
+  'if they are deferred). Paths are relative to the remote project root (or absolute',
+  'under that root). You never pass a host or credentials.'
+].join(' ');
+
 const PATH_SCHEMA = {
   type: 'object',
   properties: {

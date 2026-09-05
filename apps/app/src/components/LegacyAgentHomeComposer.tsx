@@ -11,7 +11,9 @@ import type {
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
 import { buildLaunchArgs } from './AgentLauncher.js';
+import { agentCardRuntimeLabel } from './fleet-item.js';
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
+import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import {
   CommandComposer,
   ComposerIconButton,
@@ -25,7 +27,11 @@ import { posixQuote } from '../lib/quote.js';
 import { attachmentName } from '../lib/attachments.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
-import { composerProjectOptions, resolveComposerProjectId } from './composer-project-default.js';
+import {
+  composerProjectOptions,
+  resolveComposerProjectId,
+  type ComposerProjectSelectionProps
+} from './composer-project-default.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
 import { consumeComposerModeCycle } from './thread/pickers/composer-mode.js';
@@ -66,6 +72,10 @@ const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
  */
 export function LegacyAgentHomeComposer({
   project: pinnedProject,
+  composerProjectId,
+  onComposerProjectIdChange,
+  cliRemoteToolProxy: controlledCliRemoteToolProxy,
+  onCliRemoteToolProxyChange,
   initialText,
   onLaunched,
   onClose
@@ -74,7 +84,9 @@ export function LegacyAgentHomeComposer({
   initialText?: string;
   onLaunched?: (session: TerminalSession, projectId: string) => void;
   onClose?: () => void;
-}) {
+  cliRemoteToolProxy?: boolean;
+  onCliRemoteToolProxyChange?: (on: boolean) => void;
+} & ComposerProjectSelectionProps) {
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
   const createTerminal = useData((s) => s.createTerminal);
@@ -87,7 +99,28 @@ export function LegacyAgentHomeComposer({
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
   const selectTab = useUi((s) => s.selectTab);
   const pushToast = useUi((s) => s.pushToast);
-  const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
+  const selectedProjectId = useUi((s) => s.selectedProjectId);
+  const lastProjectId = useData((s) => s.lastProjectId);
+  const cliRemoteToolsExperiment = useData((s) => s.cliRemoteToolProxyEnabled);
+  const [internalProjectId, setInternalProjectId] = useState(
+    pinnedProject?.id ?? composerProjectId ?? ''
+  );
+  const projectId = pinnedProject?.id
+    ?? (onComposerProjectIdChange ? (composerProjectId || internalProjectId) : internalProjectId);
+  const setProjectId = (nextProjectId: string | ((current: string) => string)) => {
+    const resolved = typeof nextProjectId === 'function' ? nextProjectId(projectId) : nextProjectId;
+    if (!onComposerProjectIdChange) setInternalProjectId(resolved);
+    onComposerProjectIdChange?.(resolved);
+  };
+  const [internalCliRemoteToolProxy, setInternalCliRemoteToolProxy] = useState(false);
+  const cliRemoteToolProxy = onCliRemoteToolProxyChange
+    ? Boolean(controlledCliRemoteToolProxy)
+    : internalCliRemoteToolProxy;
+  const setCliRemoteToolProxy = (on: boolean) => {
+    if (!onCliRemoteToolProxyChange) setInternalCliRemoteToolProxy(on);
+    onCliRemoteToolProxyChange?.(on);
+  };
+  const preferredProjectId = selectedProjectId ?? lastProjectId;
   const [familyId, setFamilyId] = useState<HarnessFamily | ''>('');
   const [automaticProfile, setAutomaticProfile] = useState<LaunchProfileId | null>(null);
   const [selectionState, setSelectionState] = useState<'loading' | 'resolved' | 'unavailable'>('loading');
@@ -117,6 +150,9 @@ export function LegacyAgentHomeComposer({
   familyIdRef.current = familyId;
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
   const selectedHarness = harnesses.find((descriptor) => descriptor.id === familyId);
+  const cliRuntimeProfile = automaticProfile
+    ?? selectedHarness?.defaultProfileId
+    ?? (familyId ? PROFILE_BY_FAMILY[familyId] : 'claude');
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
     getThreadModelCatalog,
@@ -219,7 +255,7 @@ export function LegacyAgentHomeComposer({
       setProjectId(pinnedProject.id);
       return;
     }
-    const nextId = resolveComposerProjectId(projects, projectId);
+    const nextId = resolveComposerProjectId(projects, projectId, undefined, preferredProjectId);
     if (nextId && nextId !== projectId) {
       setProjectId(nextId);
       return;
@@ -237,7 +273,7 @@ export function LegacyAgentHomeComposer({
     return () => {
       cancelled = true;
     };
-  }, [loadProjects, pinnedProject, projectId, projects]);
+  }, [loadProjects, pinnedProject, preferredProjectId, projectId, projects]);
 
   useEffect(() => {
     if (!project) return;
@@ -426,7 +462,10 @@ export function LegacyAgentHomeComposer({
         harnessRouting,
         profileSource: selectionProvenance === 'automatic' ? 'seeded-default' : 'explicit',
         workspace: project.quickAgent ? { kind: 'personal' } : workspace,
-        isolateScratch: project.quickAgent ? args.title || true : undefined
+        isolateScratch: project.quickAgent ? args.title || true : undefined,
+        remoteToolProxy: project.remote && cliRemoteToolsExperiment && cliRemoteToolProxy
+          ? true
+          : undefined
       });
       if (!session) return;
       field.clear();
@@ -625,7 +664,35 @@ export function LegacyAgentHomeComposer({
               title={pinnedProject ? 'Locked to this project' : undefined}
             />
           </div>
-          {project && !project.remote && (
+          {project?.remote && cliRemoteToolsExperiment ? (
+            <div className="thread-command-chip thread-command-runtime-picker">
+              <PopoverPicklist
+                ariaLabel="CLI runtime"
+                searchable={false}
+                minWidth={292}
+                value={cliRemoteToolProxy ? 'tools' : 'host'}
+                triggerTestId="composer-remote-runtime-picker"
+                onChange={(next) => setCliRemoteToolProxy(next === 'tools')}
+                options={[
+                  {
+                    value: 'host',
+                    label: agentCardRuntimeLabel({ profile: cliRuntimeProfile, remote: true })
+                  },
+                  {
+                    value: 'tools',
+                    label: agentCardRuntimeLabel({ profile: cliRuntimeProfile, remoteToolProxy: true })
+                  }
+                ]}
+              />
+            </div>
+          ) : project?.remote ? (
+            <span className="thread-command-chip" data-testid="composer-remote-host-mark">
+              {agentCardRuntimeLabel({
+                profile: cliRuntimeProfile,
+                remote: true
+              })}
+            </span>
+          ) : project ? (
             <EnvironmentPicker
               projectId={project.id}
               value={workspace}
@@ -633,7 +700,7 @@ export function LegacyAgentHomeComposer({
               allowPersonal={Boolean(project.quickAgent)}
               disabled={launching}
             />
-          )}
+          ) : null}
         </div>
       </div>
     </div>

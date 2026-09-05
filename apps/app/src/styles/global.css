@@ -2153,9 +2153,11 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
      height (so the inbox list couldn't scroll). Pin it to the grid track. */
   min-height: 0;
   position: relative;
-  /* Lift the pane above the workspace grid item so the resize handle, which
-     overhangs the shared border, isn't painted underneath the terminal /
-     explorer surface (which would make it un-grabbable). */
+  /* Lift the pane above the adjacent detail column so the resize handle, which
+     overhangs the shared border, isn't painted underneath. This z-index must
+     stay INSIDE a content-track stacking context (`.split-workspace` /
+     `.inbox-view`); at the shell level it ties the sidebar (`z-index: 1`) and
+     paints over the left rail. */
   z-index: 1;
 }
 
@@ -2909,8 +2911,12 @@ body.resizing-col {
   padding: 6px 12px 10px;
   border-bottom: 1px solid var(--border);
 }
-.focus-project-name {
+.focus-project-header .project-meta--inline {
   flex: 1;
+  min-width: 0;
+}
+.focus-project-name {
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
@@ -11997,6 +12003,10 @@ body.resizing-col .explorer-resizer::after {
   overflow: hidden;
   display: grid;
   grid-template-columns: max(var(--inbox-list-min), var(--col-list)) minmax(0, 1fr);
+  /* Trap the inner list pane z-index so the Feed list cannot paint over the
+     left rail. The sidebar is a sibling stacking context at z-index 1; without
+     this, the list is later in the tree and wins. */
+  isolation: isolate;
 }
 
 .inbox-view-detail {
@@ -25888,7 +25898,10 @@ body.resizing-col .library-split-resizer::after {
   grid-template-columns: 260px minmax(0, 1fr);
 }
 
-.agent-monitor--empty {
+/* Two-class selector so a later `.agent-monitor { display: grid }` (there is a
+   duplicate monitor block further down) cannot spread the icon / title / copy
+   across the 3 live-monitor columns. */
+.agent-monitor.agent-monitor--empty {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -25898,12 +25911,12 @@ body.resizing-col .library-split-resizer::after {
   text-align: center;
   padding: 32px;
 }
-.agent-monitor--empty h4 {
+.agent-monitor.agent-monitor--empty h4 {
   margin: 4px 0 0;
   font-size: 14px;
   color: var(--text-primary);
 }
-.agent-monitor--empty p {
+.agent-monitor.agent-monitor--empty p {
   margin: 0;
   font-size: 12px;
   max-width: 320px;
@@ -31506,6 +31519,11 @@ textarea.thread-command-editor {
   line-height: 1.25;
 }
 
+.home-agent-composer .thread-command-composer .thread-command-runtime-picker .launch-model-picker-trigger,
+.thread-command-composer .thread-command-runtime-picker .launch-model-picker-trigger {
+  max-width: 292px;
+}
+
 .home-agent-composer .thread-command-composer .launch-model-picker-trigger:hover:not(:disabled),
 .thread-command-composer .launch-model-picker-trigger:hover:not(:disabled) {
   background: transparent;
@@ -31572,6 +31590,9 @@ textarea.thread-command-editor {
   width: 100%;
   height: 100%;
   grid-column: 2 / -1;
+  /* Grid item with a non-auto z-index creates a stacking context, so nested
+     list-pane z-index (Inbox) cannot paint over the sidebar. */
+  z-index: 0;
 }
 
 .split-workspace-host {
@@ -32336,7 +32357,7 @@ textarea.thread-command-editor {
 .thread-timeline-row.is-assistant {
   position: relative;
   width: fit-content;
-  max-width: 70%;
+  max-width: 100%;
 }
 
 .thread-timeline-row.is-user {
@@ -35996,6 +36017,15 @@ textarea.thread-command-editor {
   .agent-monitor.is-agent-session.panel-collapsed {
     grid-template-columns: minmax(160px, 28%) minmax(0, 1fr);
   }
+}
+
+/* Source-order floor: this duplicate `.agent-monitor { display: grid }` block
+   must not win over the empty-state stack. */
+.agent-monitor.agent-monitor--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Left pane — the agent list, grouped by lane. */

@@ -25,7 +25,8 @@ describe('composerProjectRemoteDescription', () => {
   it('labels SSH-backed projects with host, and skips local ones', () => {
     expect(composerProjectRemoteDescription(remoteBox)).toBe('Remote · sfwork@limited-pony');
     expect(composerProjectRemoteDescription({ remote: { host: 'devbox' } })).toBe('Remote · devbox');
-    expect(composerProjectRemoteDescription(alpha)).toBeUndefined();
+    expect(composerProjectRemoteDescription({ hostId: 'h-remote' })).toBe('Remote machine');
+    expect(composerProjectRemoteDescription({ remote: undefined })).toBeUndefined();
     expect(composerProjectRemoteDescription(undefined)).toBeUndefined();
   });
 });
@@ -60,6 +61,12 @@ describe('composerProjectPickerRows', () => {
       description: 'Remote · sfwork@limited-pony'
     });
     expect(rows.find((row) => row.value === 'alpha')?.remote).toBeUndefined();
+    expect(composerProjectPickerRows([{ id: 'on-host', name: 'app', hostId: 'h-remote' }])[0]).toEqual({
+      value: 'on-host',
+      label: 'app',
+      remote: true,
+      description: 'Remote machine'
+    });
     expect(picklistOptionVisible(
       { label: 'limited-pony', description: 'Remote · sfwork@limited-pony' },
       'remote'
@@ -107,6 +114,8 @@ describe('ComposerProjectPicker', () => {
     expect(source).toContain('FolderPlus');
     expect(source).toContain('FolderX');
     expect(source).toContain('Network');
+    expect(source).toContain('triggerIcon');
+    expect(source).toContain('isRemoteWorkspaceProject');
     expect(source).toContain('composerProjectRemoteDescription');
     expect(source).toContain('row.description');
     expect(source).toContain('row.remote');

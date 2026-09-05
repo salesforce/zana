@@ -70,7 +70,10 @@ describe('SplitWorkspaceRoute', () => {
     expect(area).not.toContain('<SplitWorkspaceSecondaryPanelHost');
     expect(area).not.toContain('createPaneSecondaryPanelRegistry');
     expect(area).toContain('secondaryPanelRegistry={null}');
-    expect(css).toContain('.split-workspace {');
+    expect(css).toContain('.split-workspace {\n  display: flex;');
+    expect(css).toContain(
+      '.split-workspace {\n  display: flex;\n  flex-direction: column;\n  min-width: 0;\n  min-height: 0;\n  width: 100%;\n  height: 100%;\n  grid-column: 2 / -1;\n  /* Grid item with a non-auto z-index creates a stacking context, so nested\n     list-pane z-index (Inbox) cannot paint over the sidebar. */\n  z-index: 0;\n}'
+    );
     expect(css).toContain('.split-pane.is-maximized {');
     expect(css).toContain('.split-pane-scrim.is-dimmed {');
     expect(css).toContain('.split-pane-minimap {');

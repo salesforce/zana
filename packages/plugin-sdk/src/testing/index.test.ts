@@ -19,6 +19,32 @@ describe('createFakePluginHost', () => {
     expect(harness.published).toEqual([{ event: 'tick', payload: { ok: true } }]);
   });
 
+  it('records provider and pty-harness registrations', () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
+    const provider = zcc.agents.experimental_registerProvider({
+      id: 'pi',
+      displayName: 'Pi',
+      capabilities: {
+        supportsServiceTier: false,
+        fork: 'checkpoint',
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['full']
+      }
+    });
+    const pty = zcc.agents.experimental_registerPtyHarness({
+      id: 'claude',
+      displayName: 'Claude Code',
+      profiles: [{ id: 'claude', label: 'Claude' }]
+    });
+    expect(harness.providers[0]?.id).toBe('pi');
+    expect(harness.ptyHarnesses[0]?.id).toBe('claude');
+    provider.unregister();
+    pty.unregister();
+    expect(harness.providers).toEqual([]);
+    expect(harness.ptyHarnesses).toEqual([]);
+  });
+
   it('runs a registered CLI command', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
     zcc.cli.register({

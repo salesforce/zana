@@ -50,6 +50,8 @@ describe('project-row workspace actions', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain('composerProjectLabel');
     expect(source).toContain('<span className="project-name">{displayName}</span>');
+    expect(source).toContain('isRemoteWorkspaceProject(p)');
+    expect(source).toContain('className="project-remote-icon"');
   });
 
   it('opens the shared agent lifecycle menu from a nested session row', () => {

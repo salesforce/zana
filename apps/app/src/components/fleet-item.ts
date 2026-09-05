@@ -274,10 +274,14 @@ export function agentCardRuntimeLabel(input: {
   profile: string;
   personaName?: string | null;
   remote?: boolean;
+  remoteToolProxy?: boolean;
 }): string {
   const name = input.personaName?.trim();
   const harness = name || cliHarnessLabel(input.profile);
-  return `${harness} · ${input.remote ? 'Remote host' : 'Local'}`;
+  const runtime = input.remoteToolProxy
+    ? 'Local agent · remote tools'
+    : input.remote ? 'Remote host' : 'Local';
+  return `${harness} · ${runtime}`;
 }
 
 export function threadCardShowsProject(showProject: boolean, grouped: boolean): boolean {

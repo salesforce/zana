@@ -48,6 +48,16 @@ describe('AgentRowDetail', () => {
     );
     expect(html).toContain('Working');
     expect(html).toContain('Claude Code · Remote host');
+  });
+
+  it('marks a local-tools CLI session on an SSH project', () => {
+    h.status = 'working';
+    h.subagents = 0;
+    const html = renderToStaticMarkup(
+      <AgentRowDetail session={session({ remoteToolProxy: true })} projectRemote />
+    );
+    expect(html).toContain('Claude Code · Local agent · remote tools');
+    expect(html).not.toContain('Remote host');
     expect(html).not.toContain('CLI Agent');
   });
 

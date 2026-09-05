@@ -849,6 +849,12 @@ describe('expandable row and chips', () => {
     );
     expect(actionBtn).toContain('padding: 4px;');
     expect(css).toContain('.thread-timeline-item.is-user,\n.thread-timeline-item.is-assistant {\n  align-items: flex-start;');
+    const assistantRow = css.slice(
+      css.indexOf('.thread-timeline-row.is-assistant {'),
+      css.indexOf('.thread-timeline-row.is-user {')
+    );
+    expect(assistantRow).toContain('width: fit-content;');
+    expect(assistantRow).toContain('max-width: 100%;');
     expect(css).toContain('.thread-timeline-row.is-user {\n  position: relative;\n  width: 100%;\n  max-width: 100%;');
     const timelinePane = css.slice(
       css.indexOf('.thread-detail-timeline {\n  flex: 1 1 auto;'),

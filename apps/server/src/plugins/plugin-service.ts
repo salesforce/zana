@@ -362,6 +362,24 @@ export function loadManifestFromDir(rootDir: string): PluginManifest {
   throw new Error(`no package.json zcc block or extension.json in ${rootDir}`);
 }
 
+/**
+ * Leftover MainModule dirs (`extension.json`, no `package.json` `zcc` block).
+ * A real plugin — including a path install of an official plugin for
+ * `zcc plugin dev` — has the `zcc` block and must not be treated as leftover.
+ */
+export function isLegacyExtensionJsonPluginRoot(rootDir: string): boolean {
+  const pkgPath = join(rootDir, 'package.json');
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = readJson(pkgPath) as { zcc?: unknown };
+      if (pkg.zcc) return false;
+    } catch {
+      /* unreadable package.json is not a zcc plugin */
+    }
+  }
+  return existsSync(join(rootDir, 'extension.json'));
+}
+
 function assertEngines(manifest: PluginManifest, hostVersion: string, sdkVersion: string): void {
   if (manifest.engines.zcc && !satisfiesRange(hostVersion, manifest.engines.zcc)) {
     throw new Error(`plugin requires zcc ${manifest.engines.zcc} (host ${hostVersion})`);
@@ -1061,6 +1079,42 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
   }
 
+  /**
+   * Official (and builtin) catalog ids used to be leftover `extension.json`
+   * MainModules. Those rows occupy the id, so Browse thinks the plugin is
+   * already installed and the UI calls RPCs the MainModule never registered.
+   * Replace that occupier with the bundled plugin on reconcile. Do not touch
+   * a real `package.json` `zcc` path install (`zcc plugin dev`) and do not
+   * auto-install an official plugin the user never had.
+   */
+  async function reclaimBundledIdsFromLegacyOccupiers(): Promise<void> {
+    for (const def of [...BUILTIN_PLUGINS, ...OFFICIAL_PLUGINS]) {
+      const row = store.get(def.pluginId);
+      if (!row) continue;
+      if (uninstalled.has(def.pluginId)) continue;
+      if (isLocalSidecar(opts.dataDir, def.pluginId)) continue;
+      let bundledDir: string | null = null;
+      try {
+        bundledDir = resolveBundledDir(opts.bundledRoot, def.name);
+      } catch {
+        continue;
+      }
+      if (resolve(row.rootDir) === resolve(bundledDir)) continue;
+      if (!isLegacyExtensionJsonPluginRoot(row.rootDir)) continue;
+      try {
+        await installParsed({ kind: 'builtin', name: def.name }, row.enabled);
+        console.info(
+          `[plugins] replaced leftover extension.json occupier ${def.pluginId} with builtin:${def.name}`
+        );
+      } catch (error) {
+        console.error(
+          `[plugins] failed to replace leftover ${def.pluginId} with builtin:${def.name}:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+  }
+
   function startBuiltinSourceWatchers(): void {
     if (!opts.watchBuiltinPluginSources) return;
     for (const row of store.list()) {
@@ -1198,6 +1252,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           await store.upsert({ ...row, rootDir: expected, updatedAt: now() });
         }
       }
+      await reclaimBundledIdsFromLegacyOccupiers();
       const installed: InstalledPluginRow[] = [];
       for (const def of BUILTIN_PLUGINS) {
         if (!def.autoInstall) continue;
@@ -1572,5 +1627,10 @@ export async function installBundledPlugin(
   }
 }
 
-export { BUILTIN_PLUGINS, OFFICIAL_PLUGINS, bundledPluginByName } from './builtin-registry.js';
+export {
+  BUNDLED_PLUGINS,
+  BUILTIN_PLUGINS,
+  OFFICIAL_PLUGINS,
+  bundledPluginByName
+} from './builtin-registry.js';
 export type { InstalledPluginRow } from './plugin-store.js';

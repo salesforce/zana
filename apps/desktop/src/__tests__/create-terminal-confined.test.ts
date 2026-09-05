@@ -44,19 +44,35 @@ let projects: Project[] = [PROJECT];
 const createScratchSubfolder = vi.fn(() => '/tmp/proj/scratch');
 
 // Capture every ptys.create() call so we can assert what reaches the pty layer.
-const createCalls: Array<{ cwd: string; extraArgs?: string[]; profile: string; persona: unknown }> = [];
+const createCalls: Array<{
+  cwd: string;
+  extraArgs?: string[];
+  profile: string;
+  persona: unknown;
+  remote?: unknown;
+  remoteToolProxy?: boolean;
+}> = [];
 
 vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
   class PtyManager {
     setMcpBaseUrl() {}
     setProjectRoots() {}
     setRulesResolver() {}
-    create(opts: { cwd: string; extraArgs?: string[]; profile: string; persona: unknown }) {
+    create(opts: {
+      cwd: string;
+      extraArgs?: string[];
+      profile: string;
+      persona: unknown;
+      remote?: unknown;
+      remoteToolProxy?: boolean;
+    }) {
       createCalls.push({
         cwd: opts.cwd,
         extraArgs: opts.extraArgs,
         profile: opts.profile,
-        persona: opts.persona
+        persona: opts.persona,
+        remote: opts.remote,
+        remoteToolProxy: opts.remoteToolProxy
       });
       return { id: `s${createCalls.length}` };
     }
@@ -433,5 +449,64 @@ describe('createTerminalConfined — main-side denylist enforcement', () => {
       CONFIG.defaultHarness = prior;
       CONFIG.harnessOpenCodeEnabled = priorEnabled;
     }
+  });
+});
+
+describe('createTerminalConfined — CLI remote tools', () => {
+  const sshProject = {
+    ...PROJECT,
+    id: 'p-ssh',
+    remote: { host: 'devbox' }
+  } as Project;
+
+  beforeEach(() => {
+    createCalls.length = 0;
+    projects = [sshProject];
+  });
+
+  it('omits ssh remote when Experimental is on and the renderer asks for remote tools', () => {
+    const res = createTerminalConfined(
+      {
+        projectId: 'p-ssh',
+        profile: 'claude',
+        cols: 80,
+        rows: 24,
+        remoteToolProxy: true
+      },
+      {
+        launchSnapshot: {
+          project: sshProject,
+          config: { ...CONFIG, cliRemoteToolProxyEnabled: true },
+          projectSettings: PROJECT_SETTINGS,
+          personas: []
+        }
+      }
+    );
+    expect(res.ok).toBe(true);
+    expect(lastCreate().remote).toBeUndefined();
+    expect(lastCreate().remoteToolProxy).toBe(true);
+  });
+
+  it('keeps ssh -t when Experimental is off even if the renderer asks for remote tools', () => {
+    const res = createTerminalConfined(
+      {
+        projectId: 'p-ssh',
+        profile: 'claude',
+        cols: 80,
+        rows: 24,
+        remoteToolProxy: true
+      },
+      {
+        launchSnapshot: {
+          project: sshProject,
+          config: { ...CONFIG, cliRemoteToolProxyEnabled: false },
+          projectSettings: PROJECT_SETTINGS,
+          personas: []
+        }
+      }
+    );
+    expect(res.ok).toBe(true);
+    expect(lastCreate().remote).toEqual({ host: 'devbox' });
+    expect(lastCreate().remoteToolProxy).toBeUndefined();
   });
 });

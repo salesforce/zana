@@ -747,6 +747,7 @@ function mirroredConfigFlags(config: AppConfig) {
     terminalWheelArrowsEnabled: config.terminalWheelArrowsEnabled ?? true,
     heartbeatEnabled: config.heartbeatEnabled ?? false,
     goalsEnabled: config.goalsEnabled ?? false,
+    cliRemoteToolProxyEnabled: config.cliRemoteToolProxyEnabled ?? false,
     followUpsEnabled: config.followUpsEnabled ?? false,
     idleAttentionSensitivity: config.idleAttentionSensitivity ?? 'medium',
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
@@ -770,6 +771,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
     openerHiddenTargets: config.openerHiddenTargets ?? [],
+    lastProjectId: config.lastProjectId ?? null,
   };
 }
 
@@ -1413,6 +1415,10 @@ interface DataState {
   /** Mirror of AppConfig.goalsEnabled — gates the experimental Goals project tab.
    *  Hydrated on init, kept live by the Settings toggle. Default off. */
   goalsEnabled: boolean;
+  /** Mirror of AppConfig.cliRemoteToolProxyEnabled — unlocks the CLI Agent
+   *  Remote host vs Local agent · remote tools picker on SSH projects.
+   *  Hydrated on init, kept live by the Settings toggle. Default off. */
+  cliRemoteToolProxyEnabled: boolean;
   /** Mirror of AppConfig.followUpsEnabled — gates the experimental Follow-ups
    *  project tab. Hydrated on init, kept live by the Settings toggle. Default off. */
   followUpsEnabled: boolean;
@@ -1494,6 +1500,9 @@ interface DataState {
   /** Last external-editor verification snapshot (Settings → Editor). Empty until
    *  `refreshEditorStatus` runs. */
   editorStatus: EditorVerifyResult[];
+  /** Mirror of AppConfig.lastProjectId — seeds New Chat when the sidebar has
+   *  no current selection (e.g. after adding a remote, then opening Home). */
+  lastProjectId: string | null;
   /** Re-probe every external editor's `<shim> --version` and cache the result. */
   refreshEditorStatus: () => Promise<void>;
   /** Mirror of AppConfig.openerHiddenTargets — opener-bar targets the user hid.
@@ -1516,6 +1525,7 @@ interface DataState {
   setTerminalWheelArrowsEnabled: (on: boolean) => void;
   setHeartbeatEnabled: (on: boolean) => void;
   setGoalsEnabled: (on: boolean) => void;
+  setCliRemoteToolProxyEnabled: (on: boolean) => void;
   setFollowUpsEnabled: (on: boolean) => void;
   setCatchUpSummaryEnabled: (on: boolean) => void;
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
@@ -1638,6 +1648,12 @@ interface DataState {
       /** Receives a launch failure for callers needing retained inline feedback
        *  in addition to the global error toast. */
       onError?: (message: string) => void;
+      /**
+       * Renderer INTENT: local CLI + SSH remote tools. Main honors only when
+       * Experimental `cliRemoteToolProxyEnabled` is on and the store project
+       * has `remote` (Rule 1). Never send host credentials.
+       */
+      remoteToolProxy?: boolean;
     }
   ) => Promise<TerminalSession | null>;
   /**
@@ -1827,6 +1843,7 @@ export const useData = create<DataState>((set, get) => ({
   terminalWheelArrowsEnabled: true,
   heartbeatEnabled: false,
   goalsEnabled: false,
+  cliRemoteToolProxyEnabled: false,
   followUpsEnabled: false,
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
@@ -1851,6 +1868,7 @@ export const useData = create<DataState>((set, get) => ({
   harnessOpenCodeEnabled: false,
   harnessStatus: [],
   editorStatus: [],
+  lastProjectId: null,
   openerHiddenTargets: [],
   microVmEnabled: false,
   worktreeIsolationDefault: false,
@@ -1878,6 +1896,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setGoalsEnabled(on) {
     set({ goalsEnabled: on });
+  },
+
+  setCliRemoteToolProxyEnabled(on) {
+    set({ cliRemoteToolProxyEnabled: on });
   },
 
   setFollowUpsEnabled(on) {
@@ -2968,7 +2990,8 @@ export const useData = create<DataState>((set, get) => ({
         microVmMemoryMib: opts?.microVmMemoryMib,
         resumeSessionId: opts?.resumeSessionId,
         cohort: opts?.cohort,
-        headless: opts?.headless
+        headless: opts?.headless,
+        remoteToolProxy: opts?.remoteToolProxy
       });
       if (!result.ok) {
         opts?.onError?.(result.message);

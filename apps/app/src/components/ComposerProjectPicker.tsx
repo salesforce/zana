@@ -12,7 +12,7 @@ import {
   composerProjectRemoteDescription,
   resolveComposerProjectPickerChange
 } from './composer-project-picker.js';
-import { DEFAULT_COMPOSER_WORKSPACE_LABEL } from './composer-project-default.js';
+import { DEFAULT_COMPOSER_WORKSPACE_LABEL, isRemoteWorkspaceProject } from './composer-project-default.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 
 export function ComposerProjectPicker({
@@ -32,9 +32,8 @@ export function ComposerProjectPicker({
   const addProjectByPath = useData((s) => s.addProjectByPath);
   const [showLocalDialog, setShowLocalDialog] = useState(false);
   const rows = useMemo(() => composerProjectPickerRows(projects), [projects]);
-  const selectedRemoteHint = composerProjectRemoteDescription(
-    projects.find((project) => project.id === value)
-  );
+  const selectedProject = projects.find((project) => project.id === value);
+  const selectedRemoteHint = composerProjectRemoteDescription(selectedProject);
 
   const selectProject = (projectId: string) => {
     if (projectId === value) return;
@@ -58,6 +57,9 @@ export function ComposerProjectPicker({
         placeholder={DEFAULT_COMPOSER_WORKSPACE_LABEL}
         disabled={disabled}
         title={title ?? selectedRemoteHint}
+        triggerIcon={isRemoteWorkspaceProject(selectedProject)
+          ? <Network size={14} strokeWidth={2} className="project-remote-icon" aria-hidden="true" />
+          : undefined}
         minWidth={280}
         emptyHint="No matching projects"
         options={rows.map((row) => ({

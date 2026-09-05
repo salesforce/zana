@@ -30,6 +30,12 @@ export function ExperimentalView({
           onChange={(v) => onUpdate({ goalsEnabled: v })}
         />
         <CheckboxField
+          label="CLI Agent remote tools"
+          help="Experimental — on an SSH project, CLI Agent can run on this machine and execute file and shell tools over SSH (same as Modern's Local agent · remote tools). Unlocks a New Chat picker: Remote host (ssh -t) vs Local agent · remote tools. Off ⇒ CLI Agent on SSH always uses ssh -t (Remote host)."
+          checked={config.cliRemoteToolProxyEnabled ?? false}
+          onChange={(v) => onUpdate({ cliRemoteToolProxyEnabled: v })}
+        />
+        <CheckboxField
           label="Catch-up summary"
           help="Experimental — when an agent sits idle or is waiting on a choice, precompute a quick catch-up summary under the terminal through monitor HTTP provider selected in Agents settings. Without one, summaries report unavailable. Also shows manual 'Summarize to inbox' button in agent modal. Off ⇒ both are hidden."
           checked={config.catchUpSummaryEnabled ?? false}

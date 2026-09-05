@@ -111,6 +111,14 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
         displayName: string;
         capabilities: Record<string, unknown>;
       }): { id: string; unregister(): void };
+      experimental_registerPtyHarness(declaration: {
+        id: string;
+        displayName: string;
+        icon?: string;
+        profiles: Array<{ id: string; label: string }>;
+        alwaysEnabled?: boolean;
+        enableConfigKey?: string;
+      }): { id: string; unregister(): void };
     };
     readonly events: {
       on(

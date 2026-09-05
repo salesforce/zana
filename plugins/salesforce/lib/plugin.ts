@@ -167,7 +167,6 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     return { root: snapshot.projectRoot };
   };
 
-  await applyStatus();
   settings.onChange(() => {
     connections.invalidate();
     void applyStatus();
@@ -326,17 +325,25 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return { ok: false, error: message, code };
     }
   });
-  zcc.rpc.method('soql.describeGlobal', (args) => explorer.describeGlobal(args));
-  zcc.rpc.method('soql.describeSObject', (args) => explorer.describeSObject(args));
-  zcc.rpc.method('soql.query', (args) => explorer.query(args));
-  zcc.rpc.method('soql.queryMore', (args) => explorer.queryMore(args));
-  zcc.rpc.method('soql.explain', (args) => explorer.explain(args));
-  zcc.rpc.method('soql.limits', () => explorer.limits());
-  zcc.rpc.method('soql.abort', (args) => explorer.abort(args));
-  zcc.rpc.method('soql.history.list', () => explorer.historyList());
-  zcc.rpc.method('soql.history.save', (args) => explorer.historySave(args));
-  zcc.rpc.method('soql.history.remove', (args) => explorer.historyRemove(args));
+  const soqlRpcs: Record<string, (args: unknown) => unknown> = {
+    describeGlobal: (args) => explorer.describeGlobal(args),
+    describeSObject: (args) => explorer.describeSObject(args),
+    query: (args) => explorer.query(args),
+    queryMore: (args) => explorer.queryMore(args),
+    explain: (args) => explorer.explain(args),
+    limits: () => explorer.limits(),
+    abort: (args) => explorer.abort(args),
+    'history.list': () => explorer.historyList(),
+    'history.save': (args) => explorer.historySave(args),
+    'history.remove': (args) => explorer.historyRemove(args)
+  };
+  for (const [name, handler] of Object.entries(soqlRpcs)) {
+    zcc.rpc.method(`soql.${name}`, handler);
+    // Older UI bundles called the Salesforce REST verb (`sql.describeGlobal`).
+    zcc.rpc.method(`sql.${name}`, handler);
+  }
   zcc.onDispose(() => explorer.dispose());
+  await applyStatus();
 
   zcc.cli.register({
     name: 'sf',

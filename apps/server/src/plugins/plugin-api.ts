@@ -652,6 +652,18 @@ export function createPluginApi(
         disposeHooks.push(() => handle.unregister());
         return handle;
       },
+      experimental_registerPtyHarness: (declaration) => {
+        assertLive();
+        if (!declaration?.id?.trim() || !declaration?.displayName?.trim()) {
+          throw new Error('agents.experimental_registerPtyHarness requires id and displayName');
+        }
+        return {
+          id: declaration.id,
+          unregister() {
+            /* Host-daemon binds the family in-process; unregister is a no-op here. */
+          }
+        };
+      },
       configure: (provider) => {
         assertLive();
         agentConfigurers.push(provider);

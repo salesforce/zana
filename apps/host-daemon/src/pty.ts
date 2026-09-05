@@ -37,6 +37,11 @@ import {
 export { applyHeapCeiling, extractPinnedSessionId };
 import { nativeSessionFields } from './harness/session-adapter.js';
 import { resolveAdditionalWorkspaceWriteRootsSync } from '@zana-ai/zcc-host-workspace';
+import {
+  CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS,
+  REMOTE_TOOL_PROXY_DISALLOWED_TOOLS
+} from './remote-tool-proxy.js';
+import { REMOTE_FS_TOOL_NAMES } from './remote-fs-mcp-tools.js';
 
 // Electron-Vite emits an ESM `require` shim for the main bundle. Keep this
 // module-local resolver distinct so the bundled declarations cannot collide.
@@ -676,6 +681,12 @@ export class PtyManager extends EventEmitter {
     microVmMemoryMib?: number;
     /** Internal migration lane: authenticated server-host execution for local shells only. */
     runtimeHost?: boolean;
+    /**
+     * MAIN-only: local CLI + SSH remote tools. Omit `remote` so this stays on
+     * the local spawn path (MCP injection). Set only by createTerminalConfined
+     * after re-authorizing Experimental + store `project.remote` (Rule 1).
+     */
+    remoteToolProxy?: boolean;
   }): TerminalSession {
     if (opts.remote) {
       return this.createRemote({ ...opts, remote: opts.remote });
@@ -823,7 +834,9 @@ export class PtyManager extends EventEmitter {
     // opened tabs get only the inbox guidance. Built once so the claude
     // `--append-system-prompt` path and the codex `-c developer_instructions`
     // path (guidanceArgs) deliver IDENTICAL guidance.
-    const guidanceText = buildSystemPromptGuidance(Boolean(opts.scheduled));
+    const guidanceText = opts.remoteToolProxy
+      ? `${buildSystemPromptGuidance(Boolean(opts.scheduled))}\n\n${CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS}`
+      : buildSystemPromptGuidance(Boolean(opts.scheduled));
     // Operator RULES.md (WARP-C5): the composed global + project standing
     // instructions, or null when neither file exists. Resolved via the injected
     // resolver (file I/O + Rule-2 confinement live in `rules-file.ts` + the boot
@@ -1047,6 +1060,9 @@ export class PtyManager extends EventEmitter {
     const microvmExecAllow = opts.autonomous
       ? ['mcp__zcc-inbox__microvm_exec', 'mcp__zcc-inbox__microvm_reset']
       : [];
+    const remoteFsAllow = opts.remoteToolProxy
+      ? REMOTE_FS_TOOL_NAMES.map((name) => `mcp__zcc-inbox__${name}`)
+      : [];
     // "Trust all ZCC tools" (AppConfig.trustZccToolsEnabled) short-circuits the
     // narrow per-tool allow-list to the whole-server wildcard `mcp__zcc-inbox`
     // (claude treats an `mcp__<server>` entry with no `__tool` suffix as "pre-
@@ -1074,7 +1090,8 @@ export class PtyManager extends EventEmitter {
               ...meshAllow,
               ...agentDataAllow,
               ...remoteExecAllow,
-              ...microvmExecAllow
+              ...microvmExecAllow,
+              ...remoteFsAllow
             ]
           : [
               'mcp__zcc-inbox__inbox_push',
@@ -1085,7 +1102,8 @@ export class PtyManager extends EventEmitter {
               ...meshAllow,
               ...agentDataAllow,
               ...remoteExecAllow,
-              ...microvmExecAllow
+              ...microvmExecAllow,
+              ...remoteFsAllow
             ];
     // Per-tab Claude session id. Forcing `--session-id <uuid>` at first launch
     // gives each claude tab a *stable, distinct* transcript id, so restore can
@@ -1189,7 +1207,7 @@ export class PtyManager extends EventEmitter {
         ],
         inboxAllow
       ),
-      []
+      opts.remoteToolProxy ? [...REMOTE_TOOL_PROXY_DISALLOWED_TOOLS] : []
     );
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
@@ -1388,7 +1406,8 @@ export class PtyManager extends EventEmitter {
         : requestedEnvironment && requestedEnvironment !== 'local'
           ? requestedEnvironment
           : undefined,
-      isolationStatus: isolationStatus.isolated || isolationStatus.reason ? isolationStatus : undefined
+      isolationStatus: isolationStatus.isolated || isolationStatus.reason ? isolationStatus : undefined,
+      remoteToolProxy: opts.remoteToolProxy || undefined
     };
 
     // ASYNC, HANDLE-OWNING ENV (microVM/container) — the backend boot is async
@@ -1893,9 +1912,9 @@ export class PtyManager extends EventEmitter {
       mintClaudeSessionId: randomUUID
     });
     let remoteCmd = builtCmd;
-    // tmux persistence on the REMOTE (opt-in, Phase 2): this is the strongest
-    // use case — survive a flaky `ssh -t` link by re-attaching the live remote
-    // session. Gated on the scope covering REMOTE sessions ('remote' or 'all')
+    // tmux persistence on the REMOTE: survive a flaky `ssh -t` link by
+    // re-attaching the live remote session. Gated on the scope covering REMOTE
+    // sessions ('remote' or 'all'; missing matches Settings' "all sessions")
     // + non-scheduled/headless. We can't probe the remote's PATH from here, so
     // we rely on `tmux` being on the remote PATH; a missing remote tmux
     // surfaces as a normal command error in the terminal (no worse than any
@@ -1914,8 +1933,12 @@ export class PtyManager extends EventEmitter {
     // (the remote agent keeps running in its detached tmux session). A
     // wake-reconnect spawn is tmux-backed by construction, so folding
     // `reconnectTmuxId` in here arms auto-reconnect for it too.
+    // Settings displays missing tmuxScope as "all sessions" (the default).
+    // Honor that on the remote wrap so SSH CLI sessions are tmux-backed
+    // unless the user has explicitly chosen 'off'.
+    const remoteTmuxScope = opts.config.tmuxScope ?? 'all';
     const tmuxBacked =
-      ((opts.config.tmuxScope === 'remote' || opts.config.tmuxScope === 'all') ||
+      ((remoteTmuxScope === 'remote' || remoteTmuxScope === 'all') ||
         !!opts.reconnectTmuxId) &&
       !opts.scheduled &&
       !opts.headless;

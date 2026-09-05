@@ -3159,6 +3159,11 @@ export function createTerminalConfined(
     // tools that deliberately exercise this low-level helper in isolation.
     const projectMicroVmSettings = opts?.launchSnapshot?.projectSettings
       ?? store.getProjectSettings(req.projectId);
+    const launchConfig = opts?.launchSnapshot?.config ?? store.getConfig();
+    const useRemoteTools =
+      Boolean(req.remoteToolProxy)
+      && launchConfig.cliRemoteToolProxyEnabled === true
+      && Boolean(project.remote);
     const resolvedMicroVmImage =
       req.microVmImage ?? effectivePersona?.microVmImage ?? projectMicroVmSettings.microVmImage;
     const session = ptys.create({
@@ -3169,12 +3174,13 @@ export function createTerminalConfined(
       cwd,
       cols: req.cols,
       rows: req.rows,
-      config: opts?.launchSnapshot?.config ?? store.getConfig(),
+      config: launchConfig,
       projectSettings: projectMicroVmSettings,
       extraArgs,
       harnessRouting: req.harnessRouting,
       title: req.title,
-      remote: project.remote,
+      remote: useRemoteTools ? undefined : project.remote,
+      remoteToolProxy: useRemoteTools || undefined,
       cohort: req.cohort,
       headless: req.headless,
       // MAIN-only: autonomous team runs force --permission-mode acceptEdits +

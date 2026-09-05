@@ -24,6 +24,8 @@ export interface FakePluginHarness {
   schedules: Array<{ name: string; cron: string; job: () => void | Promise<void> }>;
   extraSkillRoots: string[];
   extraInstructions: string[];
+  providers: import('../server.js').PluginProviderDeclaration[];
+  ptyHarnesses: import('../server.js').PluginPtyHarnessDeclaration[];
   mentionProviders: import('../server.js').PluginMentionProviderRegistration[];
   agentConfigurers: Array<
     (
@@ -120,6 +122,8 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   const schedules: Array<{ name: string; cron: string; job: () => void | Promise<void> }> = [];
   const extraSkillRoots: string[] = [];
   const extraInstructions: string[] = [];
+  const providers: FakePluginHarness['providers'] = [];
+  const ptyHarnesses: FakePluginHarness['ptyHarnesses'] = [];
   const mentionProviders: FakePluginHarness['mentionProviders'] = [];
   const agentConfigurers: FakePluginHarness['agentConfigurers'] = [];
   const agentTools: import('../server.js').PluginAgentToolRegistration[] = [];
@@ -379,12 +383,28 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       registerTool(registration) {
         agentTools.push(registration);
       },
-      experimental_registerProvider: () => ({
-        id: 'fake',
-        unregister() {
-          /* no-op in the harness */
-        }
-      }),
+      experimental_registerProvider: (declaration) => {
+        assertLive();
+        providers.push(declaration);
+        return {
+          id: declaration.id,
+          unregister() {
+            const index = providers.indexOf(declaration);
+            if (index >= 0) providers.splice(index, 1);
+          }
+        };
+      },
+      experimental_registerPtyHarness: (declaration) => {
+        assertLive();
+        ptyHarnesses.push(declaration);
+        return {
+          id: declaration.id,
+          unregister() {
+            const index = ptyHarnesses.indexOf(declaration);
+            if (index >= 0) ptyHarnesses.splice(index, 1);
+          }
+        };
+      },
       configure(provider) {
         agentConfigurers.push(provider);
       }
@@ -419,6 +439,8 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     schedules,
     extraSkillRoots,
     extraInstructions,
+    providers,
+    ptyHarnesses,
     mentionProviders,
     agentConfigurers,
     get cli() {

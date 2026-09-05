@@ -87,6 +87,7 @@ this list fails CI):
 - `zcc.agents` — `contributeInstructions(text)`, `contributeSkills(rootPaths)`,
   `registerTool({ name, description, inputSchema?, presentation?, execute })`,
   `experimental_registerProvider(declaration)`,
+  `experimental_registerPtyHarness(declaration)`,
   `configure(provider)` (returns optional `{ tools, skills, instructions }`
   folded into the generated plugin-instructions skill).
 - `zcc.events` — `events.on(name, handler)` for thread lifecycle.

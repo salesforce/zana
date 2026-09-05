@@ -5,7 +5,7 @@ import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ThreadContextWindowUsage } from '@zana-ai/zcc-server-contract';
 import { product } from '../lib/product-client.js';
 import { copyText } from '../lib/copy-text.js';
-import { useData } from '../store.js';
+import { useData, useUi } from '../store.js';
 import { useThreads } from '../thread-store.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { useRouteState } from '../hooks/useRouteState.js';
@@ -53,7 +53,7 @@ import { resolveThreadSubmitMode } from './thread/thread-submit-mode.js';
 import { promptHistoryTexts, stepPromptHistory } from './thread/prompt-history-step.js';
 import { ThreadContextMeter } from './thread/ThreadContextMeter.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
-import { resolveComposerProjectId } from './composer-project-default.js';
+import { resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
 import { useBooleanPreference } from '../lib/use-boolean-preference.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import {
@@ -68,7 +68,7 @@ import { useComposerPromptField } from './composer/use-composer-prompt-field.js'
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
-export interface ThreadCommandComposerProps {
+export interface ThreadCommandComposerProps extends ComposerProjectSelectionProps {
   project?: Project;
   threadId?: string;
   status?: string;
@@ -90,6 +90,8 @@ export interface ThreadCommandComposerProps {
 
 export function ThreadCommandComposer({
   project: pinnedProject,
+  composerProjectId,
+  onComposerProjectIdChange,
   threadId,
   status,
   inFlightRetry = false,
@@ -108,8 +110,20 @@ export function ThreadCommandComposer({
   const route = useRouteState();
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
+  const lastProjectId = useData((s) => s.lastProjectId);
+  const selectedProjectId = useUi((s) => s.selectedProjectId);
   const upsertThread = useThreads((s) => s.upsert);
-  const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
+  const [internalProjectId, setInternalProjectId] = useState(
+    pinnedProject?.id ?? composerProjectId ?? ''
+  );
+  const projectId = pinnedProject?.id
+    ?? (onComposerProjectIdChange ? (composerProjectId || internalProjectId) : internalProjectId);
+  const setProjectId = (nextProjectId: string | ((current: string) => string)) => {
+    const resolved = typeof nextProjectId === 'function' ? nextProjectId(projectId) : nextProjectId;
+    if (!onComposerProjectIdChange) setInternalProjectId(resolved);
+    onComposerProjectIdChange?.(resolved);
+  };
+  const preferredProjectId = selectedProjectId ?? lastProjectId;
   const ensureScratchRef = useRef(false);
   const options = useThreadComposerOptions({
     threadId,
@@ -183,7 +197,7 @@ export function ThreadCommandComposer({
       setProjectId(pinnedProject.id);
       return;
     }
-    const nextId = resolveComposerProjectId(projects, projectId);
+    const nextId = resolveComposerProjectId(projects, projectId, undefined, preferredProjectId);
     if (nextId && nextId !== projectId) {
       setProjectId(nextId);
       return;
@@ -201,7 +215,7 @@ export function ThreadCommandComposer({
     return () => {
       cancelled = true;
     };
-  }, [loadProjects, pinnedProject, projectId, projects]);
+  }, [loadProjects, pinnedProject, preferredProjectId, projectId, projects]);
 
   const permissionOptions = permissionModeOptionsFor(
     options.provider?.permissionModes ?? ['accept-edits', 'full']

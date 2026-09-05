@@ -116,6 +116,15 @@ describe('AgentsBoard compact chrome contract', () => {
     );
   });
 
+  it('keeps the empty list-view monitor as a centered stack, not the 3-column grid', () => {
+    expect(css).toMatch(/\.agent-monitor\.agent-monitor--empty\s*\{[^}]*display:\s*flex/s);
+    const lastEmpty = css.lastIndexOf('.agent-monitor.agent-monitor--empty');
+    const lastGrid = css.lastIndexOf('.agent-monitor {\n  flex: 1');
+    expect(lastEmpty).toBeGreaterThan(lastGrid);
+    const emptyBlock = css.slice(lastEmpty, css.indexOf('}', lastEmpty));
+    expect(emptyBlock).toContain('display: flex');
+  });
+
   it('does not span a launch composer across the workbench', () => {
     expect(board).not.toContain('<HomeAgentComposer');
     expect(css).not.toContain('.agents-board > .home-agent-composer {');

@@ -81,6 +81,8 @@ export type {
   PluginProviderDeclaration,
   PluginProviderHandle,
   PluginProviderCapabilities,
+  PluginPtyHarnessDeclaration,
+  PluginPtyHarnessProfile,
   PluginUi,
   PluginInteractionRequest,
   PluginInteractionResult,

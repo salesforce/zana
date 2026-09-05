@@ -8,7 +8,14 @@ export const DEFAULT_COMPOSER_WORKSPACE_LABEL = DEFAULT_PROJECT_DISPLAY_NAME;
 
 const SCRATCH_FOLDER_NAMES = new Set([SCRATCH_WORKSPACE_NAME, 'cc-workspace']);
 
-export type ComposerProject = Pick<Project, 'id' | 'name' | 'quickAgent' | 'remote'>;
+export type ComposerProject = Pick<Project, 'id' | 'name' | 'quickAgent' | 'remote' | 'hostId'>;
+
+/** SSH remotes and folders bound to a non-primary host daemon. */
+export function isRemoteWorkspaceProject(
+  project: Pick<ComposerProject, 'remote' | 'hostId'> | undefined
+): boolean {
+  return Boolean(project?.remote) || Boolean(project?.hostId);
+}
 
 export function isScratchWorkspaceProject(project: ComposerProject): boolean {
   return Boolean(project.quickAgent) || project.name === SCRATCH_WORKSPACE_NAME;
@@ -32,15 +39,24 @@ export function composerProjectOptions<T extends Pick<Project, 'quickAgent'>>(pr
 
 /**
  * Default project for a new-thread composer. A pinned project always wins.
- * Otherwise keep a valid current pick, or fall through to the scratch workspace
- * so an unselected composer still has `zcc-workspace`.
+ * Otherwise keep a valid current pick, then a preferred id (sidebar selection
+ * or last-used project), then the scratch workspace so an unselected composer
+ * still has `zcc-workspace`.
  */
 export function resolveComposerProjectId(
   projects: readonly ComposerProject[],
   currentId: string,
-  pinnedId?: string
+  pinnedId?: string,
+  preferredId?: string | null
 ): string {
   if (pinnedId) return pinnedId;
   if (currentId && projects.some((project) => project.id === currentId)) return currentId;
+  if (preferredId && projects.some((project) => project.id === preferredId)) return preferredId;
   return scratchWorkspaceProject(projects)?.id ?? '';
 }
+
+/** Optional controlled project pick shared across Modern / CLI Agent / Autonomous. */
+export type ComposerProjectSelectionProps = {
+  composerProjectId?: string;
+  onComposerProjectIdChange?: (projectId: string) => void;
+};

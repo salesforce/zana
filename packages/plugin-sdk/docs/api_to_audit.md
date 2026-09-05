@@ -6,6 +6,7 @@ in-tree consumer and a documented contract.
 | Surface | Status | Notes |
 |---|---|---|
 | `agents.experimental_registerProvider` | experimental | Thread provider catalog. May change without a major bump. |
+| `agents.experimental_registerPtyHarness` | experimental | CLI Agent PTY family declaration. May change without a major bump. |
 | Typed RPC (`rpc.method` + Standard Schema) | not yet | Untyped handlers are the day-one contract. |
 | `zcc.host` workers | deferred | Manifest field exists; no authoring loop yet. |
 | Product SDK (`zcc.sdk` spawn/HTTP) | deferred | Use the CLI / public HTTP instead. |

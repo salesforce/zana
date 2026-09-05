@@ -52,7 +52,7 @@ import { copyText } from '../../lib/copy-text.js';
 import { getAgentSessionRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { railThreadsForProject, threadIsLiveForRail } from '../fleet-item.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../lib/suppress-post-drag-click.js';
-import { composerProjectLabel } from '../composer-project-default.js';
+import { composerProjectLabel, isRemoteWorkspaceProject } from '../composer-project-default.js';
 import { resolveIcon } from '../../lib/resolveIcon.js';
 import { listCreateProjectActions, listProjectMenuActions, subscribePluginSlots } from '../../plugins/plugin-slots.js';
 import { createProjectActionContext, projectMenuNavigateContext } from '../../plugins/plugin-nav-href.js';
@@ -640,7 +640,7 @@ export function ProjectsList({
               const projectMeta = (
                 <span className="project-meta project-meta--inline" title={tooltip || undefined}>
                   <span className="project-name">{displayName}</span>
-                  {p.remote && <Network size={11} strokeWidth={2} className="project-remote-icon" aria-label="Remote SSH project" />}
+                  {isRemoteWorkspaceProject(p) && <Network size={11} strokeWidth={2} className="project-remote-icon" aria-label="Remote SSH project" />}
                 </span>
               );
               const favoriteStar = (

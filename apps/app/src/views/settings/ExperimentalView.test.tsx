@@ -41,3 +41,17 @@ describe('Experimental voice settings', () => {
     expect(html).not.toContain('Fallback transcription model');
   });
 });
+
+describe('Experimental CLI Agent remote tools', () => {
+  it('defaults the CLI remote-tools toggle off', () => {
+    const html = renderToStaticMarkup(
+      <ExperimentalView
+        config={base}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn()}
+      />
+    );
+    expect(html).toContain('CLI Agent remote tools');
+    expect(html).toContain('ssh -t');
+  });
+});

@@ -244,6 +244,9 @@ export function SettingsView() {
       if (typeof patch.goalsEnabled === 'boolean') {
         useData.getState().setGoalsEnabled(patch.goalsEnabled);
       }
+      if (typeof patch.cliRemoteToolProxyEnabled === 'boolean') {
+        useData.getState().setCliRemoteToolProxyEnabled(patch.cliRemoteToolProxyEnabled);
+      }
       if (typeof patch.followUpsEnabled === 'boolean') {
         useData.getState().setFollowUpsEnabled(patch.followUpsEnabled);
       }

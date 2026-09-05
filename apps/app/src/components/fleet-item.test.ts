@@ -213,6 +213,9 @@ describe('fleet items', () => {
     expect(agentCardRuntimeLabel({ profile: 'claude', remote: true, personaName: 'Reviewer' })).toBe(
       'Reviewer · Remote host'
     );
+    expect(agentCardRuntimeLabel({ profile: 'claude', remote: true, remoteToolProxy: true })).toBe(
+      'Claude Code · Local agent · remote tools'
+    );
     expect(agentCardRuntimeLabel({ profile: 'claude', personaName: '  ' })).toBe('Claude Code · Local');
   });
 

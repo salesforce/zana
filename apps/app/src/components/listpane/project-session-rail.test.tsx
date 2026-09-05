@@ -135,10 +135,24 @@ describe('ProjectSessionRail', () => {
     expect(markup).toContain('data-testid="project-session-rail-heading"');
     expect(markup).toContain('>Project<');
     expect(markup).toContain('zana-command-center');
+    expect(markup).not.toContain('aria-label="Remote SSH project"');
     expect(markup).not.toContain('class="project-terminals"');
     expect(markup).not.toContain('aria-label="Organize projects"');
     expect(markup).not.toContain('aria-label="Add project"');
     expect(markup).not.toContain('Sort by');
+  });
+
+  it('shows the remote network mark next to an SSH or host-bound project name', () => {
+    h.data.terminals = {};
+    h.threads = [];
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProjectSessionRail project={{ ...project, name: 'limited-pony', remote: { host: 'limited-pony' } }} />
+      </MemoryRouter>
+    );
+    expect(markup).toContain('limited-pony');
+    expect(markup).toContain('aria-label="Remote SSH project"');
+    expect(markup).toContain('project-remote-icon');
   });
 
   it('nests live threads, a bounded idle history, and CLI agents under this project', () => {
@@ -192,6 +206,8 @@ describe('ProjectSessionRail', () => {
     expect(source).toContain('ui.enterProjectFocus(card.projectId)');
     expect(source).toContain('data-testid="project-session-rail"');
     expect(source).toContain('>Project</span>');
+    expect(source).toContain('isRemoteWorkspaceProject(project)');
+    expect(source).toContain('className="project-remote-icon"');
     expect(source).toContain('className="sidebar-projects');
     expect(source).not.toContain('ListFilter');
     expect(source).not.toContain('Organize projects');

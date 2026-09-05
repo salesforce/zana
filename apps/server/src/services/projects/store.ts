@@ -968,6 +968,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.goalsEnabled === 'boolean') {
     normalized.goalsEnabled = input.goalsEnabled;
   }
+  if (typeof input.cliRemoteToolProxyEnabled === 'boolean') {
+    normalized.cliRemoteToolProxyEnabled = input.cliRemoteToolProxyEnabled;
+  }
   if (typeof input.followUpsEnabled === 'boolean') {
     normalized.followUpsEnabled = input.followUpsEnabled;
   }

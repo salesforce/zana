@@ -124,8 +124,26 @@ describe('LegacyAgentHomeComposer', () => {
   it('replaces the isolation checkbox with a workspace picker for real local projects', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<EnvironmentPicker');
-    expect(source).toContain('project && !project.remote &&');
+    expect(source).toContain('project?.remote');
     expect(source).toContain('defaultWorkspaceChoice');
     expect(source).not.toContain('Isolate in a git worktree');
+  });
+
+  it('marks an SSH project as Remote host unless Experimental unlocks the picker', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('agentCardRuntimeLabel');
+    expect(source).toContain('data-testid="composer-remote-host-mark"');
+    expect(source).toContain('triggerTestId="composer-remote-runtime-picker"');
+    expect(source).toContain('thread-command-runtime-picker');
+    expect(source).toContain('minWidth={292}');
+    expect(source).toContain('cliRemoteToolsExperiment');
+    expect(source).toContain('remoteToolProxy: project.remote && cliRemoteToolsExperiment && cliRemoteToolProxy');
+    expect(source).not.toContain('composerRemoteToolsMark');
+    expect(source).not.toContain('remote: project.remote');
+
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(css).toContain(
+      '.thread-command-composer .thread-command-runtime-picker .launch-model-picker-trigger {\n  max-width: 292px;\n}'
+    );
   });
 });
