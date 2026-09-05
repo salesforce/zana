@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
-    "marked": "^18.0.9",
+    "marked": "^18.0.11",
     "mermaid": "^11.17.0",
     "nanoid": "^6.0.1",
     "next": "^16.3.1",
