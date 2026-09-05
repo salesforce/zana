@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.197",
-    "@anthropic-ai/sdk": "^0.93.0",
+    "@anthropic-ai/sdk": "^0.123.0",
     "@zana-ai/zcc-domain": "workspace:*",
     "@zana-ai/zcc-host-daemon-contract": "workspace:*",
     "@zana-ai/zcc-agent-process-utils": "workspace:*",
