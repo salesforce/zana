@@ -1,0 +1,20 @@
+{
+  "name": "@zcc-ext/posthog-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Opt-in usage analytics sent to a PostHog project you configure: agent lifecycle events plus optional content-free UI-click ids. Never sends prompt or response content.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "PostHog Analytics",
+    "description": "Opt-in usage analytics sent to a PostHog project you configure: agent lifecycle events plus optional content-free UI-click ids. Never sends prompt or response content.",
+    "branding": {
+      "icon": "LineChart"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}
