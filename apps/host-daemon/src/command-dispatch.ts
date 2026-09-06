@@ -16,7 +16,7 @@ import type {
 import type { z } from 'zod';
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { PERSONAL_WORKSPACE_DIR_NAME } from '@zana-ai/zcc-domain';
-import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
+import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import type { PendingInteractionResolution } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   WorkspaceError,
@@ -35,10 +35,12 @@ import {
   workspaceSquashMerge,
   workspaceStatus
 } from '@zana-ai/zcc-host-workspace';
+import { probeExtraAcpAgents } from './extra-acp-agent-probes.js';
 import { verifyHarnesses } from './harness/harness-verify.js';
 import { registrationFor } from './harness/registry.js';
 import { HostCommandError } from './host-command-error.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
+import { completeCodexInference } from './codex-inference-complete.js';
 import { getProviderCliStatus, runProviderCliInstall } from './provider-cli-health.js';
 import { installGlobalSkills, readGlobalSkillsStatus } from './global-skills.js';
 import {
@@ -99,6 +101,8 @@ export type ThreadResumeInput = {
   model?: string;
   reasoningLevel?: ThreadWorkInput['reasoningLevel'];
   acpMode?: string;
+  claudeCodePermissionMode?: 'plan';
+  providerOptions?: Record<string, unknown>;
   dynamicTools?: ThreadStartFields['dynamicTools'];
   instructions?: ThreadStartFields['instructions'];
 };
@@ -145,6 +149,8 @@ export interface CommandRuntime {
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
     acpMode?: string;
+    claudeCodePermissionMode?: 'plan';
+    providerOptions?: Record<string, unknown>;
     clientRequestId?: ThreadWorkInput['clientRequestId'];
     permissionMode?: ThreadWorkInput['permissionMode'];
     permissionEscalation?: 'ask' | 'deny';
@@ -194,6 +200,8 @@ export function createCommandRuntime(options: {
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
     acpMode?: string;
+    claudeCodePermissionMode?: 'plan';
+    providerOptions?: Record<string, unknown>;
     clientRequestId?: ThreadWorkInput['clientRequestId'];
     permissionMode?: ThreadWorkInput['permissionMode'];
     permissionEscalation?: 'ask' | 'deny';
@@ -260,8 +268,11 @@ export function createCommandRuntime(options: {
     homeDir: options.homeDir,
     peerSsh: options.peerSsh,
     verifyProviders: options.verifyProviders ?? (async () => {
-      const results: HarnessVerifyResult[] = await verifyHarnesses(loadConfig());
-      return { providers: results };
+      const [results, extraInstalledAgents] = await Promise.all([
+        verifyHarnesses(loadConfig()),
+        probeExtraAcpAgents()
+      ]);
+      return { providers: results, extraInstalledAgents };
     })
   };
 }
@@ -353,6 +364,9 @@ async function applyThreadResume(
       permissionMode: command.permissionMode,
       model: command.model,
       reasoningLevel: command.reasoningLevel,
+      acpMode: command.acpMode,
+      claudeCodePermissionMode: command.claudeCodePermissionMode,
+      providerOptions: command.providerOptions,
       dynamicTools: command.dynamicTools,
       instructions: command.instructions
     });
@@ -775,6 +789,8 @@ export async function dispatchHostCommand(
           model: command.model,
           reasoningLevel: command.reasoningLevel,
           acpMode: command.acpMode,
+          claudeCodePermissionMode: command.claudeCodePermissionMode,
+          providerOptions: command.providerOptions,
           clientRequestId: command.clientRequestId,
           permissionMode: command.resume?.permissionMode,
           permissionEscalation: command.permissionEscalation,
@@ -993,6 +1009,8 @@ export async function dispatchHostCommand(
       } catch (error) {
         mapWorkspaceError(error);
       }
+    case 'codex.inference.complete':
+      return completeCodexInference(command);
     case 'codex.voice.transcribe':
       return transcribeCodexVoice(command);
     case 'interactive.resolve': {

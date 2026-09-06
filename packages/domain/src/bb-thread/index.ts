@@ -13,6 +13,7 @@ export * from "./code-theme.js";
 export * from "./claude-task-tools.js";
 export * from "./debounced-callback-scheduler.js";
 export * from "./environment-lifecycle.js";
+export * from "./execution-mode.js";
 export * from "./environment.js";
 export * from "./experiments.js";
 export * from "./feature-flags.js";

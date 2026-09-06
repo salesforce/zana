@@ -1577,6 +1577,23 @@ describe("acp bridge", () => {
     expect(agentMessageTexts()).toContain("auth-method:cached_token");
   });
 
+  it("authenticates Codex-style api-key when OPENAI_API_KEY is available", async () => {
+    const { providerThreadId } = await startThread({
+      envVars: {
+        FAKE_ACP_AUTH_METHODS: "cached_token,api-key",
+        OPENAI_API_KEY: "sk-test-key",
+      },
+    });
+
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-auth-method", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("auth-method:api-key");
+  });
+
   it("prefers xAI API-key auth when XAI_API_KEY is available", async () => {
     const { providerThreadId } = await startThread({
       envVars: {
@@ -1726,6 +1743,10 @@ describe("acp bridge", () => {
 
     await expect(bridgeCall).resolves.toEqual({
       content: "environment directory updated",
+      contentBlocks: [
+        { type: "text", text: "environment directory updated" },
+      ],
+      images: [],
       isError: false,
       ok: true,
     });

@@ -31,6 +31,7 @@ export type PluginSettingDescriptor =
       label: string;
       description?: string;
       secret?: true;
+      multiline?: true;
       default?: string;
     }
   | { type: 'boolean'; label: string; description?: string; default?: boolean }
@@ -365,12 +366,28 @@ export interface PluginProviderCapabilities {
   reasoningLevels?: string[];
 }
 
+export type PluginProviderVisibility = 'always' | 'installed';
+
+export interface PluginProviderOptionsContext {
+  threadId: string;
+  projectId: string;
+  model?: string;
+  permissionMode: string;
+  promptMode?: 'plan';
+  settings: Readonly<Record<string, PluginSettingValue | undefined>>;
+}
+
 export interface PluginProviderDeclaration {
   id: string;
   displayName: string;
   icon?: string;
   capabilities: PluginProviderCapabilities;
   composerActions?: string[];
+  /** Hide from the picker until CLI health reports the binary is installed. */
+  visibility?: PluginProviderVisibility;
+  deriveProviderOptions?: (
+    context: PluginProviderOptionsContext
+  ) => Record<string, unknown> | void;
 }
 
 export interface PluginProviderHandle {

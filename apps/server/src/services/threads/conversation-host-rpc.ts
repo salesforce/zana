@@ -3,6 +3,7 @@ import type { ThreadResumeFields } from '@zana-ai/zcc-contracts/host-rpc';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
+import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
 import {
   bridgeLaunchForProvider,
   getThreadProvider,
@@ -29,14 +30,23 @@ export async function threadResumeFields(
     threadId: thread.id,
     projectId: thread.projectId
   });
+  const permissionMode = permissionModeForLaunchProfile(thread.providerId);
+  const providerOptions = derivedProviderOptionsForCommand({
+    providerId: thread.providerId,
+    threadId: thread.id,
+    projectId: thread.projectId,
+    permissionMode,
+    plugins: ctx.plugins
+  });
   return {
     projectId: thread.projectId,
     providerId: thread.providerId,
     providerThreadId: thread.providerThreadId,
     cwd: environment?.path ?? undefined,
     bridgeLaunch: bridgeLaunchForProvider(thread.providerId, ctx.pluginHostArtifacts),
-    permissionMode: permissionModeForLaunchProfile(thread.providerId),
+    permissionMode,
     ...sessionTooling,
+    ...(providerOptions ? { providerOptions } : {}),
     ...(getThreadProvider(thread.providerId)?.capabilities.fork === 'checkpoint'
       ? (() => {
         const checkpoint = latestProviderCheckpoint(listConversationThreadEvents(ctx.db, thread.id));

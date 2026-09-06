@@ -223,6 +223,14 @@ describe('host-rpc contract', () => {
       prompt: null,
       timeoutMs: 10_000
     }).type).toBe('codex.voice.transcribe');
+    expect(HostRpcCommandSchema.parse({
+      type: 'codex.inference.complete',
+      model: 'gpt-5',
+      reasoningEffort: 'none',
+      prompt: 'Name this thread.',
+      outputSchema: { type: 'object' },
+      timeoutMs: 10_000
+    }).type).toBe('codex.inference.complete');
     expect(HostRpcCommandSchema.safeParse({
       type: 'thread.resize',
       threadId,
@@ -403,10 +411,22 @@ describe('host-rpc contract', () => {
     expect(parseHostRpcResult('host.install_global_skills', {
       installations: [{ name: 'zcc-cli', path: '/tmp/.agents/skills/zcc-cli' }]
     }).installations[0]?.name).toBe('zcc-cli');
+    expect(parseHostRpcResult('codex.voice.transcribe', {
+      model: 'gpt-transcribe',
+      text: 'hello'
+    })).toEqual({ model: 'gpt-transcribe', text: 'hello' });
+    expect(parseHostRpcResult('codex.inference.complete', {
+      model: 'gpt-5',
+      value: { title: 'Hello' }
+    })).toEqual({ model: 'gpt-5', value: { title: 'Hello' } });
   });
 
   it('parses provider.status results by command type', () => {
     expect(parseHostRpcResult('provider.status', { providers: [] })).toEqual({ providers: [] });
+    expect(parseHostRpcResult('provider.status', {
+      providers: [],
+      extraInstalledAgents: [{ providerId: 'acp-omp', installed: false }]
+    }).extraInstalledAgents).toEqual([{ providerId: 'acp-omp', installed: false }]);
     expect(parseHostRpcResult('thread.resize', { threadId, resized: true })).toEqual({
       threadId,
       resized: true

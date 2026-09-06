@@ -31,7 +31,8 @@ import {
   type ThreadSendMode
 } from './conversation-dispatch-checkpoint.js';
 import { conversationThreadView, flattenThreadInput } from './conversation-create.js';
-import { isPlanExecutionMode, requestedExecutionModeFromTurn } from './conversation-execution-mode.js';
+import { isPlanExecutionMode, requestedExecutionModeFromTurn, claudeCodePermissionModeForTurn } from './conversation-execution-mode.js';
+import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
 import { hostPromptFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
 import { resolveActivePlanTurn } from './conversation-timeline.js';
 import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
@@ -79,7 +80,13 @@ export async function sendConversationTurn(
   threadId: string,
   input: unknown,
   mode: ThreadSendMode = 'auto',
-  execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string },
+  execution?: {
+    model?: string;
+    reasoningLevel?: ReasoningLevel;
+    acpMode?: string;
+    claudeCodePermissionMode?: 'plan';
+    providerOptions?: Record<string, unknown>;
+  },
   options: { drain?: boolean; resumeQueue?: boolean; compact?: boolean } = {}
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
@@ -91,6 +98,7 @@ export async function sendConversationTurn(
   if (!live.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
+  let packedExecution = execution;
   if (options.compact !== true) {
     const requestedMode = requestedExecutionModeFromTurn({
       acpMode: execution?.acpMode,
@@ -101,6 +109,22 @@ export async function sendConversationTurn(
       requestedMode,
       effectiveMode: requestedMode
     });
+    const claudeCodePermissionMode = claudeCodePermissionModeForTurn(live.providerId, requestedMode);
+    const providerOptions = derivedProviderOptionsForCommand({
+      providerId: live.providerId,
+      threadId: live.id,
+      projectId: live.projectId,
+      model: execution?.model,
+      permissionMode: clampPermissionModeToHost(ctx.db, live.hostId, permissionModeForLaunchProfile(live.providerId))
+        ?? permissionModeForLaunchProfile(live.providerId),
+      promptMode: requestedMode === 'plan' ? 'plan' : undefined,
+      plugins: ctx.plugins
+    });
+    packedExecution = {
+      ...execution,
+      ...(claudeCodePermissionMode ? { claudeCodePermissionMode } : {}),
+      ...(providerOptions ? { providerOptions } : {})
+    };
   }
   const pending = ctx.pendingInteractions.hasPendingThreadInteraction(threadId);
   if (pending && mode === 'start') {
@@ -178,7 +202,7 @@ export async function sendConversationTurn(
     thread: live,
     prompt,
     mode: resolvedMode,
-    execution,
+    execution: packedExecution,
     clientRequestId,
     input,
     drain: options.drain === true
@@ -629,7 +653,13 @@ async function turnSubmitCommand(
   thread: ConversationThreadRow,
   prompt: string[],
   mode: ThreadSendMode,
-  execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string },
+  execution?: {
+    model?: string;
+    reasoningLevel?: ReasoningLevel;
+    acpMode?: string;
+    claudeCodePermissionMode?: 'plan';
+    providerOptions?: Record<string, unknown>;
+  },
   clientRequestId?: string,
   drain = false
 ): Promise<Parameters<ProductHttpContext['hostHub']['callHostOnlineRpc']>[0]['command']> {
@@ -647,6 +677,10 @@ async function turnSubmitCommand(
     ...(execution?.model ? { model: execution.model } : {}),
     ...(execution?.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {}),
     ...(execution?.acpMode ? { acpMode: execution.acpMode } : {}),
+    ...(execution?.claudeCodePermissionMode
+      ? { claudeCodePermissionMode: execution.claudeCodePermissionMode }
+      : {}),
+    ...(execution?.providerOptions ? { providerOptions: execution.providerOptions } : {}),
     ...(clientRequestId ? { clientRequestId } : {}),
     permissionEscalation: drain ? 'deny' : 'ask',
     ...(mode === 'steer' || mode === 'steer-if-active'
@@ -662,7 +696,13 @@ async function threadStartCommandForFork(
   ctx: ProductHttpContext,
   thread: ConversationThreadRow,
   prompt: string[],
-  execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string },
+  execution?: {
+    model?: string;
+    reasoningLevel?: ReasoningLevel;
+    acpMode?: string;
+    claudeCodePermissionMode?: 'plan';
+    providerOptions?: Record<string, unknown>;
+  },
   clientRequestId?: string
 ): Promise<Parameters<ProductHttpContext['hostHub']['callHostOnlineRpc']>[0]['command']> {
   if (!thread.environmentId) {
@@ -693,6 +733,10 @@ async function threadStartCommandForFork(
     ...(execution?.model ? { model: execution.model } : {}),
     ...(execution?.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {}),
     ...(execution?.acpMode ? { acpMode: execution.acpMode } : {}),
+    ...(execution?.claudeCodePermissionMode
+      ? { claudeCodePermissionMode: execution.claudeCodePermissionMode }
+      : {}),
+    ...(execution?.providerOptions ? { providerOptions: execution.providerOptions } : {}),
     ...(clientRequestId ? { clientRequestId } : {}),
     ...(fork?.sourceProviderThreadId ? { providerThreadId: fork.sourceProviderThreadId } : {}),
     ...(fork?.sourceProviderCheckpointId ? { providerCheckpointId: fork.sourceProviderCheckpointId } : {}),

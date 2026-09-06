@@ -82,6 +82,7 @@ vi.mock("./configured-services.js", () => ({
 
 vi.mock("./model-runtime.js", () => ({
   getPiModelRuntime: mockGetPiModelRuntime,
+  getPiModelPickerScope: vi.fn(async () => ({})),
 }));
 
 import { handleLine } from "./bridge.js";

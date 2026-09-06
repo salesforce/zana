@@ -131,7 +131,13 @@ function toPiCatalogModel(model: PiAvailableModel): PiCatalogModel | undefined {
   };
 }
 
-export async function listPiBridgeModels(modelRuntime: ModelRuntime): Promise<{
+export async function listPiBridgeModels(
+  modelRuntime: ModelRuntime,
+  scope?: {
+    scopedModelIds?: readonly string[];
+    preferredDefaultId?: string;
+  },
+): Promise<{
   models: AvailableModel[];
   selectedOnlyModels: AvailableModel[];
 }> {
@@ -150,7 +156,13 @@ export async function listPiBridgeModels(modelRuntime: ModelRuntime): Promise<{
     );
   }
 
-  return buildPiAvailableModels({ models });
+  return buildPiAvailableModels({
+    models,
+    ...(scope?.scopedModelIds ? { scopedModelIds: scope.scopedModelIds } : {}),
+    ...(scope?.preferredDefaultId
+      ? { preferredDefaultId: scope.preferredDefaultId }
+      : {}),
+  });
 }
 
 /** @internal Test seam: reset the per-process refresh latch. */

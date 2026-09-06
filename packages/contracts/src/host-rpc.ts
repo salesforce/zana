@@ -107,6 +107,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'project.clone',
   'project.clone_default_path',
   'codex.voice.transcribe',
+  'codex.inference.complete',
   'interactive.resolve',
   'provider.cli_status',
   'provider.cli_install',
@@ -289,6 +290,8 @@ export const ThreadStartCommandSchema = z.object({
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
   acpMode: z.string().min(1).max(200).optional(),
+  claudeCodePermissionMode: z.literal('plan').optional(),
+  providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
   providerThreadId: z.string().min(1).optional(),
   /** Correlates turn/input/accepted with the server's client/turn/requested. */
   clientRequestId: clientTurnRequestIdSchema.optional(),
@@ -332,6 +335,8 @@ export const ThreadResumeFieldsSchema = z.object({
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
   acpMode: z.string().min(1).max(200).optional(),
+  claudeCodePermissionMode: z.literal('plan').optional(),
+  providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
   instructions: z.string().max(100_000).optional(),
   providerCheckpointId: z.string().min(1).max(200).optional()
@@ -348,6 +353,8 @@ export const TurnSubmitCommandSchema = z.object({
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
   acpMode: z.string().min(1).max(200).optional(),
+  claudeCodePermissionMode: z.literal('plan').optional(),
+  providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
   clientRequestId: clientTurnRequestIdSchema.optional(),
   permissionEscalation: z.enum(['ask', 'deny']).optional(),
   expectedTurnId: z.string().min(1).max(200).optional()
@@ -624,6 +631,16 @@ export const CodexVoiceTranscribeCommandSchema = z.object({
 }).strict();
 export type CodexVoiceTranscribeCommand = z.infer<typeof CodexVoiceTranscribeCommandSchema>;
 
+export const CodexInferenceCompleteCommandSchema = z.object({
+  type: z.literal('codex.inference.complete'),
+  model: z.string().min(1).max(120),
+  reasoningEffort: z.literal('none'),
+  prompt: z.string().min(1),
+  outputSchema: z.record(z.string(), z.unknown()),
+  timeoutMs: z.number().int().positive().max(120_000)
+}).strict();
+export type CodexInferenceCompleteCommand = z.infer<typeof CodexInferenceCompleteCommandSchema>;
+
 export const InteractiveResolveCommandSchema = z.object({
   type: z.literal('interactive.resolve'),
   threadId: UuidSchema,
@@ -744,6 +761,7 @@ export const HostRpcCommandSchema = z.union([
   ProjectCloneCommandSchema,
   ProjectCloneDefaultPathCommandSchema,
   CodexVoiceTranscribeCommandSchema,
+  CodexInferenceCompleteCommandSchema,
   InteractiveResolveCommandSchema,
   ProviderCliStatusCommandSchema,
   ProviderCliInstallCommandSchema,
@@ -770,7 +788,11 @@ const ProviderStatusEntrySchema = z.object({
 }).strict();
 
 export const ProviderStatusResultSchema = z.object({
-  providers: z.array(ProviderStatusEntrySchema)
+  providers: z.array(ProviderStatusEntrySchema),
+  extraInstalledAgents: z.array(z.object({
+    providerId: z.string().min(1),
+    installed: z.boolean()
+  }).strict()).optional()
 }).strict();
 export type ProviderStatusResult = z.infer<typeof ProviderStatusResultSchema>;
 
@@ -1083,6 +1105,12 @@ export const CodexVoiceTranscribeResultSchema = z.object({
 }).strict();
 export type CodexVoiceTranscribeResult = z.infer<typeof CodexVoiceTranscribeResultSchema>;
 
+export const CodexInferenceCompleteResultSchema = z.object({
+  model: z.string().min(1),
+  value: z.record(z.string(), z.unknown())
+}).strict();
+export type CodexInferenceCompleteResult = z.infer<typeof CodexInferenceCompleteResultSchema>;
+
 export const InteractiveResolveResultSchema = z.object({
   interactionId: z.string().min(1),
   delivered: z.literal(true)
@@ -1193,6 +1221,7 @@ export const HostRpcResultSchemaByType = {
   'project.clone': ProjectCloneResultSchema,
   'project.clone_default_path': ProjectCloneDefaultPathResultSchema,
   'codex.voice.transcribe': CodexVoiceTranscribeResultSchema,
+  'codex.inference.complete': CodexInferenceCompleteResultSchema,
   'interactive.resolve': InteractiveResolveResultSchema,
   'provider.cli_status': ProviderCliStatusResultSchema,
   'provider.cli_install': ProviderCliInstallResultSchema,

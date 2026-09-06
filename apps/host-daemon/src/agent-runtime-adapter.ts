@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveZccDataDir } from './host-config.js';
 import type { HostBridgeLaunch, HostEventEnvelope, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
+import type { HostDaemonAcpLaunchSpec } from '@zana-ai/zcc-host-daemon-contract';
 import {
   createAgentRuntime,
   type AgentRuntime,
@@ -141,17 +142,37 @@ export function threadExecutionOptions(input: {
   } as RuntimeThreadExecutionOptions;
 }
 
+function isProviderOptionsBag(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 function executionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
   reasoningLevel?: ReasoningLevel;
   acpMode?: string;
+  claudeCodePermissionMode?: 'plan';
+  providerOptions?: Record<string, unknown>;
   permissionEscalation?: 'ask' | 'deny' | null;
 }): RuntimeThreadExecutionOptions {
+  const providerOptions: Record<string, unknown> = {
+    ...(isProviderOptionsBag(input.providerOptions) ? input.providerOptions : {}),
+    ...(input.acpMode ? { acpMode: input.acpMode } : {})
+  };
   return {
     ...threadExecutionOptions(input),
-    ...(input.acpMode ? { providerOptions: { acpMode: input.acpMode } } : {})
+    ...(input.claudeCodePermissionMode
+      ? { claudeCodePermissionMode: input.claudeCodePermissionMode }
+      : {}),
+    ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {})
   };
+}
+
+function acpLaunchSpecFromProviderOptions(
+  providerOptions?: Record<string, unknown>
+): HostDaemonAcpLaunchSpec | undefined {
+  const spec = providerOptions?.acpLaunchSpec;
+  return isProviderOptionsBag(spec) ? (spec as HostDaemonAcpLaunchSpec) : undefined;
 }
 
 function toRuntimeBridgeLaunch(
@@ -412,8 +433,13 @@ export function createAgentRuntimeAdapter(options: {
           permissionMode: input.permissionMode,
           model: input.model,
           reasoningLevel: input.reasoningLevel,
-          acpMode: input.acpMode
+          acpMode: input.acpMode,
+          claudeCodePermissionMode: input.claudeCodePermissionMode,
+          providerOptions: input.providerOptions
         }),
+        ...(acpLaunchSpecFromProviderOptions(input.providerOptions)
+          ? { acpLaunchSpec: acpLaunchSpecFromProviderOptions(input.providerOptions) }
+          : {}),
         ...(input.providerThreadId ? {
           fork: {
             sourceProviderThreadId: input.providerThreadId,
@@ -440,6 +466,8 @@ export function createAgentRuntimeAdapter(options: {
           model: input.model,
           reasoningLevel: input.reasoningLevel,
           acpMode: input.acpMode,
+          claudeCodePermissionMode: input.claudeCodePermissionMode,
+          providerOptions: input.providerOptions,
           permissionEscalation: input.permissionEscalation
         });
         const payload = {
@@ -484,8 +512,13 @@ export function createAgentRuntimeAdapter(options: {
           permissionMode: input.permissionMode,
           model: input.model,
           reasoningLevel: input.reasoningLevel,
-          acpMode: input.acpMode
+          acpMode: input.acpMode,
+          claudeCodePermissionMode: input.claudeCodePermissionMode,
+          providerOptions: input.providerOptions
         }),
+        ...(acpLaunchSpecFromProviderOptions(input.providerOptions)
+          ? { acpLaunchSpec: acpLaunchSpecFromProviderOptions(input.providerOptions) }
+          : {}),
         ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
         ...mergeSessionTooling({
           remoteProxy: false,

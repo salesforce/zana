@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentRuntimeSkillRoot } from '@zana-ai/zcc-agent-runtime';
+import { discoverNativeSkillRoots } from './native-skill-discovery.js';
 
 export function injectedSkillRootsFile(dataDir: string): string {
   return join(dataDir, 'injected-skill-roots.json');
@@ -94,8 +95,14 @@ export function expandDirectoryRootsToRuntimeSkillRoots(
   return out;
 }
 
-export function loadRuntimeSkillRoots(dataDir: string): AgentRuntimeSkillRoot[] {
-  return expandDirectoryRootsToRuntimeSkillRoots(readInjectedSkillDirectoryRoots(dataDir));
+export function loadRuntimeSkillRoots(
+  dataDir: string,
+  nativeRoots: readonly AgentRuntimeSkillRoot[] = discoverNativeSkillRoots()
+): AgentRuntimeSkillRoot[] {
+  return [
+    ...expandDirectoryRootsToRuntimeSkillRoots(readInjectedSkillDirectoryRoots(dataDir)),
+    ...nativeRoots
+  ];
 }
 
 /** Stable hash of injected skill directory roots + discovered skill names. */

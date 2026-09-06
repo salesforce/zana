@@ -79,6 +79,22 @@ import {
 import { isPlanAcpMode, isPlanArtifactWritePath } from "../plan-write-policy.js";
 import { acpProfileFromLaunchSpec, type AcpAgentProfile } from "../profiles.js";
 import {
+  approveCursorSessionMcpServer,
+  revokeCursorSessionMcpServer,
+  type CursorMcpApproval,
+} from "./cursor-mcp-approval.js";
+import {
+  getCursorProviderHealth,
+  getCursorProviderInstallationRun,
+  getCursorProviderInstallationStatus,
+  getCursorProviderUsage,
+  isCursorLaunchCommand,
+} from "./cursor-maintenance.js";
+import {
+  agentAdvertisesSessionFork,
+  narrowAcpForkCapability,
+} from "./fork-capability.js";
+import {
   buildAcpModelListParams,
   buildAcpSessionParams,
   type AcpModelListParams,
@@ -176,6 +192,7 @@ interface AcpThreadSession {
   pendingPermissions: Set<PendingAcpPermission>;
   configOptions: readonly AcpConfigOption[] | undefined;
   acpMode: string | undefined;
+  cursorMcpApproval: CursorMcpApproval | undefined;
 }
 
 const sessionsByBbThreadId = new Map<string, AcpThreadSession>();
@@ -724,15 +741,20 @@ function resolveAcpAuthMethodId(
   authMethods: readonly { id: string }[] | undefined,
   env: Record<string, string | undefined>,
 ): string | undefined {
-  // Grok is currently the only known ACP agent that advertises auth methods.
-  // Keep this preference local until another authenticated ACP provider needs
-  // a data-driven policy; cached_token is an ACP-side local-login flow.
   const methodIds = new Set((authMethods ?? []).map((method) => method.id));
   if (methodIds.size === 0) {
     return undefined;
   }
   if (env.XAI_API_KEY && methodIds.has("xai.api_key")) {
     return "xai.api_key";
+  }
+  // Codex ACP (`codex-acp`) advertises a generic `api-key` method and reads
+  // CODEX_API_KEY / OPENAI_API_KEY from the process environment.
+  if (
+    (env.CODEX_API_KEY || env.OPENAI_API_KEY) &&
+    methodIds.has("api-key")
+  ) {
+    return "api-key";
   }
   if (methodIds.has("cached_token")) {
     return "cached_token";
@@ -1731,6 +1753,25 @@ function removeSession(session: AcpThreadSession): void {
   }
 }
 
+async function releaseCursorMcpApproval(
+  session: AcpThreadSession,
+): Promise<void> {
+  const approval = session.cursorMcpApproval;
+  session.cursorMcpApproval = undefined;
+  if (!approval) {
+    return;
+  }
+  try {
+    await revokeCursorSessionMcpServer(approval);
+  } catch (error) {
+    process.stderr.write(
+      `acp bridge: failed to remove Cursor session MCP approval for thread "${session.bbThreadId}": ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    );
+  }
+}
+
 function getSessionByProviderThreadId(
   providerThreadId: string,
 ): AcpThreadSession | undefined {
@@ -1812,8 +1853,10 @@ async function startAgentSession(
       cancelPendingPermissions(session);
       removeSession(session);
       if (!wasCurrent || session.stopping) {
+        void releaseCursorMcpApproval(session);
         return;
       }
+      void releaseCursorMcpApproval(session);
       emitSessionError(
         session,
         `ACP agent "${agentLabel}" exited unexpectedly` +
@@ -1849,6 +1892,7 @@ async function startAgentSession(
     pendingPermissions: new Set(),
     configOptions: undefined,
     acpMode: params.acpMode,
+    cursorMcpApproval: undefined,
   };
 
   try {
@@ -1874,7 +1918,10 @@ async function startAgentSession(
     const supportsLoadSession =
       initializeResult.agentCapabilities?.loadSession ?? false;
     const supportsFork =
-      initializeResult.agentCapabilities?.sessionCapabilities?.fork != null;
+      narrowAcpForkCapability({
+        declared: "tip",
+        agentAdvertisesFork: agentAdvertisesSessionFork(initializeResult),
+      }) !== "none";
     if (request.kind === "fork" && !supportsFork) {
       throw new Error(
         `ACP agent "${agentLabel}" does not advertise session/fork support.`,
@@ -1882,6 +1929,20 @@ async function startAgentSession(
     }
     session.supportsLoadSession = supportsLoadSession;
     const mcpServers = await buildSessionMcpServers(params);
+    const mcpServer = mcpServers[0];
+    if (mcpServer) {
+      session.cursorMcpApproval = await approveCursorSessionMcpServer({
+        agentCommand: params.agent.command,
+        config: mcpServer,
+        cwd: params.cwd,
+        env: childEnv,
+      });
+      if (session.cursorMcpApproval?.installedByBb) {
+        process.stderr.write(
+          `acp bridge: installed Cursor session MCP approval for thread "${bbThreadId}"\n`,
+        );
+      }
+    }
 
     let sessionId: string | undefined;
     let loadedConfigOptions: readonly AcpConfigOption[] | undefined;
@@ -2012,6 +2073,7 @@ async function startAgentSession(
     session.stopping = true;
     connection.kill();
     removeSession(session);
+    await releaseCursorMcpApproval(session);
     throw error;
   }
 }
@@ -2040,6 +2102,7 @@ async function stopSession(session: AcpThreadSession): Promise<void> {
 
   session.connection.kill();
   removeSession(session);
+  await releaseCursorMcpApproval(session);
 }
 
 /**
@@ -2057,6 +2120,7 @@ function releaseSession(session: AcpThreadSession): void {
   cancelPendingPermissions(session);
   session.connection.kill();
   removeSession(session);
+  void releaseCursorMcpApproval(session);
 }
 
 // ---------------------------------------------------------------------------
@@ -2473,6 +2537,45 @@ function decodeAdditionalWorkspaceWriteRoots(
   );
 }
 
+function isCursorMaintenanceTarget(params: {
+  providerId: string;
+  providerOptions?: Record<string, unknown>;
+}): boolean {
+  if (params.providerId === "acp-cursor" || params.providerId === "cursor") {
+    return true;
+  }
+  return isCursorLaunchCommand(
+    decodeLaunchProfile(params.providerOptions)?.agentCommand.command,
+  );
+}
+
+async function handleAcpProviderMaintenance(
+  request: Extract<
+    AcpBridgeCommand,
+    {
+      method:
+        | "provider/health"
+        | "provider/usage"
+        | "provider/installation/status"
+        | "provider/installation/run";
+    }
+  >,
+): Promise<unknown> {
+  if (!isCursorMaintenanceTarget(request.params)) {
+    return { supported: false };
+  }
+  switch (request.method) {
+    case "provider/health":
+      return getCursorProviderHealth();
+    case "provider/usage":
+      return getCursorProviderUsage();
+    case "provider/installation/status":
+      return getCursorProviderInstallationStatus();
+    case "provider/installation/run":
+      return getCursorProviderInstallationRun(request.params.action);
+  }
+}
+
 async function handleRequest(
   request: AcpBridgeCommand & { id: string | number },
 ): Promise<void> {
@@ -2522,6 +2625,13 @@ async function handleRequest(
           decodeAcpModelPickerOptions(request.params.providerOptions),
         ),
       );
+      return;
+
+    case "provider/health":
+    case "provider/usage":
+    case "provider/installation/status":
+    case "provider/installation/run":
+      sendResult(request.id, await handleAcpProviderMaintenance(request));
       return;
 
     case "thread/start":

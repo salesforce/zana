@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyExecutionMode,
   classifyExecutionModeOption,
+  claudeCodePermissionModeForTurn,
   isPlanExecutionMode,
+  portableWorkIntent,
   requestedExecutionModeFromTurn
 } from './conversation-execution-mode.js';
 
@@ -25,6 +27,23 @@ describe('classifyExecutionMode', () => {
     expect(isPlanExecutionMode('plan')).toBe(true);
     expect(isPlanExecutionMode('agent')).toBe(false);
     expect(isPlanExecutionMode(null)).toBe(false);
+  });
+});
+
+describe('portableWorkIntent', () => {
+  it('re-exports the Agent | Plan projection', () => {
+    expect(portableWorkIntent({
+      acpModeOptions: [
+        { value: 'build', name: 'Build' },
+        { value: 'plan', name: 'Plan' },
+        { value: 'ask', name: 'Ask' }
+      ]
+    })).toEqual({
+      modes: ['agent', 'plan'],
+      planNativeValue: 'plan',
+      executeNativeValue: 'build',
+      usesSlashPlan: false
+    });
   });
 });
 
@@ -73,5 +92,14 @@ describe('requestedExecutionModeFromTurn', () => {
       input: [{ type: 'text', text: '/plan inspect' }]
     })).toBe('agent');
     expect(requestedExecutionModeFromTurn({ input: [{ type: 'text', text: 'hi' }] })).toBe('agent');
+  });
+});
+
+describe('claudeCodePermissionModeForTurn', () => {
+  it('packs plan only for Claude Code slash/native plan turns', () => {
+    expect(claudeCodePermissionModeForTurn('claude-code', 'plan')).toBe('plan');
+    expect(claudeCodePermissionModeForTurn('codex', 'plan')).toBeUndefined();
+    expect(claudeCodePermissionModeForTurn('claude-code', 'agent')).toBeUndefined();
+    expect(claudeCodePermissionModeForTurn('acp-cursor', 'plan')).toBeUndefined();
   });
 });

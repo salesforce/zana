@@ -96,15 +96,18 @@ export function threadProviderFamily(providerId: string): string | null {
 }
 
 export function isThreadProviderOffered(
-  provider: Pick<ThreadProviderRecord, 'id'>,
-  availability: readonly HarnessVerifyResult[]
+  provider: Pick<ThreadProviderRecord, 'id' | 'visibility'>,
+  availability: readonly HarnessVerifyResult[],
+  extraInstalled?: Readonly<Record<string, boolean>>
 ): boolean {
   if (provider.id === 'fake') return true;
   const family = threadProviderFamily(provider.id);
-  if (!family) return true;
-  const status = availability.find((row) => row.family === family);
-  if (!status) return true;
-  return status.installed && status.enabled;
+  const status = family ? availability.find((row) => row.family === family) : undefined;
+  if (status) return status.installed && status.enabled;
+  if (provider.visibility === 'installed' && extraInstalled && provider.id in extraInstalled) {
+    return extraInstalled[provider.id] === true;
+  }
+  return true;
 }
 
 function parsePermissionModes(values: readonly string[]): PermissionMode[] {
@@ -328,6 +331,8 @@ export function classifyModelListError(error: unknown): Exclude<ThreadModelLoadE
     || text.includes('authentication required')
     || text.includes('agent login')
     || text.includes('codex login')
+    || text.includes('opencode auth')
+    || text.includes('opencode login')
     || text.includes('cursor_api_key')
     || text.includes('cursor_auth_token')
   ) {
@@ -345,11 +350,12 @@ export function classifyModelListError(error: unknown): Exclude<ThreadModelLoadE
 export function buildThreadExecutionOptions(input: {
   providerId?: string;
   availability: readonly HarnessVerifyResult[];
+  extraInstalled?: Readonly<Record<string, boolean>>;
   listed?: { models: AvailableModel[]; selectedOnlyModels: AvailableModel[]; acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> } } | null;
   listError?: ThreadModelLoadErrorCode | null;
 }): ThreadExecutionOptionsResponse {
   const catalog = listThreadProviders();
-  const offered = catalog.filter((provider) => isThreadProviderOffered(provider, input.availability));
+  const offered = catalog.filter((provider) => isThreadProviderOffered(provider, input.availability, input.extraInstalled));
   const requested = input.providerId
     ? catalog.find((provider) => provider.id === input.providerId) ?? offered[0]
     : offered[0];

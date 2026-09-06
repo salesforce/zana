@@ -1,48 +1,80 @@
 import { resolve } from "node:path";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { loadConfiguredPiServices } from "./configured-services.js";
+import {
+  resolveModelScopeWithDiagnostics,
+  type ModelRuntime,
+} from "@earendil-works/pi-coding-agent";
+import {
+  loadConfiguredPiServices,
+  type LoadedPiServices,
+} from "./configured-services.js";
 
-const modelRuntimePromises = new Map<string, Promise<ModelRuntime>>();
+const loadedByCwd = new Map<string, Promise<LoadedPiServices>>();
 
-export function getPiModelRuntime(cwd = process.cwd()): Promise<ModelRuntime> {
+function loadPiServicesForCwd(cwd: string): Promise<LoadedPiServices> {
   const resolvedCwd = resolve(cwd);
-  const existing = modelRuntimePromises.get(resolvedCwd);
+  const existing = loadedByCwd.get(resolvedCwd);
   if (existing) {
     return existing;
   }
 
-  // Use the full service path here too. This adds models from configured Pi
-  // extensions to BB's model picker. Cache each requested workspace separately
-  // because project settings and extensions are bound to that workspace.
-  const modelRuntimePromise = loadConfiguredPiServices({ cwd: resolvedCwd })
-    .then(({ configErrors, services }) => {
-      // One broken extension must not empty the picker. Pi still registered
-      // every provider it did load, so report the problem and list those
-      // models. Thread start keeps failing on the same configuration, so the
-      // user still learns about it before a run uses a partial setup.
-      if (configErrors.length > 0) {
-        for (const configError of configErrors) {
+  const loaded = loadConfiguredPiServices({ cwd: resolvedCwd })
+    .then((result) => {
+      if (result.configErrors.length > 0) {
+        for (const configError of result.configErrors) {
           process.stderr.write(`pi bridge: ${configError}\n`);
         }
-        // This runtime is missing whatever failed to load, so it must not
-        // outlive the broken configuration. Drop the memo and reload on the
-        // next call, which picks the repaired extension up without a restart
-        // of the long-lived bridge.
-        modelRuntimePromises.delete(resolvedCwd);
+        loadedByCwd.delete(resolvedCwd);
       }
-      return services.modelRuntime;
+      return result;
     })
-    // Drop the memo if creation fails. A transient failure must not poison all
-    // later model-list calls until the bridge restarts.
     .catch((error: unknown) => {
-      modelRuntimePromises.delete(resolvedCwd);
+      loadedByCwd.delete(resolvedCwd);
       throw error;
     });
-  modelRuntimePromises.set(resolvedCwd, modelRuntimePromise);
-  return modelRuntimePromise;
+  loadedByCwd.set(resolvedCwd, loaded);
+  return loaded;
+}
+
+export function getPiModelRuntime(cwd = process.cwd()): Promise<ModelRuntime> {
+  return loadPiServicesForCwd(cwd).then(({ services }) => services.modelRuntime);
+}
+
+export interface PiModelPickerScope {
+  scopedModelIds?: string[];
+  preferredDefaultId?: string;
+}
+
+/**
+ * Honor Pi `enabledModels` / default model settings the SDK already loaded.
+ * Empty scope means the full catalog.
+ */
+export async function getPiModelPickerScope(
+  cwd = process.cwd(),
+): Promise<PiModelPickerScope> {
+  const { services } = await loadPiServicesForCwd(cwd);
+  const enabled = services.settingsManager.getEnabledModels();
+  const defaultProvider = services.settingsManager.getDefaultProvider();
+  const defaultModel = services.settingsManager.getDefaultModel();
+  const preferredDefaultId =
+    defaultProvider && defaultModel
+      ? `${defaultProvider}/${defaultModel}`
+      : undefined;
+  if (!enabled || enabled.length === 0) {
+    return preferredDefaultId ? { preferredDefaultId } : {};
+  }
+  const { scopedModels } = await resolveModelScopeWithDiagnostics(
+    enabled,
+    services.modelRuntime,
+  );
+  return {
+    scopedModelIds: scopedModels.map(
+      (entry) => `${entry.model.provider}/${entry.model.id}`,
+    ),
+    ...(preferredDefaultId ? { preferredDefaultId } : {}),
+  };
 }
 
 /** @internal Test seam. */
 export function resetPiModelRuntimesForTests(): void {
-  modelRuntimePromises.clear();
+  loadedByCwd.clear();
 }

@@ -50,7 +50,8 @@ import { hostPromptFromInput, resolvePromptAttachmentPath } from '../projects/at
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
 import { latestProviderCheckpoint } from './conversation-edit-message.js';
 import { conversationThreadView } from './conversation-thread-view.js';
-import { requestedExecutionModeFromTurn } from './conversation-execution-mode.js';
+import { requestedExecutionModeFromTurn, claudeCodePermissionModeForTurn } from './conversation-execution-mode.js';
+import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
 import { recordThreadExecutionMode } from './conversation-plan.js';
 
 export {
@@ -192,6 +193,7 @@ async function startConversationOnHost(
     acpMode: args.input.acpMode,
     input: args.input.promptInput
   });
+  const claudeCodePermissionMode = claudeCodePermissionModeForTurn(providerId, requestedMode);
   recordThreadExecutionMode(ctx.db, {
     threadId: args.thread.id,
     requestedMode,
@@ -199,6 +201,15 @@ async function startConversationOnHost(
   });
   const requestedPermissionMode = args.input.permissionMode ?? permissionModeForLaunchProfile(args.input.providerId);
   const permissionMode = clampPermissionModeToHost(ctx.db, args.hostId, requestedPermissionMode) ?? requestedPermissionMode;
+  const providerOptions = derivedProviderOptionsForCommand({
+    providerId,
+    threadId: args.thread.id,
+    projectId: args.project.id,
+    model: args.input.model,
+    permissionMode,
+    promptMode: requestedMode === 'plan' ? 'plan' : undefined,
+    plugins: ctx.plugins
+  });
   const clientRequestId = appendClientTurnRequested(ctx, {
     threadId: args.thread.id,
     prompt: args.prompt,
@@ -233,6 +244,8 @@ async function startConversationOnHost(
       ...(args.input.model ? { model: args.input.model } : {}),
       ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {}),
       ...(args.input.acpMode ? { acpMode: args.input.acpMode } : {}),
+      ...(claudeCodePermissionMode ? { claudeCodePermissionMode } : {}),
+      ...(providerOptions ? { providerOptions } : {}),
       ...(clientRequestId ? { clientRequestId } : {}),
       ...(checkpoint ? { providerCheckpointId: checkpoint } : {}),
       ...sessionTooling,

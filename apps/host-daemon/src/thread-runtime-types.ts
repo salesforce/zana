@@ -24,6 +24,8 @@ export interface ThreadRuntimeAdapter {
     acpMode?: string;
     clientRequestId?: string;
     permissionMode?: 'accept-edits' | 'auto' | 'full';
+    claudeCodePermissionMode?: 'plan';
+    providerOptions?: Record<string, unknown>;
     permissionEscalation?: 'ask' | 'deny';
     expectedTurnId?: string;
   }): Promise<void>;

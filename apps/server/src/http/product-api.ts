@@ -84,7 +84,7 @@ import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSche
 import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
-import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
+import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify, harnessVerifyBundle } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
 import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
@@ -2553,10 +2553,14 @@ export async function handleProductHttp(
       const providerId = requestUrl.searchParams.get('providerId') ?? undefined;
       const requestedHostId = requestUrl.searchParams.get('hostId') ?? undefined;
       let availability: Awaited<ReturnType<typeof harnessVerify>> = [];
+      let extraInstalled: Record<string, boolean> = {};
       try {
-        availability = await harnessVerify(ctx.hostHub, requestedHostId);
+        const bundle = await harnessVerifyBundle(ctx.hostHub, requestedHostId);
+        availability = bundle.availability;
+        extraInstalled = bundle.extraInstalled;
       } catch {
         availability = [];
+        extraInstalled = {};
       }
       let listed: ProviderListModelsResult | null = null;
       let listError: ThreadModelLoadErrorCode | null = null;
@@ -2581,7 +2585,7 @@ export async function handleProductHttp(
           listError = classifyModelListError(error);
         }
       }
-      sendJson(response, 200, buildThreadExecutionOptions({ providerId, availability, listed, listError }));
+      sendJson(response, 200, buildThreadExecutionOptions({ providerId, availability, extraInstalled, listed, listError }));
       return true;
     }
 

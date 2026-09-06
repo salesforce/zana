@@ -4,51 +4,18 @@ import {
   type PromptInput
 } from '@zana-ai/zcc-domain/thread-runtime';
 
-export type ExecutionModeKind = 'plan' | 'ask' | 'execute' | 'custom';
-
-export interface ClassifiedExecutionMode {
-  id: string;
-  label: string;
-  kind: ExecutionModeKind;
-}
-
-/**
- * Map a harness-native mode id/label onto a portable semantic kind.
- * Core never branches on a provider id — Cursor `plan`/`agent`/`ask` fall
- * out of this classifier like any other ACP session mode.
- */
-export function classifyExecutionMode(id: string, name?: string): ExecutionModeKind {
-  const token = id.trim().toLowerCase();
-  const label = (name ?? '').trim().toLowerCase();
-  if (token === 'plan' || label === 'plan') return 'plan';
-  if (token === 'ask' || label === 'ask') return 'ask';
-  if (
-    token === 'agent'
-    || token === 'build'
-    || token === 'execute'
-    || token === 'code'
-    || label === 'agent'
-  ) {
-    return 'execute';
-  }
-  return 'custom';
-}
-
-export function classifyExecutionModeOption(option: {
-  value: string;
-  name?: string;
-}): ClassifiedExecutionMode {
-  return {
-    id: option.value,
-    label: option.name?.trim() || option.value,
-    kind: classifyExecutionMode(option.value, option.name)
-  };
-}
-
-export function isPlanExecutionMode(id: string | null | undefined, name?: string): boolean {
-  if (!id) return false;
-  return classifyExecutionMode(id, name) === 'plan';
-}
+export {
+  classifyExecutionMode,
+  classifyExecutionModeOption,
+  composerWorkModeFromNativeMode,
+  isPlanExecutionMode,
+  nativeModeForComposerWorkMode,
+  portableWorkIntent,
+  type ClassifiedExecutionMode,
+  type ExecutionModeKind,
+  type PortableWorkIntent,
+  type PortableWorkMode
+} from '@zana-ai/zcc-domain/thread-runtime';
 
 function parsePromptInputList(input: unknown): PromptInput[] {
   if (!Array.isArray(input)) return [];
@@ -72,4 +39,16 @@ export function requestedExecutionModeFromTurn(args: {
   if (promptInputHasCommandMention(parts, { trigger: '/', name: 'plan' })) return 'plan';
   if (promptInputHasCommandMention(parts, { trigger: '/', name: 'goal' })) return 'goal';
   return 'agent';
+}
+
+/**
+ * Claude slash Plan is not an ACP session mode. Pack the SDK permission-mode
+ * field so the dedicated Claude bridge can `setPermissionMode("plan")`.
+ * Codex slash Plan does not use this field.
+ */
+export function claudeCodePermissionModeForTurn(
+  providerId: string | undefined,
+  requestedMode: string
+): 'plan' | undefined {
+  return requestedMode === 'plan' && providerId === 'claude-code' ? 'plan' : undefined;
 }

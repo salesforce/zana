@@ -221,7 +221,9 @@ describe('unmanaged environment reuse', () => {
     expect(source).toContain('reasoningLevel: args.input.reasoningLevel');
     expect(source).toContain("...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})");
     expect(source).toContain('recordThreadExecutionMode');
-    expect(source).toContain('requestedExecutionModeFromTurn');
+    expect(source).toContain('claudeCodePermissionMode');
+    expect(source).toContain('providerOptions');
+    expect(source).toContain('derivedProviderOptionsForCommand');
     expect(source).toContain('clientRequestId');
     expect(source).toContain("from './conversation-live-turn.js'");
     expect(source).toContain('startLiveTurnCommand');
