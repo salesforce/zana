@@ -104,6 +104,11 @@ export interface HarnessVerifyResult {
   alwaysEnabled: boolean;
   /** Machine reality: `<binary> --version` exited 0. */
   installed: boolean;
+  /**
+   * Thread/ACP adapter binary is on PATH. Absent when the family has no
+   * separate adapter (Cursor/OpenCode: the PTY CLI *is* the ACP agent).
+   */
+  threadAdapterInstalled?: boolean;
   /** Trimmed `--version` output when installed. */
   version?: string;
   /** Exact normalized numeric CLI version, when the output contains one. */
@@ -658,6 +663,28 @@ export function hasBlockingQuestion(
   entry: Pick<InboxEntry, 'question' | 'questions'>
 ): boolean {
   return inboxQuestions(entry).some((q) => q.blocking === true);
+}
+
+/** Dedupe key prefix used when thread pending decisions were cloned into Inbox. */
+export const PENDING_INTERACTION_INBOX_DEDUPE_PREFIX = 'pending-interaction:';
+
+/**
+ * True for leftover Inbox clones of in-thread approvals/questions.
+ * Those clones only offered "Open thread" and never resolved the decision.
+ */
+export function isThreadPendingInboxClone(
+  entry: Pick<InboxEntry, 'dedupeKey' | 'question' | 'questions'>
+): boolean {
+  if (
+    typeof entry.dedupeKey === 'string'
+    && entry.dedupeKey.startsWith(PENDING_INTERACTION_INBOX_DEDUPE_PREFIX)
+  ) {
+    return true;
+  }
+  const questions = inboxQuestions(entry);
+  if (questions.length !== 1) return false;
+  const options = questions[0]?.options ?? [];
+  return options.length === 1 && options[0]?.label === 'Open thread';
 }
 
 /** Structured AI digest of the inbox — backs the "AI Summary" card. */
@@ -1324,6 +1351,13 @@ export interface TerminalSession {
    */
   remoteTunnel?: { ok: boolean; reason?: string };
   /**
+   * Local CLI + SSH remote tools (Experimental). Set when this session was
+   * spawned on this machine with `zcc-inbox` `remote_*` tools instead of
+   * `ssh -t`. Board labels use this rather than {@link Project.remote} so an
+   * SSH project can show **Local agent · remote tools** vs **Remote host**.
+   */
+  remoteToolProxy?: boolean;
+  /**
    * Per-agent opt-in for the Heartbeat feature (absent/false = off). When true
    * AND the global {@link AppConfig.heartbeatEnabled} master switch is on, this
    * session is nudged to continue after it stays idle for the configured delay.
@@ -1956,8 +1990,9 @@ export interface AppConfig {
    * Include scheduler-spawned sessions (`session.scheduled`) on the Agents board,
    * list, and flow. Default ON: waiting scheduled jobs sit in a **Scheduled**
    * lane; working / exited ones use the normal Working / Done lanes. Turn off
-   * to keep those runs on the Scheduler panel and in the inbox only. Does not
-   * change project session lists, the tab strip, or focus buckets.
+   * to remove those runs from Agent View. A live run remains visible in its
+   * project's sidebar tree so the project status dot always has a matching row.
+   * Does not change the tab strip or focus buckets.
    */
   includeScheduledAgentsInAgentView?: boolean;
   /**
@@ -2011,6 +2046,13 @@ export interface AppConfig {
    * every report stays inline (no demotion).
    */
   feedNoiseClassifierEnabled?: boolean;
+  /**
+   * Automatically open the thread secondary panel on the Plan pin when Plan
+   * mode is active (native ACP Plan, `/plan`, or a durable plan artifact).
+   * EXPERIMENTAL; default OFF. Plan-approval prompts still open the panel
+   * regardless of this flag.
+   */
+  autoOpenThreadPlanPanel?: boolean;
   /**
    * Auto-link report-looking files an agent wrote to the inbox, even when it
    * never calls `inbox_push` itself (see {@link AutoReportLinkerService}). On
@@ -2129,6 +2171,23 @@ export interface AppConfig {
    */
   goalsEnabled?: boolean;
   /**
+   * EXPERIMENTAL — CLI Agent on an SSH project can run the CLI on this machine
+   * and execute file/shell tools over SSH (`zcc-inbox` `remote_*`), same as
+   * Modern's local-agent / remote-tools path. Unlocks a New Chat picker
+   * (Remote host vs Local agent · remote tools). Default OFF: CLI Agent on
+   * SSH always uses `ssh -t` (Remote host). Main re-authorizes the pick
+   * (Rule 1); the renderer never sends host credentials.
+   */
+  cliRemoteToolProxyEnabled?: boolean;
+  /**
+   * EXPERIMENTAL — CLI Agent asks the project’s execution host which CLIs and
+   * models are installed (`GET /system/execution-options?hostId=…`, same path
+   * Modern uses) instead of this machine’s local `harness.descriptors` list.
+   * Default OFF: the CLI Agent picker still reflects locally installed
+   * harnesses and trusted PTY adapter catalogs.
+   */
+  cliRemoteHostCatalogEnabled?: boolean;
+  /**
    * Master switch for the EXPERIMENTAL Follow-ups feature: when ON, the
    * "Follow-ups" project-scoped nav tab appears (durable parked questions from
    * idle-triage and other origins). Under evaluation, so it's hidden by default
@@ -2237,8 +2296,15 @@ export interface AppConfig {
   /**
    * When on and a thread is running, Enter steers the active turn and
    * Cmd/Ctrl+Enter queues. Default off: Enter always uses `auto`.
+   * Kept for backward compatibility; {@link composerSendMode} is the picker.
    */
   steerActiveThreadOnEnter?: boolean;
+  /**
+   * Composer send intent: Auto | Steer | Queue. Absent maps from
+   * {@link steerActiveThreadOnEnter} (true → steer, otherwise auto).
+   * Default remains auto; existing false configs stay auto.
+   */
+  composerSendMode?: 'auto' | 'steer' | 'queue-if-active';
   /**
    * Surface `provider/unhandled` timeline rows. Default off; development
    * builds also force this on.
@@ -2277,8 +2343,10 @@ export interface AppConfig {
    */
   cloneRoot?: string;
   /**
-   * Persisted leftover. Pairing uses runtime `ZCC_APP_URL` or the compile-time
-   * bake, not this field. `presentAppConfig` overwrites it for the renderer.
+   * Public origin remotes use to enroll (Tailscale Serve, Heroku pairing door).
+   * Pairing prefers runtime `ZCC_APP_URL` or the compile-time bake, then this
+   * field, then the repo `public-app-url` file. `presentAppConfig` overlays the
+   * resolved origin for the renderer and never includes the relay token.
    */
   publicAppUrl?: string;
   /**
@@ -2710,6 +2778,13 @@ export interface CreateTerminalRequest {
   microVmImage?: string;
   microVmCpus?: number;
   microVmMemoryMib?: number;
+  /**
+   * Renderer INTENT: run this CLI launch as local agent + remote SSH tools
+   * instead of `ssh -t`. Main honors it only when
+   * {@link AppConfig.cliRemoteToolProxyEnabled} is on AND the store project
+   * has `remote` (Rule 1). Never send host / credentials from the renderer.
+   */
+  remoteToolProxy?: boolean;
 }
 
 export interface FsEntry {
@@ -4389,14 +4464,14 @@ export interface HarnessAuthStatusInfo {
 export type SkillSource = 'user' | 'plugin' | 'project';
 
 /**
- * The agent tool a skill belongs to — Claude Code, Cursor, and (in future)
- * Codex/Gemini/Windsurf. Core NEVER hardcodes a concrete id in logic: skill
- * discovery is dispatched through the `SKILL_PROVIDERS` registry
+ * The agent tool a skill belongs to — Claude Code, Cursor, OpenCode, and (in
+ * future) Codex/Gemini/Windsurf. Core NEVER hardcodes a concrete id in logic:
+ * skill discovery is dispatched through the `SKILL_PROVIDERS` registry
  * (`src/main/skills/registry.ts`), and the renderer derives its tool filters
  * from the distinct `tool` values present in the returned entries. Widened to
  * `string` so an unregistered/future tool id is tolerated everywhere.
  */
-export type SkillTool = 'claude-code' | 'cursor' | (string & {});
+export type SkillTool = 'claude-code' | 'cursor' | 'opencode' | (string & {});
 
 /**
  * How (and whether) a skill can be enabled/disabled. Modelled as a descriptor
@@ -4578,6 +4653,7 @@ export interface PluginSettingsSnapshot {
       label: string;
       description?: string;
       secret?: true;
+      multiline?: true;
       options?: string[];
       default?: string | boolean;
     }
@@ -5011,10 +5087,8 @@ export interface WhatsNewEvent {
 
 /**
  * First-run dependency check ("setup doctor"). On launch the app verifies that
- * the companion pieces the installer normally sets up are actually present —
- * the `claude` CLI, the Zana MCP server + Claude Code plugins, and the bundled
- * disk extensions — and auto-installs the ones it can do non-interactively,
- * guiding the user through the rest.
+ * the companion CLIs are actually present — Claude Code, Cursor, OpenCode, Pi,
+ * Codex, and the Salesforce CLI — and guides the user through anything missing.
  *
  * `kind` distinguishes how a missing dependency is remediated:
  *   - `installable` — the app can install it itself (npm / claude CLI calls).
@@ -5034,9 +5108,9 @@ export type DependencyPhase =
   | 'failed';
 
 export interface DependencyState {
-  /** Stable id, e.g. 'claude-cli', 'zana-mcp'. */
+  /** Stable id, e.g. 'claude-cli'. */
   id: string;
-  /** Human label shown in the checklist, e.g. "Zana MCP server". */
+  /** Human label shown in the checklist, e.g. "Claude Code CLI". */
   label: string;
   /** One-line description of what it is / why it's needed. */
   detail: string;
@@ -5049,6 +5123,11 @@ export interface DependencyState {
    * shell command the user can copy to install it themselves.
    */
   manualCommand?: string;
+  /**
+   * When false, a missing/failed item is listed and can be installed, but it
+   * does not auto-open the first-run checklist. Absent means required.
+   */
+  required?: boolean;
 }
 
 /** The full setup snapshot pushed to the renderer on `deps:onStatus`. */

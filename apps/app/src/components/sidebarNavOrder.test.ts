@@ -57,6 +57,31 @@ describe('sidebar navigation order', () => {
     ).toEqual(projectIds);
   });
 
+  it('keeps a saved Project session tree last even if it was stored after Agents', () => {
+    expect(
+      normalizeSidebarNavOrder(
+        ['inbox', 'agents', 'sidebar-section:project-sessions', 'feed', 'terminals'],
+        ['inbox', 'agents', 'feed', 'terminals', 'sidebar-section:project-sessions'],
+        ['inbox'],
+        ['sidebar-section:project-sessions']
+      )
+    ).toEqual(['inbox', 'agents', 'feed', 'terminals', 'sidebar-section:project-sessions']);
+  });
+
+  it('does not let a drag move the trailing Project session tree', () => {
+    const ids = ['inbox', 'agents', 'feed', 'sidebar-section:project-sessions'];
+    expect(
+      reorderSidebarNavItems(ids, 'sidebar-section:project-sessions', 'agents', ['inbox'], [
+        'sidebar-section:project-sessions'
+      ])
+    ).toEqual(ids);
+    expect(
+      reorderSidebarNavItems(ids, 'feed', 'sidebar-section:project-sessions', ['inbox'], [
+        'sidebar-section:project-sessions'
+      ])
+    ).toEqual(ids);
+  });
+
   it('maps the retired Agents collection onto the Agents destination', () => {
     expect(
       normalizeSidebarNavOrder(

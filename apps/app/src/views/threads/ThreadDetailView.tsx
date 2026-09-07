@@ -10,6 +10,7 @@ import { ThreadTimeline } from '../../components/thread/ThreadTimeline.js';
 import { ThreadDiffPanel } from '../../components/thread/ThreadDiffPanel.js';
 import { ThreadWorkspaceBanner } from '../../components/thread/ThreadWorkspaceBanner.js';
 import {
+  composerVisibleTodos,
   timelineHasInFlightRetry,
   timelineRowsAwaitUser
 } from '../../components/thread/thread-timeline-model.js';
@@ -25,9 +26,8 @@ import { ThreadDetailSearch } from '../../components/thread/ThreadDetailSearch.j
 import { createCoalescedRunner } from '../../lib/coalesced-runner.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
-import { pendingChildThreads, useThreads } from '../../thread-store.js';
+import { pendingChildThreads, useThreads, type ThreadListItem } from '../../thread-store.js';
 import { useData } from '../../store.js';
-import { composerRemoteToolsMark } from '../../components/composer-host-status.js';
 import { ThreadPendingInteractionBanner } from '../../components/thread/pending-interactions/ThreadPendingInteractionBanner.js';
 import { ChildThreadPendingBanners } from '../../components/thread/pending-interactions/ChildThreadPendingBanners.js';
 import {
@@ -37,11 +37,9 @@ import {
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { useOptionalPaneContext, usePaneSecondaryPanelRegistration } from '../thread-detail/PaneContext.js';
 import { ThreadInfoContent } from '../../components/thread/secondary-panel/ThreadInfoContent.js';
-import { ThreadPlanPanel } from '../../components/thread/secondary-panel/ThreadPlanPanel.js';
-import {
-  planFileTabTitle,
-  resolveThreadPlanDocument
-} from '../../components/thread/secondary-panel/thread-plan-document.js';
+import { ThreadPlanPanel, type DurablePlanPanelView } from '../../components/thread/secondary-panel/ThreadPlanPanel.js';
+import { planFileTabTitle, resolveThreadPlanDocument } from '../../components/thread/secondary-panel/thread-plan-document.js';
+import { planExecutionTitle } from '../../components/thread/timeline/plan-execution-card.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/ThreadFilePreviewTab.js';
 import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
@@ -49,6 +47,7 @@ import { ThreadTerminalTab } from '../../components/thread/secondary-panel/Threa
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from '../../components/thread/secondary-panel/ThreadExplorerTab.js';
 import { PluginThreadHeaderActions } from '../../plugins/PluginThreadHeaderActions.js';
+import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { copyText } from '../../components/thread/secondary-panel/threadSecondaryPanelLogic.js';
 import { useThreadSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
 import { useInAppBrowserPanel } from '../../components/thread/secondary-panel/useInAppBrowserPanel.js';
@@ -91,12 +90,18 @@ export function ThreadDetailView() {
 export function ThreadDetail({
   threadId,
   embedded = false,
-  modal = false
+  modal = false,
+  leadingContent,
+  messageActions,
+  includePluginMessageActions = true
 }: {
   threadId: string;
   embedded?: boolean;
   /** Hosted in the thread inspector modal; dialog close/fullscreen live on the modal header. */
   modal?: boolean;
+  leadingContent?: ReactNode;
+  messageActions?: readonly ThreadChatMessageAction[];
+  includePluginMessageActions?: boolean;
 }) {
   const navigate = useNavigate();
   const route = useRouteState();
@@ -131,10 +136,11 @@ export function ThreadDetail({
   const [modelFallback, setModelFallback] = useState<ThreadTimelineModelFallback | null>(null);
   const [parentThreadId, setParentThreadId] = useState<string | null>(null);
   const [promptMode, setPromptMode] = useState<{ mode: string; prompt?: string } | null>(null);
+  const [executionModeRequested, setExecutionModeRequested] = useState<string | null>(null);
+  const [durablePlan, setDurablePlan] = useState<(DurablePlanPanelView & { filePath?: string | null }) | null>(null);
   const [contextWindow, setContextWindow] = useState<ThreadContextWindowUsage | null>(null);
   const [lastReadSeq, setLastReadSeq] = useState<number | null>(null);
   const [diffPath, setDiffPath] = useState<string | null>(null);
-  const [planExpanded, setPlanExpanded] = useState(false);
   const [todoExpanded, setTodoExpanded] = useState(false);
   const [planExitPending, setPlanExitPending] = useState(false);
   const [optimisticRow, setOptimisticRow] = useState<TimelineRow | null>(null);
@@ -171,13 +177,22 @@ export function ThreadDetail({
 
   useEffect(() => {
     const onOptimistic = (event: Event) => {
-      const detail = (event as CustomEvent<{ threadId?: string; text?: string | null }>).detail;
+      const detail = (event as CustomEvent<{
+        threadId?: string;
+        text?: string | null;
+        imagePaths?: string[];
+      }>).detail;
       if (detail?.threadId !== threadId) return;
-      if (!detail.text) {
+      const imagePaths = detail.imagePaths ?? [];
+      if (detail.text == null && imagePaths.length === 0) {
         setOptimisticRow(null);
         return;
       }
-      setOptimisticRow(buildOptimisticUserTimelineRow({ threadId, text: detail.text }));
+      setOptimisticRow(buildOptimisticUserTimelineRow({
+        threadId,
+        text: detail.text ?? '',
+        localImagePaths: imagePaths
+      }));
     };
     const onStop = (event: Event) => {
       const detail = (event as CustomEvent<{ threadId?: string }>).detail;
@@ -219,6 +234,7 @@ export function ThreadDetail({
     rowsRef.current = [];
     maxSeqRef.current = 0;
     loadedRef.current = false;
+    setExecutionModeRequested(null);
 
     const applyTimeline = (
       timeline: Awaited<ReturnType<typeof product.threads.timeline>>,
@@ -235,6 +251,9 @@ export function ThreadDetail({
       setBackgroundCommands((timeline.activeBackgroundCommands as TimelineViewWorkflowWorkRow[]) ?? []);
       setModelFallback((timeline.modelFallback as ThreadTimelineModelFallback | null) ?? null);
       setPromptMode((timeline.activePromptMode as { mode: string; prompt?: string } | null) ?? null);
+      const execution = timeline.executionMode as { requested?: string | null } | null | undefined;
+      setExecutionModeRequested(execution?.requested ?? null);
+      setDurablePlan((timeline.durablePlan as (DurablePlanPanelView & { filePath?: string | null }) | null) ?? null);
       setContextWindow((timeline.contextWindowUsage as ThreadContextWindowUsage | null) ?? null);
       setLastReadSeq(typeof timeline.lastReadSeq === 'number' ? timeline.lastReadSeq : null);
       return nextRows;
@@ -287,7 +306,8 @@ export function ThreadDetail({
           model?: string | null;
           reasoningLevel?: string | null;
         };
-        const nextStatus = thread.status ?? timeline.status;
+        const runtimeStatus = (thread as { runtime?: { displayStatus?: string } }).runtime?.displayStatus;
+        const nextStatus = runtimeStatus || thread.status || timeline.status;
         setTitle(thread.title?.trim() || 'Agent');
         setStatus(nextStatus);
         setCwd(typeof thread.cwd === 'string' ? thread.cwd : null);
@@ -319,7 +339,8 @@ export function ThreadDetail({
             maxSeq: typeof timeline.maxSeq === 'number' ? timeline.maxSeq : 0,
             updatedAt: typeof (thread as { updatedAt?: number }).updatedAt === 'number'
               ? (thread as { updatedAt: number }).updatedAt
-              : undefined
+              : undefined,
+            runtime: (thread as { runtime?: ThreadListItem['runtime'] }).runtime
           });
         }
       } catch {
@@ -387,31 +408,11 @@ export function ThreadDetail({
   const closable = activeClosableTab(panel.state);
   const panelOpen = hostedSecondary ? false : panel.state.isOpen;
   const bounded = embedded || pane?.isBoundedPane === true;
-  const planDocument = useMemo(
-    () => resolveThreadPlanDocument({
-      promptMode,
-      pendingInteractions,
-      rows
-    }),
-    [pendingInteractions, promptMode, rows]
-  );
-  const showPlanPin = planDocument !== null;
-  const openedPlanPanel = useRef(false);
-  const selectPin = panel.selectPin;
-
-  useEffect(() => {
-    if (!planDocument) {
-      openedPlanPanel.current = false;
-      if (pin === 'plan') selectPin('info');
-      return;
-    }
-    if (planDocument.source !== 'approval' || openedPlanPanel.current) return;
-    openedPlanPanel.current = true;
-    selectPin('plan');
-    // selectPin is stable once the panel hook memoizes commands; pin + plan
-    // document are the only triggers. Do not depend on `panel` (new object
-    // every state change) or React #185 loops on the Agents List embed.
-  }, [pin, planDocument, selectPin]);
+  const planDocument = resolveThreadPlanDocument({
+    promptMode,
+    pendingInteractions,
+    durablePlan
+  });
 
   const viewClass = [
     'thread-detail-view',
@@ -440,18 +441,6 @@ export function ThreadDetail({
           appendThreadRecentItem(threadId, { kind: 'file', source: 'thread-storage', path });
           panel.addTab({ kind: 'storage-preview', title, path });
         }}
-      />
-    );
-  } else if (pin === 'plan' && planDocument) {
-    panelBody = (
-      <ThreadPlanPanel
-        document={planDocument}
-        todos={todos}
-        onOpenFile={(path) => panel.addTab({
-          kind: 'file-preview',
-          title: planFileTabTitle(path),
-          path
-        })}
       />
     );
   } else if (pin === 'diff' && environmentId) {
@@ -520,13 +509,26 @@ export function ThreadDetail({
     );
   } else if (pin === 'diff') {
     panelBody = <p className="thread-detail-empty">No environment is attached to this agent.</p>;
+  } else if (pin === 'plan') {
+    const document = planDocument ?? { markdown: null, filePath: null, prompt: null, source: 'empty' as const };
+    panelBody = (
+      <ThreadPlanPanel
+        document={document}
+        durablePlan={durablePlan}
+        todos={todos}
+        onOpenFile={(path) => {
+          appendThreadRecentItem(threadId, { kind: 'file', source: 'workspace', path });
+          panel.addTab({ kind: 'file-preview', title: planFileTabTitle(path), path });
+        }}
+      />
+    );
   }
 
   const secondaryPanelNode: ReactNode = panel.state.isOpen ? (
         <ThreadSecondaryPanel
           state={panel.state}
           showDiffPin={Boolean(environmentId)}
-          showPlanPin={showPlanPin}
+          showPlanPin={Boolean(planDocument)}
           onSelectInfo={() => panel.selectPin('info')}
           onSelectDiff={() => panel.selectPin('diff')}
           onSelectPlan={() => panel.selectPin('plan')}
@@ -658,7 +660,7 @@ export function ThreadDetail({
                 <X size={14} />
               </button>
             ) : null}
-            {!panel.state.isOpen ? (
+            {!panel.state.isOpen && !embedded ? (
               <button
                 type="button"
                 className="icon-btn"
@@ -674,6 +676,11 @@ export function ThreadDetail({
         </header>
         <div className="thread-detail-body">
           <div className="thread-detail-column">
+            {leadingContent ? (
+              <div className="thread-chat-leading" data-testid="thread-chat-leading-content">
+                {leadingContent}
+              </div>
+            ) : null}
             <ThreadTimeline
               threadId={threadId}
               rows={displayRows}
@@ -682,6 +689,9 @@ export function ThreadDetail({
               thinking={thinking}
               goal={goal}
               activeWorkflows={workflows}
+              planExecution={durablePlan?.tasks.length
+                ? { title: planExecutionTitle(durablePlan.markdown), tasks: durablePlan.tasks }
+                : null}
               lastReadSeq={lastReadSeq}
               onReachedBottom={markRead}
               onCopy={(text) => {
@@ -716,10 +726,8 @@ export function ThreadDetail({
                   }
                 });
               }}
-            />
-            <ThreadWorkspaceBanner
-              environmentId={environmentId}
-              onOpenDiff={(path) => openDiff(path)}
+              messageActions={messageActions}
+              includePluginMessageActions={includePluginMessageActions}
             />
             <div className="thread-composer-dock">
               <PromptContextBanner
@@ -728,11 +736,10 @@ export function ThreadDetail({
                 parentThreadId={parentThreadId}
                 childCount={childThreads.length}
                 environmentId={environmentId}
-                onReview={() => openDiff()}
               />
               <QueuedMessagesCard threadId={threadId} />
               <ModelFallbackCard fallback={modelFallback} />
-              <BackgroundCommandsCard commands={backgroundCommands} />
+              <BackgroundCommandsCard commands={backgroundCommands} workflows={workflows} />
               <ChildThreadPendingBanners childThreads={childThreads} projectId={projectId} />
               {pendingInteractions.map((interaction) => (
                 <ThreadPendingInteractionBanner
@@ -743,18 +750,18 @@ export function ThreadDetail({
               ))}
               <ThreadPromptModeCard
                 mode={promptMode}
-                isExpanded={planExpanded}
                 isExitPending={planExitPending}
-                onToggle={() => {
-                  setPlanExpanded((value) => !value);
-                  if (showPlanPin) panel.selectPin('plan');
-                }}
+                onOpenPlan={() => panel.selectPin('plan')}
                 onExitPlanMode={exitPlanMode}
               />
               <ThreadTodoCard
-                todos={todos}
+                todos={composerVisibleTodos(todos, durablePlan?.tasks.length ?? 0)}
                 isExpanded={todoExpanded}
                 onToggle={() => setTodoExpanded((value) => !value)}
+              />
+              <ThreadWorkspaceBanner
+                environmentId={environmentId}
+                onOpenDiff={(path) => openDiff(path)}
               />
               <ThreadCommandComposer
                 threadId={threadId}
@@ -763,20 +770,18 @@ export function ThreadDetail({
                 status={status}
                 inFlightRetry={inFlightRetry}
                 sendBlocked={pendingInteractions.length > 0}
-                environmentLabel={
-                  composerRemoteToolsMark(project ?? undefined, threads.find((row) => row.id === threadId)?.hostId)
-                    ?? (isWorktree ? 'This checkout' : 'Local')
-                }
+                environmentLabel={isWorktree ? 'This checkout' : 'Local'}
                 contextWindowUsage={contextWindow}
                 providerId={threadProviderId ?? undefined}
                 model={threadModel}
                 reasoningLevel={threadReasoning}
+                executionModeRequested={executionModeRequested}
               />
             </div>
           </div>
         </div>
       </div>
-      {hostedSecondary ? null : secondaryPanelNode}
+      {hostedSecondary || embedded ? null : secondaryPanelNode}
       </div>
     </section>
   );

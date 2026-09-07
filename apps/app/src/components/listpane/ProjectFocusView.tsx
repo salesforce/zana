@@ -1,10 +1,10 @@
 import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { Plus, X, ArrowLeft, AppWindow } from 'lucide-react';
+import { Plus, X, ArrowLeft, AppWindow, Network } from 'lucide-react';
 import { useData, useUi, useAgentStatus, useIdleTriage, usePersonas } from '../../store.js';
 import type { Project, LaunchProfileId, Persona, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileLabel } from '@zana-ai/zcc-domain/launch-provider';
-import { composerProjectLabel } from '../composer-project-default.js';
+import { composerProjectLabel, isRemoteWorkspaceProject } from '../composer-project-default.js';
 import { profileIcon, personaIcon } from '../../lib/profileIcon.js';
 import { bucketSessions } from '../../lib/sessionBuckets.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
@@ -198,8 +198,13 @@ export function ProjectFocusView({ project }: { project: Project }) {
           className="project-dot"
           style={project.color ? { background: project.color } : undefined}
         />
-        <span className="focus-project-name" title={project.path}>
-          {composerProjectLabel(project)}
+        <span className="project-meta project-meta--inline">
+          <span className="focus-project-name" title={project.path}>
+            {composerProjectLabel(project)}
+          </span>
+          {isRemoteWorkspaceProject(project) && (
+            <Network size={11} strokeWidth={2} className="project-remote-icon" aria-label="Remote SSH project" />
+          )}
         </span>
         <ProjectRollupDot projectId={project.id} />
         <div className="focus-new" ref={newMenuRef}>

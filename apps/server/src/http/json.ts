@@ -50,6 +50,15 @@ export function sendBytes(
 }
 
 export function sendNdjson(response: ServerResponse, events: unknown[]): void {
+  const stream = beginNdjson(response);
+  for (const event of events) stream.write(event);
+  stream.end();
+}
+
+export function beginNdjson(response: ServerResponse): {
+  write(event: unknown): void;
+  end(): void;
+} {
   response.writeHead(
     200,
     headersWithCors(response, {
@@ -58,10 +67,15 @@ export function sendNdjson(response: ServerResponse, events: unknown[]): void {
       'X-Content-Type-Options': 'nosniff'
     })
   );
-  for (const event of events) {
-    response.write(`${JSON.stringify(event)}\n`);
-  }
-  response.end();
+  response.flushHeaders();
+  return {
+    write(event) {
+      response.write(`${JSON.stringify(event)}\n`);
+    },
+    end() {
+      response.end();
+    }
+  };
 }
 
 export async function readJsonBody(request: IncomingMessage, limit = 1_000_000): Promise<unknown> {

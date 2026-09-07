@@ -27,8 +27,8 @@ describe('agent script panel logic', () => {
 
   it('hints when the DX root is missing', () => {
     expect(playgroundHint(false, undefined)).toBeNull();
-    expect(playgroundHint(true, true)).toBeNull();
-    expect(playgroundHint(true, false)).toMatch(/DX project root/);
+    expect(playgroundHint(true, false, true)).toBeNull();
+    expect(playgroundHint(true, false)).toMatch(/\.agent files/);
   });
 
   it('defaults theme to dark without a light document attribute', () => {

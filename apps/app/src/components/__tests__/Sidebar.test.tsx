@@ -283,7 +283,9 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(markup).not.toContain('Ask user question');
     expect(markup).not.toContain('Custom instructions');
     expect(markup).not.toContain('Salesforce');
+    expect(markup).not.toContain('SOQL');
     expect(markup).not.toContain('data-testid="nav-ask-user-question"');
+    expect(markup).not.toContain('data-testid="nav-salesforce/soql"');
     expect(markup).toContain('data-testid="nav-extensions"');
   });
 
@@ -309,5 +311,34 @@ describe('Sidebar structure and compact accessibility', () => {
 
     expect(source).toContain('CSS.Translate.toString(transform)');
     expect(source).not.toContain('CSS.Transform.toString(transform)');
+  });
+
+  it('opens plugin nav panels in the split workspace via cmd-click and drag', () => {
+    const source = readFileSync(new URL('../Sidebar.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("kind: 'plugin-panel'");
+    expect(source).toContain('splitContent:');
+    expect(source).toContain('panel.pluginId');
+    expect(source).toContain('subPath: \'\'');
+  });
+
+  it('lets Home, Inbox, Agents, Scheduler, and module rows drag into a split pane', () => {
+    const source = readFileSync(new URL('../Sidebar.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("item.id === 'home'");
+    expect(source).toContain("kind: 'home'");
+    expect(source).toContain("item.id === 'inbox'");
+    expect(source).toContain("kind: 'inbox'");
+    expect(source).toContain("item.id === 'agents'");
+    expect(source).toContain("kind: 'agents'");
+    expect(source).toContain("item.id === 'scheduler'");
+    expect(source).toContain("kind: 'scheduler'");
+    expect(source).toContain('NON_SPLITTABLE_NAV_IDS.has(item.id)');
+    expect(source).toContain("kind: 'plugin-panel'");
+    expect(source).toContain('DEFAULT_PLUGIN_PANEL_PATH');
+  });
+
+  it('targets the split workspace box for view drops, not the display:contents landmark', () => {
+    const source = readFileSync(new URL('../sidebar/useThreadRowSplitDrag.ts', import.meta.url), 'utf8');
+    expect(source).toContain("const MAIN_CONTENT_SELECTOR = '.split-workspace'");
+    expect(source).not.toContain('main.shell-main');
   });
 });

@@ -21,12 +21,20 @@ import type { LocalAppOriginArgs } from './local-app-origins.js';
 import { createProductHub, type ProductHub } from './product-hub.js';
 import { createHostHub, type HostHub } from './host-hub.js';
 import { PendingInteractionLifecycle } from '../services/interactions/pending-interactions.js';
+import { prunePendingInteractionInboxCopies } from '../services/interactions/pending-interaction-attention.js';
 import { conversationThreadView } from '../services/threads/conversation-create.js';
 import { createThreadTitleNamer, type ThreadTitleNamer } from '../services/threads/thread-title-namer.js';
 import { createJoinCodeStore, type JoinCodeStore } from '../services/hosts/join-codes.js';
 import type { PluginService } from '../plugins/plugin-service.js';
 import { PluginHostArtifactRegistry } from '../plugins/plugin-host-artifact-registry.js';
-import { flushHeldConversationSends } from '../services/threads/conversation-lifecycle.js';
+import {
+  flushDueConversationSendsForHost,
+  flushHeldConversationSends,
+  reconcileStoppingConversationThreadsOnHostConnect
+} from '../services/threads/conversation-lifecycle.js';
+import { applyLoggedConversationLifecycleEvent } from '../services/threads/conversation-lifecycle-outcome.js';
+import { healDisconnectedConversationThreadsForHost } from '../services/threads/conversation-host-recovery.js';
+import { HOST_ACTIVE_WORK_DISCONNECT_GRACE_MS } from '../services/threads/conversation-runtime-display.js';
 import { disposeLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
@@ -97,6 +105,7 @@ export function createProductHttpContext(
   const terminalSessions = new Map<string, ProductTerminalRecord>();
   let pendingInteractions: PendingInteractionLifecycle;
   let ctx!: ProductHttpContext;
+  const disconnectHealTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const hostHub = createHostHub(db, hub, terminalSessions, {
     onNewHostInstance: (hostId) => {
       pendingInteractions?.interruptPendingInteractionsForHost(
@@ -104,10 +113,34 @@ export function createProductHttpContext(
         'host-daemon-restarted'
       );
     },
+    onHostConnected: (hostId) => {
+      const timer = disconnectHealTimers.get(hostId);
+      if (timer) {
+        clearTimeout(timer);
+        disconnectHealTimers.delete(hostId);
+      }
+      if (!ctx) return;
+      void reconcileStoppingConversationThreadsOnHostConnect(ctx, hostId).catch(() => undefined);
+      void flushDueConversationSendsForHost(ctx, hostId).catch(() => undefined);
+    },
     onConversationEvent: ({ threadId }) => {
       const thread = getConversationThread(db, threadId);
       if (!thread) return;
       hub.emit('threads:updated', conversationThreadView(ctx, thread));
+    },
+    onConversationLifecycle: ({ threadId, event }) => {
+      if (!ctx) return;
+      applyLoggedConversationLifecycleEvent(ctx, { threadId, event });
+    },
+    onHostDisconnected: (hostId) => {
+      const existing = disconnectHealTimers.get(hostId);
+      if (existing) clearTimeout(existing);
+      disconnectHealTimers.set(hostId, setTimeout(() => {
+        disconnectHealTimers.delete(hostId);
+        if (!ctx) return;
+        if (hostHub.connectedHostIds().includes(hostId)) return;
+        healDisconnectedConversationThreadsForHost(ctx.db, ctx.hub, hostId);
+      }, HOST_ACTIVE_WORK_DISCONNECT_GRACE_MS));
     }
   });
   pendingInteractions = new PendingInteractionLifecycle({
@@ -121,6 +154,14 @@ export function createProductHttpContext(
       }
       if (ctx.pendingInteractions.hasPendingThreadInteraction(threadId)) return;
       void flushHeldConversationSends(ctx, threadId).catch(() => undefined);
+    },
+    onPendingInteractionCreated: ({ threadId, interaction }) => {
+      if (!ctx) return;
+      void import('../services/threads/conversation-child-notifications.js')
+        .then(({ notifyParentOfChildNeedsAttention }) => {
+          notifyParentOfChildNeedsAttention(ctx, { threadId, interaction });
+        })
+        .catch(() => undefined);
     }
   });
   pendingInteractions.start();
@@ -135,6 +176,7 @@ export function createProductHttpContext(
   inbox.onRemoved((id) => hub.emit('inbox:removed', id));
   inbox.onUpdated((entry) => hub.emit('inbox:updated', entry));
   inbox.onPruned((ids) => hub.emit('inbox:pruned', ids));
+  void prunePendingInteractionInboxCopies(inbox);
   suggestions.onAppended((entry) => hub.emit('suggestions:appended', entry));
   suggestions.onRemoved((id) => hub.emit('suggestions:removed', id));
   suggestions.onUpdated((entry) => hub.emit('suggestions:updated', entry));
@@ -240,6 +282,8 @@ export function createProductHttpContext(
     pluginHostArtifacts: new PluginHostArtifactRegistry(),
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
+      for (const timer of disconnectHealTimers.values()) clearTimeout(timer);
+      disconnectHealTimers.clear();
       disposeLocalHostDaemon(ctx);
       promptRegistry.stop();
       ctx.plugins?.stop?.();

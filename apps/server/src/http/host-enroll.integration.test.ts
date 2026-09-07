@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import {
   HOST_RPC_PROTOCOL_VERSION,
@@ -367,9 +367,11 @@ describe('host enroll hub and thread create', () => {
     expect(provision?.command).toMatchObject({ workspaceProvisionType: 'personal' });
     const targetPath = (provision?.command as { targetPath?: string }).targetPath;
     expect(targetPath?.startsWith(`${join(projectRoot, 'personal-workspaces')}/`)).toBe(true);
-    const start = bCommands.find((row) => row.command.type === 'thread.start');
-    expect(start?.command).toMatchObject({ type: 'thread.start' });
-    expect((start?.command as { cwd?: string }).cwd).toBeUndefined();
+    await vi.waitFor(() => {
+      const start = bCommands.find((row) => row.command.type === 'thread.start');
+      expect(start?.command).toMatchObject({ type: 'thread.start' });
+      expect((start?.command as { cwd?: string }).cwd).toBeUndefined();
+    });
   });
 
   it('rejects a local project folder on another machine', async () => {
@@ -480,7 +482,10 @@ describe('host enroll hub and thread create', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['hi'] })
     }).then((response) => response.json()) as { value: { id: string; providerThreadId: string | null } };
-    expect(spawned.value.providerThreadId).toMatch(/^prov-/);
+    expect(spawned.value.id).toBeTruthy();
+    await vi.waitFor(() => {
+      expect(getConversationThread(server!.ctx.db, spawned.value.id)?.providerThreadId).toMatch(/^prov-/);
+    });
 
     socket.send(JSON.stringify({
       type: 'host.event',

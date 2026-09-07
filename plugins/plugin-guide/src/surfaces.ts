@@ -58,6 +58,19 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         experimental: true
       },
       {
+        id: 'experimental_createProjectAction',
+        title: 'Create project',
+        summary: 'An item on the Projects Add project (+) menu for scaffolding or registering a new project.',
+        bullets: [
+          'Registration: `id`, `title`, `icon`, optional `component`, and `run`.',
+          '`run` receives `pickDirectory`, `addProject`, `cloneRoot`, `toProject`, and `openDialog`.',
+          'Call `openDialog()` to mount `component` in a host modal. Dialog props also include `close`.'
+        ],
+        apiSymbols: ['PluginAppSlots.experimental_createProjectAction', 'PluginCreateProjectActionRegistration'],
+        experimental: true,
+        firstParty: ['Salesforce']
+      },
+      {
         id: 'sidebarFooterAction',
         title: 'Sidebar footer',
         summary: 'An action in the rail utility dock.',
@@ -325,6 +338,6 @@ export function copyPluginSurfaceAgentReference(surface: PluginSurface): string 
     surface.summary,
     ...surface.bullets.map((line) => `- ${line}`),
     `SDK: ${surface.apiSymbols.join(', ')}`,
-    'After editing, run `zcc plugin install .` then `zcc plugin dev` and open this surface in the running app.'
+    'After editing, `zcc plugin reload <id>` for a backend path install; optional `zcc plugin dev` watches UI. Open this surface in the running app.'
   ].join('\n');
 }

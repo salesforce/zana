@@ -500,8 +500,8 @@ export function useComposerPromptField({
     onSubmitRef.current(opts);
   }, []);
 
-  const handleChromeKeyDown = useCallback((event: { key: string; metaKey: boolean; ctrlKey: boolean; preventDefault: () => void }) => {
-    if (interceptKeyDownRef.current?.(event as Parameters<ComposerKeyInterceptor>[0])) return;
+  const handleChromeKeyDown = useCallback((event: Parameters<ComposerKeyInterceptor>[0]) => {
+    if (interceptKeyDownRef.current?.(event)) return;
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       if (typeaheadRef.current.open) {
         event.preventDefault();

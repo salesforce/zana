@@ -22,6 +22,8 @@ const thread = {
   providerThreadId: 'prov-1',
   parentThreadId: null,
   archivedAt: null,
+  pinnedAt: null,
+  pinOrder: null,
   createdAt: 1,
   updatedAt: 1
 };
@@ -29,6 +31,7 @@ const thread = {
 vi.mock('@zana-ai/zcc-db', () => ({
   getConversationThread: vi.fn(() => thread),
   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
+  listConversationThreadEvents: vi.fn(() => []),
   listConversationThreadEventsWindow: vi.fn(() => []),
   setConversationProviderThreadId: vi.fn()
 }));

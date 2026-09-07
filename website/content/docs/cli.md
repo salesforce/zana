@@ -73,6 +73,8 @@ OFFLINE (no app required):
   plugin build [dir]       Bundle zcc.app / zcc.server for CI
 
 PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:8780):
+  plugin reload <id>       Reload a plugin (rebuild is not implied)
+  plugin dev [dir]         Watch, rebuild UI, reload on save [--once]
   status                   Live dashboard: projects and threads
   thread list [--project ID]
   thread spawn --project <id> --prompt "..." [--provider <id>] [--wait]
@@ -97,7 +99,7 @@ FILE READS (work if the app is down; prefer HTTP groups above when it is up):
   followup ls              List follow-ups (parked questions/decisions)
 
 LIVE CONTROL PLANE (app must be running):
-  plugin ls|install|enable|disable|reload|remove|dev|search|outdated|update|run|logs
+  plugin ls|install|enable|disable|remove|search|outdated|update|run|logs
   marketplace ls|add|refresh|remove|install
   agent ls                 List live agents + their state
   team ls                  List the team catalogue
@@ -485,9 +487,11 @@ zcc marketplace ls
 zcc marketplace install tasks@official
 ```
 
-`plugin ls` / `new` / `types` / `build` work with the app down. `plugin install`,
-`enable`, `disable`, `reload`, `remove`, `dev`, `search`, `outdated`, `update`,
-`run`, and every `marketplace` verb are **live tier**.
+`plugin ls` / `new` / `types` / `build` work with the app down. `plugin reload`
+and `plugin dev` use product HTTP (`POST /api/v1/plugin-apps/:id/reload`) and do
+not need the control socket. `plugin install`, `enable`, `disable`, `remove`,
+`search`, `outdated`, `update`, `run`, and every `marketplace` verb are
+**control-plane live**.
 
 `plugin logs <id>` prints persisted JSONL from the plugin log (`-n N`, `-f` to
 follow). `plugin run <id> <args…>` runs a CLI contribution declared by that

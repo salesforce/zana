@@ -10,13 +10,9 @@ import {
   createPluginDevLoop,
   syncPluginTypes
 } from '@zana-ai/zcc-plugin-build';
+import { jsonResult, textResult, type CliResult } from './cli-result.js';
 import { callControlPlane, isAppRunning } from './control-client.js';
-
-interface CliResult {
-  exitCode: number;
-  stdout: string;
-  stderr?: string;
-}
+import { productRequest, type ProductHttpDeps } from './product-http.js';
 
 interface InstalledFile {
   version: 1;
@@ -106,11 +102,28 @@ async function live(
   return { exitCode: 0, stdout: `${typeof result.value === 'string' ? result.value : JSON.stringify(result.value, null, 2)}\n` };
 }
 
+/** Product HTTP — same route the renderer uses. Does not need control.sock. */
+async function reloadPluginViaHttp(
+  id: string,
+  jsonOutput: boolean,
+  httpDeps?: ProductHttpDeps
+): Promise<CliResult> {
+  const result = await productRequest<{ ok?: boolean; value?: unknown }>(
+    'POST',
+    `/api/v1/plugin-apps/${encodeURIComponent(id)}/reload`,
+    { body: {}, deps: httpDeps }
+  );
+  if (!result.ok) return result.result;
+  if (jsonOutput) return jsonResult(result.data);
+  return textResult(`Reloaded ${id}`);
+}
+
 export async function runPluginCommand(
   dataDir: string,
   subcommand: string | undefined,
   rest: string[],
-  jsonOutput: boolean
+  jsonOutput: boolean,
+  httpDeps?: ProductHttpDeps
 ): Promise<CliResult> {
   if (!subcommand || subcommand === 'ls' || subcommand === 'list') {
     const file = readInstalled(dataDir);
@@ -126,7 +139,12 @@ export async function runPluginCommand(
     if (!source) return err('plugin install requires a source (path: | git: | npm: | builtin:)', 2);
     return live(dataDir, 'plugin.install', { source }, jsonOutput);
   }
-  if (subcommand === 'enable' || subcommand === 'disable' || subcommand === 'remove' || subcommand === 'reload') {
+  if (subcommand === 'reload') {
+    const id = rest[0];
+    if (!id) return err('plugin reload requires a <pluginId>', 2);
+    return reloadPluginViaHttp(id, jsonOutput, httpDeps);
+  }
+  if (subcommand === 'enable' || subcommand === 'disable' || subcommand === 'remove') {
     const id = rest[0];
     if (!id) return err(`plugin ${subcommand} requires a <pluginId>`, 2);
     return live(dataDir, `plugin.${subcommand}`, { id }, jsonOutput);
@@ -218,8 +236,10 @@ export async function runPluginCommand(
         await buildPluginServer(dir, '1.0.0', { minify: false, sourcemap: true });
       },
       reloadPlugin: async () => {
-        const reloaded = await live(dataDir, 'plugin.reload', { id }, false);
-        if (reloaded.exitCode !== 0) throw new Error(reloaded.stderr ?? 'reload failed');
+        const reloaded = await reloadPluginViaHttp(id, false, httpDeps);
+        if (reloaded.exitCode !== 0) {
+          throw new Error((reloaded.stderr ?? reloaded.stdout).trim() || 'reload failed');
+        }
       },
       log: (line) => {
         process.stderr.write(`${line}\n`);
@@ -227,7 +247,7 @@ export async function runPluginCommand(
     });
     if (rest.includes('--once')) {
       loop.handleChange('package.json');
-      await loop.settled();
+      await loop.flushNow();
       loop.dispose();
       return { exitCode: 0, stdout: `Reloaded ${id}\n` };
     }

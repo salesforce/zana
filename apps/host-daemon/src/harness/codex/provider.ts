@@ -58,9 +58,10 @@ import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.j
 import { BaseLaunchProvider } from '../base-provider.js';
 import type { HarnessModelTarget, ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
+import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 import { codexLegacyRouting } from './legacy-routing.js';
 
-const CODEX_EVIDENCE_VERSION = '0.140.0';
+export const CODEX_EVIDENCE_VERSION = '0.140.0';
 const codexEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
   id, versionRange: CODEX_EVIDENCE_VERSION, scope,
   probe: 'codex --version plus provider and golden argv contract suite', observed, reviewedAt: '2026-08-04'
@@ -185,10 +186,16 @@ export class CodexProvider extends BaseLaunchProvider {
 
   get adapter(): TrustedHarnessAdapter {
     if (!this.discoveredModels.length) return CODEX_ADAPTER;
-    const models = this.discoveredModels;
+    const { models, evidence } = overlayDiscoveredModels(
+      this.discoveredModels,
+      CODEX_ADAPTER.evidence,
+      CODEX_EVIDENCE_VERSION,
+      (id, scope) => codexEvidence(id, scope, 'Live Codex model/list catalog and -m contribution verified.')
+    );
     const defaultModel = models[0]?.id;
     return {
       ...CODEX_ADAPTER,
+      evidence,
       descriptor: {
         ...CODEX_ADAPTER.descriptor,
         targets: {

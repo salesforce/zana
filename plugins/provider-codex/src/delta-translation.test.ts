@@ -7,6 +7,7 @@ import {
 import { experimental_createDeltaAssembler as createDeltaAssembler } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 import type { DeltaAssembler } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 import type { ServerNotification as CodexServerNotification } from "./generated/codex-app-server/schema/ServerNotification.js";
+import type { RateLimitSnapshot } from "./generated/codex-app-server/schema/v2/RateLimitSnapshot.js";
 import type { Turn } from "./generated/codex-app-server/schema/v2/Turn.js";
 import {
   AGENT_MESSAGE_PRESENTATION,
@@ -21,23 +22,6 @@ import {
   type CodexEventTranslator,
 } from "./translator.js";
 import { codexRateLimitReadResponseSchema } from "./schemas.js";
-
-/**
- * Per-event Codex translation equivalence for the narrow-grammar path.
- *
- * These are the codex event-translation suite's cases, ported so the SAME
- * codex app-server notifications drive the new pipeline: codex dialect events
- * → semantic deltas → the runtime delta assembler → canonical ThreadEvents.
- * Event content, ordering, scoping, and statuses are asserted exactly as
- * before; ids are asserted by shape and via the assembler's provider↔bb maps
- * because minting moved from the bridge to the assembler (thread/provider
- * thread ids are stamped downstream by the runtime, so events leave with
- * empty ids here).
- *
- * Split of responsibility with translator.test.ts is unchanged: that file
- * keeps the *stateful* correlation invariants; this file holds the per-event
- * translation surface.
- */
 
 const THREAD_ID = "t-codex-translation";
 const ENTROPY = "cx-test";
@@ -72,6 +56,23 @@ function codexEvent<M extends CodexServerNotification["method"]>(
   return { jsonrpc: "2.0" as const, method, params };
 }
 
+function codexRateLimitSnapshot(
+  overrides: Partial<RateLimitSnapshot>,
+): RateLimitSnapshot {
+  return {
+    limitId: "codex",
+    limitName: null,
+    primary: null,
+    secondary: null,
+    credits: null,
+    individualLimit: null,
+    spendControlReached: null,
+    planType: null,
+    rateLimitReachedType: null,
+    ...overrides,
+  };
+}
+
 function codexTurn(args: {
   id: string;
   status: Turn["status"];
@@ -95,9 +96,7 @@ interface CodexEquivalenceHarness {
   translate(
     event: Parameters<CodexEventTranslator["translateEvent"]>[0],
   ): ThreadEvent[];
-  /** bb turn id minted for a codex turn id (empty when never seen). */
   turnId(codexTurnId: string): string;
-  /** bb item id minted for a codex item id (empty when never seen). */
   itemId(codexItemId: string): string;
 }
 
@@ -108,7 +107,6 @@ function createHarness(): CodexEquivalenceHarness {
   const assembler = createDeltaAssembler({
     providerId: "codex",
     entropyPrefix: ENTROPY,
-    // Equivalence suites pin per-delta translation fidelity: no coalescing.
     textDeltaFlushMs: 0,
   });
   return {
@@ -128,10 +126,6 @@ function createHarness(): CodexEquivalenceHarness {
     },
   };
 }
-
-// ---------------------------------------------------------------------------
-// Envelope handling and turn lifecycle
-// ---------------------------------------------------------------------------
 
 describe("codex turn lifecycle translation", () => {
   it("translates turn/started into a keyed turn/started", () => {
@@ -282,10 +276,6 @@ describe("codex turn lifecycle translation", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Thread lifecycle
-// ---------------------------------------------------------------------------
-
 describe("codex thread lifecycle translation", () => {
   it("translates thread/started into started + identity + name", () => {
     const harness = createHarness();
@@ -434,10 +424,6 @@ describe("codex thread lifecycle translation", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Items
-// ---------------------------------------------------------------------------
-
 describe("codex item translation", () => {
   it("translates item/started with agentMessage", () => {
     const harness = createHarness();
@@ -549,10 +535,6 @@ describe("codex item translation", () => {
       },
     });
 
-    // Thread scope, not turn scope: this notification failed schema parsing,
-    // so nothing here vouches for that turn id being one bb started. Codex
-    // notifications bb *does* parse still carry turn scope — see the handled
-    // item/started cases above.
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "provider/unhandled",
@@ -933,8 +915,6 @@ describe("codex item translation", () => {
       }),
     );
 
-    // A dynamic tool the session was not constructed with is codex's own:
-    // no server, the generic presentation.
     const native = harness.translate(
       codexEvent("item/started", {
         threadId: "t1",
@@ -1255,10 +1235,6 @@ describe("codex item translation", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Web search / fetch items
-// ---------------------------------------------------------------------------
-
 describe("codex web item translation", () => {
   it("maps completed search actions to webSearch", () => {
     const harness = createHarness();
@@ -1499,10 +1475,6 @@ describe("codex web item translation", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Streaming deltas and token usage
-// ---------------------------------------------------------------------------
-
 describe("codex delta and usage translation", () => {
   it("synthesizes item/started for a delta-first agent message and keeps the id", () => {
     const harness = createHarness();
@@ -1530,7 +1502,6 @@ describe("codex delta and usage translation", () => {
       }),
     ]);
 
-    // A second delta streams into the already-open item.
     expect(
       harness.translate(
         codexEvent("item/agentMessage/delta", {
@@ -1619,10 +1590,6 @@ describe("codex delta and usage translation", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Turn plan updates
-// ---------------------------------------------------------------------------
-
 describe("codex plan translation", () => {
   it("maps turn/plan/updated to a settled planSteps snapshot", () => {
     const harness = createHarness();
@@ -1705,7 +1672,6 @@ describe("codex plan translation", () => {
     expect(
       first[0]?.type === "item/completed" ? first[0].item : null,
     ).not.toHaveProperty("explanation");
-    // The later snapshot supersedes the earlier one as its own item.
     expect(second).toHaveLength(1);
     const firstItem =
       first[0]?.type === "item/completed" ? first[0].item : null;
@@ -1717,10 +1683,6 @@ describe("codex plan translation", () => {
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// Turn diffs
-// ---------------------------------------------------------------------------
 
 describe("codex turn diff translation", () => {
   it("maps turn/diff/updated onto the vouched turn", () => {
@@ -1741,10 +1703,6 @@ describe("codex turn diff translation", () => {
     ]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Errors and warnings
-// ---------------------------------------------------------------------------
 
 describe("codex error and warning translation", () => {
   it("includes detail and willRetry on turn-scoped errors", () => {
@@ -1959,10 +1917,6 @@ describe("codex error and warning translation", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Account rate limits
-// ---------------------------------------------------------------------------
-
 describe("codex account rate-limit translation", () => {
   const blockedSpendControlSnapshot = {
     limitId: "codex",
@@ -2064,6 +2018,381 @@ describe("codex account rate-limit translation", () => {
         }),
       }),
     ]);
+  });
+
+  it("classifies an exhausted weekly window independently from extra credits", () => {
+    const harness = createHarness();
+    const [event] = harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          primary: {
+            usedPercent: 100,
+            windowDurationMins: 10_080,
+            resetsAt: 1_788_748_218,
+          },
+          credits: {
+            hasCredits: false,
+            unlimited: false,
+            balance: "0",
+          },
+          planType: "pro",
+        }),
+      }),
+    );
+
+    expect(event).toMatchObject({
+      type: "provider/rateLimits/updated",
+      rateLimits: {
+        status: "blocked",
+        kind: "subscription-window",
+        reachedReason: null,
+        windows: [
+          {
+            providerKey: "primary",
+            label: "Weekly limit",
+            status: "blocked",
+            resetsAtMs: 1_788_748_218_000,
+          },
+        ],
+      },
+    });
+  });
+
+  it("does not merge subscription windows across limit ids", () => {
+    const state = createCodexEventTranslationState();
+    applyCodexRateLimitUpdate(state, {
+      limitId: "codex",
+      primary: {
+        usedPercent: 100,
+        windowDurationMins: 10_080,
+        resetsAt: 1_788_748_218,
+      },
+      credits: {
+        hasCredits: false,
+        unlimited: false,
+        balance: "0",
+      },
+    });
+
+    const premiumSnapshot = applyCodexRateLimitUpdate(state, {
+      limitId: "premium",
+      primary: null,
+      secondary: null,
+      credits: {
+        hasCredits: false,
+        unlimited: false,
+        balance: "0",
+      },
+    });
+
+    expect(premiumSnapshot).toMatchObject({
+      limitId: "premium",
+      primary: null,
+      secondary: null,
+    });
+  });
+
+  it("keeps an exhausted bucket active when another bucket has no windows", () => {
+    const harness = createHarness();
+    harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          primary: {
+            usedPercent: 100,
+            windowDurationMins: 10_080,
+            resetsAt: 1_788_748_218,
+          },
+          credits: {
+            hasCredits: false,
+            unlimited: false,
+            balance: "0",
+          },
+          planType: "pro",
+        }),
+      }),
+    );
+
+    const [event] = harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          limitId: "premium",
+          credits: {
+            hasCredits: false,
+            unlimited: false,
+            balance: "0",
+          },
+          planType: "pro",
+        }),
+      }),
+    );
+
+    expect(event).toMatchObject({
+      type: "provider/rateLimits/updated",
+      rateLimits: {
+        status: "blocked",
+        kind: "subscription-window",
+        windows: [
+          {
+            providerKey: "primary",
+            label: "Weekly limit",
+            status: "blocked",
+            resetsAtMs: 1_788_748_218_000,
+          },
+        ],
+      },
+    });
+  });
+
+  it("preserves every applicable blocked window across global and active buckets", () => {
+    const harness = createHarness();
+    harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          primary: {
+            usedPercent: 100,
+            windowDurationMins: 10_080,
+            resetsAt: 1_788_748_218,
+          },
+          planType: "pro",
+        }),
+      }),
+    );
+
+    const [event] = harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          limitId: "premium",
+          primary: {
+            usedPercent: 100,
+            windowDurationMins: 300,
+            resetsAt: 1_788_700_000,
+          },
+          planType: "pro",
+        }),
+      }),
+    );
+
+    expect(event).toMatchObject({
+      type: "provider/rateLimits/updated",
+      rateLimits: {
+        status: "blocked",
+        kind: "subscription-window",
+        windows: [
+          {
+            providerKey: "primary",
+            label: "Weekly limit",
+            status: "blocked",
+            resetsAtMs: 1_788_748_218_000,
+          },
+          {
+            providerKey: "primary",
+            label: "Current session",
+            status: "blocked",
+            resetsAtMs: 1_788_700_000_000,
+          },
+        ],
+      },
+    });
+  });
+
+  it("keeps a global credit block ahead of an active subscription block", () => {
+    const harness = createHarness();
+    harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          credits: {
+            hasCredits: false,
+            unlimited: false,
+            balance: "0",
+          },
+          planType: "pro",
+          rateLimitReachedType: "workspace_owner_credits_depleted",
+        }),
+      }),
+    );
+
+    const [event] = harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          limitId: "premium",
+          primary: {
+            usedPercent: 100,
+            windowDurationMins: 300,
+            resetsAt: 1_788_700_000,
+          },
+          planType: "pro",
+          rateLimitReachedType: "rate_limit_reached",
+        }),
+      }),
+    );
+
+    expect(event).toMatchObject({
+      type: "provider/rateLimits/updated",
+      rateLimits: {
+        status: "blocked",
+        kind: "credits",
+        reachedReason: "workspace_owner_credits_depleted",
+        windows: [
+          {
+            providerKey: "primary",
+            label: "Current session",
+            status: "blocked",
+            resetsAtMs: 1_788_700_000_000,
+          },
+        ],
+      },
+    });
+  });
+
+  it("does not let an inactive model bucket block the active bucket", () => {
+    const harness = createHarness();
+    harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          limitId: "model-a",
+          limitName: "Model A",
+          primary: {
+            usedPercent: 100,
+            windowDurationMins: 300,
+            resetsAt: 1_788_748_218,
+          },
+          planType: "pro",
+        }),
+      }),
+    );
+
+    const [event] = harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          limitId: "model-b",
+          limitName: "Model B",
+          primary: {
+            usedPercent: 10,
+            windowDurationMins: 300,
+            resetsAt: 1_788_748_218,
+          },
+          planType: "pro",
+        }),
+      }),
+    );
+
+    expect(event).toMatchObject({
+      type: "provider/rateLimits/updated",
+      rateLimits: {
+        status: "allowed",
+        kind: "subscription-window",
+        windows: [{ providerKey: "primary", status: "allowed" }],
+      },
+    });
+  });
+
+  it("hydrates and preserves rate-limit buckets by limit id", () => {
+    const harness = createHarness();
+    const [rateLimitRead] = harness.translator.buildPostInitializeRequests();
+    if (rateLimitRead === undefined) {
+      throw new Error("Expected a Codex rate-limit hydration request");
+    }
+    rateLimitRead.onResult({
+      rateLimits: {
+        limitId: "codex",
+        primary: {
+          usedPercent: 20,
+          windowDurationMins: 300,
+          resetsAt: 1_788_700_000,
+        },
+      },
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          primary: {
+            usedPercent: 20,
+            windowDurationMins: 300,
+            resetsAt: 1_788_700_000,
+          },
+        },
+        premium: {
+          limitId: "premium",
+          primary: {
+            usedPercent: 100,
+            windowDurationMins: 10_080,
+            resetsAt: 1_788_748_218,
+          },
+        },
+      },
+    });
+
+    const [event] = harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          limitId: "premium",
+          credits: {
+            hasCredits: false,
+            unlimited: false,
+            balance: "0",
+          },
+          planType: "pro",
+        }),
+      }),
+    );
+
+    expect(event).toMatchObject({
+      type: "provider/rateLimits/updated",
+      rateLimits: {
+        status: "blocked",
+        kind: "subscription-window",
+        windows: [
+          {
+            providerKey: "primary",
+            label: "Weekly limit",
+            status: "blocked",
+            resetsAtMs: 1_788_748_218_000,
+          },
+        ],
+      },
+    });
+  });
+
+  it("keeps an exhausted individual limit ahead of an allowed subscription window", () => {
+    const harness = createHarness();
+    const [event] = harness.translate(
+      codexEvent("account/rateLimits/updated", {
+        rateLimits: codexRateLimitSnapshot({
+          primary: {
+            usedPercent: 20,
+            windowDurationMins: 300,
+            resetsAt: 1_788_700_000,
+          },
+          individualLimit: {
+            limit: "100",
+            used: "100",
+            remainingPercent: 0,
+            resetsAt: 1_788_748_218,
+          },
+          planType: "pro",
+        }),
+      }),
+    );
+
+    expect(event).toMatchObject({
+      type: "provider/rateLimits/updated",
+      rateLimits: {
+        status: "blocked",
+        kind: "spend-control",
+        reachedReason: null,
+        windows: [
+          {
+            providerKey: "primary",
+            label: "Current session",
+            status: "allowed",
+          },
+          {
+            providerKey: "individual-limit",
+            label: "Spend control",
+            status: "blocked",
+          },
+        ],
+      },
+    });
   });
 
   it("uses Codex's reached reason before credit and spend metadata", () => {
@@ -2188,10 +2517,6 @@ describe("codex account rate-limit translation", () => {
     });
   });
 });
-
-// ---------------------------------------------------------------------------
-// Notifications bb deliberately ignores
-// ---------------------------------------------------------------------------
 
 describe("codex ignored notifications", () => {
   it("ignores remote control status changes", () => {

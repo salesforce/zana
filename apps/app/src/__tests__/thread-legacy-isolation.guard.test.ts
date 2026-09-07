@@ -39,10 +39,15 @@ describe('thread / legacy isolation', () => {
     expect(modePicker).not.toContain('createTerminal');
     expect(hook).not.toContain('LauncherModelPicker');
     expect(hook).not.toContain('AgentLauncher');
-    expect(hook).toContain('prefetchThreadModelCatalog');
+    expect(hook).toContain('setThreadModelCatalogHost');
     expect(hook).toContain('ensureThreadProviderModels');
     expect(hook).toContain('reconcileReasoningLevel');
     expect(catalog).toContain('executionOptions');
+    expect(catalog).toContain('catalogHostId');
+    expect(catalog).toContain('setThreadModelCatalogHost');
+    expect(stripComments(readFileSync(join(appRoot, 'lib/product-client.ts'), 'utf8'))).toContain(
+      "if (query?.hostId) params.set('hostId', query.hostId)"
+    );
     expect(catalog).toContain('composerActionsFromProvider');
     expect(catalog).not.toContain('list_models');
     expect(catalog).not.toContain('AgentLauncher');

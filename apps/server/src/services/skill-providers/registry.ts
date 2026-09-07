@@ -6,21 +6,22 @@
  * provider for an entry via {@link providerForEntryId}.
  *
  * Static, boot-time-constant list (Rule 3: providers are stateless value
- * objects — nothing to subscribe or dispose). Adding Codex/Gemini/Windsurf =
- * one new provider object in `skill-provider.ts` + one entry here, zero caller
- * edits.
+ * objects — nothing to subscribe or dispose). Adding a tool = one new
+ * provider object in `skill-provider.ts` + one entry here, zero caller edits.
  */
 
 import type { SkillTool } from '@zana-ai/zcc-domain/product';
 import {
   claudeCodeSkillProvider,
   cursorSkillProvider,
+  openCodeSkillProvider,
   type SkillProvider
 } from './skill-provider.js';
 
 export const SKILL_PROVIDERS: readonly SkillProvider[] = [
   claudeCodeSkillProvider,
-  cursorSkillProvider
+  cursorSkillProvider,
+  openCodeSkillProvider
 ];
 
 /** The default tool for a bare (tool-less) id — the historical Claude ids. */

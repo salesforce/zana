@@ -1,5 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, Pencil, Check } from 'lucide-react';
 import type { ScheduleGroup } from '@zana-ai/zcc-domain/product';
 import { useScheduleGroups, useScheduler, useUi } from '../store.js';
@@ -15,6 +16,9 @@ import {
  * schedules). CRUD over `~/.zcc/groups.json` via the scheduler.groups
  * IPC surface. Deleting a group never deletes its schedules — they fall back
  * to the Ungrouped bucket — so the confirm copy says exactly that.
+ *
+ * Portaled to `document.body` so Scheduler's stacking context
+ * (`.aurora-host { isolation: isolate }`) cannot trap the backdrop.
  */
 export function ScheduleGroupsModal({ onClose }: { onClose: () => void }) {
   const groups = useScheduleGroups((s) => s.groups);
@@ -45,7 +49,7 @@ export function ScheduleGroupsModal({ onClose }: { onClose: () => void }) {
     if (!result.ok) pushToast(`Delete failed: ${result.message}`, 'error');
   };
 
-  return (
+  const node = (
     <div className="modal-backdrop" onClick={onClose}>
       <div
         ref={ref}
@@ -130,6 +134,8 @@ export function ScheduleGroupsModal({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   );
+  if (typeof document === 'undefined') return node;
+  return createPortal(node, document.body);
 }
 
 function GroupEditor({

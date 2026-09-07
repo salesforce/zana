@@ -10,9 +10,22 @@ import { PromptModal } from '../PromptModal.js';
 import { shouldShowThreadStop } from './thread-timeline-model.js';
 import { dispatchThreadStopRequested } from './timeline/thread-optimistic-events.js';
 
-/** Viewport coords for the overflow menu. Fixed + portaled so the timeline cannot steal clicks. */
-export function threadOverflowMenuPosition(rect: Pick<DOMRect, 'bottom' | 'left'>): CSSProperties {
-  return { top: rect.bottom + 4, left: rect.left };
+const MENU_GAP = 4;
+const VIEWPORT_GUTTER = 8;
+
+/** Viewport coords for the overflow menu. Fixed + portaled so the timeline cannot steal clicks.
+ *  Hang from the trigger’s right edge (the kebab sits after a flexing title) and clamp so
+ *  “Close with follow-up” cannot clip the window. */
+export function threadOverflowMenuPosition(
+  rect: Pick<DOMRect, 'bottom' | 'right'>,
+  viewport: Pick<Window, 'innerWidth'>
+): CSSProperties {
+  const right = Math.max(VIEWPORT_GUTTER, viewport.innerWidth - rect.right);
+  return {
+    top: rect.bottom + MENU_GAP,
+    right,
+    maxWidth: Math.max(0, viewport.innerWidth - right - VIEWPORT_GUTTER)
+  };
 }
 
 /** Fork stays wired; hide the menu item until the flow is ready. */
@@ -209,7 +222,7 @@ export function ThreadDetailOverflow({
         data-testid="thread-overflow-trigger"
         onClick={() => {
           const rect = triggerRef.current?.getBoundingClientRect();
-          if (rect) setMenuPos(threadOverflowMenuPosition(rect));
+          if (rect) setMenuPos(threadOverflowMenuPosition(rect, window));
           setOpen((value) => !value);
         }}
       >

@@ -53,9 +53,22 @@ describe('ThreadContextMeter', () => {
     expect(html).toContain('95% left');
     expect(html).toContain('thread-context-meter-pct');
     expect(html).toContain('thread-context-meter-card');
+    expect(html).not.toContain('thread-command-compact');
+  });
+
+  it('puts Compact in the usage card when the thread can compact', () => {
+    const html = renderToStaticMarkup(
+      <ThreadContextMeter
+        usage={{ usedTokens: 48_000, modelContextWindow: 1_000_000, estimated: true }}
+        onCompact={() => {}}
+      />
+    );
+    expect(html).toContain('data-testid="thread-command-compact"');
+    expect(html).toContain('thread-context-meter-compact');
+    expect(html).toContain('Compact');
   });
 
   it('renders nothing without usage', () => {
-    expect(renderToStaticMarkup(<ThreadContextMeter usage={null} />)).toBe('');
+    expect(renderToStaticMarkup(<ThreadContextMeter usage={null} onCompact={() => {}} />)).toBe('');
   });
 });

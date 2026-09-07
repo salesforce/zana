@@ -415,6 +415,7 @@ function TrafficLights(): ReactNode {
 export function AppShellWireframe(): ReactNode {
   const [workspace, setWorkspace] = useState<'agents' | 'library'>('agents');
   const menu = useEngagement('experimental_projectMenuAction');
+  const create = useEngagement('experimental_createProjectAction');
   return (
     <div className="plugin-guide-stage">
       <MeasuredBadge id="navPanel" label="Sidebar panel" anchor='[data-guide-region="navPanel"]' at="start" />
@@ -480,9 +481,25 @@ export function AppShellWireframe(): ReactNode {
                   <span className="plugin-guide-icon-hit" title="Project menu">
                     <Icon name="more" />
                   </span>
-                  <span className="plugin-guide-icon-hit" title="Add project">
+                  <Mark
+                    id="experimental_createProjectAction"
+                    label="Create project"
+                    chip="side"
+                    className="plugin-guide-icon-hit"
+                    title="Add project"
+                  >
                     <Icon name="plus" />
-                  </span>
+                    {create.outlined ? (
+                      <span className="plugin-guide-ws-menu" aria-hidden>
+                        <span>Add local folder</span>
+                        <span>Clone from Git</span>
+                        <span>Add remote project</span>
+                        <span className="is-plugin">
+                          <Plug /> Salesforce DX project
+                        </span>
+                      </span>
+                    ) : null}
+                  </Mark>
                 </span>
               </div>
               <span className="plugin-guide-fx-folder">zana-command-center</span>

@@ -5,6 +5,12 @@ import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { archiveConversation, cancelConversationPlan, forkConversation, resumeConversation, sendConversationTurn, stopConversation, unarchiveConversation } from './conversation-lifecycle.js';
 import { conversationTimeline } from './conversation-timeline.js';
+import {
+  hasLatestRootTurnCompleted,
+  hasTerminalClientTurnRequestEvent,
+  settleLiveTurnCommandFailure
+} from './conversation-turn-settlement.js';
+import { LIVE_TURN_COMMAND_TIMEOUT_MS } from '../../http/host-hub.js';
 
 const thread = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -14,11 +20,14 @@ const thread = {
   providerId: 'claude-code',
   status: 'idle' as const,
   originKind: null,
+  originPluginId: null,
   visibility: 'visible' as const,
   title: 'Hello',
   providerThreadId: 'prov-1',
   parentThreadId: null,
   archivedAt: null,
+  pinnedAt: null,
+  pinOrder: null,
   createdAt: 1,
   updatedAt: 1
 };
@@ -39,7 +48,16 @@ vi.mock('@zana-ai/zcc-db', () => {
   return {
   DEFERRED_THREAD_MESSAGE_CAP: 50,
   getConversationThread: vi.fn(() => thread),
-  updateConversationThreadStatus: vi.fn((_db, id, status) => ({ ...thread, id, status })),
+  applyConversationThreadLifecycleEvent: vi.fn((_db, args) => {
+    const nextStatus = args.event.type === 'run.started' ? 'active'
+      : args.event.type === 'run.failed' ? 'error'
+        : args.event.type === 'stop.requested' ? 'stopping'
+          : args.event.type === 'stop.settled' || args.event.type === 'run.succeeded' ? 'idle'
+            : thread.status;
+    return { applied: true, thread: { ...thread, id: args.threadId, status: nextStatus } };
+  }),
+  getLatestSessionForHost: vi.fn(() => null),
+  listLiveConversationThreadsForHost: vi.fn(() => []),
   setConversationProviderThreadId: vi.fn(),
   archiveConversationThread: vi.fn(),
   unarchiveConversationThread: vi.fn((_db, id) => ({ ...thread, id, archivedAt: null })),
@@ -55,6 +73,8 @@ vi.mock('@zana-ai/zcc-db', () => {
     ...thread,
     id: '33333333-3333-4333-8333-333333333333',
     originKind: input.originKind ?? null,
+    originPluginId: input.originPluginId ?? null,
+    visibility: input.visibility ?? 'visible',
     parentThreadId: input.parentThreadId ?? null,
     title: input.title,
     status: input.status ?? 'starting'
@@ -66,23 +86,54 @@ vi.mock('@zana-ai/zcc-db', () => {
     sequence: index + 1
   }))),
   countDeferredThreadMessages: vi.fn(() => 0),
+  countActiveConversationTurns: vi.fn(() => 0),
   createDeferredThreadMessage: vi.fn((_db, input) => ({
     id: 'dmsg_1',
     threadId: input.threadId,
     kind: input.kind,
     payload: input.payload,
-    createdAt: 1
+    createdAt: 1,
+    status: 'queued',
+    paused: false,
+    sendAfter: null,
+    failureReason: null,
+    groupBoundaryId: null,
+    updatedAt: 1
   })),
   deleteDeferredThreadMessagesForThread: vi.fn(() => 0),
+  pauseDeferredThreadMessagesForThread: vi.fn(() => 0),
+  resumeDeferredThreadMessagesForThread: vi.fn(() => 0),
+  isThreadQueueAutoSendPaused: vi.fn(() => false),
+  listDueDeferredThreadMessages: vi.fn(() => []),
+  markDeferredThreadMessageDispatching: vi.fn(() => true),
+  markDeferredThreadMessageFailed: vi.fn(() => true),
   listDeferredThreadMessages: vi.fn(() => []),
   deleteDeferredThreadMessage: vi.fn(() => false),
   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
+  getThreadPlanByRootThread: vi.fn(() => null),
+  getThreadExecutionState: vi.fn(() => null),
+  latestThreadPlanRevision: vi.fn(() => null),
+  listThreadPlanTasks: vi.fn(() => []),
+  listThreadPlanReferences: vi.fn(() => []),
+  upsertThreadExecutionState: vi.fn(),
+  createThreadPlan: vi.fn((_db, input) => ({
+    id: 'plan-1',
+    rootThreadId: input.rootThreadId,
+    status: 'draft',
+    filePath: null,
+    createdAt: 1,
+    updatedAt: 1
+  })),
+  addThreadPlanReference: vi.fn(),
   hasPendingInteractionForThread: vi.fn(() => false),
   countLiveThreadsForEnvironment: vi.fn(() => 1),
   countConversationThreadEvents: vi.fn(() => listConversationThreadEvents().length),
   listConversationThreadEventsWindow: vi.fn(() => listConversationThreadEvents()),
   nextConversationEventSequence: vi.fn(() => 1),
   maxConversationEventSequenceByThreadIds: vi.fn(() => ({})),
+  listConversationThreadsForHost: vi.fn(() => []),
+  listConversationThreadsByProject: vi.fn(() => []),
+  getHost: vi.fn(() => ({ id: 'host-1', maxPermissionMode: 'full' })),
   listConversationThreadEvents
   };
 });
@@ -91,15 +142,25 @@ import {
   appendConversationThreadEvent,
   copyConversationThreadEvents,
   createConversationThread,
+  createDeferredThreadMessage,
   deleteDeferredThreadMessagesForThread,
   getConversationThread,
   getEnvironment,
+  archiveConversationThread,
   listConversationThreadEvents,
   listConversationThreadEventsWindow,
+  listConversationThreadsByProject,
+  pauseDeferredThreadMessagesForThread,
   setConversationProviderThreadId,
   unarchiveConversationThread,
-  updateConversationThreadStatus
+  applyConversationThreadLifecycleEvent,
+  getThreadExecutionState,
+  upsertThreadExecutionState
 } from '@zana-ai/zcc-db';
+
+function lifecycleCall(type: 'run.started' | 'run.failed' | 'stop.requested' | 'stop.settled' | 'run.succeeded') {
+  return [expect.anything(), expect.objectContaining({ threadId: thread.id, event: { type } })];
+}
 
 function pendingInteractionsStub(overrides?: {
   hasPendingThreadInteraction?: boolean;
@@ -119,10 +180,10 @@ function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>): ProductHt
     generation: 'g1'
   });
   return {
-    db: {},
+    db: { transaction: (fn: () => unknown) => fn() },
     dataDir: '/tmp/zcc-data',
     hub: { emit: vi.fn() },
-    hostHub: { callHostOnlineRpc },
+    hostHub: { callHostOnlineRpc, connectedHostIds: () => ['host-1'] },
     pluginHostArtifacts,
     plugins: {
       emitThreadEvent: vi.fn().mockResolvedValue(undefined)
@@ -149,9 +210,19 @@ beforeEach(() => {
     })
   );
   vi.mocked(getConversationThread).mockReturnValue(thread);
-  vi.mocked(updateConversationThreadStatus).mockImplementation((_db, id, status) => ({ ...thread, id, status }));
+  vi.mocked(applyConversationThreadLifecycleEvent).mockImplementation((_db, args) => {
+    const nextStatus = args.event.type === 'run.started' ? 'active'
+      : args.event.type === 'run.failed' ? 'error'
+        : args.event.type === 'stop.requested' ? 'stopping'
+          : args.event.type === 'stop.settled' || args.event.type === 'run.succeeded' ? 'idle'
+            : thread.status;
+    return { applied: true, thread: { ...thread, id: args.threadId, status: nextStatus } };
+  });
   vi.mocked(listConversationThreadEventsWindow).mockImplementation(() => listConversationThreadEvents());
   vi.mocked(setConversationProviderThreadId).mockReset();
+  vi.mocked(createDeferredThreadMessage).mockClear();
+  vi.mocked(pauseDeferredThreadMessagesForThread).mockClear();
+  vi.mocked(deleteDeferredThreadMessagesForThread).mockClear();
 });
 
 afterEach(() => {
@@ -162,8 +233,8 @@ describe('conversation lifecycle', () => {
   it('sends a follow-up turn through turn.submit', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
     await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }], 'queue-if-active');
-    expect(updateConversationThreadStatus).toHaveBeenCalledWith(expect.anything(), thread.id, 'active');
-    expect(updateConversationThreadStatus).not.toHaveBeenCalledWith(expect.anything(), thread.id, 'error');
+    expect(applyConversationThreadLifecycleEvent).toHaveBeenCalledWith(...lifecycleCall('run.started'));
+    expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalledWith(...lifecycleCall('run.failed'));
     expect(appendConversationThreadEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -172,18 +243,26 @@ describe('conversation lifecycle', () => {
       })
     );
     expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      timeoutMs: LIVE_TURN_COMMAND_TIMEOUT_MS,
       command: expect.objectContaining({
         type: 'turn.submit',
-        input: ['follow up'],
-        mode: 'queue-if-active',
+        input: [{ type: 'text', text: 'follow up', mentions: [] }],
+        mode: 'start',
         clientRequestId: expect.stringMatching(/^creq_/),
         resume: expect.objectContaining({
           providerThreadId: 'prov-1',
           providerId: 'claude-code',
-          cwd: '/tmp/proj'
-        })
+          cwd: '/tmp/proj',
+          permissionMode: 'accept-edits'
+        }),
+        permissionEscalation: 'ask'
       })
     }));
+    expect(upsertThreadExecutionState).toHaveBeenCalledWith(expect.anything(), {
+      threadId: thread.id,
+      requestedMode: 'agent',
+      effectiveMode: 'agent'
+    });
   });
 
   it('appends agent-only plugin mention context before turn.submit', async () => {
@@ -207,14 +286,18 @@ describe('conversation lifecycle', () => {
       command: expect.objectContaining({
         type: 'turn.submit',
         input: expect.arrayContaining([
-          'fix @bug',
-          expect.stringContaining('Issue body')
+          expect.objectContaining({ type: 'text', text: 'fix @bug' }),
+          expect.objectContaining({
+            type: 'text',
+            visibility: 'agent-only',
+            text: expect.stringContaining('Issue body')
+          })
         ])
       })
     }));
   });
 
-  it('sends an image-only follow-up as a host disk marker', async () => {
+  it('sends an image-only follow-up as a localImage host prompt part', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
     await sendConversationTurn(
       ctx(callHostOnlineRpc),
@@ -225,7 +308,7 @@ describe('conversation lifecycle', () => {
       command: expect.objectContaining({
         type: 'turn.submit',
         input: [
-          '[Attached image. It is on disk at /tmp/zcc-data/attachments/proj-1/shot.png — use the Read tool to view it.]'
+          { type: 'localImage', path: '/tmp/zcc-data/attachments/proj-1/shot.png' }
         ]
       })
     }));
@@ -262,11 +345,13 @@ describe('conversation lifecycle', () => {
       return { threadId: thread.id, resumed: true, providerThreadId: 'prov-1' };
     });
     await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }]);
-    expect(callHostOnlineRpc.mock.calls.map((call) => call[0].command.type)).toEqual([
-      'turn.submit',
-      'thread.resume',
-      'turn.submit'
-    ]);
+    await vi.waitFor(() => {
+      expect(callHostOnlineRpc.mock.calls.map((call) => call[0].command.type)).toEqual([
+        'turn.submit',
+        'thread.resume',
+        'turn.submit'
+      ]);
+    });
     expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
       command: expect.objectContaining({
         type: 'thread.resume',
@@ -281,11 +366,12 @@ describe('conversation lifecycle', () => {
       throw Object.assign(new Error('thread is not running on this host'), { code: 'unknown_thread' });
     });
     const product = ctx(callHostOnlineRpc);
-    await expect(
-      sendConversationTurn(product, thread.id, [{ type: 'text', text: 'follow up' }])
-    ).rejects.toMatchObject({ code: 'not_resumable' });
+    const sent = await sendConversationTurn(product, thread.id, [{ type: 'text', text: 'follow up' }]);
+    expect(sent.id).toBe(thread.id);
+    await vi.waitFor(() => {
+      expect(applyConversationThreadLifecycleEvent).toHaveBeenCalledWith(...lifecycleCall('run.failed'));
+    });
     expect(callHostOnlineRpc).toHaveBeenCalledTimes(1);
-    expect(updateConversationThreadStatus).toHaveBeenCalledWith(expect.anything(), thread.id, 'error');
     expect(product.hub.emit).toHaveBeenCalledWith(
       'threads:updated',
       expect.objectContaining({ id: thread.id, status: 'error' })
@@ -344,8 +430,11 @@ describe('conversation lifecycle', () => {
     expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
       command: expect.objectContaining({
         type: 'thread.resume',
-        dynamicTools: [expect.objectContaining({ name: 'sf_soql' })],
-        instructions: 'Use sf_soql.'
+        dynamicTools: expect.arrayContaining([
+          expect.objectContaining({ name: 'preview_file' }),
+          expect.objectContaining({ name: 'sf_soql' })
+        ]),
+        instructions: expect.stringContaining('Use sf_soql.')
       })
     }));
     callHostOnlineRpc.mockClear();
@@ -355,8 +444,11 @@ describe('conversation lifecycle', () => {
       command: expect.objectContaining({
         type: 'turn.submit',
         resume: expect.objectContaining({
-          dynamicTools: [expect.objectContaining({ name: 'sf_soql' })],
-          instructions: 'Use sf_soql.'
+          dynamicTools: expect.arrayContaining([
+            expect.objectContaining({ name: 'preview_file' }),
+            expect.objectContaining({ name: 'sf_soql' })
+          ]),
+          instructions: expect.stringContaining('Use sf_soql.')
         })
       })
     }));
@@ -378,8 +470,11 @@ describe('conversation lifecycle', () => {
         providerThreadId: 'prov-1'
       })
     }));
-    const command = callHostOnlineRpc.mock.calls[0]?.[0] as { command: { dynamicTools?: unknown } };
-    expect(command.command.dynamicTools).toBeUndefined();
+    const command = callHostOnlineRpc.mock.calls[0]?.[0] as { command: { dynamicTools?: Array<{ name?: string }> } };
+    expect(command.command.dynamicTools?.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(['preview_file', 'browser_open', 'inbox_push'])
+    );
+    expect(command.command.dynamicTools?.[0]?.name).toBe('preview_file');
   });
 
   it('forks a child conversation thread without mixing PTY rows', async () => {
@@ -398,6 +493,62 @@ describe('conversation lifecycle', () => {
     expect(forked.parentThreadId).toBe(thread.id);
     expect(namer.reserve).toHaveBeenCalledWith(forked.id);
     expect(namer.request).not.toHaveBeenCalled();
+  });
+
+  it('forks a hidden plugin-owned child with an agent-only seed', async () => {
+    const product = ctx(async () => ({}));
+    const forked = await forkConversation(product, thread.id, {
+      visibility: 'hidden',
+      originPluginId: 'side-chat',
+      agentContextSeed: [{
+        type: 'text',
+        text: 'Replying to this earlier message in the conversation:\n\nhello',
+        mentions: [],
+        visibility: 'agent-only'
+      }]
+    });
+    expect(createConversationThread).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        parentThreadId: thread.id,
+        originKind: 'fork',
+        originPluginId: 'side-chat',
+        visibility: 'hidden'
+      })
+    );
+    expect(forked.visibility).toBe('hidden');
+    expect(forked.originPluginId).toBe('side-chat');
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        threadId: forked.id,
+        type: 'client/turn/requested'
+      })
+    );
+  });
+
+  it('archives hidden children when the source thread is archived', async () => {
+    const child = {
+      ...thread,
+      id: '44444444-4444-4444-8444-444444444444',
+      parentThreadId: thread.id,
+      originKind: 'fork' as const,
+      originPluginId: 'side-chat',
+      visibility: 'hidden' as const,
+      title: 'Side'
+    };
+    vi.mocked(getConversationThread).mockImplementation((_db, id) => {
+      if (id === child.id) return child;
+      return { ...thread };
+    });
+    vi.mocked(listConversationThreadsByProject).mockImplementation((_db, _projectId, _archived, opts) => (
+      opts?.includeHidden ? [child] : []
+    ));
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, stopped: true }));
+    const context = ctx(callHostOnlineRpc);
+    await archiveConversation(context, thread.id);
+    expect(archiveConversationThread).toHaveBeenCalledWith(expect.anything(), child.id);
+    expect(archiveConversationThread).toHaveBeenCalledWith(expect.anything(), thread.id);
   });
 
   it('copies completed source history into a fork and leaves the source untouched', async () => {
@@ -456,6 +607,137 @@ describe('conversation lifecycle', () => {
     vi.mocked(copyConversationThreadEvents).mockClear();
     await forkConversation(ctx(async () => ({})), thread.id);
     expect(copyConversationThreadEvents).not.toHaveBeenCalled();
+  });
+
+  it('rejects a mid-session fork when the provider cannot rewind', async () => {
+    providerHandles.push(
+      registerThreadProvider('tip-only', {
+        id: 'acp-cursor',
+        displayName: 'Cursor',
+        capabilities: {
+          supportsServiceTier: false,
+          fork: 'tip',
+          supportsThreadArchive: false,
+          supportsThreadRename: false,
+          permissionModes: ['full']
+        },
+        composerActions: []
+      })
+    );
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, providerId: 'acp-cursor' });
+    vi.mocked(listConversationThreadEvents).mockReturnValue([
+      {
+        id: 'evt-1',
+        threadId: thread.id,
+        sequence: 1,
+        type: 'turn/started',
+        payload: {
+          type: 'turn/started',
+          threadId: thread.id,
+          scope: { kind: 'turn', turnId: 't1' },
+          providerThreadId: 'prov-1'
+        },
+        createdAt: 1
+      },
+      {
+        id: 'evt-2',
+        threadId: thread.id,
+        sequence: 2,
+        type: 'turn/completed',
+        payload: {
+          type: 'turn/completed',
+          threadId: thread.id,
+          scope: { kind: 'turn', turnId: 't1' },
+          providerThreadId: 'prov-1',
+          providerCheckpointId: 'cp-1'
+        },
+        createdAt: 2
+      },
+      {
+        id: 'evt-3',
+        threadId: thread.id,
+        sequence: 3,
+        type: 'turn/started',
+        payload: {
+          type: 'turn/started',
+          threadId: thread.id,
+          scope: { kind: 'turn', turnId: 't2' },
+          providerThreadId: 'prov-1'
+        },
+        createdAt: 3
+      },
+      {
+        id: 'evt-4',
+        threadId: thread.id,
+        sequence: 4,
+        type: 'turn/completed',
+        payload: {
+          type: 'turn/completed',
+          threadId: thread.id,
+          scope: { kind: 'turn', turnId: 't2' },
+          providerThreadId: 'prov-1',
+          providerCheckpointId: 'cp-2'
+        },
+        createdAt: 4
+      }
+    ]);
+    await expect(forkConversation(ctx(async () => ({})), thread.id, { sourceSeqEnd: 2 }))
+      .rejects.toMatchObject({ code: 'fork_source_session_unavailable', status: 409 });
+  });
+
+  it('starts a fork from the copied checkpoint instead of a blank turn.submit', async () => {
+    const forkId = '33333333-3333-4333-8333-333333333333';
+    const forked = {
+      ...thread,
+      id: forkId,
+      originKind: 'fork' as const,
+      parentThreadId: thread.id,
+      providerThreadId: null,
+      title: 'Hello (fork)',
+      status: 'idle' as const
+    };
+    vi.mocked(getConversationThread).mockReturnValue(forked);
+    vi.mocked(listConversationThreadEvents).mockReturnValue([
+      {
+        id: 'fork-evt-1',
+        threadId: forkId,
+        sequence: 1,
+        type: 'turn/started',
+        payload: {
+          type: 'turn/started',
+          threadId: forkId,
+          scope: { kind: 'turn', turnId: 'turn-1' },
+          providerThreadId: 'prov-source'
+        },
+        createdAt: 1
+      },
+      {
+        id: 'fork-evt-2',
+        threadId: forkId,
+        sequence: 2,
+        type: 'turn/completed',
+        payload: {
+          type: 'turn/completed',
+          threadId: forkId,
+          scope: { kind: 'turn', turnId: 'turn-1' },
+          providerThreadId: 'prov-source',
+          providerCheckpointId: 'cp-9'
+        },
+        createdAt: 2
+      }
+    ]);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: forkId, started: true, providerThreadId: 'prov-fork' }));
+    await sendConversationTurn(ctx(callHostOnlineRpc), forkId, [{ type: 'text', text: 'continue from here' }]);
+    await Promise.resolve();
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'thread.start',
+        providerThreadId: 'prov-source',
+        providerCheckpointId: 'cp-9',
+        input: [{ type: 'text', text: 'continue from here', mentions: [] }]
+      })
+    }));
+    expect(setConversationProviderThreadId).toHaveBeenCalledWith(expect.anything(), forkId, 'prov-fork');
   });
 
   it('retries the tab namer from a later prompt on a still-unnamed thread', async () => {
@@ -686,6 +968,7 @@ describe('conversation lifecycle', () => {
   });
 
   it('interrupts pending interactions when stopping a thread', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, status: 'active' });
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, stopped: true }));
     const context = ctx(callHostOnlineRpc);
     await stopConversation(context, thread.id);
@@ -704,16 +987,16 @@ describe('conversation lifecycle', () => {
       reason: 'thread-deleted'
     });
     expect(deleteDeferredThreadMessagesForThread).toHaveBeenCalledWith(context.db, thread.id);
-    expect(context.plugins?.emitThreadEvent).toHaveBeenNthCalledWith(1, {
+    expect(context.plugins?.emitThreadEvent).toHaveBeenNthCalledWith(1, expect.objectContaining({
       name: 'thread.archived',
       threadId: thread.id,
       projectId: thread.projectId
-    });
-    expect(context.plugins?.emitThreadEvent).toHaveBeenNthCalledWith(2, {
+    }));
+    expect(context.plugins?.emitThreadEvent).toHaveBeenNthCalledWith(2, expect.objectContaining({
       name: 'thread.deleted',
       threadId: thread.id,
       projectId: thread.projectId
-    });
+    }));
   });
 
   it('409s cancelPlan when plan mode is not active', async () => {
@@ -795,6 +1078,91 @@ describe('conversation lifecycle', () => {
         expectedTurnId: 'turn-plan-1'
       }
     });
+    expect(upsertThreadExecutionState).toHaveBeenCalledWith(expect.anything(), {
+      threadId: thread.id,
+      requestedMode: 'agent',
+      effectiveMode: 'agent'
+    });
+  });
+
+  it('records slash plan mode on send and ACP plan from execution.acpMode', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{
+      type: 'text',
+      text: '/plan inspect the failing command',
+      mentions: [{
+        start: 0,
+        end: 5,
+        resource: {
+          kind: 'command',
+          trigger: '/',
+          name: 'plan',
+          source: 'command',
+          origin: 'builtin',
+          label: 'plan',
+          argumentHint: null
+        }
+      }]
+    }]);
+    expect(upsertThreadExecutionState).toHaveBeenCalledWith(expect.anything(), {
+      threadId: thread.id,
+      requestedMode: 'plan',
+      effectiveMode: 'plan'
+    });
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        input: [{
+          type: 'text',
+          text: '/plan inspect the failing command',
+          mentions: [{
+            start: 0,
+            end: 5,
+            resource: {
+              kind: 'command',
+              trigger: '/',
+              name: 'plan',
+              source: 'command',
+              origin: 'builtin',
+              label: 'plan',
+              argumentHint: null
+            }
+          }]
+        }],
+        claudeCodePermissionMode: 'plan'
+      })
+    }));
+
+    vi.mocked(upsertThreadExecutionState).mockClear();
+    await sendConversationTurn(
+      ctx(callHostOnlineRpc),
+      thread.id,
+      [{ type: 'text', text: 'follow up' }],
+      'auto',
+      { acpMode: 'plan' }
+    );
+    expect(upsertThreadExecutionState).toHaveBeenCalledWith(expect.anything(), {
+      threadId: thread.id,
+      requestedMode: 'plan',
+      effectiveMode: 'plan'
+    });
+  });
+
+  it('exits sticky plan when no live plan turn is active', async () => {
+    vi.mocked(getThreadExecutionState).mockReturnValueOnce({
+      threadId: thread.id,
+      requestedMode: 'plan',
+      effectiveMode: 'plan',
+      updatedAt: 1
+    });
+    const callHostOnlineRpc = vi.fn(async () => ({ cancelled: true }));
+    await expect(cancelConversationPlan(ctx(callHostOnlineRpc), thread.id)).resolves.toEqual({ ok: true });
+    expect(callHostOnlineRpc).not.toHaveBeenCalled();
+    expect(upsertThreadExecutionState).toHaveBeenCalledWith(expect.anything(), {
+      threadId: thread.id,
+      requestedMode: 'agent',
+      effectiveMode: 'agent'
+    });
   });
 
   it('unarchives a conversation thread when the environment still exists', async () => {
@@ -810,5 +1178,228 @@ describe('conversation lifecycle', () => {
     vi.mocked(getEnvironment).mockReturnValueOnce(null);
     await expect(unarchiveConversation(ctx(vi.fn()), thread.id))
       .rejects.toMatchObject({ status: 409, code: 'environment_not_ready' });
+  });
+
+  it('queues a send when the host is offline', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    const context = ctx(callHostOnlineRpc);
+    context.hostHub.connectedHostIds = () => [];
+    await sendConversationTurn(context, thread.id, [{ type: 'text', text: 'offline' }]);
+    expect(callHostOnlineRpc).not.toHaveBeenCalled();
+    expect(createDeferredThreadMessage).toHaveBeenCalled();
+  });
+
+  it('queues queue-if-active while the thread is already active', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, status: 'active' });
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    await sendConversationTurn(
+      ctx(callHostOnlineRpc),
+      thread.id,
+      [{ type: 'text', text: 'later' }],
+      'queue-if-active'
+    );
+    expect(callHostOnlineRpc).not.toHaveBeenCalled();
+    expect(createDeferredThreadMessage).toHaveBeenCalled();
+  });
+
+  it('drains queue-if-active onto an active thread as auto', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, status: 'active' });
+    vi.mocked(applyConversationThreadLifecycleEvent).mockReturnValueOnce({
+      applied: false,
+      reason: 'illegal-transition',
+      detail: 'no transition for run.started from status active'
+    });
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    await sendConversationTurn(
+      ctx(callHostOnlineRpc),
+      thread.id,
+      [{ type: 'text', text: 'now' }],
+      'queue-if-active',
+      undefined,
+      { drain: true }
+    );
+    expect(createDeferredThreadMessage).not.toHaveBeenCalled();
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        input: [{ type: 'text', text: 'now', mentions: [] }],
+        mode: 'auto',
+        permissionEscalation: 'deny'
+      })
+    }));
+  });
+
+  it('pauses queued sends on stop instead of dropping them', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, status: 'active' });
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, stopped: true }));
+    const context = ctx(callHostOnlineRpc);
+    await stopConversation(context, thread.id);
+    expect(pauseDeferredThreadMessagesForThread).toHaveBeenCalledWith(context.db, thread.id);
+    expect(deleteDeferredThreadMessagesForThread).not.toHaveBeenCalled();
+  });
+
+  it('stays stopping when the host stop RPC times out', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, status: 'active' });
+    const { HostUnavailableError } = await import('../../http/host-hub.js');
+    const callHostOnlineRpc = vi.fn(async () => {
+      throw new HostUnavailableError('host host-1 RPC timed out');
+    });
+    const next = await stopConversation(ctx(callHostOnlineRpc), thread.id);
+    expect(next.status).toBe('stopping');
+    expect(applyConversationThreadLifecycleEvent).toHaveBeenCalledWith(...lifecycleCall('stop.requested'));
+  });
+
+  it('releases an idle thread without interrupt events', async () => {
+    vi.mocked(applyConversationThreadLifecycleEvent).mockClear();
+    vi.mocked(pauseDeferredThreadMessagesForThread).mockClear();
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, stopped: true }));
+    const context = ctx(callHostOnlineRpc);
+    const next = await stopConversation(context, thread.id);
+    expect(next.status).toBe('idle');
+    expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalled();
+    expect(pauseDeferredThreadMessagesForThread).not.toHaveBeenCalled();
+  });
+
+  it('returns while a live turn.submit RPC is still running', async () => {
+    vi.mocked(applyConversationThreadLifecycleEvent).mockClear();
+    const callHostOnlineRpc = vi.fn(() => new Promise(() => {}));
+    const startedAt = Date.now();
+    const sent = await sendConversationTurn(
+      ctx(callHostOnlineRpc),
+      thread.id,
+      [{ type: 'text', text: 'follow up' }]
+    );
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    expect(sent.id).toBe(thread.id);
+    expect(callHostOnlineRpc).toHaveBeenCalledTimes(1);
+    expect(applyConversationThreadLifecycleEvent).toHaveBeenCalledWith(...lifecycleCall('run.started'));
+    expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalledWith(...lifecycleCall('run.failed'));
+  });
+
+  it('does not flip a live thread to error after the request was accepted', async () => {
+    vi.mocked(applyConversationThreadLifecycleEvent).mockClear();
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    let rejectRpc: (error: unknown) => void = () => undefined;
+    const callHostOnlineRpc = vi.fn(() => new Promise((_resolve, reject) => {
+      rejectRpc = reject;
+    }));
+    const product = ctx(callHostOnlineRpc);
+    await sendConversationTurn(product, thread.id, [{ type: 'text', text: 'follow up' }]);
+    const requestId = (callHostOnlineRpc.mock.calls[0]?.[0] as { command: { clientRequestId: string } })
+      .command.clientRequestId;
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([{
+      id: 'acc',
+      threadId: thread.id,
+      sequence: 2,
+      type: 'turn/input/accepted',
+      payload: {
+        type: 'turn/input/accepted',
+        clientRequestId: requestId,
+        threadId: thread.id,
+        providerThreadId: 'prov-1',
+        scope: { kind: 'thread' }
+      },
+      createdAt: 2
+    }]);
+    rejectRpc(new Error('socket closed'));
+    await vi.waitFor(() => {
+      expect(hasTerminalClientTurnRequestEvent(product, { threadId: thread.id, requestId })).toBe(true);
+    });
+    expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalledWith(...lifecycleCall('run.failed'));
+    expect(appendConversationThreadEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: 'client/turn/rejected' })
+    );
+  });
+
+  it('settles a pre-acceptance follow-up without erroring an open root turn', async () => {
+    vi.mocked(applyConversationThreadLifecycleEvent).mockClear();
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([{
+      id: 'start',
+      threadId: thread.id,
+      sequence: 1,
+      type: 'turn/started',
+      payload: {
+        type: 'turn/started',
+        threadId: thread.id,
+        providerThreadId: 'prov-1',
+        scope: { kind: 'turn', turnId: 'turn-live' }
+      },
+      createdAt: 1
+    }]);
+    const callHostOnlineRpc = vi.fn(async () => {
+      throw new Error('transport failed');
+    });
+    const product = ctx(callHostOnlineRpc);
+    const sent = await sendConversationTurn(product, thread.id, [{ type: 'text', text: 'Is it done ?' }]);
+    expect(sent.id).toBe(thread.id);
+    await vi.waitFor(() => {
+      expect(appendConversationThreadEvent).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ type: 'client/turn/rejected' })
+      );
+    });
+    expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalledWith(...lifecycleCall('run.failed'));
+  });
+
+  it('settles a pre-acceptance failure to error when no root turn is open', async () => {
+    const callHostOnlineRpc = vi.fn(async () => {
+      throw new Error('transport failed');
+    });
+    const product = ctx(callHostOnlineRpc);
+    await sendConversationTurn(product, thread.id, [{ type: 'text', text: 'follow up' }]);
+    await vi.waitFor(() => {
+      expect(applyConversationThreadLifecycleEvent).toHaveBeenCalledWith(...lifecycleCall('run.failed'));
+    });
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: 'client/turn/rejected' })
+    );
+  });
+
+  it('skips error settlement when the latest root turn already completed', () => {
+    vi.mocked(applyConversationThreadLifecycleEvent).mockClear();
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    const product = ctx(async () => ({}));
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([
+      {
+        id: 'start',
+        threadId: thread.id,
+        sequence: 1,
+        type: 'turn/started',
+        payload: {
+          type: 'turn/started',
+          threadId: thread.id,
+          scope: { kind: 'turn', turnId: 'turn-1' }
+        },
+        createdAt: 1
+      },
+      {
+        id: 'done',
+        threadId: thread.id,
+        sequence: 2,
+        type: 'turn/completed',
+        payload: {
+          type: 'turn/completed',
+          threadId: thread.id,
+          status: 'completed',
+          scope: { kind: 'turn', turnId: 'turn-1' }
+        },
+        createdAt: 2
+      }
+    ]);
+    expect(hasLatestRootTurnCompleted(product, thread.id)).toBe(true);
+    settleLiveTurnCommandFailure(product, {
+      thread,
+      commandType: 'turn.submit',
+      clientRequestId: 'creq_23456789ab',
+      error: new Error('late transport')
+    });
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: 'client/turn/rejected' })
+    );
+    expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalledWith(...lifecycleCall('run.failed'));
   });
 });

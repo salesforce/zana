@@ -67,6 +67,9 @@ describe('provider CLI health', () => {
     expect(missingStatus.installAction?.kind).toBe('install');
     expect(missingStatus.minimumSupportedVersion).toBe(CODEX_MINIMUM_SUPPORTED_VERSION);
 
+    const piDefinition = getProviderCliDefinition('pi');
+    expect(piDefinition.minimumSupportedVersion).toBe('0.84.0');
+
     const outdated = new FakeProviderCliCommandRunner((args) => {
       const key = commandKey(args);
       if (key.includes('which codex')) return { stdout: '/usr/local/bin/codex\n' };

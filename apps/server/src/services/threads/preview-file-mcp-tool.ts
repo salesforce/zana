@@ -9,15 +9,11 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PanelFileSource } from '@zana-ai/zcc-server-contract';
+import { PREVIEW_FILE_DESCRIPTION } from './host-preview-file-tool.js';
+
+export { PREVIEW_FILE_DESCRIPTION };
 
 const MAX_PATH_LENGTH = 1024;
-
-export const PREVIEW_FILE_DESCRIPTION = [
-  "Open a file in this thread's visible side-panel preview tab.",
-  'Use this when the user should SEE the file — a report, a diagram, a config you just wrote.',
-  'Keep using Read for your own inspection. Do not preview every file you touch.',
-  'Paths are relative to this project (workspace) or thread storage.'
-].join(' ');
 
 export const previewFileInputSchema = {
   path: z

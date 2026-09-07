@@ -1,11 +1,10 @@
 export function remoteAddSubmitLabel(input: {
-  installHost: boolean;
   installing: boolean;
   retry: boolean;
 }): string {
   if (input.installing) return 'Installing…';
   if (input.retry) return 'Retry install';
-  return input.installHost ? 'Add and install' : 'Add project';
+  return 'Add and install';
 }
 
 export function collectBootstrapLogs(

@@ -49,7 +49,7 @@ describe('guardrail', () => {
     expect(sessionKey('t1', { kind: 'org.production.read', orgAlias: 'prod', orgId: '00Dxx', orgKind: 'production', summary: '' })).toContain('org.production.read');
   });
 
-  it('always prompts Agent Script publish and activate', async () => {
+  it('always prompts Agentforce publish, activate, live preview, and org.write', async () => {
     let prompts = 0;
     const guard = new Guardrail(async () => {
       prompts += 1;
@@ -68,7 +68,16 @@ describe('guardrail', () => {
     await expect(
       guard.mediate({ ...publish, kind: 'agent.activate', summary: 'activate' })
     ).resolves.toMatchObject({ approved: true });
-    expect(prompts).toBe(3);
+    await expect(
+      guard.mediate({ ...publish, kind: 'agent.preview.live', summary: 'live preview' })
+    ).resolves.toMatchObject({ approved: true });
+    await expect(
+      guard.mediate({ ...publish, kind: 'org.write', summary: 'PATCH Account' })
+    ).resolves.toMatchObject({ approved: true });
+    await expect(
+      guard.mediate({ ...publish, kind: 'org.write', summary: 'PATCH Account' })
+    ).resolves.toMatchObject({ approved: true });
+    expect(prompts).toBe(6);
   });
 
   it('names every guardrail envelope and can clear a thread session', async () => {
@@ -95,11 +104,13 @@ describe('guardrail', () => {
     expect(prompts).toBe(1);
     expect(envelopeTitle('org.production.read')).toMatch(/production/);
     expect(envelopeTitle('org.unknown.read')).toMatch(/unknown/);
+    expect(envelopeTitle('org.write')).toMatch(/Salesforce write/);
     expect(envelopeTitle('soql.unbounded')).toMatch(/unbounded/);
     expect(envelopeTitle('soql.export')).toMatch(/export/);
     expect(envelopeTitle('apex.anonymous')).toMatch(/anonymous/);
     expect(envelopeTitle('agent.publish')).toMatch(/publish/);
     expect(envelopeTitle('agent.activate')).toMatch(/activate/);
+    expect(envelopeTitle('agent.preview.live')).toMatch(/live preview/);
     expect(envelopeTitle('not-a-kind' as 'soql.export')).toMatch(/Salesforce/);
   });
 

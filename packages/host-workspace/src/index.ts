@@ -21,3 +21,4 @@ export type { ProvisionInput, UnmanagedCheckout } from './workspace.js';
 export { createWorktree, removeWorktree } from './provisioning.js';
 export { copyWorktreeIncludeFiles } from './worktree-include.js';
 export { runGit, detectGitRepo, discoverWorkspace } from './git.js';
+export { withGitRefMutationLock } from './git-ref-mutation-lock.js';

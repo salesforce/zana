@@ -49,15 +49,26 @@ export function PluginSettingsForm({
             </label>
           );
         }
+        const control = descriptor.multiline === true && !descriptor.secret ? (
+          <textarea
+            rows={8}
+            value={typeof value === 'string' ? value : ''}
+            disabled={busy}
+            onChange={(event) => onSave(key, event.target.value)}
+          />
+        ) : (
+          <input
+            type={descriptor.secret ? 'password' : 'text'}
+            value={typeof value === 'string' ? value : ''}
+            disabled={busy}
+            onChange={(event) => onSave(key, event.target.value)}
+          />
+        );
         return (
           <label key={key} className="settings-field">
             <span>{descriptor.label}</span>
-            <input
-              type={descriptor.secret ? 'password' : 'text'}
-              value={typeof value === 'string' ? value : ''}
-              disabled={busy}
-              onChange={(event) => onSave(key, event.target.value)}
-            />
+            {descriptor.description ? <span className="settings-help">{descriptor.description}</span> : null}
+            {control}
           </label>
         );
       })}

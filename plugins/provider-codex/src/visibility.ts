@@ -10,11 +10,7 @@ import {
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import type { ServerNotification } from "./generated/codex-app-server/schema/ServerNotification.js";
 
-type CodexServerNotificationMethod =
-  | ServerNotification["method"]
-  // Visibility can lead the independently refreshed generated schema when a
-  // newer installed Codex starts emitting a notification.
-  | "rawResponse/completed";
+type CodexServerNotificationMethod = ServerNotification["method"];
 
 interface CodexNotificationRawEvent {
   kind: "notification";
@@ -51,11 +47,13 @@ const CODEX_SERVER_NOTIFICATION_METHODS = {
   "account/rateLimits/updated": true,
   "account/updated": true,
   "app/list/updated": true,
+  "autoApprovalReview/strictReviewRequired": true,
   "command/exec/outputDelta": true,
   configWarning: true,
   deprecationNotice: true,
   error: true,
   "externalAgentConfig/import/completed": true,
+  "externalAgentConfig/import/progress": true,
   "fs/changed": true,
   "fuzzyFileSearch/sessionCompleted": true,
   "fuzzyFileSearch/sessionUpdated": true,
@@ -80,8 +78,10 @@ const CODEX_SERVER_NOTIFICATION_METHODS = {
   "mcpServer/startupStatus/updated": true,
   "model/verification": true,
   "model/rerouted": true,
+  "model/safetyBuffering/updated": true,
   "process/exited": true,
   "process/outputDelta": true,
+  "project/changed": true,
   "rawResponse/completed": true,
   "rawResponseItem/completed": true,
   "remoteControl/status/changed": true,
@@ -90,9 +90,14 @@ const CODEX_SERVER_NOTIFICATION_METHODS = {
   "thread/archived": true,
   "thread/closed": true,
   "thread/compacted": true,
+  "thread/deleted": true,
+  "thread/environment/connected": true,
+  "thread/environment/disconnected": true,
   "thread/goal/cleared": true,
   "thread/goal/updated": true,
   "thread/name/updated": true,
+  "thread/project/updated": true,
+  "thread/queue/changed": true,
   "thread/settings/updated": true,
   "thread/realtime/closed": true,
   "thread/realtime/error": true,
@@ -102,6 +107,7 @@ const CODEX_SERVER_NOTIFICATION_METHODS = {
   "thread/realtime/started": true,
   "thread/realtime/transcript/delta": true,
   "thread/realtime/transcript/done": true,
+  "thread/reverted": true,
   "thread/started": true,
   "thread/status/changed": true,
   "thread/tokenUsage/updated": true,
@@ -121,11 +127,13 @@ const CODEX_NOTIFICATION_COVERAGE = {
   "account/rateLimits/updated": "normalized",
   "account/updated": "unknown",
   "app/list/updated": "unknown",
+  "autoApprovalReview/strictReviewRequired": "unknown",
   "command/exec/outputDelta": "unknown",
   configWarning: "normalized",
   deprecationNotice: "normalized",
   error: "normalized",
   "externalAgentConfig/import/completed": "unknown",
+  "externalAgentConfig/import/progress": "unknown",
   "fs/changed": "unknown",
   "fuzzyFileSearch/sessionCompleted": "unknown",
   "fuzzyFileSearch/sessionUpdated": "unknown",
@@ -133,8 +141,6 @@ const CODEX_NOTIFICATION_COVERAGE = {
   "hook/completed": "unknown",
   "hook/started": "unknown",
   "item/agentMessage/delta": "normalized",
-  // Codex's automatic reviewer lifecycle is internal policy progress. The
-  // resulting tool/item lifecycle already carries the actionable outcome.
   "item/autoApprovalReview/completed": "noise",
   "item/autoApprovalReview/started": "noise",
   "item/commandExecution/outputDelta": "normalized",
@@ -152,17 +158,10 @@ const CODEX_NOTIFICATION_COVERAGE = {
   "mcpServer/startupStatus/updated": "noise",
   "model/verification": "unknown",
   "model/rerouted": "unknown",
-  // Background-process gap: unlike Claude Code (which emits a task lifecycle for
-  // Bash run_in_background, materialized as a background-command timeline row),
-  // Codex has no model-facing "run in background" affordance. A model that
-  // backgrounds a command with a trailing `&` produces an ordinary, immediately
-  // completed commandExecution with no lifecycle. These process/* notifications
-  // belong to the client-initiated `process/spawn` API, which bb never calls, so
-  // there is nothing to surface — left "unknown" intentionally.
+  "model/safetyBuffering/updated": "unknown",
   "process/exited": "unknown",
   "process/outputDelta": "unknown",
-  // Internal per-response accounting; thread/tokenUsage/updated carries the
-  // user-facing token state.
+  "project/changed": "unknown",
   "rawResponse/completed": "noise",
   "rawResponseItem/completed": "noise",
   "remoteControl/status/changed": "noise",
@@ -171,9 +170,14 @@ const CODEX_NOTIFICATION_COVERAGE = {
   "thread/archived": "noise",
   "thread/closed": "unknown",
   "thread/compacted": "normalized",
+  "thread/deleted": "unknown",
+  "thread/environment/connected": "unknown",
+  "thread/environment/disconnected": "unknown",
   "thread/goal/cleared": "normalized",
   "thread/goal/updated": "normalized",
   "thread/name/updated": "normalized",
+  "thread/project/updated": "unknown",
+  "thread/queue/changed": "unknown",
   "thread/settings/updated": "noise",
   "thread/realtime/closed": "unknown",
   "thread/realtime/error": "unknown",
@@ -183,13 +187,13 @@ const CODEX_NOTIFICATION_COVERAGE = {
   "thread/realtime/started": "unknown",
   "thread/realtime/transcript/delta": "unknown",
   "thread/realtime/transcript/done": "unknown",
+  "thread/reverted": "unknown",
   "thread/started": "normalized",
   "thread/status/changed": "noise",
   "thread/tokenUsage/updated": "normalized",
   "thread/unarchived": "noise",
   "turn/completed": "normalized",
   "turn/diff/updated": "normalized",
-  // Internal moderation accounting is not actionable thread output.
   "turn/moderationMetadata": "noise",
   "turn/plan/updated": "normalized",
   "turn/started": "normalized",
@@ -260,7 +264,6 @@ function describeParsedCodexRawEvent(
           event.method === "item/completed") &&
         isCodexUserMessageItemEvent(event)
       ) {
-        // User prompts render from client/turn/requested; Codex echoes are intentionally suppressed.
         return { kind: event.method, coverage: "noise" };
       }
       if (event.method === "item/commandExecution/terminalInteraction") {

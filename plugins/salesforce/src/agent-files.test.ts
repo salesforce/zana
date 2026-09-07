@@ -84,4 +84,23 @@ describe('agent files confinement', () => {
     writeAgentFile(dir, 'force-app/Bot.agent', 'saved', deps);
     expect(readFileSync(join(dir, 'force-app', 'Bot.agent'), 'utf8')).toBe('saved');
   });
+
+  it('walks a non-DX folder for .agent files when allowed', () => {
+    const files = {
+      '/src/bots/QC/QC.agent': 'config:\n    agent_name: "QC"\n',
+      '/src/README.md': 'nope'
+    };
+    const deps = memFs(files, {
+      '/src': ['bots', 'README.md'],
+      '/src/bots': ['QC'],
+      '/src/bots/QC': ['QC.agent']
+    });
+    expect(() => listAgentFiles('/src', deps)).toThrow(/DX project root/);
+    const listed = listAgentFiles('/src', deps, { allowNonDx: true });
+    expect(listed).toEqual([
+      expect.objectContaining({ apiName: 'QC', path: 'bots/QC/QC.agent' })
+    ]);
+    expect(readAgentFile('/src', 'bots/QC/QC.agent', deps, { allowNonDx: true }).content).toContain('QC');
+    expect(() => readAgentFile('/src', '/etc/passwd', deps, { allowNonDx: true })).toThrow(AgentFilesError);
+  });
 });

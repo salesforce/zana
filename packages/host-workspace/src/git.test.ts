@@ -115,6 +115,18 @@ describe('paged workspace diffs', () => {
     expect(Buffer.byteLength(patches[0]?.patch ?? '', 'utf8')).toBeLessThanOrEqual(80);
   });
 
+  it('includes uncommitted tracked edits in the all-changes TOC on the default branch', async () => {
+    const repo = await initRepo();
+    await writeFile(join(repo, 'README.md'), 'changed\n');
+    await writeFile(join(repo, 'scratch.txt'), 'new\n');
+    const committed = await readWorkspaceDiffFiles(repo, { type: 'branch_committed', mergeBaseBranch: 'main' });
+    expect(committed.files).toEqual([]);
+    const all = await readWorkspaceDiffFiles(repo, { type: 'all', mergeBaseBranch: 'main' });
+    expect(all.files.map((file) => file.path).sort()).toEqual(['README.md', 'scratch.txt']);
+    const patches = await readWorkspaceDiffPatch(repo, { type: 'all', mergeBaseBranch: 'main' }, ['README.md']);
+    expect(patches[0]?.patch).toContain('changed');
+  });
+
   it('returns a prefix when a combined page exceeds the budget', async () => {
     const repo = await initRepo();
     await writeFile(join(repo, 'a.ts'), `${'a'.repeat(4_000)}\n`);

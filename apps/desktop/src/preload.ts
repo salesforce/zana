@@ -327,6 +327,17 @@ const api: CcApi = {
     send: async () => ({ ok: false }),
     stop: async () => ({ ok: false }),
     cancelPlan: async () => ({ ok: false }),
+    plan: async () => ({ ok: false }),
+    updatePlan: async () => ({ ok: false }),
+    addPlanTask: async () => ({ ok: false }),
+    flushNextTurn: async () => ({ ok: false }),
+    nextTurn: async () => ({ items: [] }),
+    compact: async () => ({ ok: false }),
+    promptHistory: async () => ({ entries: [] }),
+    pin: async () => ({ thread: {} }),
+    unpin: async () => ({ thread: {} }),
+    search: async () => ({ threads: [] }),
+    childSummary: async () => ({ total: 0, live: 0 }),
     resume: async () => ({ ok: false }),
     timeline: async () => ({ rows: [], status: 'unknown' }),
     read: async () => ({ thread: {} }),
@@ -342,6 +353,9 @@ const api: CcApi = {
       throw new Error('threads require the product server');
     },
     deleteQueuedMessage: async () => {
+      throw new Error('threads require the product server');
+    },
+    deleteNextTurn: async () => {
       throw new Error('threads require the product server');
     },
     sendQueuedMessage: async () => {

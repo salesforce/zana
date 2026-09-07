@@ -7,17 +7,19 @@ import type {
   ProviderCliStatusResponse
 } from '@zana-ai/zcc-contracts/host-rpc';
 import { product } from '../../lib/product-client.js';
-import { useData } from '@/store';
-import { Section } from '@/components/settings/FormFields';
+import { useData, useUi } from '@/store';
+import { Field, Section } from '@/components/settings/FormFields';
 import { useHosts } from '../../hooks/useHosts.js';
 import { HostSshIdentityDialog } from '../../components/HostSshIdentityDialog.js';
 import { AddMachineDialog } from './AddMachineDialog.js';
 import { MachineCard } from './MachineCard.js';
 import {
   defaultSshHost,
-  sshHostOptionsFromProjects
+  sshHostOptionsFromProjects,
+  TAILSCALE_SERVE_HINT
 } from './machine-pairing.js';
 import { reconnectMachine } from './machine-reconnect.js';
+import { runHostInstallWithDrawer } from '../../lib/host-install-run.js';
 import {
   actionableProviderCliRows,
   installProviderCliOnMachine,
@@ -31,7 +33,9 @@ interface MachinesTabProps {
 }
 
 export function MachinesSettingsView({
-  config
+  config,
+  onConfigDraft,
+  onUpdate
 }: MachinesTabProps) {
   const hosts = useHosts();
   const projects = useData((s) => s.projects);
@@ -93,7 +97,20 @@ export function MachinesSettingsView({
         hostId: host.id,
         canRepairViaSsh: host.canRepairViaSsh,
         afterSshPick,
-        repair: (id) => product.hosts.repair(id)
+        repair: (id) => runHostInstallWithDrawer({
+          kind: 'fix',
+          target: host.name,
+          startLogs: ['Renewing pairing…'],
+          run: async (onEvent) => {
+            try {
+              await product.relay.renewJoinWindow();
+            } catch {
+              /* repair still auto-renews */
+            }
+            useUi.getState().appendHostInstallLogs(['Reconnecting…']);
+            return product.hosts.repair(id, onEvent);
+          }
+        })
       });
       if (result.ok) return;
       if (result.needsSshPick) {
@@ -160,6 +177,21 @@ export function MachinesSettingsView({
         title="Machines"
         help="Pair another computer so projects and agents can run there. SSH remotes stay a separate path — they use this machine’s daemon to ssh in. Connected machines follow the server version automatically; Codex, Claude Code, and the other harness CLIs update from the rows below."
       >
+        <Field
+          label="Public app URL"
+          help={`Origin remotes use to enroll. Official builds bake this. For local/dev, ${TAILSCALE_SERVE_HINT}`}
+          mono
+        >
+          <input
+            type="url"
+            value={config.publicAppUrl ?? ''}
+            placeholder="https://zcc.example.com"
+            onChange={(event) => onConfigDraft({ ...config, publicAppUrl: event.target.value })}
+            onBlur={(event) => void onUpdate({ publicAppUrl: event.target.value.trim() || undefined })}
+            spellCheck={false}
+            data-testid="public-app-url"
+          />
+        </Field>
         <div className="machines-toolbar">
           <button type="button" className="settings-btn" onClick={() => setAdding(true)}>
             <Plus size={13} aria-hidden="true" />

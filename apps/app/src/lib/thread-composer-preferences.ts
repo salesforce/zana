@@ -10,13 +10,31 @@ export const MARKDOWN_IN_PROMPT_DEFAULT = true;
 
 export type ComposerSendMode = 'auto' | 'steer' | 'queue-if-active';
 
+export function resolvedComposerSendMode(config: {
+  composerSendMode?: ComposerSendMode;
+  steerActiveThreadOnEnter?: boolean;
+}): ComposerSendMode {
+  if (
+    config.composerSendMode === 'auto'
+    || config.composerSendMode === 'steer'
+    || config.composerSendMode === 'queue-if-active'
+  ) {
+    return config.composerSendMode;
+  }
+  return config.steerActiveThreadOnEnter ? 'steer' : 'auto';
+}
+
 export function resolveThreadSendMode(args: {
-  steerOnEnter: boolean;
+  pickerMode: ComposerSendMode;
   threadRunning: boolean;
   modifierEnter: boolean;
 }): ComposerSendMode {
-  if (!args.steerOnEnter || !args.threadRunning) return 'auto';
-  return args.modifierEnter ? 'queue-if-active' : 'steer';
+  if (!args.threadRunning) return 'auto';
+  if (args.pickerMode === 'steer') {
+    return args.modifierEnter ? 'queue-if-active' : 'steer';
+  }
+  if (args.pickerMode === 'queue-if-active') return 'queue-if-active';
+  return 'auto';
 }
 
 export function composerPromptExtensions(markdownEnabled: boolean, placeholder: string) {

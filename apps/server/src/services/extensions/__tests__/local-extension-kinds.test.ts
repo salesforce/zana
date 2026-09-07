@@ -59,7 +59,10 @@ describe('scaffoldLocalExtension (per kind)', () => {
     expect(pkg.zcc.server).toBe('./server.ts');
     expect(pkg.zcc.app).toBe('./app.tsx');
     expect(existsSync(join(workDir, 'server.ts'))).toBe(true);
-    expect(existsSync(join(workDir, 'app.js'))).toBe(true);
+    expect(existsSync(join(workDir, 'app.tsx'))).toBe(true);
+    expect(existsSync(join(workDir, 'app.js'))).toBe(false);
+    expect(existsSync(join(workDir, 'server.test.ts'))).toBe(true);
+    expect(existsSync(join(workDir, 'app.test.tsx'))).toBe(true);
     expect(existsSync(join(workDir, 'extension.json'))).toBe(false);
   });
 

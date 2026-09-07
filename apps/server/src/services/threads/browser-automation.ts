@@ -14,17 +14,17 @@ export interface BrowserAutomationTarget {
 export interface BrowserAutomationHost {
   open(args: { threadId: string; url: string; visible: boolean }): Promise<{ targetId: string; tabId: string }>;
   list(threadId?: string): Promise<BrowserAutomationTarget[]>;
-  snapshot(targetId: string): Promise<{
+  snapshot(targetId: string, threadId?: string): Promise<{
     targetId: string;
     tabId: string;
     url: string;
     title: string | null;
     dataUrl: string | null;
   }>;
-  click(targetId: string, args: { selector?: string; x?: number; y?: number }): Promise<void>;
-  type(targetId: string, args: { selector?: string; text: string }): Promise<void>;
-  evaluate(targetId: string, script: string): Promise<unknown>;
-  close(targetId: string): Promise<void>;
+  click(targetId: string, args: { selector?: string; x?: number; y?: number }, threadId?: string): Promise<void>;
+  type(targetId: string, args: { selector?: string; text: string }, threadId?: string): Promise<void>;
+  evaluate(targetId: string, script: string, threadId?: string): Promise<unknown>;
+  close(targetId: string, threadId?: string): Promise<void>;
 }
 
 let host: BrowserAutomationHost | null = null;

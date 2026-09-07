@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { inboxQuestions, hasBlockingQuestion, type InboxEntry } from './inbox.js';
+import { inboxQuestions, hasBlockingQuestion, isThreadPendingInboxClone, type InboxEntry } from './inbox.js';
 
 const opt = { id: 'A', label: 'Yes' };
 
@@ -46,5 +46,31 @@ describe('hasBlockingQuestion', () => {
     expect(
       hasBlockingQuestion({ questions: [{ options: [opt] }, { options: [opt], blocking: false }] })
     ).toBe(false);
+  });
+});
+
+describe('isThreadPendingInboxClone', () => {
+  it('matches leftover pending-interaction dedupe keys', () => {
+    expect(isThreadPendingInboxClone({ dedupeKey: 'pending-interaction:pint_1' })).toBe(true);
+    expect(isThreadPendingInboxClone({ dedupeKey: 'inbox-ask:q1' })).toBe(false);
+  });
+
+  it('matches the Open-thread-only clone shape even without a prefix', () => {
+    expect(isThreadPendingInboxClone({
+      question: {
+        options: [{ id: 'A', label: 'Open thread' }],
+        blocking: true
+      }
+    })).toBe(true);
+  });
+
+  it('leaves real inbox_ask questions alone', () => {
+    expect(isThreadPendingInboxClone({
+      subject: 'Ready to ship?',
+      question: {
+        options: [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'Not yet' }],
+        blocking: true
+      }
+    })).toBe(false);
   });
 });

@@ -24,6 +24,7 @@ import {
   isAllowedBrowserUrl,
   resolveWindowOpenAction
 } from './desktop-browser-policy.js';
+import { isPendingAutomationTab, partitionForBrowserTab } from './desktop-browser-thread-scope.js';
 
 const POPUP_RATE_WINDOW_MS = 10_000;
 const POPUP_RATE_MAX_IN_WINDOW = 3;
@@ -181,7 +182,7 @@ export function createDesktopBrowserViewManager(options?: {
   const entries = new Map<string, BrowserViewEntry>();
   const automationTargets = new Map<string, string>();
   const resizingHostIds = new Set<number>();
-  let hardenedSession: Session | null = null;
+  const hardenedSessions = new Map<string, Session>();
 
   function isHostResizing(hostWindow: DesktopBrowserHostWindow): boolean {
     return resizingHostIds.has(hostWindow.webContents.id);
@@ -262,9 +263,10 @@ export function createDesktopBrowserViewManager(options?: {
       });
   }
 
-  function ensureHardenedSession(): Session {
-    if (hardenedSession !== null) return hardenedSession;
-    const browserSession = session.fromPartition(partition);
+  function ensureHardenedSession(sessionPartition: string): Session {
+    const existing = hardenedSessions.get(sessionPartition);
+    if (existing) return existing;
+    const browserSession = session.fromPartition(sessionPartition);
     browserSession.setPermissionRequestHandler((_wc, permission, callback) => {
       callback(isAllowedBrowserPermission(permission));
     });
@@ -272,7 +274,7 @@ export function createDesktopBrowserViewManager(options?: {
     browserSession.on('will-download', (event) => {
       event.preventDefault();
     });
-    hardenedSession = browserSession;
+    hardenedSessions.set(sessionPartition, browserSession);
     return browserSession;
   }
 
@@ -377,11 +379,12 @@ export function createDesktopBrowserViewManager(options?: {
     desiredBounds: DesktopBrowserViewBounds;
     hostWindow: DesktopBrowserHostWindow;
     tabId: string;
+    sessionPartition: string;
   }): BrowserViewEntry {
-    ensureHardenedSession();
+    ensureHardenedSession(args.sessionPartition);
     const view = new WebContentsView({
       webPreferences: {
-        partition,
+        partition: args.sessionPartition,
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
@@ -456,7 +459,8 @@ export function createDesktopBrowserViewManager(options?: {
       const entry = existing ?? createEntry({
         desiredBounds: request.bounds,
         hostWindow,
-        tabId: request.tabId
+        tabId: request.tabId,
+        sessionPartition: partitionForBrowserTab(isPendingAutomationTab(request.tabId), partition)
       });
       entry.desiredBounds = request.bounds;
       applyEntryDesiredBounds(entry, hostWindow);

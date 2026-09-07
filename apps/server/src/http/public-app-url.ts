@@ -4,7 +4,7 @@ import { isLoopbackHttpHost } from '../browser-bootstrap.js';
 import { headerValue } from './browser-request-guard.js';
 import type { IncomingMessage } from 'node:http';
 
-/** Repo-root one-line hostname file. Kept for operators; pairing no longer reads it. */
+/** Repo-root one-line origin. Last fallback for local/dev pairing. */
 export const PUBLIC_APP_URL_FILENAME = 'public-app-url';
 
 export function readPublicAppUrlFile(cwd?: string): string | undefined {
@@ -48,32 +48,34 @@ function compileTimeAppUrl(): string | undefined {
  * allowlisting on enroll/WS. Trailing slashes are stripped.
  *
  * Precedence: runtime `ZCC_APP_URL` > compile-time bake (`electron-vite` main
- * define from the same env). Settings `publicAppUrl` and the repo
- * `public-app-url` file are not used.
+ * define from the same env) > Settings `publicAppUrl` > repo `public-app-url`.
+ * The pairing relay token stays env/bake only and never reaches the renderer.
  */
 export function resolvePublicAppUrl(input?: {
   env?: NodeJS.ProcessEnv;
   bundledUrl?: string | null;
-  /** @deprecated Ignored — pairing does not read Settings. */
   configUrl?: string | null;
-  /** @deprecated Ignored — pairing does not read the repo file. */
   cwd?: string;
 }): string | undefined {
   const env = input?.env ?? process.env;
   const bundled = input && 'bundledUrl' in input
     ? input.bundledUrl ?? undefined
     : compileTimeAppUrl();
-  return parsePublicOrigin(env.ZCC_APP_URL) ?? parsePublicOrigin(bundled);
+  return parsePublicOrigin(env.ZCC_APP_URL)
+    ?? parsePublicOrigin(bundled)
+    ?? parsePublicOrigin(input?.configUrl ?? undefined)
+    ?? parsePublicOrigin(readPublicAppUrlFile(input?.cwd));
 }
 
-/** Renderer-facing config: public origin from env/bake only; never the relay token. */
+/** Renderer-facing config: resolved public origin; never the relay token. */
 export function presentAppConfig<T extends { publicAppUrl?: string; relayToken?: string }>(
   config: T,
   input?: { env?: NodeJS.ProcessEnv; bundledUrl?: string | null }
 ): T {
   const publicAppUrl = resolvePublicAppUrl({
     env: input?.env,
-    bundledUrl: input?.bundledUrl
+    ...(input && 'bundledUrl' in input ? { bundledUrl: input.bundledUrl } : {}),
+    configUrl: config.publicAppUrl
   });
   if (publicAppUrl === config.publicAppUrl && config.relayToken === undefined) return config;
   return { ...config, publicAppUrl, relayToken: undefined };
@@ -89,15 +91,21 @@ export function publicOriginHost(publicAppUrl: string | undefined): string | und
 }
 
 /**
- * Host-internal enroll/WS accept loopback Host headers (local daemon) or the
- * configured public origin (Tailscale Serve / Heroku). DNS-rebinding Host
- * headers that match neither are refused.
+ * Host-internal enroll/WS accept loopback Host headers (local daemon), Docker
+ * Desktop's host.docker.internal gateway, or the configured public origin
+ * (Tailscale Serve / Heroku). DNS-rebinding Host headers that match none of
+ * those are refused.
  */
+function isDockerDesktopGatewayHost(hostHeader: string | undefined): boolean {
+  const host = (hostHeader?.trim().split(':')[0] ?? '').toLowerCase();
+  return host === 'host.docker.internal';
+}
+
 export function isAllowedHostInternalHost(
   hostHeader: string | undefined,
   publicAppUrl?: string
 ): boolean {
-  if (isLoopbackHttpHost(hostHeader)) return true;
+  if (isLoopbackHttpHost(hostHeader) || isDockerDesktopGatewayHost(hostHeader)) return true;
   const expected = publicOriginHost(publicAppUrl);
   const received = hostHeader?.trim().toLowerCase();
   return Boolean(expected && received && received === expected);

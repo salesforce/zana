@@ -1,6 +1,8 @@
 import type {
   TimelineActivityIntent,
   TimelineCommandWorkRow,
+  TimelineFileReadWorkRow,
+  TimelineSearchWorkRow,
   TimelineToolWorkRow,
 } from "@zana-ai/zcc-server-contract";
 import { assertNever } from "./assert-never.js";
@@ -11,7 +13,48 @@ import {
 
 export type TimelineExplorationWorkRow =
   | TimelineCommandWorkRow
-  | TimelineToolWorkRow;
+  | TimelineToolWorkRow
+  | TimelineFileReadWorkRow
+  | TimelineSearchWorkRow;
+
+export function timelineRowActivityIntents(
+  row: TimelineExplorationWorkRow,
+): readonly TimelineActivityIntent[] {
+  switch (row.workKind) {
+    case "command":
+    case "tool":
+      return "activityIntents" in row ? row.activityIntents : [];
+    case "file-read":
+      return [
+        {
+          type: "read",
+          command: row.cmd ?? row.path,
+          name: "fileRead",
+          path: row.path,
+        },
+      ];
+    case "search":
+      if (row.mode === "content") {
+        return [
+          {
+            type: "search",
+            command: row.cmd ?? row.query,
+            query: row.query,
+            path: row.path,
+          },
+        ];
+      }
+      return [
+        {
+          type: "list_files",
+          command: row.cmd ?? row.query,
+          path: row.path,
+        },
+      ];
+    default:
+      return [];
+  }
+}
 type TimelineReadActivityIntent = Extract<
   TimelineActivityIntent,
   { type: "read" }
@@ -47,7 +90,8 @@ export function primaryTimelineActivityIntent(
   row: TimelineExplorationWorkRow,
 ): TimelineActivityIntent | null {
   return (
-    row.activityIntents.find((intent) => intent.type !== "unknown") ?? null
+    timelineRowActivityIntents(row).find((intent) => intent.type !== "unknown") ??
+    null
   );
 }
 

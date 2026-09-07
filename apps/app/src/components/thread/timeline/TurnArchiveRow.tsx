@@ -9,6 +9,7 @@ import { TimelineTitleView } from './TimelineTitleView.js';
 import type { TimelineTitleActionHandler, TimelineTitleLinkHandler } from './TimelineTitleView.js';
 import type { collectTimelineAutoExpansionRowIds } from './timeline-auto-expand.js';
 import { StencilLines } from '../../ui/Skeleton.js';
+import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 
 export function TurnArchiveRow({
   row,
@@ -27,7 +28,9 @@ export function TurnArchiveRow({
   projectId,
   parentThreadId,
   threadIdle,
-  onFork
+  onFork,
+  messageActions,
+  includePluginMessageActions
 }: {
   row: Extract<ThreadTimelineViewRow, { kind: 'turn' }>;
   title: TimelineTitle;
@@ -46,8 +49,10 @@ export function TurnArchiveRow({
   parentThreadId?: string | null;
   threadIdle?: boolean;
   onFork?: (sourceSeqEnd?: number) => void;
+  messageActions?: readonly ThreadChatMessageAction[];
+  includePluginMessageActions?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(row.status === 'interrupted');
   const [children, setChildren] = useState<ThreadTimelineViewRow[] | null>(row.children);
   const [loading, setLoading] = useState(false);
 
@@ -117,6 +122,9 @@ export function TurnArchiveRow({
         parentThreadId={parentThreadId}
         threadIdle={threadIdle}
         onFork={onFork}
+        scopeActive={false}
+        messageActions={messageActions}
+        includePluginMessageActions={includePluginMessageActions}
       />
       ) : open ? (
         <p className="thread-timeline-system">No details</p>

@@ -1,22 +1,17 @@
 /**
- * First-run dependency doctor for companion dependencies.
+ * First-run dependency doctor for companion CLIs.
  *
- * When the app is installed from the .dmg, companion pieces may be absent. On
- * launch we DETECT them and AUTO-INSTALL the ones we can do non-interactively,
- * guiding the user through the rest:
+ * On launch we DETECT them and guide the user through the rest:
  *
- *   - `claude` CLI            — MANUAL (Claude Code is an external install). Detect-only.
- *   - Zana MCP server         — INSTALLABLE: `npm i -g @zana-ai/mcp@latest`, then
- *                               `claude mcp add zana …` (the registration needs the claude CLI).
- *   - Zana Claude Code plugins— INSTALLABLE: `claude plugin marketplace add …` + `claude plugin install …`.
- *   - Bundled disk extensions — BUNDLED: seeded into ~/.zcc/extensions on boot by
- *                               extension-installer.ts. Reported here for completeness,
- *                               discovered generically (Rule 6 — never names a concrete id).
+ *   - Claude Code CLI (`claude`)     — MANUAL. Required for first-run auto-open.
+ *   - Cursor CLI (`cursor-agent`)    — INSTALLABLE (official install script).
+ *   - OpenCode CLI (`opencode`)      — INSTALLABLE (`npm i -g opencode-ai`).
+ *   - Pi CLI (`pi`)                  — INSTALLABLE (`npm i -g @earendil-works/pi-coding-agent`).
+ *   - Codex CLI (`codex`)            — INSTALLABLE (`npm i -g @openai/codex`).
+ *   - SF CLI (`sf`)                  — INSTALLABLE (`npm i -g @salesforce/cli`).
  *
- * This is a SETUP/REGISTRATION seam, not module-bus logic. It legitimately names
- * the external CLIs / npm package / MCP-server id it wires up. The disk-extension
- * section stays extension-agnostic (scans the install root) because those
- * genuinely are registry extensions.
+ * Optional CLIs (everything except Claude Code) appear in the checklist but
+ * do not auto-open it — most machines will not have every harness.
  *
  * Posture mirrors updater.ts: a factory returning a small interface, pushing
  * status via the injected `safeSend`, owning no long-lived timers. Best-effort
@@ -25,11 +20,9 @@
  */
 
 import { execFile } from 'node:child_process';
-import { join } from 'node:path';
-import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
-import { readFile, readdir } from 'node:fs/promises';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import type {
+  DependencyKind,
   DependencyProgress,
   DependencyState,
   SetupStatus
@@ -61,12 +54,104 @@ interface CmdResult {
   stderr: string;
 }
 
+const NPM_INSTALL_TIMEOUT_MS = 180_000;
+const CURSOR_INSTALL_SCRIPT = 'curl -fsSL https://cursor.com/install | bash';
+
+interface CompanionSpec {
+  id: string;
+  label: string;
+  detail: string;
+  kind: DependencyKind;
+  required: boolean;
+  bin: string;
+  versionArgs: readonly string[];
+  manualCommand: string;
+  install?: { command: string; args: readonly string[]; timeoutMs: number };
+}
+
+function npmGlobalInstall(pkg: string): NonNullable<CompanionSpec['install']> {
+  return {
+    command: 'npm',
+    args: ['install', '-g', `${pkg}@latest`],
+    timeoutMs: NPM_INSTALL_TIMEOUT_MS
+  };
+}
+
+/** Display order is the checklist order. */
+const COMPANIONS: readonly CompanionSpec[] = [
+  {
+    id: 'claude-cli',
+    label: 'Claude Code CLI',
+    detail: 'The `claude` command — required for running Claude Code agents.',
+    kind: 'manual',
+    required: true,
+    bin: 'claude',
+    versionArgs: ['--version'],
+    manualCommand: 'See https://claude.com/claude-code to install the Claude Code CLI'
+  },
+  {
+    id: 'cursor-cli',
+    label: 'Cursor CLI',
+    detail: 'The `cursor-agent` command — Cursor agent harness.',
+    kind: 'installable',
+    required: false,
+    bin: 'cursor-agent',
+    versionArgs: ['--version'],
+    manualCommand: CURSOR_INSTALL_SCRIPT,
+    install: { command: 'sh', args: ['-c', CURSOR_INSTALL_SCRIPT], timeoutMs: NPM_INSTALL_TIMEOUT_MS }
+  },
+  {
+    id: 'opencode-cli',
+    label: 'OpenCode CLI',
+    detail: 'The `opencode` command — OpenCode agent harness.',
+    kind: 'installable',
+    required: false,
+    bin: 'opencode',
+    versionArgs: ['--version'],
+    manualCommand: 'npm install -g opencode-ai@latest',
+    install: npmGlobalInstall('opencode-ai')
+  },
+  {
+    id: 'pi-cli',
+    label: 'Pi CLI',
+    detail: 'The `pi` command — Pi coding agent harness.',
+    kind: 'installable',
+    required: false,
+    bin: 'pi',
+    versionArgs: ['--version'],
+    manualCommand: 'npm install -g @earendil-works/pi-coding-agent@latest',
+    install: npmGlobalInstall('@earendil-works/pi-coding-agent')
+  },
+  {
+    id: 'codex-cli',
+    label: 'Codex CLI',
+    detail: 'The `codex` command — Codex agent harness.',
+    kind: 'installable',
+    required: false,
+    bin: 'codex',
+    versionArgs: ['--version'],
+    manualCommand: 'npm install -g @openai/codex@latest',
+    install: npmGlobalInstall('@openai/codex')
+  },
+  {
+    id: 'sf-cli',
+    label: 'SF CLI',
+    detail: 'The `sf` command — Salesforce CLI.',
+    kind: 'installable',
+    required: false,
+    bin: 'sf',
+    versionArgs: ['--version'],
+    manualCommand: 'npm install -g @salesforce/cli@latest',
+    install: npmGlobalInstall('@salesforce/cli')
+  }
+];
+
 /** Run a command with the (already PATH-repaired) process env. Best-effort. */
-function run(cmd: string, args: string[], timeoutMs = 15_000): Promise<CmdResult> {
+function run(cmd: string, args: readonly string[], timeoutMs = 15_000): Promise<CmdResult> {
   return new Promise((resolve) => {
     execFile(
       cmd,
-      args,
+      [...args],
       { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
       (err, stdout, stderr) => {
         resolve({
@@ -79,47 +164,44 @@ function run(cmd: string, args: string[], timeoutMs = 15_000): Promise<CmdResult
   });
 }
 
-/** Stable ids for the tracked dependencies. */
-const ID = {
-  claude: 'claude-cli',
-  zanaMcp: 'zana-mcp',
-  zanaPlugins: 'zana-plugins'
-} as const;
+function versionNote(stdout: string): string {
+  const line =
+    stdout
+      .split(/\r?\n/u)
+      .map((s) => s.trim())
+      .find((s) => s.length > 0) ?? stdout.trim();
+  return line.length > 120 ? `${line.slice(0, 117)}…` : line;
+}
+
+function failNote(result: CmdResult): string {
+  const line =
+    result.stderr
+      .split(/\r?\n/u)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .pop() ||
+    result.stdout
+      .split(/\r?\n/u)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .pop() ||
+    'install failed';
+  return line.length > 160 ? `${line.slice(0, 157)}…` : line;
+}
 
 export function createDoctor(deps: DoctorDeps): Doctor {
   const { safeSend, log } = deps;
 
-  // Display order is fixed; detection fills in `phase`/`note` in place.
-  const items: DependencyState[] = [
-    {
-      id: ID.claude,
-      label: 'Claude Code CLI',
-      detail: 'The `claude` command — required for Zana MCP + plugin wiring and for running agents.',
-      kind: 'manual',
-      phase: 'checking',
-      manualCommand: 'See https://claude.com/claude-code to install the Claude Code CLI'
-    },
-    {
-      id: ID.zanaMcp,
-      label: 'Zana MCP server',
-      detail: 'The @zana-ai/mcp server, registered with Claude Code so agents get Zana tools.',
-      kind: 'installable',
-      phase: 'checking',
-      manualCommand: 'npm install -g @zana-ai/mcp@latest && claude mcp add zana -- npx -y @zana-ai/mcp'
-    },
-    {
-      id: ID.zanaPlugins,
-      label: 'Zana plugins',
-      detail: 'The Zana Claude Code plugin marketplace + the zana / zana-loop plugins.',
-      kind: 'installable',
-      phase: 'checking',
-      manualCommand:
-        'claude plugin marketplace add grebmann1/zana && claude plugin install zana@zana-marketplace'
-    }
-  ];
+  const items: DependencyState[] = COMPANIONS.map((spec) => ({
+    id: spec.id,
+    label: spec.label,
+    detail: spec.detail,
+    kind: spec.kind,
+    phase: 'checking',
+    manualCommand: spec.manualCommand,
+    required: spec.required
+  }));
 
-  // Discovered disk extensions are appended after the fixed items; tracked by id
-  // so a re-check updates in place rather than duplicating.
   const byId = (id: string) => items.find((i) => i.id === id);
 
   let busy = false;
@@ -144,105 +226,21 @@ export function createDoctor(deps: DoctorDeps): Doctor {
     const it = byId(id);
     if (!it) return;
     it.phase = phase;
-    if (note !== undefined) it.note = note;
+    it.note = note;
     emit();
   };
 
-  /** Detect the bundled disk extensions seeded under ~/.zcc/extensions/<id>. */
-  async function detectBundledExtensions(): Promise<void> {
-    const root = process.env.ZCC_EXTENSIONS_DIR ?? join(resolveZccDataDir(), 'extensions');
-    let names: string[] = [];
-    try {
-      names = (await readdir(root, { withFileTypes: true }))
-        .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
-        .map((e) => e.name)
-        .sort();
-    } catch {
-      names = []; // dir not created yet → no bundled extensions installed
-    }
-    // Drop any previously-tracked extension rows so a removed extension doesn't
-    // linger (the fixed items keep their ids; ext rows are namespaced).
-    for (let i = items.length - 1; i >= 0; i--) {
-      if (items[i].id.startsWith('ext:')) items.splice(i, 1);
-    }
-    for (const name of names) {
-      const manifest = join(root, name, 'extension.json');
-      let label = name;
-      let version = '';
-      try {
-        const m = JSON.parse(await readFile(manifest, 'utf-8')) as {
-          name?: unknown;
-          version?: unknown;
-        };
-        if (typeof m.name === 'string' && m.name) label = m.name;
-        if (typeof m.version === 'string') version = m.version;
-      } catch {
-        // No manifest under this dir — not a real extension; skip it.
-        continue;
-      }
-      items.push({
-        id: `ext:${name}`,
-        label: `${label} extension`,
-        detail: 'Bundled in-app extension — seeded automatically on launch.',
-        kind: 'bundled',
-        phase: 'present',
-        note: version ? `v${version}` : 'installed'
-      });
-    }
+  async function probe(spec: CompanionSpec): Promise<void> {
+    const result = await run(spec.bin, spec.versionArgs);
+    setPhase(spec.id, result.ok ? 'present' : 'missing', result.ok ? versionNote(result.stdout) : undefined);
   }
 
   async function check(): Promise<void> {
     busy = true;
-    for (const it of items) {
-      if (!it.id.startsWith('ext:')) it.phase = 'checking';
-    }
+    for (const it of items) it.phase = 'checking';
     emit();
     try {
-      // claude CLI — manual, detect via `claude --version`.
-      const claude = await run('claude', ['--version']);
-      setPhase(ID.claude, claude.ok ? 'present' : 'missing', claude.ok ? claude.stdout : undefined);
-
-      // Zana MCP — installable. The AUTHORITATIVE signal that it works is
-      // `claude mcp get zana` succeeding: the server is registered as
-      // `npx -y @zana-ai/mcp`, which fetches on demand and needs NO global npm
-      // install, so a present-but-not-globally-installed machine is fully
-      // functional. We therefore key "present" off registration, not `npm ls`
-      // (which exits 1 / "(empty)" on a working npx-based setup). When claude
-      // isn't around to ask, fall back to the npm-global presence as a hint.
-      if (claude.ok) {
-        const reg = await run('claude', ['mcp', 'get', 'zana']);
-        setPhase(
-          ID.zanaMcp,
-          reg.ok ? 'present' : 'missing',
-          reg.ok ? 'registered with Claude Code' : undefined
-        );
-      } else {
-        const npmLs = await run('npm', ['ls', '-g', '@zana-ai/mcp', '--depth=0']);
-        const mcpInstalled = npmLs.ok && /@zana-ai\/mcp@/.test(npmLs.stdout);
-        setPhase(
-          ID.zanaMcp,
-          mcpInstalled ? 'present' : 'missing',
-          mcpInstalled ? 'installed (register once the claude CLI is present)' : 'needs the claude CLI to register'
-        );
-      }
-
-      // Zana plugins — installable; only checkable when claude is present. The
-      // real signal is the plugin being INSTALLED (`claude plugin list` shows
-      // `zana@zana-marketplace`), not merely the marketplace being configured —
-      // a marketplace can be added without any plugin installed from it.
-      if (claude.ok) {
-        const plugins = await run('claude', ['plugin', 'list']);
-        const installed = plugins.ok && /zana@zana-marketplace/.test(plugins.stdout);
-        setPhase(
-          ID.zanaPlugins,
-          installed ? 'present' : 'missing',
-          installed ? 'installed' : undefined
-        );
-      } else {
-        setPhase(ID.zanaPlugins, 'missing', 'needs the claude CLI first');
-      }
-
-      await detectBundledExtensions();
+      await Promise.all(COMPANIONS.map((spec) => probe(spec)));
     } catch (err) {
       log('dependencyDoctor.check', err);
     } finally {
@@ -251,55 +249,24 @@ export function createDoctor(deps: DoctorDeps): Doctor {
     }
   }
 
-  /** Install the Zana MCP server (npm global + Claude Code registration). */
-  async function installZanaMcp(claudePresent: boolean): Promise<void> {
-    setPhase(ID.zanaMcp, 'installing');
-    progress(ID.zanaMcp, 'Installing @zana-ai/mcp globally (npm i -g)…');
-    const npm = await run('npm', ['install', '-g', '@zana-ai/mcp@latest'], 180_000);
-    if (!npm.ok) {
-      setPhase(ID.zanaMcp, 'failed', npm.stderr.split('\n').pop() || 'npm install failed');
-      return;
-    }
-    if (claudePresent) {
-      const reg = await run('claude', ['mcp', 'get', 'zana']);
-      if (!reg.ok) {
-        progress(ID.zanaMcp, 'Registering the Zana MCP server with Claude Code…');
-        // `claude mcp add` is idempotent (re-adding an existing server just
-        // rewrites its config and exits 0), so this is safe even if a partial
-        // prior run already registered it.
-        const add = await run('claude', ['mcp', 'add', 'zana', '--', 'npx', '-y', '@zana-ai/mcp']);
-        if (!add.ok) {
-          setPhase(ID.zanaMcp, 'failed', 'installed, but `claude mcp add zana` failed');
-          return;
-        }
-      }
-      setPhase(ID.zanaMcp, 'installed', 'registered with Claude Code');
-    } else {
-      setPhase(ID.zanaMcp, 'installed', 'installed (register once the claude CLI is present)');
-    }
-  }
+  async function installOne(spec: CompanionSpec): Promise<void> {
+    if (!spec.install) return;
+    const current = byId(spec.id);
+    if (current?.phase !== 'missing' && current?.phase !== 'failed') return;
 
-  /** Install the Zana plugin marketplace + plugins (requires the claude CLI). */
-  async function installZanaPlugins(claudePresent: boolean): Promise<void> {
-    if (!claudePresent) {
-      setPhase(ID.zanaPlugins, 'failed', 'needs the claude CLI first');
+    setPhase(spec.id, 'installing');
+    progress(spec.id, `Installing ${spec.label}…`);
+    const result = await run(spec.install.command, spec.install.args, spec.install.timeoutMs);
+    if (!result.ok) {
+      setPhase(spec.id, 'failed', failNote(result));
       return;
     }
-    setPhase(ID.zanaPlugins, 'installing');
-    const market = await run('claude', ['plugin', 'marketplace', 'list']);
-    if (!(market.ok && /zana-marketplace/.test(market.stdout))) {
-      progress(ID.zanaPlugins, 'Adding the Zana plugin marketplace (grebmann1/zana)…');
-      const add = await run('claude', ['plugin', 'marketplace', 'add', 'grebmann1/zana']);
-      if (!add.ok) {
-        setPhase(ID.zanaPlugins, 'failed', '`claude plugin marketplace add` failed');
-        return;
-      }
-    }
-    progress(ID.zanaPlugins, 'Installing the zana + zana-loop plugins…');
-    // Best-effort: a plugin that's already installed exits non-zero — tolerate it.
-    await run('claude', ['plugin', 'install', 'zana@zana-marketplace']);
-    await run('claude', ['plugin', 'install', 'zana-loop@zana-marketplace']);
-    setPhase(ID.zanaPlugins, 'installed', 'marketplace + plugins ready');
+    const verify = await run(spec.bin, spec.versionArgs);
+    setPhase(
+      spec.id,
+      'installed',
+      verify.ok ? versionNote(verify.stdout) : 'installed'
+    );
   }
 
   async function install(): Promise<void> {
@@ -307,13 +274,8 @@ export function createDoctor(deps: DoctorDeps): Doctor {
     busy = true;
     emit();
     try {
-      const claudePresent = byId(ID.claude)?.phase === 'present';
-      // Only act on installable items that aren't already satisfied.
-      if (byId(ID.zanaMcp)?.phase === 'missing' || byId(ID.zanaMcp)?.phase === 'failed') {
-        await installZanaMcp(claudePresent);
-      }
-      if (byId(ID.zanaPlugins)?.phase === 'missing' || byId(ID.zanaPlugins)?.phase === 'failed') {
-        await installZanaPlugins(claudePresent);
+      for (const spec of COMPANIONS) {
+        if (spec.kind === 'installable') await installOne(spec);
       }
     } catch (err) {
       log('dependencyDoctor.install', err);
@@ -333,7 +295,12 @@ export function createDoctor(deps: DoctorDeps): Doctor {
   };
 }
 
-/** True if any tracked dependency is missing/failed — gates the first-run auto-open. */
+/**
+ * True if a required dependency is missing/failed — gates the first-run
+ * auto-open. Optional CLIs (`required: false`) are listed but never trip this.
+ */
 export function hasMissingDeps(status: SetupStatus): boolean {
-  return status.items.some((i) => i.phase === 'missing' || i.phase === 'failed');
+  return status.items.some(
+    (i) => i.required !== false && (i.phase === 'missing' || i.phase === 'failed')
+  );
 }

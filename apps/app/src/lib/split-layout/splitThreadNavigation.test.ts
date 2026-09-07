@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   createSinglePaneLayout,
+  focusedPaneRoute,
   isSplitWorkspacePath,
   paneContentForPathname,
   paneContentRoute,
   reconcileLayoutForContent,
   threadPaneContent
 } from './splitThreadNavigation.js';
-import { splitPane } from './ops.js';
+import { openEmptySplitPane, splitPane } from './ops.js';
 
 describe('splitThreadNavigation', () => {
   it('maps splittable pathnames to pane content and back', () => {
@@ -79,11 +80,59 @@ describe('splitThreadNavigation', () => {
       panelPath: 'panel',
       subPath: 'nested/path'
     });
-    expect(isSplitWorkspacePath('/inbox')).toBe(false);
+    expect(isSplitWorkspacePath('/inbox')).toBe(true);
+    expect(paneContentForPathname('/inbox')).toEqual({ kind: 'inbox' });
+    expect(paneContentRoute({ kind: 'inbox' })).toBe('/inbox');
     expect(paneContentForPathname('/extensions/plugins/docs')).toBeNull();
     expect(isSplitWorkspacePath('/threads/abc')).toBe(true);
     expect(isSplitWorkspacePath('/plugins/docs/panel')).toBe(true);
     expect(isSplitWorkspacePath('/agents')).toBe(true);
+    expect(paneContentForPathname('/projects/p1')).toEqual({
+      kind: 'project-view',
+      projectId: 'p1',
+      mode: 'agents'
+    });
+    expect(paneContentRoute({ kind: 'project-view', projectId: 'p1', mode: 'agents' })).toBe(
+      '/projects/p1'
+    );
+    expect(paneContentForPathname('/projects/p1/explorer')).toEqual({
+      kind: 'project-view',
+      projectId: 'p1',
+      mode: 'explorer'
+    });
+    expect(paneContentForPathname('/projects/p1/terminals')).toEqual({
+      kind: 'project-view',
+      projectId: 'p1',
+      mode: 'terminals'
+    });
+    expect(paneContentForPathname('/projects/p1/docs')).toEqual({
+      kind: 'project-view',
+      projectId: 'p1',
+      mode: 'docs'
+    });
+    expect(paneContentRoute({ kind: 'project-view', projectId: 'p1', mode: 'explorer' })).toBe(
+      '/projects/p1/explorer'
+    );
+    const agentScript = {
+      kind: 'project-view' as const,
+      projectId: 'p1',
+      mode: 'salesforce:agent-script'
+    };
+    expect(paneContentRoute(agentScript)).toBe('/projects/p1/salesforce%3Aagent-script');
+    expect(paneContentForPathname('/projects/p1/salesforce%3Aagent-script')).toEqual(agentScript);
+    expect(paneContentForPathname('/projects/p1/salesforce:agent-script')).toEqual(agentScript);
+    expect(isSplitWorkspacePath('/projects/p1')).toBe(true);
+    expect(isSplitWorkspacePath('/projects/p1/explorer')).toBe(true);
+    expect(paneContentForPathname('/projects/p1/settings')).toBeNull();
+    expect(isSplitWorkspacePath('/projects/p1/settings')).toBe(false);
+    expect(isSplitWorkspacePath('/projects/p1/threads/t1')).toBe(true);
+    expect(paneContentForPathname('/projects/p1/threads/t1')).toEqual({
+      kind: 'thread',
+      projectId: 'p1',
+      threadId: 't1'
+    });
+    expect(isSplitWorkspacePath('/projects/p1/sessions/s1')).toBe(true);
+    expect(isSplitWorkspacePath('/projects/p1/schedules/sched-1')).toBe(true);
   });
 
   it('seeds a single pane and focuses an existing pane on reconcile', () => {
@@ -129,6 +178,20 @@ describe('splitThreadNavigation', () => {
       pluginId: 'docs',
       panelPath: 'panel',
       subPath: 'a/b'
+    });
+  });
+
+  it('keeps an empty drop well focused when the current route already occupies another pane', () => {
+    const agents = createSinglePaneLayout({ kind: 'agents' });
+    const withEmpty = openEmptySplitPane(agents);
+    expect(paneContentRoute({ kind: 'empty' })).toBe('');
+    expect(focusedPaneRoute(withEmpty)).toBeNull();
+    expect(reconcileLayoutForContent(withEmpty, { kind: 'agents' })).toBe(withEmpty);
+    const filled = reconcileLayoutForContent(withEmpty, { kind: 'home' });
+    expect(filled.focusedPaneId).toBe(withEmpty.focusedPaneId);
+    expect(filled.root.type === 'split' ? filled.root.children[1] : null).toMatchObject({
+      type: 'pane',
+      content: { kind: 'home' }
     });
   });
 });

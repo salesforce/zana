@@ -23,10 +23,28 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import { hasDesktopBridge } from './app-surface.js';
 import { apiJson, fetchWithAppSurface } from './fetch-with-app-surface.js';
+import { readNdjsonEvents } from './ndjson-events.js';
 import { subscribeProductEvent } from './product-ws.js';
 
 function noopSubscribe(_cb: unknown): () => void {
   return () => {};
+}
+
+async function requireOkNdjson<T>(
+  response: Response,
+  onEvent?: (event: T) => void
+): Promise<T[]> {
+  if (!response.ok) {
+    let detail = `${response.status}`;
+    try {
+      const body = (await response.json()) as { error?: string; message?: string };
+      detail = body.message ?? body.error ?? detail;
+    } catch {
+      /* keep status */
+    }
+    throw new Error(detail);
+  }
+  return readNdjsonEvents(response, onEvent);
 }
 
 const pluginAppListeners = new Set<(entries: PluginAppEntry[]) => void>();
@@ -493,50 +511,20 @@ function httpProduct(): Pick<
           .filter((line) => line.length > 0)
           .map((line) => JSON.parse(line) as Awaited<ReturnType<CcApi['hosts']['installProviderCli']>>[number]);
       },
-      bootstrap: async (projectId) => {
+      bootstrap: async (projectId, onEvent) => {
         const response = await fetchWithAppSurface('/api/v1/hosts/bootstrap', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ projectId })
         });
-        if (!response.ok) {
-          let detail = `${response.status}`;
-          try {
-            const body = (await response.json()) as { error?: string; message?: string };
-            detail = body.message ?? body.error ?? detail;
-          } catch {
-            /* keep status */
-          }
-          throw new Error(detail);
-        }
-        const text = await response.text();
-        return text
-          .split('\n')
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0)
-          .map((line) => JSON.parse(line) as Awaited<ReturnType<CcApi['hosts']['bootstrap']>>[number]);
+        return requireOkNdjson(response, onEvent);
       },
-      repair: async (id) => {
+      repair: async (id, onEvent) => {
         const response = await fetchWithAppSurface(
           `/api/v1/hosts/${encodeURIComponent(id)}/repair`,
           { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }
         );
-        if (!response.ok) {
-          let detail = `${response.status}`;
-          try {
-            const body = (await response.json()) as { error?: string; message?: string };
-            detail = body.message ?? body.error ?? detail;
-          } catch {
-            /* keep status */
-          }
-          throw new Error(detail);
-        }
-        const text = await response.text();
-        return text
-          .split('\n')
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0)
-          .map((line) => JSON.parse(line) as Awaited<ReturnType<CcApi['hosts']['repair']>>[number]);
+        return requireOkNdjson(response, onEvent);
       },
       updateSshIdentity: async (id, patch) => apiJson<Host>(
         `/hosts/${encodeURIComponent(id)}/ssh-identity`,
@@ -657,6 +645,44 @@ function httpProduct(): Pick<
         apiJson(`/threads/${encodeURIComponent(threadId)}/stop`, { method: 'POST', body: '{}' }),
       cancelPlan: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/plan/cancel`, { method: 'POST', body: '{}' }),
+      plan: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/plan`),
+      updatePlan: async (threadId: string, markdown: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/plan`, {
+          method: 'PATCH',
+          body: JSON.stringify({ markdown })
+        }),
+      addPlanTask: async (threadId: string, text: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/plan/tasks`, {
+          method: 'POST',
+          body: JSON.stringify({ text })
+        }),
+      flushNextTurn: async (threadId: string, force = true) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/flush`, {
+          method: 'POST',
+          body: JSON.stringify({ force })
+        }),
+      deleteNextTurn: async (threadId: string, itemId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}`, {
+          method: 'DELETE'
+        }),
+      nextTurn: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn`),
+      compact: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/compact`, { method: 'POST', body: '{}' }),
+      promptHistory: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/prompt-history`),
+      pin: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/pin`, { method: 'POST', body: '{}' }),
+      unpin: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/unpin`, { method: 'POST', body: '{}' }),
+      search: async (query: string, projectId?: string) => {
+        const params = new URLSearchParams({ q: query });
+        if (projectId) params.set('projectId', projectId);
+        return apiJson(`/threads/search?${params.toString()}`);
+      },
+      childSummary: async (threadId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/child-summary`),
       resume: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/resume`, { method: 'POST', body: '{}' }),
       timeline: async (threadId, query) => {
@@ -735,6 +761,7 @@ function httpProduct(): Pick<
       executionOptions: async (query) => {
         const params = new URLSearchParams();
         if (query?.providerId) params.set('providerId', query.providerId);
+        if (query?.hostId) params.set('hostId', query.hostId);
         const suffix = params.size ? `?${params.toString()}` : '';
         return apiJson(`/system/execution-options${suffix}`);
       },

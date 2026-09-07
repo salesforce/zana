@@ -152,7 +152,7 @@ export function AgentsSettingsView({
       >
         <CheckboxField
           label="Include scheduled agents in Agent View"
-          help="Show your schedules and their live runs on the Agents board, list, and flow. Armed jobs sit in a Scheduled column; while a run is working it uses Working, and finished runs use Done. On by default. Turn off to keep scheduled jobs on the Scheduler panel and in the inbox only."
+          help="Show your schedules and their live runs on the Agents board, list, and flow. Armed jobs sit in a Scheduled column; while a run is working it uses Working, and finished runs use Done. On by default. A live run always remains visible under its project in the sidebar so the project status dot has a matching row."
           checked={config.includeScheduledAgentsInAgentView ?? true}
           onChange={(v) => onUpdate({ includeScheduledAgentsInAgentView: v })}
         />

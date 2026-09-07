@@ -6,6 +6,7 @@ import {
   FolderOpen,
   Layers,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
   X
@@ -61,6 +62,7 @@ export function SkillsBody({
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [bundles, setBundles] = useState<SkillBundle[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<'all' | SkillSource>(initialFilter);
   const [query, setQuery] = useState('');
   const [editingBundle, setEditingBundle] = useState<SkillBundle | 'new' | null>(null);
@@ -98,6 +100,15 @@ export function SkillsBody({
       setLoading(false);
     }
   }, [selectedProject?.path]);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await reload();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [reload]);
 
   // Consolidated effect: initial load, change subscriptions, and deep-link honor.
   // Runs once per project (when selectedProject?.path changes via reload deps)
@@ -224,8 +235,10 @@ export function SkillsBody({
               <p className="settings-help scheduler-subtitle">
                 Discover skills across your agent tools — Claude Code
                 (<code>~/.claude/skills</code>, <code>~/.claude/plugins</code>, a
-                project's <code>.claude/skills</code>), skills shipped by an
-                installed ZCC plugin, and Cursor rules (<code>.cursor/rules</code>).
+                project's <code>.claude/skills</code>), OpenCode
+                (<code>~/.config/opencode/skills</code>, a project's{' '}
+                <code>.opencode/skills</code>), skills shipped by an installed
+                ZCC plugin, and Cursor rules (<code>.cursor/rules</code>).
                 Toggling a Claude user or project skill writes to{' '}
                 <code>skillOverrides</code> in <code>~/.claude/settings.json</code>.
                 Installed ZCC plugin skills reload with <code>zcc plugin dev</code>.
@@ -259,15 +272,32 @@ export function SkillsBody({
         <div className="skills-layout">
           <section className="skills-left">
             <div className="skills-toolbar">
-              <div className="skills-search">
-                <Search size={14} aria-hidden />
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search skills…"
-                  aria-label="Search skills"
-                />
+              <div className="skills-toolbar-row">
+                <div className="skills-search">
+                  <Search size={14} aria-hidden />
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search skills…"
+                    aria-label="Search skills"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => void refresh()}
+                  disabled={refreshing || loading}
+                  title="Refresh skills"
+                  aria-label="Refresh skills"
+                >
+                  <RefreshCw
+                    size={14}
+                    className={refreshing ? 'ext-spin' : undefined}
+                    aria-hidden
+                  />
+                  Refresh
+                </button>
               </div>
               <div className="skills-filter" role="tablist" aria-label="Source filter">
                 {SOURCE_FILTERS.map((f) => (
@@ -300,7 +330,7 @@ export function SkillsBody({
                   {filter === 'project' && !selectedProject
                     ? 'Select a project in the sidebar to see project-scoped skills.'
                     : skills.length === 0
-                      ? 'Drop a skill in ~/.claude/skills, or install a plugin that ships skills.'
+                      ? 'Drop a skill in ~/.claude/skills or ~/.config/opencode/skills, or install a plugin that ships skills.'
                       : 'Try a different search or filter.'}
                 </div>
               </div>

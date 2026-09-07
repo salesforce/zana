@@ -1,3 +1,4 @@
+import '@/lib/monacoSetup';
 import { useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Bell, Star } from 'lucide-react';
@@ -12,7 +13,6 @@ import { SplitWorkspaceRoute } from '@/views/SplitWorkspaceRoute';
 import { ProjectScopedNav } from './components/ProjectScopedNav.js';
 import { SettingsView } from '@/views/settings/SettingsView';
 import { ExtensionsView } from '@/views/extensions/ExtensionsView';
-import { InboxView } from '@/views/inbox/InboxView';
 import { FollowUpsView } from '@/views/follow-ups/FollowUpsView';
 import { SuggestionsView } from '@/views/suggestions/SuggestionsView';
 import { GoalsPanel } from '@/views/project/GoalsPanel';
@@ -25,6 +25,7 @@ import { AgentTerminalModal } from './components/AgentTerminalModal.js';
 import { ThreadModal } from './components/ThreadModal.js';
 import { FavoriteAgentsDrawer } from './components/FavoriteAgentsDrawer.js';
 import { NotificationsDrawer } from './components/NotificationsDrawer.js';
+import { HostInstallDrawer } from './components/HostInstallDrawer.js';
 import { Walkthrough } from './components/Walkthrough.js';
 import { SetupChecklistHost } from './components/SetupChecklist.js';
 import { Toaster } from './components/Toaster.js';
@@ -137,7 +138,7 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
     <>
       <Routes>
         <Route path={APP_ROOT_ROUTE_PATH} element={null} />
-        <Route path={INBOX_ROUTE_PATH} element={<InboxView />} />
+        <Route path={INBOX_ROUTE_PATH} element={null} />
         <Route path={AGENTS_ROUTE_PATH} element={null} />
         <Route path={NEW_THREAD_ROUTE_PATH} element={null} />
         <Route path={THREAD_ROUTE_PATH} element={null} />
@@ -765,6 +766,7 @@ export function App() {
       <ThreadModalHost />
       <FavoriteAgentsDrawer />
       <NotificationsDrawer />
+      <HostInstallDrawer />
       <WalkthroughHost />
       <SetupChecklistHost />
       <WhatsNewModal />

@@ -33,6 +33,14 @@ function asVerifyResults(result: ProviderStatusResult): HarnessVerifyResult[] {
   });
 }
 
+function extraInstalledFromStatus(result: ProviderStatusResult): Record<string, boolean> {
+  const extra: Record<string, boolean> = {};
+  for (const row of result.extraInstalledAgents ?? []) {
+    extra[row.providerId] = row.installed;
+  }
+  return extra;
+}
+
 async function providerStatus(hub: HostHub, hostId?: string): Promise<ProviderStatusResult | null> {
   try {
     const resolved = hub.resolveHostId(hostId);
@@ -49,6 +57,18 @@ async function providerStatus(hub: HostHub, hostId?: string): Promise<ProviderSt
 export async function harnessVerify(hub: HostHub, hostId?: string): Promise<HarnessVerifyResult[]> {
   const status = await providerStatus(hub, hostId);
   return status ? asVerifyResults(status) : [];
+}
+
+export async function harnessVerifyBundle(hub: HostHub, hostId?: string): Promise<{
+  availability: HarnessVerifyResult[];
+  extraInstalled: Record<string, boolean>;
+}> {
+  const status = await providerStatus(hub, hostId);
+  if (!status) return { availability: [], extraInstalled: {} };
+  return {
+    availability: asVerifyResults(status),
+    extraInstalled: extraInstalledFromStatus(status)
+  };
 }
 
 export async function harnessDescriptors(hub: HostHub, hostId?: string): Promise<HarnessAdapterDescriptor[]> {

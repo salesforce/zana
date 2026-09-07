@@ -87,12 +87,7 @@ export async function runDoctor(
     cliError,
     defaultOrg: alias,
     org,
-    aliases: listed.map((row) => ({
-      alias: row.alias,
-      username: row.username,
-      kind: row.kind,
-      isDefault: row.isDefault
-    })),
+    aliases: listed,
     dxProject,
     projectRoot: settings.projectRoot.trim() || null,
     ...agent,
@@ -105,7 +100,7 @@ export function formatDoctor(report: DoctorReport): string {
     `CLI: ${report.cliOk ? report.cliVersion ?? 'ok' : report.cliError ?? 'missing'}`,
     `DX project: ${report.dxProject ? report.projectRoot ?? 'yes' : 'not detected'}`,
     `Target org: ${report.defaultOrg ?? '(none)'}`,
-    `Agent Script: compiler ${report.agentCompiler}${report.agentPluginOk ? ', sf agent ok' : ', sf agent missing'}${report.agentEvalOk ? ', run-eval ok' : ', run-eval missing'} (${report.agentBundleCount} .agent)`,
+    `Agentforce: compiler ${report.agentCompiler}${report.agentPluginOk ? ', sf agent ok' : ', sf agent missing'}${report.agentEvalOk ? ', run-eval ok' : ', run-eval missing'} (${report.agentBundleCount} .agent)`,
     `Agent CLI cwd: ${report.dxProject ? report.projectRoot ?? 'projectRoot' : '(no DX project)'}`,
     'Publish/activate: confirmation required (headless skipped)'
   ];
@@ -118,7 +113,7 @@ export function formatDoctor(report: DoctorReport): string {
   }
   if (report.aliases.length > 0) {
     lines.push('Aliases:');
-    for (const row of report.aliases.slice(0, 20)) {
+    for (const row of report.aliases) {
       lines.push(`  ${row.isDefault ? '*' : ' '} ${row.alias}  ${row.username}  ${row.kind}`);
     }
   }

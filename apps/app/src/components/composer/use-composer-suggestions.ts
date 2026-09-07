@@ -57,6 +57,11 @@ export function useComposerSuggestions(args: {
   const loadThreads = useThreads((state) => state.load);
   const [paths, setPaths] = useState<PathRow[]>([]);
   const [pluginMentions, setPluginMentions] = useState<TypeaheadSuggestion[]>([]);
+  const [searchedThreads, setSearchedThreads] = useState<Array<{
+    id: string;
+    projectId: string;
+    title: string | null;
+  }>>([]);
   const fetchedProviders = useMentionProviderRows();
   const providers = args.mentionProviders ?? fetchedProviders;
 
@@ -64,6 +69,32 @@ export function useComposerSuggestions(args: {
     if (args.trigger?.kind !== 'mention' || !args.projectId) return;
     void loadThreads();
   }, [args.projectId, args.trigger?.kind, loadThreads]);
+
+  useEffect(() => {
+    if (args.trigger?.kind !== 'mention' || args.trigger.char !== '@') return;
+    let cancelled = false;
+    void product.threads.search(args.trigger.query, args.projectId || undefined)
+      .then((body) => {
+        if (cancelled) return;
+        const rows = Array.isArray(body.threads) ? body.threads : [];
+        setSearchedThreads(rows.flatMap((row) => {
+          if (!row || typeof row !== 'object') return [];
+          const record = row as { id?: unknown; projectId?: unknown; title?: unknown };
+          if (typeof record.id !== 'string' || typeof record.projectId !== 'string') return [];
+          return [{
+            id: record.id,
+            projectId: record.projectId,
+            title: typeof record.title === 'string' ? record.title : null
+          }];
+        }));
+      })
+      .catch(() => {
+        if (!cancelled) setSearchedThreads([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [args.projectId, args.trigger?.char, args.trigger?.kind, args.trigger?.query]);
 
   useEffect(() => {
     if (args.trigger?.kind !== 'mention' || args.trigger.char !== '@' || !args.projectId) return;
@@ -138,19 +169,23 @@ export function useComposerSuggestions(args: {
       return plugin.slice(0, 8);
     }
     const projectNames = new Map(args.projects.map((project) => [project.id, project.name]));
-    const host = buildMentionSuggestions({
-      paths,
-      threads: threads.map((thread) => ({
+    const threadIndex = new Map<string, { id: string; projectId: string; title: string | null; projectName?: string | null }>();
+    for (const thread of [...threads, ...searchedThreads]) {
+      threadIndex.set(thread.id, {
         id: thread.id,
         projectId: thread.projectId,
         title: thread.title,
         projectName: projectNames.get(thread.projectId) ?? null
-      })),
+      });
+    }
+    const host = buildMentionSuggestions({
+      paths,
+      threads: [...threadIndex.values()],
       projects: args.projects,
       query: args.trigger.query
     });
     return [...plugin, ...host].slice(0, 8);
-  }, [args.commands, args.projects, args.trigger, paths, pluginMentions, threads]);
+  }, [args.commands, args.projects, args.trigger, paths, pluginMentions, searchedThreads, threads]);
 
   return {
     suggestions,

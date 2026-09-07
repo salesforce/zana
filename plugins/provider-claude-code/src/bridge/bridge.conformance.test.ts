@@ -7,29 +7,11 @@ import type {
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
-  formatConformanceReport,
-  runBridgeConformance,
-  type BridgeConformanceTransport,
-} from "@zana-ai/zcc-provider-bridge-protocol/conformance";
-import {
-  captureBridgeJsonRpcOutput,
-  type CapturedBridgeJsonRpcOutput,
-} from "@zana-ai/zcc-provider-bridge-protocol/testing";
-
-/**
- * The claude-code bridge's conformance run: drives the bridge through the
- * canonical Provider Bridge Protocol suite against a scripted in-process
- * Claude Agent SDK query (the exact seam the bridge tests use for hermetic
- * sessions: `vi.mock("@anthropic-ai/claude-agent-sdk")` replacing `query`,
- * while SdkSession, session options, and the whole bridge request surface
- * stay real) and asserts a fully green report.
- *
- * The scripted query answers every prompt with a streamed text delta first
- * (`stream_event`), then the full assistant message, then a success result —
- * so the suite exercises the translator's turn lifecycle, delta-first
- * item/started synthesis, and cross-resume id uniqueness (each canonical
- * session gets a fresh entropy-prefixed translator).
- */
+  experimental_captureBridgeJsonRpcOutput as captureBridgeJsonRpcOutput,
+  experimental_formatConformanceReport as formatConformanceReport,
+  experimental_runBridgeConformance as runBridgeConformance,
+} from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
+import type { CapturedBridgeJsonRpcOutput } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 
 const { forkSessionMock, queryMock } = vi.hoisted(() => ({
   forkSessionMock: vi.fn(),
@@ -45,12 +27,8 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 
 import { handleLine } from "./bridge.js";
 
-const CONFORMANCE_THREAD_ID = "thr_conformance_1";
-
-/** The prompt the kit's turn/settles-without-activity scenario sends. */
 const ZERO_WORK_PROMPT_TEXT = "/clear";
 
-/** Freeform provider fixture; the bridge translator narrows it by schema. */
 function asSdkMessage(message: Record<string, unknown>): SDKMessage {
   return message as unknown as SDKMessage;
 }
@@ -62,13 +40,6 @@ interface ScriptedClaudeQueryCall {
 
 let scriptedTurnCounter = 0;
 
-/**
- * A Claude SDK query whose message stream answers every consumed prompt with
- * one full scripted turn: a `stream_event` text delta (delta-first, so the
- * translator must synthesize item/started), the assistant message carrying
- * the final text plus usage, then a success result with usage and model
- * context-window data.
- */
 function createScriptedClaudeQuery(call: ScriptedClaudeQueryCall) {
   const sessionId =
     call.options.resume ?? call.options.sessionId ?? "scripted-session";
@@ -87,9 +58,6 @@ function createScriptedClaudeQuery(call: ScriptedClaudeQueryCall) {
 
   void (async () => {
     for await (const userMessage of call.prompt) {
-      // Claude handles `/clear` locally: a bare success result, no assistant
-      // message and no stream event, so nothing opens a bb turn (#1431). The
-      // kit's zero-work prompt reproduces exactly that shape.
       if (userMessage.message.content === ZERO_WORK_PROMPT_TEXT) {
         push(
           asSdkMessage({
@@ -195,55 +163,20 @@ beforeEach(() => {
   queryMock.mockImplementation((call: ScriptedClaudeQueryCall) =>
     createScriptedClaudeQuery(call),
   );
-  // forkSession mints a fresh session UUID for the forked branch (real SDK
-  // shape: `{ sessionId }`). The forked session resumes through queryMock like
-  // any other turn.
-  forkSessionMock.mockImplementation(async (sourceSessionId: string) => ({
-    sessionId: `${sourceSessionId}-fork`,
-  }));
+  forkSessionMock.mockImplementation((sessionId: string) =>
+    Promise.resolve({ sessionId: `${sessionId}-fork` }),
+  );
   output = captureBridgeJsonRpcOutput();
 });
 
-afterEach(async () => {
-  // Reap the session the kit leaves behind (its last scenario resumes and
-  // runs a turn) so no SDK session state outlives the test.
-  const cleanupId = 990_001;
-  handleLine(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      id: cleanupId,
-      method: "thread/stop",
-      params: {
-        threadId: CONFORMANCE_THREAD_ID,
-        providerThreadId: "conformance-cleanup",
-        intent: "release",
-        activeTurnId: null,
-      },
-    }),
-  );
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (output.messages.some((message) => message.id === cleanupId)) {
-      break;
-    }
-    await new Promise((resolveTick) => setTimeout(resolveTick, 20));
-  }
+afterEach(() => {
   output.restore();
   rmSync(workspaceDir, { recursive: true, force: true });
 });
 
 it("passes the canonical protocol suite against the scripted claude session", async () => {
-  let drained = 0;
-  const transport: BridgeConformanceTransport = {
-    send: (line) => handleLine(line),
-    takeMessages: () => {
-      const fresh = output.messages.slice(drained);
-      drained = output.messages.length;
-      return fresh;
-    },
-  };
-
   const report = await runBridgeConformance({
-    transport,
+    transport: { send: handleLine, takeMessages: output.takeMessages },
     providerId: "claude-code",
     session: {
       cwd: workspaceDir,
@@ -255,8 +188,6 @@ it("passes the canonical protocol suite against the scripted claude session", as
     timeoutMs: 10_000,
   });
 
-  // Keep the human-readable report visible in test output for diagnosing
-  // any regression.
   console.info(
     `claude-code bridge conformance:\n${formatConformanceReport(report)}`,
   );
@@ -271,12 +202,15 @@ it("passes the canonical protocol suite against the scripted claude session", as
     "rpc/non-json-ignored": "pass",
     "rpc/response-not-request": "pass",
     "handshake/initialize": "pass",
+    "skills/configure-declared": "pass",
     "session/start-identity": "pass",
     "turn/lifecycle": "pass",
     "events/schema-valid": "pass",
     "item/opens-before-delta": "pass",
     "stop/release-not-interrupted": "pass",
+    "session/resume-identity": "pass",
     "session/resume-id-uniqueness": "pass",
+    "session/fork-identity": "pass",
     "turn/settles-without-activity": "pass",
   });
 

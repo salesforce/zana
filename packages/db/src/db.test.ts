@@ -22,8 +22,12 @@ import {
   listLiveThreads,
   listThreadEvents,
   listVisibleConversationThreads,
+  listConversationThreadsByProject,
+  queryConversationThreads,
+  markDeferredThreadMessageFailed,
   maxConversationEventSequenceByThreadIds,
   openDatabase,
+  requeueDeferredThreadMessagesForThread,
   completeThread,
   threadOutputTail,
   unarchiveConversationThread,
@@ -168,6 +172,51 @@ describe('packages/db', () => {
     expect(liveIds).not.toContain(idle.id);
     expect(visibleIds).toEqual(expect.arrayContaining([live.id, idle.id, failed.id]));
     expect(listVisibleConversationThreads(db, { limit: 1 })).toHaveLength(1);
+  });
+
+  it('keeps hidden plugin forks out of the visible roster and queryable by origin', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-hidden-fork-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const parent = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Main'
+    });
+    const hidden = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Side',
+      status: 'idle',
+      originKind: 'fork',
+      originPluginId: 'side-chat',
+      visibility: 'hidden',
+      parentThreadId: parent.id
+    });
+    expect(hidden.originPluginId).toBe('side-chat');
+    expect(hidden.visibility).toBe('hidden');
+    expect(listVisibleConversationThreads(db).map((row) => row.id)).not.toContain(hidden.id);
+    expect(listConversationThreadsByProject(db, 'proj-1').map((row) => row.id)).not.toContain(hidden.id);
+    expect(
+      listConversationThreadsByProject(db, 'proj-1', false, { includeHidden: true }).map((row) => row.id)
+    ).toContain(hidden.id);
+    expect(
+      queryConversationThreads(db, {
+        includeHidden: true,
+        originKind: 'fork',
+        originPluginId: 'side-chat',
+        archived: false
+      }).map((row) => row.id)
+    ).toEqual([hidden.id]);
   });
 
   it('updates a conversation thread parent pointer', () => {
@@ -320,10 +369,30 @@ describe('packages/db', () => {
     createDeferredThreadMessage(db, { threadId: thread.id, kind: 'send', payload: '{"n":1}' });
     createDeferredThreadMessage(db, { threadId: thread.id, kind: 'send', payload: '{"n":2}' });
     expect(countDeferredThreadMessages(db, thread.id)).toBe(2);
-    expect(listDeferredThreadMessages(db, thread.id).map((row) => row.payload)).toEqual([
+    const listed = listDeferredThreadMessages(db, thread.id);
+    expect(listed.map((row) => row.payload)).toEqual([
       '{"n":1}',
       '{"n":2}'
     ]);
+    expect(listed[0]).toMatchObject({
+      status: 'queued',
+      paused: false,
+      sendAfter: null,
+      failureReason: null,
+      groupBoundaryId: null
+    });
+    const first = listed[0]!;
+    markDeferredThreadMessageFailed(db, { id: first.id, threadId: thread.id, reason: 'Thread is already active' });
+    expect(listDeferredThreadMessages(db, thread.id)[0]).toMatchObject({
+      status: 'failed',
+      failureReason: 'Thread is already active'
+    });
+    expect(requeueDeferredThreadMessagesForThread(db, thread.id)).toBe(1);
+    expect(listDeferredThreadMessages(db, thread.id)[0]).toMatchObject({
+      status: 'queued',
+      paused: false,
+      failureReason: null
+    });
   });
 
   it('deletes conversation events after a sequence', () => {

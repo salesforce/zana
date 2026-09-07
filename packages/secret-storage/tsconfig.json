@@ -1,0 +1,17 @@
+{
+  "extends": [
+    "@zana-ai/zcc-tsconfig/base.json",
+    "@zana-ai/zcc-tsconfig/typecheck-overrides.json"
+  ],
+  "compilerOptions": {
+    "rootDir": ".",
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src",
+    "test",
+    "tests"
+  ]
+}

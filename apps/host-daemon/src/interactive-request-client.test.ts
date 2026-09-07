@@ -57,6 +57,27 @@ describe('interactive request HTTP client', () => {
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer key-1');
   });
 
+  it('keeps the pairing session prefix on the interactive-request URL', async () => {
+    const fetchFn = vi.fn(async (url: string) => {
+      expect(url).toBe(
+        'https://zcc.example/t/zcrs_abcdefghijklmnopqr/internal/hosts/interactive-request'
+      );
+      return jsonResponse(200, {
+        outcome: 'created',
+        interactionId: 'pint_1',
+        status: 'pending'
+      });
+    });
+    const client = createInteractiveRequestHttpClient({
+      serverUrl: 'https://zcc.example/t/zcrs_abcdefghijklmnopqr',
+      hostId: 'host-1',
+      hostKey: 'key-1',
+      sessionId: 'inst-1',
+      fetchFn: fetchFn as unknown as typeof fetch
+    });
+    await expect(client.registerRequest(request())).resolves.toMatchObject({ outcome: 'created' });
+  });
+
   it('does not retry a logical 409 reject', async () => {
     const fetchFn = vi.fn(async () => jsonResponse(409, { error: 'conflict' }));
     const client = createInteractiveRequestHttpClient({

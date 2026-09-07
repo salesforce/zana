@@ -2,13 +2,13 @@
 @import url('../../../../plugins/plugin-guide/plugin-guide.css');
 
 :root {
-  --bg-base: #0b0f15;
-  --bg-panel: #10151c;
-  --bg-elevated: #161c25;
-  --bg-hover: #1a212c;
-  --bg-input: #0d1117;
-  --border: #1f2731;
-  --border-strong: #2a3340;
+  --bg-base: #181818;
+  --bg-panel: #1e1e1e;
+  --bg-elevated: #242424;
+  --bg-hover: #2a2a2a;
+  --bg-input: #1c1c1c;
+  --border: #2e2e2e;
+  --border-strong: #3a3a3a;
   --text-primary: #e6edf3;
   --text-bright: #ffffff;
   --text-muted: #8b949e;
@@ -2138,6 +2138,10 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
   min-height: 0;
 }
 
+.project-scoped-nav .project-terminals {
+  margin: 1px 0 4px 8px;
+}
+
 .list-pane {
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
@@ -2149,9 +2153,11 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
      height (so the inbox list couldn't scroll). Pin it to the grid track. */
   min-height: 0;
   position: relative;
-  /* Lift the pane above the workspace grid item so the resize handle, which
-     overhangs the shared border, isn't painted underneath the terminal /
-     explorer surface (which would make it un-grabbable). */
+  /* Lift the pane above the adjacent detail column so the resize handle, which
+     overhangs the shared border, isn't painted underneath. This z-index must
+     stay INSIDE a content-track stacking context (`.split-workspace` /
+     `.inbox-view`); at the shell level it ties the sidebar (`z-index: 1`) and
+     paints over the left rail. */
   z-index: 1;
 }
 
@@ -2905,8 +2911,12 @@ body.resizing-col {
   padding: 6px 12px 10px;
   border-bottom: 1px solid var(--border);
 }
-.focus-project-name {
+.focus-project-header .project-meta--inline {
   flex: 1;
+  min-width: 0;
+}
+.focus-project-name {
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
@@ -3242,6 +3252,9 @@ body.resizing-col {
   width: min(1080px, 94vw);
   height: 94vh;
   max-height: 94vh;
+  /* Override `.modal`'s --bg-elevated so the thread inspector is a white
+     (panel) surface in light theme, not the gray page wash. */
+  background: var(--bg-panel);
   transition: width 0.15s ease, height 0.15s ease, max-height 0.15s ease, border-radius 0.15s ease;
 }
 
@@ -4247,6 +4260,21 @@ body.resizing-col {
   align-items: center;
   gap: 5px;
   white-space: nowrap;
+}
+
+/* Plugin create-project dialogs own their submit buttons, so the host Modal
+   has no footer. Flush this last row to the shell edges so it reads as one. */
+.plugin-create-project-modal .modal-body {
+  padding-bottom: 0;
+}
+
+.plugin-create-project-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 2px -14px 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border, #30363d);
 }
 
 /* --- Import from Git dialog --- */
@@ -7039,6 +7067,23 @@ body.resizing-col {
   border-top: 1px solid var(--border);
 }
 
+.settings-keyboard-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-keyboard-chord {
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+
 .settings-list-name {
   font-family: 'JetBrains Mono', 'SF Mono', monospace;
   font-size: 12px;
@@ -7922,15 +7967,28 @@ body.resizing-col .ext-hub-resizer::before {
   margin-bottom: 12px;
 }
 .create-plugin-examples {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 8px;
-  margin: 0 0 16px;
+  margin: 12px 0 0;
 }
 .create-plugin-examples-row {
+  display: contents;
+}
+.create-plugin-examples .settings-btn {
+  justify-content: flex-start;
+  text-align: left;
+  min-height: 48px;
+  white-space: normal;
+  height: auto;
+}
+.ext-market-create {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
 }
 .ext-market-tag {
   appearance: none;
@@ -11962,6 +12020,10 @@ body.resizing-col .explorer-resizer::after {
   overflow: hidden;
   display: grid;
   grid-template-columns: max(var(--inbox-list-min), var(--col-list)) minmax(0, 1fr);
+  /* Trap the inner list pane z-index so the Feed list cannot paint over the
+     left rail. The sidebar is a sibling stacking context at z-index 1; without
+     this, the list is later in the tree and wins. */
+  isolation: isolate;
 }
 
 .inbox-view-detail {
@@ -11974,7 +12036,7 @@ body.resizing-col .explorer-resizer::after {
 
 /* ── Inbox Overview — the detail-column landing page (no entry selected) ──
    Holds the AI summary card (lifted out of the narrow list column) plus a
-   set of category rollups (Questions / Reports / Ideas / Goals). Rendered by
+   set of category rollups (Reports / Ideas / Goals). Rendered by
    InboxOverview.tsx. */
 .inbox-overview {
   flex: 1;
@@ -12030,11 +12092,8 @@ body.resizing-col .explorer-resizer::after {
   font-variant-numeric: tabular-nums;
 }
 
-/* Category accents — a subtle tint on the header icon/border so the four
-   rollups are distinguishable at a glance. Questions lead with a warning hue. */
-.inbox-overview-rollup.tone-question .inbox-overview-rollup-icon {
-  color: var(--accent-amber, #d99a2b);
-}
+/* Category accents — a subtle tint on the header icon/border so the
+   rollups are distinguishable at a glance. */
 .inbox-overview-rollup.tone-report .inbox-overview-rollup-icon {
   color: var(--accent-blue);
 }
@@ -12072,8 +12131,7 @@ body.resizing-col .explorer-resizer::after {
   background: color-mix(in srgb, var(--bg-hover) 80%, transparent);
 }
 
-/* Title + optional context stacked; the wrapper takes the flex space so the
-   timestamp/arrow stay right-aligned. */
+/* Title takes the flex space so the timestamp/arrow stay right-aligned. */
 .inbox-overview-row-main {
   flex: 1;
   min-width: 0;
@@ -12084,16 +12142,6 @@ body.resizing-col .explorer-resizer::after {
 
 .inbox-overview-row-title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* One-line context under a question/report row title in the overview rollups. */
-.inbox-overview-row-context {
-  min-width: 0;
-  font-size: 11px;
-  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -12519,13 +12567,13 @@ body.resizing-col .explorer-resizer::after {
   max-width: 340px;
 }
 
-/* Empty fleet board: the AuroraGrid fills this pane. */
+/* Empty fleet board: the board-level AuroraGrid shows through. */
 .agents-board-empty--launch {
   overflow: auto;
   gap: 20px;
   justify-content: center;
   padding: 48px 24px 56px;
-  background: var(--bg-base);
+  background: transparent;
 }
 
 .agents-board-empty--launch .agents-board-empty-copy {
@@ -14323,6 +14371,30 @@ body.resizing-col .explorer-resizer::after {
   margin: 0 0 10px;
 }
 
+.inbox-md img,
+.inbox-md-img {
+  display: block;
+  max-width: min(100%, 28rem);
+  max-height: 20rem;
+  margin: 8px 0;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.inbox-md-img-open {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.inbox-md-img-open .inbox-md-img {
+  margin: 8px 0;
+}
+
 .inbox-md ul {
   margin: 0 0 10px;
   padding-left: 22px;
@@ -15038,6 +15110,25 @@ body.resizing-col .explorer-resizer::after {
    the shared 1040px so cadence, project, next-run, and actions sit on one row. */
 .scheduler-panel .settings-inner {
   max-width: min(100%, 1040px);
+  position: relative;
+  z-index: 1;
+}
+
+/* Pin AuroraGrid to the panel (same as Plugins): the inner column scrolls,
+   the grid stays put. */
+.scheduler-panel.aurora-host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.scheduler-panel.aurora-host .settings-inner {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
 }
 
 /* Global Scheduler nav owns the full content track (no inner list rail).
@@ -16385,6 +16476,17 @@ body.resizing-col .explorer-resizer::after {
   flex-direction: column;
   gap: 10px;
   margin-bottom: 12px;
+}
+
+.skills-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skills-toolbar-row .skills-search {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .skills-search {
@@ -25813,7 +25915,10 @@ body.resizing-col .library-split-resizer::after {
   grid-template-columns: 260px minmax(0, 1fr);
 }
 
-.agent-monitor--empty {
+/* Two-class selector so a later `.agent-monitor { display: grid }` (there is a
+   duplicate monitor block further down) cannot spread the icon / title / copy
+   across the 3 live-monitor columns. */
+.agent-monitor.agent-monitor--empty {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -25823,12 +25928,12 @@ body.resizing-col .library-split-resizer::after {
   text-align: center;
   padding: 32px;
 }
-.agent-monitor--empty h4 {
+.agent-monitor.agent-monitor--empty h4 {
   margin: 4px 0 0;
   font-size: 14px;
   color: var(--text-primary);
 }
-.agent-monitor--empty p {
+.agent-monitor.agent-monitor--empty p {
   margin: 0;
   font-size: 12px;
   max-width: 320px;
@@ -26817,6 +26922,33 @@ body.resizing-col .library-split-resizer::after {
 
 .notifications-drawer-view-all:hover {
   color: var(--text-primary);
+}
+
+.host-install-drawer {
+  width: 380px;
+  z-index: 41;
+}
+
+.host-install-drawer-log {
+  flex: 1 1 auto;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-muted);
+  background: var(--bg-base);
+}
+
+.host-install-drawer-error {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--danger);
 }
 
 /* ============================================================================
@@ -29540,11 +29672,16 @@ body.resizing-col .library-split-resizer::after {
 
 /* New Chat (`nav === 'home'`): ListPane returns null, so without an explicit
  * span the .settings-panel auto-flows into a narrow column. Center the
- * composer column like `.new-thread-view`. Home, Plugins, New Thread, and
- * empty Agents all host AuroraGrid via `.aurora-host`. */
+ * composer column like `.new-thread-view`. Home, Plugins, New Thread,
+ * Scheduler, and Agents all host AuroraGrid via `.aurora-host`. */
 .aurora-host {
   position: relative;
   isolation: isolate;
+}
+
+.agents-board.aurora-host > :not(.aurora-grid) {
+  position: relative;
+  z-index: 1;
 }
 
 .home-panel {
@@ -29609,7 +29746,7 @@ body.resizing-col .library-split-resizer::after {
 }
 
 /* AuroraGrid: a low-contrast grid, slow blue/gold drift, and occasional circuit
- * traces. Hosts (New Chat, New Thread, Plugins, empty Agents) add
+ * traces. Hosts (New Chat, New Thread, Plugins, Scheduler, Agents) add
  * `.aurora-host`. Decorative; respects reduced-motion. */
 .aurora-host .aurora-grid {
   position: absolute;
@@ -30007,6 +30144,8 @@ textarea.ui-command-composer-input {
   margin: 0;
   border-bottom: 0;
   border-radius: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .thread-composer-dock:has(.thread-composer-stack-card) .thread-composer-stack-card:first-child {
@@ -30014,16 +30153,26 @@ textarea.ui-command-composer-input {
   border-top-right-radius: 12px;
 }
 
-.thread-composer-dock:has(.thread-composer-stack-card) .thread-command-composer .ui-command-composer {
+.thread-composer-dock:has(.thread-composer-stack-card) .thread-command-composer .ui-command-composer,
+.thread-composer-dock:has(> .thread-workspace-banner + .thread-command-composer) .thread-command-composer .ui-command-composer {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
 }
 
+.thread-composer-dock:has(> .thread-workspace-banner + .thread-command-composer) .thread-command-composer .ui-command-composer {
+  box-shadow: none;
+}
+
 .thread-prompt-mode-card,
-.thread-composer-dock .thread-todo-card {
+.thread-composer-dock .thread-todo-card,
+.thread-composer-dock .thread-background-commands-card {
   border: 1px solid var(--border);
   background: var(--bg-elevated, var(--bg-background));
   overflow: hidden;
+}
+
+.thread-background-commands-card .thread-queued-card-header {
+  padding: 8px 16px 4px;
 }
 
 .thread-stack-card-header {
@@ -30425,6 +30574,7 @@ textarea.ui-command-composer-input {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elevated, var(--bg-panel));
+  cursor: zoom-in;
 }
 
 .composer-image-thumb-preview img {
@@ -30920,14 +31070,16 @@ textarea.ui-command-composer-input {
   box-shadow: 0 10px 28px rgb(0 0 0 / 12%);
   color: var(--text-muted, var(--ink-muted));
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
   transform: translateY(4px);
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
 }
 
 .thread-context-meter:hover .thread-context-meter-card,
 .thread-context-meter:focus-within .thread-context-meter-card {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
   transform: none;
 }
@@ -30959,6 +31111,29 @@ textarea.ui-command-composer-input {
   height: 100%;
   border-radius: inherit;
   background: var(--text-primary, #1d1d1f);
+}
+
+.thread-context-meter-compact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-hover, var(--bg-2)) 72%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.thread-context-meter-compact:hover,
+.thread-context-meter-compact:focus-visible {
+  background: color-mix(in srgb, var(--bg-hover, var(--bg-2)) 100%, transparent);
+  outline: none;
 }
 
 .thread-voice-bar {
@@ -31051,7 +31226,53 @@ textarea.ui-command-composer-input {
   cursor: default;
 }
 
+.composer-remote-host-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+}
+
+.composer-remote-host-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 24ch;
+  font-size: 12px;
+}
+
+.composer-remote-host-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.composer-remote-host-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.composer-remote-host-status.is-online {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.composer-remote-host-status.is-offline {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
 .thread-command-host-action {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
 }
 
@@ -31076,6 +31297,35 @@ textarea.ui-command-composer-input {
 .thread-command-host-action-btn:not(:disabled):hover,
 .thread-command-host-copy:hover {
   color: var(--text);
+}
+
+.thread-command-host-action-btn.is-cta,
+.thread-command-host-action-btn.is-install {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-blue, #007aff);
+  color: #fff;
+  font-weight: 600;
+  animation: composer-install-breathe 2.8s ease-in-out infinite;
+}
+
+.thread-command-host-action-btn.is-cta:hover,
+.thread-command-host-action-btn.is-install:hover {
+  color: #fff;
+  animation: none;
+  filter: brightness(1.08);
+}
+
+@keyframes composer-install-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-command-host-action-btn.is-cta,
+  .thread-command-host-action-btn.is-install {
+    animation: none;
+  }
 }
 
 .thread-command-composer .thread-command-stop {
@@ -31169,6 +31419,12 @@ textarea.ui-command-composer-input {
   background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
   color: var(--danger, #e5484d);
   font-size: 13px;
+}
+
+.thread-command-upload {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--ink-muted);
   font-weight: 600;
 }
 
@@ -31384,6 +31640,11 @@ textarea.thread-command-editor {
   line-height: 1.25;
 }
 
+.home-agent-composer .thread-command-composer .thread-command-runtime-picker .launch-model-picker-trigger,
+.thread-command-composer .thread-command-runtime-picker .launch-model-picker-trigger {
+  max-width: 292px;
+}
+
 .home-agent-composer .thread-command-composer .launch-model-picker-trigger:hover:not(:disabled),
 .thread-command-composer .launch-model-picker-trigger:hover:not(:disabled) {
   background: transparent;
@@ -31450,9 +31711,13 @@ textarea.thread-command-editor {
   width: 100%;
   height: 100%;
   grid-column: 2 / -1;
+  /* Grid item with a non-auto z-index creates a stacking context, so nested
+     list-pane z-index (Inbox) cannot paint over the sidebar. */
+  z-index: 0;
 }
 
 .split-workspace-host {
+  position: relative;
   display: flex;
   flex-direction: row;
   flex: 1 1 auto;
@@ -31511,12 +31776,11 @@ textarea.thread-command-editor {
   overflow: hidden;
 }
 
-.split-pane > *:not(.split-pane-scrim) {
+.split-pane > *:not(.split-pane-scrim):not(.split-pane-bar) {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   width: 100%;
-  height: 100%;
 }
 
 .split-pane.is-maximized {
@@ -31541,13 +31805,70 @@ textarea.thread-command-editor {
   background: color-mix(in oklab, var(--bg-base) 30%, transparent);
 }
 
-.split-pane-empty {
+.split-pane-bar {
+  position: relative;
+  z-index: 21;
+  flex: 0 0 36px;
   display: flex;
   align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+}
+
+.split-pane-bar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: grab;
+  user-select: none;
+}
+
+.split-pane-bar-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.split-pane-header-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.split-pane-empty-well {
+  position: relative;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.split-pane-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
+  gap: 16px;
   flex: 1;
   color: var(--text-muted);
   padding: 24px;
+}
+
+.split-pane-empty-copy {
+  margin: 0;
 }
 
 .split-plugin-pane {
@@ -31696,14 +32017,37 @@ textarea.thread-command-editor {
 .split-workspace .thread-detail-view,
 .split-workspace .agents-board,
 .split-workspace .scheduler-page,
+.split-workspace .inbox-view,
 .split-workspace .module-panel-host,
-.split-workspace .split-plugin-pane {
+.split-workspace .split-plugin-pane,
+.split-workspace .project-mode-pane {
   grid-column: auto;
   flex: 1 1 auto;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
+}
+
+.project-mode-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.project-mode-pane > .project-topbar {
+  flex-shrink: 0;
+}
+
+.project-mode-pane > .project-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.project-mode-pane > .statusbar {
+  flex-shrink: 0;
 }
 
 .agent-modal-body > .agent-session-view,
@@ -31819,8 +32163,7 @@ textarea.thread-command-editor {
   gap: 12px;
 }
 
-.thread-detail-column > .thread-command-composer,
-.thread-detail-column > .thread-workspace-banner {
+.thread-detail-column > .thread-composer-dock {
   width: 100%;
   flex: 0 0 auto;
 }
@@ -31988,9 +32331,11 @@ textarea.thread-command-editor {
 }
 
 .thread-detail-overflow-menu {
-  /* Keep the shared `.tab-context-menu` fixed stack. Absolute positioning let
-     the timeline (a later flex sibling) steal clicks on Rename / Fork / Archive. */
-  z-index: 80;
+  /* Portaled to document.body so the timeline (a later flex sibling) cannot
+     steal clicks. Sit above `.modal-backdrop` (100) so the inspector modal
+     does not cover Rename / Fork / Archive; stay below setup/tour (200). */
+  z-index: 110;
+  box-sizing: border-box;
 }
 
 .thread-status-badge {
@@ -32037,12 +32382,18 @@ textarea.thread-command-editor {
 .thread-detail-timeline {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-x: hidden;
+  /* clip, not hidden: hidden on one axis makes this a sticky containing
+   * block that is not the vertical scroller, so position:sticky never pins. */
+  overflow-x: clip;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  /* Block, not flex: sticky descendants inside a flex scrollport do not pin
+   * in Chromium (Electron). Gap is reproduced with adjacent-sibling margins. */
+  display: block;
   width: 100%;
+}
+
+.thread-detail-timeline > * + * {
+  margin-top: 12px;
 }
 
 /*
@@ -32095,12 +32446,107 @@ textarea.thread-command-editor {
   z-index: 1;
 }
 
-.thread-timeline-item.is-user {
-  align-items: flex-end;
-}
-
+.thread-timeline-item.is-user,
 .thread-timeline-item.is-assistant {
   align-items: flex-start;
+}
+
+.thread-timeline-current-turn {
+  display: block;
+  width: 100%;
+}
+
+.thread-timeline-current-turn > * + * {
+  margin-top: 12px;
+}
+
+.thread-timeline-current-turn > .thread-timeline-item.is-user {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--bg-base);
+  padding-bottom: 8px;
+}
+
+.thread-plan-execution {
+  margin-top: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.thread-plan-execution-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-plan-execution-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.thread-plan-execution-count {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.thread-plan-execution-body {
+  margin-top: 6px;
+}
+
+.thread-plan-execution-current {
+  margin: 0;
+  font-size: 13px;
+}
+
+.thread-plan-execution-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thread-plan-execution-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.thread-plan-execution-item.is-done {
+  opacity: 0.55;
+}
+
+.thread-plan-execution-glyph {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.thread-plan-execution-item-text {
+  min-width: 0;
+}
+
+.thread-detail-view--modal .thread-timeline-current-turn > .thread-timeline-item.is-user {
+  background: var(--bg-panel);
 }
 
 .thread-timeline-row {
@@ -32108,23 +32554,32 @@ textarea.thread-command-editor {
   flex-direction: column;
 }
 
-.thread-timeline-row.is-user,
 .thread-timeline-row.is-assistant {
   position: relative;
   width: fit-content;
-  max-width: 70%;
+  max-width: 100%;
+}
+
+.thread-timeline-row.is-user {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
 }
 
 .thread-timeline-bubble {
   min-width: 0;
 }
 
-.thread-timeline-row.is-user .thread-timeline-bubble,
 .thread-timeline-row.is-assistant .thread-timeline-bubble {
   padding: 8px 14px;
   border-radius: 16px;
+}
+
+.thread-timeline-row.is-user .thread-timeline-bubble {
+  padding: 10px 14px;
   border: 1px solid var(--border);
-  background: var(--bg-hover);
+  border-radius: 12px;
+  background: var(--bg-elevated, var(--bg-background));
 }
 
 .thread-timeline-row .inbox-md,
@@ -32243,12 +32698,14 @@ textarea.thread-command-editor {
 }
 
 .thread-timeline-nested {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: block;
   margin: 6px 0 0 6px;
   padding-left: 12px;
   border-left: 1px solid color-mix(in srgb, var(--ink-muted) 28%, transparent);
+}
+
+.thread-timeline-nested > * + * {
+  margin-top: 8px;
 }
 
 .thread-timeline-work.is-compact {
@@ -32320,10 +32777,42 @@ textarea.thread-command-editor {
   background: transparent;
 }
 
-.thread-timeline-system {
+.thread-list-indicator {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--ink-muted);
+}
+
+.thread-list-indicator.is-unread-error {
+  background: var(--danger);
+}
+
+.thread-list-indicator.is-waiting-for-input {
+  background: var(--danger);
+}
+
+.thread-list-indicator.is-plan-mode,
+.thread-list-indicator.is-workflow,
+.thread-list-indicator.is-background-command,
+.thread-list-indicator.is-runtime {
+  background: var(--accent, #3b82f6);
+}
+
+.thread-timeline-system-title {
+  color: var(--ink);
+}
+
+.thread-timeline-system-detail {
   margin: 0;
+  padding: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
   color: var(--ink-muted);
-  font-size: 13px;
+  font: inherit;
+  font-size: 12px;
 }
 
 .thread-working-indicator {
@@ -32373,19 +32862,8 @@ textarea.thread-command-editor {
   border-radius: 8px;
 }
 
-.thread-todo-card ul {
-  margin: 0;
+.thread-todo-card .thread-todo-checklist {
   padding: 8px 12px 10px;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
-}
-
-.thread-todo-card li[data-status="completed"] {
-  color: var(--ink-muted);
-  text-decoration: line-through;
 }
 
 .thread-timeline-work.is-dim,
@@ -32401,13 +32879,11 @@ textarea.thread-command-editor {
 
 .thread-timeline-work-chevron {
   flex: 0 0 auto;
+  display: block;
   color: var(--ink-muted);
+  transform-origin: center;
+  transform-box: fill-box;
   transition: transform 0.12s ease;
-}
-
-.thread-timeline-work.is-open .thread-timeline-work-chevron,
-.thread-timeline-work[open] .thread-timeline-work-chevron {
-  transform: rotate(90deg);
 }
 
 .thread-timeline-work-detail {
@@ -32511,14 +32987,7 @@ textarea.thread-command-editor {
   pointer-events: none;
 }
 
-.thread-timeline-row.is-user .thread-message-actions {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin: 0;
-  padding: 6px 0 4px;
-}
-
+.thread-timeline-row.is-user .thread-message-actions,
 .thread-timeline-row.is-assistant .thread-message-actions {
   position: absolute;
   top: 100%;
@@ -32559,7 +33028,7 @@ textarea.thread-command-editor {
 }
 
 .thread-timeline-row.is-editing {
-  width: min(36rem, 100%);
+  width: 100%;
   max-width: 100%;
 }
 
@@ -32792,15 +33261,192 @@ textarea.thread-command-editor {
 .thread-queued-list {
   list-style: none;
   margin: 0;
-  padding: 0 12px 8px;
+  padding: 0 16px 8px;
 }
 
 .thread-queued-item {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   padding: 6px 0;
   border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.thread-queued-ghosts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.thread-queued-ghosts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.thread-queued-ghosts .thread-queued-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+}
+
+.thread-queued-ghost {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-background, var(--bg-elevated));
+  opacity: 0.55;
+  box-shadow: 0 -4px 12px -4px rgb(0 0 0 / 18%);
+}
+
+.thread-queued-ghost:hover,
+.thread-queued-ghost:focus-within {
+  opacity: 0.78;
+}
+
+.thread-queued-ghost-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.thread-queued-item-text {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary, var(--ink));
+}
+
+.thread-queued-ghost-stop {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.thread-queued-ghost:hover .thread-queued-ghost-stop,
+.thread-queued-ghost:focus-within .thread-queued-ghost-stop,
+.thread-queued-ghost-stop:focus-visible {
+  opacity: 1;
+}
+
+.thread-queued-ghost-stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.thread-queued-ghost-stop:disabled {
+  cursor: progress;
+}
+
+@media (hover: none) {
+  .thread-queued-ghost-stop {
+    opacity: 1;
+  }
+}
+
+.thread-queued-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px 4px;
+  position: relative;
+  z-index: 1;
+}
+
+.thread-queued-card-title {
+  display: flex;
+  align-items: baseline;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 6px;
+}
+
+.thread-queued-card-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.thread-queued-card-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.thread-queued-card-paused {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+
+.thread-queued-flush {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 2;
+  margin: 0;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink-muted) 10%, transparent);
+  color: var(--text-primary, var(--ink));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.thread-queued-flush:hover {
+  background: color-mix(in srgb, var(--ink-muted) 16%, transparent);
+}
+
+.thread-queued-flush[aria-busy='true'] {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.thread-queued-failure {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.thread-queued-card-header + .thread-queued-failure {
+  padding: 0 12px 4px;
 }
 
 .thread-queued-item.is-dragging {
@@ -32834,7 +33480,6 @@ textarea.thread-command-editor {
   color: var(--ink-muted);
 }
 
-.thread-prompt-context-review,
 .thread-prompt-context-pr {
   font-size: 12px;
 }
@@ -32879,24 +33524,25 @@ textarea.thread-command-editor {
   cursor: zoom-in;
 }
 
-.thread-image-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
+.modal.thread-image-modal {
+  width: min(960px, 94vw);
+  max-height: 92vh;
+  background: var(--bg-panel);
+}
+
+.thread-image-modal-body {
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, #000 55%, transparent);
+  overflow: auto;
+  background: color-mix(in srgb, var(--text-primary) 4%, var(--bg-panel));
 }
 
-.thread-image-lightbox img {
-  max-width: 90vw;
-  max-height: 90vh;
-}
-
-.thread-image-lightbox-close {
-  position: absolute;
-  top: 16px;
-  right: 16px;
+.thread-image-modal-body img {
+  display: block;
+  max-width: 100%;
+  max-height: min(80vh, 720px);
+  object-fit: contain;
+  border-radius: 6px;
 }
 
 .thread-file-change-diff {
@@ -32918,19 +33564,32 @@ textarea.thread-command-editor {
 }
 
 .thread-workspace-banner {
+  margin: 0;
   width: 100%;
-  padding: 2px 8px;
-  border: 1px solid transparent;
-  border-radius: 12px;
+  box-sizing: border-box;
+  padding: 6px 12px 4px;
   font-size: 13px;
   color: var(--text-muted);
 }
 
+.thread-composer-dock > .thread-workspace-banner {
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  background: var(--bg-background, var(--bg-elevated));
+}
+
+.thread-composer-dock > .thread-workspace-banner:first-child {
+  box-shadow: 0 -4px 12px -4px rgb(0 0 0 / 18%);
+}
+
+.thread-composer-dock:has(.thread-composer-stack-card) > .thread-workspace-banner {
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .thread-workspace-banner.is-open {
-  padding: 8px 10px 6px;
-  border-color: var(--border);
-  background: var(--bg-elevated);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+  padding: 8px 12px 6px;
 }
 
 .thread-workspace-banner-summary {
@@ -32972,26 +33631,23 @@ textarea.thread-command-editor {
 
 .thread-workspace-review {
   margin-left: auto;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-elevated, var(--bg-2));
+  padding: 2px 4px;
+  border: 0;
+  background: none;
   color: var(--text-muted);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 
 .thread-workspace-review:hover {
-  background: var(--bg-hover);
   color: var(--text-primary);
-  border-color: var(--border-strong);
 }
 
 .thread-workspace-files {
   list-style: none;
   margin: 4px 0 0;
-  padding: 0 0 4px 18px;
+  padding: 0 4px 6px 16px;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -33234,21 +33890,15 @@ textarea.thread-command-editor {
   padding: 12px;
 }
 
-.thread-plan-panel-prompt,
 .thread-plan-panel-empty,
-.thread-plan-panel-file {
+.thread-plan-panel-file,
+.thread-plan-panel-mismatch,
+.thread-plan-panel-progress,
+.thread-plan-panel-processing,
+.thread-plan-panel-prompt {
   margin: 0;
   font-size: 12px;
   color: var(--text-muted, var(--ink-muted));
-}
-
-.thread-plan-panel-prompt {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-card, var(--bg-elevated, var(--bg-background)));
-  color: var(--text-primary, var(--ink));
-  white-space: pre-wrap;
 }
 
 .thread-plan-panel-body .inbox-md {
@@ -33283,19 +33933,57 @@ textarea.thread-command-editor {
   color: var(--ink-muted, var(--text-dim));
 }
 
-.thread-plan-panel-todos ul {
+.thread-todo-checklist {
   margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
+  gap: 6px;
 }
 
-.thread-plan-panel-todos li[data-status="completed"] {
+.thread-todo-checklist-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.thread-todo-checklist-glyph {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-todo-checklist-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.thread-todo-checklist-item[data-status="in_progress"],
+.thread-todo-checklist-item[data-status="active"] {
+  background: color-mix(in srgb, var(--accent, var(--accent-blue)) 12%, transparent);
+}
+
+.thread-todo-checklist-item[data-status="in_progress"] .thread-todo-checklist-glyph,
+.thread-todo-checklist-item[data-status="active"] .thread-todo-checklist-glyph {
+  color: var(--accent, var(--accent-blue));
+}
+
+.thread-todo-checklist-item[data-status="completed"] {
   color: var(--ink-muted);
+}
+
+.thread-todo-checklist-item[data-status="completed"] .thread-todo-checklist-text {
   text-decoration: line-through;
+}
+
+.thread-todo-checklist-item[data-status="blocked"] .thread-todo-checklist-glyph {
+  color: var(--danger, var(--accent-red, #c44));
 }
 
 .thread-info-row {
@@ -34315,10 +35003,14 @@ textarea.thread-command-editor {
   overflow-wrap: anywhere;
 }
 
-.thread-diff-hunk-code code {
+.thread-diff-hunk-code code,
+.thread-diff-hunk-code code.hljs {
   font: inherit;
   background: none;
   padding: 0;
+  /* github-dark.css sets `.hljs { color: #c9d1d9 }` globally. Inherit the
+     panel ink so untokenized identifiers stay readable on light add/del rows. */
+  color: var(--text-primary);
 }
 
 .thread-diff-hunk-line.is-add,
@@ -34329,6 +35021,77 @@ textarea.thread-command-editor {
 .thread-diff-hunk-line.is-del,
 .thread-diff-hunk-table .is-del {
   background: color-mix(in srgb, var(--danger, #f85149) 16%, transparent);
+}
+
+/* Light theme: github-dark tokens wash out on pale add/del rows. Use the
+   github-light palette (same as PDF export) and GitHub's solid line tints. */
+:root[data-theme='light'] .thread-diff-hunk-line.is-add,
+:root[data-theme='light'] .thread-diff-hunk-table .is-add {
+  background: #dafbe1;
+}
+
+:root[data-theme='light'] .thread-diff-hunk-line.is-del,
+:root[data-theme='light'] .thread-diff-hunk-table .is-del {
+  background: #ffebe9;
+}
+
+:root[data-theme='light'] .thread-diff-hunks .hljs,
+:root[data-theme='light'] .thread-diff-hunks .hljs-subst {
+  color: #24292e;
+}
+
+:root[data-theme='light'] .thread-diff-hunks .hljs-doctag,
+:root[data-theme='light'] .thread-diff-hunks .hljs-keyword,
+:root[data-theme='light'] .thread-diff-hunks .hljs-meta .hljs-keyword,
+:root[data-theme='light'] .thread-diff-hunks .hljs-template-tag,
+:root[data-theme='light'] .thread-diff-hunks .hljs-template-variable,
+:root[data-theme='light'] .thread-diff-hunks .hljs-type,
+:root[data-theme='light'] .thread-diff-hunks .hljs-variable.language_ {
+  color: #d73a49;
+}
+
+:root[data-theme='light'] .thread-diff-hunks .hljs-title,
+:root[data-theme='light'] .thread-diff-hunks .hljs-title.class_,
+:root[data-theme='light'] .thread-diff-hunks .hljs-title.class_.inherited__,
+:root[data-theme='light'] .thread-diff-hunks .hljs-title.function_ {
+  color: #6f42c1;
+}
+
+:root[data-theme='light'] .thread-diff-hunks .hljs-attr,
+:root[data-theme='light'] .thread-diff-hunks .hljs-attribute,
+:root[data-theme='light'] .thread-diff-hunks .hljs-literal,
+:root[data-theme='light'] .thread-diff-hunks .hljs-meta,
+:root[data-theme='light'] .thread-diff-hunks .hljs-number,
+:root[data-theme='light'] .thread-diff-hunks .hljs-operator,
+:root[data-theme='light'] .thread-diff-hunks .hljs-variable,
+:root[data-theme='light'] .thread-diff-hunks .hljs-selector-attr,
+:root[data-theme='light'] .thread-diff-hunks .hljs-selector-class,
+:root[data-theme='light'] .thread-diff-hunks .hljs-selector-id {
+  color: #005cc5;
+}
+
+:root[data-theme='light'] .thread-diff-hunks .hljs-regexp,
+:root[data-theme='light'] .thread-diff-hunks .hljs-string,
+:root[data-theme='light'] .thread-diff-hunks .hljs-meta .hljs-string {
+  color: #032f62;
+}
+
+:root[data-theme='light'] .thread-diff-hunks .hljs-built_in,
+:root[data-theme='light'] .thread-diff-hunks .hljs-symbol {
+  color: #e36209;
+}
+
+:root[data-theme='light'] .thread-diff-hunks .hljs-comment,
+:root[data-theme='light'] .thread-diff-hunks .hljs-code,
+:root[data-theme='light'] .thread-diff-hunks .hljs-formula {
+  color: #6a737d;
+}
+
+:root[data-theme='light'] .thread-diff-hunks .hljs-name,
+:root[data-theme='light'] .thread-diff-hunks .hljs-quote,
+:root[data-theme='light'] .thread-diff-hunks .hljs-selector-tag,
+:root[data-theme='light'] .thread-diff-hunks .hljs-selector-pseudo {
+  color: #22863a;
 }
 
 .thread-diff-hunk-table.is-split .thread-diff-hunk-code {
@@ -35456,6 +36219,15 @@ textarea.thread-command-editor {
   }
 }
 
+/* Source-order floor: this duplicate `.agent-monitor { display: grid }` block
+   must not win over the empty-state stack. */
+.agent-monitor.agent-monitor--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Left pane — the agent list, grouped by lane. */
 .agent-monitor-list {
   min-height: 0;
@@ -36455,6 +37227,57 @@ textarea.thread-command-editor {
   padding: 0;
 }
 
+.thread-chat-leading {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 8px 12px 0;
+}
+
+.thread-chat-replying {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0 4px 8px;
+}
+
+.thread-chat-replying-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.thread-chat-replying-quote {
+  max-width: 100%;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  padding: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.thread-chat-replying-quote.is-overflow {
+  cursor: pointer;
+}
+
+.thread-chat-replying-body {
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.thread-chat-replying-body.is-clamped {
+  max-height: 5rem;
+}
+
+.thread-chat-replying-body.is-faded {
+  mask-image: linear-gradient(to bottom, black calc(100% - 1.25rem), transparent);
+}
+
 
 .plugin-nav-rows {
   display: flex;
@@ -36502,6 +37325,10 @@ textarea.thread-command-editor {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-panel);
+}
+
+.plugin-composer-banner:empty {
+  display: none;
 }
 
 .plugin-composer-banner.is-bare {

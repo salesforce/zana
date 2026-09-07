@@ -50,6 +50,24 @@ describe('plugin tool-call HTTP client', () => {
     });
   });
 
+  it('keeps the pairing session prefix on the tool-call URL', async () => {
+    const fetchFn = vi.fn(async (url: string) => {
+      expect(url).toBe('https://zcc.example/t/zcrs_abcdefghijklmnopqr/internal/hosts/tool-call');
+      return jsonResponse(200, {
+        success: true,
+        contentItems: [{ type: 'inputText', text: 'ok' }]
+      });
+    });
+    const client = createPluginToolCallHttpClient({
+      serverUrl: 'https://zcc.example/t/zcrs_abcdefghijklmnopqr',
+      hostId: 'host-1',
+      hostKey: 'key-1',
+      sessionId: 'inst-1',
+      fetchFn: fetchFn as unknown as typeof fetch
+    });
+    await expect(client.invoke(request())).resolves.toMatchObject({ success: true });
+  });
+
   it('throws on a 4xx response', async () => {
     const fetchFn = vi.fn(async () => jsonResponse(401, { error: 'unauthorized' }));
     const client = createPluginToolCallHttpClient({

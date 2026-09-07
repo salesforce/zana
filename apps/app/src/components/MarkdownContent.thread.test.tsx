@@ -19,6 +19,25 @@ describe('MarkdownContent thread extras', () => {
     expect(html).not.toContain('target="_blank"');
   });
 
+  it('renders markdown data-URL images instead of stripping them', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent text={'![shot](data:image/png;base64,iVBORw0KGgo=)'} />
+    );
+    expect(html).toContain('inbox-md-img');
+    expect(html).toContain('inbox-md-img-open');
+    expect(html).toContain('aria-label="View shot"');
+    expect(html).toContain('data:image/png;base64,iVBORw0KGgo=');
+    expect(html).not.toContain('javascript:');
+  });
+
+  it('leaves images inert when exporting', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent exportable text={'![shot](https://example.com/a.png)'} />
+    );
+    expect(html).toContain('inbox-md-img');
+    expect(html).not.toContain('inbox-md-img-open');
+  });
+
   it('keeps local file markdown links in-app', () => {
     const html = renderToStaticMarkup(
       <MarkdownContent text="See [readme](file:///workspace/README.md)" threadId="t1" />

@@ -1,0 +1,47 @@
+export {
+  defineRpcContract,
+  type PluginRpcContract,
+  type PluginRpcHandlers,
+  type PluginRpcMethodContract,
+  type PluginRpcResult,
+  type StandardSchemaV1,
+  type StandardSchemaV1InferInput,
+  type StandardSchemaV1InferOutput,
+} from "./rpc-contract.js";
+export {
+  experimental_defineHostEntry,
+  type ExperimentalHostEntry,
+  type ExperimentalHostPaths,
+  type ExperimentalHostRpcContext,
+  type ExperimentalHostRpcHandlers,
+  type ExperimentalHostSignalContract,
+  type ExperimentalHostSignals,
+  type ExperimentalHostWatchChange,
+  type ExperimentalHostWatchChangeType,
+  type ExperimentalHostWatchEvent,
+  type ExperimentalHostWatchListener,
+  type ExperimentalHostWatchOptions,
+  type ExperimentalHostWatchSubscription,
+  type ExperimentalHostWorkerLease,
+} from "./host-contract.js";
+export {
+  experimental_filterResolvedNativeRoots,
+  experimental_nativeRootsHostContract,
+  experimental_nativeRootsResolveInputSchema,
+  experimental_nativeRootsResolveOutputSchema,
+  type ExperimentalDroppedNativeRoot,
+  type ExperimentalFilteredNativeRoots,
+  type ExperimentalNativeRootsHostContract,
+  type ExperimentalNativeRootsResolveAnswer,
+  type ExperimentalNativeRootsResolveInput,
+  type ExperimentalNativeRootsResolveOutput,
+} from "./native-roots-contract.js";
+export {
+  experimental_resolveClaudePluginRoots,
+  experimental_resolveVendorPluginRoots,
+  type ExperimentalClaudePluginRoots,
+  type ExperimentalClaudePluginRootsArgs,
+  type ExperimentalVendorPlugin,
+  type ExperimentalVendorPluginRoots,
+  type ExperimentalVendorPluginRootsArgs,
+} from "./vendor-plugin-roots.js";

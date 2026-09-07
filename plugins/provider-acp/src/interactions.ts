@@ -71,7 +71,7 @@ function isNonBlank(value: string | undefined): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function extractAcpWritePaths(toolCall: AcpPermissionToolCall): string[] {
+export function extractAcpWritePaths(toolCall: AcpPermissionToolCall): string[] {
   const paths: string[] = [];
   for (const entry of toolCall.content ?? []) {
     if (entry.type === "diff" && isNonBlank(entry.path)) paths.push(entry.path);
@@ -82,7 +82,7 @@ function extractAcpWritePaths(toolCall: AcpPermissionToolCall): string[] {
   return paths;
 }
 
-function isAcpFileChangePermission(toolCall: AcpPermissionToolCall): boolean {
+export function isAcpFileChangePermission(toolCall: AcpPermissionToolCall): boolean {
   if (toolCall.kind === "edit" || toolCall.kind === "delete") return true;
   return (toolCall.content ?? []).some((entry) => entry.type === "diff");
 }

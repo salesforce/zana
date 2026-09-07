@@ -25,6 +25,35 @@ describe('optimistic timeline rows', () => {
     expect(mergeOptimisticTimelineRows([], optimistic)).toEqual([optimistic]);
   });
 
+  it('keeps an image-only optimistic row until the server attachments land', () => {
+    const optimistic = buildOptimisticUserTimelineRow({
+      threadId: 't1',
+      text: '',
+      now: 1,
+      localImagePaths: ['shot-1.png']
+    });
+    expect(optimistic.attachments?.localImagePaths).toEqual(['shot-1.png']);
+    const textOnly = {
+      ...optimistic,
+      id: 'server-empty',
+      attachments: null
+    };
+    expect(mergeOptimisticTimelineRows([textOnly], optimistic)).toEqual([textOnly, optimistic]);
+    const withImage = {
+      ...optimistic,
+      id: 'server-img',
+      attachments: {
+        webImages: 0,
+        localImages: 1,
+        localFiles: 0,
+        imageUrls: [],
+        localImagePaths: ['shot-1.png'],
+        localFilePaths: []
+      }
+    };
+    expect(mergeOptimisticTimelineRows([withImage], optimistic)).toEqual([withImage]);
+  });
+
   it('injects Stop requested until a real interruption row lands', () => {
     const pending = mergePendingStopRow([], { threadId: 't1', isStopping: true, stoppingAnchorAt: 10 });
     expect(pending[0]).toMatchObject({ title: 'Stop requested', operationKind: 'thread-interrupted' });

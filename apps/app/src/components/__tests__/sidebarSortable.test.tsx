@@ -5,25 +5,30 @@ import {
   PINNED_PROJECT_NAV_IDS,
   PROJECT_NAV_ORDER_KEY,
   GLOBAL_NAV_ORDER_KEY,
+  TRAILING_PROJECT_NAV_IDS,
   useSortableSidebarNav
 } from '../sidebarSortable.js';
 
 function Probe({
   available,
-  pinned
+  pinned,
+  trailing = []
 }: {
   available: string[];
   pinned: readonly string[];
+  trailing?: readonly string[];
 }) {
-  const { pinnedNavIds, sortableNavIds } = useSortableSidebarNav(
+  const { pinnedNavIds, sortableNavIds, trailingNavIds } = useSortableSidebarNav(
     PROJECT_NAV_ORDER_KEY,
     available,
-    pinned
+    pinned,
+    trailing
   );
   return (
     <div
       data-pinned={pinnedNavIds.join(',')}
       data-sortable={sortableNavIds.join(',')}
+      data-trailing={trailingNavIds.join(',')}
     />
   );
 }
@@ -33,6 +38,7 @@ describe('sidebarSortable', () => {
     expect(GLOBAL_NAV_ORDER_KEY).toBe('zcc.sidebarNavOrder');
     expect(PROJECT_NAV_ORDER_KEY).toBe('zcc.projectSidebarNavOrder');
     expect(PINNED_PROJECT_NAV_IDS).toEqual(['inbox']);
+    expect(TRAILING_PROJECT_NAV_IDS).toEqual(['sidebar-section:project-sessions']);
   });
 
   it('pins Inbox and leaves Agents movable on the project rail', () => {
@@ -45,6 +51,20 @@ describe('sidebarSortable', () => {
 
     expect(markup).toContain('data-pinned="inbox"');
     expect(markup).toContain('data-sortable="agents,feed,terminals"');
+  });
+
+  it('keeps the Project session tree last and out of the sortable destinations', () => {
+    const markup = renderToStaticMarkup(
+      <Probe
+        available={['inbox', 'agents', 'feed', 'sidebar-section:project-sessions']}
+        pinned={PINNED_PROJECT_NAV_IDS}
+        trailing={TRAILING_PROJECT_NAV_IDS}
+      />
+    );
+
+    expect(markup).toContain('data-pinned="inbox"');
+    expect(markup).toContain('data-sortable="agents,feed"');
+    expect(markup).toContain('data-trailing="sidebar-section:project-sessions"');
   });
 
   it('uses translation-only transforms so collection sections keep their height', () => {

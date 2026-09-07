@@ -77,17 +77,34 @@ describe('timeline auto-expand', () => {
     })).toBe(true);
   });
 
-  it('auto-opens the live pending frontier while the thread is active', () => {
+  it('does not auto-open pending tool or command rows', () => {
     const pending = command('pending', 'live');
     const ids = collectTimelineAutoExpansionRowIds({
       rows: [pending],
       scopeActive: true
     });
-    expect(ids.liveFrontierRowIds.has('live')).toBe(true);
+    expect(ids.liveFrontierRowIds.has('live')).toBe(false);
     expect(collectTimelineAutoExpansionRowIds({
       rows: [pending],
       scopeActive: false
     }).liveFrontierRowIds.size).toBe(0);
+  });
+
+  it('does not auto-open a Running N tools bundle summary', () => {
+    const bundle: ThreadTimelineViewRow = {
+      ...base,
+      id: 'bundle',
+      kind: 'bundle-summary',
+      status: 'pending',
+      children: [command('pending', 'tool-1')]
+    };
+    expect(isRowExpandable(bundle)).toBe(true);
+    const ids = collectTimelineAutoExpansionRowIds({
+      rows: [bundle],
+      scopeActive: true
+    });
+    expect(ids.liveFrontierRowIds.has('bundle')).toBe(false);
+    expect(ids.liveFrontierRowIds.has('tool-1')).toBe(false);
   });
 
   it('auto-opens a pending workflow at the live frontier', () => {
@@ -232,7 +249,7 @@ describe('timeline auto-expand', () => {
       scopeActive: true
     });
     expect(live.liveFrontierRowIds.has('del')).toBe(true);
-    expect(live.liveFrontierRowIds.has('child')).toBe(true);
+    expect(live.liveFrontierRowIds.has('child')).toBe(false);
     const systemPending: ThreadTimelineViewRow = {
       ...base,
       id: 'sys-p',
@@ -248,5 +265,22 @@ describe('timeline auto-expand', () => {
       rows: [systemPending],
       scopeActive: true
     }).liveFrontierRowIds.has('sys-p')).toBe(true);
+  });
+
+  it('auto-expands the latest interrupted turn so stop does not hide it', () => {
+    const interrupted: ThreadTimelineViewRow = {
+      ...base,
+      id: 'turn-stop',
+      kind: 'turn',
+      status: 'interrupted',
+      summaryCount: 1,
+      completedAt: 2,
+      children: [command('completed')]
+    };
+    const ids = collectTimelineAutoExpansionRowIds({
+      rows: [interrupted],
+      scopeActive: false
+    });
+    expect(ids.terminalFrontierRowIds.has('turn-stop')).toBe(true);
   });
 });

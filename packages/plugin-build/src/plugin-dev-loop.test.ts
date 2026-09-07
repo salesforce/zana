@@ -56,8 +56,27 @@ describe('plugin dev loop', () => {
       log: () => undefined
     });
     loop.handleChange('server.ts');
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    await loop.settled();
+    await loop.flushNow();
+    expect(reloads).toEqual(['ok']);
+    loop.dispose();
+  });
+
+  it('flushNow runs a pending cycle without waiting for debounce', async () => {
+    const reloads: string[] = [];
+    const loop = createPluginDevLoop({
+      pluginId: 'hello',
+      hasApp: false,
+      hasServer: false,
+      debounceMs: 60_000,
+      buildServer: async () => undefined,
+      buildApp: async () => undefined,
+      reloadPlugin: async () => {
+        reloads.push('ok');
+      },
+      log: () => undefined
+    });
+    loop.handleChange('package.json');
+    await loop.flushNow();
     expect(reloads).toEqual(['ok']);
     loop.dispose();
   });

@@ -117,6 +117,7 @@ vi.mock("../configured-services.js", () => ({
 
 vi.mock("../model-runtime.js", () => ({
   getPiModelRuntime: mockGetPiModelRuntime,
+  getPiModelPickerScope: vi.fn(async () => ({})),
 }));
 
 import { handleLine } from "../bridge.js";
@@ -628,7 +629,7 @@ describe("pi bridge", () => {
         version: 3,
         id: "persisted-session",
         timestamp: "2026-08-17T00:00:00.000Z",
-        cwd: "/tmp/worktree",
+        cwd: sessionDir,
       })}\n`,
     );
 
@@ -665,6 +666,45 @@ describe("pi bridge", () => {
         result: { ok: true },
       });
       expect(existsSync(providerSessionFile)).toBe(false);
+    } finally {
+      bridge.restore();
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails thread/resume when the session's recorded cwd is gone", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    mockCreateAgentSession.mockImplementation(async () => ({
+      session: createControlledPiAgentSession(),
+    }));
+    const sessionDir = mkdtempSync(join(tmpdir(), "pi-resume-missing-cwd-"));
+    process.env[PI_BRIDGE_SESSION_DIR_ENV] = sessionDir;
+    const providerThreadId = "thread-missing-cwd";
+    const missingCwd = join(sessionDir, "gone-workspace");
+    writeFileSync(
+      join(sessionDir, `${providerThreadId}.jsonl`),
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "persisted-session",
+        timestamp: "2026-08-17T00:00:00.000Z",
+        cwd: missingCwd,
+      })}\n`,
+    );
+
+    try {
+      bridge.sendRequest(64, "thread/resume", {
+        ...sessionParams({ threadId: "thread-resume-missing-cwd" }),
+        providerThreadId,
+      });
+      await expect(bridge.waitForResponse(64)).resolves.toMatchObject({
+        id: 64,
+        error: {
+          code: -32000,
+          message: `Cannot resume: the pi session's working directory "${missingCwd}" no longer exists.`,
+        },
+      });
+      expect(mockCreateAgentSession).not.toHaveBeenCalled();
     } finally {
       bridge.restore();
       rmSync(sessionDir, { recursive: true, force: true });
@@ -1078,6 +1118,47 @@ describe("pi bridge", () => {
         id: 22,
         result: { threadId: "thread-steer-consumption" },
       });
+    } finally {
+      bridge.restore();
+    }
+  });
+
+  it("rebuilds the Pi session when a later turn changes model or thinking", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    mockCreateAgentSession.mockImplementation(async () => ({
+      session: createControlledPiAgentSession(),
+    }));
+
+    try {
+      bridge.sendRequest(
+        1,
+        "thread/start",
+        sessionParams({ threadId: "thread-rebuild" }),
+      );
+      await bridge.waitForResponse(1);
+      expect(mockCreateAgentSession).toHaveBeenCalledTimes(1);
+
+      bridge.sendRequest(
+        2,
+        "turn/start",
+        turnStartParams("thread-rebuild", [
+          { type: "text", text: "continue" },
+        ]),
+      );
+      await bridge.waitForResponse(2);
+      expect(mockCreateAgentSession).toHaveBeenCalledTimes(1);
+
+      bridge.sendRequest(3, "turn/start", {
+        ...turnStartParams("thread-rebuild", [
+          { type: "text", text: "switch thinking" },
+        ]),
+        options: { ...CANONICAL_OPTIONS, reasoningLevel: "high" },
+      });
+      await bridge.waitForResponse(3);
+      expect(mockCreateAgentSession).toHaveBeenCalledTimes(2);
+      expect(
+        bridge.messages.some((message) => message.method === "session/replaced"),
+      ).toBe(true);
     } finally {
       bridge.restore();
     }

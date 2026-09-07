@@ -11,6 +11,7 @@ import type {
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
 import { buildLaunchArgs } from './AgentLauncher.js';
+import { agentCardRuntimeLabel } from './fleet-item.js';
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
 import {
   CommandComposer,
@@ -25,9 +26,15 @@ import { posixQuote } from '../lib/quote.js';
 import { attachmentName } from '../lib/attachments.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
-import { composerProjectOptions, resolveComposerProjectId } from './composer-project-default.js';
+import {
+  composerProjectOptions,
+  isRemoteWorkspaceProject,
+  resolveComposerProjectId,
+  type ComposerProjectSelectionProps
+} from './composer-project-default.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
+import { consumeComposerModeCycle } from './thread/pickers/composer-mode.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
@@ -36,7 +43,10 @@ import {
   absolutePathMentions,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
+  cliAgentCatalogProviders,
+  cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
+  cliAgentMoreModelOptions,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
   resolveCliAgentFamily,
@@ -54,8 +64,10 @@ import {
   getThreadModelCatalog,
   prefetchThreadModelCatalog,
   reloadThreadProviderModels,
+  setThreadModelCatalogHost,
   subscribeThreadModelCatalog
 } from './thread/pickers/thread-model-catalog.js';
+import { defaultHostId, useHosts } from '../hooks/useHosts.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
 
@@ -65,6 +77,8 @@ const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
  */
 export function LegacyAgentHomeComposer({
   project: pinnedProject,
+  composerProjectId,
+  onComposerProjectIdChange,
   initialText,
   onLaunched,
   onClose
@@ -73,7 +87,7 @@ export function LegacyAgentHomeComposer({
   initialText?: string;
   onLaunched?: (session: TerminalSession, projectId: string) => void;
   onClose?: () => void;
-}) {
+} & ComposerProjectSelectionProps) {
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
   const createTerminal = useData((s) => s.createTerminal);
@@ -84,9 +98,22 @@ export function LegacyAgentHomeComposer({
   const harnessCodexEnabled = useData((s) => s.harnessCodexEnabled);
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
+  const cliRemoteHostCatalogEnabled = useData((s) => s.cliRemoteHostCatalogEnabled);
   const selectTab = useUi((s) => s.selectTab);
   const pushToast = useUi((s) => s.pushToast);
-  const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
+  const selectedProjectId = useUi((s) => s.selectedProjectId);
+  const lastProjectId = useData((s) => s.lastProjectId);
+  const [internalProjectId, setInternalProjectId] = useState(
+    pinnedProject?.id ?? composerProjectId ?? ''
+  );
+  const projectId = pinnedProject?.id
+    ?? (onComposerProjectIdChange ? (composerProjectId || internalProjectId) : internalProjectId);
+  const setProjectId = (nextProjectId: string | ((current: string) => string)) => {
+    const resolved = typeof nextProjectId === 'function' ? nextProjectId(projectId) : nextProjectId;
+    if (!onComposerProjectIdChange) setInternalProjectId(resolved);
+    onComposerProjectIdChange?.(resolved);
+  };
+  const preferredProjectId = selectedProjectId ?? lastProjectId;
   const [familyId, setFamilyId] = useState<HarnessFamily | ''>('');
   const [automaticProfile, setAutomaticProfile] = useState<LaunchProfileId | null>(null);
   const [selectionState, setSelectionState] = useState<'loading' | 'resolved' | 'unavailable'>('loading');
@@ -115,7 +142,12 @@ export function LegacyAgentHomeComposer({
   harnessesRef.current = harnesses;
   familyIdRef.current = familyId;
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
+  const hosts = useHosts();
+  const executionHostId = defaultHostId(hosts, project);
   const selectedHarness = harnesses.find((descriptor) => descriptor.id === familyId);
+  const cliRuntimeProfile = automaticProfile
+    ?? selectedHarness?.defaultProfileId
+    ?? (familyId ? PROFILE_BY_FAMILY[familyId] : 'claude');
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
     getThreadModelCatalog,
@@ -123,29 +155,31 @@ export function LegacyAgentHomeComposer({
   );
   const selectedProviderId = (familyId && threadProviderIdForFamily(familyId)) || '';
   const catalogEntry = selectedProviderId ? catalog.byProvider[selectedProviderId] : undefined;
+  const preferHostModels = cliRemoteHostCatalogEnabled && isRemoteWorkspaceProject(project);
   const models = cliAgentModelOptions({
     adapterModels: selectedHarness?.targets?.models ?? EMPTY_MODELS,
-    catalogModels: catalogEntry?.models ?? []
+    catalogModels: catalogEntry?.models ?? [],
+    preferCatalog: preferHostModels,
+    catalogReady: Boolean(catalogEntry)
   });
-  const moreModelOptions = (selectedHarness?.targets?.models?.length ?? 0) > 0
-    ? []
-    : (catalogEntry?.selectedOnlyModels ?? []).map((row) => ({
-      value: row.model,
-      label: row.displayName
-    }));
+  const moreModelOptions = cliAgentMoreModelOptions({
+    adapterModelCount: selectedHarness?.targets?.models?.length ?? 0,
+    catalogMoreModels: catalogEntry?.selectedOnlyModels ?? [],
+    preferCatalog: preferHostModels
+  });
   const catalogModelsLoading = Boolean(
     selectedProviderId
-    && (selectedHarness?.targets?.models?.length ?? 0) === 0
+    && (preferHostModels || (selectedHarness?.targets?.models?.length ?? 0) === 0)
     && (catalog.inflight.has(selectedProviderId) || !catalogEntry)
   );
   const offeredModelIds = useMemo(() => {
     const ids = models.map((model) => model.id);
-    if ((selectedHarness?.targets?.models?.length ?? 0) > 0) return ids;
+    if (!preferHostModels && (selectedHarness?.targets?.models?.length ?? 0) > 0) return ids;
     for (const row of catalogEntry?.selectedOnlyModels ?? []) {
       if (!ids.includes(row.model)) ids.push(row.model);
     }
     return ids;
-  }, [catalogEntry?.selectedOnlyModels, models, selectedHarness?.targets?.models]);
+  }, [catalogEntry?.selectedOnlyModels, models, preferHostModels, selectedHarness?.targets?.models]);
   // OpenCode native roles = the ACP session-mode list (identical to Modern).
   const roleOptions = familyId === 'opencode'
     ? catalogEntry?.acpMode?.options ?? []
@@ -164,14 +198,24 @@ export function LegacyAgentHomeComposer({
     onSubmit: () => {
       launchRef.current();
     },
+    interceptKeyDown: (event) => consumeComposerModeCycle(event, {
+      kind: 'native',
+      options: roleOptions,
+      current: roleTargetId,
+      onChange: setRoleTargetId
+    }),
     onError: setError
   });
   const voice = useVoiceInput({ onTranscript: field.insertText });
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 
   useEffect(() => {
+    if (cliRemoteHostCatalogEnabled) {
+      void setThreadModelCatalogHost(executionHostId);
+      return;
+    }
     void prefetchThreadModelCatalog();
-  }, []);
+  }, [cliRemoteHostCatalogEnabled, executionHostId]);
 
   useEffect(() => {
     if (selectedProviderId) void ensureThreadProviderModels(selectedProviderId);
@@ -212,7 +256,7 @@ export function LegacyAgentHomeComposer({
       setProjectId(pinnedProject.id);
       return;
     }
-    const nextId = resolveComposerProjectId(projects, projectId);
+    const nextId = resolveComposerProjectId(projects, projectId, undefined, preferredProjectId);
     if (nextId && nextId !== projectId) {
       setProjectId(nextId);
       return;
@@ -230,7 +274,7 @@ export function LegacyAgentHomeComposer({
     return () => {
       cancelled = true;
     };
-  }, [loadProjects, pinnedProject, projectId, projects]);
+  }, [loadProjects, pinnedProject, preferredProjectId, projectId, projects]);
 
   useEffect(() => {
     if (!project) return;
@@ -263,7 +307,9 @@ export function LegacyAgentHomeComposer({
   useEffect(() => {
     if (!projectId) return;
     const generation = ++selectionGeneration.current;
-    const availableFamilyIds: string[] = harnesses.map((row) => row.id);
+    const availableFamilyIds: string[] = cliRemoteHostCatalogEnabled
+      ? (catalog.providers.length > 0 ? cliAgentFamilyIdsFromCatalog(catalog.providers) : [])
+      : harnesses.map((row) => row.id);
     const rememberedFamily = familyForThreadProviderId(rememberedProviderId() ?? '');
     const currentFamilyId = familyIdRef.current;
     const kept = resolveCliAgentFamily({
@@ -294,7 +340,9 @@ export function LegacyAgentHomeComposer({
     if (!currentFamilyId && !kept) setSelectionState('loading');
     void product.harness.effectiveDefault(projectId).then((result: EffectiveHarnessDefaultResult) => {
       if (generation !== selectionGeneration.current) return;
-      const liveIds = harnessesRef.current.map((row) => row.id);
+      const liveIds = cliRemoteHostCatalogEnabled
+        ? (catalog.providers.length > 0 ? cliAgentFamilyIdsFromCatalog(catalog.providers) : [])
+        : harnessesRef.current.map((row) => row.id);
       const currentFamily = familyIdRef.current;
       const remembered = familyForThreadProviderId(rememberedProviderId() ?? '');
       const nextFamily = resolveCliAgentFamily({
@@ -347,7 +395,9 @@ export function LegacyAgentHomeComposer({
     harnessCursorEnabled,
     harnessCodexEnabled,
     harnessPiEnabled,
-    harnessOpenCodeEnabled
+    harnessOpenCodeEnabled,
+    cliRemoteHostCatalogEnabled,
+    catalog.providers
   ]);
 
   const canLaunch = Boolean(
@@ -355,13 +405,16 @@ export function LegacyAgentHomeComposer({
     && familyId
     && selectionState === 'resolved'
     && resolvedProjectId === projectId
-    && (selectionProvenance !== 'explicit' || selectedHarness)
+    && (selectionProvenance !== 'explicit'
+      || selectedHarness
+      || (cliRemoteHostCatalogEnabled && Boolean(PROFILE_BY_FAMILY[familyId])))
     && !launching
   );
 
   const launch = async () => {
     if (!project || !familyId || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId) return;
-    if (selectionProvenance === 'explicit' && !selectedHarness) return;
+    if (selectionProvenance === 'explicit' && !selectedHarness
+      && !(cliRemoteHostCatalogEnabled && PROFILE_BY_FAMILY[familyId])) return;
     if (field.typeaheadOpen) return;
     const profile = selectionProvenance === 'automatic'
       ? automaticProfile
@@ -444,12 +497,14 @@ export function LegacyAgentHomeComposer({
   };
 
   const harnessProviderOptions = composerProvidersFromCatalog(
-    harnesses.flatMap((descriptor) => {
-      const providerId = threadProviderIdForFamily(descriptor.id);
-      return providerId
-        ? [{ id: providerId, displayName: descriptor.label, permissionModes: [], composerActions: [] }]
-        : [];
-    }),
+    cliRemoteHostCatalogEnabled
+      ? cliAgentCatalogProviders(catalog.providers)
+      : harnesses.flatMap((descriptor) => {
+        const providerId = threadProviderIdForFamily(descriptor.id);
+        return providerId
+          ? [{ id: providerId, displayName: descriptor.label, permissionModes: [], composerActions: [] }]
+          : [];
+      }),
     false,
     'claude-code'
   ).map((row) => ({ value: row.id, label: row.displayName }));
@@ -531,9 +586,9 @@ export function LegacyAgentHomeComposer({
                   moreModelOptions={moreModelOptions}
                   modelIsLoading={selectionState === 'loading' || catalogModelsLoading}
                   modelLoadError={
-                    (selectedHarness?.targets?.models?.length ?? 0) > 0
-                      ? null
-                      : catalogEntry?.modelLoadError ?? null
+                    preferHostModels || (selectedHarness?.targets?.models?.length ?? 0) === 0
+                      ? catalogEntry?.modelLoadError ?? null
+                      : null
                   }
                   onModelChange={(value) => {
                     setModelId(value);
@@ -618,7 +673,14 @@ export function LegacyAgentHomeComposer({
               title={pinnedProject ? 'Locked to this project' : undefined}
             />
           </div>
-          {project && !project.remote && (
+          {project?.remote ? (
+            <span className="thread-command-chip" data-testid="composer-remote-host-mark">
+              {agentCardRuntimeLabel({
+                profile: cliRuntimeProfile,
+                remote: true
+              })}
+            </span>
+          ) : project ? (
             <EnvironmentPicker
               projectId={project.id}
               value={workspace}
@@ -626,7 +688,7 @@ export function LegacyAgentHomeComposer({
               allowPersonal={Boolean(project.quickAgent)}
               disabled={launching}
             />
-          )}
+          ) : null}
         </div>
       </div>
     </div>

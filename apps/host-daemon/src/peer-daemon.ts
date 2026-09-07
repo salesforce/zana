@@ -105,15 +105,55 @@ function logText(result: PeerDaemonSshResult): string {
   return `${result.stdout}${result.stderr}`.trim();
 }
 
+/** Tail remote join output so Install can show why /status never became connected. */
+function peerJoinFailureDump(): string[] {
+  return [
+    'if ! curl -sf "http://127.0.0.1:$port/status" 2>/dev/null | grep -q \'"connected":true\'; then',
+    '  echo "host daemon did not report connected" >&2',
+    '  echo "--- /status ---" >&2',
+    '  curl -sS --max-time 2 "http://127.0.0.1:$port/status" >&2 || echo "status endpoint unreachable" >&2',
+    '  echo "--- host-daemon.log ---" >&2',
+    '  if [ -f "$data_dir/host-daemon.log" ]; then tail -n 80 "$data_dir/host-daemon.log" >&2; else echo "(no log yet)" >&2; fi',
+    '  kill "$join_pid" 2>/dev/null || true; exit 1',
+    'fi'
+  ];
+}
+
+const PEER_HOST_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function parsePeerDaemonStatusOutput(
+  stdout: string,
+  code: number | null
+): { state: PeerDaemonState; hostId?: string } {
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const statusLine =
+    lines.find((line) => /^(connected|disconnected|not_installed)(?:\s|$)/.test(line))
+    ?? lines[0]
+    ?? '';
+  const [token, maybeId] = statusLine.split(/\s+/);
+  const hostId = maybeId && PEER_HOST_ID_RE.test(maybeId) ? maybeId : undefined;
+  const withId = hostId ? { hostId } : {};
+  if (code === 2 || token === 'not_installed' || stdout.includes('not_installed')) {
+    return { state: 'not_installed', ...withId };
+  }
+  if (code === 0 || token === 'connected' || stdout.includes('connected')) {
+    return { state: 'connected', ...withId };
+  }
+  return { state: 'disconnected', ...withId };
+}
+
 export function peerStatusCommand(serverHost: string): string {
   const host = requireServerHost(serverHost);
   return [
     `data_dir="$HOME/.zcc-machines/${host}"`,
     'port_file="$data_dir/host-daemon.port"',
-    'if [ ! -f "$port_file" ]; then echo not_installed; exit 2; fi',
+    'host_id=""',
+    'if [ -f "$data_dir/host.id" ]; then host_id=$(tr -d "[:space:]" < "$data_dir/host.id"); fi',
+    'if [ ! -f "$port_file" ]; then echo "not_installed $host_id"; exit 2; fi',
     'port=$(cat "$port_file")',
-    'if curl -sf "http://127.0.0.1:$port/status" 2>/dev/null | grep -q \'"connected":true\'; then echo connected; exit 0; fi',
-    'echo disconnected; exit 1'
+    'if curl -sf "http://127.0.0.1:$port/status" 2>/dev/null | grep -q \'"connected":true\'; then echo "connected $host_id"; exit 0; fi',
+    'echo "disconnected $host_id"; exit 1'
   ].join('\n');
 }
 
@@ -182,6 +222,7 @@ export function peerInstallServiceCommand(input: {
     `join_code=${shQuote(input.joinCode)}`,
     `host_id=${shQuote(input.hostId)}`,
     `server_url=${shQuote(input.serverUrl)}`,
+    'if [ -f "$data_dir/host.id" ]; then existing_id=$(tr -d "[:space:]" < "$data_dir/host.id"); if [ "$existing_id" != "$host_id" ]; then rm -f "$data_dir/host.id" "$data_dir/auth.json"; fi; fi',
     'export ZCC_DATA_DIR="$data_dir" ZCC_SERVER_URL="$server_url"',
     'nohup "$node_bin" "$join_bin" join --join-code "$join_code" --host-id "$host_id" --server-url "$server_url" --host-daemon-port "$port" --auto-update >>"$data_dir/host-daemon.log" 2>&1 &',
     'join_pid=$!',
@@ -191,9 +232,7 @@ export function peerInstallServiceCommand(input: {
     '  if curl -sf "http://127.0.0.1:$port/status" 2>/dev/null | grep -q \'"connected":true\'; then break; fi',
     '  i=$((i + 1)); sleep 1',
     'done',
-    'if ! curl -sf "http://127.0.0.1:$port/status" 2>/dev/null | grep -q \'"connected":true\'; then',
-    '  echo "host daemon did not report connected" >&2; kill "$join_pid" 2>/dev/null || true; exit 1',
-    'fi',
+    ...peerJoinFailureDump(),
     'uname_s=$(uname -s)',
     'if [ "$uname_s" = Darwin ]; then',
     '  kill "$join_pid" 2>/dev/null || true',
@@ -250,13 +289,17 @@ export async function peerDaemonStatus(
   serverHost: string
 ): Promise<{ state: PeerDaemonState; message?: string }> {
   const result = await ssh.run(remote, peerStatusCommand(serverHost));
-  if (result.code === 2 || result.stdout.includes('not_installed')) {
-    return { state: 'not_installed', message: logText(result) || 'Host daemon is not installed' };
+  const parsed = parsePeerDaemonStatusOutput(result.stdout, result.code);
+  if (parsed.state === 'not_installed') {
+    return {
+      ...parsed,
+      message: logText(result) || 'Host daemon is not installed'
+    };
   }
-  if (result.code === 0 || result.stdout.includes('connected')) {
-    return { state: 'connected' };
+  if (parsed.state === 'connected') {
+    return parsed;
   }
-  return { state: 'disconnected', message: logText(result) || 'Host daemon is not connected' };
+  return { ...parsed, message: logText(result) || 'Host daemon is not connected' };
 }
 
 export async function peerDaemonRestart(

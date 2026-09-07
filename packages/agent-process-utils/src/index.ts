@@ -2,7 +2,8 @@ export * from "./plugin-process-paths.js";
 import type { ChildProcess, StdioOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { lstat, readdir, readlink, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import crossSpawn from "cross-spawn";
 
@@ -155,6 +156,258 @@ export function spawnPortableOutputProcess(
   return child;
 }
 
+export function supportsProcessGroups(): boolean {
+  return process.platform !== "win32";
+}
+
+export function killProcessGroup(args: {
+  child: {
+    pid?: number | undefined;
+    kill: (signal: NodeJS.Signals) => unknown;
+  };
+  signal: NodeJS.Signals;
+}): void {
+  if (supportsProcessGroups() && args.child.pid !== undefined) {
+    try {
+      process.kill(-args.child.pid, args.signal);
+      return;
+    } catch {}
+  }
+  args.child.kill(args.signal);
+}
+
+export function isProcessGroupAlive(child: {
+  pid?: number | undefined;
+}): boolean {
+  if (!supportsProcessGroups() || child.pid === undefined) {
+    return false;
+  }
+  try {
+    process.kill(-child.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasChildExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+const PROCESS_GROUP_EXIT_POLL_MS = 100;
+
+export function stopProcessGroupLeaderFirst(args: {
+  child: ChildProcess;
+  timeoutMs: number;
+  killGraceMs: number;
+}): Promise<void> {
+  const { child, timeoutMs, killGraceMs } = args;
+  if (hasChildExited(child) && !isProcessGroupAlive(child)) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolveStop) => {
+    let settled = false;
+    let hardTimer: NodeJS.Timeout | undefined;
+    let poll: NodeJS.Timeout | undefined;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(softTimer);
+      if (hardTimer !== undefined) clearTimeout(hardTimer);
+      if (poll !== undefined) clearInterval(poll);
+      resolveStop();
+    };
+    const groupGone = (): boolean =>
+      hasChildExited(child) && !isProcessGroupAlive(child);
+    const softTimer = setTimeout(() => {
+      if (groupGone()) {
+        finish();
+        return;
+      }
+      killProcessGroup({ child, signal: "SIGKILL" });
+      if (killGraceMs <= 0) {
+        finish();
+        return;
+      }
+      hardTimer = setTimeout(finish, killGraceMs);
+    }, timeoutMs);
+
+    const stopSurvivingMembers = (): void => {
+      if (!isProcessGroupAlive(child)) {
+        finish();
+        return;
+      }
+      killProcessGroup({ child, signal: "SIGTERM" });
+      poll = setInterval(() => {
+        if (!isProcessGroupAlive(child)) finish();
+      }, PROCESS_GROUP_EXIT_POLL_MS);
+    };
+
+    if (hasChildExited(child)) {
+      stopSurvivingMembers();
+      return;
+    }
+    child.once("exit", stopSurvivingMembers);
+    child.kill("SIGTERM");
+  });
+}
+
+interface ProcessWithCwd {
+  pid: number;
+  cwd: string;
+}
+
+function isPathUnderDirectory(candidate: string, directory: string): boolean {
+  const normalized = candidate.endsWith(" (deleted)")
+    ? candidate.slice(0, -" (deleted)".length)
+    : candidate;
+  return (
+    normalized === directory || normalized.startsWith(`${directory}${sep}`)
+  );
+}
+
+async function listLinuxProcessCwds(): Promise<ProcessWithCwd[]> {
+  const entries = await readdir("/proc");
+  const results: ProcessWithCwd[] = [];
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!/^\d+$/.test(entry)) return;
+      try {
+        const cwd = await readlink(`/proc/${entry}/cwd`);
+        results.push({ pid: Number(entry), cwd });
+      } catch {}
+    }),
+  );
+  return results;
+}
+
+async function listLsofProcessCwds(): Promise<ProcessWithCwd[]> {
+  const child = spawnPortableOutputProcess({
+    command: "lsof",
+    args: ["-a", "-d", "cwd", "-F", "pn", "-w", "-n"],
+  });
+  const chunks: Buffer[] = [];
+  child.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+  child.stderr.resume();
+  await new Promise<void>((resolveExit) => {
+    child.once("error", () => resolveExit());
+    child.once("exit", () => resolveExit());
+  });
+  const results: ProcessWithCwd[] = [];
+  let pid: number | null = null;
+  for (const line of Buffer.concat(chunks).toString("utf8").split("\n")) {
+    if (line.startsWith("p")) pid = Number(line.slice(1));
+    else if (line.startsWith("n") && pid !== null) {
+      results.push({ pid, cwd: line.slice(1) });
+    }
+  }
+  return results;
+}
+
+async function resolveSweepDirectory(directory: string): Promise<string | null> {
+  const resolved = resolve(directory);
+  let parent = dirname(resolved);
+  try {
+    parent = await realpath(parent);
+  } catch {}
+  const canonical = join(parent, basename(resolved));
+  try {
+    if ((await lstat(canonical)).isSymbolicLink()) return null;
+  } catch {}
+  return canonical;
+}
+
+export async function listProcessesWithCwdUnder(args: {
+  directory: string;
+}): Promise<ProcessWithCwd[]> {
+  if (process.platform === "win32") return [];
+  const directory = await resolveSweepDirectory(args.directory);
+  if (directory === null) return [];
+  const all =
+    process.platform === "linux"
+      ? await listLinuxProcessCwds()
+      : await listLsofProcessCwds();
+  return all.filter(
+    (entry) =>
+      entry.pid !== process.pid && isPathUnderDirectory(entry.cwd, directory),
+  );
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+const MAX_CWD_SWEEP_ROUNDS = 5;
+
+function signalProcesses(
+  targets: ProcessWithCwd[],
+  signal: NodeJS.Signals,
+  signalled: Map<number, ProcessWithCwd>,
+): void {
+  for (const target of targets) {
+    try {
+      process.kill(target.pid, signal);
+      signalled.set(target.pid, target);
+    } catch {}
+  }
+}
+
+export async function killProcessesWithCwdUnder(args: {
+  directory: string;
+  graceMs?: number;
+}): Promise<ProcessWithCwd[]> {
+  const graceMs = args.graceMs ?? 2000;
+  const signalled = new Map<number, ProcessWithCwd>();
+  for (let round = 0; round < MAX_CWD_SWEEP_ROUNDS; round += 1) {
+    const targets = await listProcessesWithCwdUnder({
+      directory: args.directory,
+    });
+    if (targets.length === 0) break;
+    signalProcesses(targets, "SIGTERM", signalled);
+    const deadline = Date.now() + graceMs;
+    while (
+      Date.now() < deadline &&
+      targets.some((target) => isProcessAlive(target.pid))
+    ) {
+      await delay(50);
+    }
+    const survivors = await listProcessesWithCwdUnder({
+      directory: args.directory,
+    });
+    if (survivors.length === 0) break;
+    signalProcesses(survivors, "SIGKILL", signalled);
+    await delay(50);
+  }
+  return Array.from(signalled.values());
+}
+
+const NPM_SCRIPT_POLICY_ENV_KEYS: ReadonlySet<string> = new Set([
+  "npm_config_allow_scripts",
+  "npm_config_ignore_scripts",
+  "npm_config_foreground_scripts",
+]);
+
+export function omitNpmScriptPolicyEnv(
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const childEnv: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) continue;
+    if (NPM_SCRIPT_POLICY_ENV_KEYS.has(key.toLowerCase())) continue;
+    childEnv[key] = value;
+  }
+  return childEnv;
+}
+
 export function resolveContainedPath(
   args: ResolveContainedPathArgs,
 ): string | null {
@@ -191,7 +444,7 @@ export function sanitizeInheritedChildProcessEnv(
     if (value === undefined) {
       continue;
     }
-    if (key === "NODE_ENV" || key.startsWith("BB_")) {
+    if (key === "NODE_ENV" || key.startsWith("BB_") || key.startsWith("ZCC_")) {
       continue;
     }
     sanitizedEnv[key] = value;

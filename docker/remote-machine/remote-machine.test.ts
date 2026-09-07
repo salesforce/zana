@@ -19,9 +19,19 @@ describe('docker remote machine', () => {
     expect(dockerfile).toContain("echo 'zcc:zcc'");
     expect(dockerfile).toContain('zcc-join');
     expect(dockerfile).toContain('COPY workspace/');
+    expect(dockerfile).toContain('ZCC_INSTALL_OPENCODE');
+    expect(dockerfile).toContain('ZCC_INSTALL_CODEX');
+    expect(dockerfile).toContain('@openai/codex');
+    expect(dockerfile).toContain('@agentclientprotocol/codex-acp');
+    expect(dockerfile).toContain('@earendil-works/pi-coding-agent');
+    expect(dockerfile).toContain('cursor.com/install');
+    expect(dockerfile).not.toMatch(/OPENAI_API_KEY=/);
 
     const compose = read('compose.yaml');
     expect(compose).toContain('hostname: zcc-docker');
+    expect(compose).toContain('OPENAI_API_KEY: ${OPENAI_API_KEY:-}');
+    expect(compose).toContain('CURSOR_API_KEY: ${CURSOR_API_KEY:-}');
+    expect(compose).toContain('ZCC_INSTALL_OPENCODE');
     expect(compose).toContain('host.docker.internal:host-gateway');
     expect(compose).toContain('zcc-machines:/home/zcc/.zcc-machines');
     expect(compose).toContain('network_mode: bridge');
@@ -32,6 +42,8 @@ describe('docker remote machine', () => {
     expect(joinScript).toContain('--host-id');
     expect(joinScript).toContain('/install.sh');
     expect(joinScript).toContain('runuser -u zcc');
+    expect(joinScript).toContain('OPENAI_API_KEY=');
+    expect(joinScript).toContain('rm -rf "$data_dir"');
     const joinHelp = spawnSync('sh', [join(dir, 'zcc-join')], { encoding: 'utf8' });
     expect(joinHelp.status).toBe(2);
     expect(joinHelp.stderr).toContain('--join-code');
@@ -40,6 +52,7 @@ describe('docker remote machine', () => {
     expect(entry).toContain('chown zcc:zcc');
     expect(entry).toContain('zcc-join');
     expect(entry).toContain('reconnect');
+    expect(entry).toContain('OPENAI_API_KEY=');
     expect(entry).toContain('sleep infinity');
     expect(entry).not.toMatch(/cat \$\{?found/);
 
@@ -55,6 +68,7 @@ describe('docker remote machine', () => {
     expect(pkg.scripts['docker:host-daemon']).toContain('--join');
     expect(pkg.scripts['docker:remote-machine:down']).toContain(' down');
     expect(pkg.scripts['test:docker:pairing']).toContain('ZCC_DOCKER_E2E=1');
+    expect(pkg.scripts['test:docker:live']).toContain('docker-machine-live-scenarios.sh');
 
     const helper = join(repoRoot, 'scripts/docker-remote-machine.sh');
     chmodSync(helper, 0o755);
@@ -63,9 +77,24 @@ describe('docker remote machine', () => {
     expect(help.stdout).toContain('--relay');
     expect(help.stdout).toContain('--local');
     expect(help.stdout).toContain('--join-code');
+    expect(help.stdout).toContain('OPENAI_API_KEY');
+    expect(help.stdout).toContain('CURSOR_API_KEY');
     expect(readFileSync(helper, 'utf8')).toContain('DOOR=auto');
     expect(readFileSync(helper, 'utf8')).toContain('/t/${session_id}');
     expect(help.stdout).toContain('ssh -p');
+    const waitSource = readFileSync(helper, 'utf8');
+    expect(waitSource).toContain("grep -Eq 'Host daemon connected\\.");
+    expect(waitSource).not.toContain('zcc-host-daemon joined');
+    expect(waitSource).toContain('rewriteHeaders');
+    expect(waitSource).toContain("host: loopbackHost");
+    expect(waitSource).toContain('nohup');
+    expect(waitSource).toContain('row.status === "connected"');
+    expect(waitSource).toContain('load_provider_keys');
+    expect(waitSource).toContain('${PROJECT}_zcc-machines');
+    expect(readFileSync(join(repoRoot, 'scripts/docker-machine-join-test.sh'), 'utf8'))
+      .toContain('OPENAI_API_KEY="${OPENAI_API_KEY-}"');
+    expect(existsSync(join(repoRoot, 'scripts/docker-machine-live-scenarios.sh'))).toBe(true);
+    expect(existsSync(join(repoRoot, 'scripts/docker-machine-live-turn.mjs'))).toBe(true);
 
     const missingHost = spawnSync('bash', [helper, '--join-code', 'zcde_test'], { encoding: 'utf8' });
     expect(missingHost.status).toBe(2);

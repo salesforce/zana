@@ -176,6 +176,7 @@ describe('isZccAgentDataWrite — .zcc agent-data carve-out (pure)', () => {
     expect(isZccAgentDataWrite('Write', { file_path: '/repo/.zcc/library/notes.md' })).toBe(true);
     expect(isZccAgentDataWrite('Edit', { file_path: '.zcc/followups/f1.json' })).toBe(true);
     expect(isZccAgentDataWrite('Write', { file_path: '/home/me/.zcc/goals/g.json' })).toBe(true);
+    expect(isZccAgentDataWrite('Write', { file_path: '/repo/.zcc/plans/ship.md' })).toBe(true);
   });
 
   it('does NOT match control-plane files under .zcc', () => {

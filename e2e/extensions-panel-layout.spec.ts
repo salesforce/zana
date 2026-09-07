@@ -77,3 +77,21 @@ test('Plugins New plugin seeds the home composer with the shared prefix', async 
     { timeout: 15_000 }
   );
 });
+
+test('Browse Create a plugin stays on the hub with the shared prefix', async ({ app }) => {
+  const win = app.window;
+  await win.locator('.nav-item').filter({ hasText: 'Plugins' }).first().click();
+  await win.waitForSelector('.ext-hub-shell', { timeout: 15_000 });
+  await win.getByTestId('extensions-nav-marketplace').click();
+  await expect(win.getByRole('button', { name: 'Create a plugin' })).toBeVisible();
+  await win.getByRole('button', { name: 'Create a plugin' }).click();
+  await expect(win.locator('.ext-hub-shell')).toBeVisible();
+  await expect(win).toHaveURL(/\/extensions\/plugins\/browse/);
+  await expect(win.getByRole('button', { name: 'Back to Browse' })).toBeVisible();
+  const composer = win.locator('.home-agent-composer, .thread-command-composer').first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await expect(composer.locator('.ProseMirror, [contenteditable="true"]').first()).toContainText(
+    'Create a new zcc plugin that',
+    { timeout: 15_000 }
+  );
+});

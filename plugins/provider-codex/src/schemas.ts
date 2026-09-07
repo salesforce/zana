@@ -7,6 +7,7 @@ import {
   jsonRpcEnvelopeSchema,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { z } from "zod";
+import type { CodexErrorInfo as GeneratedCodexErrorInfo } from "./generated/codex-app-server/schema/v2/CodexErrorInfo.js";
 
 const codexTurnStatusSchema = z.enum([
   "completed",
@@ -87,7 +88,6 @@ const codexUserInputSchema = z.discriminatedUnion("type", [
     })
     .passthrough(),
 ]);
-export type CodexParsedUserInput = z.infer<typeof codexUserInputSchema>;
 
 const codexToolReferenceStatusSchema = z.enum([
   "inProgress",
@@ -503,6 +503,12 @@ const codexErrorInfoSchema = z.union([
   z.literal("other"),
 ]);
 export type CodexErrorInfo = z.infer<typeof codexErrorInfoSchema>;
+const codexErrorInfoSchemaMatchesGenerated: GeneratedCodexErrorInfo extends CodexErrorInfo
+  ? CodexErrorInfo extends GeneratedCodexErrorInfo
+    ? true
+    : false
+  : false = true;
+void codexErrorInfoSchemaMatchesGenerated;
 
 const codexTurnErrorSchema = z
   .object({
@@ -801,8 +807,18 @@ export interface CodexRateLimitSnapshot {
 }
 
 export const codexRateLimitReadResponseSchema = z
-  .object({ rateLimits: codexRateLimitSnapshotUpdateSchema })
-  .passthrough();
+  .object({
+    rateLimits: codexRateLimitSnapshotUpdateSchema,
+    rateLimitsByLimitId: z
+      .record(z.string(), codexRateLimitSnapshotUpdateSchema)
+      .nullable()
+      .optional(),
+  })
+  .passthrough()
+  .transform((response) => ({
+    rateLimits: response.rateLimits,
+    rateLimitsByLimitId: response.rateLimitsByLimitId ?? null,
+  }));
 
 export const codexHandledEventSchema = z.discriminatedUnion("method", [
   createCodexEventSchema(

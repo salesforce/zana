@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import {
   query,
   type CanUseTool,
@@ -6,7 +7,13 @@ import {
   type Query,
   type SDKMessage,
   type SDKUserMessage,
+  type SpawnedProcess,
+  type SpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
+import {
+  experimental_isProviderBridgeRecording,
+  experimental_recordProviderChildIo,
+} from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import type { ClaudePermissionMode } from "../interactive-contract.js";
 import {
   isMissingClaudeCliMessage,
@@ -27,14 +34,14 @@ export interface SdkSessionOptions {
   mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
   allowedTools?: string[];
   disallowedTools?: string[];
-  tools?: string[];
   canUseTool?: CanUseTool;
   env?: NodeJS.ProcessEnv;
   pathToClaudeCodeExecutable?: Options["pathToClaudeCodeExecutable"];
   plugins?: Options["plugins"];
   thinking?: Options["thinking"];
-  /** Flag-tier settings (highest user-controlled tier); BB owns this layer. */
   settings?: Options["settings"];
+  extraArgs?: Options["extraArgs"];
+  recordThreadId?: () => string;
 }
 
 export type ClaudeSdkReasoningEffort =
@@ -44,16 +51,12 @@ export type ClaudeSdkReasoningEffort =
   | "xhigh"
   | "max";
 
-export interface ClaudeMutableFlagSettings {
+export type ClaudeMutableFlagSettings = {
   autoMemoryEnabled: boolean;
   enableWorkflows: boolean;
   effortLevel?: ClaudeSdkReasoningEffort;
   ultracode: boolean;
-}
-
-interface ClaudeMutableSettingsQueryBoundary {
-  applyFlagSettings(settings: ClaudeMutableFlagSettings): Promise<void>;
-}
+};
 
 type SdkSessionMessageHandler = (message: SDKMessage) => void;
 type SdkSessionDoneHandler = (error?: unknown) => void;
@@ -113,6 +116,25 @@ function buildSdkDoneErrorMessage(args: BuildSdkDoneErrorMessageArgs): string {
   return `${errorMessage}\n\nClaude Code stderr:\n${stderrTail}`;
 }
 
+function spawnRecordedClaudeProcess(args: {
+  onStderr: (data: string) => void;
+  spawnOptions: SpawnOptions;
+  threadId: string | null;
+}): SpawnedProcess {
+  const child = spawn(args.spawnOptions.command, args.spawnOptions.args, {
+    cwd: args.spawnOptions.cwd,
+    env: args.spawnOptions.env,
+    signal: args.spawnOptions.signal,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  child.stderr?.setEncoding("utf8").on("data", (data: string) => {
+    args.onStderr(data);
+  });
+  experimental_recordProviderChildIo(child, { threadId: args.threadId });
+  return child as SpawnedProcess;
+}
+
 function buildSdkPermissionOptions(
   args: BuildSdkPermissionOptionsArgs,
 ): SdkPermissionOptions {
@@ -121,9 +143,6 @@ function buildSdkPermissionOptions(
     return { permissionMode };
   }
 
-  // Claude Code refuses dangerous permission skipping under root. Keep bb's
-  // logical bypass policy in the bridge canUseTool handler, but avoid sending
-  // the SDK flags that make the CLI exit before the session starts.
   if (isCurrentProcessRoot()) {
     return { permissionMode: "default" };
   }
@@ -143,7 +162,6 @@ export class SdkSession {
   private readonly inputQueue: QueuedSdkInputMessage[] = [];
   private inputDone = false;
   private readonly abortController = new AbortController();
-  private isProcessing = false;
   private readonly completion: Promise<void>;
   private complete: (() => void) | null = null;
   private stderrTail = "";
@@ -162,22 +180,10 @@ export class SdkSession {
     return this.sessionId;
   }
 
-  getIsProcessing(): boolean {
-    return this.isProcessing;
-  }
-
   canPushInput(): boolean {
     return !this.inputDone;
   }
 
-  /**
-   * Change the permission mode of the live session. Used to leave Plan mode
-   * once the user approves a plan. The new mode is also recorded on the
-   * session options so a later resume rebuilds the session with it.
-   *
-   * Only streaming-input sessions accept the control request, and only while
-   * the query is open, so a closed session records the mode and returns.
-   */
   async setPermissionMode(mode: ClaudePermissionMode): Promise<void> {
     this.options.permissionMode = mode;
     await this.query?.setPermissionMode(mode);
@@ -192,16 +198,8 @@ export class SdkSession {
     effort: ClaudeSdkReasoningEffort | undefined;
     settings: ClaudeMutableFlagSettings;
   }): Promise<void> {
-    // Claude CLI accepts `max` through apply_flag_settings (and reports max
-    // from its hook context), but Agent SDK 0.3.197's Settings type omits it.
-    // Keep the compatibility assertion at this external SDK boundary.
-    await (
-      this.query as ClaudeMutableSettingsQueryBoundary | undefined
-    )?.applyFlagSettings(args.settings);
+    await this.query?.applyFlagSettings(args.settings);
     this.options.effort = args.effort;
-    this.options.thinking = args.effort
-      ? { type: "adaptive", display: "summarized" }
-      : undefined;
     const { effortLevel: _effortLevel, ...sessionSettings } = args.settings;
     const currentSettings =
       typeof this.options.settings === "object" ? this.options.settings : {};
@@ -222,25 +220,33 @@ export class SdkSession {
     const permissionOptions = buildSdkPermissionOptions({
       permissionMode: this.options.permissionMode,
     });
+    const onStderr = (data: string): void => {
+      this.stderrTail = appendBoundedText({
+        current: this.stderrTail,
+        chunk: data,
+      });
+    };
+    const recordThreadId = this.options.recordThreadId;
     const sdkOptions: Options = {
       abortController: this.abortController,
       cwd: this.options.cwd,
       systemPrompt: this.options.systemPrompt,
       ...permissionOptions,
+      ...(experimental_isProviderBridgeRecording()
+        ? {
+            spawnClaudeCodeProcess: (spawnOptions: SpawnOptions) =>
+              spawnRecordedClaudeProcess({
+                onStderr,
+                spawnOptions,
+                threadId: recordThreadId?.() ?? null,
+              }),
+          }
+        : {}),
       includePartialMessages: true,
-      // Mirror the Claude CLI cascade so the SDK loads both the user's global
-      // configuration (~/.claude/settings.json, ~/.claude/CLAUDE.md) and the
-      // workspace's project and local settings. Restricting this to "project"
-      // hid global home configuration from bb-managed sessions.
       settingSources: ["user", "project", "local"],
       persistSession: true,
       env: this.options.env ?? process.env,
-      stderr: (data) => {
-        this.stderrTail = appendBoundedText({
-          current: this.stderrTail,
-          chunk: data,
-        });
-      },
+      stderr: onStderr,
       ...(this.options.mcpServers
         ? { mcpServers: this.options.mcpServers }
         : {}),
@@ -250,7 +256,6 @@ export class SdkSession {
       ...(this.options.disallowedTools
         ? { disallowedTools: this.options.disallowedTools }
         : {}),
-      ...(this.options.tools ? { tools: this.options.tools } : {}),
       ...(this.options.canUseTool
         ? { canUseTool: this.options.canUseTool }
         : {}),
@@ -273,6 +278,7 @@ export class SdkSession {
       ...(this.options.plugins ? { plugins: this.options.plugins } : {}),
       ...(this.options.thinking ? { thinking: this.options.thinking } : {}),
       ...(this.options.settings ? { settings: this.options.settings } : {}),
+      ...(this.options.extraArgs ? { extraArgs: this.options.extraArgs } : {}),
     };
 
     try {
@@ -333,7 +339,6 @@ export class SdkSession {
     this.abortController.abort();
     this.query?.close();
     this.query = undefined;
-    this.isProcessing = false;
   }
 
   async closeGracefully(timeoutMs: number): Promise<void> {
@@ -427,13 +432,10 @@ export class SdkSession {
     try {
       for await (const message of q) {
         this.captureSessionId(message);
-        this.trackProcessingState(message);
         this.onMessage(message);
       }
-      this.isProcessing = false;
       this.onDone();
     } catch (error) {
-      this.isProcessing = false;
       this.onDone(
         new Error(
           buildSdkDoneErrorMessage({
@@ -459,15 +461,6 @@ export class SdkSession {
     const providerThreadId = session_id?.trim() ?? "";
     if (providerThreadId.length > 0) {
       this.sessionId = providerThreadId;
-    }
-  }
-
-  private trackProcessingState(message: SDKMessage): void {
-    if (message.type === "assistant" || message.type === "stream_event") {
-      this.isProcessing = true;
-    }
-    if (message.type === "result") {
-      this.isProcessing = false;
     }
   }
 }

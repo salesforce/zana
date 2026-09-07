@@ -74,13 +74,26 @@
   "exclude": [
     "plugins/**/*.test.ts",
     "plugins/**/*.test.tsx",
+    "plugins/**/vitest.config.ts",
+    "plugins/**/playground/**",
     // Glob `*.ts` also matches `*.d.ts`. The vendored `declare module` stub
     // would otherwise override the real `@zana-ai/zcc-plugin-sdk` exports
     // (ZccPluginApi, slot registrations, etc.) for the whole program.
     "plugins/**/types/zcc-plugin-sdk.d.ts",
+    "apps/app/src/**/*.test.ts",
+    "apps/app/src/**/*.test.tsx",
+    "apps/desktop/src/**/*.test.ts",
+    "apps/host-daemon/src/**/*.test.ts",
     "apps/server/src/**/*.test.ts",
     "packages/db/src/**/*.test.ts",
     "packages/contracts/src/**/*.test.ts",
-    "packages/host-workspace/src/**/*.test.ts"
+    "packages/domain/src/**/*.test.ts",
+    "packages/host-workspace/src/**/*.test.ts",
+    "packages/plugin-sdk/src/**/*.test.ts",
+    "packages/plugin-sdk/src/**/*.test.tsx",
+    "packages/plugin-sdk/src/testing/**",
+    "packages/plugin-sdk/src/internal/plugin-app-collector.ts",
+    "packages/plugin-sdk/src/internal/composer-customization-validation.ts",
+    "packages/plugin-sdk/src/internal/file-navigation-validation.ts"
   ]
 }

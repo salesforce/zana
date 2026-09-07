@@ -3,19 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createBridgeJsonRpcTestHarness } from "@zana-ai/zcc-provider-bridge-protocol/testing";
-import type { BridgeJsonRpcTestHarness } from "@zana-ai/zcc-provider-bridge-protocol/testing";
+import { experimental_createBridgeJsonRpcTestHarness as createBridgeJsonRpcTestHarness } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
+import type { BridgeJsonRpcTestHarness } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 import type { ThreadDelta } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 
 import { handleLine } from "./bridge.js";
-
-/**
- * A codex native sub-agent is a `delegation` item, and an open delegation is
- * open work for the runtime's reaper. When the app-server child dies with a
- * sub-agent still tracked, nothing runs behind that row anymore — leaving it
- * pending would make the runtime refuse to reap the thread forever, so the
- * bridge settles it as failed on the wire.
- */
 
 const THREAD_ID = "thr_child_exit_open_work";
 
@@ -122,7 +114,6 @@ it("settles the open delegation as failed when the app-server child dies", async
   });
   await harness.waitForResponse(2);
 
-  // The sub-agent opens a pending delegation; the child's death closes it.
   const deltas = await waitForDelegationDeltas(
     (all) =>
       all.some((delta) => delta.kind === "item.open") &&

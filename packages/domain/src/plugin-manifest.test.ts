@@ -29,7 +29,15 @@ describe('readPluginManifest', () => {
     expect(manifest.id).toBe('tasks');
     expect(manifest.serverEntry).toBe('./server.ts');
     expect(manifest.appEntry).toBe('./app.tsx');
+    expect(manifest.hostEntry).toBeNull();
+    expect(manifest.ptyEntry).toBeNull();
     expect(manifest.projectTab?.global).toBe(false);
+  });
+
+  it('parses optional host and pty entries', () => {
+    const manifest = readPluginManifest(baseZcc({ host: './host.ts', pty: './pty.ts' }));
+    expect(manifest.hostEntry).toBe('./host.ts');
+    expect(manifest.ptyEntry).toBe('./pty.ts');
   });
 
   it('defaults skills roots to ["skills"] when omitted', () => {
@@ -38,6 +46,7 @@ describe('readPluginManifest', () => {
     expect(manifest.skillNames).toEqual([]);
     expect(manifest.mcpServers).toEqual([]);
     expect(manifest.extra).toEqual({});
+    expect(manifest.requires).toEqual([]);
   });
 
   it('treats an empty skills array as opt-out', () => {
@@ -131,5 +140,14 @@ describe('readPluginManifest', () => {
       })
     );
     expect(manifest.themes).toEqual([{ id: 'dim', name: 'Dim', css: './themes/dim.css' }]);
+  });
+
+  it('parses zcc.requires', () => {
+    const manifest = readPluginManifest(baseZcc({ requires: ['alpha', 'beta'] }));
+    expect(manifest.requires).toEqual(['alpha', 'beta']);
+  });
+
+  it('rejects invalid zcc.requires entries', () => {
+    expect(() => readPluginManifest(baseZcc({ requires: ['Not An Id'] }))).toThrow(/plugin ids/);
   });
 });

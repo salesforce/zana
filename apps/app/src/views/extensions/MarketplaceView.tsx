@@ -18,6 +18,7 @@ import { DelayedStencilList } from '../../components/ui/Skeleton.js';
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Download,
   RefreshCw,
@@ -41,6 +42,7 @@ import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
 import { Modal } from '@/components/Modal';
 import { PromptModal } from '@/components/PromptModal';
 import { CreatePluginExamples } from '@/components/plugin/CreatePluginExamples';
+import { HomeAgentComposer } from '@/components/HomeAgentComposer';
 import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
 import { filterMarketplaceEntries, type MarketplaceTag } from './marketplace-filter.js';
 import { catalogCountLabel, catalogErrorText, catalogKindLabel } from './marketplace-catalogs.js';
@@ -53,12 +55,13 @@ const MARKET_FILTERS: { id: MarketplaceTag | 'all'; label: string }[] = [
 ];
 
 export function MarketplaceView({
-  onCreate,
   toolbarExtra
 }: {
-  onCreate?: (prompt?: string) => void;
   toolbarExtra?: ReactNode;
 } = {}) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const creating = searchParams.get('view') === 'create';
+  const [prompt, setPrompt] = useState(CREATE_PLUGIN_PROMPT);
   const [entries, setEntries] = useState<MarketplaceEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,9 +157,16 @@ export function MarketplaceView({
       .then((res) => {
         if (!res.ok) {
           setRowError((e) => ({ ...e, [entry.id]: res.message }));
+          return;
         }
-        // Success: the onChanged push triggers refresh(); the consent overlay
-        // (if the extension declares permissions) fires from the hub shell.
+        setEntries((current) =>
+          (current ?? []).map((row) =>
+            row.id === entry.id
+              ? { ...row, installed: true, installedVersion: row.installedVersion ?? row.version }
+              : row
+          )
+        );
+        refresh();
       })
       .catch((err) =>
         setRowError((e) => ({
@@ -204,6 +214,33 @@ export function MarketplaceView({
   }, [entries, query, tag]);
 
   const hasCatalog = !!entries && entries.length > 0;
+
+  const startCreate = () => {
+    setPrompt(CREATE_PLUGIN_PROMPT);
+    setSearchParams({ view: 'create' });
+  };
+  const backToBrowse = () => {
+    setSearchParams({});
+  };
+
+  if (creating) {
+    return (
+      <section className="settings-section ext-market">
+        <div className="ext-market-toolbar">
+          <button type="button" className="settings-btn" onClick={backToBrowse}>
+            Back to Browse
+          </button>
+          {toolbarExtra ? (
+            <div className="settings-btn-row ext-market-toolbar-actions">{toolbarExtra}</div>
+          ) : null}
+        </div>
+        <div className="ext-market-create">
+          <HomeAgentComposer key={prompt} initialText={prompt} autoFocus />
+          <CreatePluginExamples onSelect={setPrompt} />
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="settings-section ext-market">
@@ -329,18 +366,25 @@ export function MarketplaceView({
               <RefreshCw size={14} className={loading ? 'ext-spin' : undefined} />
             </button>
           )}
-          <div className="ext-install-menu-wrap" ref={installMenuRef}>
+          <div className="ext-install-menu-wrap ext-install-split" ref={installMenuRef}>
             <button
               type="button"
               className="settings-btn primary"
+              onClick={startCreate}
+            >
+              <Plus size={14} />
+              Create a plugin
+            </button>
+            <button
+              type="button"
+              className="settings-btn primary ext-install-split-toggle"
               onClick={() => setInstallMenuOpen((v) => !v)}
               aria-haspopup="menu"
               aria-expanded={installMenuOpen}
-              title="Install from a local folder, archive, or git repository"
+              aria-label="Install a plugin"
+              title="Install from a local folder, archive, git repository, or npm"
             >
-              <Download size={14} />
-              Install
-              <ChevronDown size={12} className="ext-install-menu-caret" />
+              <ChevronDown size={12} />
             </button>
             {installMenuOpen && (
               <div className="ext-install-menu" role="menu" aria-label="Install from">
@@ -395,23 +439,9 @@ export function MarketplaceView({
               </div>
             )}
           </div>
-          {onCreate && (
-            <button
-              type="button"
-              className="settings-btn"
-              onClick={() => onCreate(CREATE_PLUGIN_PROMPT)}
-            >
-              <Plus size={14} />
-              Create a plugin
-            </button>
-          )}
           {toolbarExtra}
         </div>
       </div>
-
-      {onCreate && (
-        <CreatePluginExamples onSelect={(prompt) => onCreate(prompt)} />
-      )}
 
       {hasCatalog && (
         <div className="ext-market-tags" role="group" aria-label="Filter by tag">

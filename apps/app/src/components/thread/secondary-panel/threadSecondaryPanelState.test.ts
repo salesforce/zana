@@ -42,7 +42,6 @@ describe('thread secondary panel state', () => {
     expect(next.activeId).toBe(INFO_PIN_ID);
     expect(activePinnedView(next)).toBe('info');
     expect(activePinnedView(selectPinnedView(next, 'diff'))).toBe('diff');
-    expect(activePinnedView(selectPinnedView(next, 'plan'))).toBe('plan');
     const withTab = addClosableTab(next, { kind: 'browser', title: 'Browser', url: 'https://example.com' });
     expect(activePinnedView(withTab)).toBeNull();
     expect(toggleSecondaryPanelMaximized(emptySecondaryPanelState())).toMatchObject({
@@ -58,14 +57,14 @@ describe('thread secondary panel state', () => {
   });
 
   it('returns the same state when the pin is already active and open', () => {
-    const opened = selectPinnedView(emptySecondaryPanelState(), 'plan');
-    expect(selectPinnedView(opened, 'plan')).toBe(opened);
+    const opened = selectPinnedView(emptySecondaryPanelState(), 'diff');
+    expect(selectPinnedView(opened, 'diff')).toBe(opened);
     const closed = { ...opened, isOpen: false };
-    expect(selectPinnedView(closed, 'plan')).not.toBe(closed);
-    expect(selectPinnedView(closed, 'plan')).toMatchObject({ isOpen: true, activeId: 'plan' });
+    expect(selectPinnedView(closed, 'diff')).not.toBe(closed);
+    expect(selectPinnedView(closed, 'diff')).toMatchObject({ isOpen: true, activeId: 'diff' });
   });
 
-  it('restores a persisted Plan pin', () => {
+  it('maps a persisted Plan pin onto Plan', () => {
     const parsed = parseSecondaryPanelState({
       version: 1,
       isOpen: true,

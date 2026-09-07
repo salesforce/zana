@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
-import { agentViewTerminals, listedTerminals } from '../store.js';
+import { agentViewTerminals, listedTerminals, projectRailTerminals } from '../store.js';
 
 function session(over: Partial<TerminalSession>): TerminalSession {
   return {
@@ -31,5 +31,11 @@ describe('agentViewTerminals', () => {
 
   it('does not change listedTerminals when includeScheduled is on', () => {
     expect(listedTerminals(list).map((t) => t.id)).toEqual(['i']);
+  });
+
+  it('keeps a running scheduled agent in the project rail', () => {
+    const exitedScheduled = session({ id: 'done', scheduled: true, status: 'exited' });
+
+    expect(projectRailTerminals([...list, exitedScheduled]).map((t) => t.id)).toEqual(['i', 'sch']);
   });
 });

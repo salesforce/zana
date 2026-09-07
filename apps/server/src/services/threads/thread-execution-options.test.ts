@@ -91,6 +91,7 @@ const BUNDLED_PROVIDERS = [
     declaration: {
       id: 'acp-opencode',
       displayName: 'OpenCode',
+      visibility: 'installed' as const,
       capabilities: {
         supportsServiceTier: true,
         fork: 'tip',
@@ -99,6 +100,23 @@ const BUNDLED_PROVIDERS = [
         supportsThreadRename: false,
         permissionModes: ['accept-edits', 'full'],
         reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max']
+      },
+      composerActions: []
+    }
+  },
+  {
+    pluginId: 'provider-acp',
+    declaration: {
+      id: 'acp-omp',
+      displayName: 'OMP',
+      visibility: 'installed' as const,
+      capabilities: {
+        supportsServiceTier: false,
+        fork: 'tip',
+        supportsManualCompaction: false,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['accept-edits', 'full']
       },
       composerActions: []
     }
@@ -151,8 +169,32 @@ describe('isThreadProviderOffered', () => {
     expect(isThreadProviderOffered({ id: 'codex' }, [verify('codex', { enabled: false })])).toBe(false);
     expect(isThreadProviderOffered({ id: 'codex' }, [])).toBe(true);
     expect(isThreadProviderOffered({ id: 'codex' }, [verify('codex')])).toBe(true);
-    expect(isThreadProviderOffered({ id: 'acp-opencode' }, [verify('opencode', { installed: false })])).toBe(false);
-    expect(isThreadProviderOffered({ id: 'acp-opencode' }, [verify('opencode')])).toBe(true);
+    expect(isThreadProviderOffered({ id: 'acp-opencode', visibility: 'installed' }, [verify('opencode', { installed: false })])).toBe(false);
+    expect(isThreadProviderOffered({ id: 'acp-opencode', visibility: 'installed' }, [verify('opencode')])).toBe(true);
+    expect(isThreadProviderOffered(
+      { id: 'acp-opencode', visibility: 'installed' },
+      [verify('opencode')],
+      { 'acp-opencode': false }
+    )).toBe(true);
+    expect(isThreadProviderOffered(
+      { id: 'acp-opencode', visibility: 'installed' },
+      [verify('opencode', { enabled: false })],
+      { 'acp-opencode': true }
+    )).toBe(false);
+    expect(isThreadProviderOffered(
+      { id: 'acp-opencode', visibility: 'installed' },
+      [verify('opencode', { installed: false })],
+      { 'acp-opencode': true }
+    )).toBe(true);
+    expect(isThreadProviderOffered(
+      { id: 'acp-opencode', visibility: 'installed' },
+      [verify('opencode', { installed: false })],
+      { 'acp-opencode': false }
+    )).toBe(false);
+    expect(isThreadProviderOffered({ id: 'acp-omp', visibility: 'installed' }, [])).toBe(false);
+    expect(isThreadProviderOffered({ id: 'acp-omp', visibility: 'installed' }, [], { 'acp-omp': false })).toBe(false);
+    expect(isThreadProviderOffered({ id: 'acp-omp', visibility: 'installed' }, [], { 'acp-omp': true })).toBe(true);
+    expect(isThreadProviderOffered({ id: 'acp-grok', visibility: 'installed' }, [], { 'acp-grok': false })).toBe(false);
     expect(isThreadProviderOffered({ id: 'fake' }, [verify('codex', { installed: false })])).toBe(true);
   });
 });
@@ -173,7 +215,20 @@ describe('buildThreadExecutionOptions', () => {
     expect(body.providers.find((row) => row.id === 'claude-code')?.composerActions).toEqual(['plan']);
   });
 
-  it('exposes Plan and Goal from the provider catalog', () => {
+  it('hides installed-only extra ACP agents until their CLI probe succeeds', () => {
+    const hidden = buildThreadExecutionOptions({
+      availability: [verify('claude'), verify('codex'), verify('pi'), verify('cursor')],
+      extraInstalled: { 'acp-omp': false }
+    });
+    expect(hidden.providers.map((row) => row.id)).not.toContain('acp-omp');
+    const shown = buildThreadExecutionOptions({
+      availability: [verify('claude'), verify('codex'), verify('pi'), verify('cursor')],
+      extraInstalled: { 'acp-omp': true }
+    });
+    expect(shown.providers.map((row) => row.id)).toContain('acp-omp');
+  });
+
+  it('exposes slash Plan for Claude and Plan plus Goal for Codex', () => {
     const body = buildThreadExecutionOptions({
       availability: [verify('claude'), verify('codex'), verify('pi'), verify('cursor')]
     });
@@ -282,14 +337,21 @@ describe('execution-options API wiring', () => {
     expect(source).toContain('classifyModelListError');
     expect(source).toContain('listError');
     expect(source).toContain('timeoutMs: 45_000');
+    expect(source).toContain('probeInstalledProviderHealth');
+    expect(source).toContain('mergeHealthIntoExtraInstalled');
+    const probe = readFileSync(new URL('./provider-health-probe.ts', import.meta.url), 'utf8');
+    expect(probe).toContain("type: 'provider.health'");
+    expect(probe).toContain('mergeHealthIntoExtraInstalled');
   });
 });
 
 describe('classifyModelListError', () => {
-  it('maps Cursor/Codex login failures onto auth_required', () => {
+  it('maps Cursor/Codex/OpenCode login failures onto auth_required', () => {
     expect(classifyModelListError(Object.assign(new Error('ACP agent is not authenticated.'), { code: 'auth_required' }))).toBe('auth_required');
     expect(classifyModelListError(new Error("Error: Authentication required. Run 'agent login'"))).toBe('auth_required');
     expect(classifyModelListError(new Error('Run `codex login` on this host'))).toBe('auth_required');
+    expect(classifyModelListError(new Error('Run `opencode auth login` to continue'))).toBe('auth_required');
+    expect(classifyModelListError(new Error('opencode login required'))).toBe('auth_required');
     expect(classifyModelListError(new Error('spawn cursor-agent ENOENT'))).toBe('missing_executable');
     expect(classifyModelListError(new Error('host rpc timed out: provider.list_models'))).toBe('timeout');
     expect(classifyModelListError(new Error('bridge crashed'))).toBe('failed');

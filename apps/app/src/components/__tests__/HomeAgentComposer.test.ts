@@ -33,6 +33,23 @@ describe('HomeAgentComposer layout', () => {
     expect(source).toContain('showAutonomousTeam={showAutonomousTeam}');
     expect(source).not.toContain('HomeAutonomousComposer');
     expect(source).not.toContain('onSelectLegacyAgent');
+    expect(source).not.toContain('consumeComposerModeCycle');
+    expect(source).toContain('composerProjectId={composerProjectId}');
+    expect(source).toContain('onComposerProjectIdChange={setComposerProjectId}');
+    expect(source).not.toContain('cliRemoteToolProxy');
+    expect(source).not.toContain('onCliRemoteToolProxyChange');
+  });
+
+  it('delegates Shift+Tab mode cycling to the shared thread helper', () => {
+    const home = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
+    const thread = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    const legacy = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const helper = readFileSync(new URL('../thread/pickers/composer-mode.ts', import.meta.url), 'utf8');
+    expect(home).not.toContain('consumeComposerModeCycle');
+    expect(thread).toContain('consumeComposerModeCycle');
+    expect(legacy).toContain('consumeComposerModeCycle');
+    expect(helper).toContain('export function consumeComposerModeCycle');
+    expect(helper).toContain('isComposerModeCycleShortcut');
   });
 
   it('spotlights the composer while the walkthrough is on Modern or CLI Agent', () => {
@@ -130,26 +147,47 @@ describe('ThreadCommandComposer pairing copy', () => {
     expect(source).toContain('void copyText(pairingCommand)');
     expect(source).not.toContain('navigator.clipboard');
   });
+
+  it('renews pairing in place and never detours to Add a machine', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    const chip = readFileSync(new URL('../ComposerHostActionChip.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('runHostInstallWithDrawer');
+    expect(source).toContain('setHostInstallDrawerOpen');
+    expect(source).toContain('Renewing pairing…');
+    expect(source).toContain('Installing…');
+    expect(source).toContain('composerBootstrapErrorMessage');
+    expect(source).toContain('product.relay.renewJoinWindow');
+    expect(source.indexOf('product.hosts.repair')).toBeGreaterThan(
+      source.indexOf('product.relay.renewJoinWindow')
+    );
+    expect(source).not.toContain('Add a machine');
+    expect(source).not.toContain('/settings/machines');
+    expect(chip).toContain('Copy install command');
+    expect(chip).toContain('is-install');
+    expect(chip).toContain('is-cta');
+    expect(chip).not.toContain('Add a machine');
+    expect(chip).not.toContain('Reconnect');
+  });
 });
 
 describe('ThreadCommandComposer submit path', () => {
   it('creates and follows up through the Thread HTTP API', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('product.threads.create');
-    expect(source).toContain('hostId,');
+    expect(source).toContain('hostId: currentThread?.hostId ?? selectedProject?.hostId ?? hostId');
     expect(source).toContain('isForeignExecutionHost');
     expect(source).toContain("kind: 'personal'");
     expect(source).toContain('cwd: foreignHost ? undefined : selected!.path');
     expect(source).toContain('field.serialize()');
-    expect(source).toContain('mentions: serialized.mentions');
+    expect(source).toContain('mentions: applied.mentions');
     expect(source).toContain('Enter a message first');
     expect(source).toContain('Could not send message');
     expect(source).toContain('options.rosterReady');
-    expect(source).toContain('options.registeredProviderIds.includes(resolvedProviderId)');
+    expect(source).toContain('isOfferedModernProvider(options.registeredProviderIds, resolvedProviderId)');
     expect(source).toContain('That harness is not available for Modern threads');
     expect(source).toContain('permissionMode: permissionMode as');
     expect(source).toContain('permissionModeOptionsFor');
-    expect(source).toContain('acpMode: options.acpMode');
+    expect(source).toContain('acpMode: workIntent.usesSlashPlan ? undefined : options.acpMode');
     expect(source).toContain('compactLabel: row.compactLabel');
     expect(source).toContain('description: row.description');
     expect(source).toContain('permissionOptions.length > 1');
@@ -182,6 +220,10 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('expandTestId="thread-command-expand"');
     expect(source).toContain('<ThreadContextMeter');
     expect(source).toContain('contextWindowUsage');
+    expect(source).toContain('onCompact=');
+    expect(source.indexOf('<ThreadContextMeter')).toBeLessThan(source.indexOf('Attach files'));
+    expect(source.indexOf('Attach files')).toBeLessThan(source.indexOf('Start voice input'));
+    expect(source).not.toContain('thread-command-context-group');
     expect(source).toContain('onTranscript');
     expect(source).not.toContain('Queue if active');
     expect(source).not.toContain('VoiceInputButton');
@@ -193,18 +235,34 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).not.toContain('showLegacyAgent');
     expect(source).not.toContain('onSelectLegacyAgent');
     expect(source).toContain('reasoningLevel: options.reasoningLevel');
-    expect(source).toContain('options.acpModeOptions.length > 0');
-    expect(source).toContain('<NativeRolePicker');
-    expect(source).toContain('options.refreshAcpModeOptions');
+    expect(source).not.toContain('options.acpModeOptions.length > 0');
+    expect(source).not.toContain('<NativeRolePicker');
+    expect(source).not.toContain('ariaLabel="Execution mode"');
+    expect(source).toContain('<ComposerSendModePicker');
+    expect(source).not.toContain('thread-next-turn-send-now');
+    expect(source).not.toContain('thread-next-turn-paused');
+    expect(source).not.toContain('flushNextTurn');
+    expect(source).toContain('onCompact=');
+    expect(source).toContain('promptHistory');
+    expect(source).toContain('resolveThreadSubmitMode');
+    expect(source).not.toContain('options.refreshAcpModeOptions');
     expect(source).toContain('moreModelOptions={options.moreModelOptions}');
-    expect(source).toContain('applyComposerModePrefix');
-    expect(source).toContain('nextComposerWorkMode');
-    expect(source).toContain("event.key !== 'Tab'");
+    expect(source).toContain('applyComposerWorkMode');
+    expect(source).toContain('workIntent.planNativeValue ? \'agent\' : composerMode');
+    expect(source).toContain('executionModeRequested');
+    expect(source).toContain('composerWorkModeFromNativeMode');
+    expect(source).toContain('portableWorkIntent');
+    expect(source).toContain('initialAcpMode: executionModeRequested');
+    expect(source).toContain('consumeComposerModeCycle');
+    expect(source).not.toContain("kind: 'native'");
+    expect(source).toContain("kind: 'work'");
+    expect(source).toContain('setComposerWorkMode');
+    expect(source).not.toContain('cycleComposerModeRef');
     expect(source).toContain('includeDisconnected');
     expect(source).toContain('ComposerHostActionChip');
-    expect(source).toContain('composerRemoteToolsMark');
+    expect(source).toContain('composerRemoteHostBadge');
     expect(source).toContain('composerHostsForProject');
-    expect(source).toContain('composer-remote-tools-mark');
+    expect(source).toContain('ComposerRemoteHostBadge');
     expect(source).toContain('HostSshIdentityDialog');
     expect(source.indexOf('<EnvironmentPicker')).toBeGreaterThan(metaIdx);
     expect(source.indexOf('ariaLabel="Permission mode"')).toBeGreaterThan(metaIdx);
@@ -219,6 +277,15 @@ describe('ThreadCommandComposer submit path', () => {
     const envStart = css.indexOf('.thread-command-env {');
     expect(envStart).toBeGreaterThan(-1);
     expect(css.slice(envStart, css.indexOf('}', envStart))).toContain('cursor: default;');
+    expect(css).toContain('.thread-command-host-action-btn.is-install');
+    expect(css).toContain('.thread-command-host-action-btn.is-cta');
+    expect(css).toContain('.composer-remote-host-status.is-offline');
+    expect(css).toContain('@keyframes composer-install-breathe');
+    expect(css).not.toContain('.thread-command-context-group {');
+    expect(css).not.toContain('.thread-command-compact {');
+    const compactStart = css.indexOf('.thread-context-meter-compact {');
+    expect(compactStart).toBeGreaterThan(-1);
+    expect(css.slice(compactStart, css.indexOf('}', compactStart))).toContain('font-size: 12px;');
   });
 
   it('shows a sending spinner and freezes the editor while submit is in flight', () => {
@@ -312,6 +379,7 @@ describe('composer mention data sources', () => {
   it('loads confined project paths and filters commands on the client', () => {
     const hook = readFileSync(new URL('../composer/use-composer-suggestions.ts', import.meta.url), 'utf8');
     expect(hook).toContain('product.projects.paths');
+    expect(hook).toContain('product.threads.search');
     expect(hook).toContain('buildMentionSuggestions');
     expect(hook).toContain('buildCommandSuggestions');
     expect(hook).toContain('typeaheadMenuOpen');

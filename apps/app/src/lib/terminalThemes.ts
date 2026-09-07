@@ -11,12 +11,12 @@ import type { TerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
 // as part of the same surface when the theme is left on Auto.
 
 const GITHUB_DARK: ITheme = {
-  background: '#10151c',
+  background: '#1e1e1e',
   foreground: '#e6edf3',
   cursor: '#d4a017',
-  cursorAccent: '#10151c',
+  cursorAccent: '#1e1e1e',
   selectionBackground: '#264f78',
-  black: '#0b0f15',
+  black: '#181818',
   red: '#f85149',
   green: '#3fb950',
   yellow: '#d4a017',

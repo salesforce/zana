@@ -35,6 +35,8 @@ type PatchCacheEntry =
   | { status: 'ready'; patch: string; truncated: boolean }
   | { status: 'error'; error: string };
 
+const DIFF_STATUS_POLL_MS = 4_000;
+
 function patchStatusOf(entry: PatchCacheEntry | undefined): DiffPatchStatus {
   return entry?.status ?? 'idle';
 }
@@ -100,24 +102,45 @@ export function ThreadDiffPanel({
 
   useEffect(() => {
     let cancelled = false;
-    setError(null);
-    setFiles(null);
-    setPatches({});
-    setCollapsedByPath({});
+    let inFlight = false;
     pendingScrollPath.current = path;
-    void product.environments.diffFiles(environmentId, target).then((next) => {
-      if (cancelled) return;
-      setFiles(next.files);
-      setListTruncated(next.truncated);
-      setPatches(seedPatchCache(next.initialPatches));
-      if (path && next.files.some((file) => file.path === path)) {
-        setCollapsedByPath({ [path]: false });
+    const load = (reset: boolean) => {
+      if (inFlight) return;
+      inFlight = true;
+      if (reset) {
+        setError(null);
+        setFiles(null);
+        setPatches({});
+        setCollapsedByPath({});
       }
-    }).catch((err: unknown) => {
-      if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load diff');
-    });
+      void product.environments.diffFiles(environmentId, target).then((next) => {
+        if (cancelled) return;
+        setFiles(next.files);
+        setListTruncated(next.truncated);
+        setPatches((previous) => {
+          const seeded = seedPatchCache(next.initialPatches);
+          if (reset) return seeded;
+          const kept: Record<string, PatchCacheEntry> = { ...seeded };
+          for (const file of next.files) {
+            const existing = previous[file.path];
+            if (!kept[file.path] && existing) kept[file.path] = existing;
+          }
+          return kept;
+        });
+        if (reset && path && next.files.some((file) => file.path === path)) {
+          setCollapsedByPath({ [path]: false });
+        }
+      }).catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load diff');
+      }).finally(() => {
+        inFlight = false;
+      });
+    };
+    load(true);
+    const timer = window.setInterval(() => load(false), DIFF_STATUS_POLL_MS);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [environmentId, path, target]);
 
@@ -174,10 +197,7 @@ export function ThreadDiffPanel({
       {phase === 'error' ? (
         <p className="thread-diff-error">{error}</p>
       ) : phase === 'ready' && files ? (
-        files.length === 0 ? (
-          <p className="thread-diff-empty">No changes.</p>
-        ) : (
-          <>
+        <>
             <div className="thread-diff-toolbar" data-testid="thread-diff-toolbar">
               <div className="thread-diff-toolbar-selector">
                 <PopoverPicklist
@@ -257,6 +277,10 @@ export function ThreadDiffPanel({
                 </div>
               </div>
             </div>
+            {files.length === 0 ? (
+              <p className="thread-diff-empty">No changes.</p>
+            ) : (
+              <>
             {listTruncated ? (
               <p className="thread-diff-cap" role="status">
                 Showing the first {files.length} changed files. Additional changes are omitted.
@@ -286,8 +310,9 @@ export function ThreadDiffPanel({
                 );
               })}
             </div>
-          </>
-        )
+              </>
+            )}
+        </>
       ) : (
         <ThreadDiffSkeleton />
       )}

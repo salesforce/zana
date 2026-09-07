@@ -5,8 +5,8 @@ import { join } from 'node:path';
 /**
  * Rule 6 guard for the skill-provider registry (source-text scan, no execution).
  *
- * Concrete agent-tool ids (`'claude-code'`, `'cursor'`) must live ONLY in the
- * provider descriptors + the registry (`src/main/skills/`). The generic skill
+ * Concrete agent-tool ids (`'claude-code'`, `'cursor'`, `'opencode'`) must live
+ * ONLY in the provider descriptors + the registry (`src/main/skills/`). The generic skill
  * ORCHESTRATOR (`src/main/skills.ts`) and the renderer's skills UI must stay
  * tool-agnostic — they iterate `SKILL_PROVIDERS` / read the entry's own `tool` +
  * `toolLabel`, never branch on a hardcoded id. A reintroduced literal there is
@@ -33,7 +33,7 @@ const TOOL_AGNOSTIC_FILES = [
 ];
 
 /** The concrete tool-id literals, quoted (single or double). */
-const TOOL_ID_LITERALS = [/(['"])claude-code\1/, /(['"])cursor\1/];
+const TOOL_ID_LITERALS = [/(['"])claude-code\1/, /(['"])cursor\1/, /(['"])opencode\1/];
 
 function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');

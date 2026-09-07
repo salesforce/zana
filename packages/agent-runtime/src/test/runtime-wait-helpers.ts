@@ -171,9 +171,12 @@ export async function waitForRuntimeConditionUnsafe(
   const label = options.label ?? "condition";
   const deadline = Date.now() + timeoutMs;
 
-  while (Date.now() < deadline) {
+  while (true) {
     if (condition()) {
       return;
+    }
+    if (Date.now() >= deadline) {
+      break;
     }
     const failFastMessage = options.failFast?.();
     if (failFastMessage) {

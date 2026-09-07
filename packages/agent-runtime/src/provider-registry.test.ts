@@ -190,10 +190,9 @@ describe("provider registry", () => {
   });
 
   it("runs every acp id on the acp plugin's verified artifact", () => {
-    // Only `acp-cursor` is plugin-declared; known and custom ACP agents are
-    // resolved from launch specs at request time and never registered. The
-    // server serves the ACP plugin's artifact for all of them, so the daemon
-    // must route each one onto the generic artifact adapter.
+    // Only Cursor and OpenCode are plugin-declared ACP providers; known
+    // and custom ACP agents are resolved from launch specs at request time and
+    // never registered. Claude Code and Codex use dedicated plugin bridges.
     for (const providerId of ["acp-cursor", "acp-opencode", "acp-custom"]) {
       const provider = createProviderForId(providerId, {
         additionalWorkspaceWriteRoots: [],
@@ -320,6 +319,68 @@ describe("provider registry", () => {
       }
     ).params.options.providerOptions.acpLaunchSpec;
     expect(spec).not.toHaveProperty("modelCli");
+  });
+
+  it("does not pack an ACP launch spec for dedicated Claude Code", () => {
+    const provider = createProviderForId("claude-code", {
+      additionalWorkspaceWriteRoots: [],
+      bridgeLaunch: ACP_BRIDGE_LAUNCH,
+    });
+    const plan = provider.buildCommandPlan({
+      type: "thread/start",
+      threadId: "thread-1",
+      cwd: "/workspace",
+      options: {
+        claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
+        workflowsEnabled: false,
+        permissionMode: "full",
+        permissionScope: "full",
+        approvalReviewer: null,
+        permissionEscalation: null,
+      },
+      instructionMode: "append",
+    });
+    const providerOptions = (
+      plan as {
+        params: {
+          options: {
+            providerOptions?: { acpLaunchSpec?: Record<string, unknown> };
+          };
+        };
+      }
+    ).params.options.providerOptions;
+    expect(providerOptions?.acpLaunchSpec).toBeUndefined();
+  });
+
+  it("does not pack an ACP launch spec for dedicated Codex", () => {
+    const provider = createProviderForId("codex", {
+      additionalWorkspaceWriteRoots: [],
+      bridgeLaunch: ACP_BRIDGE_LAUNCH,
+    });
+    const plan = provider.buildCommandPlan({
+      type: "thread/start",
+      threadId: "thread-1",
+      cwd: "/workspace",
+      options: {
+        claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
+        workflowsEnabled: false,
+        permissionMode: "full",
+        permissionScope: "full",
+        approvalReviewer: null,
+        permissionEscalation: null,
+      },
+      instructionMode: "append",
+    });
+    const providerOptions = (
+      plan as {
+        params: {
+          options: {
+            providerOptions?: { acpLaunchSpec?: Record<string, unknown> };
+          };
+        };
+      }
+    ).params.options.providerOptions;
+    expect(providerOptions?.acpLaunchSpec).toBeUndefined();
   });
 
   it("creates a dynamic acp provider from a launch spec", () => {

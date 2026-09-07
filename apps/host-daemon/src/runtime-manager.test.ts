@@ -8,6 +8,11 @@ import {
   fakeProviderScriptPath
 } from '@zana-ai/zcc-agent-runtime/test';
 import { createRuntimeManager } from './runtime-manager.js';
+import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
+
+function prompt(...chunks: string[]): PromptInput[] {
+  return chunks.map((text) => ({ type: 'text' as const, text, mentions: [] }));
+}
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -55,7 +60,7 @@ describe('runtime manager', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd: dataDir
     });
     await manager.stopWork({ threadId: 't1' });
@@ -68,7 +73,7 @@ describe('runtime manager', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd: dataDir
     });
     expect(created).toBe(2);

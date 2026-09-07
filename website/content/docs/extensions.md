@@ -39,7 +39,7 @@ them elsewhere.
 | `provider-claude-code` | Claude Code thread provider |
 | `provider-codex` | Codex thread provider |
 | `provider-pi` | Pi thread provider |
-| `provider-acp` | ACP thread provider (Cursor and other ACP harnesses) |
+| `provider-acp` | ACP thread provider (Cursor and OpenCode) |
 | `custom-instructions` | Project custom instructions |
 | `ask-user-question` | Agent questions that surface in the Inbox |
 
@@ -50,7 +50,7 @@ or `zcc plugin install <name>`):
 | --- | --- |
 | `tasks` | Workflow / task board |
 | `github` | GitHub developer tools |
-| `salesforce` | Salesforce DX inner loop |
+| `salesforce` | Salesforce DX inner loop and platform SDK for other plugins |
 | `automations` | Automations |
 | `workflows` | Workflows |
 | `side-chat` | Side chat |

@@ -17,6 +17,7 @@ function src(rel: string): string {
 
 const PANEL_FILES = [
   'views/project/ProjectView.tsx',
+  'views/project/ProjectModePane.tsx',
   'views/agents/AgentsView.tsx',
   'views/home/HomeView.tsx',
   'views/settings/SettingsView.tsx',
@@ -51,11 +52,15 @@ describe('single shell <main> landmark', () => {
     expect(app).toMatch(/path=\{AGENTS_ROUTE_PATH\}/);
     expect(app).toMatch(/path=\{AGENTS_ROUTE_PATH\} element=\{null\}/);
     expect(app).toMatch(/path=\{SCHEDULER_ROUTE_PATH\} element=\{null\}/);
+    expect(app).toMatch(/path=\{INBOX_ROUTE_PATH\} element=\{null\}/);
     expect(app).not.toMatch(/element=\{<AgentsView \/>\}/);
     expect(app).not.toMatch(/element=\{<SchedulerView \/>\}/);
+    expect(app).not.toMatch(/element=\{<InboxView \/>\}/);
     expect(app).not.toMatch(/nav === 'projects' && !focusedProjectId/);
     expect(area).toContain("content.kind === 'agents'");
     expect(area).toContain('<AgentsView />');
+    expect(area).toContain("content.kind === 'inbox'");
+    expect(area).toContain('<InboxView />');
   });
 
   it('never mounts ListPane as a shell column and always applies scoped-no-list', () => {

@@ -15,11 +15,14 @@ import { join } from 'node:path';
  *  2. Non-Claude tools prefix their tool id (`${tool}:${source}:${qualified}`).
  *  3. Cursor `.mdc` rules are discovered and rendered READ-ONLY, with
  *     `alwaysApply` folding into the effective enabled state.
+ *  4. OpenCode skills are discovered from `.opencode/skills` (project) and
+ *     `$XDG_CONFIG_HOME/opencode/skills` (user), and are read-only.
  */
 
 import {
   claudeCodeSkillProvider,
-  cursorSkillProvider
+  cursorSkillProvider,
+  openCodeSkillProvider
 } from '../../skill-providers/skill-provider.js';
 import {
   SKILL_PROVIDERS,
@@ -43,6 +46,7 @@ describe('registry', () => {
     expect(DEFAULT_SKILL_TOOL).toBe('claude-code');
     expect(providerForTool('claude-code')).toBe(claudeCodeSkillProvider);
     expect(providerForTool('cursor')).toBe(cursorSkillProvider);
+    expect(providerForTool('opencode')).toBe(openCodeSkillProvider);
     expect(providerForTool('nope')).toBeUndefined();
   });
 
@@ -54,12 +58,14 @@ describe('registry', () => {
     expect(entryId('claude-code', 'project', 'my-skill')).toBe('project:my-skill');
     // Cursor (and any future tool): tool-prefixed 3-part.
     expect(entryId('cursor', 'project', 'my-rule')).toBe('cursor:project:my-rule');
+    expect(entryId('opencode', 'user', 'reviewer')).toBe('opencode:user:reviewer');
   });
 
   it('resolves a bare 2-part id to Claude and a tool-prefixed id to its tool', () => {
     expect(providerForEntryId('project:my-skill')).toBe(claudeCodeSkillProvider);
     expect(providerForEntryId('plugin:zana/x')).toBe(claudeCodeSkillProvider);
     expect(providerForEntryId('cursor:project:my-rule')).toBe(cursorSkillProvider);
+    expect(providerForEntryId('opencode:user:reviewer')).toBe(openCodeSkillProvider);
   });
 });
 
@@ -129,10 +135,66 @@ describe('cursorSkillProvider', () => {
   });
 });
 
+describe('openCodeSkillProvider', () => {
+  let prevXdg: string | undefined;
+
+  beforeEach(() => {
+    prevXdg = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = join(root, 'xdg-config');
+  });
+
+  afterEach(() => {
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prevXdg;
+  });
+
+  it('discovers project skills from .opencode/skills as read-only', async () => {
+    const skillDir = join(root, '.opencode', 'skills', 'reviewer');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: Reviewer\ndescription: Reviews diffs\n---\nbody\n'
+    );
+
+    const units = await openCodeSkillProvider.discover('project', { projectPath: root });
+    expect(units).toHaveLength(1);
+    expect(units[0].shortName).toBe('Reviewer');
+    expect(units[0].qualifiedName).toBe('reviewer');
+    expect(units[0].source).toBe('project');
+    expect(units[0].parsed.description).toBe('Reviews diffs');
+    expect(openCodeSkillProvider.toggleState(units[0], new Set())).toEqual({
+      supported: false,
+      enabled: true,
+      reason: 'Managed in the OpenCode skill folder'
+    });
+  });
+
+  it('discovers user skills from $XDG_CONFIG_HOME/opencode/skills', async () => {
+    const skillDir = join(root, 'xdg-config', 'opencode', 'skills', 'deploy');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: Deploy\ndescription: Ships the app\n---\nbody\n'
+    );
+
+    const units = await openCodeSkillProvider.discover('user', {});
+    expect(units).toHaveLength(1);
+    expect(units[0].shortName).toBe('Deploy');
+    expect(units[0].source).toBe('user');
+    expect(units[0].path).toBe(skillDir);
+  });
+
+  it('has no plugin scope and needs a project path for project skills', async () => {
+    expect(await openCodeSkillProvider.discover('plugin', { projectPath: root })).toEqual([]);
+    expect(await openCodeSkillProvider.discover('project', {})).toEqual([]);
+  });
+});
+
 describe('SKILL_PROVIDERS registry list', () => {
   it('exposes each provider with a unique id, label, and icon', () => {
     const ids = SKILL_PROVIDERS.map((p) => p.id);
     expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain('opencode');
     for (const p of SKILL_PROVIDERS) {
       expect(p.label.length).toBeGreaterThan(0);
       expect(p.icon.length).toBeGreaterThan(0);

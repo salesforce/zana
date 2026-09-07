@@ -102,6 +102,14 @@ server_host=$(printf '%s' "$server_url" | sed -E 's#^https?://##; s#[/:].*##')
 data_dir=${ZCC_DATA_DIR:-"$HOME/.zcc-machines/$server_host"}
 mkdir -p "$data_dir"
 chmod 700 "$data_dir"
+# A new join host id cannot keep a previous enroll's host.id (persistHostId
+# used to refuse the mismatch). Drop leftover identity; keep runtime files.
+if [ -f "$data_dir/host.id" ]; then
+  existing_id=$(tr -d '[:space:]' < "$data_dir/host.id")
+  if [ "$existing_id" != "$host_id" ]; then
+    rm -f "$data_dir/host.id" "$data_dir/auth.json"
+  fi
+fi
 
 port_dir="$HOME/.zcc-machines/host-daemon-ports"
 mkdir -p "$port_dir"
@@ -179,8 +187,20 @@ wait_connected() {
   return 1
 }
 
+dump_join_diagnostics() {
+  echo "$1" >&2
+  echo "--- /status ---" >&2
+  curl -sS --max-time 2 "http://127.0.0.1:$port/status" >&2 || echo "status endpoint unreachable" >&2
+  echo "--- host-daemon.log ---" >&2
+  if [ -f "$data_dir/host-daemon.log" ]; then
+    tail -n 80 "$data_dir/host-daemon.log" >&2
+  else
+    echo "(no log yet)" >&2
+  fi
+}
+
 if ! wait_connected; then
-  echo "host daemon did not report connected" >&2
+  dump_join_diagnostics "host daemon did not report connected"
   kill "$join_pid" 2>/dev/null || true
   exit 1
 fi
@@ -263,7 +283,7 @@ else
 fi
 
 if ! wait_connected; then
-  echo "service-managed daemon did not report connected" >&2
+  dump_join_diagnostics "service-managed daemon did not report connected"
   exit 1
 fi
 echo "Host daemon connected."

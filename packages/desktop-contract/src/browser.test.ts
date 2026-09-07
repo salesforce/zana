@@ -3,6 +3,7 @@ import {
   DESKTOP_BROWSER_MAX_URL_LENGTH,
   clampDesktopBrowserViewBounds,
   parseDesktopBrowserAttachRequest,
+  parseDesktopBrowserAutomationOpenRequest,
   parseDesktopBrowserSetBoundsRequest,
   parseDesktopBrowserState,
   type DesktopBrowserViewBounds,
@@ -107,6 +108,26 @@ describe('desktop browser IPC schemas', () => {
       parseDesktopBrowserSetBoundsRequest({
         tabId: 'browser:abc',
         bounds: { x: 0.5, y: 0, width: 800, height: 600 }
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects extra keys on automationOpen including visible', () => {
+    expect(
+      parseDesktopBrowserAutomationOpenRequest({
+        threadId: 'thr-1',
+        tabId: 'browser:abc',
+        targetId: 'browser-auto:1',
+        url: 'https://example.com'
+      }).success
+    ).toBe(true);
+    expect(
+      parseDesktopBrowserAutomationOpenRequest({
+        threadId: 'thr-1',
+        tabId: 'browser:abc',
+        targetId: 'browser-auto:1',
+        url: 'https://example.com',
+        visible: false
       }).success
     ).toBe(false);
   });

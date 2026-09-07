@@ -88,6 +88,7 @@ describe('AgentBoard thread cards', () => {
     const source = readFileSync(new URL('../AgentBoard.tsx', import.meta.url), 'utf8');
     expect(source).toContain('threadCardRuntimeLabel');
     expect(source).toContain('agentCardRuntimeLabel');
+    expect(source).toContain('remoteToolProxy: Boolean(t.remoteToolProxy)');
     expect(source).toContain('threadCardShowsProject');
     expect(source).toContain('renderThreadCard(item, laneKey, grouped)');
     expect(source).toContain('{(!showProject || grouped) && <span className="agent-card-sub">{runtime}</span>}');

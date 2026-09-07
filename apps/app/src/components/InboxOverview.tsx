@@ -2,16 +2,14 @@ import { product } from '../lib/product-client.js';
 import { useMemo } from 'react';
 import {
   FileText,
-  HelpCircle,
   Lightbulb,
   Target,
   ChevronRight,
   type LucideIcon
 } from 'lucide-react';
-import { inboxQuestions, type InboxEntry, type LibraryDoc } from '@zana-ai/zcc-domain/product';
+import type { InboxEntry, LibraryDoc } from '@zana-ai/zcc-domain/product';
 import {
   useData,
-  useInboxAnswered,
   useInboxSelection,
   useLibrary,
   useUi
@@ -19,7 +17,7 @@ import {
 import { classifyEntry, isReport } from '@zana-ai/zcc-domain/feed-categories';
 import { InboxSummaryCard } from './InboxSummaryCard.js';
 import { formatRelative } from './InboxSidebar.js';
-import { inboxPrimaryTitle, inboxContextLine } from '../lib/inboxPresentation.js';
+import { inboxPrimaryTitle } from '../lib/inboxPresentation.js';
 
 /**
  * Inbox Overview — the detail-column LANDING PAGE shown when no entry is
@@ -27,7 +25,6 @@ import { inboxPrimaryTitle, inboxContextLine } from '../lib/inboxPresentation.js
  * column (where it was crowding the scannable feed) and pairs it with a set of
  * category rollups projected over the SAME data the feed already classifies:
  *
- *   • Questions ⚠  — pending `inbox_ask` entries awaiting the user
  *   • Reports  📄  — agent reports / free-form status (the `report` category)
  *   • Goals    🎯  — goal outcomes (the `goal` category)
  *   • Ideas    💡  — library docs tagged `idea` (the real ideas store; ideas
@@ -38,8 +35,8 @@ import { inboxPrimaryTitle, inboxContextLine } from '../lib/inboxPresentation.js
  * project; at the top level it's cross-project. No new state / IPC — this is a
  * pure projection over `entries` (already scoped by the caller) + the library.
  *
- * Clicking a Question/Report/Goal row selects that inbox entry (the detail
- * column swaps to its preview). Clicking an Idea row jumps to the Library view.
+ * Clicking a Report/Goal row selects that inbox entry (the detail column swaps
+ * to its preview). Clicking an Idea row jumps to the Library view.
  */
 const ROLLUP_MAX_ROWS = 5;
 
@@ -51,7 +48,6 @@ export function InboxOverview({
   entries: InboxEntry[];
 }) {
   const select = useInboxSelection((s) => s.select);
-  const answeredIds = useInboxAnswered((s) => s.answeredIds);
   const libraryDocs = useLibrary((s) => s.docs);
 
   // Opening an idea = deep-linking into a project's Library view, scrolled to
@@ -90,24 +86,19 @@ export function InboxOverview({
     }
   };
 
-  // Bucket the already-scoped entries by feed category. Questions are further
-  // narrowed to those still awaiting an answer (an answered ask drops out, same
-  // signal the sidebar's pending-question flag uses).
-  const { questions, reports, goals } = useMemo(() => {
-    const questions: InboxEntry[] = [];
+  const { reports, goals } = useMemo(() => {
     const reports: InboxEntry[] = [];
     const goals: InboxEntry[] = [];
     for (const e of entries) {
       const cat = classifyEntry(e);
-      if (cat === 'question') {
-        if (inboxQuestions(e).length > 0 && !answeredIds[e.id]) questions.push(e);
-      } else if (cat === 'goal') {
+      if (cat === 'goal') {
         goals.push(e);
       } else if (cat === 'report') {
         reports.push(e);
       }
-      // grouped/noise categories (agent-closed, scheduled, heartbeat, …) are
-      // deliberately omitted — the Overview surfaces signal, not folded noise.
+      // Questions stay in the feed / sidebar pin; grouped/noise categories
+      // (agent-closed, scheduled, heartbeat, …) are omitted — the Overview
+      // surfaces signal rollups, not folded noise.
     }
     // Newest-first within each rollup (entries arrive newest-first already, but
     // don't rely on caller order).
@@ -122,11 +113,10 @@ export function InboxOverview({
       return b.ts - a.ts;
     };
     return {
-      questions: questions.sort(byTs),
       reports: reports.sort(byReportThenTs),
       goals: goals.sort(byTs)
     };
-  }, [entries, answeredIds]);
+  }, [entries]);
 
   // Ideas live in the library (tagged `idea`), not the inbox. Scope by project
   // when drilled in; at the top level show every idea (global + all projects).
@@ -139,7 +129,6 @@ export function InboxOverview({
   }, [libraryDocs, scopeProjectId]);
 
   const nothing =
-    questions.length === 0 &&
     reports.length === 0 &&
     goals.length === 0 &&
     ideas.length === 0;
@@ -147,24 +136,6 @@ export function InboxOverview({
   return (
     <div className="inbox-overview">
       <InboxSummaryCard scopeProjectId={scopeProjectId} entries={entries} />
-
-      <Rollup
-        icon={HelpCircle}
-        tone="question"
-        label="Questions"
-        hint="need your answer"
-        count={questions.length}
-      >
-        {questions.slice(0, ROLLUP_MAX_ROWS).map((e) => (
-          <OverviewRow
-            key={e.id}
-            title={inboxPrimaryTitle(e)}
-            context={inboxContextLine(e)}
-            when={formatRelative(e.ts)}
-            onClick={() => select(e.id)}
-          />
-        ))}
-      </Rollup>
 
       <Rollup icon={FileText} tone="report" label="Reports" count={reports.length}>
         {reports.slice(0, ROLLUP_MAX_ROWS).map((e) => (
@@ -201,7 +172,7 @@ export function InboxOverview({
 
       {nothing && (
         <div className="inbox-overview-empty">
-          Nothing to surface yet — questions, reports, goals, and captured ideas
+          Nothing to surface yet — reports, goals, and captured ideas
           will appear here as your projects work.
         </div>
       )}
@@ -218,14 +189,12 @@ function Rollup({
   icon: Icon,
   tone,
   label,
-  hint,
   count,
   children
 }: {
   icon: LucideIcon;
-  tone: 'question' | 'report' | 'idea' | 'goal';
+  tone: 'report' | 'idea' | 'goal';
   label: string;
-  hint?: string;
   count: number;
   children: React.ReactNode;
 }) {
@@ -236,10 +205,7 @@ function Rollup({
       <div className="inbox-overview-rollup-head">
         <Icon size={13} className="inbox-overview-rollup-icon" aria-hidden />
         <span className="inbox-overview-rollup-label">{label}</span>
-        <span className="inbox-overview-rollup-count">
-          {count}
-          {hint && count > 0 ? ` ${hint}` : ''}
-        </span>
+        <span className="inbox-overview-rollup-count">{count}</span>
       </div>
       <div className="inbox-overview-rollup-rows">{children}</div>
       {more > 0 && (
@@ -251,13 +217,10 @@ function Rollup({
 
 function OverviewRow({
   title,
-  context,
   when,
   onClick
 }: {
   title: string;
-  /** Optional one-line context ("what this is trying to achieve"), shown under the title. */
-  context?: string;
   when: string;
   onClick: () => void;
 }) {
@@ -265,7 +228,6 @@ function OverviewRow({
     <button type="button" className="inbox-overview-row" onClick={onClick}>
       <span className="inbox-overview-row-main">
         <span className="inbox-overview-row-title">{title}</span>
-        {context && <span className="inbox-overview-row-context">{context}</span>}
       </span>
       <span className="inbox-overview-row-ts">{when}</span>
       <ChevronRight size={12} className="inbox-overview-row-arrow" aria-hidden />

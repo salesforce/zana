@@ -101,7 +101,7 @@ export function ThreadModal({
           </button>
         </header>
         <div className="agent-modal-body">
-          <ThreadDetail threadId={threadId} embedded modal />
+          <ThreadDetail threadId={threadId} modal />
         </div>
       </div>
     </div>

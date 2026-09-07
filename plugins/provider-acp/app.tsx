@@ -35,6 +35,33 @@ function OpencodeIcon({ className }: { className?: string }) {
   );
 }
 
+function HermesIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <title>Hermes Agent</title>
+      <path d="M12 3 5 7.5v9L12 21l7-4.5v-9zm0 2.2 4.8 3.1v6.4L12 17.8 7.2 14.7V8.3z" />
+    </svg>
+  );
+}
+
+function OmpIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <title>OMP</title>
+      <path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h10v2H4z" />
+    </svg>
+  );
+}
+
+function GrokIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <title>Grok Build</title>
+      <path d="M12 2 4 7v10l8 5 8-5V7zm0 2.3 5.5 3.4v6.6L12 17.7 6.5 14.3V7.7z" />
+    </svg>
+  );
+}
+
 export default definePluginApp((app) => {
   app.slots.experimental_providerIcon({
     providerId: "acp-cursor",
@@ -43,5 +70,17 @@ export default definePluginApp((app) => {
   app.slots.experimental_providerIcon({
     providerId: "acp-opencode",
     icon: OpencodeIcon,
+  });
+  app.slots.experimental_providerIcon({
+    providerId: "acp-omp",
+    icon: OmpIcon,
+  });
+  app.slots.experimental_providerIcon({
+    providerId: "acp-grok",
+    icon: GrokIcon,
+  });
+  app.slots.experimental_providerIcon({
+    providerId: "acp-hermes-agent",
+    icon: HermesIcon,
   });
 });

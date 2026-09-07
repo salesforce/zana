@@ -26,7 +26,7 @@ describe('plugin host artifact HTTP client', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('requires Content-Length and returns the bytes', async () => {
+  it('returns the bytes when Content-Length matches', async () => {
     const bytes = new Uint8Array(Buffer.from('export default 1;\n'));
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
       expect(url).toBe(`http://127.0.0.1:4100/internal/plugins/provider-acp/host/${DIGEST}`);
@@ -41,6 +41,29 @@ describe('plugin host artifact HTTP client', () => {
     });
     const client = createPluginHostArtifactHttpClient({
       serverUrl: 'http://127.0.0.1:4100',
+      hostId: 'host-1',
+      hostKey: 'key',
+      fetchFn: fetchFn as unknown as typeof fetch
+    });
+    await expect(
+      client.fetch({
+        pluginId: 'provider-acp',
+        digest: DIGEST,
+        expectedByteLength: bytes.byteLength
+      })
+    ).resolves.toEqual(bytes);
+  });
+
+  it('keeps the pairing session prefix on the artifact URL', async () => {
+    const bytes = new Uint8Array(Buffer.from('export default 1;\n'));
+    const fetchFn = vi.fn(async (url: string) => {
+      expect(url).toBe(
+        `https://zcc.example/t/zcrs_abcdefghijklmnopqr/internal/plugins/provider-acp/host/${DIGEST}`
+      );
+      return new Response(bytes, { status: 200 });
+    });
+    const client = createPluginHostArtifactHttpClient({
+      serverUrl: 'https://zcc.example/t/zcrs_abcdefghijklmnopqr',
       hostId: 'host-1',
       hostKey: 'key',
       fetchFn: fetchFn as unknown as typeof fetch
@@ -71,11 +94,12 @@ describe('plugin host artifact HTTP client', () => {
         digest: DIGEST,
         expectedByteLength: 18
       })
-    ).rejects.toThrow(/Content-Length/u);
+    ).rejects.toThrow(/invalid Content-Length/u);
   });
 
-  it('fails when Content-Length is missing', async () => {
-    const fetchFn = vi.fn(async () => new Response('export default 1;\n', { status: 200 }));
+  it('accepts a missing Content-Length when the body matches the expected size', async () => {
+    const bytes = new Uint8Array(Buffer.from('export default 1;\n'));
+    const fetchFn = vi.fn(async () => new Response(bytes, { status: 200 }));
     const client = createPluginHostArtifactHttpClient({
       serverUrl: 'http://127.0.0.1:4100/',
       hostId: 'host-1',
@@ -86,9 +110,9 @@ describe('plugin host artifact HTTP client', () => {
       client.fetch({
         pluginId: 'provider-acp',
         digest: DIGEST,
-        expectedByteLength: 18
+        expectedByteLength: bytes.byteLength
       })
-    ).rejects.toThrow(/Content-Length/u);
+    ).resolves.toEqual(bytes);
   });
 
   it('cuts off a stream that exceeds the expected length', async () => {

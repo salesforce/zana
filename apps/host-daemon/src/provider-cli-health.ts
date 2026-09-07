@@ -21,6 +21,7 @@ const INSTALL_OUTPUT_CAP = 512 * 1024;
 const CLAUDE_CODE_INSTALL_SCRIPT_URL = 'https://claude.ai/install.sh';
 const CURSOR_INSTALL_SCRIPT_URL = 'https://cursor.com/install';
 export const CODEX_MINIMUM_SUPPORTED_VERSION = '0.136.0';
+export const PI_MINIMUM_SUPPORTED_VERSION = '0.84.0';
 
 const npmGlobalListResponseSchema = z
   .object({
@@ -166,7 +167,7 @@ const PROVIDER_CLI_DEFINITIONS = {
     displayName: 'PI',
     executableName: 'pi',
     npmPackageName: '@earendil-works/pi-coding-agent',
-    minimumSupportedVersion: null,
+    minimumSupportedVersion: PI_MINIMUM_SUPPORTED_VERSION,
     installCommand: { kind: 'npmGlobal' },
     updateCommand: {
       commandKind: 'exec',

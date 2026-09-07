@@ -1,18 +1,3 @@
-/**
- * Claude background-task invariants — task items, open-work tracking, settle
- * on session replace / thread detach, and the turn-completion rules that
- * decide which kinds of background work hold a bb turn open.
- *
- * Ported to the narrow-grammar path: the same SDK task fixtures drive the
- * claude delta translator and a real runtime delta assembler. Item ids are
- * assembler-minted, asserted via the provider↔bb map under the task's
- * provider item key (`task:<taskId>#<generation>`); parent tool-call ids map
- * onto the minted id of the spawning tool call when the assembler saw it
- * open, and pass through raw otherwise. Progress-event throttling is now the
- * assembler's central 500ms policy (status transitions ride `flush`), which
- * these cases exercise end to end.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { threadScope, turnScope } from "@zana-ai/zcc-domain/thread-runtime";
 import type {
@@ -29,13 +14,7 @@ import {
   spawningToolUseFor,
   spawningToolUseMessage,
 } from "./delta-test-harness.js";
-import {
-  hasCompletionBlockingClaudeTasks,
-  hasOpenClaudeBackgroundTasks,
-  type ClaudeTaskMap,
-} from "./task-translation.js";
 
-/** The assembler's central progress-throttle default. */
 const PROGRESS_THROTTLE_MS = 500;
 
 function isBackgroundTaskItem(
@@ -88,8 +67,6 @@ describe("claude-code background task translation", () => {
     const allEvents: ThreadEvent[] = [];
 
     for (const message of loadSessionFixture("workflow-mini.ndjson")) {
-      // Real capture batches arrive faster than the throttle; spread them out
-      // so every progress message is emission-eligible.
       advanceClock(PROGRESS_THROTTLE_MS + 1);
       allEvents.push(
         ...harness.translate(message, {
@@ -119,14 +96,11 @@ describe("claude-code background task translation", () => {
       status: "pending",
       taskStatus: "running",
       skipTranscript: false,
-      // The spawning Workflow tool call opened first, so the parent link is
-      // its assembler-minted item id.
       parentToolCallId: harness.itemId(
         "toolu_012BkJCmbBgNqL6SXPKNfPvE",
         "bb-thread-1",
       ),
     });
-    // The spawning turn places the item; progress/completed are thread-scoped.
     expect(started[0]!.scope.kind).toBe("turn");
     for (const event of [...progress, ...completed]) {
       expect(event.scope).toEqual(threadScope());
@@ -143,8 +117,6 @@ describe("claude-code background task translation", () => {
       toolUses: 0,
       durationMs: 3277,
     });
-    // Delta batches folded across events: all 3 agents and both phases
-    // survive even though later batches only carried changed records.
     expect(finalItem.workflow?.agents.map((a) => a.label)).toEqual([
       "alpha",
       "bravo",
@@ -172,7 +144,6 @@ describe("claude-code background task translation", () => {
     harness.translate(loadFixture("task-started-workflow.json"), context);
 
     advanceClock(PROGRESS_THROTTLE_MS + 1);
-    // Batch 1: phases seeded + agents 1 and 2.
     const batch1 = harness.translate(
       loadFixture("task-progress-workflow-batch1.json"),
       context,
@@ -181,7 +152,6 @@ describe("claude-code background task translation", () => {
     expect(batch1Item.workflow?.agents).toHaveLength(2);
 
     advanceClock(PROGRESS_THROTTLE_MS + 1);
-    // Batch 2: only agent 1's progress record — agent 2 must survive the fold.
     const batch2 = harness.translate(
       loadFixture("task-progress-workflow-delta.json"),
       context,
@@ -195,8 +165,6 @@ describe("claude-code background task translation", () => {
       state: "running",
       tokens: 8886,
     });
-    // Agent 2's batch-1 records (queued, then started) survive untouched —
-    // batch 2 carried nothing for it.
     expect(batch2Item.workflow?.agents[1]).toMatchObject({
       state: "running",
       label: "bravo",
@@ -215,7 +183,6 @@ describe("claude-code background task translation", () => {
     );
     harness.translate(loadFixture("task-started-workflow.json"), context);
 
-    // Within the throttle window: folded but not emitted.
     advanceClock(100);
     const throttled = harness.translate(
       loadFixture("task-progress-workflow-batch1.json"),
@@ -223,8 +190,6 @@ describe("claude-code background task translation", () => {
     );
     expect(collectTaskEvents(throttled)).toHaveLength(0);
 
-    // Still within the window, but a status transition flushes immediately —
-    // and the snapshot carries the previously folded (unemitted) records.
     advanceClock(100);
     const updated = harness.translate(
       {
@@ -244,7 +209,6 @@ describe("claude-code background task translation", () => {
     expect(pausedItem.status).toBe("pending");
     expect(pausedItem.workflow?.agents).toHaveLength(2);
 
-    // After the window, progress emits again.
     advanceClock(PROGRESS_THROTTLE_MS + 1);
     const flushed = harness.translate(
       loadFixture("task-progress-workflow-delta.json"),
@@ -296,7 +260,6 @@ describe("claude-code background task translation", () => {
     const stoppedItem = backgroundTaskItem(stoppedEvents[0]!);
     expect(stoppedItem.status).toBe("interrupted");
     expect(stoppedItem.taskStatus).toBe("stopped");
-    // Empty output_file stays absent rather than persisting "".
     expect(stoppedItem.outputFile).toBeUndefined();
   });
 
@@ -337,7 +300,6 @@ describe("claude-code background task translation", () => {
       taskStatus: "completed",
       summary: "Single subagent reply test",
     });
-    // The session still renders: the Task tool call itself is a started item.
     expect(
       allEvents.some(
         (event) =>
@@ -373,6 +335,7 @@ describe("claude-code background task translation", () => {
     );
 
     expect(started).toEqual([]);
+    expect(harness.translator.hasOpenSessionWork(context.threadId)).toBe(true);
 
     const completed = harness.translate(
       {
@@ -389,6 +352,7 @@ describe("claude-code background task translation", () => {
     );
 
     expect(completed).toEqual([]);
+    expect(harness.translator.hasOpenSessionWork(context.threadId)).toBe(false);
   });
 
   it("preserves skip_transcript on the item", () => {
@@ -417,8 +381,6 @@ describe("claude-code background task translation", () => {
       context,
     );
     harness.translate(loadFixture("task-started-workflow.json"), context);
-    // The Workflow call returns as soon as the task is registered; only the
-    // task itself stays open.
     harness.translate(
       {
         type: "user",
@@ -450,14 +412,11 @@ describe("claude-code background task translation", () => {
       status: "interrupted",
       taskStatus: "stopped",
     });
-    // Session death also settles the spawning turn as interrupted, before
-    // the task drain — the bridge's exact settlement order.
     expect(events[0]).toMatchObject({
       type: "turn/completed",
       status: "interrupted",
     });
 
-    // Idempotent: a second resume has nothing left to settle.
     const repeat = harness.settleSession("bb-thread-1");
     expect(
       repeat.filter((event) => event.type === "item/backgroundTask/completed"),
@@ -473,9 +432,6 @@ describe("claude-code background task translation", () => {
       context,
     );
     harness.translate(loadFixture("task-started-workflow.json"), context);
-    // task_updated may report "completed" minutes before task_notification
-    // arrives; a settle inside that window must not flip the workflow to
-    // interrupted.
     harness.translate(
       {
         type: "system",
@@ -518,7 +474,6 @@ describe("claude-code background task translation", () => {
     expect(completed).toHaveLength(1);
     expect(backgroundTaskItem(completed[0]!).status).toBe("interrupted");
 
-    // Threads without open work produce nothing.
     expect(harness.settleSession("bb-thread-other")).toEqual([]);
   });
 
@@ -533,7 +488,6 @@ describe("claude-code background task translation", () => {
     harness.translate(loadFixture("task-started-workflow.json"), context);
     harness.translate(loadFixture("task-notification-workflow.json"), context);
 
-    // Late progress for the settled task: dropped.
     advanceClock(PROGRESS_THROTTLE_MS + 1);
     const late = harness.translate(
       loadFixture("task-progress-workflow-batch1.json"),
@@ -541,8 +495,6 @@ describe("claude-code background task translation", () => {
     );
     expect(collectTaskEvents(late)).toHaveLength(0);
 
-    // A fresh task_started for the same id starts a new item generation under
-    // a new provider item key — and therefore a fresh assembler-minted id.
     const reopened = harness.translate(
       {
         ...loadFixture("task-started-workflow.json"),
@@ -564,12 +516,7 @@ describe("claude-code background task translation", () => {
     );
     expect(backgroundTaskItem(reopenedStarted[0]!)).toMatchObject({
       id: secondGenerationId,
-      // Both generations share the provider task id as the explicit family
-      // identity — consumers correlate restarts through it, never through the
-      // assembler-minted item id text.
       familyId: "wu7ol9ras",
-      // The spawning tool call was never seen opening; the assembler mints
-      // its bb id on first reference instead of leaking the provider id.
       parentToolCallId: harness.itemId("toolu_send_message_1", "bb-thread-1"),
     });
   });
@@ -616,12 +563,9 @@ describe("claude-code background task translation", () => {
       skipTranscript: false,
       parentToolCallId: harness.itemId("toolu_bash_1", "bb-thread-1"),
     });
-    // A shell command carries no workflow phase/agent tree.
     expect(startedItem.workflow).toBeUndefined();
     expect(startedItem.workflowName).toBeUndefined();
 
-    // The terminal notification settles the row as completed with the provider
-    // summary (which embeds the exit code).
     const notified = harness.translate(
       {
         type: "system",
@@ -655,8 +599,6 @@ describe("claude-code background task translation", () => {
     const harness = createClaudeDeltaHarness();
     const context = { threadId: "bb-thread-1" };
 
-    // The parent starts a workflow and its turn completes; the workflow keeps
-    // running without holding the turn open.
     harness.translate(
       spawningToolUseFor(loadFixture("task-started-workflow.json")),
       context,
@@ -670,8 +612,6 @@ describe("claude-code background task translation", () => {
       expect.objectContaining({ type: "turn/completed" }),
     );
 
-    // A workflow agent backgrounds a shell command. The CLI reports the task
-    // on the parent session, but the agent's own tool_use never streamed.
     const childCommand = harness.translate(
       {
         type: "system",
@@ -686,12 +626,9 @@ describe("claude-code background task translation", () => {
       },
       context,
     );
-    // Nothing materializes: no background-command row the parent would show
-    // as its own, and no provider-only turn opens.
     expect(childCommand).toEqual([]);
     expect(harness.itemId("toolu_workflow_child_bash", "bb-thread-1")).toBe("");
 
-    // A sub-agent the workflow agent spawned must not hold a turn open either.
     const childAgent = harness.translate(
       {
         type: "system",
@@ -708,7 +645,6 @@ describe("claude-code background task translation", () => {
     );
     expect(childAgent).toEqual([]);
 
-    // Later lifecycle events for the untracked task fall through.
     const notified = harness.translate(
       {
         type: "system",
@@ -726,7 +662,6 @@ describe("claude-code background task translation", () => {
     );
     expect(notified).toEqual([]);
 
-    // The parent's own next backgrounded command still materializes.
     harness.translate(
       spawningToolUseMessage({
         toolUseId: "toolu_parent_bash",
@@ -798,8 +733,6 @@ describe("claude-code background task translation", () => {
       parentToolCallId: harness.itemId("toolu_sub_1", "bb-thread-1"),
     });
   });
-
-  // -- turn completion vs. open background work -----------------------------
 
   it("keeps one logical turn open across Claude background-agent reinvocations", () => {
     const harness = createClaudeDeltaHarness();
@@ -1016,9 +949,6 @@ describe("claude-code background task translation", () => {
       context,
     );
 
-    // The turn ends so the thread goes idle and the composer sends instead of
-    // queueing, while the still-pending task keeps driving the workflow
-    // indicators.
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "turn/completed",
@@ -1075,8 +1005,6 @@ describe("claude-code background task translation", () => {
       context,
     );
 
-    // The first turn already closed, so the workflow's follow-up work gets its
-    // own turn instead of reopening the settled one.
     expect(reinvoked).toContainEqual(
       expect.objectContaining({
         type: "turn/started",
@@ -1129,74 +1057,5 @@ describe("claude-code background task translation", () => {
         status: "failed",
       }),
     );
-  });
-});
-
-describe("claude-code background-task occupancy helpers", () => {
-  function taskMap(
-    rows: Array<{
-      terminal: boolean;
-      skipTranscript?: boolean;
-      taskType: string;
-    }>,
-  ): ClaudeTaskMap {
-    return new Map(
-      rows.map((row, index) => [
-        String(index),
-        {
-          terminal: row.terminal,
-          skipTranscript: row.skipTranscript ?? false,
-          taskType: row.taskType,
-        },
-      ]),
-    ) as ClaudeTaskMap;
-  }
-
-  it("treats any non-terminal task as occupancy that must pin translator state", () => {
-    expect(hasOpenClaudeBackgroundTasks(taskMap([]))).toBe(false);
-    expect(
-      hasOpenClaudeBackgroundTasks(
-        taskMap([{ terminal: true, taskType: "local_workflow" }]),
-      ),
-    ).toBe(false);
-    expect(
-      hasOpenClaudeBackgroundTasks(
-        taskMap([{ terminal: false, taskType: "local_workflow" }]),
-      ),
-    ).toBe(true);
-    expect(
-      hasOpenClaudeBackgroundTasks(
-        taskMap([{ terminal: false, taskType: "local_bash" }]),
-      ),
-    ).toBe(true);
-  });
-
-  it("does not let workflows or detached shells block turn completion", () => {
-    expect(
-      hasCompletionBlockingClaudeTasks(
-        taskMap([{ terminal: false, taskType: "local_subagent" }]),
-      ),
-    ).toBe(true);
-    expect(
-      hasCompletionBlockingClaudeTasks(
-        taskMap([{ terminal: false, taskType: "local_workflow" }]),
-      ),
-    ).toBe(false);
-    expect(
-      hasCompletionBlockingClaudeTasks(
-        taskMap([{ terminal: false, taskType: "local_bash" }]),
-      ),
-    ).toBe(false);
-    expect(
-      hasCompletionBlockingClaudeTasks(
-        taskMap([
-          {
-            terminal: false,
-            skipTranscript: true,
-            taskType: "local_agent",
-          },
-        ]),
-      ),
-    ).toBe(false);
   });
 });

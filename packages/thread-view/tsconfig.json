@@ -13,5 +13,10 @@
     "src",
     "test",
     "tests"
+  ],
+  "exclude": [
+    "test/v3-item-projection.test.ts",
+    "test/delegation-item-projection.test.ts",
+    "test/web-activity-lifecycle.test.ts"
   ]
 }

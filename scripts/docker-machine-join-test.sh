@@ -87,10 +87,11 @@ docker run -d \
   -e ZCC_SERVER_URL="$PUBLIC_URL" \
   -e JOIN_CODE="$join_code" \
   -e HOST_ID="$host_id" \
+  -e OPENAI_API_KEY="${OPENAI_API_KEY-}" \
   "$IMAGE" >/dev/null
 
 deadline=$((SECONDS + 120))
-until docker logs "$CONTAINER" 2>&1 | grep -Eq 'Host daemon connected|Connected \(service install skipped\)|zcc-host-daemon joined'; do
+until docker logs "$CONTAINER" 2>&1 | grep -Eq 'Host daemon connected\.|Connected \(service install skipped\)'; do
   if [[ $SECONDS -ge $deadline ]]; then
     printf 'installer did not report connected\n' >&2
     docker logs "$CONTAINER" >&2 || true

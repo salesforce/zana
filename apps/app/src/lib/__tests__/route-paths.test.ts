@@ -18,6 +18,7 @@ import {
   getProjectRoutePath,
   getProjectSettingsRoutePath,
   getAgentSessionRoutePath,
+  decodeRouteParam,
   getProjectModeRoutePath,
   getRootRoutePath,
   getSchedulerRoutePath,
@@ -53,6 +54,9 @@ describe('route path helpers', () => {
     expect(getProjectSettingsRoutePath('proj 1')).toBe('/projects/proj%201/settings');
     expect(getProjectModeRoutePath('p1', 'agents')).toBe('/projects/p1');
     expect(getProjectModeRoutePath('p1', 'terminals')).toBe('/projects/p1/terminals');
+    expect(getProjectModeRoutePath('p1', 'salesforce:agent-script')).toBe(
+      '/projects/p1/salesforce%3Aagent-script'
+    );
     expect(getPluginDetailRoutePath('github')).toBe('/extensions/plugins/github');
     expect(
       getPluginPanelRoutePath({ pluginId: 'docs', path: DEFAULT_PLUGIN_PANEL_PATH, subPath: 'a/b' })
@@ -196,6 +200,12 @@ describe('route path helpers', () => {
       resolveRouteHref({ currentOrigin: 'http://127.0.0.1:5173', href: '/not-a-route' })
     ).toBeNull();
     expect(resolveRouteHref({ currentOrigin: 'not-a-origin', href: '/inbox' })).toBeNull();
+  });
+
+  it('decodes encoded project-mode params, including plugin tab colons', () => {
+    expect(decodeRouteParam('salesforce%3Aagent-script')).toBe('salesforce:agent-script');
+    expect(decodeRouteParam('salesforce:agent-script')).toBe('salesforce:agent-script');
+    expect(decodeRouteParam('%E0%A4')).toBe('%E0%A4');
   });
 
   it('lets static settings/plugins/browse segments win over params', () => {

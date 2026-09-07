@@ -1,4 +1,5 @@
-import type { AgentScriptDialect } from '../../lib/types.js';
+import type { PlaygroundView } from '../../lib/agent-script-chrome.js';
+import type { AgentScriptDialect, PublicOrgView } from '../../lib/types.js';
 import type { AgentScriptExample } from '../../lib/agent-script-model.js';
 
 export const PLAYGROUND_BRIDGE_SOURCE = 'zcc-salesforce-agentscript';
@@ -24,6 +25,8 @@ export type HostToPlayground =
       examples: readonly AgentScriptExample[];
       files: PlaygroundFileRef[];
       saveEnabled: boolean;
+      view?: PlaygroundView;
+      org?: PublicOrgView | null;
     }
   | {
       source: typeof PLAYGROUND_BRIDGE_SOURCE;
@@ -36,7 +39,9 @@ export type HostToPlayground =
     }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setTheme'; theme: 'light' | 'dark' }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setDialect'; dialect: AgentScriptDialect }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setView'; view: PlaygroundView }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setFiles'; files: PlaygroundFileRef[] }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setOrg'; org: PublicOrgView | null }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'saved'; sha256: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'flushSave' };
 
@@ -63,7 +68,9 @@ export function isHostToPlayground(value: unknown): value is HostToPlayground {
     value.type === 'setFile' ||
     value.type === 'setTheme' ||
     value.type === 'setDialect' ||
+    value.type === 'setView' ||
     value.type === 'setFiles' ||
+    value.type === 'setOrg' ||
     value.type === 'saved' ||
     value.type === 'flushSave'
   );

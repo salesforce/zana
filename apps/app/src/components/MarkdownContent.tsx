@@ -1,4 +1,4 @@
-import { Children, isValidElement, memo, type ReactNode } from 'react';
+import { Children, isValidElement, memo, useState, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -22,6 +22,9 @@ import { parseLocalFileMarkdownHref } from './markdown-local-file.js';
 import { parseThreadMentionHref, remarkThreadMentions } from './markdown-thread-mentions.js';
 import { dispatchThreadOpenFile } from './thread/secondary-panel/useThreadOpenFileSignal.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
+import { conversationImageSrc } from '../lib/prompt-attachments.js';
+import { transformMarkdownMediaUrl } from './thread/timeline/thread-inline-images.js';
+import { ThreadImageLightbox } from './thread/timeline/ThreadImageLightbox.js';
 
 /**
  * Shared markdown / doc rendering for the inbox.
@@ -158,6 +161,7 @@ export const MarkdownContent = memo(function MarkdownContent({
     REWRITE_LOCALHOST_LINKS_DEFAULT
   );
   const hostname = typeof window !== 'undefined' ? window.location.hostname : undefined;
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const remarkPlugins = [
     remarkGfm,
     remarkMath,
@@ -165,13 +169,11 @@ export const MarkdownContent = memo(function MarkdownContent({
     ...(threadMentions ? [remarkThreadMentions] : [])
   ];
   return (
-    <div className="inbox-md">
-      <ReactMarkdown
+    <>
+      <div className="inbox-md">
+        <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        urlTransform={(url) => {
-          if (url.startsWith('zcc-thread:') || url.startsWith('file:')) return url;
-          return defaultUrlTransform(url);
-        }}
+        urlTransform={(url) => transformMarkdownMediaUrl(url, defaultUrlTransform)}
         // Syntax-highlight fenced code blocks. `ignoreMissing` keeps unknown
         // languages (incl. ```mermaid, which the pre override intercepts
         // before this matters) from throwing — they just render unhighlighted.
@@ -250,12 +252,47 @@ export const MarkdownContent = memo(function MarkdownContent({
             if (mermaid !== null)
               return <MermaidDiagram key={mermaid} code={mermaid} theme={mermaidTheme} exportable={exportable} />;
             return <pre {...props} />;
+          },
+          img: (props) => {
+            const raw = typeof props.src === 'string' ? props.src : '';
+            const src = conversationImageSrc(projectId, raw) ?? (/^(https?:|data:image\/|blob:)/iu.test(raw) ? raw : null);
+            if (!src) return null;
+            const alt = typeof props.alt === 'string' && props.alt.length > 0 ? props.alt : 'Image';
+            const image = (
+              <img
+                {...props}
+                src={src}
+                className="inbox-md-img"
+                alt={alt}
+                loading="lazy"
+                decoding="async"
+              />
+            );
+            if (exportable) return image;
+            return (
+              <button
+                type="button"
+                className="inbox-md-img-open"
+                aria-label={`View ${alt}`}
+                onClick={() => setLightbox({ src, alt })}
+              >
+                {image}
+              </button>
+            );
           }
         }}
       >
         {body}
       </ReactMarkdown>
-    </div>
+      </div>
+      {lightbox ? (
+        <ThreadImageLightbox
+          src={lightbox.src}
+          alt={lightbox.alt}
+          onClose={() => setLightbox(null)}
+        />
+      ) : null}
+    </>
   );
 });
 

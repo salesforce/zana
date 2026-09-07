@@ -7,6 +7,11 @@ import {
   parseDesktopBrowserTabRef
 } from '@zana-ai/zcc-desktop-contract';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
+import {
+  bindAutomationTargetThread,
+  peekPendingBrowserOpen,
+  unbindAutomationTargetThread
+} from './desktop-browser-automation.js';
 import type { DesktopBrowserViewManager } from './desktop-browser-view.js';
 
 function hostWindowFromEvent(event: IpcMainEvent | IpcMainInvokeEvent): BrowserWindow | null {
@@ -69,8 +74,14 @@ export function registerDesktopBrowserIpc(manager: DesktopBrowserViewManager): v
     const hostWindow = hostWindowFromEvent(event);
     if (hostWindow === null) return { ok: false };
     if (!payload || typeof payload !== 'object') return { ok: false };
-    const record = payload as { targetId?: unknown; tabId?: unknown };
+    const record = payload as { targetId?: unknown; tabId?: unknown; threadId?: unknown };
     if (typeof record.targetId !== 'string' || typeof record.tabId !== 'string') return { ok: false };
+    const pending = peekPendingBrowserOpen(record.targetId);
+    const threadId =
+      typeof record.threadId === 'string' && record.threadId.length > 0
+        ? record.threadId
+        : pending?.threadId;
+    if (threadId) bindAutomationTargetThread(record.targetId, threadId, record.tabId);
     return {
       ok: manager.registerAutomationTarget({
         tabId: record.tabId,
@@ -82,12 +93,14 @@ export function registerDesktopBrowserIpc(manager: DesktopBrowserViewManager): v
 
   ipcMain.handle(IPC.browser.unregisterAutomationTarget, (_event, targetId: unknown) => {
     if (typeof targetId !== 'string' || targetId.length === 0) return { ok: false };
+    unbindAutomationTargetThread(targetId);
     return { ok: manager.unregisterAutomationTarget(targetId) };
   });
 
   ipcMain.handle(IPC.browser.stopAutomation, (_event, targetId: unknown) => {
     if (typeof targetId !== 'string' || targetId.length === 0) return { ok: false };
     manager.closeAutomationTarget(targetId);
+    unbindAutomationTargetThread(targetId);
     return { ok: true };
   });
 }

@@ -10,7 +10,7 @@ import {
   encodeFrame,
   encodeJsonPayload
 } from './pairing-relay-protocol.js';
-import { isRelaySessionId, type PairingRelaySnapshot } from './pairing-session-url.js';
+import { isRelaySessionId, joinKeepaliveDelayMs, type PairingRelaySnapshot } from './pairing-session-url.js';
 
 export type { PairingRelaySnapshot } from './pairing-session-url.js';
 import { resolvePublicAppUrl } from './public-app-url.js';
@@ -30,7 +30,6 @@ const HOP_BY_HOP = new Set([
   'upgrade',
   'host',
   'origin',
-  'content-length',
   // Last hop is loopback; a forwarded Heroku Host would 403 when Settings
   // and the public origin disagree (plan: force Host 127.0.0.1).
   'x-forwarded-for',
@@ -124,6 +123,7 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
   const helloWaiters = new Set<(hello: PairingRelayHello) => void>();
   let socket: WebSocket | null = null;
   let pingTimer: NodeJS.Timeout | null = null;
+  let joinKeepaliveTimer: NodeJS.Timeout | null = null;
   let reconnectTimer: NodeJS.Timeout | null = null;
   let backoff = 1000;
   let stopped = true;
@@ -287,6 +287,7 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
         const hello = { sessionId: meta.sessionId, joinUntil: meta.joinUntil };
         options.onHello?.(hello);
         for (const waiter of [...helloWaiters]) waiter(hello);
+        armJoinKeepalive();
       } catch {
         /* ignore malformed hello */
       }
@@ -334,7 +335,45 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
     }
   }
 
+  function clearJoinKeepalive(): void {
+    if (joinKeepaliveTimer) {
+      clearTimeout(joinKeepaliveTimer);
+      joinKeepaliveTimer = null;
+    }
+  }
+
+  function armJoinKeepalive(): void {
+    clearJoinKeepalive();
+    if (stopped || current !== 'connected') return;
+    joinKeepaliveTimer = setTimeout(() => {
+      joinKeepaliveTimer = null;
+      void requestJoinRenew().finally(() => {
+        if (!stopped && current === 'connected') armJoinKeepalive();
+      });
+    }, joinKeepaliveDelayMs(currentJoinUntil));
+  }
+
+  function requestJoinRenew(): Promise<PairingRelaySnapshot> {
+    if (current !== 'connected' || !socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.resolve(snapshot());
+    }
+    return new Promise<PairingRelaySnapshot>((resolve) => {
+      const timer = setTimeout(() => {
+        helloWaiters.delete(onHello);
+        resolve(snapshot());
+      }, 2_000);
+      const onHello = () => {
+        clearTimeout(timer);
+        helloWaiters.delete(onHello);
+        resolve(snapshot());
+      };
+      helloWaiters.add(onHello);
+      send(TYPE.JOIN_RENEW, FLAG.FIN, 0);
+    });
+  }
+
   function disconnect(): void {
+    clearJoinKeepalive();
     if (pingTimer) {
       clearInterval(pingTimer);
       pingTimer = null;
@@ -428,22 +467,7 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
     sessionId: () => currentSessionId,
     joinUntil: () => currentJoinUntil,
     renewJoinWindow() {
-      if (current !== 'connected' || !socket || socket.readyState !== WebSocket.OPEN) {
-        return Promise.resolve(snapshot());
-      }
-      return new Promise<PairingRelaySnapshot>((resolve) => {
-        const timer = setTimeout(() => {
-          helloWaiters.delete(onHello);
-          resolve(snapshot());
-        }, 2_000);
-        const onHello = () => {
-          clearTimeout(timer);
-          helloWaiters.delete(onHello);
-          resolve(snapshot());
-        };
-        helloWaiters.add(onHello);
-        send(TYPE.JOIN_RENEW, FLAG.FIN, 0);
-      });
+      return requestJoinRenew();
     },
     start() {
       stopped = false;

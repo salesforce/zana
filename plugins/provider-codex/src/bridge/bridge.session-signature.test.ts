@@ -3,17 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createBridgeJsonRpcTestHarness } from "@zana-ai/zcc-provider-bridge-protocol/testing";
+import { experimental_createBridgeJsonRpcTestHarness as createBridgeJsonRpcTestHarness } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 import { handleLine } from "./bridge.js";
-
-/**
- * The runtime builds the thread shell environment only for
- * session-construction commands and sends `envVars: {}` on every turn command
- * (`runtime.ts` turn/start and turn/steer). A first turn must therefore keep
- * the session the bridge just constructed: rebuilding it would resume a codex
- * thread whose rollout does not exist yet, which the real app-server rejects
- * with "no rollout found for thread id".
- */
 
 const THREAD_ID = "thr_signature_1";
 
@@ -26,6 +17,18 @@ const sessionOptions = {
   permissionScope: "full",
   approvalReviewer: null,
   permissionEscalation: null,
+} as const;
+
+const autoAskSessionOptions = {
+  permissionMode: "auto",
+  permissionScope: "workspace",
+  approvalReviewer: "automatic",
+  permissionEscalation: "ask",
+} as const;
+
+const autoDenySessionOptions = {
+  ...autoAskSessionOptions,
+  permissionEscalation: "deny",
 } as const;
 
 let harness: ReturnType<typeof createBridgeJsonRpcTestHarness>;
@@ -71,8 +74,33 @@ it("keeps the constructed session for a turn whose options carry no envVars", as
     providerThreadId,
     clientRequestId: "creq_signature2",
     input: [{ type: "text", text: "say hello", mentions: [] }],
-    // The runtime never carries envVars on a turn.
     options: { ...sessionOptions },
+  });
+  const turn = await harness.waitForResponse(2);
+
+  expect(turn.error).toBeUndefined();
+  expect(
+    harness.messages.filter((message) => message.method === "session/replaced"),
+  ).toEqual([]);
+}, 30_000);
+
+it("keeps an auto-reviewed session when only escalation intent changes", async () => {
+  harness.sendRequest(1, "thread/start", {
+    threadId: THREAD_ID,
+    cwd: workspaceDir,
+    instructionMode: "append",
+    options: autoAskSessionOptions,
+  });
+  const started = await harness.waitForResponse(1);
+  const providerThreadId = (started.result as { providerThreadId: string })
+    .providerThreadId;
+
+  harness.sendRequest(2, "turn/start", {
+    threadId: THREAD_ID,
+    providerThreadId,
+    clientRequestId: "creq_signature3",
+    input: [{ type: "text", text: "say hello", mentions: [] }],
+    options: autoDenySessionOptions,
   });
   const turn = await harness.waitForResponse(2);
 

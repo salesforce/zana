@@ -13,6 +13,9 @@ export type PaneContent =
       kind: 'home';
     }
   | {
+      kind: 'inbox';
+    }
+  | {
       kind: 'agents';
     }
   | {
@@ -41,6 +44,14 @@ export type PaneContent =
   | {
       kind: 'plugin-detail';
       pluginId: string;
+    }
+  | {
+      kind: 'project-view';
+      projectId: string;
+      mode: string;
+    }
+  | {
+      kind: 'empty';
     };
 
 export interface PaneNode {

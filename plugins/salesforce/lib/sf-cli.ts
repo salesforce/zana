@@ -5,6 +5,7 @@ import {
   SF_REST_TIMEOUT_MS,
   type ExecResult,
   type ExecSfOptions,
+  type PublicListedOrg,
   type ResolvedOrg,
   type SalesforceRequest,
   type SalesforceResponse
@@ -69,6 +70,21 @@ export function createContainedSpawner(): (
     });
 }
 
+export function composeAbortSignal(timeoutMs: number, extra?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!extra) return timeout;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([timeout, extra]);
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(extra.reason ?? timeout.reason);
+  if (timeout.aborted || extra.aborted) {
+    controller.abort(extra.aborted ? extra.reason : timeout.reason);
+    return controller.signal;
+  }
+  timeout.addEventListener('abort', onAbort, { once: true });
+  extra.addEventListener('abort', onAbort, { once: true });
+  return controller.signal;
+}
+
 export async function salesforceRestRequest(
   conn: ResolvedOrg,
   req: SalesforceRequest
@@ -87,7 +103,7 @@ export async function salesforceRestRequest(
       ...(req.body !== undefined ? { 'Content-Type': 'application/json' } : {})
     },
     body: req.body !== undefined ? JSON.stringify(req.body) : undefined,
-    signal: AbortSignal.timeout(SF_REST_TIMEOUT_MS)
+    signal: composeAbortSignal(SF_REST_TIMEOUT_MS, req.signal)
   });
   const text = await res.text();
   let json: unknown = null;
@@ -107,16 +123,38 @@ function stringField(row: Record<string, unknown>, ...keys: string[]): string {
   return '';
 }
 
+/** Salesforce CLI 2.136+ redacts secrets as `[REDACTED] Use 'sf org auth …' to view`. */
+export function isUsableAccessToken(value: string): boolean {
+  const token = value.trim();
+  if (!token) return false;
+  return !/^\[REDACTED\]/i.test(token);
+}
+
+export function normalizeAccessToken(value: string): string {
+  return value.trim().replace(/^Bearer\s+/i, '').trim();
+}
+
+export function parseAccessToken(stdout: string): string | null {
+  const root = readJsonObject(stdout);
+  const result = root?.result;
+  if (typeof result === 'string') {
+    const token = normalizeAccessToken(result);
+    return isUsableAccessToken(token) ? token : null;
+  }
+  if (!result || typeof result !== 'object') return null;
+  const token = normalizeAccessToken(stringField(result as Record<string, unknown>, 'accessToken'));
+  return isUsableAccessToken(token) ? token : null;
+}
+
 function boolField(row: Record<string, unknown>, key: string): boolean | undefined {
   const value = row[key];
   return typeof value === 'boolean' ? value : undefined;
 }
 
-export interface ListedOrg {
-  alias: string;
-  username: string;
-  kind: ReturnType<typeof classifyOrgKind>;
-  isDefault: boolean;
+export type ListedOrg = PublicListedOrg;
+
+function orgListKey(alias: string, username: string): string {
+  return (username || alias).toLowerCase();
 }
 
 export function parseOrgList(stdout: string): ListedOrg[] {
@@ -130,26 +168,47 @@ export function parseOrgList(stdout: string): ListedOrg[] {
       if (Array.isArray(value)) buckets.push(...value);
     }
   }
-  const out: ListedOrg[] = [];
+  const byKey = new Map<string, ListedOrg>();
   for (const entry of buckets) {
     if (!entry || typeof entry !== 'object') continue;
     const row = entry as Record<string, unknown>;
     const username = stringField(row, 'username', 'userName');
     const alias = stringField(row, 'alias') || username;
     if (!username && !alias) continue;
-    out.push({
+    const instanceUrl = stringField(row, 'instanceUrl', 'loginUrl');
+    const next: ListedOrg = {
       alias,
       username,
       kind: classifyOrgKind({
         isScratchOrg: boolField(row, 'isScratchOrg'),
         isScratch: boolField(row, 'isScratch'),
         isSandbox: boolField(row, 'isSandbox'),
-        instanceUrl: stringField(row, 'instanceUrl', 'loginUrl')
+        instanceUrl
       }),
-      isDefault: boolField(row, 'isDefaultUsername') === true || boolField(row, 'isDefaultDevHubUsername') === true
+      isDefault: boolField(row, 'isDefaultUsername') === true || boolField(row, 'isDefaultDevHubUsername') === true,
+      orgId: stringField(row, 'orgId', 'id'),
+      instanceUrl: instanceUrl.replace(/\/+$/, ''),
+      connectedStatus: stringField(row, 'connectedStatus', 'status')
+    };
+    const key = orgListKey(alias, username);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, next);
+      continue;
+    }
+    byKey.set(key, {
+      ...existing,
+      ...next,
+      alias: existing.alias || next.alias,
+      username: existing.username || next.username,
+      isDefault: existing.isDefault || next.isDefault,
+      orgId: existing.orgId || next.orgId,
+      instanceUrl: existing.instanceUrl || next.instanceUrl,
+      connectedStatus: existing.connectedStatus || next.connectedStatus,
+      kind: existing.kind === 'unknown' ? next.kind : existing.kind
     });
   }
-  return out;
+  return [...byKey.values()];
 }
 
 export function parseCliVersion(stdout: string): string | null {
@@ -164,8 +223,9 @@ export function parseOrgDisplay(stdout: string, fallbackAlias: string, fallbackA
   const row = result as Record<string, unknown>;
   const username = stringField(row, 'username');
   const instanceUrl = stringField(row, 'instanceUrl');
-  const accessToken = stringField(row, 'accessToken');
-  if (!username || !instanceUrl || !accessToken) return null;
+  if (!username || !instanceUrl) return null;
+  const rawToken = stringField(row, 'accessToken');
+  const accessToken = isUsableAccessToken(rawToken) ? normalizeAccessToken(rawToken) : '';
   const alias = stringField(row, 'alias') || fallbackAlias || username;
   const orgId = stringField(row, 'orgId', 'id');
   const apiVersion = stringField(row, 'apiVersion') || fallbackApiVersion || DEFAULT_API_VERSION;

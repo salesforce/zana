@@ -10,8 +10,8 @@ describe('codexModelsFromResponse', () => {
         { id: 'hidden', displayName: 'Hidden', hidden: true, isDefault: false }
       ]
     })).toEqual([
-      { id: 'gpt-5.5', label: 'GPT-5.5', scope: ['local'] },
-      { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', scope: ['local'] }
+      { id: 'gpt-5.5', label: 'GPT-5.5', scope: ['local'], evidenceVersion: '0.140.0' },
+      { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', scope: ['local'], evidenceVersion: '0.140.0' }
     ]);
   });
 });

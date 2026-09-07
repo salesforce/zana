@@ -60,10 +60,14 @@ export function findPaneByThread(
   );
 }
 
+export const EMPTY_PANE_CONTENT: PaneContent = { kind: 'empty' };
+
 /** Byte-for-byte pane identity, including plugin subpaths and session project ids. */
 export function paneContentEquals(a: PaneContent, b: PaneContent): boolean {
   if (a.kind !== b.kind) return false;
-  if (a.kind === 'home' || a.kind === 'agents' || a.kind === 'scheduler') return true;
+  if (a.kind === 'home' || a.kind === 'inbox' || a.kind === 'agents' || a.kind === 'scheduler' || a.kind === 'empty') {
+    return true;
+  }
   if (a.kind === 'new-thread' || a.kind === 'new-schedule') {
     return b.kind === a.kind && (a.projectId ?? null) === (b.projectId ?? null);
   }
@@ -78,6 +82,9 @@ export function paneContentEquals(a: PaneContent, b: PaneContent): boolean {
   }
   if (a.kind === 'plugin-detail') {
     return b.kind === 'plugin-detail' && a.pluginId === b.pluginId;
+  }
+  if (a.kind === 'project-view') {
+    return b.kind === 'project-view' && a.projectId === b.projectId && a.mode === b.mode;
   }
   return (
     b.kind === 'plugin-panel' &&
@@ -433,6 +440,18 @@ export function setFocus(layout: SplitLayout, paneId: string): SplitLayout {
     return layout;
   }
   return { ...layout, focusedPaneId: paneId };
+}
+
+/**
+ * Focus an existing empty drop well, or split the focused pane to the right
+ * with a new one. No-op at the pane cap when no empty pane exists.
+ */
+export function openEmptySplitPane(layout: SplitLayout): SplitLayout {
+  const existing = findPaneByContent(layout.root, EMPTY_PANE_CONTENT);
+  if (existing !== null) {
+    return setFocus(layout, existing.paneId);
+  }
+  return splitPane(layout, layout.focusedPaneId, 'right', EMPTY_PANE_CONTENT);
 }
 
 function normalizeNode(node: LayoutNode): LayoutNode {

@@ -12,10 +12,10 @@ describe('cursorModelsFromListOutput', () => {
       'cursor-grok-4.5-medium - Cursor Grok 4.5 Medium',
       'gpt-5.6-sol-medium - GPT-5.6 Sol 1M'
     ].join('\n'))).toEqual([
-      { id: 'auto', label: 'Auto', scope: ['local'] },
-      { id: 'cursor-grok-4.5-medium', label: 'Cursor Grok 4.5', scope: ['local'] },
-      { id: 'cursor-grok-4.6-medium', label: 'Cursor Grok 4.6', scope: ['local'] },
-      { id: 'gpt-5.6-sol-medium', label: 'GPT-5.6 Sol', scope: ['local'] }
+      { id: 'auto', label: 'Auto', scope: ['local'], evidenceVersion: '2026.01.23' },
+      { id: 'cursor-grok-4.5-medium', label: 'Cursor Grok 4.5', scope: ['local'], evidenceVersion: '2026.01.23' },
+      { id: 'cursor-grok-4.6-medium', label: 'Cursor Grok 4.6', scope: ['local'], evidenceVersion: '2026.01.23' },
+      { id: 'gpt-5.6-sol-medium', label: 'GPT-5.6 Sol', scope: ['local'], evidenceVersion: '2026.01.23' }
     ]);
   });
 });

@@ -8,7 +8,8 @@ import {
 } from '../plugins/plugin-service.js';
 import {
   getConversationThread,
-  listConversationThreadEventsWindow
+  listConversationThreadEventsWindow,
+  queryConversationThreads
 } from '@zana-ai/zcc-db';
 import {
   archiveConversation,
@@ -16,6 +17,9 @@ import {
   sendConversationTurn,
   unarchiveConversation
 } from '../services/threads/conversation-lifecycle.js';
+import { createQueuedMessage, listQueuedMessages } from '../services/threads/queued-messages.js';
+import { createConversationFromRequest } from '../services/threads/conversation-create.js';
+import { listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 import type { ProductHttpContext } from './product-context.js';
 
 export async function productPushInbox(
@@ -98,8 +102,63 @@ export async function attachProductPluginService(
       if (!ok) throw new Error('unknown-thread');
       return { id: threadId };
     },
-    forkThread: async ({ threadId }) => {
-      const thread = await forkConversation(ctx, threadId);
+    forkThread: async ({ threadId, sourceSeqEnd, visibility, agentContextSeed, title, pluginId }) => {
+      const thread = await forkConversation(ctx, threadId, {
+        sourceSeqEnd,
+        visibility,
+        originPluginId: pluginId,
+        agentContextSeed,
+        title
+      });
+      return { id: thread.id };
+    },
+    listThreads: async ({ includeHidden, originKind, originPluginId, archived, limit, offset }) => {
+      return queryConversationThreads(ctx.db, {
+        includeHidden,
+        originKind,
+        originPluginId,
+        archived,
+        limit,
+        offset
+      }).map((thread) => ({
+        id: thread.id,
+        projectId: thread.projectId,
+        hostId: thread.hostId,
+        environmentId: thread.environmentId,
+        providerId: thread.providerId,
+        status: thread.status,
+        originKind: thread.originKind,
+        originPluginId: thread.originPluginId,
+        visibility: thread.visibility,
+        archivedAt: thread.archivedAt,
+        createdAt: thread.createdAt,
+        parentThreadId: thread.parentThreadId
+      }));
+    },
+    listQueuedMessages: async ({ threadId }) => {
+      return listQueuedMessages(ctx.dataDir, threadId).map((row) => ({ id: row.id }));
+    },
+    createQueuedMessage: async ({ threadId, input, senderThreadId }) => {
+      const message = await createQueuedMessage(ctx.dataDir, threadId, input as never, {
+        senderThreadId
+      });
+      return { id: message.id };
+    },
+    spawnThread: async ({ pluginId, projectId, prompt, providerId, parentThreadId }) => {
+      const providers = listThreadProviders();
+      const resolvedProvider = providerId
+        && providers.some((row) => row.id === providerId)
+        ? providerId
+        : providers[0]?.id;
+      if (!resolvedProvider) throw new Error('no thread provider is registered');
+      const thread = await createConversationFromRequest(ctx, {
+        projectId,
+        providerId: resolvedProvider,
+        input: [prompt],
+        promptInput: [{ type: 'text', text: prompt, mentions: [] }],
+        title: `Plugin: ${pluginId}`,
+        parentThreadId
+      });
       return { id: thread.id };
     },
     unarchiveThread: async ({ threadId }) => {

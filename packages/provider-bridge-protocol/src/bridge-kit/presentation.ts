@@ -127,8 +127,14 @@ export function webFetchPresentation(url: string): DeltaPresentation {
 
 /**
  * A plan-steps snapshot. The headline is the step in progress — what the
- * agent is doing now. Collapsed by default: the todo banner reads the
- * snapshot; the row is bookkeeping.
+ * agent is doing now. Collapsed by default: the todo banner and durable
+ * `thread_plan_tasks` store read the snapshot; the row is bookkeeping.
+ *
+ * Provider contract: emit a settled `item/completed` `{ type: "planSteps",
+ * steps: [{ step, status }] }` on every native todo/plan update. Status is
+ * `pending` | `active` | `completed` (`active` is the in-progress step).
+ * Each snapshot supersedes the previous. Do not emit legacy
+ * `turn/plan/updated` for new harnesses.
  */
 export function planStepsPresentation(
   steps: readonly { step: string; status?: string }[],

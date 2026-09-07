@@ -21,6 +21,7 @@ import {
   findOpenConversationTurn,
   HOST_RECOVERY_TURN_SCAN_CAP,
   interruptLiveConversationThreadsForHost,
+  healDisconnectedConversationThreadsForHost,
   shouldInterruptLiveThreadsOnNewHostInstance
 } from './conversation-host-recovery.js';
 
@@ -205,7 +206,7 @@ describe('conversation host recovery', () => {
       hostId: host.id,
       reason: 'manual-stop'
     });
-    expect(getConversationThread(database, thread.id)?.status).toBe('error');
+    expect(getConversationThread(database, thread.id)?.status).toBe('idle');
     expect(listConversationThreadEvents(database, thread.id).map((row) => row.type)).toEqual([
       'system/thread/interrupted'
     ]);
@@ -258,5 +259,15 @@ describe('conversation host recovery', () => {
       environmentId: null,
       cwd: null
     }));
+  });
+
+  it('heals ghost-active threads to error and settles stopping to idle', () => {
+    const database = openTestDb();
+    const host = seedHost(database);
+    const active = seedThread(database, host.id, { status: 'active', title: 'Ghost' });
+    const stopping = seedThread(database, host.id, { status: 'stopping', title: 'Stop' });
+    healDisconnectedConversationThreadsForHost(database, hub(), host.id);
+    expect(getConversationThread(database, active.id)?.status).toBe('error');
+    expect(getConversationThread(database, stopping.id)?.status).toBe('idle');
   });
 });

@@ -32,6 +32,10 @@ describe('host-artifact', () => {
     expect(joinScript).toContain('/internal/hosts/enroll');
     expect(joinScript).toContain('host.list_dir');
     expect(joinScript).toContain('host-rpc.request');
+    expect(joinScript).not.toContain('Host artifact response is missing Content-Length');
+    expect(joinScript).toMatch(
+      /displayName:\s*"Codex"[\s\S]{0,400}?command:\s*"codex-acp"/
+    );
   }, 60_000);
 
   it('packs the provider-bridge worker so remotes do not resolve workspace packages', () => {

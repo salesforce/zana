@@ -1,10 +1,12 @@
 import { Maximize2, Minimize2 } from 'lucide-react';
+import { useState } from 'react';
 import { EditorContent, type Editor } from '@tiptap/react';
 import { ComposerIconButton } from '../ui/CommandComposer.js';
 import { ComposerImageThumbs } from './ComposerImageThumbs.js';
 import { ComposerTypeaheadMenu } from './ComposerTypeaheadMenu.js';
 import type { ComposerImageAttachment } from './composer-image-attachments.js';
 import type { TypeaheadSuggestion } from './types.js';
+import { ThreadImageLightbox } from '../thread/timeline/ThreadImageLightbox.js';
 
 export function ComposerPromptField({
   editor,
@@ -31,6 +33,7 @@ export function ComposerPromptField({
   triggerKind: 'mention' | 'command';
   onApply: (item: TypeaheadSuggestion) => void;
 }) {
+  const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
   return (
     <>
       <ComposerImageThumbs
@@ -40,6 +43,7 @@ export function ComposerPromptField({
           src: image.previewSrc
         }))}
         onRemove={onRemoveImage}
+        onOpen={(image) => setLightbox({ src: image.src, name: image.name })}
       />
       <div className="thread-command-editor-slot">
         <ComposerIconButton
@@ -61,6 +65,13 @@ export function ComposerPromptField({
           onApply={onApply}
         />
       )}
+      {lightbox ? (
+        <ThreadImageLightbox
+          src={lightbox.src}
+          alt={lightbox.name}
+          onClose={() => setLightbox(null)}
+        />
+      ) : null}
     </>
   );
 }

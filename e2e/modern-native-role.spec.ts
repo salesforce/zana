@@ -32,15 +32,15 @@ test('Modern Native role applies a session-advertised ACP mode', async ({ app })
   await window.getByTestId('model-reasoning-provider-acp-cursor').click();
   await modelTrigger.click(); // switching harness leaves the popover open; close it
 
-  // The native role is a popover chip (shared NativeRolePicker) — the resting
-  // selection is the session-advertised currentValue ('build' → labelled 'Build').
-  const roleTrigger = composer.getByTestId('native-role-picker-trigger');
+  // The first-slot picker is Agent | Plan (shared ComposerModePicker). ACP
+  // session modes still drive the payload (`build` is execute-kind → Agent).
+  const roleTrigger = composer.getByTestId('composer-mode-picker-trigger');
   await expect(roleTrigger).toBeVisible({ timeout: 30_000 });
-  await expect(roleTrigger).toContainText('Build');
+  await expect(roleTrigger).toContainText('Agent');
   await roleTrigger.click();
-  const roleMenu = window.getByTestId('native-role-picker-menu');
-  await expect(roleMenu.getByRole('option')).toHaveText(['Build', 'Plan']);
-  await window.getByTestId('native-role-plan').click();
+  const roleMenu = window.getByTestId('composer-mode-picker-menu');
+  await expect(roleMenu.getByRole('option')).toHaveText(['Agent', 'Plan']);
+  await window.getByTestId('composer-mode-plan').click();
   await expect(roleTrigger).toContainText('Plan');
 
   const input = composer.getByTestId('thread-command-input');

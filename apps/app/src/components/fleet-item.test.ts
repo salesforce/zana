@@ -193,6 +193,9 @@ describe('fleet items', () => {
     expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle' }), true)).toBe(
       'Claude Code · Local agent · remote tools'
     );
+    expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle' }), false, true)).toBe(
+      'Claude Code · Remote host'
+    );
     expect(threadCardShowsProject(true, true)).toBe(false);
     expect(threadCardShowsProject(true, false)).toBe(true);
     expect(threadCardShowsProject(false, false)).toBe(false);
@@ -212,6 +215,9 @@ describe('fleet items', () => {
     );
     expect(agentCardRuntimeLabel({ profile: 'claude', remote: true, personaName: 'Reviewer' })).toBe(
       'Reviewer · Remote host'
+    );
+    expect(agentCardRuntimeLabel({ profile: 'claude', remote: true, remoteToolProxy: true })).toBe(
+      'Claude Code · Local agent · remote tools'
     );
     expect(agentCardRuntimeLabel({ profile: 'claude', personaName: '  ' })).toBe('Claude Code · Local');
   });

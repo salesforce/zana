@@ -38,6 +38,7 @@ import {
   formatTimelineActivityIntentDetailParts,
   getTimelineActivityIntentDetailDedupeKey,
   hasTimelineExplorationIntent,
+  timelineRowActivityIntents,
   type TimelineExplorationWorkRow,
 } from "./timeline-activity-intents.js";
 import { fileNameFromPath, formatTimelinePath } from "./timeline-path-display.js";
@@ -1712,7 +1713,7 @@ export function buildTimelineActivityIntentTitles(
         ? "interrupted"
         : undefined;
 
-  row.activityIntents.forEach((intent, index) => {
+  timelineRowActivityIntents(row).forEach((intent, index) => {
     if (intent.type === "unknown") {
       return;
     }

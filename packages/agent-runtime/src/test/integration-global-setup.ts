@@ -30,8 +30,6 @@ import {
  * bridge instead of an artifact.
  */
 const PROVIDER_BRIDGE_PLUGIN_IDS = [
-  "provider-codex",
-  "provider-claude-code",
   "provider-acp",
 ] as const;
 

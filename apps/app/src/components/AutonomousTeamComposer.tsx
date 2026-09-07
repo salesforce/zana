@@ -15,7 +15,7 @@ import { posixQuote } from '../lib/quote.js';
 import { attachmentName } from '../lib/attachments.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
-import { composerProjectOptions, resolveComposerProjectId } from './composer-project-default.js';
+import { composerProjectOptions, resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
@@ -34,18 +34,32 @@ import {
  */
 export function AutonomousTeamComposer({
   project: pinnedProject,
+  composerProjectId,
+  onComposerProjectIdChange,
   initialText,
   onClose
 }: {
   project?: Project;
   initialText?: string;
   onClose?: () => void;
-}) {
+} & ComposerProjectSelectionProps) {
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
   const teams = useTeams(useShallow((s) => s.teams));
   const pushToast = useUi((s) => s.pushToast);
-  const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
+  const selectedProjectId = useUi((s) => s.selectedProjectId);
+  const lastProjectId = useData((s) => s.lastProjectId);
+  const [internalProjectId, setInternalProjectId] = useState(
+    pinnedProject?.id ?? composerProjectId ?? ''
+  );
+  const projectId = pinnedProject?.id
+    ?? (onComposerProjectIdChange ? (composerProjectId || internalProjectId) : internalProjectId);
+  const setProjectId = (nextProjectId: string | ((current: string) => string)) => {
+    const resolved = typeof nextProjectId === 'function' ? nextProjectId(projectId) : nextProjectId;
+    if (!onComposerProjectIdChange) setInternalProjectId(resolved);
+    onComposerProjectIdChange?.(resolved);
+  };
+  const preferredProjectId = selectedProjectId ?? lastProjectId;
   const [teamId, setTeamId] = useState('');
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +102,7 @@ export function AutonomousTeamComposer({
       setProjectId(preferred);
       return;
     }
-    const nextId = resolveComposerProjectId(projects, projectId);
+    const nextId = resolveComposerProjectId(projects, projectId, undefined, preferredProjectId);
     if (nextId && nextId !== projectId) {
       setProjectId(nextId);
       return;
@@ -106,7 +120,7 @@ export function AutonomousTeamComposer({
     return () => {
       cancelled = true;
     };
-  }, [loadProjects, pinnedProject, projectId, projects, selectedTeam?.defaultProjectId]);
+  }, [loadProjects, pinnedProject, preferredProjectId, projectId, projects, selectedTeam?.defaultProjectId]);
 
   const goalReady = field.text.trim().length > 0 || field.images.length > 0;
   const canLaunch = Boolean(teamId && project && goalReady && !launching);

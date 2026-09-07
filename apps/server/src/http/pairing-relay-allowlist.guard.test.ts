@@ -23,6 +23,7 @@ describe('pairing relay allowlist guard', () => {
     expect(isAllowedHttp('POST', '/internal/hosts/interactive-request')).toBe(true);
     expect(isAllowedHttp('POST', '/internal/hosts/interactive-request/interrupt')).toBe(true);
     expect(isAllowedHttp('GET', `/internal/plugins/provider-acp/host/${'ab'.repeat(32)}`)).toBe(true);
+    expect(isAllowedHttp('POST', '/internal/hosts/tool-call')).toBe(false);
     expect(isAllowedWs('/internal/hosts/ws')).toBe(true);
     expect(isAllowedWs('/internal/hosts/ws/')).toBe(true);
   });

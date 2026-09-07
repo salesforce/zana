@@ -244,12 +244,15 @@ export function threadHarnessLabel(providerId: string): string {
 /** Runtime + harness line for a board card (replaces the redundant project name). */
 export function threadCardRuntimeLabel(
   thread: Pick<ThreadListItem, 'providerId' | 'isWorktree'>,
-  remoteToolProxy = false
+  remoteToolProxy = false,
+  remoteHost = false
 ): string {
   const harness = threadHarnessLabel(thread.providerId);
   const runtime = remoteToolProxy
     ? 'Local agent · remote tools'
-    : thread.isWorktree ? 'This checkout' : 'Local';
+    : remoteHost
+      ? 'Remote host'
+      : thread.isWorktree ? 'This checkout' : 'Local';
   return `${harness} · ${runtime}`;
 }
 
@@ -274,10 +277,14 @@ export function agentCardRuntimeLabel(input: {
   profile: string;
   personaName?: string | null;
   remote?: boolean;
+  remoteToolProxy?: boolean;
 }): string {
   const name = input.personaName?.trim();
   const harness = name || cliHarnessLabel(input.profile);
-  return `${harness} · ${input.remote ? 'Remote host' : 'Local'}`;
+  const runtime = input.remoteToolProxy
+    ? 'Local agent · remote tools'
+    : input.remote ? 'Remote host' : 'Local';
+  return `${harness} · ${runtime}`;
 }
 
 export function threadCardShowsProject(showProject: boolean, grouped: boolean): boolean {

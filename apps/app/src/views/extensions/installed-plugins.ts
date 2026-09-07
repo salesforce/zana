@@ -39,6 +39,23 @@ export function placeholderModule(entry: ExtensionEntry): AppModule & { loadErro
   };
 }
 
+/**
+ * Keep the installed-plugin name/icon even when the loaded module was titled
+ * after its first nav panel (Salesforce → "SOQL").
+ */
+export function withPluginIdentity(
+  module: AppModule & { loadError?: string },
+  plugin: PluginAppEntry | null
+): AppModule & { loadError?: string } {
+  if (!plugin) return module;
+  const name = plugin.name.trim();
+  return {
+    ...module,
+    title: name || module.title,
+    icon: displayIcon(plugin.icon || module.icon)
+  };
+}
+
 export function placeholderFromPlugin(
   plugin: PluginAppEntry
 ): AppModule & { loadError?: string } {
@@ -84,8 +101,10 @@ export function buildHubRows(
     const entry = byEntry.get(id) ?? null;
     if (!plugin && !entry) continue;
     const loaded = byModule.get(id);
-    const module =
-      loaded ?? (plugin ? placeholderFromPlugin(plugin) : placeholderModule(entry!));
+    const module = withPluginIdentity(
+      loaded ?? (plugin ? placeholderFromPlugin(plugin) : placeholderModule(entry!)),
+      plugin
+    );
     rows.push({ module, entry, plugin });
   }
   return rows.sort((a, b) => a.module.title.localeCompare(b.module.title));
@@ -156,7 +175,9 @@ export function filterInstalledRows(
       return false;
     }
     if (!q) return true;
-    const hay = [row.module.id, row.module.title, rowDescription(row)].join(' ').toLowerCase();
+    const hay = [row.module.id, row.module.title, row.plugin?.name, rowDescription(row)]
+      .join(' ')
+      .toLowerCase();
     return hay.includes(q);
   });
   return filtered.sort((left, right) => {

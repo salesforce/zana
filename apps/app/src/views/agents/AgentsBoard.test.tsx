@@ -3,8 +3,12 @@ import { readFileSync } from 'node:fs';
 
 const board = readFileSync(new URL('./AgentsBoard.tsx', import.meta.url), 'utf8');
 const view = readFileSync(new URL('./AgentsView.tsx', import.meta.url), 'utf8');
-const workspace = readFileSync(new URL('../project/ProjectView.tsx', import.meta.url), 'utf8');
+const workspace = readFileSync(new URL('../project/ProjectModePane.tsx', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
+const closeIdle = readFileSync(
+  new URL('../../components/CloseIdleAgentsDialog.tsx', import.meta.url),
+  'utf8'
+);
 
 describe('AgentsBoard', () => {
   it('is the only board: global and project are scope flags', () => {
@@ -19,26 +23,37 @@ describe('AgentsBoard', () => {
     expect(app).not.toContain("nav !== 'home'");
   });
 
-  it('embeds AuroraGrid on both empty scopes and keeps create off the board', () => {
+  it('hosts AuroraGrid behind the board the same way Home does', () => {
+    expect(board).toContain('aurora-host');
+    expect(board).toContain('<AuroraGrid />');
+    expect(board.indexOf('<AuroraGrid />')).toBeLessThan(board.indexOf('{showToolbar && ('));
+    expect(board).not.toContain('<HomeAgentComposer');
+    expect(board).toContain('No agents');
+    expect(board).toContain('No agents yet');
+    expect(board).toContain('setLauncherOpen(true)');
+    expect(board).toContain('data-testid="agents-board-new-thread"');
+    expect(board).toContain('{showToolbar && (');
+    expect(board).toContain('const showToolbar = fleet.length > 0 || !includeScheduled');
+    expect(board).toContain('<ScheduledColumnToggle />');
+
     const emptyStart = board.indexOf('fleet.length === 0 ? (');
     const filterStart = board.indexOf('isGlobal && visibleFleet.length === 0');
     expect(emptyStart).toBeGreaterThan(-1);
     expect(filterStart).toBeGreaterThan(emptyStart);
     const emptyBranch = board.slice(emptyStart, filterStart);
-    expect(emptyBranch).toContain('<AuroraGrid />');
+    expect(emptyBranch).not.toContain('<AuroraGrid');
+    expect(emptyBranch).not.toContain('aurora-host');
     expect(emptyBranch).not.toContain('<HomeAgentComposer');
-    expect(emptyBranch).toContain('No agents');
-    expect(emptyBranch).toContain('No agents yet');
-    expect(emptyBranch).toContain('setLauncherOpen(true)');
-    expect(emptyBranch).toContain('data-testid="agents-board-new-thread"');
-    expect(board).toContain('{showToolbar && (');
-    expect(board).toContain('const showToolbar = fleet.length > 0 || !includeScheduled');
-    expect(board).toContain('<ScheduledColumnToggle />');
-    expect(board).not.toContain('<HomeAgentComposer');
+    expect(emptyBranch).toContain('agents-board-empty--launch');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));
     expect(filterBranch).not.toContain('<AuroraGrid');
     expect(filterBranch).not.toContain('<HomeAgentComposer');
+  });
+
+  it('portals the close-idle dialog out of the aurora stacking context', () => {
+    expect(closeIdle).toContain('return createPortal(node, document.body)');
+    expect(closeIdle).toContain('className="modal-backdrop"');
   });
 
   it('merges visible threads into lanes while keeping close-idle PTY-only', () => {
@@ -101,8 +116,28 @@ describe('AgentsBoard compact chrome contract', () => {
     );
   });
 
+  it('keeps the empty list-view monitor as a centered stack, not the 3-column grid', () => {
+    expect(css).toMatch(/\.agent-monitor\.agent-monitor--empty\s*\{[^}]*display:\s*flex/s);
+    const lastEmpty = css.lastIndexOf('.agent-monitor.agent-monitor--empty');
+    const lastGrid = css.lastIndexOf('.agent-monitor {\n  flex: 1');
+    expect(lastEmpty).toBeGreaterThan(lastGrid);
+    const emptyBlock = css.slice(lastEmpty, css.indexOf('}', lastEmpty));
+    expect(emptyBlock).toContain('display: flex');
+  });
+
   it('does not span a launch composer across the workbench', () => {
     expect(board).not.toContain('<HomeAgentComposer');
     expect(css).not.toContain('.agents-board > .home-agent-composer {');
+  });
+
+  it('lifts board content above AuroraGrid', () => {
+    expect(css).toContain('.agents-board.aurora-host > :not(.aurora-grid) {');
+    const liftStart = css.indexOf('.agents-board.aurora-host > :not(.aurora-grid) {');
+    const lift = css.slice(liftStart, css.indexOf('}', liftStart));
+    expect(lift).toContain('position: relative;');
+    expect(lift).toContain('z-index: 1;');
+    expect(css).toContain(
+      '.agents-board-empty--launch {\n  overflow: auto;\n  gap: 20px;\n  justify-content: center;\n  padding: 48px 24px 56px;\n  background: transparent;'
+    );
   });
 });

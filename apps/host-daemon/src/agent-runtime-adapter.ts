@@ -1,7 +1,8 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveZccDataDir } from './host-config.js';
-import type { HostBridgeLaunch, HostEventEnvelope, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
+import type { HostBridgeLaunch, HostEventEnvelope, ProviderHealthResult, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
+import type { HostDaemonAcpLaunchSpec } from '@zana-ai/zcc-host-daemon-contract';
 import {
   createAgentRuntime,
   type AgentRuntime,
@@ -18,7 +19,6 @@ import {
   type PermissionMode,
   type PendingInteractionCreate,
   type PendingInteractionResolution,
-  type PromptInput,
   type ReasoningLevel,
   type RuntimeThreadExecutionOptions,
   type ThreadEvent,
@@ -81,13 +81,6 @@ export function mergeSessionTooling(input: {
 
 export type CreateAgentRuntimeFn = (options: AgentRuntimeOptions) => AgentRuntime;
 
-function textInput(chunks: readonly string[]): PromptInput[] {
-  return chunks
-    .map((text) => text.trim())
-    .filter((text) => text.length > 0)
-    .map((text) => ({ type: 'text' as const, text, mentions: [] }));
-}
-
 function permissionPolicy(
   mode: RuntimeThreadExecutionOptions['permissionMode']
 ): Pick<
@@ -122,14 +115,27 @@ export function threadExecutionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
   reasoningLevel?: ReasoningLevel;
+  permissionEscalation?: 'ask' | 'deny' | null;
 }): RuntimeThreadExecutionOptions {
   const mode = input.permissionMode ?? DEFAULT_THREAD_EXECUTION_OPTIONS.permissionMode;
+  const policy = permissionPolicy(mode);
+  const permissionEscalation =
+    policy.permissionEscalation === null
+      ? null
+      : input.permissionEscalation === 'ask' || input.permissionEscalation === 'deny'
+        ? input.permissionEscalation
+        : policy.permissionEscalation;
   return {
     ...DEFAULT_THREAD_EXECUTION_OPTIONS,
-    ...permissionPolicy(mode),
+    ...policy,
+    permissionEscalation,
     ...(input.model ? { model: input.model } : {}),
     ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {})
   } as RuntimeThreadExecutionOptions;
+}
+
+function isProviderOptionsBag(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function executionOptions(input: {
@@ -137,11 +143,28 @@ function executionOptions(input: {
   model?: string;
   reasoningLevel?: ReasoningLevel;
   acpMode?: string;
+  claudeCodePermissionMode?: 'plan';
+  providerOptions?: Record<string, unknown>;
+  permissionEscalation?: 'ask' | 'deny' | null;
 }): RuntimeThreadExecutionOptions {
+  const providerOptions: Record<string, unknown> = {
+    ...(isProviderOptionsBag(input.providerOptions) ? input.providerOptions : {}),
+    ...(input.acpMode ? { acpMode: input.acpMode } : {})
+  };
   return {
     ...threadExecutionOptions(input),
-    ...(input.acpMode ? { providerOptions: { acpMode: input.acpMode } } : {})
+    ...(input.claudeCodePermissionMode
+      ? { claudeCodePermissionMode: input.claudeCodePermissionMode }
+      : {}),
+    ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {})
   };
+}
+
+function acpLaunchSpecFromProviderOptions(
+  providerOptions?: Record<string, unknown>
+): HostDaemonAcpLaunchSpec | undefined {
+  const spec = providerOptions?.acpLaunchSpec;
+  return isProviderOptionsBag(spec) ? (spec as HostDaemonAcpLaunchSpec) : undefined;
 }
 
 function toRuntimeBridgeLaunch(
@@ -255,6 +278,7 @@ export function createAgentRuntimeAdapter(options: {
   const runtimeMeta = new Map<string, { catalogHash: string; cwd: string }>();
   const threadLocation = new Map<string, { environmentId: string; cwd: string }>();
   const remoteProxyByThread = new Map<string, ThreadRemoteProxy>();
+  const submitByThread = new Map<string, Promise<void>>();
   const createRuntime = options.createRuntime
     ?? (fakeProviderEnabled() ? createFakeAgentRuntime : createAgentRuntime);
   const bridgeBundleDir = options.bridgeBundleDir ?? packedBridgeBundleDir();
@@ -377,6 +401,21 @@ export function createAgentRuntimeAdapter(options: {
         ...(listed.acpMode ? { acpMode: listed.acpMode } : {})
       };
     },
+    async providerHealth(input: {
+      providerId: string;
+      bridgeLaunch: HostBridgeLaunch;
+      cwd?: string;
+    }): Promise<ProviderHealthResult> {
+      syncProviderBridgeRecording();
+      const workspaceCwd = input.cwd ?? join(storageRoot, 'provider-health', input.providerId);
+      if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
+      const runtime = runtimeFor(`provider-health:${input.providerId}`, workspaceCwd);
+      return runtime.providerHealth({
+        providerId: input.providerId,
+        bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
+        ...(input.cwd ? { cwd: input.cwd } : {})
+      });
+    },
     async startWork(input: ThreadWorkInput) {
       syncProviderBridgeRecording();
       const runtime = runtimeFor(input.environmentId, input.cwd);
@@ -395,14 +434,27 @@ export function createAgentRuntimeAdapter(options: {
         threadId: input.threadId,
         projectId: input.projectId,
         providerId: input.providerId,
-        input: textInput(input.input),
+        input: input.input,
         clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
         options: executionOptions({
           permissionMode: input.permissionMode,
           model: input.model,
           reasoningLevel: input.reasoningLevel,
-          acpMode: input.acpMode
+          acpMode: input.acpMode,
+          claudeCodePermissionMode: input.claudeCodePermissionMode,
+          providerOptions: input.providerOptions
         }),
+        ...(acpLaunchSpecFromProviderOptions(input.providerOptions)
+          ? { acpLaunchSpec: acpLaunchSpecFromProviderOptions(input.providerOptions) }
+          : {}),
+        ...(input.providerThreadId ? {
+          fork: {
+            sourceProviderThreadId: input.providerThreadId,
+            ...(input.providerCheckpointId
+              ? { sourceProviderCheckpointId: input.providerCheckpointId }
+              : {})
+          }
+        } : {}),
         ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
         ...mergeSessionTooling({
           remoteProxy,
@@ -413,17 +465,45 @@ export function createAgentRuntimeAdapter(options: {
       return { providerThreadId: result.providerThreadId };
     },
     async submitTurn(input) {
-      const runtime = runtimeForThread(input.threadId);
-      await runtime.runTurn({
-        threadId: input.threadId,
-        input: textInput(input.input),
-        clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
-        options: executionOptions({
+      const previous = submitByThread.get(input.threadId) ?? Promise.resolve();
+      const run = previous.catch(() => undefined).then(async () => {
+        const runtime = runtimeForThread(input.threadId);
+        const options = executionOptions({
+          permissionMode: input.permissionMode,
           model: input.model,
           reasoningLevel: input.reasoningLevel,
-          acpMode: input.acpMode
-        })
+          acpMode: input.acpMode,
+          claudeCodePermissionMode: input.claudeCodePermissionMode,
+          providerOptions: input.providerOptions,
+          permissionEscalation: input.permissionEscalation
+        });
+        const payload = {
+          threadId: input.threadId,
+          input: input.input,
+          clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
+          options
+        };
+        const mode = input.mode;
+        const activeTurnId = input.expectedTurnId
+          ?? runtime.getActiveTurnId?.(input.threadId)
+          ?? null;
+        const explicitSteer = mode === 'steer' || mode === 'steer-if-active';
+        const autoSteer = (mode == null || mode === 'auto') && Boolean(activeTurnId);
+        if ((explicitSteer || autoSteer) && activeTurnId) {
+          await runtime.steerTurn({
+            ...payload,
+            expectedTurnId: activeTurnId
+          });
+          return;
+        }
+        await runtime.runTurn(payload);
       });
+      submitByThread.set(input.threadId, run);
+      try {
+        await run;
+      } finally {
+        if (submitByThread.get(input.threadId) === run) submitByThread.delete(input.threadId);
+      }
     },
     async resumeWork(input: ThreadResumeInput) {
       syncProviderBridgeRecording();
@@ -439,8 +519,13 @@ export function createAgentRuntimeAdapter(options: {
           permissionMode: input.permissionMode,
           model: input.model,
           reasoningLevel: input.reasoningLevel,
-          acpMode: input.acpMode
+          acpMode: input.acpMode,
+          claudeCodePermissionMode: input.claudeCodePermissionMode,
+          providerOptions: input.providerOptions
         }),
+        ...(acpLaunchSpecFromProviderOptions(input.providerOptions)
+          ? { acpLaunchSpec: acpLaunchSpecFromProviderOptions(input.providerOptions) }
+          : {}),
         ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
         ...mergeSessionTooling({
           remoteProxy: false,

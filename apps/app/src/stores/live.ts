@@ -32,6 +32,7 @@ import type {
   Project,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
+import { isThreadPendingInboxClone } from '@zana-ai/zcc-domain/product';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { agentNavCounts } from '../lib/agent-nav-counts.js';
@@ -44,7 +45,7 @@ import { buildFollowUpAnswerPrompt, followUpAgentTitle } from '../lib/followUpPr
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
 import {
   errorMessage,
-  liveTerminals,
+  listedTerminals,
   pushErrorToast,
   useData,
   useUi
@@ -85,15 +86,21 @@ interface InboxLiveState {
 export const useInbox = create<InboxLiveState>((set) => ({
   entries: [],
   loading: true,
-  setEntries: (entries) => set({ entries, loading: false }),
+  setEntries: (entries) => set({
+    entries: entries.filter((entry) => !isThreadPendingInboxClone(entry)),
+    loading: false
+  }),
   prepend: (entry) =>
-    set((s) =>
-      s.entries.some((e) => e.id === entry.id)
-        ? s
-        : { entries: [entry, ...s.entries] }
-    ),
+    set((s) => {
+      if (isThreadPendingInboxClone(entry) || s.entries.some((e) => e.id === entry.id)) return s;
+      return { entries: [entry, ...s.entries] };
+    }),
   upsert: (entry) =>
     set((s) => {
+      if (isThreadPendingInboxClone(entry)) {
+        const next = s.entries.filter((e) => e.id !== entry.id);
+        return next.length === s.entries.length ? s : { entries: next };
+      }
       const rest = s.entries.filter((e) => e.id !== entry.id);
       // Re-front: the coalesced entry's ts was just bumped, so it's newest.
       return { entries: [entry, ...rest] };
@@ -739,12 +746,15 @@ export const useSetup = create<SetupLiveState>(() => ({
 }));
 
 /**
- * Whether the setup checklist has anything worth showing — any dependency that
- * is missing or failed to install. Gates the first-run auto-open and the
- * Sidebar/Settings affordance.
+ * Whether the first-run checklist should auto-open — a *required* dependency
+ * is missing or failed. Optional CLIs (Cursor, OpenCode, Pi, Codex, SF) stay
+ * on the list but never trip this; keep in sync with `hasMissingDeps` in
+ * dependency-doctor.ts.
  */
 export function hasMissingSetup(status: SetupStatus): boolean {
-  return status.items.some((i) => i.phase === 'missing' || i.phase === 'failed');
+  return status.items.some(
+    (i) => i.required !== false && (i.phase === 'missing' || i.phase === 'failed')
+  );
 }
 
 /**
@@ -1681,7 +1691,9 @@ export function useProjectScheduleCount(projectId: string): number {
  */
 export function useProjectRunningTerminalCount(projectId: string): number {
   const terminals = useData((s) => s.terminals);
-  return liveTerminals(terminals[projectId]).filter((t) => t.profile === 'shell').length;
+  return listedTerminals(terminals[projectId]).filter(
+    (t) => t.status !== 'exited' && t.profile === 'shell'
+  ).length;
 }
 
 /** Count of `open` follow-ups for ONE project — backs the per-project Follow-ups tab badge. */

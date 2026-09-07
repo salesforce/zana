@@ -9,6 +9,7 @@ import {
 } from '../../lib/split-drag/index.js';
 import {
   countPanes,
+  findPane,
   findPaneByContent,
   listPanes,
   MAX_PANES,
@@ -19,11 +20,17 @@ import {
   type SplitLayout
 } from '../../lib/split-layout/index.js';
 import { openRoutedPaneInSplit } from '../../lib/split-layout/openThreadInSplit.js';
-import { focusedPaneRoute, paneContentRoute } from '../../lib/split-layout/splitThreadNavigation.js';
+import {
+  createSinglePaneLayout,
+  focusedPaneRoute,
+  paneContentForPathname,
+  paneContentRoute
+} from '../../lib/split-layout/splitThreadNavigation.js';
 import { useSplitWorkspace } from '../../lib/split-layout/store.js';
 
 const SIDEBAR_SELECTOR = '.sidebar, .project-scoped-nav, [data-sidebar="sidebar"]';
-const MAIN_CONTENT_SELECTOR = '.split-workspace, main.shell-main';
+/** The live workspace box — never the shell landmark (display:contents, empty rect). */
+const MAIN_CONTENT_SELECTOR = '.split-workspace';
 
 export function usePaneContentSplitDrag({
   content,
@@ -67,20 +74,24 @@ export function usePaneContentSplitDrag({
             y,
             sidebarRightEdge
           }),
-        decide: (_paneId, zone) => {
+        decide: (paneId, zone) => {
           const layout = useSplitWorkspace.getState().layout ?? startLayout;
           if (layout === null) {
             return decideThreadDrop({ zone, threadAlreadyOpen: false, atMaxPanes: false });
           }
           const alreadyOpen = findPaneByContent(layout.root, paneContent) !== null;
+          const target = findPane(layout.root, paneId);
           return decideThreadDrop({
             zone,
             threadAlreadyOpen: alreadyOpen,
-            atMaxPanes: countPanes(layout.root) >= MAX_PANES
+            atMaxPanes: countPanes(layout.root) >= MAX_PANES,
+            emptyTarget: target?.content.kind === 'empty'
           });
         },
         onDrop: (target) => {
-          const layout = useSplitWorkspace.getState().layout ?? startLayout;
+          const stored = useSplitWorkspace.getState().layout ?? startLayout;
+          const keep = stored === null ? paneContentForPathname(pathname) : null;
+          const layout = stored ?? (keep === null ? null : createSinglePaneLayout(keep));
           if (layout === null) {
             openRoutedPaneInSplit({
               navigate,
@@ -98,10 +109,12 @@ export function usePaneContentSplitDrag({
             if (route) navigate(route, { replace: true });
             return;
           }
+          const paneId =
+            findPane(layout.root, target.paneId) !== null ? target.paneId : layout.focusedPaneId;
           const next =
             target.zone === 'center'
-              ? replacePaneContent(layout, target.paneId, paneContent)
-              : splitPane(layout, target.paneId, target.zone, paneContent);
+              ? replacePaneContent(layout, paneId, paneContent)
+              : splitPane(layout, paneId, target.zone, paneContent);
           if (next !== layout) useSplitWorkspace.getState().setLayout(next);
           const route = focusedPaneRoute(next);
           if (route) navigate(route);

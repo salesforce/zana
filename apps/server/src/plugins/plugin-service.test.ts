@@ -7,11 +7,13 @@ import {
   createPluginService,
   defaultPluginDataDir,
   installBundledPlugin,
+  isLegacyExtensionJsonPluginRoot,
   listBundledPluginCatalog,
   toPluginAppSnapshot
 } from './plugin-service.js';
 import { containsNativeAddon } from './plugin-api.js';
 import { PluginHostArtifactRegistry } from './plugin-host-artifact-registry.js';
+import { createPluginUninstalledStore, pluginUninstalledPath } from './plugin-uninstalled.js';
 
 const roots: string[] = [];
 
@@ -25,7 +27,12 @@ afterEach(() => {
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function writePlugin(dir: string, id: string, serverSource?: string): string {
+function writePlugin(
+  dir: string,
+  id: string,
+  serverSource?: string,
+  zccExtra?: Record<string, unknown>
+): string {
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, 'package.json'),
@@ -38,7 +45,8 @@ function writePlugin(dir: string, id: string, serverSource?: string): string {
         description: `${id} plugin`,
         branding: { icon: 'Puzzle' },
         server: './server.mjs',
-        app: './app.js'
+        app: './app.js',
+        ...zccExtra
       }
     })
   );
@@ -50,6 +58,35 @@ function writePlugin(dir: string, id: string, serverSource?: string): string {
       }\n`
   );
   writeFileSync(join(dir, 'app.js'), 'export default { __zccPluginApp: true, setup() {} }\n');
+  return dir;
+}
+
+function writeLegacyExtension(dir: string, id: string): string {
+  mkdirSync(join(dir, 'dist'), { recursive: true });
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({
+      name: `zcc-extension-${id}`,
+      version: '0.3.0',
+      private: true,
+      description: 'Legacy MainModule occupier'
+    })
+  );
+  writeFileSync(
+    join(dir, 'extension.json'),
+    JSON.stringify({
+      id,
+      version: '0.3.0',
+      title: 'Legacy',
+      icon: 'Cloud',
+      entry: { main: 'dist/main.mjs', renderer: 'dist/renderer.js' }
+    })
+  );
+  writeFileSync(
+    join(dir, 'dist/main.mjs'),
+    `export default { id: ${JSON.stringify(id)}, async setup() { return { status: async () => ({ old: true }) }; } };\n`
+  );
+  writeFileSync(join(dir, 'dist/renderer.js'), 'export default {}\n');
   return dir;
 }
 
@@ -743,6 +780,68 @@ describe('PluginService', () => {
     expect(service.get('tasks')).toBeUndefined();
   });
 
+  it('replaces a leftover extension.json occupier of an official id with the bundled plugin', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    writePlugin(join(bundled, 'salesforce'), 'salesforce');
+    const legacyDir = writeLegacyExtension(join(root(), 'zcc-extension-salesforce'), 'salesforce');
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.install(legacyDir);
+    expect(service.get('salesforce')?.sourceKind).toBe('path');
+    await expect(service.callRpc('salesforce', 'ping', {})).rejects.toThrow(/unknown rpc/);
+    await service.reconcileBuiltins();
+    expect(service.get('salesforce')).toMatchObject({
+      id: 'salesforce',
+      sourceKind: 'builtin',
+      source: 'builtin:salesforce',
+      enabled: true,
+      status: 'running'
+    });
+    expect(service.get('salesforce')?.rootDir).toBe(join(bundled, 'salesforce'));
+    await expect(service.callRpc('salesforce', 'ping', {})).resolves.toEqual({
+      ok: true,
+      id: 'salesforce'
+    });
+    expect(existsSync(legacyDir)).toBe(true);
+  });
+
+  it('does not replace a path install of a real zcc plugin that occupies an official id', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    writePlugin(join(bundled, 'salesforce'), 'salesforce');
+    const devDir = writePlugin(join(root(), 'salesforce-dev'), 'salesforce', `export default function plugin(zcc) {
+        zcc.rpc.method('ping', () => ({ ok: true, from: 'path-dev' }));
+      }\n`);
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.install(devDir);
+    await service.reconcileBuiltins();
+    expect(service.get('salesforce')?.sourceKind).toBe('path');
+    expect(service.get('salesforce')?.rootDir).toBe(devDir);
+    await expect(service.callRpc('salesforce', 'ping', {})).resolves.toEqual({
+      ok: true,
+      from: 'path-dev'
+    });
+  });
+
+  it('preserves enabled=false when replacing a leftover official occupier', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    writePlugin(join(bundled, 'salesforce'), 'salesforce');
+    const legacyDir = writeLegacyExtension(join(root(), 'legacy-sf'), 'salesforce');
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.install(legacyDir);
+    await service.disable('salesforce');
+    await service.reconcileBuiltins();
+    expect(service.get('salesforce')).toMatchObject({
+      sourceKind: 'builtin',
+      enabled: false,
+      status: 'disabled'
+    });
+  });
+
   it('rebases a builtin plugin onto the current bundledRoot', async () => {
     const dataDir = root();
     const firstBundled = root();
@@ -773,6 +872,26 @@ describe('PluginService', () => {
     expect(service.get('docs')?.id).toBe('docs');
   });
 
+  it('reclaims a leftover uninstall tombstone for promoted Claude and Codex providers once', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    writePlugin(join(bundled, 'provider-claude-code'), 'provider-claude-code');
+    writePlugin(join(bundled, 'provider-codex'), 'provider-codex');
+    const tombstones = createPluginUninstalledStore({ file: pluginUninstalledPath(dataDir) });
+    await tombstones.add('provider-claude-code');
+    await tombstones.add('provider-codex');
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.reconcileBuiltins();
+    expect(service.get('provider-claude-code')?.id).toBe('provider-claude-code');
+    expect(service.get('provider-codex')?.id).toBe('provider-codex');
+    await service.remove('provider-claude-code');
+    const again = await service.reconcileBuiltins();
+    expect(again.map((row) => row.id)).not.toContain('provider-claude-code');
+    expect(service.get('provider-claude-code')).toBeUndefined();
+    expect(service.get('provider-codex')?.id).toBe('provider-codex');
+  });
+
   it('auto-uninstalls retired first-party leftovers instead of migrating them', async () => {
     const dataDir = root();
     const sidecar = join(dataDir, 'extensions', 'zana');
@@ -791,6 +910,18 @@ describe('PluginService', () => {
     expect(service.get('keep')?.id).toBe('keep');
   });
 
+  it('start uninstalls leftover native Thread plugins even if their tree is gone', async () => {
+    const dataDir = root();
+    const leftover = writePlugin(join(root(), 'consensus'), 'consensus');
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.install(leftover);
+    rmSync(leftover, { recursive: true, force: true });
+    await service.start();
+    expect(service.get('consensus')).toBeUndefined();
+  });
+
   it('leaves a local-authored retired id in place', async () => {
     const dataDir = root();
     const sidecar = join(dataDir, 'extensions', 'zana');
@@ -806,6 +937,16 @@ describe('PluginService', () => {
     await service.start();
     expect(existsSync(sidecar)).toBe(true);
     expect(service.get('zana')).toBeUndefined();
+  });
+});
+
+describe('isLegacyExtensionJsonPluginRoot', () => {
+  it('detects leftover MainModule dirs and ignores real zcc plugins', () => {
+    const legacy = writeLegacyExtension(join(root(), 'legacy-root'), 'salesforce');
+    const modern = writePlugin(join(root(), 'modern-root'), 'salesforce');
+    expect(isLegacyExtensionJsonPluginRoot(legacy)).toBe(true);
+    expect(isLegacyExtensionJsonPluginRoot(modern)).toBe(false);
+    expect(isLegacyExtensionJsonPluginRoot(join(root(), 'empty'))).toBe(false);
   });
 });
 
@@ -1019,6 +1160,157 @@ describe('installBundledPlugin', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect(service.get('docs')?.updatedAt ?? 0).toBeGreaterThan(before);
+    service.stop();
+  });
+});
+
+describe('plugin services registry', () => {
+  it('lets a consumer call a provider SDK and follows reload', async () => {
+    const dataDir = root();
+    const providerDir = writePlugin(
+      join(root(), 'alpha'),
+      'alpha',
+      `export default function plugin(zcc) {
+        zcc.services.provide({ ping: () => 'v1' });
+        zcc.rpc.method('ping', () => zcc.services.use('alpha').ping());
+      }`
+    );
+    const consumerDir = writePlugin(
+      join(root(), 'beta'),
+      'beta',
+      `export default function plugin(zcc) {
+        const alpha = zcc.services.use('alpha');
+        zcc.rpc.method('fromAlpha', () => alpha.ping());
+      }`,
+      { requires: ['alpha'] }
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(consumerDir);
+    await service.install(providerDir);
+    await expect(service.callRpc('beta', 'fromAlpha', {})).resolves.toBe('v1');
+    writeFileSync(
+      join(providerDir, 'server.mjs'),
+      `export default function plugin(zcc) {
+        zcc.services.provide({ ping: () => 'v2' });
+        zcc.rpc.method('ping', () => zcc.services.use('alpha').ping());
+      }\n`
+    );
+    await service.reload('alpha');
+    await expect(service.callRpc('beta', 'fromAlpha', {})).resolves.toBe('v2');
+  });
+
+  it('loads providers before dependents on start so factory-time use() works', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const providerDir = writePlugin(
+      join(root(), 'alpha'),
+      'alpha',
+      `export default function plugin(zcc) {
+        zcc.services.provide({ ping: () => 'ok' });
+      }`
+    );
+    const consumerDir = writePlugin(
+      join(root(), 'beta'),
+      'beta',
+      `export default function plugin(zcc) {
+        const value = zcc.services.use('alpha').ping();
+        zcc.rpc.method('fromAlpha', () => value);
+      }`,
+      { requires: ['alpha'] }
+    );
+    const setup = createPluginService({ dataDir, bundledRoot: bundled });
+    await setup.install(consumerDir);
+    await setup.install(providerDir);
+    setup.stop();
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.start();
+    expect(service.get('alpha')?.status).toBe('running');
+    expect(service.get('beta')?.status).toBe('running');
+    await expect(service.callRpc('beta', 'fromAlpha', {})).resolves.toBe('ok');
+    service.stop();
+  });
+
+  it('throws service_unavailable when the provider has not provided', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const providerDir = writePlugin(
+      join(root(), 'alpha'),
+      'alpha',
+      `export default function plugin(zcc) {
+        zcc.rpc.method('ping', () => 'silent');
+      }`
+    );
+    const consumerDir = writePlugin(
+      join(root(), 'beta'),
+      'beta',
+      `export default function plugin(zcc) {
+        const alpha = zcc.services.use('alpha');
+        zcc.rpc.method('fromAlpha', () => alpha.ping());
+      }`,
+      { requires: ['alpha'] }
+    );
+    const setup = createPluginService({ dataDir, bundledRoot: bundled });
+    await setup.install(consumerDir);
+    await setup.install(providerDir);
+    setup.stop();
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.start();
+    expect(service.get('alpha')?.status).toBe('running');
+    expect(service.get('beta')?.status).toBe('running');
+    await expect(service.callRpc('beta', 'fromAlpha', {})).rejects.toThrow(/unavailable/);
+    service.stop();
+  });
+
+  it('degrades plugins in a requires cycle at start', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const aDir = writePlugin(
+      join(root(), 'alpha'),
+      'alpha',
+      `export default function plugin(zcc) { zcc.rpc.method('ping', () => 'a'); }`,
+      { requires: ['beta'] }
+    );
+    const bDir = writePlugin(
+      join(root(), 'beta'),
+      'beta',
+      `export default function plugin(zcc) { zcc.rpc.method('ping', () => 'b'); }`,
+      { requires: ['alpha'] }
+    );
+    const setup = createPluginService({ dataDir, bundledRoot: bundled });
+    await setup.install(aDir);
+    await setup.install(bDir);
+    setup.stop();
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.start();
+    expect(service.get('alpha')?.status).toBe('degraded');
+    expect(service.get('alpha')?.statusDetail).toMatch(/cycle/);
+    expect(service.get('beta')?.status).toBe('degraded');
+    service.stop();
+  });
+
+  it('marks a consumer needs-configuration when a required plugin is not running', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const consumerDir = writePlugin(
+      join(root(), 'beta'),
+      'beta',
+      `export default function plugin(zcc) {
+        zcc.rpc.method('hasAlpha', () => zcc.services.has('alpha'));
+      }`,
+      { requires: ['alpha'] }
+    );
+    const setup = createPluginService({ dataDir, bundledRoot: bundled });
+    await setup.install(consumerDir);
+    setup.stop();
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.start();
+    expect(service.get('beta')?.status).toBe('needs-configuration');
+    expect(service.get('beta')?.statusDetail).toBe('needs plugin: alpha');
+    await expect(service.callRpc('beta', 'hasAlpha', {})).resolves.toBe(false);
     service.stop();
   });
 });

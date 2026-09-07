@@ -38,7 +38,10 @@ vi.mock('../../hooks/useHosts.js', () => ({
 
 vi.mock('@/store', () => ({
   useData: (selector: (s: { projects: Array<{ hostId?: string }> }) => unknown) =>
-    selector({ projects: projectsState.current })
+    selector({ projects: projectsState.current }),
+  useUi: {
+    getState: () => ({ appendHostInstallLogs: () => undefined })
+  }
 }));
 
 const config: AppConfig = {
@@ -93,7 +96,7 @@ function cli(overrides: Partial<ProviderCliStatus> = {}): ProviderCliStatus {
 }
 
 describe('MachinesTab', () => {
-  it('renders add-machine without public origin or relay fields', () => {
+  it('renders add-machine and a public origin field, not a relay token field', () => {
     hostsState.current = [];
     projectsState.current = [];
     const html = renderToStaticMarkup(
@@ -103,7 +106,9 @@ describe('MachinesTab', () => {
         onUpdate={vi.fn().mockResolvedValue(undefined)}
       />
     );
-    expect(html).not.toContain('Public app URL');
+    expect(html).toContain('Public app URL');
+    expect(html).toContain('data-testid="public-app-url"');
+    expect(html).toContain('https://box.tailnet.ts.net');
     expect(html).not.toContain('Relay token');
     expect(html).not.toContain('data-testid="relay-status"');
     expect(html).toContain('Add a machine');
@@ -487,5 +492,14 @@ describe('MachineCard', () => {
     );
     expect(failed).toContain('ssh timed out');
     expect(failed).toContain('role="alert"');
+  });
+
+  it('renews pairing before repair', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./MachinesSettingsView.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('product.relay.renewJoinWindow');
+    expect(source.indexOf('product.hosts.repair')).toBeGreaterThan(
+      source.indexOf('product.relay.renewJoinWindow')
+    );
   });
 });

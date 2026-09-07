@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { HarnessModelTarget } from '@zana-ai/zcc-domain/harness-adapter';
+import { CODEX_EVIDENCE_VERSION } from './codex/provider.js';
 
 interface CodexModelListResult {
   data?: Array<{ id?: unknown; displayName?: unknown; hidden?: unknown; isDefault?: unknown }>;
@@ -15,6 +16,7 @@ export function codexModelsFromResponse(result: CodexModelListResult): readonly 
           id: model.id,
           label: typeof model.displayName === 'string' ? model.displayName : model.id,
           scope: ['local'] as HarnessModelTarget['scope'],
+          evidenceVersion: CODEX_EVIDENCE_VERSION,
           isDefault: model.isDefault === true
         }]
       : []

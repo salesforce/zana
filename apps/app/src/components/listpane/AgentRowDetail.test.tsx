@@ -35,6 +35,7 @@ describe('AgentRowDetail', () => {
     expect(html).toContain('Idle');
     expect(html).toContain('Claude Code · Local');
     expect(html).toContain('started');
+    expect(html).not.toContain('Scheduled');
     expect(html).not.toContain('CLI Agent');
     expect(html).not.toContain('Thread');
   });
@@ -47,7 +48,27 @@ describe('AgentRowDetail', () => {
     );
     expect(html).toContain('Working');
     expect(html).toContain('Claude Code · Remote host');
+  });
+
+  it('marks a local-tools CLI session on an SSH project', () => {
+    h.status = 'working';
+    h.subagents = 0;
+    const html = renderToStaticMarkup(
+      <AgentRowDetail session={session({ remoteToolProxy: true })} projectRemote />
+    );
+    expect(html).toContain('Claude Code · Local agent · remote tools');
+    expect(html).not.toContain('Remote host');
     expect(html).not.toContain('CLI Agent');
+  });
+
+  it('identifies a scheduler-spawned agent in the project rail', () => {
+    h.status = 'working';
+    h.subagents = 0;
+    const html = renderToStaticMarkup(
+      <AgentRowDetail session={session({ scheduled: true })} />
+    );
+    expect(html).toContain('Working');
+    expect(html).toContain('Scheduled · Claude Code · Local');
   });
 
   it('keeps harness/runtime on an exited row that has no live state word', () => {

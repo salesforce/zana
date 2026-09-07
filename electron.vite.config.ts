@@ -1,9 +1,35 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
+import { loadEnv } from 'vite';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { zccBrowserBootstrapPlugin } from './apps/app/vite-plugin-browser-bootstrap';
 import { pluginAssetDevProxyPlugin, productDevProxy } from './apps/app/vite-product-proxy';
 import { DEFAULT_SERVER_PORT, serverPortFromEnv } from './apps/server/src/http/ports';
+
+function pairingEnvFile(): Record<string, string> {
+  return loadEnv(process.env.NODE_ENV === 'production' ? 'production' : 'development', __dirname, '');
+}
+
+function bundledAppUrl(): string {
+  const fromEnv = process.env.ZCC_APP_URL?.trim() || pairingEnvFile().ZCC_APP_URL?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const text = readFileSync(resolve(__dirname, 'public-app-url'), 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      return trimmed;
+    }
+  } catch {
+    /* operator file is optional */
+  }
+  return '';
+}
+
+function bundledRelayToken(): string {
+  return process.env.ZCC_RELAY_TOKEN?.trim() || pairingEnvFile().ZCC_RELAY_TOKEN?.trim() || '';
+}
 
 // Resolve the extension SDK (`@zana-ai/zcc-extension-sdk` + subpaths) to its source
 // in all three bundles. The SDK is the canonical extension contract; core and
@@ -125,12 +151,13 @@ export default defineConfig({
   main: {
     // Official releases set ZCC_APP_URL + ZCC_RELAY_TOKEN in the build env so
     // packaged laptops can dial the Heroku pairing door without Settings.
+    // Local/dev falls back to .env then the repo public-app-url file.
     // Runtime process.env still wins. Never define these on the renderer.
     define: {
-      __ZCC_BUNDLED_APP_URL__: JSON.stringify(process.env.ZCC_APP_URL ?? ''),
-      __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify(process.env.ZCC_RELAY_TOKEN ?? '')
+      __ZCC_BUNDLED_APP_URL__: JSON.stringify(bundledAppUrl()),
+      __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify(bundledRelayToken())
     },
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['jiti'] })],
     resolve: { alias: sdkAlias, conditions: ['source'] },
     build: {
       // Pin this absolutely. Vite 8/rolldown has dumped named entries

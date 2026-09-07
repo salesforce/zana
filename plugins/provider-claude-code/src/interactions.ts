@@ -1,30 +1,27 @@
-/**
- * Claude Code interactive-request ↔ canonical pending-interaction mapping.
- *
- * Maps the claude-code bridge's provider-filtered interactive requests
- * (permission approvals, AskUserQuestion, plan-mode exit) onto the canonical
- * `PendingInteractionPayload`/`PendingInteractionResolution` shapes from
- * `@zana-ai/zcc-domain/thread-runtime`, and canonical resolutions back onto the Claude interactive
- * response contract — one module for both directions of the bridge's
- * `interaction/request` path.
- */
-
 import {
   type ApprovalPendingInteractionPayload,
   type PendingInteractionApprovalDecision,
   type PendingInteractionApprovalSubject,
   type PendingInteractionGrantedPermissionProfile,
-  type PendingInteractionPayload,
-  type PendingInteractionResolution,
   type PendingInteractionUserQuestionQuestion,
+  type ApprovalInteractionOutcome,
+  type UserQuestionInteractionOutcome,
   type UserQuestionPendingInteractionPayload,
   type UserQuestionPendingInteractionResolution,
-  isApprovalPendingInteractionPayload,
-  isApprovalPendingInteractionResolution,
-  isUserQuestionPendingInteractionPayload,
-  isUserQuestionPendingInteractionResolution,
+  approvalInteractionOutcomeSchema,
+  isApprovalInteractionOutcome,
+  userQuestionInteractionOutcomeSchema,
   ProviderResponseEncodeError,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
+import { z } from "zod";
+
+export const claudeInteractionOutcomeSchema = z.union([
+  approvalInteractionOutcomeSchema,
+  userQuestionInteractionOutcomeSchema,
+]);
+export type ClaudeInteractionOutcome =
+  | ApprovalInteractionOutcome
+  | UserQuestionInteractionOutcome;
 import {
   buildClaudePlanRejectionMessage,
   buildClaudeSessionPermissionUpdates,
@@ -57,7 +54,6 @@ function hasClaudeSessionPermissionUpdate(
 function buildClaudeApprovalAvailableDecisions(
   args: ClaudePermissionRequestApprovalParams,
 ): PendingInteractionApprovalDecision[] {
-  // A plan verdict is not a grant, so "allow for session" has nothing to mean.
   if (args.toolName === CLAUDE_EXIT_PLAN_MODE_TOOL_NAME) {
     return ["allow_once", "deny"];
   }
@@ -120,7 +116,6 @@ function buildClaudeApprovalSubject(
   };
 }
 
-/** The canonical approval payload for a Claude permission-approval request. */
 export function buildClaudeApprovalInteractionPayload(
   args: ClaudePermissionRequestApprovalParams,
 ): ApprovalPendingInteractionPayload {
@@ -294,28 +289,19 @@ function getClaudePermissionUpdateToolName(
       return null;
     case "permission_grant":
       return payload.subject.toolName;
-    case "tool_use":
-      return payload.subject.tool;
-    // A plan verdict grants nothing, so it never reaches a session update.
     case "plan":
       return null;
+    case "tool_use":
+      throw new ProviderResponseEncodeError(
+        "tool_use approval subjects are not produced by the Claude bridge",
+      );
   }
 }
 
-/**
- * Map a canonical resolution back onto the Claude interactive response the
- * request payload calls for. Throws `ProviderResponseEncodeError` when the
- * resolution kind does not match the payload — the adapter surfaces that as
- * an encode error, the bridge as a denied request.
- */
-export function buildClaudeInteractiveResponse(args: {
-  payload: PendingInteractionPayload;
-  resolution: PendingInteractionResolution;
-}): ClaudeInteractiveResponse {
-  if (
-    isUserQuestionPendingInteractionPayload(args.payload) &&
-    isUserQuestionPendingInteractionResolution(args.resolution)
-  ) {
+export function buildClaudeInteractiveResponse(
+  args: ClaudeInteractionOutcome,
+): ClaudeInteractiveResponse {
+  if (!isApprovalInteractionOutcome(args)) {
     return {
       kind: "user_question",
       behavior: "allow",
@@ -324,15 +310,6 @@ export function buildClaudeInteractiveResponse(args: {
         args.resolution,
       ),
     };
-  }
-
-  if (
-    !isApprovalPendingInteractionPayload(args.payload) ||
-    !isApprovalPendingInteractionResolution(args.resolution)
-  ) {
-    throw new ProviderResponseEncodeError(
-      "Claude Code interactive response kind does not match the request payload",
-    );
   }
 
   if (args.resolution.decision === "deny") {
@@ -348,9 +325,6 @@ export function buildClaudeInteractiveResponse(args: {
   }
 
   if (args.resolution.decision === "allow_once") {
-    // Claude canUseTool approvals without updatedPermissions apply only
-    // to the current tool request. Session grants are the only scope
-    // that should mutate Claude's permission state.
     return {
       kind: "permission_request",
       behavior: "allow",

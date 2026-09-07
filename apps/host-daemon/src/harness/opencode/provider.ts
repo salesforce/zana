@@ -184,7 +184,8 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     openCodeEvidence('build', 'Remote login-shell command binds --agent build.', 'remote'),
     openCodeEvidence('plan', 'Built-in plan role appears in effective opencode agent list output.'),
     openCodeEvidence('plan', 'Remote login-shell command binds --agent plan.', 'remote'),
-    openCodeEvidence('opencode.role.discovery', 'Project-scoped opencode agent list supplies exact effective role names before launch.')
+    openCodeEvidence('opencode.role.discovery', 'Project-scoped opencode agent list supplies exact effective role names before launch.'),
+    openCodeEvidence('opencode.role.discovery', 'Remote login-shell command binds --agent <discovered role> the same as a local launch.', 'remote')
   ]
 };
 
@@ -482,7 +483,7 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   ): readonly HarnessRoleTarget[] {
     if (result.status === 'failure') return staticRoles;
     return result.descriptors.filter(({ directLaunchAllowed }) => directLaunchAllowed).map(({ id, label }) => ({
-      id, label, scope: ['local']
+      id, label, scope: [...OPENCODE_VERIFIED_SCOPES]
     }));
   }
 
