@@ -7,10 +7,11 @@ import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
 import { useSessionGit } from '../lib/gitInfo.js';
 import { AgentInsights, useSessionStats } from './AgentInsights.js';
 import { AgentMetadata } from './AgentMetadata.js';
+import { formatDuration } from './AgentBoard.js';
 import { EnvironmentActions } from './EnvironmentActions.js';
 import { FavoriteStar } from './FavoriteStar.js';
 import { OpenerButtons } from './OpenerButtons.js';
-import { formatDuration } from './AgentBoard.js';
+import { useRemoteStartPathInspection } from '../lib/remote-start-path-inspect.js';
 
 /**
  * The agent detail panel — identity · facts · transcript insights · actions —
@@ -79,6 +80,16 @@ interface Props {
   stats?: SessionStats | null;
 }
 
+export function agentDirectoryDisplayPath(
+  cwd: string | undefined,
+  fallback: string | null | undefined
+): string {
+  const trimmed = cwd?.trim();
+  if (trimmed && trimmed !== '.') return trimmed;
+  const next = fallback?.trim();
+  return next || '$HOME';
+}
+
 export function agentDirectoryFacts(
   session: Pick<TerminalSession, 'cwd' | 'worktree'>,
   projectPath: string | undefined
@@ -128,6 +139,7 @@ export function AgentDetailPanel({
   const project = useData((s) => s.projects.find((p) => p.id === projectId));
   const remote = project?.remote;
   const isRemote = !!remote;
+  const inspection = useRemoteStartPathInspection(project);
   // Branch of the SESSION's own cwd (a worktree can differ from the project
   // root). Cwd-keyed, deduped/throttled cache; skipped for remote projects.
   const git = useSessionGit(t.cwd, isRemote);
@@ -145,7 +157,13 @@ export function AgentDetailPanel({
   const bad = exited && (t.exitCode ?? 0) !== 0;
   const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : Date.now()) - t.createdAt);
   const statusLabel = exited ? (bad ? `Exited (code ${t.exitCode})` : 'Exited') : STATE_LABEL[state];
-  const directoryFacts = agentDirectoryFacts(t, project?.path);
+  const directoryFacts = agentDirectoryFacts(
+    {
+      ...t,
+      cwd: isRemote ? agentDirectoryDisplayPath(t.cwd, inspection?.path) : t.cwd
+    },
+    project?.path
+  );
   const showHead = showIdentity || collapsible;
 
   if (collapsible && collapsed) {
@@ -264,6 +282,18 @@ export function AgentDetailPanel({
             </div>
           )
         )}
+        {inspection?.machineName ? (
+          <div className="agent-detail-fact" data-testid="agent-detail-machine">
+            <dt>Machine</dt>
+            <dd>{inspection.machineName}</dd>
+          </div>
+        ) : null}
+        {inspection ? (
+          <div className="agent-detail-fact" data-testid="agent-detail-start-path">
+            <dt>Start path source</dt>
+            <dd>{inspection.sourceLabel}</dd>
+          </div>
+        ) : null}
         {t.worktree && (
           <div className="agent-detail-fact">
             <dt>Worktree name</dt>

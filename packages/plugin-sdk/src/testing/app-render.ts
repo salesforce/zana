@@ -167,6 +167,9 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     },
     focus() {
       /* test stub */
+    },
+    experimental_setLaunchPatch() {
+      /* test stub */
     }
   };
 

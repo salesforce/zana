@@ -786,7 +786,8 @@ export class PtyManager extends EventEmitter {
     });
     const combinationError = provider.validateRoutingCombination?.({
       roleTargetId: roleTarget.targetId,
-      executionOrigin: execution.origin
+      executionOrigin: execution.origin,
+      executionTargetId: execution.targetId
     });
     if (combinationError) throw new Error(`${combinationError}.`);
 
@@ -1772,7 +1773,7 @@ export class PtyManager extends EventEmitter {
     // The session record is consumed by the renderer for remote file drops. It
     // must name the remote login directory, not the local placeholder project
     // directory that createTerminalConfined passes through as opts.cwd.
-    const remoteCwd = remote.remotePath || opts.config.remoteDefaultPath || '.';
+    const remoteCwd = remote.remotePath || opts.config.remoteDefaultPath || '';
     // Same live-session cap as the local path — a remote ssh pty is still a
     // local subprocess + fd held in this.live, so it counts identically.
     this.assertCapacity(opts.config);

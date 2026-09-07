@@ -38,7 +38,7 @@ import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/Th
 import { useOptionalPaneContext, usePaneSecondaryPanelRegistration } from '../thread-detail/PaneContext.js';
 import { ThreadInfoContent } from '../../components/thread/secondary-panel/ThreadInfoContent.js';
 import { ThreadPlanPanel, type DurablePlanPanelView } from '../../components/thread/secondary-panel/ThreadPlanPanel.js';
-import { planFileTabTitle, resolveThreadPlanDocument } from '../../components/thread/secondary-panel/thread-plan-document.js';
+import { planFileTabTitle, resolveThreadPlanDocument, isLivePlanFilePath } from '../../components/thread/secondary-panel/thread-plan-document.js';
 import { planExecutionTitle } from '../../components/thread/timeline/plan-execution-card.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/ThreadFilePreviewTab.js';
@@ -484,6 +484,9 @@ export function ThreadDetail({
       />
     );
   } else if ((closable?.kind === 'file-preview' || closable?.kind === 'storage-preview') && closable.path) {
+    const livePlan = closable.kind === 'file-preview' && isLivePlanFilePath(closable.path, durablePlan?.filePath)
+      ? durablePlan
+      : null;
     panelBody = (
       <ThreadFilePreviewTab
         threadId={threadId}
@@ -491,6 +494,15 @@ export function ThreadDetail({
         openerKey={closable.openerKey}
         projectId={projectId}
         storage={closable.kind === 'storage-preview'}
+        lineNumber={closable.lineNumber ?? null}
+        livePlan={livePlan}
+        planDocument={livePlan ? {
+          markdown: planDocument?.markdown ?? livePlan.markdown,
+          filePath: null,
+          prompt: null,
+          source: 'durable'
+        } : null}
+        todos={todos}
       />
     );
   } else if (closable?.kind === 'browser') {

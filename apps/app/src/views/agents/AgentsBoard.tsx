@@ -16,7 +16,7 @@ import {
 } from '@/store';
 import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { getThreadRoutePath, threadIdFromPath } from '@/lib/route-paths';
+import { getThreadRoutePath, getAgentSessionRoutePath, threadIdFromPath } from '@/lib/route-paths';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
 import { AgentViewToggle, ScheduledColumnToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
@@ -37,6 +37,7 @@ import {
 import { resolveIcon } from '@/lib/resolveIcon';
 import { invokeAgentsBoardAction } from '@/plugins/plugin-agent-actions';
 import { listAgentsBoardActions, subscribePluginSlots } from '@/plugins/plugin-slots';
+import { openScheduleFromAgents } from '@/components/scheduler/openScheduledLive';
 
 /**
  * One Agents Kanban, two scopes. Global (`kind: 'global'`) flattens every
@@ -209,7 +210,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const cards = useMemo<AgentCard[]>(() => {
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
     if (scopedProject) {
-      return agentViewTerminals(terminals[scopedProject.id], includeScheduled)
+      return agentViewTerminals(terminals[scopedProject.id], includeScheduled, byId)
         .filter((s) => s.profile !== 'shell')
         .map((s) =>
           toCard(s, scopedProject, byId, sinceById, triageById, overseerById, subagentsById)
@@ -219,7 +220,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     for (const [projectId, list] of Object.entries(terminals)) {
       const project = byProjectId.get(projectId);
       if (!project) continue;
-      for (const s of agentViewTerminals(list, includeScheduled)) {
+      for (const s of agentViewTerminals(list, includeScheduled, byId)) {
         if (s.profile === 'shell') continue;
         out.push(toCard(s, project, byId, sinceById, triageById, overseerById, subagentsById));
       }
@@ -283,7 +284,11 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       return;
     }
     if (item.kind === 'schedule') {
-      useUi.getState().revealSchedule(item.task.id);
+      openScheduleFromAgents(item.task, terminals, navigate);
+      return;
+    }
+    if (item.card.session.scheduled) {
+      navigate(getAgentSessionRoutePath(item.card.session.id, item.projectId));
       return;
     }
     const executionId = item.card.session.cohort?.executionId;
@@ -300,7 +305,11 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       return;
     }
     if (item.kind === 'schedule') {
-      useUi.getState().revealSchedule(item.task.id);
+      openScheduleFromAgents(item.task, terminals, navigate);
+      return;
+    }
+    if (item.card.session.scheduled) {
+      navigate(getAgentSessionRoutePath(item.card.session.id, item.projectId));
       return;
     }
     const c = item.card;

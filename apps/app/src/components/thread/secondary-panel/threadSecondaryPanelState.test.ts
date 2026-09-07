@@ -105,6 +105,13 @@ describe('thread secondary panel state', () => {
     const again = addClosableTab(opened, { kind: 'file-preview', title: 'a.ts', path: '/tmp/a.ts' });
     expect(again.tabs).toHaveLength(1);
     expect(again.activeId).toBe(opened.tabs[0]?.id);
+    const focused = addClosableTab(opened, {
+      kind: 'file-preview',
+      title: 'a.ts',
+      path: '/tmp/a.ts',
+      lineNumber: 9
+    });
+    expect(focused.tabs[0]?.lineNumber).toBe(9);
   });
 
   it('falls back to Info after closing the active tab', () => {
@@ -116,6 +123,22 @@ describe('thread secondary panel state', () => {
     const closed = closeClosableTab(opened, opened.tabs[0]!.id);
     expect(closed.tabs).toEqual([]);
     expect(closed.activeId).toBe(INFO_PIN_ID);
+  });
+
+  it('restores a persisted preview line number', () => {
+    expect(parseSecondaryPanelState({
+      version: 1,
+      isOpen: true,
+      widthPx: 352,
+      activeId: 'file-preview:1',
+      tabs: [{
+        id: 'file-preview:1',
+        kind: 'file-preview',
+        title: 'a.ts',
+        path: 'src/a.ts',
+        lineNumber: 14
+      }]
+    }).tabs[0]?.lineNumber).toBe(14);
   });
 
   it('clamps persisted width and ignores unknown tabs', () => {

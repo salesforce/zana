@@ -167,6 +167,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
 
   return (
     <div
+      data-testid="scheduler-view"
       className={`settings-panel scheduler-panel aurora-host${
         lockedProject ? ' scheduler-panel--embedded' : ' scheduler-page'
       }`}
@@ -273,7 +274,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
             hideByProject={Boolean(lockedProject)}
             onJump={openSchedule}
             onOpenProject={lockedProject ? undefined : openProjectSchedules}
-            onOpenTerminal={(t, sessionId) => openScheduledLive(t.projectId, sessionId)}
+            onOpenTerminal={(t, sessionId) => openScheduledLive(t.projectId, sessionId, navigate)}
             onEdit={openSchedule}
             onShowReport={openByReport}
             onToggle={toggleSchedule}

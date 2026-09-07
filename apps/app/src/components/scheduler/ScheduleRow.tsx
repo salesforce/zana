@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { ScheduledTask, ScheduleGroup } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '../../store.js';
+import { useNavigate } from 'react-router-dom';
 import { groupIcon, GROUP_FALLBACK_COLOR } from '../scheduleGroupMeta.js';
 import {
   pickLiveRun,
@@ -44,6 +45,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
   const nextRun = task.status.nextRunAt ? new Date(task.status.nextRunAt) : null;
   const terminals = useData((s) => s.terminals);
   const pushToast = useUi((s) => s.pushToast);
+  const navigate = useNavigate();
 
   const toggle = async () => {
     const result = await product.scheduler.setEnabled(task.id, !task.enabled);
@@ -87,7 +89,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
   const openLive = (e?: ReactMouseEvent) => {
     e?.stopPropagation();
     if (!liveSessionId) return;
-    openScheduledLive(task.projectId, liveSessionId);
+    openScheduledLive(task.projectId, liveSessionId, navigate);
   };
 
   const statusKind = isWorking

@@ -17,6 +17,7 @@ export interface HostRow {
   sshHost: string | null;
   sshUser: string | null;
   sshProxyJump: string | null;
+  defaultWorkspacePath: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -35,6 +36,7 @@ interface HostSqlRow {
   ssh_host: string | null;
   ssh_user: string | null;
   ssh_proxy_jump: string | null;
+  default_workspace_path: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -58,6 +60,7 @@ function toHost(row: HostSqlRow): HostRow {
     sshHost: row.ssh_host,
     sshUser: row.ssh_user,
     sshProxyJump: row.ssh_proxy_jump,
+    defaultWorkspacePath: row.default_workspace_path ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -159,6 +162,20 @@ export function updateHostPermissionCeiling(
   const now = Date.now();
   db.sqlite.prepare('UPDATE hosts SET max_permission_mode = ?, updated_at = ? WHERE id = ?')
     .run(maxPermissionMode, now, id);
+  return getHost(db, id);
+}
+
+export function updateHostDefaultWorkspacePath(
+  db: ZccDatabase,
+  id: string,
+  defaultWorkspacePath: string | null
+): HostRow | null {
+  const existing = getHost(db, id);
+  if (!existing || existing.destroyedAt) return null;
+  const now = Date.now();
+  db.sqlite.prepare(
+    'UPDATE hosts SET default_workspace_path = ?, updated_at = ? WHERE id = ?'
+  ).run(defaultWorkspacePath, now, id);
   return getHost(db, id);
 }
 

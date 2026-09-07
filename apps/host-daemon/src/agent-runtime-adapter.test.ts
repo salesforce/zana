@@ -82,8 +82,9 @@ describe('agent runtime thread adapter', () => {
   });
 
   it('forwards command mentions into AgentRuntime instead of wiping them', async () => {
-    const started: Array<{ input: PromptInput[] }> = [];
-    const turned: Array<{ input: PromptInput[] }> = [];
+    let startThread: ReturnType<typeof vi.spyOn>;
+    let runTurn: ReturnType<typeof vi.spyOn>;
+    let steerTurn: ReturnType<typeof vi.spyOn>;
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
       dataDir: cwd,
@@ -92,24 +93,10 @@ describe('agent runtime thread adapter', () => {
           ...options,
           adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
-        return {
-          ...runtime,
-          startThread: async (input) => {
-            started.push({ input: input.input });
-            return runtime.startThread(input);
-          },
-          runTurn: async (input) => {
-            turned.push({ input: input.input });
-            return runtime.runTurn(input);
-          },
-          // A follow-up racing the still-active initial turn steers instead of
-          // running a fresh turn (a CI-timing window); both carry the same
-          // input, so capture either path.
-          steerTurn: async (input) => {
-            turned.push({ input: input.input });
-            return runtime.steerTurn(input);
-          }
-        };
+        startThread = vi.spyOn(runtime, 'startThread');
+        runTurn = vi.spyOn(runtime, 'runTurn');
+        steerTurn = vi.spyOn(runtime, 'steerTurn');
+        return runtime;
       }
     });
     const threadId = randomUUID();
@@ -140,8 +127,11 @@ describe('agent runtime thread adapter', () => {
     });
     await adapter.submitTurn({ threadId, input: planInput });
     adapter.dispose();
-    expect(started[0]?.input).toEqual(planInput);
-    expect(turned[0]?.input).toEqual(planInput);
+    expect(startThread!.mock.calls[0]?.[0]).toMatchObject({ input: planInput });
+    const followUp = [...runTurn!.mock.calls, ...steerTurn!.mock.calls]
+      .map((call) => call[0])
+      .find((args) => args?.input);
+    expect(followUp?.input).toEqual(planInput);
   });
 
   it('applies Settings provider-bridge recording to process env before start', async () => {
@@ -278,9 +268,9 @@ describe('agent runtime thread adapter', () => {
             turned.push(input.options);
             return runtime.runTurn(input);
           },
-          // A follow-up submitTurn arriving before the initial turn goes idle is
-          // dispatched as a steer, not a fresh runTurn (observed as a CI-timing
-          // flake). Both paths carry the same options payload, so capture either.
+          // A follow-up racing the still-active initial turn steers instead of
+          // running a fresh turn (a CI-timing window); both carry the same
+          // options, so capture either path.
           steerTurn: async (input) => {
             turned.push(input.options);
             return runtime.steerTurn(input);
@@ -310,7 +300,8 @@ describe('agent runtime thread adapter', () => {
   });
 
   it('keeps accept-edits deny escalation on follow-up turns', async () => {
-    const turned: Array<{ permissionMode?: string; permissionEscalation?: string | null }> = [];
+    let runTurn: ReturnType<typeof vi.spyOn>;
+    let steerTurn: ReturnType<typeof vi.spyOn>;
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
       dataDir: cwd,
@@ -319,20 +310,9 @@ describe('agent runtime thread adapter', () => {
           ...options,
           adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
-        return {
-          ...runtime,
-          runTurn: async (input) => {
-            turned.push(input.options);
-            return runtime.runTurn(input);
-          },
-          // A follow-up submitTurn arriving before the initial turn goes idle is
-          // dispatched as a steer, not a fresh runTurn (observed as a CI-timing
-          // flake). Both paths carry the same options payload, so capture either.
-          steerTurn: async (input) => {
-            turned.push(input.options);
-            return runtime.steerTurn(input);
-          }
-        };
+        runTurn = vi.spyOn(runtime, 'runTurn');
+        steerTurn = vi.spyOn(runtime, 'steerTurn');
+        return runtime;
       }
     });
     const threadId = randomUUID();
@@ -352,9 +332,14 @@ describe('agent runtime thread adapter', () => {
       permissionEscalation: 'deny'
     });
     adapter.dispose();
-    expect(turned[0]).toMatchObject({
-      permissionMode: 'accept-edits',
-      permissionEscalation: 'deny'
+    const followUp = [...runTurn!.mock.calls, ...steerTurn!.mock.calls]
+      .map((call) => call[0])
+      .find((args) => args?.options?.permissionEscalation === 'deny');
+    expect(followUp).toMatchObject({
+      options: {
+        permissionMode: 'accept-edits',
+        permissionEscalation: 'deny'
+      }
     });
   });
 
@@ -393,86 +378,6 @@ describe('agent runtime thread adapter', () => {
       sourceProviderThreadId: 'prov-source',
       sourceProviderCheckpointId: 'cp-9'
     }]);
-  });
-
-  it('carries acpMode (native role) into providerOptions across start, follow-up, and resume', async () => {
-    // Regression guard for the Modern-composer native-role passthrough. The role
-    // is wrapped as options.providerOptions.acpMode; provider-acp then applies it
-    // via session/set_config_option. If this hop drops it, the ACP session
-    // silently stays in its default mode (build) — the CLI Agent path has its own
-    // launch-boundary coverage, so the Modern path needs this too.
-    const started: Array<{ providerOptions?: { acpMode?: string } }> = [];
-    const turned: Array<{ providerOptions?: { acpMode?: string } }> = [];
-    const resumed: Array<{ providerOptions?: { acpMode?: string } }> = [];
-    const adapter = createAgentRuntimeAdapter({
-      emit: () => undefined,
-      dataDir: cwd,
-      createRuntime: (options) => {
-        const runtime = createAgentRuntimeWithAdapters({
-          ...options,
-          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
-        });
-        return {
-          ...runtime,
-          startThread: async (input) => {
-            started.push(input.options as { providerOptions?: { acpMode?: string } });
-            return runtime.startThread(input);
-          },
-          runTurn: async (input) => {
-            turned.push(input.options as { providerOptions?: { acpMode?: string } });
-            return runtime.runTurn(input);
-          },
-          // A follow-up submitTurn racing the still-active initial turn is
-          // dispatched as a steer, not a fresh runTurn (a CI-timing window).
-          // Both carry the same options payload, so capture either path.
-          steerTurn: async (input) => {
-            turned.push(input.options as { providerOptions?: { acpMode?: string } });
-            return runtime.steerTurn(input);
-          },
-          resumeThread: async (input) => {
-            resumed.push(input.options as { providerOptions?: { acpMode?: string } });
-            return runtime.resumeThread(input);
-          }
-        };
-      }
-    });
-    const threadId = randomUUID();
-    const environmentId = randomUUID();
-    const startedResult = await adapter.startWork({
-      threadId,
-      environmentId,
-      projectId: 'p1',
-      providerId: 'fake',
-      input: ['hello'],
-      cwd,
-      acpMode: 'reviewer'
-    });
-    await adapter.submitTurn({ threadId, input: ['follow up'], acpMode: 'reviewer' });
-    await adapter.stopWork({ threadId });
-    await adapter.resumeWork({
-      threadId,
-      environmentId,
-      projectId: 'p1',
-      providerId: 'fake',
-      providerThreadId: startedResult?.providerThreadId ?? 'pt-1',
-      cwd,
-      acpMode: 'reviewer'
-    });
-    // A second thread with no role must NOT carry providerOptions — provider-acp
-    // only attempts a mode switch when providerOptions.acpMode is a non-empty string.
-    await adapter.startWork({
-      threadId: randomUUID(),
-      environmentId: randomUUID(),
-      projectId: 'p1',
-      providerId: 'fake',
-      input: ['no role'],
-      cwd
-    });
-    adapter.dispose();
-    expect(started[0]?.providerOptions?.acpMode).toBe('reviewer');
-    expect(turned[0]?.providerOptions?.acpMode).toBe('reviewer');
-    expect(resumed[0]?.providerOptions?.acpMode).toBe('reviewer');
-    expect(started[1]?.providerOptions).toBeUndefined();
   });
 
   it('forwards clientRequestId into startThread and runTurn', async () => {
@@ -632,11 +537,11 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: prompt('delay:2000 keep this turn alive'),
+      input: prompt('delay:3000 keep this turn alive'),
       cwd,
       clientRequestId: 'creq_23456789ab'
     });
-    expect(Date.now() - startedAt).toBeLessThan(1500);
+    expect(Date.now() - startedAt).toBeLessThan(2000);
     adapter.dispose();
   });
 

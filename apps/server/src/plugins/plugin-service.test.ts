@@ -208,6 +208,16 @@ describe('PluginService', () => {
     expect(service.getSettings('echo')).toEqual({ descriptors: {}, values: {} });
   });
 
+  it('removes a materialized copy under dataDir/plugins even for path sourceKind', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(join(dataDir, 'plugins', 'git', 'abc123'), 'hosted');
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(pluginDir);
+    expect(existsSync(pluginDir)).toBe(true);
+    await service.remove('hosted');
+    expect(existsSync(pluginDir)).toBe(false);
+  });
+
   it('shims a legacy extension.json directory', async () => {
     const dataDir = root();
     const pluginDir = join(root(), 'legacy');
@@ -678,9 +688,7 @@ describe('PluginService', () => {
     writeFileSync(join(pluginDir, 'app.tsx'), 'export default { __zccPluginApp: true, setup() {} }\n');
     const service = createPluginService({ dataDir, bundledRoot: root(), now: () => 7 });
     await service.install(pluginDir);
-    expect(service.snapshot()[0]?.appUrl).toBeNull();
-
-    writeFileSync(join(pluginDir, 'app.js'), 'export default { __zccPluginApp: true, setup() {} }\n');
+    expect(existsSync(join(pluginDir, 'app.js'))).toBe(true);
     expect(service.snapshot()[0]?.appUrl).toBe('/plugins/tsx-app/assets/app.js?v=7');
     expect(service.snapshot()[0]?.appUrl).not.toMatch(/\.tsx(\?|$)/);
   });
@@ -766,6 +774,20 @@ describe('PluginService', () => {
     );
     await service.disable('hello');
     expect(existsSync(join(dataDir, 'skills-generated', 'plugin-commands'))).toBe(false);
+  });
+
+  it('evaluates live contributeInstructions providers per thread', async () => {
+    const pluginDir = writePlugin(
+      join(root(), 'tunnel'),
+      'tunnel',
+      `export default function plugin(zcc) {
+        zcc.agents.contributeInstructions((ctx) => 'url for ' + ctx.threadId);
+      }\n`
+    );
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(pluginDir);
+    const session = await service.sessionTools({ threadId: 'thr-9', projectId: 'proj-1' });
+    expect(session.instructions).toBe('url for thr-9');
   });
 
   it('reconcileBuiltins skips official autoInstall:false plugins such as tasks', async () => {

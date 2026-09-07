@@ -610,7 +610,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         pluginId,
         tools: current.handle!.agentTools,
         configurers: current.handle!.agentConfigurers,
-        extraInstructions: current.handle!.extraInstructions
+        extraInstructions: current.handle!.extraInstructions,
+        extraInstructionProviders: current.handle!.extraInstructionProviders
       }));
     // Host source first so its tool names win the dedupe in
     // resolvePluginSessionTools over any collision from a plugin.
@@ -659,6 +660,27 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       writeInjectedSkillRootManifest(opts.dataDir, directoryRoots);
     } catch (error) {
       console.error('[plugins] syncPluginCommandsSkill failed', error);
+    }
+  }
+
+  /**
+   * Source plugins declare `zcc.app` as `.tsx`. The renderer cannot import
+   * TypeScript, so a one-shot `buildPluginApp` writes the `.js` sibling when
+   * it's missing. Failure is best-effort: the plugin still loads (server via
+   * jiti); the panel stays absent until `zcc plugin dev` or a later reload.
+   */
+  async function ensureCompiledApp(row: InstalledPluginRow): Promise<void> {
+    const declared = row.appEntry;
+    if (!declared || !/\.tsx?$/.test(declared)) return;
+    const compiledRel = declared.replace(/\.tsx?$/, '.js');
+    if (existsSync(join(row.rootDir, compiledRel))) return;
+    try {
+      await buildPluginApp(row.rootDir, hostVersion, { minify: false, sourcemap: true });
+    } catch (error) {
+      console.warn(
+        `[plugins] one-shot app build failed for ${row.id}:`,
+        error instanceof Error ? error.message : error
+      );
     }
   }
 
@@ -719,6 +741,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await store.upsert(degraded);
       return;
     }
+    await ensureCompiledApp(row);
     const files = listFiles(row.rootDir);
     if (containsNativeAddon(row.rootDir, files)) {
       await disposeOne(row.id);
@@ -1135,7 +1158,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await disposeOne(id);
       const row = await store.remove(id);
       await uninstalled.add(id);
-      if (row && row.sourceKind !== 'path' && row.rootDir.startsWith(join(opts.dataDir, 'plugins'))) {
+      if (row && row.rootDir.startsWith(join(opts.dataDir, 'plugins') + sep)) {
         rmSync(row.rootDir, { recursive: true, force: true });
       }
       removeInstalledPluginCopy(opts.dataDir, id);
@@ -1280,7 +1303,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await disposeOne(id);
       const row = await store.remove(id);
       await uninstalled.add(id);
-      if (row && row.sourceKind !== 'path' && row.rootDir.startsWith(join(opts.dataDir, 'plugins'))) {
+      if (row && row.rootDir.startsWith(join(opts.dataDir, 'plugins') + sep)) {
         rmSync(row.rootDir, { recursive: true, force: true });
       }
       removeLeftoverSidecar(opts.dataDir, id);

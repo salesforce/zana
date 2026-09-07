@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const create = vi.fn();
 const update = vi.fn();
+const upsertSchedulerTask = vi.hoisted(() => vi.fn());
 
 vi.mock('../../lib/product-client.js', () => ({
   product: {
@@ -21,7 +22,8 @@ vi.mock('../../store.js', () => ({
     selector({ projects: [{ id: 'p1', name: 'Demo' }] }),
   useUi: (selector: (s: { schedulerTab: string; selectedProjectId: string | null; selectedGroupId: string | null }) => unknown) =>
     selector({ schedulerTab: 'global', selectedProjectId: null, selectedGroupId: null }),
-  useScheduleGroups: (selector: (s: { groups: never[] }) => unknown) => selector({ groups: [] })
+  useScheduleGroups: (selector: (s: { groups: never[] }) => unknown) => selector({ groups: [] }),
+  upsertSchedulerTask
 }));
 
 vi.mock('../ImprovePromptButton.js', () => ({
@@ -53,6 +55,7 @@ describe('ScheduleEditor', () => {
     cleanup();
     create.mockReset();
     update.mockReset();
+    upsertSchedulerTask.mockReset();
   });
 
   it('shows the cron cadence fields after switching from interval', () => {
@@ -65,7 +68,8 @@ describe('ScheduleEditor', () => {
   });
 
   it('creates a schedule and reports the new id', async () => {
-    create.mockResolvedValue({ ok: true, value: { id: 'created-1' } });
+    const created = { id: 'created-1', name: 'Nightly' };
+    create.mockResolvedValue({ ok: true, value: created });
     const onSaved = vi.fn();
     render(<ScheduleEditor task={null} onSaved={onSaved} />);
     fireEvent.change(document.querySelector('#sched-name') as HTMLInputElement, {
@@ -74,6 +78,10 @@ describe('ScheduleEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }));
     await vi.waitFor(() => expect(onSaved).toHaveBeenCalledWith('created-1'));
     expect(create).toHaveBeenCalled();
+    expect(upsertSchedulerTask).toHaveBeenCalledWith(created);
+    expect(upsertSchedulerTask.mock.invocationCallOrder[0]).toBeLessThan(
+      onSaved.mock.invocationCallOrder[0]
+    );
   });
 
   it('saves edits and re-enables the submit button', async () => {
@@ -197,6 +205,21 @@ describe('ScheduleEditor', () => {
     expect(screen.getByRole('button', { name: 'Create schedule' }).hasAttribute('disabled')).toBe(
       true
     );
+  });
+
+  it('saves with ⌘+Enter', async () => {
+    const created = { id: 'created-1', name: 'Nightly' };
+    create.mockResolvedValue({ ok: true, value: created });
+    const onSaved = vi.fn();
+    render(<ScheduleEditor task={null} onSaved={onSaved} />);
+    fireEvent.change(document.querySelector('#sched-name') as HTMLInputElement, {
+      target: { value: 'Nightly' }
+    });
+    fireEvent.keyDown(screen.getByLabelText('New schedule'), {
+      key: 'Enter',
+      metaKey: true
+    });
+    await vi.waitFor(() => expect(onSaved).toHaveBeenCalledWith('created-1'));
   });
 
   it('shows an update error', async () => {

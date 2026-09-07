@@ -9,7 +9,7 @@
     "skipLibCheck": true,
     "paths": {
       "@zana-ai/zcc-plugin-sdk": [
-        "../../packages/plugin-sdk/bundled-types/zcc-plugin-sdk.d.ts"
+        "../../packages/plugin-sdk/src/index.ts"
       ]
     }
   },

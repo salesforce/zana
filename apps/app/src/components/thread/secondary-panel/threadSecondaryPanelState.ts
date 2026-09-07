@@ -31,6 +31,7 @@ export interface ClosableSecondaryTab {
   layout?: 'padded' | 'flush';
   openerKey?: string | null;
   automationTargetId?: string | null;
+  lineNumber?: number | null;
 }
 
 export interface ThreadSecondaryPanelState {
@@ -115,6 +116,9 @@ function parseTab(value: unknown): ClosableSecondaryTab | null {
     ...(value.automationTargetId === null || typeof value.automationTargetId === 'string'
       ? { automationTargetId: value.automationTargetId }
       : {}),
+    ...(typeof value.lineNumber === 'number' && value.lineNumber > 0
+      ? { lineNumber: Math.floor(value.lineNumber) }
+      : {}),
     ...('params' in value ? { params: parseJsonValue(value.params) } : {})
   };
 }
@@ -148,6 +152,15 @@ export function clampWidth(widthPx: number, containerWidthPx = 1200): number {
 function readStoredPanelRaw(ownerId: string): string | null {
   return localStorage.getItem(storageKeyForOwner(ownerId))
     ?? localStorage.getItem(`${LEGACY_THREAD_STORAGE_PREFIX}${ownerId}`);
+}
+
+export function hasStoredSecondaryPanel(ownerId: string): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    return readStoredPanelRaw(ownerId) != null;
+  } catch {
+    return false;
+  }
 }
 
 export function loadSecondaryPanelState(
@@ -252,6 +265,15 @@ export function addClosableTab(
 ): ThreadSecondaryPanelState {
   const existing = matchExistingTab(state.tabs, input);
   if (existing) {
+    const nextLine = input.lineNumber !== undefined ? input.lineNumber : existing.lineNumber;
+    if (nextLine !== existing.lineNumber) {
+      return {
+        ...state,
+        isOpen: true,
+        activeId: existing.id,
+        tabs: state.tabs.map((tab) => (tab.id === existing.id ? { ...tab, lineNumber: nextLine } : tab))
+      };
+    }
     return { ...state, isOpen: true, activeId: existing.id };
   }
   const tab: ClosableSecondaryTab = {
@@ -343,6 +365,7 @@ function patchAlreadyApplied(
   if (patch.openerKey !== undefined && patch.openerKey !== tab.openerKey) return false;
   if (patch.automationTargetId !== undefined && patch.automationTargetId !== tab.automationTargetId) return false;
   if (patch.params !== undefined && stableParams(tab.params) !== stableParams(patch.params)) return false;
+  if (patch.lineNumber !== undefined && patch.lineNumber !== tab.lineNumber) return false;
   return true;
 }
 

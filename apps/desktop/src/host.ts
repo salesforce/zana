@@ -30,6 +30,7 @@ import { existsSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, relative } from 'node:path';
 import { isTrustedRendererUrl, productServerUrl, rendererUrl, setProductionRendererOrigin } from './window/renderer-url.js';
+import { refreshRemoteStartPathHosts, stampedProjectRemote } from './remote-workspace.js';
 import { resolveIconPath } from './resolve-icon-path.js';
 import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
@@ -2580,6 +2581,7 @@ async function ensureRendererStaticHost(): Promise<void> {
   }
   setRuntimeHostSupervisor(runtimeSupervisor);
   setProductionRendererOrigin(runtimeSupervisor.rendererUrl);
+  void refreshRemoteStartPathHosts(productServerUrl());
 }
 
 /**
@@ -3260,7 +3262,7 @@ export function createTerminalConfined(
       extraArgs,
       harnessRouting: req.harnessRouting,
       title: req.title,
-      remote: useRemoteTools ? undefined : project.remote,
+      remote: useRemoteTools ? undefined : stampedProjectRemote(project, launchConfig.remoteDefaultPath),
       remoteToolProxy: useRemoteTools || undefined,
       cohort: req.cohort,
       headless: req.headless,
@@ -3350,6 +3352,7 @@ async function launchAuthorizedTerminal(
   const foundProject = projects.find((candidate) => candidate.id === req.projectId);
   if (!foundProject) return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
   const project = foundProject;
+  if (project.remote) await refreshRemoteStartPathHosts(productServerUrl());
   const config = store.getConfig();
   const personaSnapshot = personas.list();
   const projectSettings = await getAuthoritativeProjectSettings(req.projectId);
@@ -6109,7 +6112,11 @@ async function bootstrapNormal() {
   // claude-family terminal spawns get `ZCC_MCP_URL` injected. Errors here
   // are logged but non-fatal — the app still works without inbox push.
   const remoteFsDeps = () => ({
-    findRemote: (id: string) => store.listProjects().find((p) => p.id === id)?.remote ?? null,
+    findRemote: (id: string) => {
+      const project = store.listProjects().find((p) => p.id === id);
+      if (!project?.remote) return null;
+      return stampedProjectRemote(project, store.getConfig().remoteDefaultPath) ?? project.remote;
+    },
     defaultPath: store.getConfig().remoteDefaultPath,
     resolveRoot: fsRemoteRoot,
     exec: fsExecRemote,
@@ -6652,7 +6659,11 @@ async function bootstrapNormal() {
     runRemoteCommand: (projectId, command, execOpts) =>
       resolveAndExecRemote(
         {
-          findRemote: (id) => store.listProjects().find((p) => p.id === id)?.remote ?? null,
+          findRemote: (id) => {
+            const project = store.listProjects().find((p) => p.id === id);
+            if (!project?.remote) return null;
+            return stampedProjectRemote(project, store.getConfig().remoteDefaultPath) ?? project.remote;
+          },
           defaultPath: store.getConfig().remoteDefaultPath,
           resolveRoot: fsRemoteRoot,
           exec: fsExecRemote

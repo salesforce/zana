@@ -11,9 +11,11 @@ import {
   listThreadPlanReferences,
   listThreadPlanTasks,
   latestThreadPlanRevision,
+  touchThreadPlan,
   updateThreadPlanFilePath,
   updateThreadPlanTask,
   upsertThreadExecutionState,
+  type ThreadPlanStatus,
   type ThreadPlanTaskRow,
   type ThreadPlanTaskStatus,
   type ZccDatabase
@@ -56,7 +58,59 @@ export interface DurableThreadPlanView {
     startedAt: number | null;
     latestActivity: string | null;
   } | null;
-  referencedBy: Array<{ threadId: string; taskId: string | null }>;
+  referencedBy: Array<{
+    threadId: string;
+    taskId: string | null;
+    title: string;
+    role: 'Author' | 'Agent';
+    todosAssigned: number;
+  }>;
+}
+
+export function deriveThreadPlanStatus(tasks: readonly ThreadPlanTaskRow[]): ThreadPlanStatus {
+  if (tasks.some((task) => task.status === 'in_progress')) return 'active';
+  const open = tasks.filter((task) => task.status !== 'cancelled');
+  if (open.length > 0 && open.every((task) => task.status === 'completed')) return 'completed';
+  if (tasks.some((task) => task.status === 'pending' || task.status === 'blocked')) return 'active';
+  if (tasks.some((task) => task.status === 'completed')) return 'completed';
+  return 'draft';
+}
+
+function reconcileThreadPlanStatus(
+  db: ZccDatabase,
+  planId: string,
+  tasks?: ThreadPlanTaskRow[]
+): void {
+  const rows = tasks ?? listThreadPlanTasks(db, planId);
+  touchThreadPlan(db, planId, deriveThreadPlanStatus(rows));
+}
+
+function referencedAgentViews(
+  db: ZccDatabase,
+  plan: { id: string; rootThreadId: string },
+  tasks: readonly ThreadPlanTaskRow[]
+): DurableThreadPlanView['referencedBy'] {
+  const seen = new Set<string>();
+  const refs: DurableThreadPlanView['referencedBy'] = [];
+  for (const row of listThreadPlanReferences(db, plan.id)) {
+    if (seen.has(row.threadId)) continue;
+    seen.add(row.threadId);
+    const thread = getConversationThread(db, row.threadId);
+    const role = row.threadId === plan.rootThreadId ? 'Author' as const : 'Agent' as const;
+    const owned = tasks.filter((task) => task.owningThreadId === row.threadId).length;
+    const claimed = tasks.some((task) => task.owningThreadId);
+    refs.push({
+      threadId: row.threadId,
+      taskId: row.taskId,
+      title: thread?.title?.trim() || 'Untitled agent',
+      role,
+      todosAssigned: owned > 0 ? owned : (role === 'Author' && !claimed ? tasks.length : 0)
+    });
+  }
+  return refs.sort((left, right) => {
+    if (left.role !== right.role) return left.role === 'Author' ? -1 : 1;
+    return left.threadId.localeCompare(right.threadId);
+  });
 }
 
 function rootThreadIdFor(db: ZccDatabase, threadId: string): string {
@@ -105,6 +159,7 @@ export function snapshotApprovedPlan(
     });
   }
   persistPlanFile(db, args.threadId, trimmed, plan.filePath);
+  reconcileThreadPlanStatus(db, plan.id);
 }
 
 function normalizeProviderStatus(status: string | undefined): ThreadPlanTaskStatus {
@@ -171,6 +226,7 @@ export function importProviderPlanSteps(
       });
     }
   });
+  reconcileThreadPlanStatus(db, plan.id);
 }
 
 export function markOwningThreadPlanTasksInterrupted(db: ZccDatabase, threadId: string): void {
@@ -184,6 +240,7 @@ export function markOwningThreadPlanTasksInterrupted(db: ZccDatabase, threadId: 
       latestActivity: 'thread-stopped'
     });
   }
+  reconcileThreadPlanStatus(db, plan.id);
 }
 
 function taskProgress(tasks: ThreadPlanTaskRow[]): { completed: number; total: number } {
@@ -241,10 +298,7 @@ export function getDurableThreadPlanView(
         latestActivity: processing.latestActivity
       }
       : null,
-    referencedBy: listThreadPlanReferences(db, plan.id).map((row) => ({
-      threadId: row.threadId,
-      taskId: row.taskId
-    }))
+    referencedBy: referencedAgentViews(db, plan, tasks)
   };
 }
 
@@ -262,6 +316,7 @@ export function addUserPlanTask(
     ownerKind: 'user',
     userEdited: true
   });
+  reconcileThreadPlanStatus(ctx.db, plan.id);
   return getDurableThreadPlanView(ctx.db, threadId)!;
 }
 
@@ -282,6 +337,7 @@ export function updateUserPlanTask(
   if (!updated || updated.planId !== plan.id) {
     throw new ThreadCreateError(404, 'unknown-task', 'plan task is not registered');
   }
+  reconcileThreadPlanStatus(ctx.db, plan.id);
   return getDurableThreadPlanView(ctx.db, threadId)!;
 }
 

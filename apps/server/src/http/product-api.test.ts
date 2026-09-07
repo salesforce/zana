@@ -1770,3 +1770,74 @@ describe('product HTTP thread file preview', () => {
     });
   });
 });
+
+describe('product HTTP thread tabs', () => {
+  it('gets empty tabs then puts and conflicts on a stale revision', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-tabs-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-tabs-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [
+          {
+            id: 'proj-1',
+            name: 'Alpha',
+            path: projectRoot,
+            createdAt: 1,
+            lastActiveAt: 1
+          }
+        ]
+      })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: projectRoot
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+
+    const empty = await fetch(`${server.url}api/v1/threads/${thread.id}/tabs`);
+    expect(empty.status).toBe(200);
+    await expect(empty.json()).resolves.toEqual({ revision: 0, tabs: [] });
+
+    const tab = {
+      id: 'file-preview:1',
+      kind: 'workspace-file-preview',
+      environmentId: null,
+      projectId: null,
+      path: 'src/a.ts',
+      source: { kind: 'working-tree' },
+      statusLabel: null,
+      lineRange: { startLineNumber: 3, endLineNumber: 3 }
+    };
+    const put = await fetch(`${server.url}api/v1/threads/${thread.id}/tabs`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 0, tabs: [tab] })
+    });
+    expect(put.status).toBe(200);
+    await expect(put.json()).resolves.toMatchObject({ revision: 1, tabs: [tab] });
+
+    const stale = await fetch(`${server.url}api/v1/threads/${thread.id}/tabs`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 0, tabs: [] })
+    });
+    expect(stale.status).toBe(409);
+    await expect(stale.json()).resolves.toMatchObject({ error: 'revision_conflict' });
+
+    const missing = await fetch(`${server.url}api/v1/threads/missing/tabs`);
+    expect(missing.status).toBe(404);
+  });
+});

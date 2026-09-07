@@ -538,7 +538,13 @@ function WorkspacePaneContent({
   );
 }
 
-function PaneBody({ content, paneId }: { content: PaneContent; paneId: string }) {
+function PaneBody({
+  content,
+  paneId
+}: {
+  content: PaneContent;
+  paneId: string;
+}) {
   const projects = useData((s) => s.projects);
   if (content.kind === 'thread') {
     return <ThreadDetail key={content.threadId} threadId={content.threadId} />;

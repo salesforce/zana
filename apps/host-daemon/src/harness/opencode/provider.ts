@@ -1,6 +1,6 @@
 /**
  * OpenCodeProvider — launching the OpenCode CLI (`opencode`, npm `opencode-ai`),
- * for the profiles it serves: `opencode` and `opencode-resume`.
+ * for the profiles it serves: `opencode`, `opencode-resume`, and `opencode-yolo`.
  *
  * OpenCode is a cursor/pi-shaped interactive TUI at the command line: the bare
  * `opencode [dir]` opens the TUI in a directory (the positional is a DIRECTORY,
@@ -43,9 +43,9 @@
  * OpenCode-owned (its `opencode auth login` / provider env keys), so
  * `authKey`/`authInjection` remain the base no-ops.
  *
- * Rule 6: the concrete profile literals (`'opencode'`, `'opencode-resume'`) and the
- * provider id (`'opencode'`) appear ONLY here + the registry — `PtyManager`
- * dispatches through the interface.
+ * Rule 6: the concrete profile literals (`'opencode'`, `'opencode-resume'`,
+ * `'opencode-yolo'`) and the provider id (`'opencode'`) appear ONLY here + the
+ * registry — `PtyManager` dispatches through the interface.
  */
 
 import type { AppConfig, LaunchProfileId } from '@zana-ai/zcc-domain/product';
@@ -98,7 +98,7 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
   // Keep catalog, level mapping, and opencode-provider.test.ts in sync.
   descriptor: {
     id: 'opencode', label: 'OpenCode', agentDefaultEligible: true, terminalEligible: false, defaultProfileId: 'opencode',
-    profiles: [{ id: 'opencode', posture: 'default' }, { id: 'opencode-resume', posture: 'resume' }],
+    profiles: [{ id: 'opencode', posture: 'default' }, { id: 'opencode-resume', posture: 'resume' }, { id: 'opencode-yolo', posture: 'unrestricted' }],
     capabilities: facetSupport(
       { 'opening-prompt': 'exact', 'mcp-references': 'exact' },
       { 'opening-prompt': 'exact' },
@@ -539,8 +539,19 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     return { ...target, id: 'opencode.role.discovery', scope: [...target.scope], evidenceVersion: OPENCODE_MIN_VERSION };
   }
 
-  validateRoutingCombination(input: { roleTargetId?: string; executionOrigin: string }) {
-    return input.roleTargetId && input.executionOrigin !== 'inherited-native-default'
+  validateRoutingCombination(input: {
+    roleTargetId?: string;
+    executionOrigin: string;
+    executionTargetId?: string;
+  }) {
+    // A native `--agent` role IS the execution policy. Pairing it with a portable
+    // execution state (or an explicit execution target) double-binds `--agent`.
+    // Unrestricted `opencode-yolo` is `--auto` with origin explicit-native and NO
+    // execution target — `--auto` and `--agent <role>` are compatible.
+    if (!input.roleTargetId) return undefined;
+    const competingExecution = input.executionOrigin === 'portable-mapped'
+      || Boolean(input.executionTargetId);
+    return competingExecution
       ? 'OpenCode native role and execution state require one compatible role policy; clear one selection'
       : undefined;
   }
@@ -650,6 +661,11 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     // `baseArgsPinSession` returns true for both.
     if (profile === 'opencode-resume') {
       return { command, args: resumeSessionId ? ['--session', resumeSessionId] : ['--continue'] };
+    }
+    // opencode-yolo → `--auto`: OpenCode's documented auto-approve. Keep the
+    // literal on its own line (profile-completeness / Rule 6 family mirrors).
+    if (profile === 'opencode-yolo') {
+      return { command, args: ['--auto'] };
     }
     return { command, args: [] };
   }
@@ -796,6 +812,8 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   }
 
   title(profile: LaunchProfileId): string {
-    return profile === 'opencode-resume' ? 'opencode --continue' : 'opencode';
+    if (profile === 'opencode-resume') return 'opencode --continue';
+    if (profile === 'opencode-yolo') return 'opencode --auto';
+    return 'opencode';
   }
 }

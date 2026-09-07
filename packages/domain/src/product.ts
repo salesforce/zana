@@ -54,7 +54,8 @@ export type LaunchProfileId =
   | 'pi'
   | 'pi-resume'
   | 'opencode'
-  | 'opencode-resume';
+  | 'opencode-resume'
+  | 'opencode-yolo';
 
 /**
  * A verifiable code-harness FAMILY — the coarse grouping the Settings → Code
@@ -2016,12 +2017,13 @@ export interface AppConfig {
    */
   agentListNeedsYouFromTriage?: boolean;
   /**
-   * Include scheduler-spawned sessions (`session.scheduled`) on the Agents board,
-   * list, and flow. Default ON: waiting scheduled jobs sit in a **Scheduled**
+   * Include waiting scheduler-spawned sessions (`session.scheduled`) on the
+   * Agents board, list, and flow. Default ON: waiting jobs sit in a **Scheduled**
    * lane; working / exited ones use the normal Working / Done lanes. Turn off
-   * to remove those runs from Agent View. A live run remains visible in its
-   * project's sidebar tree so the project status dot always has a matching row.
-   * Does not change the tab strip or focus buckets.
+   * to hide that column (and armed schedule cards). A scheduled run that is
+   * working or blocked still appears in Working. Scheduled runs never appear
+   * under a project in the sidebar. Does not change the tab strip or focus
+   * buckets.
    */
   includeScheduledAgentsInAgentView?: boolean;
   /**
@@ -2303,15 +2305,16 @@ export interface AppConfig {
    */
   tmuxScope?: 'off' | 'remote' | 'all';
   /**
-   * Global fallback start path for remote (SSH) projects. When a remote project
-   * has no per-project `ProjectRemote.remotePath` of its own, both the terminal
-   * (the `cd` prefix in the ssh command) and the Explorer browse root start here
-   * instead of the remote `$HOME`. Useful when every workspace lives under a
-   * fixed root on the dev box — set it once here rather than on every project.
-   * Precedence: per-project `remotePath` → this default → remote `$HOME`.
-    * Trimmed; when absent or blank, remotes start in their own `$HOME`. The
-    * renderer is untrusted, so the value is sanitized in main (no control chars,
-    * length-capped) like the per-project field.
+   * Global fallback start path for unpaired remote (SSH) projects. When a
+   * remote has no per-project `remotePath` and is not paired to a Machine (or
+   * that Machine has no default), the terminal `cd` prefix, Explorer browse
+   * root, and new Modern harness threads start here instead of the remote
+   * `$HOME`. Enrolled machines own their default under Settings → Machines.
+   * Precedence: per-project `remotePath` → matching Machine
+   * `defaultWorkspacePath` → this default → remote `$HOME`.
+   * Trimmed; when absent or blank, unpaired remotes start in their own `$HOME`.
+   * The renderer is untrusted, so the value is sanitized in main (no control chars,
+   * length-capped) like the per-project field.
    */
   remoteDefaultPath?: string;
   /**
@@ -4960,11 +4963,12 @@ export type ExtensionInstallSource =
   /**
    * Install from a remote git repository. `url`/`ref`/`subdir` are ADVISORY
    * renderer hints (Rule #1): main normalizes + clones the url itself, validates
-   * `ref` via `safeRef`, realpath-confines `subdir`, and funnels the result
-   * through the single trusted `installFromDir` seam — so consent + the
-   * deny-by-default broker fire exactly as for `localDir`. `ref` is an optional
-   * branch/tag/SHA (default branch when absent); `subdir` locates
-   * `extension.json` when it isn't at the repo root.
+   * `ref` via `safeRef`, and realpath-confines `subdir`. A `package.json` `zcc`
+   * plugin is staged (symlink/`.git` scrub) then path-installed through
+   * PluginService. A leftover `extension.json` still funnels through
+   * `installFromDir` so consent + the deny-by-default broker fire exactly as
+   * for `localDir`. `ref` is an optional branch/tag/SHA (default branch when
+   * absent); `subdir` locates the manifest when it isn't at the repo root.
    */
   | { kind: 'git'; url: string; ref?: string; subdir?: string }
   /**

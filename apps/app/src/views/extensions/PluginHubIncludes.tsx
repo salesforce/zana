@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { Link } from 'react-router-dom';
+import { navPanelListsInExtensionsHub, navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
 import { getPluginRegistrationSets, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { getSkillsRoutePath } from '@/lib/route-paths';
 
@@ -8,16 +9,20 @@ function slotLinesFromSet(set: ReturnType<typeof getPluginRegistrationSets>[numb
   if (!set) return [];
   const lines: string[] = [];
   if (set.navPanels.length) {
-    const sidebar = set.navPanels.filter((panel) => panel.placement !== 'extensions').length;
-    const hub = set.navPanels.filter((panel) => panel.placement === 'extensions').length;
+    const sidebar = set.navPanels.filter((panel) => navPanelListsInSidebar(panel.placement)).length;
+    const hub = set.navPanels.filter((panel) => navPanelListsInExtensionsHub(panel.placement)).length;
+    const unlisted = set.navPanels.length - sidebar - hub;
     if (sidebar) lines.push(`Sidebar panels (${sidebar})`);
     if (hub) lines.push(`Plugins hub pages (${hub})`);
+    if (unlisted) lines.push(`Unlisted pages (${unlisted})`);
   }
   if (set.projectTabs.length) lines.push(`Project tabs (${set.projectTabs.length})`);
   if (set.projectMenuActions.length) lines.push(`Project menus (${set.projectMenuActions.length})`);
+  if (set.createProjectActions.length) lines.push(`Create project (${set.createProjectActions.length})`);
   if (set.settingsSections.length) lines.push(`Settings sections (${set.settingsSections.length})`);
   if (set.homepageSections.length) lines.push(`Home sections (${set.homepageSections.length})`);
   if (set.sidebarFooterActions.length) lines.push(`Sidebar footer actions (${set.sidebarFooterActions.length})`);
+  if (set.projectStatusbarItems.length) lines.push(`Project statusbar (${set.projectStatusbarItems.length})`);
   if (set.threadPanelActions.length) lines.push(`Side-panel tabs (${set.threadPanelActions.length})`);
   if (set.pendingInteractions.length) lines.push(`Pending interactions (${set.pendingInteractions.length})`);
   if (set.timelineRenderers.length) lines.push(`Timeline renderers (${set.timelineRenderers.length})`);

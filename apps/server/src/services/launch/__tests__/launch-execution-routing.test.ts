@@ -126,6 +126,24 @@ describe('production execution routing preflight', () => {
     });
   });
 
+  it('allows an OpenCode native role with the unrestricted yolo profile', async () => {
+    const services = deps();
+    const provider = new OpenCodeProvider();
+    provider.discoverAgentDescriptors = vi.fn(async () => ({ status: 'success' as const, descriptors: [
+      { id: 'build', label: 'build', mode: 'primary' as const, hidden: false, directLaunchAllowed: true }
+    ] }));
+    await expect(preflightTerminalExecution({
+      config: config(),
+      profile: 'opencode-yolo',
+      projectId: 'p1',
+      projectPath: '/tmp/p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'yolo-role',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'build' } } }
+    }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+  });
+
   it('uses fresh authoritative direct-role discovery and rejects a subagent sharing a static id', async () => {
     const services = deps();
     const provider = new OpenCodeProvider();

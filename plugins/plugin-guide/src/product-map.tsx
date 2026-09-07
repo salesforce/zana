@@ -25,6 +25,7 @@ import {
   HomeWireframe,
   PaletteWireframe,
   PlatformWireframe,
+  ProjectShellWireframe,
   SettingsWireframe,
   SurfaceMapContext,
   ThreadWireframe
@@ -37,6 +38,8 @@ function SlideContent({ group }: { group: SurfaceGroup }): ReactNode {
   switch (group.id) {
     case 'app-shell':
       return <AppShellWireframe />;
+    case 'project-shell':
+      return <ProjectShellWireframe />;
     case 'home':
       return <HomeWireframe />;
     case 'composer':

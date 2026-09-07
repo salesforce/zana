@@ -1,44 +1,42 @@
-import { useUi } from '../../store.js';
 import { useThreads } from '../../thread-store.js';
-import { isCompactViewport } from '../../hooks/useIsCompactViewport.js';
-import { openAgentSessionInSplit, openThreadInSplit } from '../../lib/split-layout/openThreadInSplit.js';
+import { getAgentSessionRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
+import { useUi } from '../../store.js';
+import type { ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
+import { liveSessionIdForTask } from './schedulerUtils.js';
 
 /**
- * Peek a live scheduled run in the inspector overlay — stay on Scheduler.
- * Conversation threads open ThreadModal; pty sessions open the agent modal.
- * Matches AgentsBoard.inspect and ScheduleRow.openLive.
+ * First-class page for a live scheduled run. Conversation threads open
+ * ThreadDetail; pty sessions open AgentSessionPage.
  */
-export function openScheduledLive(projectId: string, sessionId: string): void {
+export function scheduledLivePath(projectId: string, sessionId: string): string {
   if (useThreads.getState().threads.some((row) => row.id === sessionId)) {
-    useUi.getState().openThreadModal(sessionId);
-    return;
+    return getThreadRoutePath(sessionId, projectId);
   }
-  useUi.getState().openAgentModal(sessionId, projectId);
+  return getAgentSessionRoutePath(sessionId, projectId);
 }
 
-/** Open a live scheduled run as a split pane beside the current page. */
-export function openScheduledLiveInSplit(
+/** Open a live scheduled run as a normal agent/thread page. */
+export function openScheduledLive(
   projectId: string,
   sessionId: string,
-  navigate: (route: string, options?: { replace?: boolean }) => void,
-  currentPathname?: string
+  navigate: (to: string) => void
 ): void {
-  const isCompact = isCompactViewport();
-  if (useThreads.getState().threads.some((row) => row.id === sessionId)) {
-    openThreadInSplit({
-      navigate,
-      projectId,
-      threadId: sessionId,
-      isCompact,
-      currentPathname
-    });
+  navigate(scheduledLivePath(projectId, sessionId));
+}
+
+/**
+ * Agent View: a running job opens its live page; an armed job with no live
+ * session opens the schedule editor.
+ */
+export function openScheduleFromAgents(
+  task: ScheduledTask,
+  terminals: Record<string, TerminalSession[] | undefined>,
+  navigate: (to: string) => void
+): void {
+  const sessionId = liveSessionIdForTask(task, terminals);
+  if (sessionId) {
+    openScheduledLive(task.projectId, sessionId, navigate);
     return;
   }
-  openAgentSessionInSplit({
-    navigate,
-    projectId,
-    sessionId,
-    isCompact,
-    currentPathname
-  });
+  useUi.getState().revealSchedule(task.id);
 }

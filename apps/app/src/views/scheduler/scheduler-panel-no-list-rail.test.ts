@@ -14,6 +14,14 @@ const css = readFileSync(
   fileURLToPath(new URL('../../styles/global.css', import.meta.url)),
   'utf8'
 );
+const detail = readFileSync(
+  fileURLToPath(new URL('./ScheduleDetailPage.tsx', import.meta.url)),
+  'utf8'
+);
+const area = readFileSync(
+  fileURLToPath(new URL('../thread-detail/SplitThreadArea.tsx', import.meta.url)),
+  'utf8'
+);
 
 describe('SchedulerPanel has no inner list rail', () => {
   it('does not mount SchedulerPane or a list/detail split', () => {
@@ -50,10 +58,20 @@ describe('SchedulerPanel has no inner list rail', () => {
     expect(panel).toContain('Manage schedule groups');
   });
 
-  it('opens schedules on dedicated routes instead of a modal editor', () => {
-    expect(panel).not.toContain('ScheduleModal');
+  it('opens schedules on dedicated routes as a normal page', () => {
     expect(panel).toContain('getScheduleRoutePath');
     expect(panel).toContain('getNewScheduleRoutePath');
     expect(panel).toContain('openScheduleInSplit');
+    expect(detail).toContain('className="schedule-detail-pane"');
+    expect(detail).not.toContain('<Modal');
+    expect(detail).not.toContain('className="schedule-detail-modal"');
+    expect(detail).not.toContain('ThreadSecondaryPanel');
+    expect(area).not.toContain('isSplitPane ? null : <SchedulerView');
+  });
+
+  it('paints overview cards with the opaque panel token', () => {
+    expect(css).toMatch(/\.overview-kpi \{\n  background: var\(--bg-panel\);/);
+    expect(css).toMatch(/\.scheduler-overview \.overview-card \{\n  background: var\(--bg-panel\);/);
+    expect(css).not.toContain('var(--panel-bg, rgba(255, 255, 255, 0.03))');
   });
 });

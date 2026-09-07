@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { listHomepageSections, listNavPanels, listPendingInteractionSlots, listProjectTabs } from './plugin-slots.js';
+import { listComposerCustomizations, listCreateProjectActions, listHomepageSections, listNavPanels, listPendingInteractionSlots, listProjectTabs } from './plugin-slots.js';
 import { pluginAppIsLoadable, reconcilePluginApps, usePluginAppModules } from './plugin-app-loader.js';
 
 afterEach(async () => {
@@ -57,9 +57,20 @@ describe('server plugin app loader', () => {
         importer: async () => ({
           default: {
             __zccPluginApp: true,
-            setup(app: { slots: { projectTab(registration: object): void } }) {
+            setup(app: {
+              slots: {
+                projectTab(registration: object): void;
+                experimental_createProjectAction(registration: object): void;
+              };
+            }) {
               app.slots.projectTab({ id: 'salesforce', label: 'Salesforce', icon: 'Cloud', global: false, component: () => null });
               app.slots.projectTab({ id: 'soql', label: 'SOQL', icon: 'Database', global: false, component: () => null });
+              app.slots.experimental_createProjectAction({
+                id: 'dx-project',
+                title: 'Salesforce DX project',
+                icon: 'Cloud',
+                run: () => undefined
+              });
             }
           }
         })
@@ -71,6 +82,7 @@ describe('server plugin app loader', () => {
     ]);
     expect(listNavPanels()).toEqual([]);
     expect(listProjectTabs().map((tab) => tab.id)).toEqual(['salesforce', 'soql']);
+    expect(listCreateProjectActions().map((action) => action.title)).toEqual(['Salesforce DX project']);
   });
 
   it('pluginAppIsLoadable keeps setup-needed plugins and skips broken ones', () => {
@@ -219,5 +231,40 @@ describe('server plugin app loader', () => {
     expect(urls).toEqual(['/plugins/tasks/assets/app.js?v=1']);
     await reconcilePluginApps([{ ...entry, appUrl: '/plugins/tasks/assets/app.js?v=2' }], { importer });
     expect(urls).toEqual(['/plugins/tasks/assets/app.js?v=1', '/plugins/tasks/assets/app.js?v=2']);
+  });
+
+  it('registers composer-only apps that have no nav panel or project tab', async () => {
+    await reconcilePluginApps(
+      [{
+        id: 'harness-claude',
+        name: 'Claude Code CLI Agent',
+        description: '',
+        icon: 'Bot',
+        enabled: true,
+        provenance: 'builtin',
+        status: 'running',
+        appUrl: '/plugins/harness-claude/assets/app.js?v=1'
+      }],
+      {
+        importer: async () => ({
+          default: {
+            __zccPluginApp: true,
+            setup(app: {
+              composer: { customize(registration: object): void };
+            }) {
+              app.composer.customize({
+                id: 'chip',
+                scopes: ['cli-agent'],
+                meta: [{ id: 'chip', component: () => null }]
+              });
+            }
+          }
+        })
+      }
+    );
+    expect(usePluginAppModules.getState().modules).toEqual([]);
+    expect(listComposerCustomizations()).toEqual([
+      expect.objectContaining({ pluginId: 'harness-claude', id: 'chip' })
+    ]);
   });
 });

@@ -18,6 +18,7 @@ describe('ProjectModePane', () => {
     expect(source).toContain('slotTab.component');
     expect(source).toContain('decodeRouteParam(mode)');
     expect(source).toContain('<SplitPaneHeaderActions />');
+    expect(source).toContain('<ProjectStatusbarItems');
     expect(source).not.toContain('<AgentLauncher');
   });
 });

@@ -98,6 +98,10 @@ function MonacoFileOpener(props) {
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
           void save();
         });
+        if (typeof props.lineNumber === 'number' && props.lineNumber > 0) {
+          editor.revealLineInCenter(props.lineNumber);
+          editor.setPosition({ lineNumber: props.lineNumber, column: 1 });
+        }
         setStatus({ kind: 'ready' });
         setSaveState({ kind: 'clean' });
       })
@@ -110,7 +114,7 @@ function MonacoFileOpener(props) {
       editor?.dispose?.();
       editorRef.current = null;
     };
-  }, [props.path, props.source, rpc, save]);
+  }, [props.path, props.source, props.lineNumber, rpc, save]);
 
   if (status.kind === 'delegate') {
     return React.createElement(Original);

@@ -29,6 +29,20 @@ export const hostSchema = z.object({
    * restart or reinstall the daemon without asking the renderer for a host.
    */
   canRepairViaSsh: z.boolean().default(false),
+  /**
+   * SSH config alias used to pair this enrolled daemon (`Host.sshHost`).
+   * Lookup for workspace defaults uses this, never the display name.
+   */
+  sshHost: z.string().nullable().optional(),
+  /**
+   * Optional per-machine start path for SSH remotes that do not set a
+   * per-project `remotePath`. Empty/null falls through to Connectivity's
+   * global default, then the remote home directory. Primary (this Mac)
+   * never stores one.
+   */
+  defaultWorkspacePath: z.string().nullable().optional(),
+  /** Last-seen home directory reported by the daemon, used as the Home fallback. */
+  homeDir: z.string().nullable().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
 });

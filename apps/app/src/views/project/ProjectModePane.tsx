@@ -11,6 +11,7 @@ import { useProjectTabModules } from '@/modules';
 import { resolveProjectTabModule } from '@/lib/libraryPlugin';
 import { DelayedStencilList } from '@/components/ui/Skeleton';
 import { PluginSlotBoundary } from '@/plugins/PluginSlotBoundary';
+import { ProjectStatusbarItems } from '@/plugins/ProjectStatusbarItems';
 import { listProjectTabs, projectTabView, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { projectTerminalsAnchorId } from '@/lib/split-layout/agentSessionPortal';
 import { decodeRouteParam, getProjectModeRoutePath } from '@/lib/route-paths';
@@ -285,7 +286,9 @@ export function ProjectModePane({
             )}
           </span>
         )}
+        <ProjectStatusbarItems projectId={project.id} align="left" navigate={navigate} />
         <span className="grow" />
+        <ProjectStatusbarItems projectId={project.id} align="right" navigate={navigate} />
         {isTerminals && activeTab && (
           <>
             <span>{activeTab.profile}</span>

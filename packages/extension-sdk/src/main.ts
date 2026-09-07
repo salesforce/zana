@@ -555,7 +555,8 @@ export type SdkLaunchProfileId =
   | 'pi'
   | 'pi-resume'
   | 'opencode'
-  | 'opencode-resume';
+  | 'opencode-resume'
+  | 'opencode-yolo';
 
 /** Provenance stamp — see core's `PersonaSource`. The host stamps `{ extensionId }`. */
 export type PersonaSource =

@@ -44,7 +44,28 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).not.toContain('legacyAgentSelected');
     expect(source).toContain('<ComposerProjectPicker');
     expect(source).toContain('PluginComposerChrome');
-    expect(source).toContain("kind: 'new-thread'");
+    expect(source).toContain("kind: 'cli-agent'");
+    expect(source).toContain('PluginComposerMeta');
+    expect(source).toContain('PluginComposerAdvanced');
+    expect(source).toContain('legacy-agent-customize-launch');
+    expect(source).toContain('launch-advanced-card');
+    expect(source).toContain('Extra args');
+    expect(source).toContain('applyLaunchPatch');
+    expect(source).toContain('personaId: personaId || undefined');
+    expect(source).toContain('permissionModeOptionsFor');
+    expect(source).toContain('cliLaunchFromPermissionMode');
+    expect(source).toContain('unrestrictedProfileId');
+    expect(source).toContain('fallbackProviderOption');
+    expect(source).toContain('ariaLabel="Permission mode"');
+    expect(source).toContain('permissionOptions.length > 1');
+    expect(source).toContain('compactLabel: row.compactLabel');
+    expect(source).toContain('description: row.description');
+    expect(source).not.toContain("kind: 'new-thread'");
+    expect(source).not.toContain('claude-yolo');
+    expect(source).not.toContain('Execution state');
+    expect(source).not.toContain('yoloActive');
+    expect(source).not.toContain('setExecutionState');
+    expect(source).not.toContain('cli-yolo-chip');
   });
 
   it('shows a sending spinner on the launch button while createTerminal is in flight', () => {
@@ -90,6 +111,8 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('        : validModelId\n          ? { modelTargetId: validModelId }\n          : {};');
     // The old shape spread BOTH selectors into the adapter entry.
     expect(source).not.toContain('...(validRoleId ? { roleTargetId: validRoleId } : {})');
+    // Edits → executionState must not ride with a native role (OpenCode preflight).
+    expect(source).toContain('const withState = permLaunch.executionState && !validRoleId');
   });
 
   it('offers the OpenCode native role via a popover picker only for the opencode family', () => {

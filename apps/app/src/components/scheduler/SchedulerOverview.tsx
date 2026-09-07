@@ -261,7 +261,7 @@ export function SchedulerOverview({
                     type="button"
                     className="overview-item-main"
                     onClick={() => onOpenTerminal(task, sessionId)}
-                    title="Peek the running session"
+                    title="Open the running session"
                   >
                     <div className="overview-item-name">{task.name}</div>
                     <div className="overview-item-meta">
@@ -304,7 +304,7 @@ export function SchedulerOverview({
                     type="button"
                     className="overview-item-main"
                     onClick={() => onOpenTerminal(task, sessionId)}
-                    title="Agent finished — peek the session"
+                    title="Agent finished — open the session"
                   >
                     <div className="overview-item-name">{task.name}</div>
                     <div className="overview-item-meta">
@@ -315,7 +315,7 @@ export function SchedulerOverview({
                     type="button"
                     className="icon-button"
                     onClick={() => onOpenTerminal(task, sessionId)}
-                    title="Peek session"
+                    title="Open session"
                     aria-label="Open session"
                   >
                     <ExternalLink size={14} />

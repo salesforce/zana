@@ -10,6 +10,7 @@ const SLOT_SURFACE_IDS = [
   'experimental_projectMenuAction',
   'experimental_createProjectAction',
   'sidebarFooterAction',
+  'projectStatusbarItem',
   'pendingInteraction',
   'threadPanelAction',
   'experimental_newThreadPanelAction',
@@ -49,5 +50,16 @@ describe('plugin guide surfaces', () => {
     expect(ids.has('composer')).toBe(true);
     expect(ids.has('contentScripts')).toBe(true);
     expect(ids.has('skills')).toBe(true);
+    const composer = SURFACES.find((row) => row.id === 'composer');
+    expect(composer?.bullets.some((line) => line.includes('cli-agent'))).toBe(true);
+    expect(composer?.bullets.some((line) => line.includes('experimental_setLaunchPatch'))).toBe(true);
+  });
+
+  it('documents unlisted navPanels and footer toPluginPanel', () => {
+    const nav = SURFACES.find((row) => row.id === 'navPanel');
+    expect(nav?.bullets.some((line) => line.includes('unlisted'))).toBe(true);
+    const footer = SURFACES.find((row) => row.id === 'sidebarFooterAction');
+    expect(footer?.bullets.some((line) => line.includes('toPluginPanel'))).toBe(true);
+    expect(footer?.firstParty).toEqual(['Connect', 'Salesforce']);
   });
 });

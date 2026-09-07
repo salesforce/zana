@@ -46,6 +46,8 @@ import { HomeAgentComposer } from '@/components/HomeAgentComposer';
 import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
 import { filterMarketplaceEntries, type MarketplaceTag } from './marketplace-filter.js';
 import { catalogCountLabel, catalogErrorText, catalogKindLabel } from './marketplace-catalogs.js';
+import { reportHubInstallFailure } from './hub-install.js';
+import { useUi } from '@/store';
 
 const MARKET_FILTERS: { id: MarketplaceTag | 'all'; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -394,7 +396,12 @@ export function MarketplaceView({
                   className="ext-install-menu-item"
                   onClick={() => {
                     setInstallMenuOpen(false);
-                    product.extensions.install({ kind: 'localDir' }).catch(() => {});
+                    product.extensions
+                      .install({ kind: 'localDir' })
+                      .then((res) => reportHubInstallFailure(res, useUi.getState().pushToast))
+                      .catch((err) =>
+                        useUi.getState().pushToast(err instanceof Error ? err.message : String(err), 'error')
+                      );
                   }}
                 >
                   <FolderOpen size={14} />
@@ -406,7 +413,12 @@ export function MarketplaceView({
                   className="ext-install-menu-item"
                   onClick={() => {
                     setInstallMenuOpen(false);
-                    product.extensions.install({ kind: 'localArchive' }).catch(() => {});
+                    product.extensions
+                      .install({ kind: 'localArchive' })
+                      .then((res) => reportHubInstallFailure(res, useUi.getState().pushToast))
+                      .catch((err) =>
+                        useUi.getState().pushToast(err instanceof Error ? err.message : String(err), 'error')
+                      );
                   }}
                 >
                   <FileArchive size={14} />
@@ -469,7 +481,12 @@ export function MarketplaceView({
           onClose={() => setNpmOpen(false)}
           onSubmit={(spec) => {
             setNpmOpen(false);
-            product.extensions.install({ kind: 'npm', spec }).catch(() => {});
+            product.extensions
+              .install({ kind: 'npm', spec })
+              .then((res) => reportHubInstallFailure(res, useUi.getState().pushToast))
+              .catch((err) =>
+                useUi.getState().pushToast(err instanceof Error ? err.message : String(err), 'error')
+              );
           }}
         />
       )}

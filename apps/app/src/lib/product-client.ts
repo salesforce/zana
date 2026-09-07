@@ -751,6 +751,14 @@ function httpProduct(): Pick<
         apiJson(`/threads/${encodeURIComponent(threadId)}/thread-storage/files`),
       storageContent: async (threadId, path) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/thread-storage/content?path=${encodeURIComponent(path)}`),
+      tabs: async (threadId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/tabs`),
+      updateTabs: async (threadId, body) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/tabs`, {
+          method: 'PUT',
+          body: JSON.stringify(body)
+        }),
+      onTabs: (cb) => subscribeProductEvent('threads:tabs', cb),
       open: async (threadId, body) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/open`, {
           method: 'POST',

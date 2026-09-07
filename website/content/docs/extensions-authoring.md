@@ -108,6 +108,18 @@ export default definePluginApp((app) => {
     icon: 'Plus',
     run: () => {}
   });
+  app.slots.projectStatusbarItem({
+    id: 'orgs',
+    align: 'right',
+    icon: 'Cloud',
+    label: 'orgs',
+    run: (ctx) => {
+      ctx.openMenu([
+        { id: 'prod', label: 'Production', run: () => ctx.openDialog({ title: 'Switch org' }) },
+        { id: 'soql', label: 'Open SOQL', run: () => ctx.toProject(ctx.projectId, { tabId: 'soql' }) }
+      ]);
+    }
+  });
   app.slots.experimental_createProjectAction({
     id: 'notes-project',
     title: 'Notes project',

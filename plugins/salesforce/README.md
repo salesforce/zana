@@ -14,13 +14,16 @@ zcc plugin install salesforce
 ```
 
 Requires the Salesforce CLI (`sf`) on PATH. Log in with `sf org login web`, then
-pick an org on the Salesforce tab (or set `defaultOrg` / `SF_TARGET_ORG`).
+pick an org under **Plugins → Salesforce** or on the Salesforce tab (or set
+`defaultOrg` / `SF_TARGET_ORG`).
 
 ## Using this plugin
 
 | Surface | What it does |
 | --- | --- |
+| Plugins → Salesforce | CLI-connected org list, default alias, API version, DX root |
 | Salesforce tab | Org picker, doctor, DX project |
+| New Project | Salesforce DX project (`sf project generate`) |
 | SOQL tab | Schema rail, query / queryMore, history — REST via the SDK |
 | Agentforce playground | `.agent` editor (script + graph) |
 | Agentforce preview | Simulate or live Test against the selected org |

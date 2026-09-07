@@ -62,6 +62,7 @@ import { ComposerProjectPicker } from './ComposerProjectPicker.js';
 import { resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
 import { useBooleanPreference } from '../lib/use-boolean-preference.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
+import { PluginComposerAdvanced, PluginComposerMeta } from '../plugins/PluginComposerSlots.js';
 import {
   NAVIGATE_TO_THREAD_ON_CREATE_DEFAULT,
   NAVIGATE_TO_THREAD_ON_CREATE_KEY,
@@ -629,6 +630,7 @@ export function ThreadCommandComposer({
       text={field.text}
       setText={field.setText}
       focus={field.focus}
+      providerId={resolvedProviderId}
     >
     <div
       className={`thread-command-composer${expanded ? ' is-expanded' : ''}${field.dropOver ? ' is-drop-over' : ''}${busy ? ' is-sending' : ''}`}
@@ -839,8 +841,14 @@ export function ThreadCommandComposer({
               minWidth={280}
             />
           )}
+          <PluginComposerMeta
+            scope={threadId ? { kind: 'thread', threadId } : { kind: 'new-thread', projectId: projectId ?? null }}
+          />
         </div>
       </div>
+      <PluginComposerAdvanced
+        scope={threadId ? { kind: 'thread', threadId } : { kind: 'new-thread', projectId: projectId ?? null }}
+      />
     </div>
     </PluginComposerChrome>
     {sshPick && (

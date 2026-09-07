@@ -194,6 +194,15 @@ describe('runThreadMenuAction', () => {
 });
 
 describe('ThreadCardMenu', () => {
+  it('portals the right-click menu to document.body', () => {
+    const source = readFileSync(new URL('./threadCardActions.tsx', import.meta.url), 'utf8');
+    const start = source.indexOf('export function ThreadCardMenu');
+    const end = source.indexOf('export function ThreadArchiveQuickAction');
+    const body = source.slice(start, end);
+    expect(body).toContain('createPortal(node, document.body)');
+    expect(body).toContain("typeof document === 'undefined'");
+  });
+
   it('offers Stop only while the thread is busy', () => {
     const idle = renderToStaticMarkup(
       <MemoryRouter>

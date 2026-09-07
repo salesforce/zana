@@ -192,6 +192,7 @@ describe('thread provider catalog', () => {
     expect(canonicalThreadProviderId('cursor')).toBe('acp-cursor');
     expect(canonicalThreadProviderId('opencode')).toBe('acp-opencode');
     expect(canonicalThreadProviderId('opencode-resume')).toBe('acp-opencode');
+    expect(canonicalThreadProviderId('opencode-yolo')).toBe('acp-opencode');
     expect(canonicalThreadProviderId('codex')).toBe('codex');
   });
 
@@ -257,13 +258,16 @@ describe('SSH remotes', () => {
     expect(source).toContain('boundRemoteHostId(project)');
     expect(source).toContain('REMOTE_HOST_DAEMON_REQUIRED');
     expect(source).toContain('isRemoteToolProxyActive(project, boundRemote ?? input.hostId)');
-    expect(source).toContain('remoteWorkspacePath(project, remoteToolProxy)');
+    expect(source).toContain('resolveHarnessWorkspacePath');
+    expect(source).toContain('remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath');
+    expect(source).toContain("type: 'host.browse_directory'");
     expect(source).toContain('resolveSpawnChoiceForHost');
     expect(source).toContain('dropCwd');
     expect(source).toContain('resolvePersonalTargetPathOnHost');
     expect(source).not.toContain('readRemoteToolProxySetting');
+    expect(source).toContain('hosts: listHosts(ctx.db).map(toRemoteStartPathHost)');
     expect(source).toContain('getPrimaryHost(ctx.db)');
-    expect(source).toContain('threadLaunchRemote(args.project)');
+    expect(source).toContain('threadLaunchRemote(');
   });
 });
 

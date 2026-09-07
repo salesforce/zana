@@ -336,7 +336,10 @@ export interface CcApi {
     createJoinCode(): Promise<{ joinCode: string; hostId: string; expiresAt: number }>;
     list(): Promise<Host[]>;
     get(id: string): Promise<Host>;
-    update(id: string, patch: { name: string }): Promise<Host>;
+    update(
+      id: string,
+      patch: { name?: string; defaultWorkspacePath?: string | null }
+    ): Promise<Host>;
     updatePermissionCeiling(
       id: string,
       maxPermissionMode: 'accept-edits' | 'auto' | 'full'
@@ -597,6 +600,12 @@ export interface CcApi {
       encoding: 'utf8' | 'base64';
       contentType: string | null;
     }>;
+    tabs(threadId: string): Promise<{ revision: number; tabs: unknown[] }>;
+    updateTabs(threadId: string, body: { expectedRevision: number; tabs: unknown[] }): Promise<{
+      revision: number;
+      tabs: unknown[];
+    }>;
+    onTabs(cb: (payload: unknown) => void): () => void;
     open(threadId: string, body: {
       split?: 'right' | 'down' | 'left' | 'top' | 'replace';
       file: {

@@ -15,6 +15,7 @@ describe('harness-cursor plugin', () => {
     expect(derivePluginId(pkg.name)).toBe('harness-cursor');
     expect(manifest.serverEntry).toBe('./server.mjs');
     expect(manifest.ptyEntry).toBe('./pty.ts');
+    expect(manifest.appEntry).toBeNull();
     expect(manifest.extra.ptyHarness).toBe(true);
   });
 

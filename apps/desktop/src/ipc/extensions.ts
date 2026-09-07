@@ -2,7 +2,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
-import { installFromArchiveFile, installFromBundled, installFromDir, installFromGit, locateManifestDir, uninstallExtension } from '@zana-ai/zcc-server/services/extensions/extension-installer';
+import { installFromArchiveFile, installFromBundled, installFromDir, installFromGit, locateManifestDir, stageInstallable, stripCreds, uninstallExtension } from '@zana-ai/zcc-server/services/extensions/extension-installer';
 import {
   bundledPluginByName,
   defaultBundledRoot,
@@ -28,8 +28,10 @@ import { redeployBundledSkills, removeSkillsForExtension, syncExtensionSkills } 
 import { scratchWorkspaceRoot, store } from '@zana-ai/zcc-server/services/projects/store';
 import { BrowserWindow, dialog, shell } from 'electron';
 import { existsSync, realpathSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { cp, mkdir, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import type { AdoptLocalExtensionGitRequest, CreateLocalExtensionRequest, CreateLocalExtensionResult, ExtensionInstallSource, ExtensionUpdateOutcome, MarketplaceEntry, Result } from '@zana-ai/zcc-domain/product';
 
 export function registerExtensionsIpc(): void {
@@ -329,35 +331,86 @@ export function registerExtensionsIpc(): void {
         }
         res = { ok: true, value: { id: source.id } };
       } else if (source.kind === 'git') {
-        // Install from a remote repo. Main normalizes + clones the url, validates
-        // the ref, confines the manifest dir, scrubs the tree, and funnels the
-        // staged copy through installFromDir — same consent + broker gates as a
-        // local dir. Progress streams to the renderer via installProgress.
-        const gitRes = await installFromGit(
-          source.url,
-          { ref: source.ref, subdir: source.subdir, onProgress: (line) => ctx.safeSend(IPC.extensions.installProgress, line) },
-          installOpts
-        );
-        if (!gitRes.ok) {
-          res = gitRes;
-        } else {
-          // Record provenance FAIL-CLOSED: the remote-origin warning on the
-          // consent screen is the only carrier of "unreviewed remote code", so a
-          // failed provenance write must fail the install rather than leave a git
-          // extension with no origin badge. markGit is mutex-guarded (Rule 4).
-          const rec = await markGit(gitRes.value.id, {
-            ...gitRes.value.provenance,
-            installedAt: new Date().toISOString()
+        // Install from a remote repo. Main clones (progress + safeRef), locates
+        // a plugin manifest (`package.json` `zcc` or leftover `extension.json`),
+        // scrubs symlinks/`.git`, then dual-routes: modern plugins persist under
+        // the plugin data dir and load via PluginService; leftover disk
+        // extensions still funnel through installFromDir + markGit (consent +
+        // broker). Do NOT shim leftover extension.json through PluginService —
+        // that would drop the sandbox. Progress streams via installProgress.
+        const tmp = join(tmpdir(), `zcc-ext-git-${process.pid}-${randomBytes(4).toString('hex')}`);
+        let staged: string | undefined;
+        try {
+          const cloned = await cloneProject({
+            url: source.url,
+            destBase: tmp,
+            ref: source.ref,
+            shallow: true,
+            onProgress: (line) => ctx.safeSend(IPC.extensions.installProgress, line)
           });
-          if (!rec.ok) {
-            // Roll the just-installed bytes back out so we don't leave an
-            // un-provenanced git extension behind.
-            await uninstallExtension(gitRes.value.id, { reservedIds: ctx.builtinIds, log: ctx.logMainError }).catch(
-              () => {}
-            );
-            return { ok: false, code: 'WRITE_FAILED', message: 'Could not record extension provenance' };
+          if (!cloned.ok || !cloned.path) {
+            const code = cloned.code === 'BAD_INPUT' ? 'BAD_SOURCE' : 'CLONE_FAILED';
+            return { ok: false, code, message: cloned.message ?? 'git clone failed' };
           }
-          res = { ok: true, value: { id: gitRes.value.id } };
+          const located = await locateManifestDir(cloned.path, source.subdir);
+          if (!located.ok) return located;
+
+          const stagedRes = await stageInstallable(located.value);
+          if (!stagedRes.ok) return stagedRes;
+          staged = stagedRes.value;
+
+          if (isZccPluginWorkingDir(staged)) {
+            if (!ctx.runtimeSupervisor) {
+              return { ok: false, code: 'UNAVAILABLE', message: 'plugin host is unavailable' };
+            }
+            const dest = join(
+              defaultPluginDataDir(),
+              'plugins',
+              'git',
+              Buffer.from(source.url).toString('hex').slice(0, 24)
+            );
+            await rm(dest, { recursive: true, force: true }).catch(() => {});
+            await mkdir(dirname(dest), { recursive: true });
+            await cp(staged, dest, { recursive: true });
+            try {
+              const row = await ctx.runtimeSupervisor.installPlugin(dest);
+              const id =
+                row && typeof row === 'object' && 'id' in row
+                  ? String((row as { id: unknown }).id)
+                  : '';
+              if (!id) {
+                await rm(dest, { recursive: true, force: true }).catch(() => {});
+                return { ok: false, code: 'INSTALL_FAILED', message: 'plugin install did not return an id' };
+              }
+              return { ok: true, value: { id } };
+            } catch (err) {
+              await rm(dest, { recursive: true, force: true }).catch(() => {});
+              throw err;
+            }
+          }
+
+          const gitRes = await installFromDir(staged, installOpts);
+          if (!gitRes.ok) {
+            res = gitRes;
+          } else {
+            const rec = await markGit(gitRes.value.id, {
+              url: stripCreds(cloned.cloneUrl ?? source.url),
+              ...(source.ref ? { ref: source.ref } : {}),
+              ...(cloned.resolvedSha ? { sha: cloned.resolvedSha } : {}),
+              installedAt: new Date().toISOString()
+            });
+            if (!rec.ok) {
+              await uninstallExtension(gitRes.value.id, {
+                reservedIds: ctx.builtinIds,
+                log: ctx.logMainError
+              }).catch(() => {});
+              return { ok: false, code: 'WRITE_FAILED', message: 'Could not record extension provenance' };
+            }
+            res = { ok: true, value: { id: gitRes.value.id } };
+          }
+        } finally {
+          await rm(tmp, { recursive: true, force: true }).catch(() => {});
+          if (staged) await rm(staged, { recursive: true, force: true }).catch(() => {});
         }
       } else if (source.kind === 'bundled') {
         // Reinstall a first-party plugin or leftover disk extension from the

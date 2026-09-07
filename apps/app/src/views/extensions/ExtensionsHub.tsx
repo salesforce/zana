@@ -63,6 +63,7 @@ import {
   type InstalledPublisherFilter
 } from './installed-plugins.js';
 import { reportPluginEnabledFailure, setHubRowEnabled } from './plugin-row-enabled.js';
+import { reportHubInstallFailure } from './hub-install.js';
 import { uninstallHubRow } from './plugin-row-uninstall.js';
 import {
   applyHubPluginUpdate,
@@ -445,7 +446,12 @@ export function InstalledView({ toolbarExtra }: { toolbarExtra?: ReactNode } = {
                   className="ext-install-menu-item"
                   onClick={() => {
                     setNewMenuOpen(false);
-                    product.extensions.install({ kind: 'localDir' }).catch(() => {});
+                    product.extensions
+                      .install({ kind: 'localDir' })
+                      .then((res) => reportHubInstallFailure(res, useUi.getState().pushToast))
+                      .catch((err) =>
+                        useUi.getState().pushToast(err instanceof Error ? err.message : String(err), 'error')
+                      );
                   }}
                 >
                   <FolderOpen size={14} />

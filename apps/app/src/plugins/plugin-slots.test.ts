@@ -17,6 +17,8 @@ import {
   listAgentCardActions,
   listAgentsBoardActions,
   listProjectTabs,
+  listProjectStatusbarItems,
+  listComposerCustomizations,
   projectTabView
 } from './plugin-slots.js';
 
@@ -67,6 +69,10 @@ describe('plugin slot registry', () => {
           title: 'Board',
           run: () => undefined
         });
+        app.slots.projectStatusbarItem({
+          id: 'org',
+          label: 'prod'
+        });
       })
     );
     expect(listNavPanels()).toHaveLength(1);
@@ -79,6 +85,8 @@ describe('plugin slot registry', () => {
     expect(listCreateProjectActions()).toBe(listCreateProjectActions());
     expect(listAgentCardActions()).toHaveLength(1);
     expect(listAgentsBoardActions()).toHaveLength(1);
+    expect(listProjectStatusbarItems()).toHaveLength(1);
+    expect(listProjectStatusbarItems()).toBe(listProjectStatusbarItems());
     expect(listNavPanels()[0]?.generation).toBe(2);
   });
 
@@ -106,6 +114,27 @@ describe('plugin slot registry', () => {
     expect(listSidebarNavPanels()).toBe(listSidebarNavPanels());
     expect(listExtensionsHubPanels()).toBe(listExtensionsHubPanels());
     clearPluginSlots('guide');
+  });
+
+  it('keeps unlisted navPanels off the global sidebar and Plugins hub lists', () => {
+    clearPluginSlots('salesforce');
+    interpretPluginApp(
+      'salesforce',
+      definePluginApp((app) => {
+        app.slots.navPanel({
+          id: 'orgs',
+          title: 'Salesforce',
+          icon: 'Cloud',
+          placement: 'unlisted',
+          component: () => null
+        });
+      })
+    );
+    expect(listNavPanels().some((panel) => panel.pluginId === 'salesforce')).toBe(true);
+    expect(listSidebarNavPanels().some((panel) => panel.pluginId === 'salesforce')).toBe(false);
+    expect(listExtensionsHubPanels().some((panel) => panel.pluginId === 'salesforce')).toBe(false);
+    expect(listSidebarNavPanels()).toBe(listSidebarNavPanels());
+    clearPluginSlots('salesforce');
   });
 
   it('appends never-ordered panels and keeps stored slots', () => {
@@ -170,5 +199,27 @@ describe('plugin slot registry', () => {
     expect(projectTabView(tabs[0]!, tabs)).toBe('salesforce');
     expect(projectTabView(tabs[1]!, tabs)).toBe('salesforce:soql');
     clearPluginSlots('salesforce');
+  });
+
+  it('collects composer meta and advanced for the cli-agent scope', () => {
+    clearPluginSlots('harness-claude');
+    interpretPluginApp(
+      'harness-claude',
+      definePluginApp((app) => {
+        app.composer.customize({
+          id: 'chip',
+          scopes: ['cli-agent'],
+          meta: [{ id: 'chip', component: () => null }],
+          advanced: [{ id: 'extra', component: () => null }]
+        });
+      })
+    );
+    const rows = listComposerCustomizations();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.scopes).toEqual(['cli-agent']);
+    expect(rows[0]?.meta?.[0]?.id).toBe('chip');
+    expect(rows[0]?.advanced?.[0]?.id).toBe('extra');
+    expect(listComposerCustomizations()).toBe(rows);
+    clearPluginSlots('harness-claude');
   });
 });

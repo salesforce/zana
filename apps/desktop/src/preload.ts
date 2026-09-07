@@ -404,6 +404,12 @@ const api: CcApi = {
     storageContent: async () => {
       throw new Error('threads require the product server');
     },
+    tabs: async () => ({ revision: 0, tabs: [] }),
+    updateTabs: async () => ({ revision: 0, tabs: [] }),
+    onTabs: (cb) => {
+      void cb;
+      return () => undefined;
+    },
     open: async () => ({ delivered: 0 }),
     onOpen: (cb) => {
       void cb;

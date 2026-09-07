@@ -22,7 +22,8 @@ export type LaunchProfileId =
   | 'pi'
   | 'pi-resume'
   | 'opencode'
-  | 'opencode-resume';
+  | 'opencode-resume'
+  | 'opencode-yolo';
 
 export interface Project {
   id: string;

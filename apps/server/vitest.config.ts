@@ -7,7 +7,6 @@ export default defineConfig({
     __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify('')
   },
   resolve: {
-
     // Array form so host-daemon subpaths resolve via regex. A bare string alias
     // for '@zana-ai/zcc-host-daemon' prefix-matches subpaths too, rewriting
     // '.../harness/x' onto '.../src/index.ts/harness/x' (ENOTDIR). The subpath
@@ -35,8 +34,10 @@ export default defineConfig({
       { find: /^@zana-ai\/zcc-plugin-sdk\/testing\/app$/, replacement: resolve(__dirname, '../../packages/plugin-sdk/src/testing/app.ts') },
       { find: /^@zana-ai\/zcc-plugin-sdk\/testing$/, replacement: resolve(__dirname, '../../packages/plugin-sdk/src/testing/index.ts') },
       { find: /^@zana-ai\/zcc-plugin-sdk\/provider-bridge\/testing$/, replacement: resolve(__dirname, '../../packages/plugin-sdk/src/provider-bridge-testing.ts') },
+      { find: /^@zana-ai\/zcc-plugin-sdk\/provider-bridge\/acp$/, replacement: resolve(__dirname, '../../packages/plugin-sdk/src/provider-bridge-acp.ts') },
       { find: /^@zana-ai\/zcc-plugin-sdk\/provider-bridge$/, replacement: resolve(__dirname, '../../packages/plugin-sdk/src/provider-bridge.ts') },
-      { find: /^@zana-ai\/zcc-plugin-sdk\/(app|server)$/, replacement: resolve(__dirname, '../../packages/plugin-sdk/src') + '/$1.ts' },
+      { find: /^@zana-ai\/zcc-plugin-sdk\/ai-services$/, replacement: resolve(__dirname, '../../packages/plugin-sdk/src/ai-services.ts') },
+      { find: /^@zana-ai\/zcc-plugin-sdk\/(app|server|host)$/, replacement: resolve(__dirname, '../../packages/plugin-sdk/src') + '/$1.ts' },
       { find: /^@zana-ai\/zcc-plugin-sdk$/, replacement: resolve(__dirname, '../../packages/plugin-sdk/src/index.ts') },
       { find: '@zana-ai/zcc-plugin-templates', replacement: resolve(__dirname, '../../packages/plugin-templates/src/index.ts') }
     ]

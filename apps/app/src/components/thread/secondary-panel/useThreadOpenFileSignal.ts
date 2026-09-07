@@ -31,8 +31,9 @@ export function consumePendingOpenFile(threadId: string): ThreadOpenFileIntent |
 export const THREAD_OPEN_FILE_EVENT = 'zcc-thread-open-file';
 
 export function dispatchThreadOpenFile(threadId: string, path: string, lineNumber: number | null = null): void {
-  if (typeof window === 'undefined' || !threadId || !path) return;
+  if (!threadId || !path) return;
   bufferThreadOpenFile(threadId, { source: 'workspace', path, lineNumber });
+  if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent(THREAD_OPEN_FILE_EVENT, { detail: { threadId } }));
 }
 export function parseThreadOpenFilePayload(payload: unknown): {
@@ -57,13 +58,31 @@ export function parseThreadOpenFilePayload(payload: unknown): {
   };
 }
 
+export function isOpenableWorkspaceRelPath(path: string): boolean {
+  const trimmed = path.trim();
+  if (!trimmed) return false;
+  if (trimmed.split(/[/\\]/).some((part) => part === '..')) return false;
+  return true;
+}
+
+export function openWorkspaceFileForThread(
+  threadId: string | null | undefined,
+  path: string,
+  lineNumber: number | null = null
+): boolean {
+  if (!threadId || !isOpenableWorkspaceRelPath(path)) return false;
+  dispatchThreadOpenFile(threadId, path.trim(), lineNumber);
+  return true;
+}
+
 export function tabFromOpenFile(file: ThreadOpenFileIntent): Omit<ClosableSecondaryTab, 'id'> {
   const parts = file.path.split(/[/\\]/);
   const title = parts[parts.length - 1] || file.path;
+  const lineNumber = file.lineNumber != null && file.lineNumber > 0 ? file.lineNumber : undefined;
   if (file.source === 'thread-storage') {
-    return { kind: 'storage-preview', title, path: file.path };
+    return { kind: 'storage-preview', title, path: file.path, ...(lineNumber ? { lineNumber } : {}) };
   }
-  return { kind: 'file-preview', title, path: file.path };
+  return { kind: 'file-preview', title, path: file.path, ...(lineNumber ? { lineNumber } : {}) };
 }
 
 export function useThreadOpenFileSignal({

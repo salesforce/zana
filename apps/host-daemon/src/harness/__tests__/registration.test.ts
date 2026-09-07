@@ -89,6 +89,7 @@ describe('harness registrations', () => {
     const openCode = registrationFor('opencode');
     expect(openCode?.discoverAgentDescriptors).toBeDefined();
     expect(registrationFor('opencode-resume')).toBe(openCode);
+    expect(registrationFor('opencode-yolo')).toBe(openCode);
     expect(registrationFor('claude')?.discoverAgentDescriptors).toBeUndefined();
   });
 

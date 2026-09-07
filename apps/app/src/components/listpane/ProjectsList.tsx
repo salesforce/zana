@@ -393,9 +393,10 @@ export function ProjectsList({
     return pinFavoriteProjectsFirst(sorted);
   }, [inSidebar, projects, sidebarProjectSort]);
 
-  // A project is "active" when it has at least one live session, including a
-  // scheduled run, or a live thread. Keeps the selected project visible
-  // regardless, so toggling the filter never hides the row the user is in.
+  // A project is "active" when it has at least one live interactive session
+  // or a live thread. Scheduler jobs stay off this tree. Keeps the selected
+  // project visible regardless, so toggling the filter never hides the row
+  // the user is in.
   const projectHasRunningAgents = (p: Project) =>
     projectRailTerminals(terminals[p.id]).length > 0 ||
     (liveThreadsByProject.get(p.id)?.length ?? 0) > 0;
