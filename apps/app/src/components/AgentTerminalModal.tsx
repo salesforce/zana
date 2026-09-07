@@ -34,7 +34,8 @@ const STATE_LABEL: Record<AgentState, string> = {
   working: 'Working',
   idle: 'Idle',
   done: 'Done',
-  unknown: 'Idle'
+  unknown: 'Idle',
+  waiting: 'Waiting for model'
 };
 
 interface Props {

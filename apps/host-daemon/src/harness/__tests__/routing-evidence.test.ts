@@ -38,10 +38,10 @@ describe('structured routing evidence', () => {
   it('selects the matching-scope evidence row when local and remote share an id', () => {
     const claude = providerFor('claude');
     const model = claude.adapter.descriptor.targets!.models[0];
-    expect(evaluateTargetEvidence(claude, model, 'local', '2.1.209')).toMatchObject({
+    expect(evaluateTargetEvidence(claude, model, 'local', '2.1.220')).toMatchObject({
       classification: 'available', evidence: { id: model.id, scope: 'local' }
     });
-    expect(evaluateTargetEvidence(claude, model, 'remote', '2.1.209')).toMatchObject({
+    expect(evaluateTargetEvidence(claude, model, 'remote', '2.1.220')).toMatchObject({
       classification: 'available', evidence: { id: model.id, scope: 'remote' }
     });
   });

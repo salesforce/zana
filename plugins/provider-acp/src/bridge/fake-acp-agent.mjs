@@ -395,6 +395,15 @@ async function handlePrompt(message) {
 
   if (text === "/compact") {
     // OpenCode treats this exact prompt as a provider-local control.
+  } else if (text.includes("announce-mcp-tool")) {
+    notifyUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "mcp-tool-1",
+      title: "MCP: tool",
+      kind: "other",
+      status: "pending",
+    });
+    return;
   } else if (text.includes("request-permission")) {
     notifyUpdate({
       sessionUpdate: "tool_call",
@@ -518,6 +527,9 @@ async function handleMessage(message) {
           protocolVersion: 1,
           agentCapabilities: {
             loadSession,
+            ...(process.env.FAKE_ACP_HTTP_MCP === "1"
+              ? { mcpCapabilities: { http: true } }
+              : {}),
             promptCapabilities: { image: false },
             ...(forkSession ? { sessionCapabilities: { fork: {} } } : {}),
           },

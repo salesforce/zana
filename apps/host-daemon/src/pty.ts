@@ -615,6 +615,10 @@ export class PtyManager extends EventEmitter {
      * `launchTeam` for autonomous launches.
      */
     autonomous?: boolean;
+    /** Main-owned Team launch semantics; renderer cannot set this field. */
+    coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
+    /** Opening task already composes persona kickoff, so delayed pty injection must stay off. */
+    suppressPersonaInitialPrompt?: boolean;
     /**
      * Scheduled inbox loudness, baked onto the session so an agent `inbox_push`
      * during this run is stamped (or, when `silent`, dropped) accordingly.
@@ -836,8 +840,8 @@ export class PtyManager extends EventEmitter {
     // `--append-system-prompt` path and the codex `-c developer_instructions`
     // path (guidanceArgs) deliver IDENTICAL guidance.
     const guidanceText = opts.remoteToolProxy
-      ? `${buildSystemPromptGuidance(Boolean(opts.scheduled))}\n\n${CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS}`
-      : buildSystemPromptGuidance(Boolean(opts.scheduled));
+      ? `${buildSystemPromptGuidance(Boolean(opts.scheduled), opts.coordinationMode)}\n\n${CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS}`
+      : buildSystemPromptGuidance(Boolean(opts.scheduled), opts.coordinationMode);
     // Operator RULES.md (WARP-C5): the composed global + project standing
     // instructions, or null when neither file exists. Resolved via the injected
     // resolver (file I/O + Rule-2 confinement live in `rules-file.ts` + the boot
@@ -927,7 +931,7 @@ export class PtyManager extends EventEmitter {
       ? {
           stop: `${providerHookBase}/stop/${opts.projectId}/${sessionId}`,
           notify: `${providerHookBase}/notify/${opts.projectId}/${sessionId}`,
-          firstPrompt: opts.scheduled
+          firstPrompt: opts.scheduled || opts.coordinationMode === 'job-team'
             ? undefined
             : `${providerHookBase}/firstprompt/${opts.projectId}/${sessionId}`,
           subagent: `${providerHookBase}/subagent/${opts.projectId}/${sessionId}`
@@ -989,7 +993,9 @@ export class PtyManager extends EventEmitter {
       callbacks: lifecycleBase ? {
         stop: `${lifecycleBase}/stop/${opts.projectId}/${sessionId}`,
         notify: `${lifecycleBase}/notify/${opts.projectId}/${sessionId}`,
-        firstPrompt: opts.scheduled ? undefined : `${lifecycleBase}/firstprompt/${opts.projectId}/${sessionId}`,
+        firstPrompt: opts.scheduled || opts.coordinationMode === 'job-team'
+          ? undefined
+          : `${lifecycleBase}/firstprompt/${opts.projectId}/${sessionId}`,
         subagent: `${lifecycleBase}/subagent/${opts.projectId}/${sessionId}`,
         toolActivity: `${lifecycleBase}/toolactivity/${opts.projectId}/${sessionId}`,
         overseer: `${lifecycleBase}/overseer/${opts.projectId}/${sessionId}`,
@@ -1021,7 +1027,7 @@ export class PtyManager extends EventEmitter {
       'mcp__zcc-inbox__list_agents',
       'mcp__zcc-inbox__find_agent',
       'mcp__zcc-inbox__agent_inbox',
-      ...(opts.autonomous ? ['mcp__zcc-inbox__agent_send'] : [])
+      ...(opts.autonomous || opts.coordinationMode === 'job-team' ? ['mcp__zcc-inbox__agent_send'] : [])
     ];
     // Agent-data tools — follow-ups, library, and goals. Same host-confined trust
     // model as `inbox_push`: the `projectId`/`sessionId` they operate on is closed
@@ -1170,6 +1176,35 @@ export class PtyManager extends EventEmitter {
     const autonomousArgs = opts.autonomous
       ? [...autonomousPermissionArgs, '--disallowedTools', 'AskUserQuestion']
       : [];
+    // Job Team's MCP allowlist and AskUserQuestion denial use Claude-only argv
+    // flags. Passing them to another harness makes its CLI reject the launch
+    // before it can consume the already-bound kickoff prompt.
+    const claudeJobTeamPolicy = opts.coordinationMode === 'job-team' && caps.injectsClaudeMcpConfig;
+    const jobTeamAllow = claudeJobTeamPolicy
+      ? [
+          'mcp__zcc-inbox__execution.snapshot',
+          'mcp__zcc-inbox__execution.source.list',
+          'mcp__zcc-inbox__execution.source.read',
+          'mcp__zcc-inbox__execution.plan.register',
+          'mcp__zcc-inbox__execution.work.claim',
+          'mcp__zcc-inbox__execution.work.assign',
+          'mcp__zcc-inbox__execution.work.dispatch_ready',
+          'mcp__zcc-inbox__execution.work.complete',
+          'mcp__zcc-inbox__execution.work.fail',
+          'mcp__zcc-inbox__execution.work.block',
+          'mcp__zcc-inbox__execution.work.release',
+          'mcp__zcc-inbox__execution.work.retry',
+          'mcp__zcc-inbox__execution.delivery.pull',
+          'mcp__zcc-inbox__execution.delivery.ack',
+          'mcp__zcc-inbox__execution.event',
+          'mcp__zcc-inbox__execution.artifact.put',
+          'mcp__zcc-inbox__execution.artifact.list',
+          'mcp__zcc-inbox__execution.complete'
+      ]
+      : [];
+    const jobTeamArgs = claudeJobTeamPolicy
+      ? ['--disallowedTools', 'AskUserQuestion']
+      : [];
     // Precedence order (lowest → highest):
     //   base profile args → AppConfig globals (already in `args`)
     //   → claudeMcpArgs → providerMcpArgs → providerGuidanceArgs → providerHookArgs
@@ -1205,10 +1240,11 @@ export class PtyManager extends EventEmitter {
           ...(roleTarget.contribution.args ?? []),
           ...(execution.contribution.args ?? []),
           ...autonomousArgs,
+          ...jobTeamArgs,
            ...lifecycleContribution.args,
           ...cleanedExtra
         ],
-        inboxAllow
+        [...inboxAllow, ...jobTeamAllow]
       ),
       opts.remoteToolProxy && caps.injectsClaudeMcpConfig
         ? [...REMOTE_TOOL_PROXY_DISALLOWED_TOOLS]
@@ -1471,7 +1507,7 @@ export class PtyManager extends EventEmitter {
   private wireSessionIo(
     session: TerminalSession,
     proc: pty.IPty | ExecutionSession,
-    opts: { autonomous?: boolean; persona?: Persona; scheduled?: boolean },
+    opts: { autonomous?: boolean; persona?: Persona; scheduled?: boolean; suppressPersonaInitialPrompt?: boolean },
     caps: { injectsClaudeMcpConfig: boolean }
   ): void {
     proc.onData((data) => {
@@ -1503,7 +1539,7 @@ export class PtyManager extends EventEmitter {
     // prompt to the pty after the first data event (the agent's ready signal).
     // This mirrors how the scheduler fires non-interactive prompts, but as a pty
     // write so interactive sessions can actually run it.
-    if (opts.persona?.initialPrompt && caps.injectsClaudeMcpConfig && !opts.scheduled) {
+    if (opts.persona?.initialPrompt && caps.injectsClaudeMcpConfig && !opts.scheduled && !opts.suppressPersonaInitialPrompt) {
       let promptWritten = false;
       const writePrompt = () => {
         if (promptWritten) return;
@@ -1607,8 +1643,22 @@ export class PtyManager extends EventEmitter {
    */
   private finalizeExit(sessionId: string, exitCode: number): void {
     this.flushData(sessionId);
-    this.clearDataBuffer(sessionId);
     const live = this.live.get(sessionId);
+    // Diagnose an opaque non-zero exit from the retained output tail BEFORE the
+    // backlog is dropped. A provider may turn a bare exit code into a specific,
+    // actionable message (OpenCode exit-64 = a pinned model gone from the gateway).
+    // Emit it as a terminal `data` event so the renderer shows it inline, ahead of
+    // `exit`. Read the backlog first — clearDataBuffer() deletes it.
+    if (live && exitCode !== 0) {
+      const provider = providerFor(live.session.profile);
+      const explanation = provider.explainUnexpectedExit?.(
+        live.session.profile,
+        exitCode,
+        this.getBacklog(sessionId)
+      );
+      if (explanation) this.emit('data', sessionId, `\r\n\x1b[31m${explanation}\x1b[0m\r\n`);
+    }
+    this.clearDataBuffer(sessionId);
     if (!live) return;
     if (live.session.status === 'running') this.startupFailures.delete(sessionId);
     live.session.status = 'exited';

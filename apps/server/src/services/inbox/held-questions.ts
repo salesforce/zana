@@ -131,8 +131,9 @@ export class HeldQuestionService {
   }
 
   /**
-   * Feed a session's newly-resolved agent state. On the edge INTO idle or blocked
-   * (the agent stopped making progress — the user's input is useful NOW) flush
+   * Feed a session's newly-resolved agent state. On the edge INTO a stopped state
+   * (idle, blocked, or `waiting` for non-OSC harnesses — the agent stopped making
+   * progress, so the user's input is useful NOW) flush
    * every held question for the session. A working→working or other non-stop
    * transition does nothing. Cheap and synchronous on the hot path (the appends
    * are fired-and-forgotten).
@@ -144,7 +145,7 @@ export class HeldQuestionService {
       this.ensure(sessionId).lastState = state;
       return;
     }
-    const stopped = state === 'idle' || state === 'blocked';
+    const stopped = state === 'idle' || state === 'blocked' || state === 'waiting';
     s.lastState = state;
     if (stopped && s.held.length > 0) this.flushAll(sessionId);
   }

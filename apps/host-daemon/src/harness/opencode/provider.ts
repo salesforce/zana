@@ -70,7 +70,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { remoteCdPrefix, shellQuote, shellQuoteArgv } from '../shell-quote.js';
 import { cleanExtraArgs } from '../argv-utils.js';
-import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
+import { isLiveListedModelTargetId, resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 
 const OPENCODE_MIN_VERSION = '1.18.0';
 const OPENCODE_REVIEWED_AT = '2026-09-02';
@@ -134,6 +134,9 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
         { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
+      // Single-family monotonic ladder (matches claude haiku/sonnet/opus, codex
+      // openai): the gpt-5.6 family is the only family spanning all three tiers.
+      // gemini + grok stay catalog-selectable but off the default ladder.
       modelLevelMapping: {
         low: 'llmgw/gpt-5.6-luna-1M',
         medium: 'llmgw/gpt-5.6-terra-1M',
@@ -306,10 +309,12 @@ export class OpenCodeAgentDiscoveryCache {
 
   constructor(
     private readonly successTtlMs = Infinity,
-    private readonly maxEntries = 8,
+    // Boot warms every local project. Retain those catalogs for normal picker
+    // opens; only the user's Refresh action should invoke OpenCode again.
+    private readonly maxEntries = 64,
     private readonly now = Date.now,
     private readonly maxConcurrentLoads = 2,
-    private readonly maxPendingLoads = 16
+    private readonly maxPendingLoads = 128
   ) {}
 
   discover(command: string, cwd: string, load: DiscoveryLoader, options: DiscoveryOptions = {}) {
@@ -457,6 +462,69 @@ function discoverOpenCodeAgents(context: { cwd: string; config: AppConfig }, opt
   );
 }
 
+/**
+ * Parse `opencode models` stdout into the live provider/model ids. The CLI prints
+ * one `provider/model` id per line; we keep only lines that parse as a model
+ * target id (a `provider/model` shape, never a bare flag), trimmed and de-duped in
+ * first-seen order. Tolerant of blank lines / stray banner text (non-matching
+ * lines are dropped) so a noisy CLI build can't poison the set.
+ */
+export function parseOpenCodeModelIds(output: string): string[] {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const raw of output.split(/\r?\n/)) {
+    const id = raw.trim();
+    if (!id || !id.includes('/') || !isLiveListedModelTargetId(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * Live model-id inventory cache — the model twin of {@link agentDiscoveryCache}.
+ * Success is retained until an explicit refresh (a launch shouldn't re-probe the
+ * CLI on every spawn); failures are NOT cached (return `undefined` and re-probe
+ * next time), so a transient offline blip can't pin an empty inventory. In-flight
+ * loads are de-duped per (command, cwd). Bounded by `maxEntries` (oldest-evicted).
+ */
+class OpenCodeModelDiscoveryCache {
+  private readonly entries = new Map<string, { value?: readonly string[]; inFlight?: Promise<readonly string[]> }>();
+
+  constructor(private readonly maxEntries = 64) {}
+
+  discover(command: string, cwd: string, load: () => Promise<readonly string[]>): Promise<readonly string[]> {
+    const key = JSON.stringify([command, cwd]);
+    const existing = this.entries.get(key);
+    if (existing?.value) return Promise.resolve(existing.value);
+    if (existing?.inFlight) return existing.inFlight;
+    const inFlight = load()
+      .then((value) => {
+        this.entries.delete(key);
+        this.entries.set(key, { value });
+        while (this.entries.size > this.maxEntries) this.entries.delete(this.entries.keys().next().value!);
+        return value;
+      })
+      .catch((error) => {
+        if (this.entries.get(key)?.inFlight === inFlight) this.entries.delete(key);
+        throw error;
+      });
+    this.entries.set(key, { inFlight });
+    return inFlight;
+  }
+}
+
+const modelDiscoveryCache = new OpenCodeModelDiscoveryCache();
+
+function runOpenCodeModelDiscovery(command: string, cwd: string): Promise<readonly string[]> {
+  return runOpenCodeCaptured(command, ['models'], cwd).then(parseOpenCodeModelIds);
+}
+
+function discoverOpenCodeModels(context: { cwd: string; config: AppConfig }): Promise<readonly string[]> {
+  const command = opencodeBinary(context.config);
+  return modelDiscoveryCache.discover(command, context.cwd, () => runOpenCodeModelDiscovery(command, context.cwd));
+}
+
 export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
   readonly adapter = OPENCODE_ADAPTER;
@@ -528,6 +596,35 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     } catch (error) {
       return OpenCodeProvider.failureResult(error);
     }
+  }
+
+  /**
+   * Live model inventory (`opencode models`) for preflight validation against
+   * gateway drift. Returns `undefined` on ANY probe failure (CLI missing,
+   * timeout, non-zero exit, empty parse) so the caller falls back to the static
+   * snapshot rather than blocking a launch on a transient probe error — an empty
+   * live list would otherwise reject every model. A non-empty result is the
+   * authoritative set the gateway currently exposes.
+   */
+  async discoverModelTargets(context: { cwd: string; config: AppConfig }): Promise<readonly string[] | undefined> {
+    try {
+      const ids = await discoverOpenCodeModels(context);
+      return ids.length > 0 ? ids : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Turn an opaque exit-64 into a specific, actionable message when the crash
+   * signature is a `ProviderModelNotFoundError` — the exact failure gateway model
+   * renames produce when a stale pinned `--model` reaches argv. Any other
+   * exit/text returns `undefined` (the generic exit handling stands).
+   */
+  explainUnexpectedExit(_profile: LaunchProfileId, exitCode: number, recentText: string): string | undefined {
+    if (exitCode !== 64) return undefined;
+    if (!/ProviderModelNotFoundError|ModelNotFoundError|model .* not found/i.test(recentText)) return undefined;
+    return 'OpenCode exited: the pinned model is no longer available on the gateway (likely renamed). Clear the forced model in routing/persona settings, or pick a native --agent role (which carries its own model), then relaunch.';
   }
 
   modelContribution(targetId: string, level?: ModelLevel) {

@@ -267,6 +267,13 @@ describe('agent runtime thread adapter', () => {
           runTurn: async (input) => {
             turned.push(input.options);
             return runtime.runTurn(input);
+          },
+          // A follow-up racing the still-active initial turn steers instead of
+          // running a fresh turn (a CI-timing window); both carry the same
+          // options, so capture either path.
+          steerTurn: async (input) => {
+            turned.push(input.options);
+            return runtime.steerTurn(input);
           }
         };
       }
@@ -393,6 +400,13 @@ describe('agent runtime thread adapter', () => {
           runTurn: async (input) => {
             turned.push(input.clientRequestId);
             return runtime.runTurn(input);
+          },
+          // A follow-up racing the still-active initial turn steers instead of
+          // running a fresh turn (a CI-timing window); both carry the same
+          // clientRequestId, so capture either path.
+          steerTurn: async (input) => {
+            turned.push(input.clientRequestId);
+            return runtime.steerTurn(input);
           }
         };
       }

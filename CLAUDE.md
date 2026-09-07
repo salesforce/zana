@@ -28,6 +28,20 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
 
 ## Coupling notes (don't regress these)
 
+- **"Run the Job Team E2E tests" → `pnpm run test:e2e:jobteam`.** The Job Team
+  feature has THREE owner-launch surfaces (Job Team UI, CLI Agent owner, Modern
+  ACP owner); each has a deterministic always-on spec that drives the same 4-unit
+  fake DAG to `COMPLETED` with no model spend
+  (`e2e/job-team-launch-ui.spec.ts`, `e2e/cli-agent-job-team-run.spec.ts`,
+  `e2e/modern-owner-job-team-run.spec.ts`). All three titles contain "Job Team".
+  The Modern spec exercises the real `/internal/hosts/tool-call` → forwarder →
+  loopback `execution.start` chain (the path that broke live while unit tests
+  passed). The `test:e2e:jobteam` script builds, flips the better-sqlite3 ABI to
+  Electron, runs the three, and restores the Node ABI. Full run instructions are
+  in `docs/job-team-e2e.md`. Run the deterministic three on any owner-launch
+  change. (A real-model end-to-end check exists outside this tree, owned by the
+  integration — core stays unaware of it by design.)
+
 - **Child-process integrations must be verified at the real Electron production
   boundary, not only through mocks, shell commands, or Node/Vitest.** Electron's
   process runtime can behave differently from equivalent Node and shell execution.

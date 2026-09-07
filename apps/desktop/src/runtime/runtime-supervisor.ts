@@ -37,6 +37,18 @@ export interface RuntimeSupervisor {
   readonly hostUrl: string;
   readonly hostToken: string;
   readonly hostSigningKey: string;
+  /**
+   * Push Electron-main's loopback MCP base URL down to the server-runtime once
+   * `startMcpServer` resolves (its port is unknown at fork time). Fire-and-forget.
+   */
+  setMcpBaseUrl(url: string, teamLaunchEnabled: boolean, teamJobLaunchEnabled?: boolean): void;
+  /**
+   * Ask the server-runtime whether a Modern (ACP) conversation thread is live in
+   * a project — the liveness half of the loopback launch_team identity check for
+   * an ACP thread (the credential proves "trusted local process", not liveness).
+   * Never rejects for a dead/unknown thread; resolves `false`.
+   */
+  isThreadLive(threadId: string, projectId: string): Promise<boolean>;
   relaunchEnrolledHost(): Promise<{ ok: true } | { ok: false; message: string }>;
   appVersion(): Promise<string>;
   listProjects(): Promise<RuntimeProject[]>;
@@ -157,6 +169,9 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     hostUrl: host.url,
     hostToken: token,
     hostSigningKey: signingKey,
+    // No packaged server-runtime child in this fallback; nothing to notify.
+    setMcpBaseUrl: () => {},
+    isThreadLive: async () => false,
     async relaunchEnrolledHost() {
       return {
         ok: false as const,
@@ -222,6 +237,7 @@ interface UtilityRuntime {
   child: UtilityChild;
   url: string;
   request(operation: 'app-version' | 'projects-list'): Promise<unknown>;
+  request(operation: 'thread-live', threadId: string, projectId: string): Promise<unknown>;
   request(operation: 'projects-add', path: string): Promise<unknown>;
   request(operation: 'projects-update', projectId: string, patch: RuntimeProjectPatch): Promise<unknown>;
   request(operation: 'projects-reorder', orderedIds: string[]): Promise<unknown>;
@@ -456,6 +472,17 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     hostUrl: host.url,
     hostToken: options.token,
     hostSigningKey: options.signingKey,
+    setMcpBaseUrl(url, teamLaunchEnabled, teamJobLaunchEnabled = false) {
+      renderer.child.postMessage({
+        type: 'mcp-ready',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        mcpBaseUrl: url,
+        teamLaunchEnabled,
+        teamJobLaunchEnabled
+      });
+    },
+    isThreadLive: async (threadId, projectId) =>
+      (await server.request('thread-live', threadId, projectId)) === true,
     appVersion: async () => {
       const value = await server.request('app-version');
       return typeof value === 'string' ? value : '';
@@ -594,7 +621,7 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
   return {
     ...runtime,
     request(
-      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+      operation: 'app-version' | 'thread-live' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
        ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | boolean | null>] | [string, string[]] | []
     ) {
       const id = randomUUID();
@@ -606,6 +633,7 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
         pending.set(id, { resolve: resolveResult, reject: rejectResult, timer });
         runtime.child.postMessage({
           type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id, operation, deadlineAt: new Date(Date.now() + 20_000).toISOString(),
+          ...(operation === 'thread-live' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),
           ...(operation === 'terminal-execute' ? { command: args[0] as TerminalRequestCommand } : {}),
           ...(operation === 'terminal-record' ? { event: args[0] as TerminalHostEvent } : {}),
           ...(operation === 'terminal-events-since' ? {

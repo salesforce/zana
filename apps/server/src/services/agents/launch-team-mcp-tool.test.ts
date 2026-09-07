@@ -127,6 +127,47 @@ describe('registerLaunchTeamTool', () => {
     expect(launchTeam).toHaveBeenCalledOnce();
   });
 
+  it('awaits an async (Promise) route-identity gate — a Modern/ACP liveness probe', async () => {
+    // The gate is now boolean | Promise<boolean> (main may cross-process probe a
+    // live ACP thread). A Promise<false> MUST block — a naive `=== false` on the
+    // unresolved Promise would wrongly pass. Prove every tool awaits it.
+    const launchTeam = vi.fn((): Result<any> => ({ ok: true, value: { launched: 1, cohortId: 'cohort-1', launchRequestId: 'req', workers: [], failedSlots: [] } }));
+    const validateRouteIdentity = vi.fn(async () => false);
+    const { server, tools } = fakeServer();
+    registerLaunchTeamTool(server as never, makeOpts({ launchTeam, validateRouteIdentity }));
+
+    const blocked = await tools.get('launch_team')!(structuredLaunchArgs);
+    expect(blocked.isError).toBe(true);
+    expect(text(blocked)).toContain('originating session is not live in this project');
+    expect(launchTeam).not.toHaveBeenCalled();
+
+    validateRouteIdentity.mockResolvedValue(true);
+    const allowed = await tools.get('launch_team')!(structuredLaunchArgs);
+    expect(allowed.isError).toBeFalsy();
+    expect(launchTeam).toHaveBeenCalledOnce();
+  });
+
+  it('denies (never throws) when the route-identity probe rejects', async () => {
+    // A cross-process liveness probe can reject (network error, dead child). The
+    // gate must fail CLOSED — a rejection is treated as "not live", surfaced as
+    // an isError result, and the launch side effect never runs.
+    const launchTeam = vi.fn((): Result<any> => ({ ok: true, value: { launched: 1, cohortId: 'c', launchRequestId: 'req', workers: [], failedSlots: [] } }));
+    const cancelTeamLaunch = vi.fn((): Result<any> => ({ ok: true, value: { pendingSessionIds: [], canceledSessionIds: [], lifecycleState: 'CANCELED' } }));
+    const validateRouteIdentity = vi.fn(async () => { throw new Error('probe unreachable'); });
+    const { server, tools } = fakeServer();
+    registerLaunchTeamTool(server as never, makeOpts({ launchTeam, cancelTeamLaunch, validateRouteIdentity }));
+
+    const blocked = await tools.get('launch_team')!(structuredLaunchArgs);
+    expect(blocked.isError).toBe(true);
+    expect(text(blocked)).toContain('originating session is not live in this project');
+    expect(launchTeam).not.toHaveBeenCalled();
+
+    // The optional-tool call sites (guarded by `!sessionId || denied`) also deny.
+    const canceled = await tools.get('cancel_team_launch')!({ launchRequestId: 'req' });
+    expect(canceled.isError).toBe(true);
+    expect(cancelTeamLaunch).not.toHaveBeenCalled();
+  });
+
   it('preauthorizes route-bound request policy and per-slot tasks', async () => {
     const authorizeTeamLaunch = vi.fn(() => ({ ok: true, value: {
       teamId: 'squad', projectId: 'p1', slots: [

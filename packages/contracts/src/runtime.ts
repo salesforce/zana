@@ -108,6 +108,16 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     afterSequence: z.number().int().min(-1).optional()
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
+    // Liveness probe for a Modern (ACP) conversation thread acting as a team
+    // launcher. Electron-main asks the server-runtime whether this threadId is a
+    // live thread in this project before honoring a loopback launch_team call —
+    // the ACP analogue of the pty getSession() check (a credential proves
+    // "trusted local process", not liveness).
+    operation: z.literal('thread-live'),
+    threadId: z.string().min(1).max(256),
+    projectId: ProjectIdSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-list')
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
@@ -194,10 +204,27 @@ export const RuntimeStopSchema = z.object({
   protocolVersion: ServerRuntimeProtocolVersionSchema
 }).strict();
 
+/**
+ * One-way push: Electron-main's loopback MCP HTTP server is bound AFTER the
+ * server-runtime child forks (its port isn't known at start), so its base URL
+ * can't ride the start payload. Sent once after `startMcpServer` resolves so the
+ * Modern team-launch / owner-execution forwarder can reach it.
+ * `teamLaunchEnabled` gates launch_team; `teamJobLaunchEnabled` gates
+ * execution.start / snapshot / resume_binding. Off ⇒ those tools stay hidden.
+ */
+export const RuntimeMcpReadySchema = z.object({
+  type: z.literal('mcp-ready'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
+  mcpBaseUrl: z.string().url(),
+  teamLaunchEnabled: z.boolean(),
+  teamJobLaunchEnabled: z.boolean().optional()
+}).strict();
+
 export const ServerRuntimeInboundSchema = z.discriminatedUnion('type', [
   ServerRuntimeStartSchema,
   ServerRuntimeRequestSchema,
-  RuntimeStopSchema
+  RuntimeStopSchema,
+  RuntimeMcpReadySchema
 ]);
 
 export const RuntimeReadySchema = z.object({

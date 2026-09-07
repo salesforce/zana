@@ -201,6 +201,17 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
     return false;
   }
 
+  /**
+   * No provider-specific exit explanation by default. A provider whose CLI exits
+   * with an opaque non-zero code for a diagnosable, actionable reason (OpenCode's
+   * exit-64 ProviderModelNotFoundError on gateway model drift) overrides this to
+   * turn that code into a specific message surfaced to the user; returning
+   * `undefined` leaves the generic exit handling in place.
+   */
+  explainUnexpectedExit(_profile: LaunchProfileId, _exitCode: number, _recentText: string): string | undefined {
+    return undefined;
+  }
+
   /** Build the command handed to the remote sshd, plus the resumable session id. */
   abstract buildRemoteCommand(input: RemoteCommandInput): RemoteCommandResult;
 

@@ -47,13 +47,15 @@ export async function attachProductPluginService(
   ctx: ProductHttpContext,
   opts?: Pick<
     PluginServiceOptions,
-    'bundledRoot' | 'onAgentCapabilitiesChanged' | 'onAppsChanged' | 'watchBuiltinPluginSources'
+    'onAgentCapabilitiesChanged' | 'onAppsChanged' | 'watchBuiltinPluginSources' | 'hostAgentToolSource'
   >
+    & { bundledRoot?: string }
 ): Promise<PluginService> {
   const plugins = createPluginService({
     dataDir: ctx.dataDir,
     bundledRoot: opts?.bundledRoot ?? defaultBundledRoot(),
     pluginHostArtifacts: ctx.pluginHostArtifacts,
+    ...(opts?.hostAgentToolSource ? { hostAgentToolSource: opts.hostAgentToolSource } : {}),
     requestPluginInteraction: (args) => ctx.pendingInteractions.requestPluginInteraction(args),
     interruptPluginInteractions: (pluginId) => {
       ctx.pendingInteractions.interruptPluginInteractions(pluginId);

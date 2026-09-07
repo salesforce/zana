@@ -38,10 +38,10 @@ export function launchMetadataSnapshot(input: {
     : input.execution.state;
 
   const values: SessionMetadataValue[] = [];
-  if (input.axes.includes('provider')) values.push(value('Provider', provider?.label));
-  if (input.axes.includes('model')) values.push(value('Model', model?.label));
-  if (input.axes.includes('role')) values.push(value('Role', role?.label));
-  if (input.axes.includes('execution')) values.push(value('Execution', execution));
+  if (input.axes.includes('provider') && provider?.label) values.push(value('Provider', provider.label));
+  if (input.axes.includes('model') && model?.label) values.push(value('Model', model.label));
+  if (input.axes.includes('role') && role?.label) values.push(value('Role', role.label));
+  if (input.axes.includes('execution') && execution) values.push(value('Execution', execution));
 
   return {
     observedAt: input.observedAt,

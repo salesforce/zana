@@ -51,6 +51,7 @@ import type {
   SavedRecord,
   Suggestion,
   Team,
+  TeamJobLaunchInput,
   TerminalSession,
   UpdateProgress,
   UpdateStatus,
@@ -202,6 +203,35 @@ const api: CcApi = {
     listProject: (projectId) => ipcRenderer.invoke(IPC.executionConsent.listProject, projectId),
     revokeProject: (projectId, grantId) =>
       ipcRenderer.invoke(IPC.executionConsent.revokeProject, projectId, grantId)
+  },
+  executionBoard: {
+    listProject: (projectId, before, limit) => ipcRenderer.invoke(IPC.executionBoard.listProject, projectId, before, limit),
+    snapshot: (projectId, executionId, after) => ipcRenderer.invoke(IPC.executionBoard.snapshot, projectId, executionId, after),
+    readArtifact: (projectId, executionId, artifactId) => ipcRenderer.invoke(IPC.executionBoard.readArtifact, projectId, executionId, artifactId),
+    dismiss: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.dismiss, projectId, executionId),
+    stop: (projectId, executionId, expectedStateVersion) =>
+      ipcRenderer.invoke(IPC.executionBoard.stop, projectId, executionId, expectedStateVersion),
+    retry: (projectId, executionId, expectedStateVersion) =>
+      ipcRenderer.invoke(IPC.executionBoard.retry, projectId, executionId, expectedStateVersion),
+    retryWork: (projectId, executionId, expectedStateVersion, workUnitId, assignedSlotId) =>
+      ipcRenderer.invoke(IPC.executionBoard.retryWork, projectId, executionId, expectedStateVersion, workUnitId, assignedSlotId),
+    releaseWork: (projectId, executionId, expectedStateVersion, workUnitId) =>
+      ipcRenderer.invoke(IPC.executionBoard.releaseWork, projectId, executionId, expectedStateVersion, workUnitId),
+    reassignWork: (projectId, executionId, expectedStateVersion, workUnitId, assignedSlotId) =>
+      ipcRenderer.invoke(IPC.executionBoard.reassignWork, projectId, executionId, expectedStateVersion, workUnitId, assignedSlotId),
+    // `allowLatestVersion` is the explicit opt-in required to honor the
+    // `expectedStateVersion === -1` "use current stateVersion" sentinel — main
+    // rejects -1 outright unless this is `true` (see execution-board.ts). Always
+    // sent as a real boolean (never left `undefined`) so main can distinguish it
+    // from the compat blockerId/clientRequestId/message string tail.
+    respond: (projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, allowLatestVersion) =>
+      ipcRenderer.invoke(IPC.executionBoard.respond, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, allowLatestVersion === true),
+    resume: (projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, allowLatestVersion) =>
+      ipcRenderer.invoke(IPC.executionBoard.resume, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, allowLatestVersion === true),
+    retryDelivery: (projectId, executionId, expectedStateVersion, blockerId, deliveryId) =>
+      ipcRenderer.invoke(IPC.executionBoard.retryDelivery, projectId, executionId, expectedStateVersion, blockerId, deliveryId),
+    clearResumeToken: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.clearResumeToken, projectId, executionId),
+    relaunchMonitor: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.relaunchMonitor, projectId, executionId)
   },
   harnessAuth: {
     status: () => ipcRenderer.invoke(IPC.harnessAuth.status),
@@ -593,6 +623,9 @@ const api: CcApi = {
     downloadFromRemote: (projectId, remotePath) =>
       ipcRenderer.invoke(IPC.fs.downloadFromRemote, projectId, remotePath)
   },
+  executionSources: {
+    pick: (projectId) => ipcRenderer.invoke(IPC.executionSources.pick, projectId)
+  },
   openers: {
     openIn: (target, path) => ipcRenderer.invoke(IPC.openers.openIn, target, path)
   },
@@ -731,6 +764,7 @@ const api: CcApi = {
     delete: (id) => ipcRenderer.invoke(IPC.teams.delete, id),
     launch: (teamId, projectId) => ipcRenderer.invoke(IPC.teams.launch, teamId, projectId),
     cancel: (launchRequestId) => ipcRenderer.invoke(IPC.teams.cancel, launchRequestId),
+    startJob: (input: TeamJobLaunchInput) => ipcRenderer.invoke(IPC.teams.startJob, input),
     launchAutonomous: (teamId, projectId, goal) =>
       ipcRenderer.invoke(IPC.teams.launchAutonomous, teamId, projectId, goal),
     stopAutonomous: (runId) => ipcRenderer.invoke(IPC.teams.stopAutonomous, runId),
@@ -1177,6 +1211,7 @@ if (process.argv.includes('--zcc-e2e')) {
   contextBridge.exposeInMainWorld('__zccTest', {
     drainEvents: (cursor: number) => ipcRenderer.invoke(IPC.test.drainEvents, cursor),
     snapshot: () => ipcRenderer.invoke(IPC.test.snapshot),
-    reset: () => ipcRenderer.invoke(IPC.test.reset)
+    reset: () => ipcRenderer.invoke(IPC.test.reset),
+    mcpRoute: (sessionId: string) => ipcRenderer.invoke(IPC.test.mcpRoute, sessionId)
   });
 }

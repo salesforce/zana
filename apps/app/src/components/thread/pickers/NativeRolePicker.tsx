@@ -25,7 +25,12 @@ export function NativeRolePicker({
   refreshLabel?: string;
 }) {
   if (options.length === 0) return null;
-  const selected = options.find((option) => option.value === value) ?? options[0];
+
+  // When no role is explicitly selected (undefined), show a neutral placeholder
+  // rather than falling back to options[0]. For an existing thread the running
+  // mode is unknown here, so claiming the first option (e.g. `build`) would be a
+  // lie; leaving it unselected keeps the picker honest and sends no override.
+  const selected = value !== undefined ? options.find((option) => option.value === value) : undefined;
   const selectedMode = composerWorkModeForNativeLabel(selected?.value ?? '', selected?.name);
   const selectedLabel = selected?.name ?? selected?.value ?? ariaLabel;
   return (
@@ -34,6 +39,7 @@ export function NativeRolePicker({
       title={`${selectedLabel} (Shift+Tab)`}
       ariaKeyshortcuts="Shift+Tab"
       value={selected?.value ?? ''}
+      placeholder="Agent"
       disabled={disabled}
       searchable
       searchPlaceholder={`Search ${ariaLabel.toLowerCase()}…`}

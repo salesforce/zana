@@ -63,6 +63,10 @@ interface Entry {
   working: boolean;
   /** The armed silence timer (null when idle / not yet started). */
   timer: NodeJS.Timeout | null;
+  /** Has the first output event been seen since the last turn start / user submission? */
+  hasFirstEvent: boolean;
+  /** Are we currently in the `waiting` state? */
+  waiting: boolean;
 }
 
 /**
@@ -76,6 +80,27 @@ export class OutputActivityMonitor {
   constructor(private readonly deps: OutputActivityDeps) {}
 
   /**
+   * Signal that a new user turn has started or a session has launched.
+   * Resets the first-event tracker and ensures the session reports as 'working'.
+   */
+  onTurnStart(sessionId: string): void {
+    let entry = this.entries.get(sessionId);
+    if (!entry) {
+      entry = { working: false, timer: null, hasFirstEvent: false, waiting: false };
+      this.entries.set(sessionId, entry);
+    }
+    entry.hasFirstEvent = false;
+    entry.waiting = false;
+    if (!entry.working) {
+      entry.working = true;
+      this.deps.sink.report(sessionId, 'working');
+    }
+    if (entry.timer !== null) this.deps.clearTimer(entry.timer);
+    const ms = Math.max(1, Math.round(this.deps.idleAfterMs?.() ?? DEFAULT_IDLE_AFTER_MS));
+    entry.timer = this.deps.setTimer(() => this.onSilence(sessionId), ms);
+  }
+
+  /**
    * Feed a raw PTY data chunk. On the edge from quiet→output, reports `working`;
    * every chunk re-arms the silence timer, whose elapse reports `idle`. Empty
    * chunks are ignored (a bare flush shouldn't count as activity).
@@ -84,12 +109,14 @@ export class OutputActivityMonitor {
     if (!chunk) return;
     let entry = this.entries.get(sessionId);
     if (!entry) {
-      entry = { working: false, timer: null };
+      entry = { working: false, timer: null, hasFirstEvent: true, waiting: false };
       this.entries.set(sessionId, entry);
     }
+    entry.hasFirstEvent = true;
     // Edge into working: report once, not on every subsequent chunk.
-    if (!entry.working) {
+    if (!entry.working || entry.waiting) {
       entry.working = true;
+      entry.waiting = false;
       this.deps.sink.report(sessionId, 'working');
     }
     // (Re)arm the silence timer on every chunk.
@@ -105,12 +132,18 @@ export class OutputActivityMonitor {
     this.entries.delete(sessionId);
   }
 
-  /** The silence elapsed with no further output → the agent has settled. */
+  /** The silence elapsed with no further output → the agent has settled or is waiting. */
   private onSilence(sessionId: string): void {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
     entry.timer = null;
     entry.working = false;
-    this.deps.sink.report(sessionId, 'idle');
+    if (!entry.hasFirstEvent) {
+      entry.waiting = true;
+      this.deps.sink.report(sessionId, 'waiting');
+    } else {
+      entry.waiting = false;
+      this.deps.sink.report(sessionId, 'idle');
+    }
   }
 }

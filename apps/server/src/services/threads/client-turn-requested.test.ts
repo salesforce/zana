@@ -67,6 +67,37 @@ describe('appendClientTurnRequested', () => {
     });
   });
 
+  it('records the native role only when the turn carried one', () => {
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    appendClientTurnRequested(
+      { db: {}, hub: { emit: vi.fn() } } as never,
+      {
+        threadId: '11111111-1111-4111-8111-111111111111',
+        prompt: ['With a role'],
+        kind: 'thread-start',
+        acpMode: '  plan  '
+      }
+    );
+    const withRole = vi.mocked(appendConversationThreadEvent).mock.calls[0]![1].payload as {
+      execution: { acpMode?: string };
+    };
+    expect(withRole.execution.acpMode).toBe('plan');
+
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    appendClientTurnRequested(
+      { db: {}, hub: { emit: vi.fn() } } as never,
+      {
+        threadId: '11111111-1111-4111-8111-111111111111',
+        prompt: ['No role'],
+        kind: 'thread-start'
+      }
+    );
+    const noRole = vi.mocked(appendConversationThreadEvent).mock.calls[0]![1].payload as {
+      execution: Record<string, unknown>;
+    };
+    expect('acpMode' in noRole.execution).toBe(false);
+  });
+
   it('skips empty prompts', () => {
     vi.mocked(appendConversationThreadEvent).mockClear();
     appendClientTurnRequested(

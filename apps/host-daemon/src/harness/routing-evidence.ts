@@ -1,6 +1,6 @@
 import type { HarnessEvidence, HarnessPersonaFacet, HarnessScope } from '@zana-ai/zcc-domain/harness-adapter';
 import type { LaunchProvider } from './launch-provider.js';
-import { compareVersions } from '@zana-ai/zcc-extension-sdk';
+import { compareVersions } from '@zana-ai/zcc-domain';
 
 export type RoutingEvidenceDecision =
   | { classification: 'available'; evidence: HarnessEvidence }

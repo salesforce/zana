@@ -72,6 +72,7 @@ function classify(session: TerminalSession, agent: AgentState): SessionBucketId 
     case 'blocked':
       return 'blocked';
     case 'working':
+    case 'waiting':
       return 'running';
     case 'done':
       return 'done';

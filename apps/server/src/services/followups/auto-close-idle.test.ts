@@ -186,6 +186,44 @@ describe('AutoCloseIdleService', () => {
     expect(closeSession).not.toHaveBeenCalled();
   });
 
+  it('never closes a Job Team orchestrator (job coordinator) at arm time', () => {
+    const { deps, clock, closeSession } = makeDeps({
+      getSession: () => ({ ...baseSession, cohortRole: 'orchestrator' })
+    });
+    const svc = new AutoCloseIdleService(deps);
+    svc.observe('s1', 'idle');
+    // orchestrator ⇒ ineligible ⇒ nothing armed
+    expect(clock.pendingCount()).toBe(0);
+    expect(closeSession).not.toHaveBeenCalled();
+  });
+
+  it('spares an orchestrator at fire time even if the cohort role appears during the dwell', () => {
+    let role: AutoCloseSessionInfo['cohortRole'];
+    const { deps, clock, closeSession } = makeDeps({
+      getSession: () => ({ ...baseSession, cohortRole: role })
+    });
+    const svc = new AutoCloseIdleService(deps);
+    svc.observe('s1', 'idle');
+    expect(clock.pendingCount()).toBe(1); // armed as a plain agent
+    role = 'orchestrator'; // became a job coordinator during the dwell
+    clock.fireNext();
+    expect(closeSession).not.toHaveBeenCalled(); // eligible() re-check spares it
+  });
+
+  it('spares a Job Team worker via the immutable cohort role, even when headless was cleared', () => {
+    // A worker's `headless` background bit is mutable: a user opening its card
+    // flips it via restoreTerminal. So a bare worker (scheduled/headless both
+    // unset) must still be spared off the immutable cohort-role stamp.
+    const { deps, clock, closeSession } = makeDeps({
+      getSession: () => ({ ...baseSession, scheduled: undefined, headless: undefined, cohortRole: 'worker' })
+    });
+    const svc = new AutoCloseIdleService(deps);
+    svc.observe('s1', 'idle');
+    // worker ⇒ ineligible ⇒ nothing armed
+    expect(clock.pendingCount()).toBe(0);
+    expect(closeSession).not.toHaveBeenCalled();
+  });
+
   // T5.2: the "is this an agent?" gate is capability-driven, not a `=== 'shell'`
   // literal. A codex agent is an agent → eligible; an unknown/future non-agent
   // profile degrades to the shell posture (never auto-closed) rather than being

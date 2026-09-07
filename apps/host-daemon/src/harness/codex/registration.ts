@@ -27,7 +27,6 @@ export const codexHarness: HarnessRegistration = {
     resumeSessionId: session.codexSessionId
   }),
   createTranscriptAdapter: () => new CodexTranscriptAdapter(),
-  monitorCapability: { state: 'unsupported', sources: [], reason: 'No live native monitor fact is wired' },
   supportedScopes: ['local', 'remote'],
   verification: {
     enabledConfigKey: 'harnessCodexEnabled',

@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -52,7 +53,7 @@ function request(body: unknown, headers: Record<string, string> = {}): IncomingM
 
 function captureResponse(): { response: ServerResponse; status: number; body: unknown } {
   const captured = { status: 0, body: undefined as unknown };
-  const response = {
+  const response = Object.assign(new EventEmitter(), {
     writeHead(status: number) {
       captured.status = status;
       return response;
@@ -64,7 +65,7 @@ function captureResponse(): { response: ServerResponse; status: number; body: un
     getHeader() {
       return undefined;
     }
-  };
+  });
   return {
     response: response as unknown as ServerResponse,
     get status() {
@@ -319,5 +320,37 @@ describe('host internal plugin tool-call', () => {
       success: false,
       contentItems: [{ type: 'inputText', text: expect.stringContaining('apex timeout') }]
     });
+  });
+
+  it('keeps tool execution alive after request body closes', async () => {
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getConversationThread).mockReturnValue(thread as never);
+    let signal: AbortSignal | undefined;
+    const invokeAgentTool = vi.fn(async (args: { ctx: { signal: AbortSignal } }) => {
+      signal = args.ctx.signal;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return { success: true, contentItems: [] };
+    });
+    const req = request({
+      sessionId: 'inst-1',
+      threadId: thread.id,
+      providerThreadId: 'prov-1',
+      turnId: 'turn-1',
+      callId: 'call-1',
+      tool: 'execution_start'
+    });
+    const captured = captureResponse();
+
+    const pending = handleHostInternalHttp(req, captured.response, {
+      config: { getConfig: () => ({}) },
+      db: {},
+      plugins: { invokeAgentTool }
+    } as unknown as ProductHttpContext);
+    await vi.waitFor(() => expect(invokeAgentTool).toHaveBeenCalled());
+    req.emit('close');
+    await pending;
+
+    expect(signal?.aborted).toBe(false);
+    expect(captured.status).toBe(200);
   });
 });

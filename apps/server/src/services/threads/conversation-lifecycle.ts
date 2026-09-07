@@ -199,7 +199,8 @@ export async function sendConversationTurn(
     kind: steerTurnId ? 'steer' : 'new-turn',
     expectedTurnId: steerTurnId,
     model: execution?.model,
-    reasoningLevel: execution?.reasoningLevel
+    reasoningLevel: execution?.reasoningLevel,
+    acpMode: execution?.acpMode
   });
   const started = applyLoggedConversationLifecycleEvent(ctx, {
     threadId: live.id,

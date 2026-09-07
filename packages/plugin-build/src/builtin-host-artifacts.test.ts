@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { lstat, cp, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -5,6 +6,28 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { buildPluginHost } from './build-plugin-host.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
+
+async function runMcpProbe(command: string, args: string[], env: NodeJS.ProcessEnv, input: string): Promise<string> {
+  return new Promise((resolveProbe, rejectProbe) => {
+    const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once('error', rejectProbe);
+    child.once('close', (code) => {
+      if (code === 0) resolveProbe(stdout);
+      else rejectProbe(new Error(`MCP probe exited ${String(code)}: ${stderr}`));
+    });
+    child.stdin.end(input);
+  });
+}
 
 async function stagePluginForHostBuild(
   source: string,
@@ -48,6 +71,7 @@ describe('builtin host artifacts', () => {
       methods: {
         register(name: string, handler: (input?: unknown) => unknown) {
           handlers.set(name, handler);
+          return handlers;
         }
       }
     });
@@ -65,6 +89,45 @@ describe('builtin host artifacts', () => {
     const bridge = Reflect.get(Object(imported), 'experimental_providerBridge');
     expect(bridge).toMatchObject({ experimental_apiVersion: 1 });
     expect(typeof Reflect.get(Object(bridge), 'handleLine')).toBe('function');
+
+    const stdout = await runMcpProbe(
+      process.execPath,
+      [built.jsPath, '--mcp-stdio'],
+      {
+        ...process.env,
+        BB_ACP_DYNAMIC_TOOL_HOST: '127.0.0.1',
+        BB_ACP_DYNAMIC_TOOL_PORT: '1',
+        BB_ACP_DYNAMIC_TOOL_TOKEN: 'test-token',
+        BB_ACP_DYNAMIC_TOOL_THREAD_ID: 'test-thread',
+        BB_ACP_DYNAMIC_TOOLS: JSON.stringify([
+          {
+            name: 'execution_start',
+            description: 'Start execution.',
+            inputSchema: { type: 'object', properties: {} }
+          }
+        ])
+      },
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })}\n` +
+        `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`
+    );
+    const replies = stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { id: number; result: unknown });
+    expect(replies).toContainEqual(expect.objectContaining({ id: 1 }));
+    expect(replies).toContainEqual({
+      jsonrpc: '2.0',
+      id: 2,
+      result: {
+        tools: [
+          {
+            name: 'execution_start',
+            description: 'Start execution.',
+            inputSchema: { type: 'object', properties: {} }
+          }
+        ]
+      }
+    });
   }, 90_000);
 
   it('builds the provider-claude-code host entry as a relocatable Agent SDK bridge', async () => {

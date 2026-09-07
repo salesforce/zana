@@ -230,7 +230,8 @@ async function startConversationOnHost(
     kind: 'thread-start',
     permissionMode,
     model: args.input.model,
-    reasoningLevel: args.input.reasoningLevel
+    reasoningLevel: args.input.reasoningLevel,
+    acpMode: args.input.acpMode
   });
   const sessionTooling = await packConversationSessionTooling(ctx, {
     threadId: args.thread.id,

@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   ACP_BRIDGE_MCP_SERVER_NAME,
+  isAcpHttpMcpServerConfig,
   type AcpMcpServerConfig,
 } from "./tool-proxy-mcp.js";
 
@@ -48,11 +49,20 @@ function cursorDataDirectory(
   return join(home, ".cursor");
 }
 
-function cursorMcpServerConfig(config: AcpMcpServerConfig): {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-} {
+function cursorMcpServerConfig(
+  config: AcpMcpServerConfig,
+):
+  | { command: string; args: string[]; env: Record<string, string> }
+  | { type: "http"; url: string; headers: Record<string, string> } {
+  if (isAcpHttpMcpServerConfig(config)) {
+    return {
+      type: "http",
+      url: config.url,
+      headers: Object.fromEntries(
+        config.headers.map(({ name, value }) => [name, value]),
+      ),
+    };
+  }
   return {
     command: config.command,
     args: config.args,

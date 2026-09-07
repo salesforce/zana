@@ -39,6 +39,9 @@ import type {
   SpawnEnvironmentChoice,
   WorkspaceDiffResponse,
   WorkspaceStatus,
+  ExecutionBoardProjection,
+  ExecutionBoardSnapshot,
+  ExecutionSourceCapabilityView,
   ExtensionEntry,
   ExtensionInstallSource,
   ExtensionUpdateOutcome,
@@ -133,6 +136,8 @@ import type {
   Suggestion,
   Team,
   TeamInput,
+  TeamJobLaunchInput,
+  TeamJobLaunchResult,
   TerminalSession,
   TmuxRestoreCandidate,
   TmuxVerifyResult,
@@ -177,6 +182,30 @@ export interface CcApi {
   executionConsent: {
     listProject(projectId: string): Promise<ProjectExecutionConsentGrant[]>;
     revokeProject(projectId: string, grantId: string): Promise<ProjectExecutionConsentGrant[]>;
+  };
+  executionBoard: {
+    listProject(projectId: string, before?: number, limit?: number): Promise<{ executions: ExecutionBoardProjection[]; hasMore: boolean }>;
+    snapshot(projectId: string, executionId: string, after?: number): Promise<ExecutionBoardSnapshot | undefined>;
+    readArtifact(projectId: string, executionId: string, artifactId: string): Promise<Result<{ content: string }>>;
+    dismiss(projectId: string, executionId: string): Promise<Result<{ dismissedSessionIds: string[] }>>;
+    stop(projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionBoardProjection>>;
+    retry(projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionBoardProjection>>;
+    retryWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId?: string): Promise<Result<ExecutionBoardProjection>>;
+    releaseWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string): Promise<Result<ExecutionBoardProjection>>;
+    reassignWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId: string): Promise<Result<ExecutionBoardProjection>>;
+    /**
+     * `expectedStateVersion === -1` means "use the execution's current
+     * stateVersion" — main only honors that sentinel when `allowLatestVersion`
+     * is explicitly `true` (otherwise -1 is rejected as invalid), so a caller
+     * can't silently skip optimistic-concurrency by passing -1. Only the Inbox
+     * reply flow — which doesn't track a live stateVersion — should pass `true`;
+     * every other caller should supply a real stateVersion and omit this.
+     */
+    respond(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string, allowLatestVersion?: boolean): Promise<Result<ExecutionBoardProjection>>;
+    resume(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string, allowLatestVersion?: boolean): Promise<Result<ExecutionBoardProjection>>;
+    retryDelivery(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, deliveryId: string): Promise<Result<ExecutionBoardProjection>>;
+    clearResumeToken(projectId: string, executionId: string): Promise<Result<true>>;
+    relaunchMonitor(projectId: string, executionId: string): Promise<Result<{ sessionId: string }>>;
   };
   /**
    * Per-harness auth (Settings → Harness). `status` returns the base URL +
@@ -1008,6 +1037,10 @@ export interface CcApi {
      */
     downloadFromRemote(projectId: string, remotePath: string): Promise<RemoteTransferResult>;
   };
+  executionSources: {
+    /** Native chooser returns opaque, window/project-scoped capabilities; never paths. */
+    pick(projectId: string): Promise<Result<ExecutionSourceCapabilityView[]>>;
+  };
   openers: {
     openIn(target: OpenTarget, path: string): Promise<OpenResult>;
   };
@@ -1694,6 +1727,8 @@ export interface CcApi {
     ): Promise<Result<LaunchTeamResult>>;
     /** Cancel sessions from a renderer-owned interactive Team launch. */
     cancel(launchRequestId: string): Promise<Result<CancelTeamLaunchResult>>;
+    /** Start a durable Team job. Main re-authorizes Team/project and maps slots. */
+    startJob(input: TeamJobLaunchInput): Promise<Result<TeamJobLaunchResult>>;
     /**
      * Launch a team as an AUTONOMOUS run into a project: opens orchestrator +
      * worker tabs, the orchestrator seeded with `goal`, and a main-side

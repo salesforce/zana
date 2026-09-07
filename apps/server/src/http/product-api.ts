@@ -92,6 +92,7 @@ import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-
 import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
 import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, pinConversationThread, reorderPinnedConversationThread, unpinConversationThread, updateConversationThreadTitle } from '@zana-ai/zcc-db';
 import { handleHostsApi } from './hosts-api.js';
+import { isThreadLiveInProject } from '../services/agents/thread-liveness.js';
 import type { MarketplaceCatalogRow } from '../plugins/marketplace-store.js';
 import { presentAppConfig } from './public-app-url.js';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
@@ -878,6 +879,32 @@ export async function handleProductHttp(
       await renameConversationOnHost(ctx, updated, title);
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, updated));
       sendJson(response, 200, { thread: conversationThreadView(ctx, updated) });
+      return true;
+    }
+
+    const threadLive = routeParams(path, '/api/v1/threads/:id/live');
+    if (threadLive && method === 'GET') {
+      // Owner-session liveness for the Modern/ACP loopback owner-auth gate.
+      // Electron-main probes this over loopback HTTP so the gate works even
+      // when main runs NO in-process runtime supervisor (dev: the conversation
+      // store lives in this standalone product server, not a forked child).
+      // The canonical rule stays in isThreadLiveInProject — the exact same
+      // check the packaged runtime child answers for the `thread-live` op.
+      // Transport auth is the loopback bind + Origin guard on this server; the
+      // authorization decision is isThreadLiveInProject's exact projectId match
+      // (the strictest thread route — a thread only authorizes launches in the
+      // one project it was probed for). An unscoped probe has no project to
+      // match, so it can never be live: refuse rather than fall through to a
+      // '' comparison. The response is a deliberately non-disclosing boolean —
+      // an unknown/dead thread is `live:false`, never a 404 that would confirm
+      // the id exists.
+      const projectId = requestUrl.searchParams.get('projectId') ?? '';
+      if (!projectId) {
+        sendJson(response, 200, { live: false });
+        return true;
+      }
+      const thread = getConversationThread(ctx.db, threadLive.id);
+      sendJson(response, 200, { live: isThreadLiveInProject(thread, projectId) });
       return true;
     }
 

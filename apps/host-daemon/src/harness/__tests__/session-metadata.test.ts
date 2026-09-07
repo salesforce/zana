@@ -75,7 +75,7 @@ describe('launchMetadataSnapshot', () => {
     expect(snapshot.sections).toEqual([]);
   });
 
-  it('does not expose an unmatched provider-native target id', () => {
+  it('omits unmatched provider-native targets instead of showing unavailable values', () => {
     const snapshot = providerFor('opencode').launchMetadata({
       model: { targetId: 'provider/private-model', source: 'per-tab', structuredSelected: true, contribution: {} },
       role: { targetId: 'private-role', source: 'Agent', contribution: {} },
@@ -83,8 +83,7 @@ describe('launchMetadataSnapshot', () => {
       observedAt: 123
     });
 
-    expect(snapshot.sections[0].values).toContainEqual({ label: 'Model' });
-    expect(snapshot.sections[0].values).toContainEqual({ label: 'Role' });
+    expect(snapshot.sections).toEqual([]);
     expect(JSON.stringify(snapshot)).not.toContain('private');
   });
 });

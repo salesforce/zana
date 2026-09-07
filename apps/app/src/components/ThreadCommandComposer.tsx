@@ -87,6 +87,8 @@ export interface ThreadCommandComposerProps extends ComposerProjectSelectionProp
   providerId?: string;
   model?: string | null;
   reasoningLevel?: string | null;
+  /** Persisted native role/mode of an existing thread, for honest picker display. */
+  acpMode?: string | null;
   initialText?: string;
   /** Focus the prompt after mounting (hub/browse create-plugin seed). */
   autoFocus?: boolean;
@@ -108,6 +110,7 @@ export function ThreadCommandComposer({
   providerId: lockedProviderId,
   model: initialModel,
   reasoningLevel: initialReasoningLevel,
+  acpMode: initialAcpMode,
   initialText,
   autoFocus = false,
   onCreated,
@@ -142,7 +145,7 @@ export function ThreadCommandComposer({
     lockedProviderId,
     initialModel,
     initialReasoningLevel,
-    initialAcpMode: executionModeRequested,
+    initialAcpMode: executionModeRequested ?? initialAcpMode,
     hostId: currentThread?.hostId ?? selectedProject?.hostId ?? hostId
   });
   const [permissionMode, setPermissionMode] = useState('accept-edits');

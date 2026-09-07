@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -53,9 +53,10 @@ function packageRoot(name: string): string {
 
 async function packPluginSdk(packDir: string): Promise<string> {
   await mkdir(packDir, { recursive: true });
-  if (!existsSync(join(pluginSdkRoot, 'dist', 'testing', 'app.js'))) {
-    await execFileAsync(process.execPath, ['scripts/build-runtime.mjs'], { cwd: pluginSdkRoot });
-  }
+  // A stale `dist/` from a prior run must never be packed as-is: its mere
+  // existence says nothing about whether it matches the current source, so
+  // rebuild unconditionally rather than gating on a presence check.
+  await execFileAsync(process.execPath, ['scripts/build-runtime.mjs'], { cwd: pluginSdkRoot });
   await execFileAsync('npm', ['pack', '--silent', '--ignore-scripts', '--pack-destination', packDir], {
     cwd: pluginSdkRoot
   });

@@ -22,7 +22,8 @@
 import {
   SESSION_MEMORY_DEFAULTS,
   type AppConfig,
-  type SessionWorktree
+  type SessionWorktree,
+  type TeamCoordinationMode
 } from '@zana-ai/zcc-domain/product';
 
 /**
@@ -139,9 +140,10 @@ const AGENT_MESH_GUIDANCE = [
 const PROJECT_AWARENESS_GUIDANCE = [
   'You are running in ONE project, but the user manages several. The MCP tool',
   '`list_projects` (server: zcc-inbox) returns every project — id, tag, name,',
-  'and local path. When the user refers to another project by name ("check',
-  'project B", "look at zana"), resolve it with `list_projects` and use its',
-  'path directly instead of asking the user where it lives. If your task is to',
+  'and local path. Default work stays in THIS session project. Use `list_projects`',
+  'only when user explicitly names another Zana project (for example, "check',
+  'project B"), then resolve it and use its path directly instead of asking',
+  'the user where it lives. If your task is to',
    'clone a new Git project (rather than work inside this one), use `clone_project`',
    'instead of raw `git clone`: it places the repo under the configured clone root',
    'using its repository name and registers it immediately. For a scaffolded',
@@ -229,10 +231,16 @@ const FOLLOWUP_USAGE_GUIDANCE = [
  * report; every claude tab gets the inbox / mesh / project-awareness / library /
  * follow-up guidance. Exported so the caller (and tests) share the exact text.
  */
-export function buildSystemPromptGuidance(scheduled: boolean): string {
-  return scheduled
-    ? `${INBOX_USAGE_GUIDANCE}\n\n${SCHEDULE_REPORT_GUIDANCE}\n\n${AGENT_MESH_GUIDANCE}\n\n${PROJECT_AWARENESS_GUIDANCE}\n\n${PROJECT_LIBRARY_GUIDANCE}\n\n${FOLLOWUP_USAGE_GUIDANCE}`
-    : `${INBOX_USAGE_GUIDANCE}\n\n${AGENT_MESH_GUIDANCE}\n\n${PROJECT_AWARENESS_GUIDANCE}\n\n${PROJECT_LIBRARY_GUIDANCE}\n\n${FOLLOWUP_USAGE_GUIDANCE}`;
+export function buildSystemPromptGuidance(scheduled: boolean, coordinationMode?: TeamCoordinationMode): string {
+  const guidanceBlocks = [
+    INBOX_USAGE_GUIDANCE,
+    ...(scheduled ? [SCHEDULE_REPORT_GUIDANCE] : []),
+    ...(coordinationMode === 'job-team' ? [] : [AGENT_MESH_GUIDANCE]),
+    PROJECT_AWARENESS_GUIDANCE,
+    PROJECT_LIBRARY_GUIDANCE,
+    FOLLOWUP_USAGE_GUIDANCE
+  ];
+  return guidanceBlocks.join('\n\n');
 }
 
 /**

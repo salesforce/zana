@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { IdleTriageService, MAX_CONCURRENT_TRIAGES, MAX_TRIAGES_PER_SESSION, parseTriage, type IdleTriageDeps, type TriageSessionInfo } from './idle-triage.js';
+import {
+  IdleTriageService,
+  parseTriage,
+  MAX_CONCURRENT_TRIAGES,
+  MAX_TRIAGES_PER_SESSION,
+  type IdleTriageDeps,
+  type TriageSessionInfo
+} from './idle-triage.js';
 import type { IdleTriageResult, LlmRunResult } from '@zana-ai/zcc-domain/product';
 
 describe('parseTriage', () => {
@@ -114,6 +121,12 @@ function makeClock() {
       pending.delete(id);
       fn();
     },
+    /** Fire every timer armed as of THIS call (a snapshot), simulating simultaneous transitions. */
+    fireAll() {
+      const fns = [...pending.values()];
+      pending.clear();
+      for (const fn of fns) fn();
+    },
     pendingCount: () => pending.size
   };
 }
@@ -135,7 +148,6 @@ describe('IdleTriageService', () => {
       delaySeconds: () => 20,
       getSession: () => baseSession,
       hasTranscript: (p) => p === 'claude',
-      hasMonitorCapability: (p) => p === 'claude',
       readLastTurn: vi.fn(async () => 'Done — want me to commit?'),
       runTriage: vi.fn(async () => okResult('{"resolution":"done","summary":"finished","confidence":0.8}')),
       now: () => 1000,
@@ -162,6 +174,27 @@ describe('IdleTriageService', () => {
     expect(clock.pendingCount()).toBe(1);
 
     clock.fireNext(); // dwell elapses while still idle
+    await tick();
+
+    expect(deps.runTriage).toHaveBeenCalledTimes(1);
+    expect(emitted).toEqual([
+      { sessionId: 's', at: 1000, resolution: 'done', summary: 'finished', confidence: 0.8 }
+    ]);
+  });
+
+  it('fires once after the dwell elapses on working→waiting too (non-OSC harnesses rest in waiting, not idle)', async () => {
+    const { deps, clock } = makeDeps();
+    const svc = new IdleTriageService(deps);
+    const emitted: IdleTriageResult[] = [];
+    svc.on('triage', (r) => emitted.push(r));
+
+    svc.observe('s', 'working');
+    svc.observe('s', 'waiting');
+    // Dwell armed but not yet elapsed → no call.
+    expect(deps.runTriage).not.toHaveBeenCalled();
+    expect(clock.pendingCount()).toBe(1);
+
+    clock.fireNext(); // dwell elapses while still waiting
     await tick();
 
     expect(deps.runTriage).toHaveBeenCalledTimes(1);
@@ -226,52 +259,8 @@ describe('IdleTriageService', () => {
     expect(deps.runTriage).not.toHaveBeenCalled();
   });
 
-  it('caps concurrent automatic triage calls', async () => {
-    const calls: Array<() => void> = [];
-    const { deps, clock } = makeDeps({
-      runTriage: vi.fn(() => new Promise<LlmRunResult>((resolve) => calls.push(() => resolve(okResult('{"resolution":"done","summary":"x"}')))))
-    });
-    const svc = new IdleTriageService(deps);
-    for (let index = 0; index < MAX_CONCURRENT_TRIAGES + 1; index += 1) {
-      svc.observe(`s${index}`, 'idle');
-      clock.fireNext();
-    }
-    await tick();
-    expect(deps.runTriage).toHaveBeenCalledTimes(MAX_CONCURRENT_TRIAGES);
-    calls.forEach((resolve) => resolve());
-    await tick();
-    clock.fireNext();
-    await tick();
-    expect(deps.runTriage).toHaveBeenCalledTimes(MAX_CONCURRENT_TRIAGES + 1);
-  });
-
-  it('limits repeated idle spells for one session', async () => {
-    const { deps, clock } = makeDeps();
-    const svc = new IdleTriageService(deps);
-    for (let index = 0; index < MAX_TRIAGES_PER_SESSION + 1; index += 1) {
-      svc.observe('s', 'idle');
-      clock.fireNext();
-      await tick();
-      svc.observe('s', 'working');
-    }
-    expect(deps.runTriage).toHaveBeenCalledTimes(MAX_TRIAGES_PER_SESSION);
-  });
-
   it('skips non-claude sessions', async () => {
     const { deps, clock } = makeDeps({ getSession: () => ({ ...baseSession, profile: 'shell' }) });
-    const svc = new IdleTriageService(deps);
-    svc.observe('s', 'idle');
-    clock.fireNext();
-    await tick();
-    expect(deps.runTriage).not.toHaveBeenCalled();
-  });
-
-  it('skips transcript-capable sessions with no verified monitor capability', async () => {
-    const { deps, clock } = makeDeps({
-      getSession: () => ({ ...baseSession, profile: 'cursor' }),
-      hasTranscript: () => true,
-      hasMonitorCapability: () => false
-    });
     const svc = new IdleTriageService(deps);
     svc.observe('s', 'idle');
     clock.fireNext();
@@ -290,6 +279,19 @@ describe('IdleTriageService', () => {
 
   it('skips scheduled sessions too', async () => {
     const { deps, clock } = makeDeps({ getSession: () => ({ ...baseSession, scheduled: true }) });
+    const svc = new IdleTriageService(deps);
+    svc.observe('s', 'idle');
+    clock.fireNext();
+    await tick();
+    expect(deps.runTriage).not.toHaveBeenCalled();
+  });
+
+  it('skips a job-team worker via the immutable cohort role even when headless was cleared', async () => {
+    // A worker spawns headless, but a user opening its card clears the bit;
+    // the immutable cohort.role stamp must still suppress triage.
+    const { deps, clock } = makeDeps({
+      getSession: () => ({ ...baseSession, scheduled: undefined, headless: undefined, cohortRole: 'worker' })
+    });
     const svc = new IdleTriageService(deps);
     svc.observe('s', 'idle');
     clock.fireNext();
@@ -348,5 +350,115 @@ describe('IdleTriageService', () => {
     svc.remove('s');
     expect(clock.pendingCount()).toBe(0);
     expect(clock.clearTimer).toHaveBeenCalledTimes(1);
+  });
+
+  describe('bounded concurrency and per-session budget', () => {
+    /** Per-session info keyed off sessionId, so a multi-session burst can be modeled. */
+    function makeMultiSessionDeps(over: Partial<IdleTriageDeps> = {}) {
+      const clock = makeClock();
+      const sessions = new Map<string, TriageSessionInfo>();
+      const deps: IdleTriageDeps = {
+        isEnabled: () => true,
+        delaySeconds: () => 20,
+        getSession: (id) => sessions.get(id) ?? null,
+        hasTranscript: (p) => p === 'claude',
+        readLastTurn: vi.fn(async () => 'Done — want me to commit?'),
+        runTriage: vi.fn(async () => okResult('{"resolution":"done","summary":"finished"}')),
+        now: () => 1000,
+        setTimer: clock.setTimer,
+        clearTimer: clock.clearTimer,
+        ...over
+      };
+      return { deps, clock, sessions };
+    }
+
+    it(`caps concurrent in-flight triage calls at MAX_CONCURRENT_TRIAGES (${MAX_CONCURRENT_TRIAGES}) under a simultaneous burst`, async () => {
+      const burstSize = MAX_CONCURRENT_TRIAGES + 2; // deliberately over the cap
+      // Each call gets its own controllable resolver so we can hold calls "in flight".
+      const resolvers: Array<(r: LlmRunResult) => void> = [];
+      const runTriage = vi.fn(
+        () =>
+          new Promise<LlmRunResult>((res) => {
+            resolvers.push(res);
+          })
+      );
+      const { deps, clock, sessions } = makeMultiSessionDeps({ runTriage });
+      const svc = new IdleTriageService(deps);
+
+      for (let i = 0; i < burstSize; i++) {
+        const id = `s${i}`;
+        sessions.set(id, { profile: 'claude', cwd: '/proj', claudeSessionId: id, status: 'running' });
+        svc.observe(id, 'working');
+        svc.observe(id, 'idle'); // arms one dwell timer per session
+      }
+      expect(clock.pendingCount()).toBe(burstSize);
+
+      // All sessions settle at rest simultaneously — fire every armed dwell at once.
+      clock.fireAll();
+      await tick();
+
+      // Only the cap's worth actually spent a call; the rest backed off to a retry timer.
+      expect(runTriage).toHaveBeenCalledTimes(MAX_CONCURRENT_TRIAGES);
+      expect(clock.pendingCount()).toBe(burstSize - MAX_CONCURRENT_TRIAGES);
+
+      // Resolve the in-flight calls and let the deferred sessions retry.
+      for (const resolve of resolvers) resolve(okResult('{"resolution":"done","summary":"x"}'));
+      await tick();
+      clock.fireAll(); // fire the retry timers armed for the deferred sessions
+      await tick();
+
+      expect(runTriage).toHaveBeenCalledTimes(burstSize);
+    });
+
+    it(`stops triaging a session once it hits MAX_TRIAGES_PER_SESSION (${MAX_TRIAGES_PER_SESSION}) even if it keeps cycling idle`, async () => {
+      const { deps, clock, sessions } = makeMultiSessionDeps();
+      sessions.set('s', { profile: 'claude', cwd: '/proj', claudeSessionId: 's', status: 'running' });
+      const svc = new IdleTriageService(deps);
+
+      for (let i = 0; i < MAX_TRIAGES_PER_SESSION; i++) {
+        svc.observe('s', 'working');
+        svc.observe('s', 'idle');
+        clock.fireNext();
+        await tick();
+      }
+      expect(deps.runTriage).toHaveBeenCalledTimes(MAX_TRIAGES_PER_SESSION);
+
+      // One more full working→idle cycle: dwell still arms, but the budget is spent.
+      svc.observe('s', 'working');
+      svc.observe('s', 'idle');
+      expect(clock.pendingCount()).toBe(1); // dwell arms regardless of budget
+      clock.fireNext();
+      await tick();
+
+      expect(deps.runTriage).toHaveBeenCalledTimes(MAX_TRIAGES_PER_SESSION); // unchanged — budget exhausted
+    });
+
+    it('removing a session that has an in-flight triage does not leak the global concurrency slot', async () => {
+      let resolveCall: (r: LlmRunResult) => void = () => {};
+      const runTriage = vi.fn(() => new Promise<LlmRunResult>((res) => { resolveCall = res; }));
+      const { deps, clock, sessions } = makeMultiSessionDeps({ runTriage });
+      sessions.set('s', { profile: 'claude', cwd: '/proj', claudeSessionId: 's', status: 'running' });
+      const svc = new IdleTriageService(deps);
+
+      svc.observe('s', 'working');
+      svc.observe('s', 'idle');
+      clock.fireNext();
+      await tick(); // triage in flight, pending slot held
+
+      svc.remove('s'); // session torn down mid-call (pty exit)
+      resolveCall(okResult('{"resolution":"done","summary":"x"}'));
+      await tick(); // the .finally() must still release the pending slot
+
+      // A fresh burst up to the cap should all fire immediately — proves no slot leaked.
+      for (let i = 0; i < MAX_CONCURRENT_TRIAGES; i++) {
+        const id = `fresh-${i}`;
+        sessions.set(id, { profile: 'claude', cwd: '/proj', claudeSessionId: id, status: 'running' });
+        svc.observe(id, 'working');
+        svc.observe(id, 'idle');
+      }
+      clock.fireAll();
+      await tick();
+      expect(runTriage).toHaveBeenCalledTimes(1 + MAX_CONCURRENT_TRIAGES); // the first + the full fresh burst, none deferred
+    });
   });
 });

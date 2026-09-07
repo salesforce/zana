@@ -106,6 +106,8 @@ export interface InboxInput {
    * a sibling's.
    */
   target?: { moduleId: string };
+  executionId?: string;
+  blockerId?: string;
 }
 
 export interface InboxReadOpts {

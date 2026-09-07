@@ -39,7 +39,7 @@ import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '..
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 import { claudeLegacyRouting } from './legacy-routing.js';
 
-const CLAUDE_EVIDENCE_VERSION = '2.1.209';
+const CLAUDE_EVIDENCE_VERSION = '2.1.220';
 const claudeEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
   id, versionRange: CLAUDE_EVIDENCE_VERSION, scope,
   probe: 'claude --version plus golden argv and provider contract suite', observed, reviewedAt: '2026-08-04'

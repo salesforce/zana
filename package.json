@@ -8,7 +8,7 @@
   "homepage": "https://github.com/salesforce/zana",
   "main": "out/main/index.js",
   "type": "module",
-  "packageManager": "pnpm@11.13.1",
+  "packageManager": "pnpm@11.25.0",
   "scripts": {
     "prepare": "node scripts/ensure-node-pty-helper.mjs && node scripts/ensure-better-sqlite3.mjs && git config core.hooksPath .githooks || true",
     "build:cli": "pnpm --filter @zcc/cli build",
@@ -49,6 +49,8 @@
     "test:e2e:headed": "pnpm run build:legacy && playwright test --headed",
     "test:smoke": "pnpm run build:legacy && playwright test e2e/smoke.spec.ts",
     "test:smoke:only": "playwright test e2e/smoke.spec.ts",
+    "test:e2e:jobteam": "node scripts/run-jobteam-e2e.mjs",
+    "test:e2e:jobteam:only": "playwright test e2e/job-team-launch-ui.spec.ts e2e/cli-agent-job-team-run.spec.ts e2e/modern-owner-job-team-run.spec.ts",
     "test:codex:live": "ZCC_LIVE_CODEX=1 vitest run apps/host-daemon/src/harness/__tests__/codex-provider.live.test.ts",
     "rebuild": "electron-rebuild -f -w node-pty && node scripts/ensure-better-sqlite3.mjs",
     "rebuild:electron": "electron-rebuild -f -w node-pty -w better-sqlite3",
