@@ -1365,7 +1365,9 @@ export interface PluginAgents {
    * A repeated registration within one factory execution is rejected.
    */
   contributeInstructions(
-    provider: (ctx: { threadId: string; projectId: string }) => string | null,
+    textOrProvider:
+      | string
+      | ((ctx: { threadId: string; projectId: string }) => string | null),
   ): void;
 }
 

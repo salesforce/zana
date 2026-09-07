@@ -71,6 +71,29 @@ describe('ThreadInfoRows', () => {
     expect(html).not.toContain('/Users/me/.zcc/remote-projects/abc');
   });
 
+  it('shows the enrolled machine and start-path source', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadInfoRows
+          isWorktree={false}
+          cwd="/opt/workspace/core"
+          branchName={null}
+          workspaceStatus={null}
+          pullRequest={null}
+          sshTarget="limited-pony"
+          sshStatus="connected"
+          remoteDirectory="/opt/workspace/core"
+          machineName="Limited Pony"
+          startPathSource="Machine"
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="thread-info-machine"');
+    expect(html).toContain('Limited Pony');
+    expect(html).toContain('data-testid="thread-info-start-path"');
+    expect(html).toContain('Machine');
+  });
+
   it('marks an unreachable ControlMaster without swapping in a remote directory', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>

@@ -90,3 +90,27 @@ export const INBOX_PUSH_SAMPLE_FILES: Record<string, string> = {
 };
 `,
 };
+
+/** Modern `package.json` `zcc` plugin — no leftover `extension.json`. */
+export const ZCC_PLUGIN_SAMPLE_FILES: Record<string, string> = {
+  'package.json': JSON.stringify(
+    {
+      name: 'zcc-plugin-git-hello',
+      version: '0.1.0',
+      engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+      zcc: {
+        name: 'git-hello',
+        description: 'git hello plugin',
+        branding: { icon: 'Puzzle' },
+        server: './server.mjs'
+      }
+    },
+    null,
+    2
+  ),
+  'server.mjs': `export default function plugin(zcc) {
+  zcc.rpc.method('ping', () => ({ ok: true, id: zcc.pluginId }));
+}
+`
+};
+

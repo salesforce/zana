@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { ApprovalPendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   pendingPlanApprovalSubject,
+  planDocumentBadge,
+  planDocumentBadgeLabel,
   planFileTabTitle,
+  planReferenceDetail,
+  planReferenceSummary,
+  isLivePlanFilePath,
   resolveThreadPlanDocument
 } from './thread-plan-document.js';
 
@@ -138,4 +143,54 @@ describe('thread plan document', () => {
     });
   });
 
+  it('matches a preview path to the live plan file', () => {
+    expect(isLivePlanFilePath(
+      '/tmp/proj/.zcc/plans/ship.plan.md',
+      '/tmp/proj/.zcc/plans/ship.plan.md'
+    )).toBe(true);
+    expect(isLivePlanFilePath(
+      '/private/tmp/proj/.zcc/plans/ship.plan.md',
+      'tmp/proj/.zcc/plans/ship.plan.md'
+    )).toBe(true);
+    expect(isLivePlanFilePath('/tmp/README.md', '/tmp/proj/.zcc/plans/ship.plan.md')).toBe(false);
+    expect(isLivePlanFilePath('/tmp/a.plan.md', null)).toBe(false);
+    expect(isLivePlanFilePath('/foo/ship.plan.md', '/bar/ship.plan.md')).toBe(false);
+  });
+
+  it('derives Building, Ready, and Complete badges', () => {
+    expect(planDocumentBadge({
+      markdown: '# Plan',
+      processing: { text: 'Write tests' },
+      tasks: [{ status: 'in_progress' }]
+    })).toBe('building');
+    expect(planDocumentBadge({
+      markdown: '# Plan',
+      tasks: [{ status: 'pending' }],
+      progress: { completed: 0, total: 1 }
+    })).toBe('ready');
+    expect(planDocumentBadge({
+      status: 'completed',
+      markdown: '# Plan',
+      tasks: [{ status: 'completed' }],
+      progress: { completed: 1, total: 1 }
+    })).toBe('complete');
+    expect(planDocumentBadge({ status: 'draft', markdown: null, tasks: [] })).toBeNull();
+    expect(planDocumentBadgeLabel('building')).toBe('Building');
+    expect(planDocumentBadgeLabel('ready')).toBe('Ready');
+    expect(planDocumentBadgeLabel('complete')).toBe('Complete');
+  });
+
+  it('formats referenced-by copy with title, role, and todo count', () => {
+    const refs = [
+      { threadId: 't-1', taskId: null, title: 'Pipe prefix in instructions', role: 'Author', todosAssigned: 3 },
+      { threadId: 't-1', taskId: 'task-1', title: 'Pipe prefix in instructions', role: 'Author', todosAssigned: 3 }
+    ];
+    expect(planReferenceSummary(refs)).toBe('Referenced by 1 Agent');
+    expect(planReferenceDetail(refs[0]!)).toBe('Pipe prefix in instructions · Author · 3 todos assigned');
+    expect(planReferenceDetail({ threadId: 't-2', taskId: null })).toBe('Untitled agent · Agent · 0 todos assigned');
+    expect(planReferenceSummary([
+      { threadId: 'a', taskId: null },
+      { threadId: 'b', taskId: null }
+    ])).toBe('Referenced by 2 Agents');
+  });
 });

@@ -15,6 +15,7 @@
       "icon": "ChartNoAxesColumn"
     },
     "server": "./server.mjs",
-    "app": "./app.js"
+    "app": "./app.js",
+    "skills": ["skills"]
   }
 }

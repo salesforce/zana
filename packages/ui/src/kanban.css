@@ -48,7 +48,7 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted, var(--zcc-foreground-muted, #8b949e));
-  background: var(--bg-panel, var(--zcc-surface, #1e1e1e));
+  background: transparent;
   border-bottom: 1px solid var(--border, var(--zcc-border, #2e2e2e));
 }
 

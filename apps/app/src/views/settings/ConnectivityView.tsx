@@ -24,7 +24,7 @@ export function ConnectivityView({
     >
       <Field
         label="Default remote path"
-        help="Optional start path for remote (SSH) projects that don't set their own. Both the terminal and the Explorer open here instead of the remote home directory. A per-project remote path still overrides this. Leave blank to start in the remote home directory."
+        help="Fallback start path for SSH remotes that are not paired to a Machine and do not set their own project path. Enrolled machines have their own default under Settings → Machines. A per-project Remote start path still wins. Leave blank to start in the remote home directory."
       >
         <input
           type="text"

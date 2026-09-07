@@ -413,7 +413,6 @@ function TrafficLights(): ReactNode {
 }
 
 export function AppShellWireframe(): ReactNode {
-  const [workspace, setWorkspace] = useState<'agents' | 'library'>('agents');
   const menu = useEngagement('experimental_projectMenuAction');
   const create = useEngagement('experimental_createProjectAction');
   return (
@@ -425,7 +424,6 @@ export function AppShellWireframe(): ReactNode {
         anchor='[data-guide-region="sidebarFooterAction"]'
         at="start"
       />
-      <MeasuredBadge id="projectTab" label="Project tab" anchor='[data-guide-region="projectTab"]' at="end" />
       <WindowFrame>
         <div className="plugin-guide-shell plugin-guide-shell--bb">
           <span className="plugin-guide-sidebar-trigger" aria-hidden>
@@ -529,6 +527,68 @@ export function AppShellWireframe(): ReactNode {
               </span>
             </Mark>
           </aside>
+          <section className="plugin-guide-workspace">
+            <div className="plugin-guide-fx-canvas">
+              <div className="plugin-guide-fx-skel" />
+              <div className="plugin-guide-fx-skel is-short" />
+              <div className="plugin-guide-fx-skel" />
+            </div>
+          </section>
+        </div>
+      </WindowFrame>
+    </div>
+  );
+}
+
+export function ProjectShellWireframe(): ReactNode {
+  const [workspace, setWorkspace] = useState<'agents' | 'library'>('agents');
+  const card = useEngagement('experimental_agentCardAction');
+  const statusbar = useEngagement('projectStatusbarItem');
+  return (
+    <div className="plugin-guide-stage">
+      <MeasuredBadge id="projectTab" label="Project tab" anchor='[data-guide-region="projectTab"]' at="end" />
+      <MeasuredBadge
+        id="experimental_agentsBoardAction"
+        label="Agents board action"
+        anchor='[data-guide-region="experimental_agentsBoardAction"]'
+        at="end"
+      />
+      <MeasuredBadge
+        id="projectStatusbarItem"
+        label="Project statusbar"
+        anchor='[data-guide-region="projectStatusbarItem"]'
+        at="above"
+      />
+      <WindowFrame>
+        <div className="plugin-guide-shell plugin-guide-shell--bb">
+          <span className="plugin-guide-sidebar-trigger" aria-hidden>
+            <Icon name="sidebar" />
+          </span>
+          <aside className="plugin-guide-fx-nav">
+            <div className="plugin-guide-fx-titlebar plugin-guide-fx-titlebar--reserve">
+              <Icon name="back" />
+              <Icon name="fwd" />
+            </div>
+            <div className="plugin-guide-fx-nav-row">
+              <Icon name="plus" /> New Chat
+            </div>
+            <div className="plugin-guide-fx-nav-row">
+              <Icon name="inbox" /> Inbox
+            </div>
+            <div className="plugin-guide-fx-nav-row">
+              <Icon name="agents" /> Agents
+            </div>
+            <div className="plugin-guide-fx-nav-row">
+              <Icon name="plugins" /> Plugins
+            </div>
+            <div className="plugin-guide-thread-stack">
+              <div className="plugin-guide-ws-head">
+                <span className="plugin-guide-fx-section plugin-guide-ws-head-title">Projects</span>
+              </div>
+              <span className="plugin-guide-fx-nav-row is-plugin">Acme</span>
+              <span className="plugin-guide-fx-nav-row">checkout-api</span>
+            </div>
+          </aside>
           <aside className="plugin-guide-fx-list">
             <header className="plugin-guide-fx-list-head plugin-guide-ws-rail-head">
               <Icon name="back" /> Acme
@@ -565,6 +625,17 @@ export function AppShellWireframe(): ReactNode {
           <section className="plugin-guide-workspace">
             <header className="plugin-guide-ws-topbar">
               <span>{workspace === 'library' ? 'Library' : 'Agents'}</span>
+              {workspace === 'agents' ? (
+                <Mark
+                  id="experimental_agentsBoardAction"
+                  label="Agents board action"
+                  chip="side"
+                  className="plugin-guide-agents-toolbar-btn"
+                  title="Agents board action"
+                >
+                  <Plug /> Your action
+                </Mark>
+              ) : null}
             </header>
             {workspace === 'library' ? (
               <div className="plugin-guide-fx-canvas">
@@ -580,8 +651,27 @@ export function AppShellWireframe(): ReactNode {
                 <div className="plugin-guide-agent-col">
                   <span className="plugin-guide-agent-col-head">Running</span>
                   <div className="plugin-guide-agent-card is-live">
-                    <span className="plugin-guide-tl-meta">
-                      <Icon name="agents" /> Pairing relay
+                    <span className="plugin-guide-agent-card-head">
+                      <span className="plugin-guide-tl-meta">
+                        <Icon name="agents" /> Pairing relay
+                      </span>
+                      <Mark
+                        id="experimental_agentCardAction"
+                        label="Agent card action"
+                        chip="side"
+                        className="plugin-guide-icon-hit"
+                        title="Agent card action"
+                      >
+                        <Icon name="more" />
+                        {card.outlined ? (
+                          <span className="plugin-guide-ws-menu" aria-hidden>
+                            <span>Restart</span>
+                            <span className="is-plugin">
+                              <Plug /> Your action
+                            </span>
+                          </span>
+                        ) : null}
+                      </Mark>
                     </span>
                     <p>Ship the pairing flow on this host.</p>
                   </div>
@@ -597,6 +687,28 @@ export function AppShellWireframe(): ReactNode {
                 </div>
               </div>
             )}
+            <Mark
+              id="projectStatusbarItem"
+              label="Project statusbar"
+              showChip={false}
+              className="plugin-guide-ws-statusbar"
+            >
+              <span>~/projects/acme</span>
+              <span>main</span>
+              <span className="plugin-guide-ws-statusbar-grow" />
+              <span className="plugin-guide-ws-statusbar-chip is-plugin">
+                <Plug /> prod
+              </span>
+              {statusbar.outlined ? (
+                <span className="plugin-guide-ws-menu plugin-guide-ws-statusbar-menu" aria-hidden>
+                  <span className="is-plugin">
+                    <Plug /> Production
+                  </span>
+                  <span>Open SOQL</span>
+                  <span>Switch org…</span>
+                </span>
+              ) : null}
+            </Mark>
           </section>
         </div>
       </WindowFrame>

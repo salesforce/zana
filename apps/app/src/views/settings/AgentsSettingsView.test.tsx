@@ -41,6 +41,7 @@ describe('AgentsTab worktree isolation', () => {
     expect(html).toContain('CLI Agent');
     expect(html).toContain('Max live sessions');
     expect(html).toContain('Agent heap limit (MB)');
+    expect(html).toContain('Remote defaults');
     expect(html).not.toContain('Performance &amp; limits');
   });
 

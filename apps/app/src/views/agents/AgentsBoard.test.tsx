@@ -140,4 +140,11 @@ describe('AgentsBoard compact chrome contract', () => {
       '.agents-board-empty--launch {\n  overflow: auto;\n  gap: 20px;\n  justify-content: center;\n  padding: 48px 24px 56px;\n  background: transparent;'
     );
   });
+
+  it('paints lane accents as an inset top stripe, not a recolored header divider', () => {
+    expect(css).toContain('.zcc-kanban-col.lane-blocked { box-shadow: inset 0 2px 0 var(--danger); }');
+    expect(css).toContain('.zcc-kanban-col.lane-working { box-shadow: inset 0 2px 0 var(--accent-gold); }');
+    expect(css).not.toContain('.zcc-kanban-col.lane-blocked .zcc-kanban-col-header { border-bottom-color:');
+    expect(css).not.toContain('.zcc-kanban-col.lane-working .zcc-kanban-col-header { border-bottom-color:');
+  });
 });

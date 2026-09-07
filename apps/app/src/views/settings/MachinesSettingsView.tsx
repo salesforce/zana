@@ -255,6 +255,12 @@ export function MachinesSettingsView({
                 }
               }}
               onInstall={(provider, actionKind) => void runInstall(host.id, provider, actionKind)}
+              onWorkspacePathChange={(path) => {
+                if (host.isPrimary) return;
+                const current = host.defaultWorkspacePath ?? '';
+                if (path === current) return;
+                void product.hosts.update(host.id, { defaultWorkspacePath: path || null });
+              }}
             />
           ))}
         </ul>

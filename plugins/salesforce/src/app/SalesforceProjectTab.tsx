@@ -15,18 +15,6 @@ type StatusPayload = {
   };
 };
 
-const LIST_STYLES = `
-.sf-org-list { display: grid; gap: 8px; margin: 12px 0 16px; }
-.sf-org-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-muted); }
-.sf-org-refresh, .sf-org-list button { font: inherit; }
-.sf-org-refresh { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; }
-.sf-org-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.sf-org-rows button { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(10rem, 1.4fr) auto auto auto; gap: 8px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; font-size: 12px; }
-.sf-org-rows button.is-selected { border-color: var(--accent, #1b96ff); background: color-mix(in srgb, var(--accent, #1b96ff) 12%, transparent); }
-.sf-org-error { margin: 0; color: var(--danger); font-size: 12px; }
-.sf-org-empty { margin: 0; color: var(--text-muted); font-size: 12px; }
-`;
-
 export function SalesforceProjectTab(props: { pluginId: string; projectId: string }) {
   const navigate = useZccNavigate();
   const context = useZccContext();
@@ -55,7 +43,6 @@ export function SalesforceProjectTab(props: { pluginId: string; projectId: strin
 
   return (
     <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
-      <style>{LIST_STYLES}</style>
       <h2 style={{ marginTop: 0 }}>Salesforce</h2>
       <p>{orgLabel}</p>
       <OrgPicker pluginId={props.pluginId} />

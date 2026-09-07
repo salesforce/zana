@@ -61,6 +61,11 @@ describe('ThreadPlanPanel', () => {
     expect(html).toContain('0/8 complete');
     expect(html).toContain('Step 1');
     expect(html).toContain('Step 8');
+    expect(html).toContain('data-testid="thread-plan-status"');
+    expect(html).toContain('Ready');
+    expect(html).toContain('Referenced by 1 Agent');
+    expect(html).toContain('Untitled agent · Agent · 0 todos assigned');
+    expect(html).not.toContain('6e37a024-a39d-4cf4-8c91-108c0deb72db');
   });
 
   it('hides the empty copy when timeline todos exist without markdown', () => {
@@ -113,12 +118,13 @@ describe('ThreadPlanPanel', () => {
     expect(html).not.toContain('data-testid="thread-plan-open-file"');
   });
 
-  it('shows durable progress, mismatch, and referenced-by', () => {
+  it('shows durable progress, mismatch, Building badge, and human referenced-by', () => {
     const html = renderToStaticMarkup(
       <ThreadPlanPanel
         document={{ markdown: null, filePath: null, prompt: null, source: 'durable' }}
         durablePlan={{
           markdown: 'Persisted plan',
+          status: 'active',
           revision: 2,
           progress: { completed: 1, total: 2 },
           executionModeMismatch: true,
@@ -126,17 +132,45 @@ describe('ThreadPlanPanel', () => {
           effectiveExecutionMode: 'agent',
           processing: { text: 'Ship it', owningThreadId: 't-1', startedAt: 1, latestActivity: null },
           tasks: [{ id: 'task-1', text: 'Ship it', status: 'in_progress', owningThreadId: 't-1', blockedReason: null }],
-          referencedBy: [{ threadId: 't-1', taskId: 'task-1' }]
+          referencedBy: [{
+            threadId: 't-1',
+            taskId: 'task-1',
+            title: 'Pipe prefix in instructions',
+            role: 'Author',
+            todosAssigned: 3
+          }]
         }}
       />
     );
     expect(html).toContain('data-testid="thread-plan-mode-mismatch"');
     expect(html).toContain('data-testid="thread-plan-progress"');
     expect(html).toContain('1/2 complete');
-    expect(html).toContain('data-testid="thread-plan-processing"');
+    expect(html).toContain('data-testid="thread-plan-status"');
+    expect(html).toContain('Building');
+    expect(html).not.toContain('data-testid="thread-plan-processing"');
     expect(html).toContain('Persisted plan');
-    expect(html).toContain('Referenced by');
+    expect(html).toContain('Referenced by 1 Agent');
+    expect(html).toContain('Pipe prefix in instructions · Author · 3 todos assigned');
+    expect(html).not.toContain('>t-1<');
     expect(html).toContain('class="thread-todo-checklist"');
     expect(html).toContain('aria-label="In progress: Ship it"');
+  });
+
+  it('shows a Complete badge when every task is done', () => {
+    const html = renderToStaticMarkup(
+      <ThreadPlanPanel
+        document={{ markdown: '# Done', filePath: null, prompt: null, source: 'durable' }}
+        durablePlan={{
+          markdown: '# Done',
+          status: 'completed',
+          revision: 1,
+          progress: { completed: 1, total: 1 },
+          tasks: [{ id: 'task-1', text: 'Ship it', status: 'completed', owningThreadId: null, blockedReason: null }],
+          referencedBy: []
+        }}
+      />
+    );
+    expect(html).toContain('data-status="complete"');
+    expect(html).toContain('Complete');
   });
 });

@@ -145,6 +145,12 @@ export type {
   PluginCreateProjectDialogProps,
   PluginSidebarFooterActionRegistration,
   PluginSidebarFooterActionContext,
+  PluginProjectStatusbarAlign,
+  PluginProjectStatusbarDialogProps,
+  PluginProjectStatusbarItemContext,
+  PluginProjectStatusbarItemProps,
+  PluginProjectStatusbarItemRegistration,
+  PluginProjectStatusbarMenuItem,
   PluginPendingInteractionRegistration,
   PluginPendingInteractionProps,
   PluginPendingInteractionView,
@@ -198,6 +204,7 @@ export {
   collectPluginApp,
   DEFAULT_PLUGIN_THREAD_PANEL_SCOPES,
   emptyRegistrationSet,
+  PLUGIN_PROJECT_STATUSBAR_ALIGNS,
   PLUGIN_THREAD_PANEL_SCOPES,
   threadPanelActionMatchesScope
 } from './app-contract.js';

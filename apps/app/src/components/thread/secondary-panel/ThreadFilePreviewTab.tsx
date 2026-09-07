@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Copy, FileText } from 'lucide-react';
 import { product } from '../../../lib/product-client.js';
 import { DocContent } from '../../MarkdownContent.js';
@@ -12,6 +12,7 @@ import {
   writeFileOpenerPin
 } from '../../../plugins/plugin-slot-resolvers.js';
 import type { PluginFileOpenerRegistration } from '@zana-ai/zcc-plugin-sdk';
+import type { ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import { SecondaryPanelSelectionActions } from './SecondaryPanelSelectionActions.js';
 import {
   applyPreviewResult,
@@ -21,19 +22,26 @@ import {
   previewPathParts
 } from './threadSecondaryPanelLogic.js';
 import { StencilLines } from '../../ui/Skeleton.js';
+import { PlanStatusBadge, ThreadPlanPanel, type DurablePlanPanelView } from './ThreadPlanPanel.js';
+import {
+  type ThreadPlanDocument,
+  planDocumentBadge
+} from './thread-plan-document.js';
 
 export function ThreadFilePreviewView({
   path,
   content,
   error,
   threadId,
-  projectId
+  projectId,
+  lineNumber = null
 }: {
   path: string;
   content: string | null;
   error: string | null;
   threadId?: string;
   projectId?: string | null;
+  lineNumber?: number | null;
 }) {
   if (error) return <p className="thread-detail-empty">{error}</p>;
   if (content === null) {
@@ -48,6 +56,11 @@ export function ThreadFilePreviewView({
   if (previewKind(path, content) === 'image') {
     return <img className="thread-file-preview-image" src={content} alt={path} />;
   }
+  if (lineNumber != null && lineNumber > 0) {
+    return (
+      <FilePreviewLineList content={content} lineNumber={lineNumber} />
+    );
+  }
   return (
     <div className="thread-file-preview" data-testid="thread-file-preview">
       <DocContent
@@ -61,16 +74,58 @@ export function ThreadFilePreviewView({
   );
 }
 
+export function FilePreviewLineList({
+  content,
+  lineNumber
+}: {
+  content: string;
+  lineNumber: number;
+}) {
+  const rootRef = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    const node = rootRef.current?.querySelector(`[data-preview-line="${lineNumber}"]`);
+    if (node instanceof HTMLElement) {
+      node.scrollIntoView({ block: 'center' });
+    }
+  }, [content, lineNumber]);
+  const lines = content.split('\n');
+  return (
+    <pre
+      ref={rootRef}
+      className="thread-file-preview thread-file-preview-lines"
+      data-testid="thread-file-preview"
+      data-focus-line={lineNumber}
+    >
+      {lines.map((line, index) => {
+        const n = index + 1;
+        return (
+          <div
+            key={n}
+            data-preview-line={n}
+            data-testid={n === lineNumber ? 'thread-file-preview-focus-line' : undefined}
+            className={n === lineNumber ? 'thread-file-preview-line is-highlighted' : 'thread-file-preview-line'}
+          >
+            <span className="thread-file-preview-line-no">{n}</span>
+            <span>{line.length > 0 ? line : ' '}</span>
+          </div>
+        );
+      })}
+    </pre>
+  );
+}
+
 export function ThreadFilePreviewChrome({
   path,
   matches,
   selectedKey,
-  onSelect
+  onSelect,
+  statusBadge = null
 }: {
   path: string;
   matches: readonly PluginFileOpenerRegistration[];
   selectedKey: string;
   onSelect: (key: string) => void;
+  statusBadge?: ReturnType<typeof planDocumentBadge>;
 }) {
   const { name, dir } = previewPathParts(path);
   const [copied, setCopied] = useState(false);
@@ -81,6 +136,7 @@ export function ThreadFilePreviewChrome({
         {dir ? <span className="thread-file-preview-dir">{dir}/</span> : null}
         <span className="thread-file-preview-name">{name}</span>
       </span>
+      {statusBadge ? <PlanStatusBadge badge={statusBadge} /> : null}
       <div className="thread-file-preview-chrome-actions">
         <button
           type="button"
@@ -125,13 +181,21 @@ export function ThreadFilePreviewTab({
   path,
   openerKey,
   projectId,
-  storage = false
+  storage = false,
+  livePlan = null,
+  planDocument = null,
+  todos = null,
+  lineNumber = null
 }: {
   threadId?: string;
   path: string;
   openerKey?: string | null;
   projectId?: string | null;
   storage?: boolean;
+  livePlan?: DurablePlanPanelView | null;
+  planDocument?: ThreadPlanDocument | null;
+  todos?: ThreadTimelinePendingTodos | null;
+  lineNumber?: number | null;
 }) {
   const [override, setOverride] = useState<string | null>(openerKey ?? null);
   const [content, setContent] = useState<string | null>(null);
@@ -141,7 +205,26 @@ export function ThreadFilePreviewTab({
   const OpenerComponent = opener?.component;
   const matches = matchingFileOpeners(path, openers);
 
+  const liveDocument = livePlan
+    ? (planDocument ?? {
+      markdown: livePlan.markdown,
+      filePath: null,
+      prompt: null,
+      source: 'durable' as const
+    })
+    : null;
+  const liveBadge = livePlan
+    ? planDocumentBadge({
+      status: livePlan.status,
+      processing: livePlan.processing,
+      progress: livePlan.progress,
+      tasks: livePlan.tasks,
+      markdown: liveDocument?.markdown ?? livePlan.markdown
+    })
+    : null;
+
   useEffect(() => {
+    if (livePlan) return;
     let cancelled = false;
     const hostReader = storage
       ? product.threads.storageContent
@@ -163,8 +246,36 @@ export function ThreadFilePreviewTab({
       applyPreviewResult(cancelled, result, setError, setContent);
     });
     return () => { cancelled = true; };
-  }, [path, storage, threadId]);
+  }, [path, storage, threadId, livePlan]);
 
+  const chrome = (
+    <ThreadFilePreviewChrome
+      path={path}
+      matches={matches}
+      selectedKey={opener ? fileOpenerKey(opener) : 'host'}
+      statusBadge={liveBadge}
+      onSelect={(next) => {
+        setOverride(next);
+        const extension = fileExtensionOf(path);
+        if (extension) writeFileOpenerPin(extension, next);
+      }}
+    />
+  );
+  if (livePlan && liveDocument) {
+    return (
+      <SecondaryPanelSelectionActions threadId={threadId}>
+        <div className="thread-file-preview-host" data-testid="thread-live-plan-preview">
+          {chrome}
+          <ThreadPlanPanel
+            document={liveDocument}
+            durablePlan={livePlan}
+            todos={todos}
+            showStatusBadge={false}
+          />
+        </div>
+      </SecondaryPanelSelectionActions>
+    );
+  }
   const hostPreview = (
     <ThreadFilePreviewView
       path={path}
@@ -172,18 +283,7 @@ export function ThreadFilePreviewTab({
       error={error}
       threadId={threadId}
       projectId={projectId}
-    />
-  );
-  const chrome = (
-    <ThreadFilePreviewChrome
-      path={path}
-      matches={matches}
-      selectedKey={opener ? fileOpenerKey(opener) : 'host'}
-      onSelect={(next) => {
-        setOverride(next);
-        const extension = fileExtensionOf(path);
-        if (extension) writeFileOpenerPin(extension, next);
-      }}
+      lineNumber={lineNumber}
     />
   );
   const preview = !opener || !OpenerComponent ? (
@@ -204,6 +304,7 @@ export function ThreadFilePreviewTab({
             environmentId: null,
             projectId: projectId ?? null
           }}
+          lineNumber={lineNumber}
           experimental_Original={() => hostPreview}
         />
       </PluginSlotBoundary>

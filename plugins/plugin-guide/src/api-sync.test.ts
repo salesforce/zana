@@ -10,6 +10,7 @@ const SLOT_SURFACE_IDS = [
   'experimental_projectMenuAction',
   'experimental_createProjectAction',
   'sidebarFooterAction',
+  'projectStatusbarItem',
   'pendingInteraction',
   'threadPanelAction',
   'experimental_newThreadPanelAction',

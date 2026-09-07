@@ -84,7 +84,7 @@ this list fails CI):
 - `zcc.cli` — `cli.register({ name, summary, commands?, run(argv, ctx) })`.
   `name` matches `^[a-z0-9-]+$`. Core `zcc` names always win. Combined
   stdout/stderr is capped at 1MiB (`plugin_cli_output_too_large`, never clipped).
-- `zcc.agents` — `contributeInstructions(text)`, `contributeSkills(rootPaths)`,
+- `zcc.agents` — `contributeInstructions(text | (ctx) => string | null)`, `contributeSkills(rootPaths)`,
   `registerTool({ name, description, inputSchema?, presentation?, execute })`,
   `experimental_registerProvider(declaration)`,
   `experimental_registerPtyHarness(declaration)`,
@@ -179,6 +179,7 @@ Frontend runtime exports you may import from `@zana-ai/zcc-plugin-sdk/app`:
 `getPluginSettings`, `setPluginSettings`, `collectPluginApp`,
 `emptyRegistrationSet`, `PLUGIN_THREAD_PANEL_SCOPES`,
 `DEFAULT_PLUGIN_THREAD_PANEL_SCOPES`, `threadPanelActionMatchesScope`,
+`PLUGIN_PROJECT_STATUSBAR_ALIGNS`,
 `useRpc`, `useRealtime`,
 `useRealtimeConnectionState`, `useSettings`, `useZccContext`,
 `useZccNavigate`, `useComposer`, `useComposerView`,
@@ -204,6 +205,30 @@ runs a headless same-origin script with an `AbortSignal` on unload.
   Props: `pluginId`, `projectId`.
 - `sidebarFooterAction` — `id`, `title`, `icon`, `run`. `run` receives
   `{ openSettings() }`.
+- `projectStatusbarItem` — a chip on the project workspace footer (path/git
+  strip). Registration: `id`, `align` (`"left"` | `"right"`, default `"right"`;
+  `PLUGIN_PROJECT_STATUSBAR_ALIGNS`), `order`, `tooltip`, `icon`, `label`
+  (required unless `item` is set), `item` (live React chrome), `component`
+  (modal body), `run`. `run` (and `item` / dialog props) receive `projectId`,
+  `toProject`, `toPluginPanel`, `openDialog({ title?, params? })`, and
+  `openMenu([{ id, label, icon?, disabled?, run }])`. Call `openDialog()` to
+  mount `component`; `openMenu` opens a host popup anchored to the chip.
+
+```ts
+app.slots.projectStatusbarItem({
+  id: 'orgs',
+  align: 'right',
+  icon: 'Cloud',
+  label: 'orgs',
+  component: OrgPicker,
+  run: (ctx) => {
+    ctx.openMenu([
+      { id: 'prod', label: 'Production', run: () => ctx.openDialog({ title: 'Switch org' }) },
+      { id: 'soql', label: 'Open SOQL', run: () => ctx.toProject(ctx.projectId, { tabId: 'soql' }) }
+    ]);
+  }
+});
+```
 - `pendingInteraction` — `id` must match `rendererId` passed to
   `zcc.ui.requestInput`. Component props: `interaction`, `submit`, `cancel`.
 - `threadPanelAction` — a closable tab in the thread right-hand side panel.
@@ -223,9 +248,11 @@ runs a headless same-origin script with an `AbortSignal` on unload.
 - `experimental_threadHeaderAction` — `id`, `title`, `component`. Props:
   `pluginId`, `threadId`, `projectId`, `isCompactViewport`.
 - `fileOpener` — `id`, `title`, `extensions`, `component`. Props: `pluginId`,
-  `path`, `source`, `experimental_Original`.
+  `path`, `source`, `lineNumber`, `experimental_Original`.
 - `messageDirective` — `id`, `component`. Renders `::name{attr}` leaves.
   Props: `pluginId`, `attributes`, `source`, `message`, `openWorkspaceFile`.
+  The host passes a real `openWorkspaceFile(path)` on thread surfaces so a
+  card can open a workspace file in the side panel; it is `null` elsewhere.
 - `messageAction` — `id`, `title`, `icon`, `run`. Context: `threadId`,
   `message`, `selectedText`, `openPanel`.
 - `experimental_agentCardAction` — `id`, `title`, `icon`, `isAvailable`, `run`.

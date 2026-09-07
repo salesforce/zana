@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import { definePluginApp, useZccContext, useZccNavigate, type PluginCreateProjectDialogProps, type PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { AgentforcePlaygroundPanel } from './src/app/AgentScriptPanel.js';
 import { AgentforcePreviewPanel } from './src/app/AgentforcePreviewPanel.js';
+import { OrgPicker } from './src/app/OrgPicker.js';
 import { SalesforceProjectTab } from './src/app/SalesforceProjectTab.js';
 import { SoqlExplorerPanel } from './src/app/soql/SoqlExplorerPanel.js';
 import { openAgentforcePlayground, openAgentforcePreview } from './src/app/agentforce-panel-params.js';
@@ -79,8 +80,8 @@ function SalesforceComposerBanner(props: { pluginId?: string }) {
       'p',
       { style: { margin: 0 } },
       orgs.length > 0
-        ? 'Salesforce: pick a CLI-connected org on the Salesforce tab. Family tools share that target.'
-        : 'Salesforce: set a default org alias under Plugins → Salesforce, then run zcc sf doctor.'
+        ? 'Salesforce: pick a CLI-connected org under Plugins → Salesforce, or on the Salesforce tab. Family tools share that target.'
+        : 'Salesforce: pick a CLI-connected org under Plugins → Salesforce, then run zcc sf doctor.'
     );
   }
   if (kind === 'production') {
@@ -294,6 +295,12 @@ function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogProps) {
 }
 
 export default definePluginApp((app) => {
+  app.slots.settingsSection({
+    id: 'orgs',
+    title: 'Connected orgs',
+    description: 'Salesforce CLI orgs. Selecting one sets the shared default org.',
+    component: OrgPicker
+  });
   app.slots.fileOpener({
     id: 'agent',
     title: 'Agentforce Playground',

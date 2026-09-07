@@ -490,11 +490,72 @@
 .plugin-guide-ws-topbar {
   display: flex;
   align-items: center;
+  gap: 8px;
   height: 40px;
   padding: 0 14px;
   border-bottom: 1px solid var(--border);
   font-size: 13px;
   font-weight: 600;
+}
+
+.plugin-guide-agents-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.plugin-guide-agent-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.plugin-guide-ws-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 22px;
+  padding: 0 12px;
+  border-radius: 0;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.plugin-guide-ws-statusbar-grow {
+  flex: 1;
+}
+
+.plugin-guide-ws-statusbar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+}
+
+.plugin-guide-ws-statusbar-chip.is-plugin {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.plugin-guide-ws-statusbar-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  right: 8px;
 }
 
 .plugin-guide-agents-board {
@@ -521,6 +582,7 @@
 }
 
 .plugin-guide-agent-card {
+  position: relative;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 10px;

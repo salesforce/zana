@@ -10,7 +10,7 @@ const CORS_HEADER_NAMES = [
 export function applyTrustedOriginCors(response: ServerResponse, origin: string): void {
   response.setHeader('Access-Control-Allow-Origin', origin);
   response.setHeader('Access-Control-Allow-Headers', 'content-type, x-zcc-app-surface');
-  response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PATCH, DELETE, OPTIONS');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS');
   response.setHeader('Vary', 'Origin');
 }
 

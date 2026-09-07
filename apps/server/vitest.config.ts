@@ -13,6 +13,7 @@ export default defineConfig({
       '@zana-ai/zcc-domain/llm': resolve(__dirname, '../../packages/domain/src/llm.ts'),
       '@zana-ai/zcc-domain/machine-pairing': resolve(__dirname, '../../packages/domain/src/machine-pairing.ts'),
       '@zana-ai/zcc-domain/product': resolve(__dirname, '../../packages/domain/src/product.ts'),
+      '@zana-ai/zcc-domain/project': resolve(__dirname, '../../packages/domain/src/project.ts'),
       '@zana-ai/zcc-domain/prompt-title': resolve(__dirname, '../../packages/domain/src/prompt-title.ts'),
       '@zana-ai/zcc-domain/thread-runtime': resolve(__dirname, '../../packages/domain/src/thread-runtime.ts'),
       '@zana-ai/zcc-domain/launch-provider': resolve(__dirname, '../../packages/domain/src/launch-provider.ts'),

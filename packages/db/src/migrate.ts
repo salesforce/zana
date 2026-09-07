@@ -218,6 +218,19 @@ const MIGRATE_V13 = [
   `ALTER TABLE thread_plans ADD COLUMN file_path TEXT`
 ];
 
+const MIGRATE_V14 = [
+  `ALTER TABLE hosts ADD COLUMN default_workspace_path TEXT`
+];
+
+const MIGRATE_V15 = [
+  `CREATE TABLE thread_tabs (
+        thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL DEFAULT 0,
+        tabs_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`
+];
+
 const MIGRATE_V5 = [
   `CREATE TABLE pending_interactions (
         id TEXT PRIMARY KEY,
@@ -322,6 +335,8 @@ export function migrate(database: SqliteDatabase): void {
   if (!applied.has(11)) applyVersion(database, 11, MIGRATE_V11);
   if (!applied.has(12)) applyVersion(database, 12, MIGRATE_V12);
   if (!applied.has(13)) applyVersion(database, 13, MIGRATE_V13);
+  if (!applied.has(14)) applyVersion(database, 14, MIGRATE_V14);
+  if (!applied.has(15)) applyVersion(database, 15, MIGRATE_V15);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

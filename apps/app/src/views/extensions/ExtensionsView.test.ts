@@ -102,6 +102,15 @@ describe('ExtensionsView aurora background', () => {
     expect(hub).not.toContain('.catch(() => {}).finally(() => setPending(null))');
   });
 
+  it('surfaces folder/npm/archive install failures instead of swallowing them', () => {
+    expect(hub).toContain('reportHubInstallFailure');
+    expect(marketplace).toContain('reportHubInstallFailure');
+    expect(hub).not.toContain("install({ kind: 'localDir' }).catch(() => {})");
+    expect(marketplace).not.toContain("install({ kind: 'localDir' }).catch(() => {})");
+    expect(marketplace).not.toContain("install({ kind: 'localArchive' }).catch(() => {})");
+    expect(marketplace).not.toContain("install({ kind: 'npm', spec }).catch(() => {})");
+  });
+
   it('opens plugin details from the trailing chevron as well as the row', () => {
     expect(hub).toContain('className="ext-installed-row-chevron"');
     expect(hub).toContain('onClick={onOpen}');

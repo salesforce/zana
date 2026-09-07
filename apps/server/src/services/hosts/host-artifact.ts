@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +25,111 @@ export interface HostArtifactInfo {
   tarballPath: string;
 }
 
+/** Overrideable roots so tests can simulate Electron `out/main` + cwd `/`. */
+export interface HostArtifactLocator {
+  here: string;
+  cwd: string;
+  resourcesPath?: string | null;
+}
+
+const JOIN_DAEMON_SOURCE_FILES = [
+  'src/join-cli.ts',
+  'src/enroll.ts',
+  'src/enroll-runtime.ts',
+  'src/server-url.ts',
+  'src/pty-pipe-shim.ts',
+  'src/better-sqlite3-stub.ts',
+  'scripts/build-join.mjs',
+  'src/server-connection.ts',
+  'src/plugin-host-artifact-client.ts',
+  'src/plugin-tool-call-client.ts',
+  'src/interactive-request-client.ts'
+] as const;
+
+const JOIN_REPO_SOURCE_FILES = [
+  'packages/provider-bridge-protocol/src/bridge-worker-entry.ts',
+  'packages/agent-runtime/src/pi/bridge/bridge.ts',
+  'packages/agent-runtime/src/acp-launch-specs.ts',
+  'packages/agent-runtime/src/provider-registry.ts'
+] as const;
+
+const PREBUILT_JOIN_FILES = [
+  'join.mjs',
+  'bb-provider-bridge-worker.mjs',
+  'bb-pi-bridge.mjs'
+] as const;
+
+function unique(paths: string[]): string[] {
+  return [...new Set(paths)];
+}
+
+function processResourcesPath(): string | null {
+  const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  return typeof resources === 'string' && resources.length > 0 ? resources : null;
+}
+
+export function defaultHostArtifactLocator(): HostArtifactLocator {
+  return {
+    here: dirname(fileURLToPath(import.meta.url)),
+    cwd: process.cwd(),
+    resourcesPath: processResourcesPath()
+  };
+}
+
+/**
+ * Host-daemon files relative to this module. Depths cover:
+ * `apps/server/src/services/hosts` (vitest), `out/main` (Electron server-runtime),
+ * and `out/main/chunks`. `cwd` is last because a utilityProcess often starts at `/`.
+ */
+export function joinDaemonFileCandidates(relPath: string, here: string, cwd: string): string[] {
+  return unique([
+    join(here, '../../../host-daemon', relPath),
+    join(here, '../../../../apps/host-daemon', relPath),
+    join(here, '../../apps/host-daemon', relPath),
+    join(here, '../../../apps/host-daemon', relPath),
+    join(cwd, 'apps/host-daemon', relPath)
+  ]);
+}
+
+export function joinRepoFileCandidates(relPath: string, here: string, cwd: string): string[] {
+  return unique([
+    join(here, '../../../../', relPath),
+    join(here, '../../../../../', relPath),
+    join(here, '../..', relPath),
+    join(here, '../../..', relPath),
+    join(cwd, relPath)
+  ]);
+}
+
+export function prebuiltJoinBundleDirCandidates(
+  here: string,
+  cwd: string,
+  resourcesPath?: string | null
+): string[] {
+  return unique([
+    ...(resourcesPath ? [join(resourcesPath, 'host-bridge')] : []),
+    join(cwd, 'apps/host-daemon/dist'),
+    join(here, '../../../host-daemon/dist'),
+    join(here, '../../apps/host-daemon/dist'),
+    join(here, '../../../apps/host-daemon/dist'),
+    join(here, '../../../../apps/host-daemon/dist')
+  ]);
+}
+
+export function resolvePrebuiltJoinBundleDir(
+  locator: HostArtifactLocator,
+  exists: (path: string) => boolean = existsSync
+): string | null {
+  for (const dir of prebuiltJoinBundleDirCandidates(locator.here, locator.cwd, locator.resourcesPath)) {
+    if (PREBUILT_JOIN_FILES.every((file) => exists(join(dir, file)))) return dir;
+  }
+  return null;
+}
+
+function firstExisting(paths: string[]): string | null {
+  return paths.find((path) => existsSync(path)) ?? null;
+}
+
 function hostDaemonVersion(): string {
   try {
     const pkg = nodeRequire('@zana-ai/zcc-host-daemon/package.json') as { version?: string };
@@ -24,26 +137,6 @@ function hostDaemonVersion(): string {
   } catch {
     return '0.1.0';
   }
-}
-
-function checkoutFile(relPath: string): string | null {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    join(here, '../../../host-daemon', relPath),
-    join(here, '../../../../apps/host-daemon', relPath),
-    join(process.cwd(), 'apps/host-daemon', relPath)
-  ];
-  return candidates.find((path) => existsSync(path)) ?? null;
-}
-
-function checkoutRepoFile(relPath: string): string | null {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    join(here, '../../../../', relPath),
-    join(here, '../../../../../', relPath),
-    join(process.cwd(), relPath)
-  ];
-  return candidates.find((path) => existsSync(path)) ?? null;
 }
 
 interface ArtifactInputs {
@@ -64,46 +157,66 @@ interface ArtifactInputs {
   providerRegistry: string;
 }
 
-function artifactInputs(): ArtifactInputs {
-  const joinCli = checkoutFile('src/join-cli.ts');
-  const enroll = checkoutFile('src/enroll.ts');
-  const enrollRuntime = checkoutFile('src/enroll-runtime.ts');
-  const serverUrl = checkoutFile('src/server-url.ts');
-  const shim = checkoutFile('src/pty-pipe-shim.ts');
-  const sqliteStub = checkoutFile('src/better-sqlite3-stub.ts');
-  const bundleScript = checkoutFile('scripts/build-join.mjs');
-  const serverConnection = checkoutFile('src/server-connection.ts');
-  const pluginHostArtifactClient = checkoutFile('src/plugin-host-artifact-client.ts');
-  const pluginToolCallClient = checkoutFile('src/plugin-tool-call-client.ts');
-  const interactiveRequestClient = checkoutFile('src/interactive-request-client.ts');
-  const workerEntry = checkoutRepoFile('packages/provider-bridge-protocol/src/bridge-worker-entry.ts');
-  const piBridge = checkoutRepoFile('packages/agent-runtime/src/pi/bridge/bridge.ts');
-  const acpLaunchSpecs = checkoutRepoFile('packages/agent-runtime/src/acp-launch-specs.ts');
-  const providerRegistry = checkoutRepoFile('packages/agent-runtime/src/provider-registry.ts');
+function locateArtifactInputs(
+  locator: HostArtifactLocator
+): { ok: true; inputs: ArtifactInputs } | { ok: false; missing: string[] } {
+  const missing: string[] = [];
+  const daemon = (relPath: (typeof JOIN_DAEMON_SOURCE_FILES)[number]): string | null => {
+    const found = firstExisting(joinDaemonFileCandidates(relPath, locator.here, locator.cwd));
+    if (!found) missing.push(relPath);
+    return found;
+  };
+  const repo = (relPath: (typeof JOIN_REPO_SOURCE_FILES)[number]): string | null => {
+    const found = firstExisting(joinRepoFileCandidates(relPath, locator.here, locator.cwd));
+    if (!found) missing.push(relPath);
+    return found;
+  };
+  const joinCli = daemon('src/join-cli.ts');
+  const enroll = daemon('src/enroll.ts');
+  const enrollRuntime = daemon('src/enroll-runtime.ts');
+  const serverUrl = daemon('src/server-url.ts');
+  const shim = daemon('src/pty-pipe-shim.ts');
+  const sqliteStub = daemon('src/better-sqlite3-stub.ts');
+  const bundleScript = daemon('scripts/build-join.mjs');
+  const serverConnection = daemon('src/server-connection.ts');
+  const pluginHostArtifactClient = daemon('src/plugin-host-artifact-client.ts');
+  const pluginToolCallClient = daemon('src/plugin-tool-call-client.ts');
+  const interactiveRequestClient = daemon('src/interactive-request-client.ts');
+  const workerEntry = repo('packages/provider-bridge-protocol/src/bridge-worker-entry.ts');
+  const piBridge = repo('packages/agent-runtime/src/pi/bridge/bridge.ts');
+  const acpLaunchSpecs = repo('packages/agent-runtime/src/acp-launch-specs.ts');
+  const providerRegistry = repo('packages/agent-runtime/src/provider-registry.ts');
   if (
-    !joinCli || !enroll || !enrollRuntime || !serverUrl || !shim || !sqliteStub || !bundleScript
+    missing.length > 0
+    || !joinCli || !enroll || !enrollRuntime || !serverUrl || !shim || !sqliteStub || !bundleScript
     || !workerEntry || !piBridge || !serverConnection || !pluginHostArtifactClient
     || !pluginToolCallClient || !interactiveRequestClient
     || !acpLaunchSpecs || !providerRegistry
   ) {
-    throw new Error('zcc-host join bundle sources are missing from this checkout');
+    return {
+      ok: false,
+      missing: missing.length > 0 ? missing : [...JOIN_DAEMON_SOURCE_FILES, ...JOIN_REPO_SOURCE_FILES]
+    };
   }
   return {
-    joinCli,
-    enroll,
-    enrollRuntime,
-    serverUrl,
-    shim,
-    sqliteStub,
-    bundleScript,
-    workerEntry,
-    piBridge,
-    serverConnection,
-    pluginHostArtifactClient,
-    pluginToolCallClient,
-    interactiveRequestClient,
-    acpLaunchSpecs,
-    providerRegistry
+    ok: true,
+    inputs: {
+      joinCli,
+      enroll,
+      enrollRuntime,
+      serverUrl,
+      shim,
+      sqliteStub,
+      bundleScript,
+      workerEntry,
+      piBridge,
+      serverConnection,
+      pluginHostArtifactClient,
+      pluginToolCallClient,
+      interactiveRequestClient,
+      acpLaunchSpecs,
+      providerRegistry
+    }
   };
 }
 
@@ -132,43 +245,21 @@ function artifactStamp(inputs: ArtifactInputs): string {
   return hash.digest('hex').slice(0, 8);
 }
 
+function prebuiltStamp(bundleDir: string): string {
+  const hash = createHash('sha256');
+  for (const file of PREBUILT_JOIN_FILES) {
+    hash.update(readFileSync(join(bundleDir, file)));
+  }
+  hash.update(String(HOST_RPC_PROTOCOL_VERSION));
+  hash.update('prebuilt-join-bundle');
+  return hash.digest('hex').slice(0, 8);
+}
+
 function cachedTarballPath(version: string, stamp: string): string {
   return join(tmpdir(), `zcc-host-artifact-${version}-${HOST_RPC_PROTOCOL_VERSION}-${stamp}.tgz`);
 }
 
-/**
- * Serve the host-daemon join artifact this server was built with so a remote
- * machine cannot be stranded on a different protocol. The tarball is an
- * esbuild bundle of join-cli (Node ESM, no tsx) plus the provider-bridge
- * worker and Pi bridge, with node-pty swapped for a pipe shim so Linux
- * remotes do not need this laptop's native addon.
- */
-export function resolveHostArtifact(env: NodeJS.ProcessEnv = process.env): HostArtifactInfo {
-  const override = env.ZCC_HOST_ARTIFACT?.trim();
-  if (override && existsSync(override)) {
-    return {
-      version: hostDaemonVersion(),
-      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
-      tarballPath: override
-    };
-  }
-  const version = hostDaemonVersion();
-  const inputs = artifactInputs();
-  const stamp = artifactStamp(inputs);
-  const cached = cachedTarballPath(version, stamp);
-  if (!existsSync(cached)) {
-    packJoinArtifact(cached, inputs.bundleScript);
-  }
-  return {
-    version,
-    protocolVersion: HOST_RPC_PROTOCOL_VERSION,
-    tarballPath: cached
-  };
-}
-
-function packJoinArtifact(tarball: string, bundleScript: string): void {
-  const dir = mkdtempSync(join(tmpdir(), 'zcc-host-artifact-'));
-  mkdirSync(dir, { recursive: true, mode: 0o755 });
+function writeJoinPackageJson(dir: string): void {
   writeFileSync(
     join(dir, 'package.json'),
     JSON.stringify({
@@ -178,6 +269,74 @@ function packJoinArtifact(tarball: string, bundleScript: string): void {
       bin: { 'zcc-host': 'join.mjs' }
     }, null, 2)
   );
+}
+
+function tarJoinDir(tarball: string, dir: string): void {
+  const packed = spawnSync(
+    'tar',
+    ['-czf', tarball, '-C', dir, 'package.json', ...PREBUILT_JOIN_FILES],
+    { encoding: 'utf8' }
+  );
+  if (packed.status !== 0 || !existsSync(tarball)) {
+    throw new Error(packed.stderr || 'failed to pack zcc-host artifact');
+  }
+}
+
+/**
+ * Serve the host-daemon join artifact this server was built with so a remote
+ * machine cannot be stranded on a different protocol. The tarball is an
+ * esbuild bundle of join-cli (Node ESM, no tsx) plus the provider-bridge
+ * worker and Pi bridge, with node-pty swapped for a pipe shim so Linux
+ * remotes do not need this laptop's native addon.
+ */
+export function resolveHostArtifact(
+  env: NodeJS.ProcessEnv = process.env,
+  locator: HostArtifactLocator = defaultHostArtifactLocator()
+): HostArtifactInfo {
+  const override = env.ZCC_HOST_ARTIFACT?.trim();
+  if (override && existsSync(override)) {
+    return {
+      version: hostDaemonVersion(),
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      tarballPath: override
+    };
+  }
+  const version = hostDaemonVersion();
+  const located = locateArtifactInputs(locator);
+  if (located.ok) {
+    const stamp = artifactStamp(located.inputs);
+    const cached = cachedTarballPath(version, stamp);
+    if (!existsSync(cached)) {
+      packJoinArtifact(cached, located.inputs.bundleScript);
+    }
+    return {
+      version,
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      tarballPath: cached
+    };
+  }
+  const prebuilt = resolvePrebuiltJoinBundleDir(locator);
+  if (prebuilt) {
+    const stamp = prebuiltStamp(prebuilt);
+    const cached = cachedTarballPath(version, stamp);
+    if (!existsSync(cached)) {
+      packPrebuiltArtifact(cached, prebuilt);
+    }
+    return {
+      version,
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      tarballPath: cached
+    };
+  }
+  throw new Error(
+    `zcc-host join bundle sources are missing from this checkout (${located.missing.join(', ')})`
+  );
+}
+
+function packJoinArtifact(tarball: string, bundleScript: string): void {
+  const dir = mkdtempSync(join(tmpdir(), 'zcc-host-artifact-'));
+  mkdirSync(dir, { recursive: true, mode: 0o755 });
+  writeJoinPackageJson(dir);
   const outfile = join(dir, 'join.mjs');
   const packedJs = spawnSync(process.execPath, [bundleScript, '--outfile', outfile], {
     encoding: 'utf8'
@@ -187,14 +346,17 @@ function packJoinArtifact(tarball: string, bundleScript: string): void {
   if (packedJs.status !== 0 || !existsSync(outfile) || !existsSync(worker) || !existsSync(piBridge)) {
     throw new Error(packedJs.stderr || packedJs.stdout || 'failed to bundle zcc-host join.mjs');
   }
-  const packed = spawnSync(
-    'tar',
-    ['-czf', tarball, '-C', dir, 'package.json', 'join.mjs', 'bb-provider-bridge-worker.mjs', 'bb-pi-bridge.mjs'],
-    { encoding: 'utf8' }
-  );
-  if (packed.status !== 0 || !existsSync(tarball)) {
-    throw new Error(packed.stderr || 'failed to pack zcc-host artifact');
+  tarJoinDir(tarball, dir);
+}
+
+function packPrebuiltArtifact(tarball: string, bundleDir: string): void {
+  const dir = mkdtempSync(join(tmpdir(), 'zcc-host-artifact-'));
+  mkdirSync(dir, { recursive: true, mode: 0o755 });
+  writeJoinPackageJson(dir);
+  for (const file of PREBUILT_JOIN_FILES) {
+    copyFileSync(join(bundleDir, file), join(dir, file));
   }
+  tarJoinDir(tarball, dir);
 }
 
 export function createHostArtifactReadStream(path: string): ReturnType<typeof createReadStream> {

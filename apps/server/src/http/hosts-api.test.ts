@@ -80,6 +80,75 @@ describe('hosts API', () => {
     });
   });
 
+  it('stores a default workspace path on an enrolled machine, not this Mac', async () => {
+    await start();
+    await fetch(`${server!.url}internal/hosts/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer enroll-token-enroll-token-enroll',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostName: 'laptop',
+        instanceId: '11111111-1111-4111-8111-111111111111'
+      })
+    });
+    const minted = await fetch(`${server!.url}api/v1/hosts/join-codes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    }).then((response) => response.json()) as { joinCode: string; hostId: string };
+    const enrolled = await fetch(`${server!.url}internal/hosts/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${minted.joinCode}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostName: 'limited-pony',
+        instanceId: '33333333-3333-4333-8333-333333333333',
+        hostId: minted.hostId
+      })
+    });
+    expect(enrolled.status).toBe(201);
+    const remote = await enrolled.json() as { hostId: string };
+    const listed = await fetch(`${server!.url}api/v1/hosts`).then((response) => response.json()) as Array<{
+      id: string;
+      isPrimary: boolean;
+    }>;
+    const primary = listed.find((row) => row.isPrimary);
+    expect(primary).toBeTruthy();
+    const denied = await fetch(`${server!.url}api/v1/hosts/${primary!.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ defaultWorkspacePath: '/opt/workspace/core' })
+    });
+    expect(denied.status).toBe(400);
+    const patched = await fetch(`${server!.url}api/v1/hosts/${remote.hostId}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ defaultWorkspacePath: '/opt/workspace/core' })
+    });
+    expect(patched.status).toBe(200);
+    await expect(patched.json()).resolves.toMatchObject({
+      id: remote.hostId,
+      defaultWorkspacePath: '/opt/workspace/core',
+      isPrimary: false
+    });
+    const cleared = await fetch(`${server!.url}api/v1/hosts/${remote.hostId}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ defaultWorkspacePath: '' })
+    });
+    expect(cleared.status).toBe(200);
+    await expect(cleared.json()).resolves.toMatchObject({
+      id: remote.hostId,
+      defaultWorkspacePath: null
+    });
+  });
+
   it('enrolls a join code against a Tailscale Serve Host header', async () => {
     await start('https://box.tailnet.ts.net');
     const minted = await fetch(`${server!.url}api/v1/hosts/join-codes`, {

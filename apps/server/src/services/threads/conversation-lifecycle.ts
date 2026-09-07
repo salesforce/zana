@@ -58,6 +58,10 @@ import { bridgeLaunchForProvider, getThreadProvider, permissionModeForLaunchProf
 import { clampPermissionModeToHost } from '../hosts/permission-ceiling.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
+import {
+  threadPathMentionReaders,
+  withResolvedPathMentionContext
+} from '../../plugins/path-mentions.js';
 import { appendStopRequestedEvent, finalizeInterruptedConversation } from './conversation-interrupt.js';
 import {
   markOwningThreadPlanTasksInterrupted,
@@ -170,7 +174,10 @@ export async function sendConversationTurn(
   const resolvedMode = resolveConversationSendMode(live, mode);
   ensureRuntimeCanAcceptActiveSend(ctx, live, resolvedMode);
   const resolvedInput = prependDeferredFirstTurnContext(
-    await withResolvedPluginMentionContext(ctx.plugins, input),
+    await withResolvedPathMentionContext(
+      await withResolvedPluginMentionContext(ctx.plugins, input),
+      threadPathMentionReaders(ctx, live.id)
+    ),
     resolveDeferredFirstTurnContext(ctx, live.id)
   );
   const textPrompt = flattenThreadInput(resolvedInput).map((part) => part.trim()).filter((part) => part.length > 0);

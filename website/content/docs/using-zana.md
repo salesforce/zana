@@ -1,4 +1,4 @@
-# Using Zana Command Center
+# Using Zana
 
 Once you've [installed the app and spawned your first
 agent](/docs/getting-started/), this guide covers the day-to-day surfaces — the

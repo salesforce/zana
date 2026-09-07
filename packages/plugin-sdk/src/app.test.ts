@@ -201,6 +201,78 @@ describe('definePluginApp', () => {
     ).toThrow(/"component" must be a React component function/);
   });
 
+  it('collects projectStatusbarItem and rejects invalid registrations', () => {
+    const def = definePluginApp((app) => {
+      app.slots.projectStatusbarItem({
+        id: 'orgs',
+        align: 'right',
+        order: 10,
+        icon: 'Cloud',
+        label: 'prod',
+        tooltip: 'Current org',
+        component: () => null,
+        run: (ctx) => {
+          ctx.openMenu([]);
+        }
+      });
+      app.slots.projectStatusbarItem({
+        id: 'live',
+        align: 'left',
+        item: () => null
+      });
+    });
+    const set = collectPluginApp('salesforce', 1, def);
+    expect(set.projectStatusbarItems).toHaveLength(2);
+    expect(set.projectStatusbarItems[0]).toMatchObject({
+      id: 'orgs',
+      align: 'right',
+      order: 10,
+      icon: 'Cloud',
+      label: 'prod',
+      tooltip: 'Current org',
+      pluginId: 'salesforce'
+    });
+    expect(set.projectStatusbarItems[1]).toMatchObject({ id: 'live', align: 'left' });
+    expect(typeof set.projectStatusbarItems[1]?.item).toBe('function');
+    expect(
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.projectStatusbarItem({ id: 'plain', label: 'ok' });
+        })
+      ).projectStatusbarItems[0]?.align
+    ).toBe('right');
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.projectStatusbarItem({ id: 'missing' } as never);
+        })
+      )
+    ).toThrow(/"label" is required unless "item" is set/);
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.projectStatusbarItem({ id: 'bad-align', label: 'x', align: 'center' as never });
+        })
+      )
+    ).toThrow(/"align" must be "left" or "right"/);
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.projectStatusbarItem({ id: 'a', label: 'A' });
+          app.slots.projectStatusbarItem({ id: 'a', label: 'B' });
+        })
+      )
+    ).toThrow(/duplicate id/);
+  });
+
   it('defaults navPanel path to id and rejects duplicate slot ids', () => {
     const def = definePluginApp((app) => {
       app.slots.navPanel({

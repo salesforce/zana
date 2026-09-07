@@ -297,6 +297,49 @@ describe('conversation lifecycle', () => {
     }));
   });
 
+  it('appends agent-only path mention context before turn.submit', async () => {
+    const callHostOnlineRpc = vi.fn(async (input: { command?: { type?: string; relPath?: string } }) => {
+      if (input.command?.type === 'host.read_file') {
+        return { content: 'export const x = 1;\n', encoding: 'utf8' };
+      }
+      return { threadId: thread.id, accepted: true };
+    });
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{
+      type: 'text',
+      text: 'see @src/foo.ts',
+      mentions: [{
+        start: 4,
+        end: 15,
+        resource: {
+          kind: 'path',
+          source: 'workspace',
+          entryKind: 'file',
+          path: 'src/foo.ts',
+          label: 'foo.ts'
+        }
+      }]
+    }]);
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'host.read_file',
+        relPath: 'src/foo.ts'
+      })
+    }));
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        input: expect.arrayContaining([
+          expect.objectContaining({ type: 'text', text: 'see @src/foo.ts' }),
+          expect.objectContaining({
+            type: 'text',
+            visibility: 'agent-only',
+            text: expect.stringContaining('export const x = 1')
+          })
+        ])
+      })
+    }));
+  });
+
   it('sends an image-only follow-up as a localImage host prompt part', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
     await sendConversationTurn(

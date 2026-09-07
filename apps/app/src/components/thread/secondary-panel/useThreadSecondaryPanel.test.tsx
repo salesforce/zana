@@ -1,7 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useSecondaryPanel, useThreadSecondaryPanel } from './useThreadSecondaryPanel.js';
+
+vi.mock('../../../lib/product-client.js', () => ({
+  product: {
+    threads: {
+      tabs: async () => ({ revision: 0, tabs: [] }),
+      updateTabs: async () => ({ revision: 1, tabs: [] }),
+      onTabs: () => () => undefined
+    }
+  }
+}));
 
 function Probe({ threadId }: { threadId?: string }) {
   const panel = useThreadSecondaryPanel(threadId);

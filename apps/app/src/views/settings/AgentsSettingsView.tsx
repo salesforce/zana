@@ -3,6 +3,7 @@ import { AUTO_CLOSE_IDLE_DEFAULTS, HEARTBEAT_DEFAULTS, SESSION_MEMORY_DEFAULTS }
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { OverseerRecentPane } from '@/components/settings/OverseerRecentPane';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
 
 export function AgentsSettingsView({
   config,
@@ -443,6 +444,7 @@ export function AgentsSettingsView({
           />
         </Field>
       </Section>
+      <RemoteMachineDefaultsList />
 
       {/* Overseer — the auto-mode-OFF fallback auto-approval cascade. The
           sub-settings (LLM tier, deny patterns) only show once it's armed. */}

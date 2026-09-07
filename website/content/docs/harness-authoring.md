@@ -5,34 +5,29 @@ harness integrations**. A harness teaches the app how one CLI launches, resumes
 sessions, accepts optional integrations, and reports useful state without making
 the generic terminal host understand that CLI's private flags.
 
-This guide is for maintainers adding a new CLI family to Zana. A coding-CLI
-family is a first-party plugin (`plugins/harness-<id>`) that registers with
-`experimental_registerPtyHarness`. The host still authorizes cwd and spawns
-`node-pty`; the plugin owns dialect and catalog. Shell stays a core floor.
+This guide is for maintainers adding a new CLI framework to Zana itself. It is
+not the disk-extension API: a harness runs on the trusted main-process side and
+is statically reviewed and compiled with the application.
 
 ## What a harness is
 
-A harness is a plugin declaration plus the native planner it binds:
+A harness is a static registration plus the native implementation it owns:
 
 ```
 shared profiles and capabilities
               |
               v
-  plugins/harness-<id>/server.ts
-  experimental_registerPtyHarness
+  src/main/harness/<id>/registration.ts
               |
-              +-- zcc.pty planner artifact (in-process in host-daemon)
               +-- provider native argv and remote command
               +-- optional MCP, guidance, hook, and auth encoding
               +-- optional transcript, native-id, and exact-resume adapter
               +-- optional model or agent discovery
               |
               v
-     host-daemon runtime map ∪ shell floor
+     HARNESS_REGISTRATIONS (trusted static roster)
               |
               v
-PtyManager and host services
-```
 PtyManager and main host services
 ```
 
@@ -143,10 +138,10 @@ Use `supportedScopes: ['local', 'remote']` only after testing remote behavior.
 The generic host rejects remote launches for registrations that do not declare
 remote support.
 
-Add the family as `plugins/harness-<id>` with `experimental_registerPtyHarness`.
-Do not add rows to a static `HARNESS_REGISTRATIONS` array (shell only). The SDK
-validator rejects duplicate harness IDs and duplicate profile ownership; unknown
-persisted profiles degrade to the shell floor.
+Add the registration exactly once to `HARNESS_REGISTRATIONS` in
+`src/main/harness/registry.ts`. The SDK validator rejects duplicate harness IDs
+and duplicate profile ownership; the registration test verifies that all profiles
+are owned exactly once.
 
 ## Add only supported adapters
 
@@ -171,13 +166,14 @@ move a contribution because a CLI happens to accept it in another position.
 
 ## Preserve the trust boundary
 
-The harness SDK, `@zcc/harness-sdk`, is a dependency-free contract package.
-Planners load in-process in host-daemon from a packed `zcc.pty` artifact. They
-are not a JSON-RPC subprocess and must not spawn or choose cwd.
+The harness SDK, `@zcc/harness-sdk`, is a dependency-free contract package. It
+is **not** a runtime plugin loader. New harnesses are static code because a CLI
+integration can affect process launch, callbacks, stored session IDs, and remote
+execution.
 
 Keep these rules intact:
 
-- Never accept a harness registration from the renderer.
+- Never accept a harness registration from the renderer, a manifest, or disk.
 - Do not give a provider raw project paths, credentials, renderer IPC, or control
   over session identity.
 - Keep filesystem and process work in the host. A provider returns native launch

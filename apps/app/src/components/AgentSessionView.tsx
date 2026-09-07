@@ -186,6 +186,7 @@ export function AgentSessionView({
         openerKey={closable.openerKey}
         projectId={projectId}
         storage={closable.kind === 'storage-preview'}
+        lineNumber={closable.lineNumber ?? null}
       />
     );
   } else if (closable?.kind === 'browser') {

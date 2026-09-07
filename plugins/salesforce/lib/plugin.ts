@@ -84,7 +84,7 @@ const SETTINGS = {
     type: 'string' as const,
     label: 'Default org alias',
     description:
-      'Salesforce CLI alias used by SOQL, Apex, LWC, and Agentforce. Pick from CLI-connected orgs on the Salesforce tab. Blank falls back to SF_TARGET_ORG, then the CLI default.'
+      'Salesforce CLI alias used by SOQL, Apex, LWC, and Agentforce. Pick from CLI-connected orgs in these settings or on the Salesforce tab. Blank falls back to SF_TARGET_ORG, then the CLI default.'
   },
   [SETTING_API_VERSION]: {
     type: 'string' as const,
@@ -149,7 +149,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   const applyStatus = async () => {
     const snapshot = await readSettings();
     if (!snapshot.defaultOrg) {
-      zcc.status.needsConfiguration('Pick a CLI-connected org on the Salesforce tab, or set a default org alias, then run zcc sf doctor.');
+      zcc.status.needsConfiguration('Pick a CLI-connected org under Plugins → Salesforce, or set a default org alias, then run zcc sf doctor.');
     }
   };
 

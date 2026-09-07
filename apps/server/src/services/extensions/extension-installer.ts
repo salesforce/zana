@@ -35,6 +35,7 @@ import type { Result } from '@zana-ai/zcc-domain/product';
 import { decodeArchive, ARCHIVE_MAX_BYTES } from './extension-registry.js';
 import { isWithin, resolveContained, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import { cloneProject, type CloneOptions, type CloneResult } from '../projects/git-clone.js';
+import { isZccPluginWorkingDir } from './local-extension.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -440,7 +441,7 @@ export interface GitInstallResult {
 export interface InstallFromGitOpts {
   /** Optional branch/tag/SHA. Validated by `safeRef` inside `cloneProject`. */
   ref?: string;
-  /** Optional path INSIDE the repo where `extension.json` lives. Advisory —
+  /** Optional path INSIDE the repo where the plugin manifest lives. Advisory —
    *  realpath-confined against the clone root before use (Rule 2). */
   subdir?: string;
   /** Progress lines from the underlying `git clone`. */
@@ -470,10 +471,22 @@ export function stripCreds(url: string): string {
   }
 }
 
+const MANIFEST_HINT = 'package.json with a zcc block or extension.json';
+
 /**
- * Locate the directory containing `extension.json` within a freshly-cloned repo.
- * Fail-closed + bounded (Rule 5 — never recurses past one level, so a repo's
- * `node_modules` can't be scanned):
+ * True when `dir` is an installable plugin root: a modern `package.json` `zcc`
+ * plugin, or a leftover `extension.json` disk extension. A dir with both is a
+ * zcc plugin (`isZccPluginWorkingDir` wins at the install branch).
+ */
+export function dirHasInstallableManifest(dir: string): boolean {
+  return isZccPluginWorkingDir(dir) || existsSync(join(dir, MANIFEST_NAME));
+}
+
+/**
+ * Locate the directory containing a plugin manifest within a freshly-cloned repo.
+ * Accepts `package.json` with a `zcc` block (current plugins) or leftover
+ * `extension.json`. Fail-closed + bounded (Rule 5 — never recurses past one
+ * level, so a repo's `node_modules` can't be scanned):
  *   1. explicit `subdir` → realpath-confined against `cloneRoot` (Rule 2);
  *      escape → BAD_SUBDIR, no manifest there → MANIFEST_NOT_FOUND.
  *   2. manifest at the repo root → cloneRoot.
@@ -485,7 +498,7 @@ export async function locateManifestDir(
   cloneRoot: string,
   subdir?: string
 ): Promise<Result<string>> {
-  const hasManifest = (dir: string): boolean => existsSync(join(dir, MANIFEST_NAME));
+  const hasManifest = dirHasInstallableManifest;
 
   if (subdir && subdir.trim()) {
     const contained = resolveContained(cloneRoot, subdir.trim());
@@ -502,7 +515,7 @@ export async function locateManifestDir(
       return { ok: false, code: 'MANIFEST_NOT_FOUND', message: `Subfolder not found: ${subdir}` };
     }
     if (!hasManifest(contained)) {
-      return { ok: false, code: 'MANIFEST_NOT_FOUND', message: `No ${MANIFEST_NAME} in ${subdir}` };
+      return { ok: false, code: 'MANIFEST_NOT_FOUND', message: `No ${MANIFEST_HINT} in ${subdir}` };
     }
     return { ok: true, value: contained };
   }
@@ -521,7 +534,7 @@ export async function locateManifestDir(
   const withManifest = entries.filter((name) => hasManifest(join(cloneRoot, name)));
   if (withManifest.length === 1) return { ok: true, value: join(cloneRoot, withManifest[0]) };
   if (withManifest.length === 0) {
-    return { ok: false, code: 'MANIFEST_NOT_FOUND', message: `No ${MANIFEST_NAME} in the repository` };
+    return { ok: false, code: 'MANIFEST_NOT_FOUND', message: `No ${MANIFEST_HINT} in the repository` };
   }
   return {
     ok: false,

@@ -48,12 +48,14 @@ extraResources:
   # `resolveOpencodeBinDir` finds resourcesPath/opencode/<arch>/opencode.
   - from: vendor/opencode
     to: opencode
-  # Packed provider-bridge worker + Pi bridge. The desktop host-daemon runs
-  # from asar and cannot import.meta.resolve tsx/TypeScript; join-cli already
-  # ships these next to join.mjs for remotes. Copy the same files here.
+  # Packed join.mjs + provider-bridge worker + Pi bridge. The desktop host-daemon
+  # runs from asar and cannot import.meta.resolve tsx/TypeScript; Fix connection
+  # tars this tree when checkout sources are not locatable. join-cli already
+  # ships these next to join.mjs for remotes.
   - from: apps/host-daemon/dist
     to: host-bridge
     filter:
+      - join.mjs
       - bb-provider-bridge-worker.mjs
       - bb-pi-bridge.mjs
   # First-party plugins (`plugins/<id>` with a package.json `zcc` block).

@@ -17,6 +17,7 @@ import {
   listAgentCardActions,
   listAgentsBoardActions,
   listProjectTabs,
+  listProjectStatusbarItems,
   projectTabView
 } from './plugin-slots.js';
 
@@ -67,6 +68,10 @@ describe('plugin slot registry', () => {
           title: 'Board',
           run: () => undefined
         });
+        app.slots.projectStatusbarItem({
+          id: 'org',
+          label: 'prod'
+        });
       })
     );
     expect(listNavPanels()).toHaveLength(1);
@@ -79,6 +84,8 @@ describe('plugin slot registry', () => {
     expect(listCreateProjectActions()).toBe(listCreateProjectActions());
     expect(listAgentCardActions()).toHaveLength(1);
     expect(listAgentsBoardActions()).toHaveLength(1);
+    expect(listProjectStatusbarItems()).toHaveLength(1);
+    expect(listProjectStatusbarItems()).toBe(listProjectStatusbarItems());
     expect(listNavPanels()[0]?.generation).toBe(2);
   });
 

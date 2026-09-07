@@ -101,6 +101,53 @@ export interface PluginSidebarFooterActionRegistration extends PluginSlotBase {
   run: (context: PluginSidebarFooterActionContext) => void | Promise<void>;
 }
 
+export const PLUGIN_PROJECT_STATUSBAR_ALIGNS = ['left', 'right'] as const;
+export type PluginProjectStatusbarAlign = (typeof PLUGIN_PROJECT_STATUSBAR_ALIGNS)[number];
+
+export interface PluginProjectStatusbarMenuItem {
+  id: string;
+  label: string;
+  icon?: string;
+  disabled?: boolean;
+  run(): void | Promise<void>;
+}
+
+export interface PluginProjectStatusbarItemContext {
+  projectId: string;
+  toProject(projectId: string, options?: ZccNavigateToProjectOptions): boolean;
+  toPluginPanel(path?: string, options?: { subPath?: string; replace?: boolean }): boolean;
+  openDialog(options?: { title?: string; params?: JsonValue }): boolean;
+  openMenu(items: readonly PluginProjectStatusbarMenuItem[]): boolean;
+}
+
+export interface PluginProjectStatusbarItemProps extends PluginProjectStatusbarItemContext {
+  pluginId: string;
+}
+
+export interface PluginProjectStatusbarDialogProps {
+  pluginId: string;
+  projectId: string;
+  params: JsonValue | null;
+  close(): void;
+  toProject(projectId: string, options?: ZccNavigateToProjectOptions): boolean;
+  toPluginPanel(path?: string, options?: { subPath?: string; replace?: boolean }): boolean;
+}
+
+export interface PluginProjectStatusbarItemRegistration extends PluginSlotBase {
+  /** `left` sits after path/git; `right` (default) sits before terminal meta. */
+  align?: PluginProjectStatusbarAlign;
+  order?: number;
+  tooltip?: string;
+  icon?: string;
+  /** Host-rendered label. Required unless `item` supplies live chrome. */
+  label?: string;
+  /** Live chip; when set, the host does not auto-call `run`. */
+  item?: ComponentType<PluginProjectStatusbarItemProps>;
+  /** Modal body mounted by `openDialog`. */
+  component?: ComponentType<PluginProjectStatusbarDialogProps>;
+  run?: (ctx: PluginProjectStatusbarItemContext) => void | Promise<void>;
+}
+
 export interface PluginPendingInteractionView {
   id: string;
   threadId: string;
@@ -221,6 +268,8 @@ export interface PluginFileOpenerProps {
   pluginId: string;
   path: string;
   source: PluginFileOpenerSource;
+  /** 1-based line to reveal when the host opened this preview with --line / preview_file. */
+  lineNumber?: number | null;
   experimental_Original: ComponentType;
 }
 
@@ -489,6 +538,9 @@ export interface PluginAppSlots {
     registration: Omit<PluginCreateProjectActionRegistration, 'generation' | 'pluginId'>
   ): void;
   sidebarFooterAction(registration: Omit<PluginSidebarFooterActionRegistration, 'generation' | 'pluginId'>): void;
+  projectStatusbarItem(
+    registration: Omit<PluginProjectStatusbarItemRegistration, 'generation' | 'pluginId'>
+  ): void;
   pendingInteraction(registration: Omit<PluginPendingInteractionRegistration, 'generation' | 'pluginId'>): void;
   threadPanelAction(registration: Omit<PluginThreadPanelActionRegistration, 'generation' | 'pluginId'>): void;
   experimental_newThreadPanelAction(
@@ -539,6 +591,7 @@ export interface PluginRegistrationSet {
   projectMenuActions: PluginProjectMenuActionRegistration[];
   createProjectActions: PluginCreateProjectActionRegistration[];
   sidebarFooterActions: PluginSidebarFooterActionRegistration[];
+  projectStatusbarItems: PluginProjectStatusbarItemRegistration[];
   pendingInteractions: PluginPendingInteractionRegistration[];
   threadPanelActions: PluginThreadPanelActionRegistration[];
   newThreadPanelActions: PluginNewThreadPanelActionRegistration[];
@@ -656,6 +709,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     projectMenuActions: [],
     createProjectActions: [],
     sidebarFooterActions: [],
+    projectStatusbarItems: [],
     pendingInteractions: [],
     threadPanelActions: [],
     newThreadPanelActions: [],
@@ -760,6 +814,7 @@ export function collectPluginApp(
     composerCustomization: new Set<string>(),
     pendingInteraction: new Set<string>(),
     sidebarFooterAction: new Set<string>(),
+    projectStatusbarItem: new Set<string>(),
     threadList: new Set<string>(),
     threadHeaderAction: new Set<string>(),
     fileOpener: new Set<string>(),
@@ -902,6 +957,50 @@ export function collectPluginApp(
             title: requireNonEmptyString(kind, 'title', registration.title),
             icon: requireNonEmptyString(kind, 'icon', registration.icon),
             run: registration.run
+          })
+        );
+      },
+      projectStatusbarItem: (registration) => {
+        const kind = 'slots.projectStatusbarItem';
+        const id = requireSlotId(kind, registration.id);
+        requireUniqueId(kind, seen.projectStatusbarItem, id);
+        const align = registration.align ?? 'right';
+        if (align !== 'left' && align !== 'right') {
+          throw new Error(`${kind}: "align" must be "left" or "right"`);
+        }
+        if (registration.item !== undefined) {
+          requireComponent(kind, 'item', registration.item);
+        }
+        if (registration.component !== undefined) {
+          requireComponent(kind, 'component', registration.component);
+        }
+        if (registration.run !== undefined && typeof registration.run !== 'function') {
+          throw new Error(`${kind}: "run" must be a function when set`);
+        }
+        const label = requireOptionalString(kind, 'label', registration.label);
+        if (!registration.item && (label === undefined || label.length === 0)) {
+          throw new Error(`${kind}: "label" is required unless "item" is set`);
+        }
+        if (
+          registration.order !== undefined &&
+          (typeof registration.order !== 'number' || !Number.isFinite(registration.order))
+        ) {
+          throw new Error(`${kind}: "order" must be a finite number when set`);
+        }
+        const tooltip = requireOptionalString(kind, 'tooltip', registration.tooltip);
+        set.projectStatusbarItems.push(
+          stamp({
+            id,
+            align,
+            ...(registration.order !== undefined ? { order: registration.order } : {}),
+            ...(tooltip !== undefined ? { tooltip } : {}),
+            ...(registration.icon !== undefined
+              ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
+              : {}),
+            ...(label !== undefined && label.length > 0 ? { label } : {}),
+            ...(registration.item !== undefined ? { item: registration.item } : {}),
+            ...(registration.component !== undefined ? { component: registration.component } : {}),
+            ...(registration.run !== undefined ? { run: registration.run } : {})
           })
         );
       },

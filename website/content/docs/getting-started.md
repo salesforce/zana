@@ -1,6 +1,6 @@
 # Getting started
 
-Zana Command Center (ZCC) turns supported coding harnesses into a
+Zana (ZCC) turns supported coding harnesses into a
 **multi-project cockpit**: run many agent sessions at once, see which ones
 need you versus which are still working, reply to them, and drive multi-agent
 workflows — all from one window.
@@ -113,7 +113,7 @@ letting the agents carry the rest.
 
 ## Where to go next
 
-- **[Using Zana Command Center](/docs/using-zana/)** — a fuller tour of the
+- **[Using Zana](/docs/using-zana/)** — a fuller tour of the
   Inbox, Agents, Teams, and the day-to-day workflows.
 - **[Using Zana on multiple machines](/docs/multiple-devices/)** — pair another
   computer from Settings → Machines (public origin / relay; SSH reverse-tunnel

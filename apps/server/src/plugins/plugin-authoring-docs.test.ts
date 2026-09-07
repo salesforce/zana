@@ -33,6 +33,8 @@ import type {
   PluginSettingDescriptor,
   PluginSettingsSectionRegistration,
   PluginSidebarFooterActionRegistration,
+  PluginProjectStatusbarItemContext,
+  PluginProjectStatusbarItemRegistration,
   PluginThreadEvent,
   PluginThreadHeaderActionProps,
   PluginThreadHeaderActionRegistration,
@@ -122,6 +124,7 @@ type SlotPropsByName = {
   navPanel: { pluginId: string; subPath: string };
   projectTab: { pluginId: string; projectId: string };
   sidebarFooterAction: { title: string; icon: string; run: () => void | Promise<void> };
+  projectStatusbarItem: PluginProjectStatusbarItemContext;
   pendingInteraction: PluginPendingInteractionProps;
   threadPanelAction: PluginThreadPanelProps;
   experimental_newThreadPanelAction: PluginNewThreadPanelProps;
@@ -191,6 +194,18 @@ const SIDEBAR_FOOTER_ACTION_REGISTRATION_FIELDS = [
   'icon',
   'run'
 ] as const satisfies readonly (keyof Omit<PluginSidebarFooterActionRegistration, 'generation' | 'pluginId'>)[];
+
+const PROJECT_STATUSBAR_ITEM_REGISTRATION_FIELDS = [
+  'id',
+  'align',
+  'order',
+  'tooltip',
+  'icon',
+  'label',
+  'item',
+  'component',
+  'run'
+] as const satisfies readonly (keyof Omit<PluginProjectStatusbarItemRegistration, 'generation' | 'pluginId'>)[];
 
 const THREAD_PANEL_ACTION_REGISTRATION_FIELDS = [
   'id',
@@ -297,6 +312,7 @@ const FRONTEND_SLOT_PROP_FIELDS = {
   navPanel: ['pluginId', 'subPath'],
   projectTab: ['pluginId', 'projectId'],
   sidebarFooterAction: ['title', 'icon', 'run'],
+  projectStatusbarItem: ['projectId', 'toProject', 'toPluginPanel', 'openDialog', 'openMenu'],
   pendingInteraction: ['interaction', 'submit', 'cancel'],
   threadPanelAction: ['pluginId', 'threadId', 'params'],
   experimental_newThreadPanelAction: ['pluginId', 'projectId', 'params'],
@@ -310,7 +326,7 @@ const FRONTEND_SLOT_PROP_FIELDS = {
     'experimental_Original'
   ],
   experimental_threadHeaderAction: ['pluginId', 'threadId', 'projectId', 'isCompactViewport'],
-  fileOpener: ['pluginId', 'path', 'source', 'experimental_Original'],
+  fileOpener: ['pluginId', 'path', 'source', 'lineNumber', 'experimental_Original'],
   messageDirective: ['pluginId', 'attributes', 'source', 'message', 'openWorkspaceFile'],
   messageAction: ['threadId', 'message', 'selectedText', 'openPanel'],
   experimental_agentCardAction: ['sessionId', 'projectId'],
@@ -379,6 +395,9 @@ describe('zcc-plugin-authoring skill', () => {
     }
     for (const field of SIDEBAR_FOOTER_ACTION_REGISTRATION_FIELDS) {
       expect(skill, `sidebarFooterAction registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of PROJECT_STATUSBAR_ITEM_REGISTRATION_FIELDS) {
+      expect(skill, `projectStatusbarItem registration field "${field}" is not documented`).toContain(field);
     }
     for (const field of THREAD_PANEL_ACTION_REGISTRATION_FIELDS) {
       expect(skill, `threadPanelAction registration field "${field}" is not documented`).toContain(field);

@@ -13,3 +13,14 @@ export {
   DEFAULT_WORKSPACE_DISPLAY_NAME,
   toProjectSummary
 } from './product.js';
+
+export {
+  matchHostForRemoteProject,
+  remoteStartPathSourceLabel,
+  resolveRemoteStartPath,
+  stampRemoteStartPath,
+  type RemoteStartPathHost,
+  type RemoteStartPathProject,
+  type RemoteStartPathResolution,
+  type RemoteStartPathSource
+} from './remote-start-path.js';

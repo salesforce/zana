@@ -815,6 +815,8 @@ describe('expandable row and chips', () => {
     expect(column).toContain('<ThreadTodoCard');
     expect(column).toContain('composerVisibleTodos(todos, durablePlan?.tasks.length');
     expect(source).toContain('product.threads.cancelPlan');
+    expect(source).toContain('livePlan={livePlan}');
+    expect(source).toContain('isLivePlanFilePath');
     expect(source).not.toContain('ThreadPromptModeChip');
 
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
@@ -829,6 +831,7 @@ describe('expandable row and chips', () => {
     expect(css).toContain('.thread-prompt-mode-card');
     expect(css).toContain('.thread-pending-banner-plan');
     expect(css).toContain('.thread-plan-panel');
+    expect(css).toContain('.thread-plan-status');
     expect(css).toContain('.thread-plan-execution');
     expect(css).toContain('.thread-todo-checklist');
     const mentionPopover = css.slice(

@@ -67,6 +67,15 @@ describe('AgentDeleteQuickAction', () => {
 });
 
 describe('plugin agent card menu', () => {
+  it('portals the right-click menu to document.body', () => {
+    const source = readFileSync(new URL('./agentCardActions.tsx', import.meta.url), 'utf8');
+    const start = source.indexOf('export function AgentCardMenu');
+    const end = source.indexOf('export function AgentDeleteQuickAction');
+    const body = source.slice(start, end);
+    expect(body).toContain('createPortal(node, document.body)');
+    expect(body).toContain("typeof document === 'undefined'");
+  });
+
   it('runs experimental_agentCardAction from the overflow menu', () => {
     const source = readFileSync(new URL('./agentCardActions.tsx', import.meta.url), 'utf8');
     expect(source).toContain('listAgentCardActions');

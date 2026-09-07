@@ -72,9 +72,15 @@ export type CreateHostJoinCodeResponse = z.infer<
 
 export const updateHostRequestSchema = z
   .object({
-    name: z.string().trim().min(1).max(100),
+    name: z.string().trim().min(1).max(100).optional(),
+    /** Empty or null clears the per-machine default (fall through to global / HOME). */
+    defaultWorkspacePath: z.union([z.string().max(256), z.null()]).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (data) => data.name !== undefined || data.defaultWorkspacePath !== undefined,
+    { message: "name or defaultWorkspacePath required" },
+  );
 export type UpdateHostRequest = z.infer<typeof updateHostRequestSchema>;
 
 /**

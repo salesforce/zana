@@ -4,6 +4,7 @@ import {
   HOST_SESSION_INSTRUCTIONS_MAX,
   HOST_SESSION_TOOLS_MAX,
   invokePluginAgentTool,
+  LIVE_INSTRUCTION_MAX,
   packHostSessionTooling,
   resolvePluginSessionTools,
   safePackPluginSession,
@@ -55,6 +56,23 @@ describe('resolvePluginSessionTools', () => {
     ], { threadId: 'thr-1', projectId: 'proj-1' });
     expect(session.tools.map((row) => row.name)).toEqual(['note_search', 'note_read']);
     expect(session.instructions).toBe('Keep notes short.');
+  });
+
+  it('evaluates live instruction providers, caps them, and swallows throws', async () => {
+    const session = await resolvePluginSessionTools([
+      source({
+        pluginId: 'tunnel',
+        extraInstructionProviders: [
+          (ctx) => `Tunnel for ${ctx.threadId} in ${ctx.projectId} ${'x'.repeat(5000)}`,
+          () => {
+            throw new Error('boom');
+          },
+          () => null
+        ]
+      })
+    ], { threadId: 'thr-1', projectId: 'proj-1' });
+    expect(session.instructions?.startsWith('Tunnel for thr-1 in proj-1 ')).toBe(true);
+    expect(session.instructions?.length).toBe(LIVE_INSTRUCTION_MAX);
   });
 
   it('omits tools when configure() returns an empty object', async () => {

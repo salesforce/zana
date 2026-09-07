@@ -95,7 +95,9 @@ describe('salesforce plugin contract', () => {
 
   it('registers settings, Salesforce tab, Agentforce side panels, guardrail, composer banner, and file opener', () => {
     const set = collectTestPluginApp(app, 'salesforce');
-    expect(set.settingsSections).toEqual([]);
+    expect(set.settingsSections).toMatchObject([
+      { id: 'orgs', title: 'Connected orgs', component: expect.any(Function) }
+    ]);
     expect(set.projectTabs.map((tab) => tab.id)).toEqual(['salesforce', 'soql']);
     expect(set.projectTabs[1]).toMatchObject({ label: 'SOQL', icon: 'Database', global: false });
     expect(set.threadPanelActions.map((row) => row.id)).toEqual(['playground', 'preview']);

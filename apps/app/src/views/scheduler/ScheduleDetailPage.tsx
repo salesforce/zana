@@ -157,6 +157,7 @@ function ScheduleDetailView({
         openerKey={closable.openerKey}
         projectId={task?.projectId ?? projectId}
         storage={closable.kind === 'storage-preview'}
+        lineNumber={closable.lineNumber ?? null}
       />
     );
   } else if (closable?.kind === 'browser') {

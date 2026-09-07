@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { OrgPicker } from './OrgPicker.js';
 import { SalesforceProjectTab } from './SalesforceProjectTab.js';
+import app from '../../app.tsx';
 
 const orgs = [
   {
@@ -118,6 +120,15 @@ describe('OrgPicker and Salesforce project tab', () => {
     });
     expect(setSettings).toHaveBeenCalledWith('salesforce', { defaultOrg: 'prod' });
     expect(onSelect).toHaveBeenCalledWith('prod');
+  });
+
+  it('lists CLI orgs from the plugin settings section', async () => {
+    const Section = collectTestPluginApp(app, 'salesforce').settingsSections[0]?.component;
+    expect(Section).toBeTruthy();
+    const el = await mount(createElement(Section!, { pluginId: 'salesforce' }));
+    expect(el.querySelector('[data-testid="salesforce-org-list"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="salesforce-org:prod"]')).toBeTruthy();
+    expect(el.textContent).toContain('CLI-connected orgs');
   });
 
   it('renders CLI orgs on the Salesforce project tab', async () => {

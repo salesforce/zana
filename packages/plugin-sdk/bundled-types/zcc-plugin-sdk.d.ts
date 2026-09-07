@@ -107,7 +107,7 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
       }): void;
     };
     readonly agents: {
-      contributeInstructions(text: string): void;
+      contributeInstructions(text: string | ((ctx: { threadId: string; projectId: string }) => string | null)): void;
       contributeSkills(rootPaths: string[]): void;
       registerTool(registration: {
         name: string;

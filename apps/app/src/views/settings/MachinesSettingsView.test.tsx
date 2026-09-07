@@ -274,6 +274,8 @@ describe('MachineCard', () => {
     expect(html).toContain('Online');
     expect(html).toContain('0 projects');
     expect(html).toContain('Permission ceiling');
+    expect(html).toContain('Default workspace path');
+    expect(html).toContain('data-testid="machine-workspace-h1"');
     expect(html).toContain('Rename');
     expect(html).toContain('Remove');
     expect(html).not.toContain('Reconnect');
@@ -334,6 +336,7 @@ describe('MachineCard', () => {
     expect(html).toContain('this machine');
     expect(html).toContain('1 project');
     expect(html).toContain('Connect this machine to see harness CLI versions');
+    expect(html).not.toContain('Default workspace path');
     expect(html).not.toContain('Remove');
     expect(html).not.toContain('Reconnect');
     expect(html).toContain('Relaunch harness');

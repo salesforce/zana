@@ -50,7 +50,11 @@ Slots (also mapped in the in-app Plugin Guide):
 - `experimental_projectMenuAction` — project row overflow or workspace organize menu (`toProject` opens a `projectTab`)
 - `experimental_createProjectAction` — Add project (+) menu (`openDialog` mounts an optional create wizard; `addProject` registers the folder)
 - `sidebarFooterAction` — host-rendered footer icon
-- `pendingInteraction` / `threadPanelAction` / `experimental_newThreadPanelAction` /
+- `projectStatusbarItem` — project workspace footer chip (`align` left/right;
+  `run` may `toProject` / `toPluginPanel` / `openDialog` / `openMenu`)
+- `pendingInteraction` / `threadPanelAction` (thread side-panel tabs; optional
+  `scopes` include `"agent-session"` for the CLI-agent inspector) /
+  `experimental_newThreadPanelAction` /
   `experimental_threadList` / `experimental_threadHeaderAction` — thread chrome
 - `fileOpener` / `messageDirective` / `messageAction` / `experimental_timelineRenderer`
 - `experimental_agentCardAction` / `experimental_agentsBoardAction`

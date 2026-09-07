@@ -64,6 +64,12 @@ export type {
   PluginSettingsSectionRegistration,
   PluginSidebarFooterActionContext,
   PluginSidebarFooterActionRegistration,
+  PluginProjectStatusbarAlign,
+  PluginProjectStatusbarDialogProps,
+  PluginProjectStatusbarItemContext,
+  PluginProjectStatusbarItemProps,
+  PluginProjectStatusbarItemRegistration,
+  PluginProjectStatusbarMenuItem,
   PluginSlotBase,
   PluginThreadHeaderActionProps,
   PluginThreadHeaderActionRegistration,
@@ -84,6 +90,7 @@ export {
   collectPluginApp,
   DEFAULT_PLUGIN_THREAD_PANEL_SCOPES,
   emptyRegistrationSet,
+  PLUGIN_PROJECT_STATUSBAR_ALIGNS,
   PLUGIN_THREAD_PANEL_SCOPES,
   threadPanelActionMatchesScope
 } from './app-contract.js';

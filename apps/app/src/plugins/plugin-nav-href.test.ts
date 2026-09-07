@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { definePluginApp } from '@zana-ai/zcc-plugin-sdk';
-import { extensionsHubRedirectForPath, hrefForPluginNavPanel, hrefForPluginProjectTab, projectMenuNavigateContext, createProjectActionContext } from './plugin-nav-href.js';
+import { extensionsHubRedirectForPath, hrefForPluginNavPanel, hrefForPluginProjectTab, projectMenuNavigateContext, createProjectActionContext, projectStatusbarItemContext } from './plugin-nav-href.js';
 import { clearPluginSlots, interpretPluginApp, listProjectTabs } from './plugin-slots.js';
 
 afterEach(() => {
@@ -114,6 +114,39 @@ describe('createProjectActionContext', () => {
     });
     ctx.toProject('proj-1', { tabId: 'salesforce' });
     expect(navigated).toEqual(['/projects/proj-1/salesforce']);
+    clearPluginSlots('salesforce');
+  });
+});
+
+describe('projectStatusbarItemContext', () => {
+  it('opens a project tab and a nav panel', () => {
+    interpretPluginApp(
+      'salesforce',
+      definePluginApp((app) => {
+        app.slots.navPanel({
+          id: 'main',
+          title: 'Salesforce',
+          icon: 'Cloud',
+          path: 'panel',
+          component: () => null
+        });
+        app.slots.projectTab({ id: 'salesforce', label: 'Salesforce', icon: 'Cloud', component: () => null });
+        app.slots.projectTab({ id: 'soql', label: 'SOQL', icon: 'Database', component: () => null });
+      })
+    );
+    const navigated: string[] = [];
+    const ctx = projectStatusbarItemContext('salesforce', {
+      projectId: 'proj-1',
+      navigate: (to) => {
+        navigated.push(to);
+      },
+      openDialog: () => true,
+      openMenu: () => true
+    });
+    expect(ctx.projectId).toBe('proj-1');
+    expect(ctx.toProject('proj-1', { tabId: 'soql' })).toBe(true);
+    expect(ctx.toPluginPanel()).toBe(true);
+    expect(navigated).toEqual(['/projects/proj-1/salesforce%3Asoql', '/plugins/salesforce/panel']);
     clearPluginSlots('salesforce');
   });
 });

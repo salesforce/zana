@@ -59,6 +59,7 @@ import { readLastThreadExecution } from '../services/threads/thread-last-executi
 import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
 import { listThreadStorageFiles, readThreadStorageFile } from '../services/threads/thread-storage.js';
+import { getConversationThreadTabs, updateConversationThreadTabs } from '../services/threads/thread-tabs.js';
 import { openThreadFilePreview, previewFileDepsFromContext } from '../services/threads/preview-file.js';
 import { listThreadProviders, bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
 import {
@@ -331,13 +332,13 @@ export async function handleProductHttp(
 
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
-      Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+      Allow: 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS',
       'Cache-Control': 'no-store',
       ...(origin
         ? {
             'Access-Control-Allow-Origin': origin,
             'Access-Control-Allow-Headers': 'content-type, x-zcc-app-surface',
-            'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS',
             Vary: 'Origin'
           }
         : {})
@@ -1057,6 +1058,36 @@ export async function handleProductHttp(
         });
         sendJson(response, 200, { delivered: ctx.hub.size() });
       } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadTabs = routeParams(path, '/api/v1/threads/:id/tabs');
+    if (threadTabs && method === 'GET') {
+      try {
+        sendJson(response, 200, getConversationThreadTabs(ctx, threadTabs.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+    if (threadTabs && method === 'PUT') {
+      try {
+        sendJson(response, 200, updateConversationThreadTabs(ctx, threadTabs.id, await readJsonBody(request)));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
         sendHostFailure(response, error);
       }
       return true;

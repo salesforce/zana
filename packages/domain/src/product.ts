@@ -2268,15 +2268,16 @@ export interface AppConfig {
    */
   tmuxScope?: 'off' | 'remote' | 'all';
   /**
-   * Global fallback start path for remote (SSH) projects. When a remote project
-   * has no per-project `ProjectRemote.remotePath` of its own, both the terminal
-   * (the `cd` prefix in the ssh command) and the Explorer browse root start here
-   * instead of the remote `$HOME`. Useful when every workspace lives under a
-   * fixed root on the dev box — set it once here rather than on every project.
-   * Precedence: per-project `remotePath` → this default → remote `$HOME`.
-    * Trimmed; when absent or blank, remotes start in their own `$HOME`. The
-    * renderer is untrusted, so the value is sanitized in main (no control chars,
-    * length-capped) like the per-project field.
+   * Global fallback start path for unpaired remote (SSH) projects. When a
+   * remote has no per-project `remotePath` and is not paired to a Machine (or
+   * that Machine has no default), the terminal `cd` prefix, Explorer browse
+   * root, and new Modern harness threads start here instead of the remote
+   * `$HOME`. Enrolled machines own their default under Settings → Machines.
+   * Precedence: per-project `remotePath` → matching Machine
+   * `defaultWorkspacePath` → this default → remote `$HOME`.
+   * Trimmed; when absent or blank, unpaired remotes start in their own `$HOME`.
+   * The renderer is untrusted, so the value is sanitized in main (no control chars,
+   * length-capped) like the per-project field.
    */
   remoteDefaultPath?: string;
   /**
@@ -4881,11 +4882,12 @@ export type ExtensionInstallSource =
   /**
    * Install from a remote git repository. `url`/`ref`/`subdir` are ADVISORY
    * renderer hints (Rule #1): main normalizes + clones the url itself, validates
-   * `ref` via `safeRef`, realpath-confines `subdir`, and funnels the result
-   * through the single trusted `installFromDir` seam — so consent + the
-   * deny-by-default broker fire exactly as for `localDir`. `ref` is an optional
-   * branch/tag/SHA (default branch when absent); `subdir` locates
-   * `extension.json` when it isn't at the repo root.
+   * `ref` via `safeRef`, and realpath-confines `subdir`. A `package.json` `zcc`
+   * plugin is staged (symlink/`.git` scrub) then path-installed through
+   * PluginService. A leftover `extension.json` still funnels through
+   * `installFromDir` so consent + the deny-by-default broker fire exactly as
+   * for `localDir`. `ref` is an optional branch/tag/SHA (default branch when
+   * absent); `subdir` locates the manifest when it isn't at the repo root.
    */
   | { kind: 'git'; url: string; ref?: string; subdir?: string }
   /**

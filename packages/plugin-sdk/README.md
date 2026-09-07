@@ -19,7 +19,7 @@ export default definePluginApp((app) => {
 ```
 
 V1 slots: `navPanel`, `settingsSection`, `homepageSection`, `projectTab`,
-`sidebarFooterAction`, `pendingInteraction`. Experimental slots include
+`sidebarFooterAction`, `projectStatusbarItem`, `pendingInteraction`. Experimental slots include
 `experimental_createProjectAction` (Add project menu) and
 `experimental_projectMenuAction` (Organize / row overflow). Open **Plugin Guide**
 for the full surface map.

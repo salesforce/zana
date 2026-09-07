@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Box, Copy, Cpu, Folder, Gauge, GitBranch, GitPullRequest, Server } from 'lucide-react';
+import { Box, Copy, Cpu, Folder, Gauge, GitBranch, GitPullRequest, Laptop, Server } from 'lucide-react';
 import type { GitHostPullRequest, WorkspaceStatus } from '@zana-ai/zcc-domain';
 import { handleHttpLinkClick } from '../../../lib/in-app-browser-link-preference.js';
 import { product } from '../../../lib/product-client.js';
+import { useRemoteStartPathInspection } from '../../../lib/remote-start-path-inspect.js';
 import { useData } from '../../../store.js';
 import { useThreads } from '../../../thread-store.js';
 import {
@@ -45,6 +46,8 @@ export function ThreadInfoRows({
   sshTarget = null,
   sshStatus = null,
   remoteDirectory = null,
+  machineName = null,
+  startPathSource = null,
   children
 }: {
   isWorktree: boolean;
@@ -60,6 +63,8 @@ export function ThreadInfoRows({
   sshTarget?: string | null;
   sshStatus?: ThreadSshStatus | null;
   remoteDirectory?: string | null;
+  machineName?: string | null;
+  startPathSource?: string | null;
   children?: ReactNode;
 }) {
   const gitLabel = remoteToolProxy ? null : workspaceStatusPresentation(workspaceStatus).label;
@@ -98,6 +103,12 @@ export function ThreadInfoRows({
         </InfoRow>
       ) : null}
 
+      {machineName ? (
+        <InfoRow icon={<Laptop size={14} />} label="Machine" testId="thread-info-machine">
+          {machineName}
+        </InfoRow>
+      ) : null}
+
       {directory ? (
         <InfoRow icon={<Folder size={14} />} label="Directory" testId="thread-info-directory">
           <span className="thread-info-directory">
@@ -112,6 +123,12 @@ export function ThreadInfoRows({
               <Copy size={12} />
             </button>
           </span>
+        </InfoRow>
+      ) : null}
+
+      {startPathSource ? (
+        <InfoRow icon={<Folder size={14} />} label="Start path source" testId="thread-info-start-path">
+          {startPathSource}
         </InfoRow>
       ) : null}
 
@@ -221,6 +238,7 @@ export function ThreadInfoContent({
   onOpenStorageFile?: (path: string, title: string) => void;
 }) {
   const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
+  const inspection = useRemoteStartPathInspection(project ?? undefined);
   const threadHostId = useThreads((s) => s.threads.find((row) => row.id === threadId)?.hostId);
   const [environmentName, setEnvironmentName] = useState<string | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus | null>(null);
@@ -282,6 +300,8 @@ export function ThreadInfoContent({
       sshTarget={sshTarget}
       sshStatus={sshStatus}
       remoteDirectory={remoteDirectory}
+      machineName={inspection?.machineName ?? null}
+      startPathSource={inspection?.sourceLabel ?? null}
     >
       <ThreadStorageBrowser threadId={threadId} onOpenFile={onOpenStorageFile} />
     </ThreadInfoRows>

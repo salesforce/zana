@@ -5069,6 +5069,20 @@ body.resizing-col {
   color: var(--text-muted);
 }
 
+.machine-card-workspace {
+  margin: 0;
+}
+
+.remote-machine-defaults {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.remote-machine-defaults .settings-label {
+  display: block;
+}
+
 .machine-card-identity {
   min-width: 0;
   flex: 1 1 16rem;
@@ -9235,6 +9249,7 @@ body.resizing-col .ext-hub-resizer::before {
   gap: 16px;
   font-size: 11px;
   color: var(--text-muted);
+  overflow: hidden;
 }
 
 .statusbar .grow {
@@ -9260,6 +9275,54 @@ body.resizing-col .ext-hub-resizer::before {
 .statusbar-git-dot {
   font-size: 9px;
   line-height: 1;
+}
+
+.statusbar-plugin-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.statusbar-plugin-item {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.statusbar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+}
+
+button.statusbar-item {
+  cursor: pointer;
+}
+
+.statusbar-item:hover,
+.statusbar-item:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.statusbar-item:focus-visible {
+  outline: 1px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+.statusbar-menu {
+  min-width: 160px;
+  padding: 6px;
 }
 
 .project-menu {
@@ -12589,12 +12652,14 @@ body.resizing-col .explorer-resizer::after {
   margin-bottom: 0;
 }
 
-/* Lane accent stripes on the shared kanban header. */
-.zcc-kanban-col.lane-blocked .zcc-kanban-col-header { border-bottom-color: var(--danger); }
-.zcc-kanban-col.lane-working .zcc-kanban-col-header { border-bottom-color: var(--accent-gold); }
-.zcc-kanban-col.lane-scheduled .zcc-kanban-col-header { border-bottom-color: var(--accent-blue); }
-.zcc-kanban-col.lane-idle .zcc-kanban-col-header { border-bottom-color: var(--border-strong); }
-.zcc-kanban-col.lane-done .zcc-kanban-col-header { border-bottom-color: var(--success); }
+/* Lane accent stripes — inset top bar on the column (same pattern as the PR
+   board). Recoloring the header divider paints a full-width loud line under
+   the title that butts into the column's side borders. */
+.zcc-kanban-col.lane-blocked { box-shadow: inset 0 2px 0 var(--danger); }
+.zcc-kanban-col.lane-working { box-shadow: inset 0 2px 0 var(--accent-gold); }
+.zcc-kanban-col.lane-scheduled { box-shadow: inset 0 2px 0 var(--accent-blue); }
+.zcc-kanban-col.lane-idle { box-shadow: inset 0 2px 0 var(--border-strong); }
+.zcc-kanban-col.lane-done { box-shadow: inset 0 2px 0 var(--success); }
 
 .zcc-kanban-col.lane-blocked .zcc-kanban-col-icon { color: var(--danger); }
 .zcc-kanban-col.lane-working .zcc-kanban-col-icon { color: var(--accent-gold); }
@@ -31234,14 +31299,6 @@ textarea.ui-command-composer-input {
   color: var(--text-muted);
 }
 
-.composer-remote-host-path {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 24ch;
-  font-size: 12px;
-}
-
 .composer-remote-host-status {
   display: inline-flex;
   align-items: center;
@@ -33890,6 +33947,45 @@ textarea.thread-command-editor {
   padding: 12px;
 }
 
+.thread-file-preview-host > .thread-plan-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.thread-plan-panel-chrome {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.thread-plan-status {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+}
+
+.thread-plan-status.is-building {
+  color: var(--warn, #b45309);
+  background: color-mix(in srgb, var(--warn, #f59e0b) 18%, transparent);
+}
+
+.thread-plan-status.is-ready {
+  color: var(--text-muted, var(--ink-muted));
+  background: color-mix(in srgb, var(--text-muted, var(--ink-muted)) 14%, transparent);
+}
+
+.thread-plan-status.is-complete {
+  color: var(--ok, #15803d);
+  background: color-mix(in srgb, var(--ok, #22c55e) 16%, transparent);
+}
+
 .thread-plan-panel-empty,
 .thread-plan-panel-file,
 .thread-plan-panel-mismatch,
@@ -33926,11 +34022,43 @@ textarea.thread-command-editor {
 .thread-plan-panel-todos-title {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   margin: 0 0 6px;
   font-size: 12px;
   font-weight: 650;
   color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-plan-panel-todos-title .thread-plan-panel-progress {
+  font-weight: 500;
+}
+
+.thread-plan-panel-refs {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.thread-plan-panel-refs h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-plan-panel-refs ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thread-plan-panel-refs-detail {
+  font-size: 12px;
+  color: var(--text-muted, var(--ink-muted));
 }
 
 .thread-todo-checklist {
@@ -34301,6 +34429,123 @@ textarea.thread-command-editor {
 
 .thread-file-preview .inbox-md {
   max-width: 42rem;
+}
+
+.thread-file-preview-lines {
+  margin: 0;
+  padding: 0;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.thread-file-preview-line {
+  display: flex;
+  gap: 12px;
+  padding: 0 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.thread-file-preview-line.is-highlighted {
+  background: color-mix(in srgb, var(--accent, #2f81f7) 16%, transparent);
+}
+
+.thread-file-preview-line-no {
+  flex: 0 0 3ch;
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.plugin-directive-card,
+.plugin-directive-vis {
+  margin: 8px 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg-2));
+}
+
+.plugin-directive-card--error {
+  padding: 10px 12px;
+  color: var(--danger, #c44);
+  font-size: 13px;
+}
+
+.plugin-directive-card-main,
+.plugin-directive-vis-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plugin-directive-card-main:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.plugin-directive-card-kind {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.plugin-directive-card-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.plugin-directive-card-meta {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.plugin-directive-card-open {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.plugin-directive-card-open:hover,
+.plugin-directive-card-main:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.plugin-directive-vis-chrome {
+  border-bottom: 1px solid var(--border);
+  cursor: default;
+}
+
+.plugin-directive-vis-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: var(--bg);
+}
+
+.plugin-directive-vis-frame--loading {
+  background: color-mix(in srgb, var(--bg-elevated, var(--bg-2)) 70%, transparent);
 }
 
 .docs-file-opener {

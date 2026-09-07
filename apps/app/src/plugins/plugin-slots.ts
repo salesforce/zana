@@ -26,6 +26,7 @@ import type {
   PluginRegistrationSet,
   PluginSettingsSectionRegistration,
   PluginSidebarFooterActionRegistration,
+  PluginProjectStatusbarItemRegistration,
   PluginThreadHeaderActionRegistration,
   PluginThreadListRegistration,
   PluginThreadPanelActionRegistration,
@@ -58,6 +59,7 @@ function emptySnapshot() {
     projectMenuActions: [] as PluginProjectMenuActionRegistration[],
     createProjectActions: [] as PluginCreateProjectActionRegistration[],
     sidebarFooterActions: [] as PluginSidebarFooterActionRegistration[],
+    projectStatusbarItems: [] as PluginProjectStatusbarItemRegistration[],
     pendingInteractions: [] as PluginPendingInteractionRegistration[],
     threadPanelActions: [] as PluginThreadPanelActionRegistration[],
     newThreadPanelActions: [] as PluginNewThreadPanelActionRegistration[],
@@ -90,6 +92,7 @@ function rebuildSnapshot(): void {
     projectMenuActions: orderedSets.flatMap((set) => set.projectMenuActions),
     createProjectActions: orderedSets.flatMap((set) => set.createProjectActions),
     sidebarFooterActions: orderedSets.flatMap((set) => set.sidebarFooterActions),
+    projectStatusbarItems: orderedSets.flatMap((set) => set.projectStatusbarItems),
     pendingInteractions: orderedSets.flatMap((set) => set.pendingInteractions),
     threadPanelActions: orderedSets.flatMap((set) => set.threadPanelActions),
     newThreadPanelActions: orderedSets.flatMap((set) => set.newThreadPanelActions),
@@ -195,6 +198,10 @@ export function projectTabView(
 
 export function listSidebarFooterActions(): PluginSidebarFooterActionRegistration[] {
   return snapshot.sidebarFooterActions;
+}
+
+export function listProjectStatusbarItems(): PluginProjectStatusbarItemRegistration[] {
+  return snapshot.projectStatusbarItems;
 }
 
 export function listPendingInteractionSlots(): PluginPendingInteractionRegistration[] {
