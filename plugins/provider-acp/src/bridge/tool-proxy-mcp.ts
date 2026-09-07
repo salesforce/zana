@@ -35,6 +35,12 @@ export type AcpMcpServerConfig =
   | AcpStdioMcpServerConfig
   | AcpHttpMcpServerConfig;
 
+export function isAcpHttpMcpServerConfig(
+  config: AcpMcpServerConfig,
+): config is AcpHttpMcpServerConfig {
+  return (config as AcpHttpMcpServerConfig).type === "http";
+}
+
 export interface BuildAcpMcpServerConfigArgs {
   bridgeArgs: string[];
   command: string;

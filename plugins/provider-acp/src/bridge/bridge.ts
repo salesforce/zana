@@ -154,6 +154,7 @@ import {
   buildAcpHttpMcpServerConfig,
   runAcpDynamicToolMcpServer,
   type AcpMcpServerConfig,
+  type AcpStdioMcpServerConfig,
 } from "./tool-proxy-mcp.js";
 
 // ---------------------------------------------------------------------------
@@ -356,7 +357,7 @@ function resolveBridgeProcessArgsForMcpServer(): string[] {
   return [...process.execArgv, fileURLToPath(import.meta.url), "--mcp-stdio"];
 }
 
-function resolveBridgeProcessEnvForMcpServer(): AcpMcpServerConfig["env"] {
+function resolveBridgeProcessEnvForMcpServer(): AcpStdioMcpServerConfig["env"] {
   const electronRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
   if (electronRunAsNode === undefined) {
     return [];
