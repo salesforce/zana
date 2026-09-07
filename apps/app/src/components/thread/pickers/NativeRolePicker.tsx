@@ -39,6 +39,7 @@ export function NativeRolePicker({
       title={`${selectedLabel} (Shift+Tab)`}
       ariaKeyshortcuts="Shift+Tab"
       value={selected?.value ?? ''}
+      placeholder="Agent"
       disabled={disabled}
       searchable
       searchPlaceholder={`Search ${ariaLabel.toLowerCase()}…`}
