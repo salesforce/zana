@@ -34,7 +34,7 @@
     "@sf-agentscript/monaco": "2.4.39",
     "@sf-agentscript/parser": "4.0.19",
     "@xyflow/react": "^12.10.0",
-    "monaco-editor": "^0.54.0"
+    "monaco-editor": "^0.56.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
