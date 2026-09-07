@@ -107,7 +107,10 @@ function referencedAgentViews(
       todosAssigned: owned > 0 ? owned : (role === 'Author' && !claimed ? tasks.length : 0)
     });
   }
-  return refs;
+  return refs.sort((left, right) => {
+    if (left.role !== right.role) return left.role === 'Author' ? -1 : 1;
+    return left.threadId.localeCompare(right.threadId);
+  });
 }
 
 function rootThreadIdFor(db: ZccDatabase, threadId: string): string {
