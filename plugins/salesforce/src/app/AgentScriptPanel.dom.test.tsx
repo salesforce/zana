@@ -16,6 +16,20 @@ const rpc = vi.fn(async (_pluginId: string, method: string, args?: { path?: stri
   if (method === 'agentFiles.list') {
     return { ok: true, files: [{ apiName: 'QC', path: 'force-app/bots/QC.agent', lines: 4 }] };
   }
+  if (method === 'org') {
+    return {
+      ok: true,
+      org: {
+        alias: 'dev',
+        username: 'dev@example.com',
+        orgId: '00Dxx',
+        instanceUrl: 'https://example',
+        apiVersion: '62.0',
+        kind: 'sandbox',
+        isDefault: true
+      }
+    };
+  }
   if (method === 'orgs') {
     return {
       ok: true,
@@ -71,6 +85,7 @@ describe('AgentScriptPanel', () => {
     });
     await act(async () => {
       await Promise.resolve();
+      await Promise.resolve();
     });
     return el;
   }
@@ -89,6 +104,8 @@ describe('AgentScriptPanel', () => {
     expect(el.querySelector('[aria-label="Agentforce view"]')?.textContent).toContain('Script');
     expect(el.querySelector('[data-testid="salesforce-agent-script-save"]')).toBeTruthy();
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.list', { projectId: 'proj-1' });
+    expect(rpc.mock.calls.some((call) => call[0] === 'salesforce' && call[1] === 'org')).toBe(true);
+    expect(el.querySelector('[data-testid="salesforce-playground-org"]')?.textContent).toBe('dev (sandbox)');
   });
 
   it('opens a scanned file after the playground is ready and persists on request', async () => {

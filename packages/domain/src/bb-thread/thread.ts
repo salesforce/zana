@@ -2,6 +2,11 @@ import { z } from "zod";
 import { environmentWorkspaceDisplayKindSchema } from "./environment.js";
 import { gitCheckoutRefSchema } from "./git-checkout.js";
 import {
+  queuedMessageFailureReasonSchema,
+  queuedMessagePayloadSchema,
+  queuedMessageWaitingOnSchema,
+} from "./queued-message.js";
+import {
   promptInputSchema,
   permissionModeSchema,
   reasoningLevelSchema,
@@ -361,6 +366,7 @@ export type ThreadPullRequest = z.infer<typeof threadPullRequestSchema>;
 
 export const threadQueuedMessageSchema = z.object({
   id: z.string(),
+  threadId: z.string().optional(),
   content: z.array(promptInputSchema).min(1),
   model: z.string().min(1),
   reasoningLevel: reasoningLevelSchema,
@@ -368,6 +374,11 @@ export const threadQueuedMessageSchema = z.object({
   serviceTier: serviceTierSchema,
   groupWithNext: z.boolean(),
   senderThreadId: z.string().nullable().optional(),
+  sendAt: z.number().int().nonnegative().nullable().default(null),
+  waitingOn: queuedMessageWaitingOnSchema.nullable().default(null),
+  failureReason: queuedMessageFailureReasonSchema.nullable().default(null),
+  payload: queuedMessagePayloadSchema.default({ kind: "inline" }),
+  editable: z.boolean().default(true),
   createdAt: z.number(),
   updatedAt: z.number(),
 });
@@ -403,8 +414,13 @@ export const threadWithRuntimeSchema = threadSchema.extend({
 });
 export type ThreadWithRuntime = z.infer<typeof threadWithRuntimeSchema>;
 
+export const threadQueuedWorkValues = ["none", "waiting", "failed"] as const;
+export const threadQueuedWorkSchema = z.enum(threadQueuedWorkValues);
+export type ThreadQueuedWork = z.infer<typeof threadQueuedWorkSchema>;
+
 export const threadListEntrySchema = threadWithRuntimeSchema.extend({
   activity: threadActivityStateSchema,
+  queuedWork: threadQueuedWorkSchema.default("none"),
   pinSortKey: z.string().nullable(),
   hasPendingInteraction: z.boolean(),
   environmentHostId: z.string().nullable(),

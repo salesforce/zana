@@ -74,4 +74,33 @@ describe('startEnrolledHostDaemon', () => {
     expect(startEnrolledHostConnection).toHaveBeenCalledTimes(2);
     await daemon.close();
   });
+
+  it('does not reuse stored auth for a different join host id', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-enroll-hostid-'));
+    readHostAuth.mockReturnValue({
+      hostId: '11111111-1111-4111-8111-111111111111',
+      hostKey: 'stale-key',
+      hostName: 'test-host'
+    });
+    enrollDaemonHost.mockResolvedValue({
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      hostId: '22222222-2222-4222-8222-222222222222',
+      hostKey: 'fresh-key'
+    });
+    startEnrolledHostConnection.mockImplementation(() => openConnection());
+
+    const daemon = await startEnrolledHostDaemon({
+      dataDir,
+      serverUrl: 'https://zcc.example/t/zcrs_abcdefghijklmnopqr/',
+      token: 'enroll-token-enroll-token-enroll',
+      hostId: '22222222-2222-4222-8222-222222222222'
+    });
+    expect(enrollDaemonHost).toHaveBeenCalledOnce();
+    expect(enrollDaemonHost.mock.calls[0][0].hostId).toBe('22222222-2222-4222-8222-222222222222');
+    expect(startEnrolledHostConnection).toHaveBeenCalledOnce();
+    expect(startEnrolledHostConnection.mock.calls[0][0].hostId).toBe(
+      '22222222-2222-4222-8222-222222222222'
+    );
+    await daemon.close();
+  });
 });

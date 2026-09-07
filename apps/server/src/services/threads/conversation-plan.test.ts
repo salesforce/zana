@@ -210,4 +210,106 @@ describe('durable thread plan', () => {
     expect(view.markdown).toBe('Typed plan body');
     expect(view.markdown).not.toContain('docs search');
   });
+
+  it('updates provider task statuses from successive planSteps snapshots', () => {
+    const { thread } = setup();
+    completeItem(thread.id, {
+      type: 'planSteps',
+      steps: [
+        { step: 'ping', status: 'pending' },
+        { step: 'pong', status: 'pending' }
+      ]
+    });
+    syncPlanFromLatestEvents(db!, thread.id);
+    expect(getDurableThreadPlanView(db!, thread.id)!.tasks.map((task) => `${task.text}:${task.status}`)).toEqual([
+      'ping:pending',
+      'pong:pending'
+    ]);
+
+    completeItem(thread.id, {
+      type: 'planSteps',
+      steps: [
+        { step: 'ping', status: 'active' },
+        { step: 'pong', status: 'pending' }
+      ]
+    });
+    syncPlanFromLatestEvents(db!, thread.id);
+    expect(getDurableThreadPlanView(db!, thread.id)!.tasks.map((task) => `${task.text}:${task.status}`)).toEqual([
+      'ping:in_progress',
+      'pong:pending'
+    ]);
+
+    completeItem(thread.id, {
+      type: 'planSteps',
+      steps: [
+        { step: 'ping', status: 'completed' },
+        { step: 'pong', status: 'in_progress' }
+      ]
+    });
+    syncPlanFromLatestEvents(db!, thread.id);
+    expect(getDurableThreadPlanView(db!, thread.id)!.tasks.map((task) => `${task.text}:${task.status}`)).toEqual([
+      'ping:completed',
+      'pong:in_progress'
+    ]);
+
+    completeItem(thread.id, {
+      type: 'planSteps',
+      steps: [
+        { step: 'ping', status: 'completed' },
+        { step: 'pong', status: 'completed' }
+      ]
+    });
+    syncPlanFromLatestEvents(db!, thread.id);
+    const view = getDurableThreadPlanView(db!, thread.id)!;
+    expect(view.tasks.map((task) => `${task.text}:${task.status}`)).toEqual([
+      'ping:completed',
+      'pong:completed'
+    ]);
+    expect(view.progress).toEqual({ completed: 2, total: 2 });
+  });
+
+  it('imports Cursor and OpenCode todo tool snapshots when planSteps are absent', () => {
+    const { thread } = setup();
+    completeItem(thread.id, {
+      type: 'toolCall',
+      tool: 'other',
+      arguments: {
+        _toolName: 'updateTodos',
+        todos: [
+          { id: 'ping', content: 'ping', status: 'TODO_STATUS_PENDING' },
+          { id: 'pong', content: 'pong', status: 'TODO_STATUS_PENDING' }
+        ]
+      }
+    });
+    completeItem(thread.id, {
+      type: 'toolCall',
+      tool: 'other',
+      arguments: {
+        todos: [{ id: 'ping', content: 'ping', status: 'TODO_STATUS_IN_PROGRESS' }]
+      }
+    });
+    syncPlanFromLatestEvents(db!, thread.id);
+    expect(getDurableThreadPlanView(db!, thread.id)!.tasks.map((task) => `${task.text}:${task.status}`)).toEqual([
+      'ping:in_progress',
+      'pong:pending'
+    ]);
+
+    completeItem(thread.id, {
+      type: 'toolCall',
+      tool: 'other',
+      arguments: {
+        todos: [
+          { content: 'ping', status: 'completed' },
+          { content: 'pong', status: 'completed' }
+        ]
+      }
+    });
+    syncPlanFromLatestEvents(db!, thread.id);
+    const view = getDurableThreadPlanView(db!, thread.id)!;
+    expect(view.tasks.map((task) => `${task.text}:${task.status}`)).toEqual([
+      'ping:completed',
+      'pong:completed'
+    ]);
+    expect(view.progress).toEqual({ completed: 2, total: 2 });
+  });
 });

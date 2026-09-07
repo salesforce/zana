@@ -301,18 +301,23 @@ describe('invokeHostSessionTool', () => {
     expect((await invokeHostSessionTool(product, {
       name: 'browser_snapshot', threadId: 'thr-1', projectId: 'proj-1', input: { targetId: 'tgt_1' }
     })).success).toBe(true);
+    expect(host.snapshot).toHaveBeenCalledWith('tgt_1', 'thr-1');
     expect((await invokeHostSessionTool(product, {
       name: 'browser_click', threadId: 'thr-1', projectId: 'proj-1', input: { targetId: 'tgt_1', selector: 'button' }
     })).success).toBe(true);
+    expect(host.click).toHaveBeenCalledWith('tgt_1', expect.objectContaining({ selector: 'button' }), 'thr-1');
     expect((await invokeHostSessionTool(product, {
       name: 'browser_type', threadId: 'thr-1', projectId: 'proj-1', input: { targetId: 'tgt_1', text: 'hi' }
     })).success).toBe(true);
+    expect(host.type).toHaveBeenCalledWith('tgt_1', expect.objectContaining({ text: 'hi' }), 'thr-1');
     expect((await invokeHostSessionTool(product, {
       name: 'browser_eval', threadId: 'thr-1', projectId: 'proj-1', input: { targetId: 'tgt_1', script: '1+1' }
     })).success).toBe(true);
+    expect(host.evaluate).toHaveBeenCalledWith('tgt_1', '1+1', 'thr-1');
     expect((await invokeHostSessionTool(product, {
       name: 'browser_close', threadId: 'thr-1', projectId: 'proj-1', input: { targetId: 'tgt_1' }
     })).success).toBe(true);
+    expect(host.close).toHaveBeenCalledWith('tgt_1', 'thr-1');
     setBrowserAutomationHost(null);
     const missing = await invokeHostSessionTool(ctx(), {
       name: 'browser_snapshot',

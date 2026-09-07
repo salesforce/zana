@@ -9,6 +9,10 @@
 # the laptop relay is connected; otherwise it publishes a throwaway TCP proxy
 # so Docker can reach loopback (same role Tailscale Serve plays on a real
 # tailnet). Override with `--relay` or `--local`.
+#
+# Live agents: export OPENAI_API_KEY / CURSOR_API_KEY (or put them in the repo
+# `.env`). The helper forwards them into the container and installs matching
+# CLIs (OpenCode, Codex, Pi, Cursor). Keys are never baked into the image.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -55,6 +59,10 @@ Join options:
   --ssh-port N       Host port mapped to the box's SSH (default ${SSH_PORT})
 
   JOIN_CODE / HOST_ID env vars are accepted as well.
+  OPENAI_API_KEY and CURSOR_API_KEY are forwarded into the box (shell or repo .env).
+  Set ZCC_INSTALL_OPENCODE / ZCC_INSTALL_CODEX / ZCC_INSTALL_PI (default 1 when an
+  OpenAI key is present) or ZCC_INSTALL_CURSOR (default 1 when a Cursor key is
+  present) to install those CLIs in the image for live turns.
 
 SSH (password zcc, local toy only):
   ssh -p ${SSH_PORT} zcc@127.0.0.1
@@ -95,6 +103,58 @@ need_docker() {
   if ! docker info >/dev/null 2>&1; then
     printf 'Docker daemon is not available. Start Docker Desktop, then retry.\n' >&2
     exit 1
+  fi
+}
+
+# Forward provider keys from the calling shell or repo .env. Never print them.
+load_env_key() {
+  local name=$1
+  if [[ -n "${!name:-}" ]]; then
+    export "$name"
+    return
+  fi
+  if [[ ! -f "$ROOT/.env" ]]; then
+    export "$name="
+    return
+  fi
+  local value
+  value=$(KEY="$name" node --input-type=module -e '
+    import { readFileSync } from "node:fs";
+    const name = process.env.KEY;
+    const text = readFileSync(process.argv[1], "utf8");
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq < 1 || trimmed.slice(0, eq).trim() !== name) continue;
+      let value = trimmed.slice(eq + 1).trim();
+      if (
+        (value.startsWith("\"") && value.endsWith("\""))
+        || (value.startsWith("'\''") && value.endsWith("'\''"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      process.stdout.write(value);
+      break;
+    }
+  ' "$ROOT/.env")
+  export "$name=$value"
+}
+
+load_provider_keys() {
+  load_env_key OPENAI_API_KEY
+  load_env_key CURSOR_API_KEY
+  if [[ -z "${ZCC_INSTALL_OPENCODE:-}" ]]; then
+    if [[ -n "$OPENAI_API_KEY" ]]; then export ZCC_INSTALL_OPENCODE=1; else export ZCC_INSTALL_OPENCODE=0; fi
+  fi
+  if [[ -z "${ZCC_INSTALL_CODEX:-}" ]]; then
+    if [[ -n "$OPENAI_API_KEY" ]]; then export ZCC_INSTALL_CODEX=1; else export ZCC_INSTALL_CODEX=0; fi
+  fi
+  if [[ -z "${ZCC_INSTALL_PI:-}" ]]; then
+    if [[ -n "$OPENAI_API_KEY" ]]; then export ZCC_INSTALL_PI=1; else export ZCC_INSTALL_PI=0; fi
+  fi
+  if [[ -z "${ZCC_INSTALL_CURSOR:-}" ]]; then
+    if [[ -n "$CURSOR_API_KEY" ]]; then export ZCC_INSTALL_CURSOR=1; else export ZCC_INSTALL_CURSOR=0; fi
   fi
 }
 
@@ -163,27 +223,71 @@ start_proxy() {
   if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     return 0
   fi
-  node --input-type=module -e "
+  # Rewrite Host to loopback so packaged ZCC_APP_URL (Heroku) does not 403
+  # install.sh / enroll when the container dials host.docker.internal.
+  # nohup+disown: a job-controlled `node &` dies with the helper and drops the WS.
+  local proxy_js="
+import http from 'node:http';
 import net from 'node:net';
-const proxy = net.createServer((client) => {
-  const upstream = net.connect(${SERVER_PORT}, '127.0.0.1');
-  client.pipe(upstream);
-  upstream.pipe(client);
-  client.on('error', () => upstream.destroy());
-  upstream.on('error', () => client.destroy());
+const targetPort = ${SERVER_PORT};
+const listenPort = ${PROXY_PORT};
+const loopbackHost = '127.0.0.1:' + targetPort;
+function rewriteHeaders(headers) {
+  const out = { ...headers, host: loopbackHost };
+  delete out['x-forwarded-host'];
+  return out;
+}
+const proxy = http.createServer((req, res) => {
+  const up = http.request({
+    hostname: '127.0.0.1',
+    port: targetPort,
+    path: req.url,
+    method: req.method,
+    headers: rewriteHeaders(req.headers),
+  }, (upRes) => {
+    res.writeHead(upRes.statusCode ?? 502, upRes.headers);
+    upRes.pipe(res);
+  });
+  up.on('error', (error) => {
+    if (!res.headersSent) res.writeHead(502);
+    res.end(String(error.message));
+  });
+  req.pipe(up);
+});
+proxy.on('upgrade', (req, clientSocket, head) => {
+  const headers = rewriteHeaders(req.headers);
+  const up = net.connect(targetPort, '127.0.0.1', () => {
+    const lines = [req.method + ' ' + req.url + ' HTTP/1.1'];
+    for (const [key, value] of Object.entries(headers)) {
+      if (value == null) continue;
+      for (const item of Array.isArray(value) ? value : [value]) {
+        lines.push(key + ': ' + item);
+      }
+    }
+    lines.push('', '');
+    up.write(lines.join('\\r\\n'));
+    if (head.length) up.write(head);
+    up.pipe(clientSocket);
+    clientSocket.pipe(up);
+  });
+  up.on('error', () => clientSocket.destroy());
+  clientSocket.on('error', () => up.destroy());
 });
 proxy.on('error', (error) => {
   console.error(error.message);
   process.exit(1);
 });
-proxy.listen(${PROXY_PORT}, '0.0.0.0', () => {
-  process.stdout.write('proxy listening on 0.0.0.0:${PROXY_PORT}\n');
+proxy.listen(listenPort, '0.0.0.0', () => {
+  process.stdout.write('proxy listening on 0.0.0.0:' + listenPort + '\\n');
 });
-" &
+"
+  nohup node --input-type=module -e "$proxy_js" </dev/null >"$COMPOSE_DIR/.proxy.log" 2>&1 &
   echo $! > "$PID_FILE"
+  disown $! 2>/dev/null || true
   sleep 0.3
   if ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     printf 'could not bind the Docker proxy on port %s\n' "$PROXY_PORT" >&2
+    cat "$COMPOSE_DIR/.proxy.log" >&2 || true
     rm -f "$PID_FILE"
     exit 1
   fi
@@ -207,7 +311,7 @@ EOF
 
 wait_connected() {
   local deadline=$((SECONDS + 120))
-  until docker logs "$CONTAINER" 2>&1 | grep -Eq 'Host daemon connected|Connected \(service install skipped\)|zcc-host-daemon joined'; do
+  until docker logs "$CONTAINER" 2>&1 | grep -Eq 'Host daemon connected\.|Connected \(service install skipped\)'; do
     if [[ $SECONDS -ge $deadline ]]; then
       printf 'installer did not report connected\n' >&2
       docker logs "$CONTAINER" >&2 || true
@@ -215,6 +319,28 @@ wait_connected() {
     fi
     if ! docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true; then
       printf 'remote-machine container exited before connecting\n' >&2
+      docker logs "$CONTAINER" >&2 || true
+      exit 1
+    fi
+    sleep 0.4
+  done
+}
+
+wait_hub_connected() {
+  local deadline=$((SECONDS + 60))
+  local hosts
+  while true; do
+    hosts=$(curl -sf "http://127.0.0.1:${SERVER_PORT}/api/v1/hosts" || true)
+    if node -e '
+      const hosts = JSON.parse(process.argv[1] || "[]");
+      const row = Array.isArray(hosts) ? hosts.find((h) => h.id === process.argv[2]) : null;
+      process.exit(row && row.status === "connected" ? 0 : 1);
+    ' "$hosts" "$HOST_ID" 2>/dev/null; then
+      return 0
+    fi
+    if [[ $SECONDS -ge $deadline ]]; then
+      printf 'hub never listed host %s as connected\n' "$HOST_ID" >&2
+      printf '%s\n' "$hosts" >&2
       docker logs "$CONTAINER" >&2 || true
       exit 1
     fi
@@ -237,6 +363,7 @@ cmd_logs() {
 
 cmd_up() {
   need_docker
+  load_provider_keys
   export JOIN_CODE="${JOIN_CODE:-}" HOST_ID="${HOST_ID:-}" ZCC_SERVER_URL="${ZCC_SERVER_URL:-}"
   compose up -d --build
   print_play_hints
@@ -248,6 +375,7 @@ cmd_up() {
 cmd_join() {
   need_docker
   need_server
+  load_provider_keys
   local public_url door_url
   local config_json mint relay_json relay_state
   config_json=$(curl_json GET "http://127.0.0.1:${SERVER_PORT}/api/v1/config")
@@ -317,8 +445,13 @@ cmd_join() {
 
   export JOIN_CODE HOST_ID
   export ZCC_SERVER_URL="$door_url"
+  # Named volume keeps a previous enroll's auth.json; a freshly minted host id
+  # then dies in persistHostId. Drop it so join always starts clean.
+  compose down --remove-orphans >/dev/null 2>&1 || docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  docker volume rm "${PROJECT}_zcc-machines" >/dev/null 2>&1 || true
   compose up -d --build --force-recreate
   wait_connected
+  wait_hub_connected
   print_play_hints
   printf 'Host daemon is connected. Settings → Machines should show "zcc-docker".\n'
   if [[ "$FOLLOW" = 1 ]]; then

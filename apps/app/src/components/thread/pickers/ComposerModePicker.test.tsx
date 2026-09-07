@@ -13,10 +13,10 @@ import {
 } from './composer-mode.js';
 
 describe('composerModesForActions', () => {
-  it('always includes Agent and adds Plan/Goal from the provider', () => {
+  it('always includes Agent and adds Plan from the provider, not Goal', () => {
     expect(composerModesForActions([])).toEqual(['agent']);
     expect(composerModesForActions(['plan'])).toEqual(['agent', 'plan']);
-    expect(composerModesForActions(['plan', 'goal'])).toEqual(['agent', 'plan', 'goal']);
+    expect(composerModesForActions(['plan', 'goal'])).toEqual(['agent', 'plan']);
   });
 });
 

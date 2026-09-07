@@ -141,6 +141,39 @@ describe('doctor', () => {
     expect(formatDoctor(report)).toContain('Note:');
   });
 
+  it('still reports org identity when CLI redacts the access token', async () => {
+    const report = await runDoctor(
+      deps(async (args) => {
+        if (args[0] === '--version') return { code: 0, stdout: '@salesforce/cli/2.136.8\n', stderr: '' };
+        if (args[0] === 'org' && args[1] === 'list') {
+          return { code: 0, stdout: JSON.stringify({ result: [] }), stderr: '' };
+        }
+        if (args.includes('display')) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              result: {
+                alias: 'gus',
+                username: 'dev@example.com',
+                orgId: '00Dxx',
+                instanceUrl: 'https://gus.my.salesforce.com',
+                accessToken: "[REDACTED] Use 'sf org auth show-access-token' to view",
+                isSandbox: false,
+                isScratchOrg: false
+              }
+            }),
+            stderr: ''
+          };
+        }
+        return { code: 1, stdout: '', stderr: 'unexpected' };
+      }),
+      { defaultOrg: 'gus', apiVersion: '62.0', projectRoot: '', agentScriptDialect: 'agentforce' }
+    );
+    expect(report.org?.alias).toBe('gus');
+    expect(report.org?.username).toBe('dev@example.com');
+    expect(JSON.stringify(report)).not.toMatch(/REDACTED|accessToken/i);
+  });
+
   it('formats reports without an org and with a fallback CLI version', () => {
     const text = formatDoctor({
       cliOk: true,

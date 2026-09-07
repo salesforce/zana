@@ -14,6 +14,9 @@ import {
 } from './agentforce-preview-logic.js';
 import { AGENTFORCE_PANEL_STYLES } from './AgentScriptPanel.js';
 import { OrgPicker } from './OrgPicker.js';
+import { fetchConnectedOrg } from './org-rpc.js';
+import { orgSessionLabel } from '../../lib/org-session.js';
+import type { PublicOrgView } from '../../lib/types.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -47,9 +50,15 @@ export function AgentforcePreviewPanel(props: {
   const [turns, setTurns] = useState<PreviewTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [org, setOrg] = useState<PublicOrgView | null>(null);
   const apiName = parseAgentforcePanelApiName(props.params);
   const targetPath = path || (apiName ? null : files[0]?.path ?? null);
   const hasTarget = Boolean(targetPath || apiName);
+
+  const refreshOrg = useCallback(async () => {
+    const payload = await fetchConnectedOrg(pluginId);
+    setOrg(payload.ok ? payload.org : null);
+  }, [pluginId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,10 +71,11 @@ export function AgentforcePreviewPanel(props: {
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       });
+    void refreshOrg().catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [pluginId, projectId]);
+  }, [pluginId, projectId, refreshOrg]);
 
   const callPreview = useCallback(
     async (action: 'agentPreview.start' | 'agentPreview.send' | 'agentPreview.end', extra?: Record<string, unknown>) => {
@@ -169,7 +179,12 @@ export function AgentforcePreviewPanel(props: {
           </select>
         </label>
         <span className="sf-as-spacer" />
-        <OrgPicker pluginId={pluginId} compact disabled={Boolean(sessionId)} />
+        <OrgPicker pluginId={pluginId} compact disabled={Boolean(sessionId)} onSelect={() => void refreshOrg()} />
+        {orgSessionLabel(org) ? (
+          <span className="sf-as-crumb-seg" data-testid="salesforce-preview-org">
+            {orgSessionLabel(org)}
+          </span>
+        ) : null}
         <select
           className="sf-as-dialect"
           aria-label="Agentforce preview mode"
@@ -209,7 +224,7 @@ export function AgentforcePreviewPanel(props: {
       ) : (
         <div className="sf-as-banner">
           {mode === 'live'
-            ? 'Live Test runs real org actions. Confirm before starting.'
+            ? `Live Test runs real actions on ${orgSessionLabel(org) ?? 'the selected org'}. Confirm before starting.`
             : 'Simulate uses mock actions. It does not mutate the org.'}
         </div>
       )}

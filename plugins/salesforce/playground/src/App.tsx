@@ -8,7 +8,7 @@ import {
   splitRatioFromClientX,
   splitRatioFromKey
 } from '../../lib/agent-script-split.js';
-import type { AgentScriptDialect } from '../../lib/types.js';
+import type { AgentScriptDialect, PublicOrgView } from '../../lib/types.js';
 import {
   graphFromAgentSource,
   type AgentGraphEdge,
@@ -19,6 +19,7 @@ import {
   PLAYGROUND_BRIDGE_SOURCE,
   type HostToPlayground
 } from '../../src/app/playground-bridge.js';
+import { orgSessionLabel } from '../../lib/org-session.js';
 import { applyDiagnostics, ensureAgentScriptMonaco, setAgentScriptLspDialect } from './editor';
 import { AgentGraph } from './graph';
 
@@ -41,6 +42,7 @@ export default function App() {
   });
   const [issueCount, setIssueCount] = useState(0);
   const [errorCount, setErrorCount] = useState(0);
+  const [org, setOrg] = useState<PublicOrgView | null>(null);
   const [splitRatio, setSplitRatio] = useState(DEFAULT_SPLIT_RATIO);
   const splitRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -110,6 +112,11 @@ export default function App() {
         setTheme(message.theme);
         setDialect(message.dialect);
         if (message.view) setView(normalizePlaygroundView(message.view));
+        if ('org' in message) setOrg(message.org ?? null);
+        return;
+      }
+      if (message.type === 'setOrg') {
+        setOrg(message.org);
         return;
       }
       if (message.type === 'setTheme') {
@@ -236,7 +243,11 @@ export default function App() {
               : `${issueCount} diagnostic${issueCount === 1 ? '' : 's'}`}
           </span>
         </span>
-        <span className="statusbar-right">{dialectLabel(dialect)}</span>
+        <span className="statusbar-right">
+          {orgSessionLabel(org) ?? 'No org'}
+          {' · '}
+          {dialectLabel(dialect)}
+        </span>
       </footer>
     </div>
   );

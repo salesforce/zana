@@ -20,6 +20,20 @@ const rpc = vi.fn(async (_pluginId: string, method: string, args?: Record<string
   if (method === 'agentPreview.end') {
     return { ok: true };
   }
+  if (method === 'org') {
+    return {
+      ok: true,
+      org: {
+        alias: 'dev',
+        username: 'dev@example.com',
+        orgId: '00Dxx',
+        instanceUrl: 'https://example',
+        apiVersion: '62.0',
+        kind: 'sandbox',
+        isDefault: true
+      }
+    };
+  }
   if (method === 'orgs') {
     return {
       ok: true,
@@ -73,6 +87,7 @@ describe('AgentforcePreviewPanel', () => {
     });
     await act(async () => {
       await Promise.resolve();
+      await Promise.resolve();
     });
     return el;
   }
@@ -80,6 +95,7 @@ describe('AgentforcePreviewPanel', () => {
   it('starts simulate preview, sends an utterance, and ends the session', async () => {
     const el = await mount();
     expect(el.querySelector('[data-testid="salesforce-agentforce-preview"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="salesforce-preview-org"]')?.textContent).toBe('dev (sandbox)');
     expect((el.querySelector('[aria-label="Agentforce preview mode"]') as HTMLSelectElement).value).toBe('simulate');
     await act(async () => {
       (el.querySelector('[data-testid="salesforce-agentforce-preview-start"]') as HTMLButtonElement).click();
@@ -134,7 +150,7 @@ describe('AgentforcePreviewPanel', () => {
       setter?.call(mode, 'live');
       mode.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    expect(el.textContent).toContain('Live Test runs real org actions');
+    expect(el.textContent).toContain('Live Test runs real actions on dev (sandbox)');
     await act(async () => {
       (el.querySelector('[data-testid="salesforce-agentforce-preview-start"]') as HTMLButtonElement).click();
     });

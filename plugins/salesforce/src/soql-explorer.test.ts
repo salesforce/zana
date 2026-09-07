@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { ConnectionManager } from '../lib/connection.js';
-import { parseSoqlApiError } from '../lib/soql-api-error.js';
+import { Guardrail } from '../lib/guardrail.js';
+import { parseApiError, parseSoqlApiError } from '../lib/soql-api-error.js';
 import {
   filterSObjectList,
   normalizeSObjectDescribe,
@@ -9,6 +10,7 @@ import {
   resolveSObjectEntry
 } from '../lib/soql-describe.js';
 import { SoqlExplorer } from '../lib/soql-explorer.js';
+import { createSalesforceSdk } from '../lib/sdk.js';
 import { pushRecent } from '../lib/soql-history.js';
 import { createSalesforcePlugin } from '../lib/plugin.js';
 import type { SalesforceDeps, SalesforceRequest } from '../lib/types.js';
@@ -123,10 +125,27 @@ describe('parseSoqlApiError', () => {
     expect(
       parseSoqlApiError(400, [{ message: 'unexpected token at row 2, column 8', errorCode: 'MALFORMED_QUERY' }], '')
     ).toMatchObject({ errorCode: 'MALFORMED_QUERY', line: 2, column: 8 });
+    expect(parseApiError).toBe(parseSoqlApiError);
   });
 });
 
 describe('SoqlExplorer', () => {
+  function makeExplorer(deps: SalesforceDeps, kv: ReturnType<typeof createFakePluginHost>['zcc']['storage']['kv']) {
+    const connections = new ConnectionManager(deps, async () => ({ defaultOrg: 'dev', apiVersion: '62.0' }));
+    const { sdk } = createSalesforceSdk({
+      connections,
+      guardrail: new Guardrail(async () => ({ approved: true, reason: 'submitted' })),
+      deps,
+      readSettings: async () => ({
+        defaultOrg: 'dev',
+        apiVersion: '62.0',
+        projectRoot: '',
+        agentScriptDialect: 'agentforce'
+      })
+    });
+    return new SoqlExplorer(sdk, kv, deps.now);
+  }
+
   it('describes, caches, queries, and refuses DML', async () => {
     const seen: string[] = [];
     const deps = mockDeps((req) => {
@@ -168,12 +187,12 @@ describe('SoqlExplorer', () => {
       return { status: 404, json: [{ message: 'missing' }], text: '' };
     });
     const { zcc } = createFakePluginHost({ pluginId: 'salesforce' });
-    const connections = new ConnectionManager(deps, async () => ({ defaultOrg: 'dev', apiVersion: '62.0' }));
-    const explorer = new SoqlExplorer(connections, zcc.storage.kv, deps.now);
+    const explorer = makeExplorer(deps, zcc.storage.kv);
 
     const global1 = await explorer.describeGlobal({});
     const global2 = await explorer.describeGlobal({});
     expect(global1).toMatchObject({ ok: true });
+    expect(JSON.stringify(global1)).not.toContain('SECRET_TOKEN');
     expect(seen.filter((row) => row.endsWith('/sobjects')).length).toBe(2);
     expect(global2).toMatchObject({ ok: true });
     expect(seen.filter((row) => row.endsWith('/sobjects')).length).toBe(2);
@@ -251,8 +270,7 @@ describe('SoqlExplorer', () => {
       }
     };
     const { zcc } = createFakePluginHost({ pluginId: 'salesforce' });
-    const connections = new ConnectionManager(pendingDeps, async () => ({ defaultOrg: 'dev', apiVersion: '62.0' }));
-    const explorer = new SoqlExplorer(connections, zcc.storage.kv, pendingDeps.now);
+    const explorer = makeExplorer(pendingDeps, zcc.storage.kv);
     const pending = explorer.query({ soql: 'SELECT Id FROM Account', requestId: 'run-1' });
     await Promise.resolve();
     expect(explorer.abort({ requestId: 'run-1' })).toEqual({ ok: true, aborted: true });

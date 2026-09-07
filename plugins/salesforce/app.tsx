@@ -342,13 +342,6 @@ export default definePluginApp((app) => {
     scopes: ['thread', 'agent-session'],
     component: AgentforcePreviewPanel
   });
-  app.slots.experimental_newThreadPanelAction({
-    id: 'playground',
-    title: 'Playground',
-    icon: 'FileCode',
-    layout: 'flush',
-    component: AgentforcePlaygroundPanel
-  });
   app.slots.experimental_createProjectAction({
     id: 'dx-project',
     title: 'Salesforce DX project',

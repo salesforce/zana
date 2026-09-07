@@ -16,6 +16,7 @@ import type {
   ToolCallResponse,
 } from "@zana-ai/zcc-domain/thread-runtime";
 import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract";
+import type { ProviderHealthResult } from "@zana-ai/zcc-provider-bridge-protocol";
 
 export type AgentRuntimeShellEnvironment = Record<string, string>;
 
@@ -191,12 +192,16 @@ export interface AgentRuntimeBridgeLaunch {
     | { kind: "daemon-bundled"; id: string };
   /** Server-validated capabilities from the provider declaration. */
   capabilities: {
+    providerInstallation?: boolean;
     supportsServiceTier: boolean;
     permissionModes: PermissionMode[];
     supportsThreadArchive: boolean;
     supportsThreadRename: boolean;
     fork: ProviderFork;
   };
+  /** Opaque provider-owned launch statics included in the process key. */
+  providerOptions?: JsonObject;
+  envPassthrough?: readonly string[];
 }
 
 export interface EnsureProviderArgs {
@@ -384,6 +389,13 @@ export interface ListModelsArgs {
   cwd?: string;
 }
 
+export interface ProviderHealthArgs {
+  providerId: string;
+  acpLaunchSpec?: HostDaemonAcpLaunchSpec;
+  bridgeLaunch?: AgentRuntimeBridgeLaunch;
+  cwd?: string;
+}
+
 export interface AgentRuntime {
   ensureProvider(args: EnsureProviderArgs): Promise<void>;
 
@@ -422,6 +434,8 @@ export interface AgentRuntime {
     selectedOnlyModels: AvailableModel[];
     acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
   }>;
+
+  providerHealth(args: ProviderHealthArgs): Promise<ProviderHealthResult>;
 
   listRunningProviders(): string[];
 

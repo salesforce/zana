@@ -19,9 +19,11 @@ import {
 } from './marketplace-source.js';
 import {
   compareVersions,
+  formatPluginRequireCycle,
   isPluginId,
   parsePluginSource,
   readPluginManifest,
+  sortPluginsByRequires,
   satisfiesRange,
   type ParsedPluginSource,
   type PluginMcpServerContribution,
@@ -51,6 +53,7 @@ import { discoverPluginSkillNames } from './plugin-skills.js';
 import {
   BUILTIN_PLUGINS,
   OFFICIAL_PLUGINS,
+  RECLAIM_UNINSTALLED_AUTOINSTALL_IDS,
   bundledPluginByName,
   isRetiredFirstPartyPluginId
 } from './builtin-registry.js';
@@ -90,6 +93,7 @@ import {
 } from './plugin-agent-tools.js';
 import { startPluginUpdateSweep } from './plugin-updates.js';
 import { buildPluginApp, buildPluginServer, createPluginDevLoop } from '@zana-ai/zcc-plugin-build';
+import { createPluginServicesRegistry } from '@zana-ai/zcc-plugin-sdk/server';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -421,6 +425,54 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   mkdirSync(kvRoot, { recursive: true });
   let updateSweep: { stop(): void } | null = null;
   const builtinWatchers: Array<{ close(): void }> = [];
+  const servicesRegistry = createPluginServicesRegistry();
+
+  function requiresOf(row: InstalledPluginRow): string[] {
+    try {
+      return loadManifestFromDir(row.rootDir).requires;
+    } catch {
+      return [];
+    }
+  }
+
+  function firstMissingRequiredPlugin(row: InstalledPluginRow): string | null {
+    for (const id of requiresOf(row)) {
+      const required = live.get(id);
+      if (!required?.handle || !required.row.enabled) return id;
+    }
+    return null;
+  }
+
+  function isMissingPluginDetail(detail: string | null | undefined): boolean {
+    return typeof detail === 'string' && detail.startsWith('needs plugin:');
+  }
+
+  async function applyMissingRequiredPluginStatus(): Promise<void> {
+    for (const [id, current] of live) {
+      if (!current.row.enabled || !current.handle) continue;
+      if (current.row.status === 'degraded') continue;
+      const missing = firstMissingRequiredPlugin(current.row);
+      const missingDetail = missing ? `needs plugin: ${missing}` : null;
+      const existingMissing = isMissingPluginDetail(current.row.statusDetail);
+      if (missing) {
+        if (current.row.status !== 'running' && !existingMissing) continue;
+        if (current.row.status === 'needs-configuration' && current.row.statusDetail === missingDetail) {
+          continue;
+        }
+        const next = {
+          ...current.row,
+          status: 'needs-configuration' as const,
+          statusDetail: missingDetail
+        };
+        live.set(id, { ...current, row: next });
+        await store.upsert(next);
+      } else if (existingMissing) {
+        const next = { ...current.row, status: 'running' as const, statusDetail: null };
+        live.set(id, { ...current, row: next });
+        await store.upsert(next);
+      }
+    }
+  }
 
   function agentContributions(): PluginAgentContribution[] {
     return store.list().map((row) => {
@@ -638,6 +690,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const disabled = { ...row, status: 'disabled' as const };
       live.set(row.id, { row: disabled, handle: null, rpc: new Map() });
       await store.upsert(disabled);
+      await applyMissingRequiredPluginStatus();
       return;
     }
     if (!existsSync(row.rootDir)) {
@@ -721,6 +774,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       onNeedsConfiguration: (message) => {
         configurationMessage = message;
       },
+      services: servicesRegistry,
       hostEntryPath: (() => {
         try {
           const manifest = loadManifestFromDir(row.rootDir);
@@ -766,6 +820,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (previous && previous.handle && previous.handle !== handle) {
         await previous.handle.dispose();
       }
+      await applyMissingRequiredPluginStatus();
     } catch (error) {
       await handle.dispose();
       const detail = error instanceof Error ? error.message : String(error);
@@ -1205,6 +1260,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const next = { ...row, enabled: false, status: 'disabled' as const, updatedAt: now() };
       await store.upsert(next);
       live.set(id, { row: next, handle: null, rpc: new Map() });
+      await applyMissingRequiredPluginStatus();
       await emitCapabilities();
       await emitAppsChanged();
       await syncCliSkill();
@@ -1219,6 +1275,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         rmSync(row.rootDir, { recursive: true, force: true });
       }
       removeLeftoverSidecar(opts.dataDir, id);
+      await applyMissingRequiredPluginStatus();
       await emitCapabilities();
       await emitAppsChanged();
       await syncCliSkill();
@@ -1238,6 +1295,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return updated;
     },
     async reconcileBuiltins() {
+      for (const id of RECLAIM_UNINSTALLED_AUTOINSTALL_IDS) {
+        if (uninstalled.hasReclaimed(id)) continue;
+        if (uninstalled.has(id)) await uninstalled.forget(id);
+        await uninstalled.markReclaimed(id);
+      }
       for (const row of store.list()) {
         if (row.sourceKind !== 'builtin') continue;
         if (isRetiredFirstPartyPluginId(row.id)) continue;
@@ -1273,9 +1335,20 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await retireRetiredFirstPartyPlugins();
       await this.reconcileBuiltins();
       await seedOfficialMarketplace();
-      for (const row of store.list()) {
-        if (!live.has(row.id)) await loadOne(row);
+      const pending = store.list().filter((row) => !live.has(row.id));
+      const { ordered, cycles } = sortPluginsByRequires(
+        pending.map((row) => ({ id: row.id, requires: requiresOf(row), row }))
+      );
+      for (const cycle of cycles) {
+        const detail = `plugin requires cycle: ${formatPluginRequireCycle(cycle.cycle)}`;
+        const degraded = { ...cycle.plugin.row, status: 'degraded' as const, statusDetail: detail };
+        live.set(cycle.plugin.id, { row: degraded, handle: null, rpc: new Map() });
+        await store.upsert(degraded);
       }
+      for (const node of ordered) {
+        if (!live.has(node.id)) await loadOne(node.row);
+      }
+      await applyMissingRequiredPluginStatus();
       await emitCapabilities();
       await emitAppsChanged();
       await syncCliSkill();

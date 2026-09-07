@@ -54,7 +54,12 @@ export class Guardrail {
 }
 
 export function reusesSession(kind: EnvelopeKind): boolean {
-  return kind !== 'agent.publish' && kind !== 'agent.activate' && kind !== 'agent.preview.live';
+  return (
+    kind !== 'agent.publish' &&
+    kind !== 'agent.activate' &&
+    kind !== 'agent.preview.live' &&
+    kind !== 'org.write'
+  );
 }
 
 export function orgReadEnvelope(kind: OrgKind): EnvelopeKind | undefined {
@@ -75,6 +80,8 @@ export function envelopeTitle(kind: EnvelopeKind): string {
       return 'Confirm production org access';
     case 'org.unknown.read':
       return 'Confirm unknown org access';
+    case 'org.write':
+      return 'Confirm Salesforce write';
     case 'apex.anonymous':
       return 'Confirm anonymous Apex';
     case 'soql.unbounded':

@@ -15,6 +15,7 @@ describe('createFakePluginHost', () => {
     expect(await settings.get()).toEqual({ token: 'secret' });
     expect(() => harness.setSettings({ token: true as never })).toThrow(/expected string/);
     await expect(harness.callRpc('echo', { a: 1 })).resolves.toEqual({ a: 1 });
+    expect(zcc.storage.database().transaction(() => 3)).toBe(3);
     expect(await zcc.storage.kv.get('k')).toEqual({ n: 1 });
     expect(harness.published).toEqual([{ event: 'tick', payload: { ok: true } }]);
   });
@@ -65,6 +66,20 @@ describe('createFakePluginHost', () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'gone' });
     await harness.dispose();
     expect(() => zcc.rpc.method('x', () => null)).toThrow(PluginContextStaleError);
+  });
+
+  it('shares a services registry across fake hosts and unregisters on dispose', async () => {
+    const { createPluginServicesRegistry } = await import('../plugin-services.js');
+    const registry = createPluginServicesRegistry();
+    const alpha = createFakePluginHost({ pluginId: 'alpha', services: registry });
+    const beta = createFakePluginHost({ pluginId: 'beta', services: registry });
+    alpha.zcc.services.provide({ ping: () => 'alpha' });
+    expect(beta.zcc.services.has('alpha')).toBe(true);
+    expect(beta.zcc.services.use<{ ping: () => string }>('alpha').ping()).toBe('alpha');
+    await alpha.harness.dispose();
+    expect(() => beta.zcc.services.use<{ ping: () => string }>('alpha').ping()).toThrow(
+      /unavailable/
+    );
   });
 });
 

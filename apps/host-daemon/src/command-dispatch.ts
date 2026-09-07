@@ -9,6 +9,7 @@ import type {
   HostRpcCommand,
   ProviderAgentDescriptorsResult,
   ProviderListModelsResult,
+  ProviderHealthResult,
   ProviderStatusResult,
   ThreadResumeFields,
   ThreadStartCommandSchema
@@ -17,7 +18,7 @@ import type { z } from 'zod';
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { PERSONAL_WORKSPACE_DIR_NAME } from '@zana-ai/zcc-domain';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
-import type { PendingInteractionResolution } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PendingInteractionResolution, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   WorkspaceError,
   cloneProject,
@@ -39,6 +40,7 @@ import { probeExtraAcpAgents } from './extra-acp-agent-probes.js';
 import { verifyHarnesses } from './harness/harness-verify.js';
 import { registrationFor } from './harness/registry.js';
 import { HostCommandError } from './host-command-error.js';
+import { watchWorkspacePath } from './workspace-fs-watch.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
 import { completeCodexInference } from './codex-inference-complete.js';
 import { getProviderCliStatus, runProviderCliInstall } from './provider-cli-health.js';
@@ -144,7 +146,7 @@ export interface CommandRuntime {
   startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
   submitTurn?: (input: {
     threadId: string;
-    input: string[];
+    input: PromptInput[];
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
@@ -183,6 +185,11 @@ export interface CommandRuntime {
     bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
     cwd?: string;
   }) => Promise<ProviderListModelsResult>;
+  providerHealth?: (input: {
+    providerId: string;
+    bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
+    cwd?: string;
+  }) => Promise<ProviderHealthResult>;
   homeDir?: string;
   peerSsh?: PeerDaemonSsh;
 }
@@ -195,7 +202,7 @@ export function createCommandRuntime(options: {
   startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
   submitTurn?: (input: {
     threadId: string;
-    input: string[];
+    input: PromptInput[];
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
@@ -234,6 +241,11 @@ export function createCommandRuntime(options: {
     bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
     cwd?: string;
   }) => Promise<ProviderListModelsResult>;
+  providerHealth?: (input: {
+    providerId: string;
+    bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
+    cwd?: string;
+  }) => Promise<ProviderHealthResult>;
   homeDir?: string;
   peerSsh?: PeerDaemonSsh;
 }): CommandRuntime {
@@ -265,6 +277,7 @@ export function createCommandRuntime(options: {
     resizeTerminal: options.resizeTerminal,
     stopTerminal: options.stopTerminal,
     listModels: options.listModels,
+    providerHealth: options.providerHealth,
     homeDir: options.homeDir,
     peerSsh: options.peerSsh,
     verifyProviders: options.verifyProviders ?? (async () => {
@@ -553,6 +566,16 @@ export async function dispatchHostCommand(
         throw new HostCommandError('unsupported', 'model listing is not available on this host');
       }
       return runtime.listModels({
+        providerId: command.providerId,
+        bridgeLaunch: command.bridgeLaunch,
+        ...(command.cwd !== undefined ? { cwd: command.cwd } : {})
+      });
+    }
+    case 'provider.health': {
+      if (!runtime.providerHealth) {
+        throw new HostCommandError('unsupported', 'provider health is not available on this host');
+      }
+      return runtime.providerHealth({
         providerId: command.providerId,
         bridgeLaunch: command.bridgeLaunch,
         ...(command.cwd !== undefined ? { cwd: command.cwd } : {})
@@ -917,6 +940,7 @@ export async function dispatchHostCommand(
       }
     case 'workspace.status':
       try {
+        watchWorkspacePath(command.workspacePath);
         return await workspaceStatus(command.workspacePath);
       } catch (error) {
         mapWorkspaceError(error);

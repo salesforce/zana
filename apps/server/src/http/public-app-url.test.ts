@@ -18,7 +18,7 @@ describe('public app URL', () => {
     })).toBe('https://box.tailnet.ts.net');
   });
 
-  it('uses the bake when env is empty and ignores Settings / the repo file', () => {
+  it('uses bake over Settings, then Settings over the repo file', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'zcc-url-file-'));
     writeFileSync(
       join(cwd, 'public-app-url'),
@@ -31,7 +31,12 @@ describe('public app URL', () => {
       cwd,
       bundledUrl: 'https://baked.example/'
     })).toBe('https://baked.example');
-    expect(resolvePublicAppUrl({ env: {}, configUrl: 'https://other.example', cwd })).toBeUndefined();
+    expect(resolvePublicAppUrl({
+      env: {},
+      configUrl: 'https://other.example',
+      cwd
+    })).toBe('https://other.example');
+    expect(resolvePublicAppUrl({ env: {}, cwd })).toBe('https://zcc-7808c5bc8f3d.herokuapp.com');
     expect(resolvePublicAppUrl({ env: {}, bundledUrl: 'not a url' })).toBeUndefined();
     expect(resolvePublicAppUrl({ env: {}, bundledUrl: 'ftp://x' })).toBeUndefined();
   });
@@ -58,10 +63,7 @@ describe('public app URL', () => {
       relayToken: undefined
     });
     const stored = { publicAppUrl: 'https://box.tailnet.ts.net' };
-    expect(presentAppConfig(stored, { env: {}, bundledUrl: '' })).toEqual({
-      publicAppUrl: undefined,
-      relayToken: undefined
-    });
+    expect(presentAppConfig(stored, { env: {}, bundledUrl: '' })).toBe(stored);
     const bare = { theme: 'light' };
     expect(presentAppConfig(bare, { env: {}, bundledUrl: '' })).toBe(bare);
   });
@@ -69,6 +71,7 @@ describe('public app URL', () => {
   it('allowlists loopback or the configured public Host header', () => {
     const url = 'https://zcc-7808c5bc8f3d.herokuapp.com';
     expect(isAllowedHostInternalHost('127.0.0.1:8780')).toBe(true);
+    expect(isAllowedHostInternalHost('host.docker.internal:18781', url)).toBe(true);
     expect(isAllowedHostInternalHost('localhost:8780', url)).toBe(true);
     expect(isAllowedHostInternalHost('zcc-7808c5bc8f3d.herokuapp.com', url)).toBe(true);
     expect(isAllowedHostInternalHost('ZCC-7808c5bc8f3d.herokuapp.com', url)).toBe(true);

@@ -9,9 +9,11 @@ const HOP_BY_HOP = new Set([
   'transfer-encoding',
   'upgrade',
   'host',
-  'origin',
-  'content-length'
+  'origin'
 ]);
+
+// Content-Length is not hop-by-hop here: the body is forwarded unmodified, and
+// enrolled daemons (plugin host.js) reject a 200 without it.
 
 /**
  * @param {import('node:http').IncomingHttpHeaders | Record<string, string | string[] | undefined>} headers

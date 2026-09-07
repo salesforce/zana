@@ -90,7 +90,9 @@ export type {
   PluginInteractionResult,
   PluginInteractionCancelReason,
   PluginStatusApi,
-  PluginSettingsSnapshot
+  PluginSettingsSnapshot,
+  PluginServices,
+  PluginServicesRegistry
 } from './server.js';
 
 export {
@@ -100,7 +102,12 @@ export {
   enforcePluginCliOutputLimit,
   parsePluginAgentToolPresentation,
   experimental_defineHostEntry,
-  isPluginHostEntryDefinition
+  isPluginHostEntryDefinition,
+  PLUGIN_SERVICE_UNAVAILABLE,
+  PluginServiceUnavailableError,
+  bindPluginServices,
+  createLiveServiceProxy,
+  createPluginServicesRegistry
 } from './server.js';
 
 export type {

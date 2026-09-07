@@ -117,7 +117,7 @@ UI → product API (conversation create/turn)
    → signed host command
    → host agent-runtime adapter
    → @zana-ai/zcc-agent-runtime
-   → provider plugin bridge (stdio / ACP / app-server)
+   → provider plugin bridge (Claude Agent SDK / Codex app-server / ACP / Pi SDK)
    → events → SQLite + thread-view projection → UI
 ```
 

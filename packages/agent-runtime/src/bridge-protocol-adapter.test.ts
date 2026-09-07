@@ -158,6 +158,17 @@ describe("thread/stop intent", () => {
   });
 });
 
+describe("provider maintenance mapping", () => {
+  it("sends provider/health with the adapter id", () => {
+    const adapter = makeAdapter();
+    expect(adapter.buildCommandPlan({ type: "provider/health", cwd: "/tmp/proj" })).toMatchObject({
+      kind: "request",
+      method: "provider/health",
+      params: { providerId: "fake-bridge", cwd: "/tmp/proj" },
+    });
+  });
+});
+
 describe("options mapping", () => {
   it("keeps core fields top-level and packs provider-flavored fields opaquely", () => {
     const adapter = makeAdapter();

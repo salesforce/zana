@@ -1,3 +1,4 @@
+import '@/lib/monacoSetup';
 import { useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Bell, Star } from 'lucide-react';
@@ -24,6 +25,7 @@ import { AgentTerminalModal } from './components/AgentTerminalModal.js';
 import { ThreadModal } from './components/ThreadModal.js';
 import { FavoriteAgentsDrawer } from './components/FavoriteAgentsDrawer.js';
 import { NotificationsDrawer } from './components/NotificationsDrawer.js';
+import { HostInstallDrawer } from './components/HostInstallDrawer.js';
 import { Walkthrough } from './components/Walkthrough.js';
 import { SetupChecklistHost } from './components/SetupChecklist.js';
 import { Toaster } from './components/Toaster.js';
@@ -764,6 +766,7 @@ export function App() {
       <ThreadModalHost />
       <FavoriteAgentsDrawer />
       <NotificationsDrawer />
+      <HostInstallDrawer />
       <WalkthroughHost />
       <SetupChecklistHost />
       <WhatsNewModal />

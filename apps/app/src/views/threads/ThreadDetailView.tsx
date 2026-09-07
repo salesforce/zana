@@ -10,6 +10,7 @@ import { ThreadTimeline } from '../../components/thread/ThreadTimeline.js';
 import { ThreadDiffPanel } from '../../components/thread/ThreadDiffPanel.js';
 import { ThreadWorkspaceBanner } from '../../components/thread/ThreadWorkspaceBanner.js';
 import {
+  composerVisibleTodos,
   timelineHasInFlightRetry,
   timelineRowsAwaitUser
 } from '../../components/thread/thread-timeline-model.js';
@@ -27,7 +28,6 @@ import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { pendingChildThreads, useThreads, type ThreadListItem } from '../../thread-store.js';
 import { useData } from '../../store.js';
-import { composerRemoteToolsMark } from '../../components/composer-host-status.js';
 import { ThreadPendingInteractionBanner } from '../../components/thread/pending-interactions/ThreadPendingInteractionBanner.js';
 import { ChildThreadPendingBanners } from '../../components/thread/pending-interactions/ChildThreadPendingBanners.js';
 import {
@@ -39,6 +39,7 @@ import { useOptionalPaneContext, usePaneSecondaryPanelRegistration } from '../th
 import { ThreadInfoContent } from '../../components/thread/secondary-panel/ThreadInfoContent.js';
 import { ThreadPlanPanel, type DurablePlanPanelView } from '../../components/thread/secondary-panel/ThreadPlanPanel.js';
 import { planFileTabTitle, resolveThreadPlanDocument } from '../../components/thread/secondary-panel/thread-plan-document.js';
+import { planExecutionTitle } from '../../components/thread/timeline/plan-execution-card.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/ThreadFilePreviewTab.js';
 import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
@@ -688,6 +689,9 @@ export function ThreadDetail({
               thinking={thinking}
               goal={goal}
               activeWorkflows={workflows}
+              planExecution={durablePlan?.tasks.length
+                ? { title: planExecutionTitle(durablePlan.markdown), tasks: durablePlan.tasks }
+                : null}
               lastReadSeq={lastReadSeq}
               onReachedBottom={markRead}
               onCopy={(text) => {
@@ -751,7 +755,7 @@ export function ThreadDetail({
                 onExitPlanMode={exitPlanMode}
               />
               <ThreadTodoCard
-                todos={todos}
+                todos={composerVisibleTodos(todos, durablePlan?.tasks.length ?? 0)}
                 isExpanded={todoExpanded}
                 onToggle={() => setTodoExpanded((value) => !value)}
               />
@@ -766,10 +770,7 @@ export function ThreadDetail({
                 status={status}
                 inFlightRetry={inFlightRetry}
                 sendBlocked={pendingInteractions.length > 0}
-                environmentLabel={
-                  composerRemoteToolsMark(project ?? undefined, threads.find((row) => row.id === threadId)?.hostId)
-                    ?? (isWorktree ? 'This checkout' : 'Local')
-                }
+                environmentLabel={isWorktree ? 'This checkout' : 'Local'}
                 contextWindowUsage={contextWindow}
                 providerId={threadProviderId ?? undefined}
                 model={threadModel}

@@ -564,6 +564,24 @@ describe("acp bridge", () => {
     ).toEqual(["low", "medium", "high"]);
   });
 
+  it("reports OpenCode health from the launch command instead of a Cursor-only noop", async () => {
+    const healthId = sendRequest("provider/health", {
+      providerId: "acp-opencode",
+      providerOptions: {
+        acpLaunchSpec: {
+          displayName: "OpenCode",
+          command: process.execPath,
+          args: ["acp"],
+          env: {},
+        },
+      },
+    });
+    expect((await waitForResponse(healthId)).result).toMatchObject({
+      supported: true,
+      health: { status: "ready" },
+    });
+  });
+
   it("answers a minimal model/list (no params) with the synthetic default", async () => {
     // The packaged-bridge smoke test sends `model/list` with empty params and
     // no agent binary on PATH; the bridge must still respond (not hang) so the

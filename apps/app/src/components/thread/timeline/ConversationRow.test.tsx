@@ -288,3 +288,55 @@ describe('ConversationRow plugin message actions', () => {
       .toBe('https://example.com/cat.png');
   });
 });
+
+describe('ConversationRow request labels', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('does not label an in-flight first message as Pending', () => {
+    render(
+      <ConversationRow
+        onCopy={() => undefined}
+        row={{
+          ...userRow,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'pending' }
+        }}
+      />
+    );
+    expect(screen.queryByTestId('thread-message-request-label')).toBeNull();
+  });
+
+  it('labels a rejected message and a steer', () => {
+    const { rerender } = render(
+      <ConversationRow
+        onCopy={() => undefined}
+        row={{
+          ...userRow,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'rejected' }
+        }}
+      />
+    );
+    expect(screen.getByTestId('thread-message-request-label').textContent).toBe('Rejected');
+    rerender(
+      <ConversationRow
+        onCopy={() => undefined}
+        row={{
+          ...userRow,
+          turnRequest: { isGrouped: false, kind: 'steer', status: 'pending' }
+        }}
+      />
+    );
+    expect(screen.getByTestId('thread-message-request-label').textContent).toBe('Steer');
+    rerender(
+      <ConversationRow
+        onCopy={() => undefined}
+        row={{
+          ...userRow,
+          turnRequest: { isGrouped: false, kind: 'steer', status: 'rejected' }
+        }}
+      />
+    );
+    expect(screen.getByTestId('thread-message-request-label').textContent).toBe('Steer rejected');
+  });
+});

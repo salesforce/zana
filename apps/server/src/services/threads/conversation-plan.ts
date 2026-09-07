@@ -18,6 +18,7 @@ import {
   type ThreadPlanTaskStatus,
   type ZccDatabase
 } from '@zana-ai/zcc-db';
+import { foldTodoPlanFromInputs } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { isPlanExecutionMode } from './conversation-execution-mode.js';
@@ -311,8 +312,10 @@ export function syncPlanFromLatestEvents(db: ZccDatabase, threadId: string): voi
     completed.push({ ...parsed, index });
   }
   const latestSteps = [...completed].reverse().find((row) => row.itemType === 'planSteps');
-  if (latestSteps) {
-    const steps = planStepsFromItem(latestSteps.item);
+  const steps = latestSteps
+    ? planStepsFromItem(latestSteps.item)
+    : foldTodoPlanFromInputs(completed.flatMap((row) => todoInputFromItem(row)));
+  if (steps.length > 0) {
     importProviderPlanSteps(db, { threadId, steps, owningThreadId: threadId });
   }
   const markdown = resolveProviderPlanMarkdown(db, threadId, completed, latestSteps);
@@ -399,6 +402,11 @@ function planStepsFromItem(item: Record<string, unknown>): Array<{ step: string;
     if (typeof row.step !== 'string') return [];
     return [{ step: row.step, status: typeof row.status === 'string' ? row.status : undefined }];
   });
+}
+
+function todoInputFromItem(row: CompletedPlanItem): unknown[] {
+  if (row.itemType !== 'toolCall') return [];
+  return [row.item.arguments];
 }
 
 function completedItemFromPayload(payload: unknown): Omit<CompletedPlanItem, 'index'> | null {

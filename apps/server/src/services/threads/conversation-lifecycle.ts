@@ -22,7 +22,7 @@ import {
   resumeConversationQueue
 } from './conversation-deferred-messages.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
-import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ReasoningLevel, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import {
   canDispatch,
@@ -31,9 +31,13 @@ import {
   type ThreadSendMode
 } from './conversation-dispatch-checkpoint.js';
 import { conversationThreadView, flattenThreadInput } from './conversation-create.js';
-import { isPlanExecutionMode, requestedExecutionModeFromTurn, claudeCodePermissionModeForTurn } from './conversation-execution-mode.js';
+import {
+  isPlanExecutionMode,
+  requestedExecutionModeFromTurn,
+  claudeCodePermissionModeForTurn
+} from './conversation-execution-mode.js';
 import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
-import { hostPromptFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
+import { hostPromptInputFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
 import { resolveActivePlanTurn } from './conversation-timeline.js';
 import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
@@ -170,7 +174,7 @@ export async function sendConversationTurn(
     resolveDeferredFirstTurnContext(ctx, live.id)
   );
   const textPrompt = flattenThreadInput(resolvedInput).map((part) => part.trim()).filter((part) => part.length > 0);
-  const prompt = hostPromptFromInput(
+  const prompt = hostPromptInputFromInput(
     resolvedInput,
     textPrompt,
     (path) => resolvePromptAttachmentPath(ctx.dataDir, live.projectId, path)
@@ -222,7 +226,7 @@ async function dispatchTurnSubmit(
   ctx: ProductHttpContext,
   args: {
     thread: ConversationThreadRow;
-    prompt: string[];
+    prompt: PromptInput[];
     mode: ThreadSendMode;
     execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
     clientRequestId?: string;
@@ -275,7 +279,7 @@ async function recoverOrSettleTurnSubmit(
   ctx: ProductHttpContext,
   args: {
     thread: ConversationThreadRow;
-    prompt: string[];
+    prompt: PromptInput[];
     mode: ThreadSendMode;
     execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
     clientRequestId?: string;
@@ -651,7 +655,7 @@ export async function reconcileStoppingConversationThreadsOnHostConnect(
 async function turnSubmitCommand(
   ctx: ProductHttpContext,
   thread: ConversationThreadRow,
-  prompt: string[],
+  prompt: PromptInput[],
   mode: ThreadSendMode,
   execution?: {
     model?: string;
@@ -695,7 +699,7 @@ async function turnSubmitCommand(
 async function threadStartCommandForFork(
   ctx: ProductHttpContext,
   thread: ConversationThreadRow,
-  prompt: string[],
+  prompt: PromptInput[],
   execution?: {
     model?: string;
     reasoningLevel?: ReasoningLevel;

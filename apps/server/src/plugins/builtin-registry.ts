@@ -25,6 +25,20 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     category: 'Context & knowledge'
   },
   {
+    name: 'provider-claude-code',
+    pluginId: 'provider-claude-code',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'provider-codex',
+    pluginId: 'provider-codex',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
     name: 'provider-pi',
     pluginId: 'provider-pi',
     autoInstall: true,
@@ -169,6 +183,20 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
     category: 'Context & knowledge'
   },
   {
+    name: 'monaco-editor',
+    pluginId: 'monaco-editor',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Interface'
+  },
+  {
+    name: 'pdf-preview',
+    pluginId: 'pdf-preview',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Interface'
+  },
+  {
     name: 'keep-awake',
     pluginId: 'keep-awake',
     autoInstall: false,
@@ -209,7 +237,14 @@ export const RETIRED_FIRST_PARTY_PLUGIN_IDS = [
   'consensus',
   'slack',
   'zana',
-  'zana-hub',
+  'zana-hub'
+] as const;
+
+/**
+ * Experimental installs later promoted to autoInstall builtins. Forget a leftover
+ * uninstall tombstone once so the builtin can land; a later user uninstall sticks.
+ */
+export const RECLAIM_UNINSTALLED_AUTOINSTALL_IDS = [
   'provider-claude-code',
   'provider-codex'
 ] as const;

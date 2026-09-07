@@ -106,6 +106,8 @@ function buildCommandPlan(command: AdapterCommand): ProviderCommandPlan {
       return { kind: "request", method: "initialize", params: {} };
     case "model/list":
       return { kind: "request", method: "model/list", params: {} };
+    case "provider/health":
+      return { kind: "noop", reason: "fake provider has no CLI health" };
     case "skills/configure":
       return {
         kind: "request",

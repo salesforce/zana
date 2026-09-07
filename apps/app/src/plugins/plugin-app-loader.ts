@@ -212,6 +212,7 @@ function toSdkSettingDescriptor(
         label: descriptor.label,
         description: descriptor.description,
         secret: descriptor.secret,
+        ...(descriptor.multiline === true ? { multiline: true } : {}),
         default: typeof descriptor.default === 'string' ? descriptor.default : undefined
       };
     case 'boolean':

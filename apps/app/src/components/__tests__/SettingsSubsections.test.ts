@@ -130,6 +130,8 @@ describe('Settings subsection navigation', () => {
       'utf8'
     );
     expect(source).not.toContain('PluginSettingsSections');
+    expect(source).toContain("import { CliSkillsSettings } from './CliSkillsSettings'");
+    expect(source).toContain("import { KeyboardSettingsSection } from './KeyboardSettingsSection'");
     expect(source).toContain('reloadComposerCommandCatalog');
     expect(source).toContain('Reload slash commands');
     expect(source).toContain('Record provider traffic');

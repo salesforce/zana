@@ -356,6 +356,24 @@ describe('PtyManager.create — CLI remote tools', () => {
     expect(spawned[0].args.join(' ')).toContain('mcp__zcc-inbox__remote_read');
   });
 
+  it('does not inject Claude --disallowedTools for cursor remote tools', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl('http://127.0.0.1:3000');
+    const session = mgr.create({
+      projectId: 'p1',
+      profile: 'cursor',
+      cwd: '/tmp',
+      cols: 80,
+      rows: 24,
+      config: { ...CONFIG, cursorBinary: 'cursor-agent' },
+      remoteToolProxy: true
+    });
+    expect(session.remoteToolProxy).toBe(true);
+    expect(spawned[0].command).not.toBe('ssh');
+    expect(spawned[0].args).not.toContain('--disallowedTools');
+    expect(spawned[0].args).not.toContain('--allowedTools');
+  });
+
   it('does not wrap remote_* into a local spawn when remoteToolProxy is off', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');

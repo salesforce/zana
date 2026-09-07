@@ -103,10 +103,15 @@ export function isThreadProviderOffered(
   if (provider.id === 'fake') return true;
   const family = threadProviderFamily(provider.id);
   const status = family ? availability.find((row) => row.family === family) : undefined;
-  if (status) return status.installed && status.enabled;
+  // A found family CLI is the source of truth. ACP health (`which` in a plugin
+  // child) must not hide OpenCode that `opencode --version` already found, and
+  // Settings hide (`enabled: false`) must still win.
+  if (status?.installed) return status.enabled;
   if (provider.visibility === 'installed' && extraInstalled && provider.id in extraInstalled) {
     return extraInstalled[provider.id] === true;
   }
+  if (status) return false;
+  if (provider.visibility === 'installed') return false;
   return true;
 }
 

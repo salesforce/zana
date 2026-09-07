@@ -7067,6 +7067,23 @@ body.resizing-col {
   border-top: 1px solid var(--border);
 }
 
+.settings-keyboard-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-keyboard-chord {
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+
 .settings-list-name {
   font-family: 'JetBrains Mono', 'SF Mono', monospace;
   font-size: 12px;
@@ -26907,6 +26924,33 @@ body.resizing-col .library-split-resizer::after {
   color: var(--text-primary);
 }
 
+.host-install-drawer {
+  width: 380px;
+  z-index: 41;
+}
+
+.host-install-drawer-log {
+  flex: 1 1 auto;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-muted);
+  background: var(--bg-base);
+}
+
+.host-install-drawer-error {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--danger);
+}
+
 /* ============================================================================
    Menu-bar popover (macOS frameless card) — surface=popover. A self-contained
    card that fills the transparent popover window; only the rows region scrolls.
@@ -30100,6 +30144,8 @@ textarea.ui-command-composer-input {
   margin: 0;
   border-bottom: 0;
   border-radius: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .thread-composer-dock:has(.thread-composer-stack-card) .thread-composer-stack-card:first-child {
@@ -31180,7 +31226,53 @@ textarea.ui-command-composer-input {
   cursor: default;
 }
 
+.composer-remote-host-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+}
+
+.composer-remote-host-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 24ch;
+  font-size: 12px;
+}
+
+.composer-remote-host-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.composer-remote-host-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.composer-remote-host-status.is-online {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.composer-remote-host-status.is-offline {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
 .thread-command-host-action {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
 }
 
@@ -31205,6 +31297,35 @@ textarea.ui-command-composer-input {
 .thread-command-host-action-btn:not(:disabled):hover,
 .thread-command-host-copy:hover {
   color: var(--text);
+}
+
+.thread-command-host-action-btn.is-cta,
+.thread-command-host-action-btn.is-install {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-blue, #007aff);
+  color: #fff;
+  font-weight: 600;
+  animation: composer-install-breathe 2.8s ease-in-out infinite;
+}
+
+.thread-command-host-action-btn.is-cta:hover,
+.thread-command-host-action-btn.is-install:hover {
+  color: #fff;
+  animation: none;
+  filter: brightness(1.08);
+}
+
+@keyframes composer-install-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-command-host-action-btn.is-cta,
+  .thread-command-host-action-btn.is-install {
+    animation: none;
+  }
 }
 
 .thread-command-composer .thread-command-stop {
@@ -32210,9 +32331,11 @@ textarea.thread-command-editor {
 }
 
 .thread-detail-overflow-menu {
-  /* Keep the shared `.tab-context-menu` fixed stack. Absolute positioning let
-     the timeline (a later flex sibling) steal clicks on Rename / Fork / Archive. */
-  z-index: 80;
+  /* Portaled to document.body so the timeline (a later flex sibling) cannot
+     steal clicks. Sit above `.modal-backdrop` (100) so the inspector modal
+     does not cover Rename / Fork / Archive; stay below setup/tour (200). */
+  z-index: 110;
+  box-sizing: border-box;
 }
 
 .thread-status-badge {
@@ -32343,6 +32466,83 @@ textarea.thread-command-editor {
   z-index: 4;
   background: var(--bg-base);
   padding-bottom: 8px;
+}
+
+.thread-plan-execution {
+  margin-top: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.thread-plan-execution-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-plan-execution-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.thread-plan-execution-count {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.thread-plan-execution-body {
+  margin-top: 6px;
+}
+
+.thread-plan-execution-current {
+  margin: 0;
+  font-size: 13px;
+}
+
+.thread-plan-execution-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thread-plan-execution-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.thread-plan-execution-item.is-done {
+  opacity: 0.55;
+}
+
+.thread-plan-execution-glyph {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.thread-plan-execution-item-text {
+  min-width: 0;
 }
 
 .thread-detail-view--modal .thread-timeline-current-turn > .thread-timeline-item.is-user {
@@ -33364,10 +33564,10 @@ textarea.thread-command-editor {
 }
 
 .thread-workspace-banner {
-  margin-left: 1rem;
-  /* margin-right: 1rem; */
-  width: calc(100% - 2rem);
-  padding: 6px 24px 4px;
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 12px 4px;
   font-size: 13px;
   color: var(--text-muted);
 }
@@ -33389,7 +33589,7 @@ textarea.thread-command-editor {
 }
 
 .thread-workspace-banner.is-open {
-  padding: 8px 24px 6px;
+  padding: 8px 12px 6px;
 }
 
 .thread-workspace-banner-summary {

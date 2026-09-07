@@ -1,0 +1,29 @@
+{
+  "name": "@zana-ai/zcc-host-watcher",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "clean": "rimraf dist tsconfig.tsbuildinfo",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@parcel/watcher": "2.5.6"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2",
+    "@zana-ai/zcc-tsconfig": "workspace:*",
+    "vitest": "^4.1.10"
+  },
+  "private": true
+}

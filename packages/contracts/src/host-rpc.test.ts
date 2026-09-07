@@ -81,7 +81,7 @@ describe('host-rpc contract', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'claude',
-      input: ['hello'],
+      input: [{ type: 'text', text: 'hello' }],
       clientRequestId: 'creq_23456789ab'
     })).toMatchObject({
       type: 'thread.start',
@@ -93,7 +93,7 @@ describe('host-rpc contract', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'claude',
-      input: ['hello'],
+      input: [{ type: 'text', text: 'hello' }],
       clientRequestId: 'not-a-request-id'
     }).success).toBe(false);
     expect(HostRpcCommandSchema.parse({
@@ -102,7 +102,7 @@ describe('host-rpc contract', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'claude',
-      input: ['hello'],
+      input: [{ type: 'text', text: 'hello' }],
       remote: { host: 'box', user: 'me', remotePath: '/src' },
       remoteToolProxy: true
     })).toMatchObject({
@@ -116,7 +116,7 @@ describe('host-rpc contract', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'opencode',
-      input: ['hello'],
+      input: [{ type: 'text', text: 'hello' }],
       dynamicTools: [{
         name: 'sf_soql',
         description: 'Run SOQL',
@@ -173,7 +173,7 @@ describe('host-rpc contract', () => {
       type: 'turn.submit',
       threadId,
       environmentId,
-      input: ['follow up'],
+      input: [{ type: 'text', text: 'follow up' }],
       model: 'claude-sonnet-5',
       reasoningLevel: 'high',
       clientRequestId: 'creq_23456789ab',
@@ -189,6 +189,50 @@ describe('host-rpc contract', () => {
       clientRequestId: 'creq_23456789ab',
       resume: { providerThreadId: 'prov-1' }
     });
+    expect(HostRpcCommandSchema.parse({
+      type: 'turn.submit',
+      threadId,
+      environmentId,
+      input: [{
+        type: 'text',
+        text: '/plan inspect',
+        mentions: [{
+          start: 0,
+          end: 5,
+          resource: {
+            kind: 'command',
+            trigger: '/',
+            name: 'plan',
+            source: 'command',
+            origin: 'builtin',
+            label: 'plan',
+            argumentHint: null
+          }
+        }]
+      }]
+    }).input).toEqual([{
+      type: 'text',
+      text: '/plan inspect',
+      mentions: [{
+        start: 0,
+        end: 5,
+        resource: {
+          kind: 'command',
+          trigger: '/',
+          name: 'plan',
+          source: 'command',
+          origin: 'builtin',
+          label: 'plan',
+          argumentHint: null
+        }
+      }]
+    }]);
+    expect(HostRpcCommandSchema.safeParse({
+      type: 'turn.submit',
+      threadId,
+      environmentId,
+      input: ['follow up']
+    }).success).toBe(false);
     expect(HostRpcCommandSchema.parse({
       type: 'terminal.start',
       sessionId: threadId,
@@ -338,6 +382,30 @@ describe('host-rpc contract', () => {
       }],
       selectedOnlyModels: []
     }).models[0]?.displayName).toBe('GPT-5.5');
+  });
+
+  it('parses provider.health commands and results', () => {
+    const command = HostRpcCommandSchema.parse({
+      type: 'provider.health',
+      providerId: 'acp-opencode',
+      bridgeLaunch: {
+        pluginId: 'provider-acp',
+        source: { kind: 'daemon-bundled', id: 'acp-opencode' },
+        capabilities: {
+          supportsServiceTier: true,
+          permissionModes: ['full'],
+          supportsThreadArchive: false,
+          supportsThreadRename: false,
+          fork: 'tip'
+        }
+      }
+    });
+    expect(command.type).toBe('provider.health');
+    expect(parseHostRpcResult('provider.health', { supported: false })).toEqual({ supported: false });
+    expect(parseHostRpcResult('provider.health', {
+      supported: true,
+      health: { status: 'not_installed' }
+    })).toMatchObject({ supported: true, health: { status: 'not_installed' } });
   });
 
   it('rejects leftover laptop artifactPath and dataDir on HostBridgeLaunch', () => {
@@ -493,6 +561,13 @@ describe('host-rpc contract', () => {
     }).type).toBe('peer_daemon.install');
     expect(parseHostRpcResult('peer_daemon.status', { state: 'not_installed' })).toEqual({
       state: 'not_installed'
+    });
+    expect(parseHostRpcResult('peer_daemon.status', {
+      state: 'disconnected',
+      hostId
+    })).toEqual({
+      state: 'disconnected',
+      hostId
     });
     expect(parseHostRpcResult('peer_daemon.restart', { ok: true, log: 'restarted' })).toEqual({
       ok: true,

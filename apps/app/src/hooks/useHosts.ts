@@ -44,7 +44,10 @@ export function defaultHostId(
   hosts: Host[],
   project?: { hostId?: string; remote?: unknown }
 ): string | undefined {
-  if (project?.remote) return primaryHost(hosts)?.id;
+  if (project?.remote) {
+    if (project.hostId && hosts.some((host) => host.id === project.hostId)) return project.hostId;
+    return undefined;
+  }
   if (project?.hostId && hosts.some((host) => host.id === project.hostId)) return project.hostId;
   return primaryHost(hosts)?.id;
 }

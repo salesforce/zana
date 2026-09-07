@@ -1,6 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, normalize, resolve, win32 } from 'node:path';
 import { resolveContained } from '@zana-ai/zcc-path-confine';
+import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 
 export const IMAGE_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
 export const FILE_ATTACHMENT_LIMIT_BYTES = 25 * 1024 * 1024;
@@ -196,6 +197,46 @@ export function hostPromptFromInput(
   const texts = flattened.map((part) => part.trim()).filter((part) => part.length > 0);
   const markers = resolvePath ? attachmentMarkersFromInput(promptInput, resolvePath) : [];
   return [...texts, ...markers];
+}
+
+function textPromptPart(text: string): PromptInput {
+  return { type: 'text', text, mentions: [] };
+}
+
+function resolveHostPromptPart(
+  item: PromptInput,
+  resolvePath?: (path: string) => string
+): PromptInput {
+  if ((item.type === 'localImage' || item.type === 'localFile') && resolvePath) {
+    return { ...item, path: resolvePath(item.path) };
+  }
+  return item;
+}
+
+/** Structured host-RPC prompt: keep mentions and attachment parts, resolve paths in place. */
+export function hostPromptInputFromInput(
+  promptInput: unknown,
+  flattened: readonly string[],
+  resolvePath?: (path: string) => string
+): PromptInput[] {
+  const parts: PromptInput[] = [];
+  if (Array.isArray(promptInput)) {
+    for (const part of promptInput) {
+      if (typeof part === 'string') {
+        const text = part.trim();
+        if (text.length > 0) parts.push(textPromptPart(text));
+        continue;
+      }
+      const parsed = promptInputSchema.safeParse(part);
+      if (!parsed.success) continue;
+      parts.push(resolveHostPromptPart(parsed.data, resolvePath));
+    }
+  }
+  if (parts.length > 0) return parts;
+  return flattened
+    .map((text) => text.trim())
+    .filter((text) => text.length > 0)
+    .map(textPromptPart);
 }
 
 export async function readAttachment(

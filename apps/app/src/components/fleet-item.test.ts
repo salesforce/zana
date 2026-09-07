@@ -193,6 +193,9 @@ describe('fleet items', () => {
     expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle' }), true)).toBe(
       'Claude Code · Local agent · remote tools'
     );
+    expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle' }), false, true)).toBe(
+      'Claude Code · Remote host'
+    );
     expect(threadCardShowsProject(true, true)).toBe(false);
     expect(threadCardShowsProject(true, false)).toBe(true);
     expect(threadCardShowsProject(false, false)).toBe(false);

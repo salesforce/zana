@@ -6,6 +6,7 @@ import {
   reloadThreadModelCatalog,
   reloadThreadProviderModels,
   resetThreadModelCatalog,
+  setThreadModelCatalogHost,
   type ThreadExecutionOptionsFetcher
 } from './thread-model-catalog.js';
 
@@ -292,5 +293,32 @@ describe('thread model catalog', () => {
     await vi.waitFor(() => {
       expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
     });
+  });
+
+  it('passes hostId on every fetch and drops the old roster when the machine changes', async () => {
+    const calls: Array<{ providerId?: string; hostId?: string }> = [];
+    let roster = ['claude-code', 'acp-opencode'];
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      calls.push({ providerId: query?.providerId, hostId: query?.hostId });
+      return optionsBody(roster, query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+
+    await setThreadModelCatalogHost('sfwork');
+    expect(calls.some((call) => call.hostId === 'sfwork' && call.providerId === undefined)).toBe(true);
+    expect(calls.filter((call) => call.providerId).every((call) => call.hostId === 'sfwork')).toBe(true);
+    expect(getThreadModelCatalog().byProvider['acp-opencode']?.models[0]?.model).toBe('acp-opencode-model');
+
+    roster = ['claude-code'];
+    calls.length = 0;
+    await setThreadModelCatalogHost('other-host');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.hostId === 'other-host')).toBe(true);
+    expect(getThreadModelCatalog().byProvider['acp-opencode']).toBeUndefined();
+    expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+
+    calls.length = 0;
+    await setThreadModelCatalogHost('other-host');
+    expect(calls).toEqual([{ providerId: undefined, hostId: 'other-host' }]);
   });
 });

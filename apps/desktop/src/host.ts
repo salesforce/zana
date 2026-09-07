@@ -53,6 +53,7 @@ import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/led
 import { finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
+import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
 import { createRestoreCapabilityStore } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { bindLaunchPrincipal, type LaunchAuthorizationBinding, type LaunchPrincipal, type LaunchPrincipalRef } from '@zana-ai/zcc-server/services/launch/types';
@@ -2954,14 +2955,17 @@ export function resolveEffectiveLaunch(
   req: Pick<CreateTerminalRequest, 'cwd' | 'isolateScratch' | 'title' | 'worktreeInfo'>,
   project: Project
 ): EffectiveLaunch {
-  const projectRoot = project.remote ? project.path : realpathSync(project.path);
+  const rooted = project.remote
+    ? (store.ensureRemoteProjectLocalDir?.(project) ?? project)
+    : project;
+  const projectRoot = rooted.remote ? rooted.path : realpathSync(rooted.path);
   let cwd = projectRoot;
-  let trustedPath = project.path;
-  const scratch = req.isolateScratch && !req.cwd && project.quickAgent && !project.remote
+  let trustedPath = rooted.path;
+  const scratch = req.isolateScratch && !req.cwd && rooted.quickAgent && !rooted.remote
     ? { label: typeof req.isolateScratch === 'string' ? req.isolateScratch : req.title }
     : undefined;
   const requestedCwd = scratch ? undefined : req.cwd;
-  if (!project.remote && requestedCwd) {
+  if (!rooted.remote && requestedCwd) {
     try {
       const realCwd = realpathSync(requestedCwd);
       if (isWithin(realCwd, projectRoot)) {
@@ -2974,10 +2978,10 @@ export function resolveEffectiveLaunch(
   }
   if (
     req.worktreeInfo?.path &&
-    !project.remote &&
+    !rooted.remote &&
     !req.isolateScratch &&
     !req.cwd &&
-    !project.quickAgent
+    !rooted.quickAgent
   ) {
     try {
       const realWt = realpathSync(req.worktreeInfo.path);
@@ -3160,10 +3164,7 @@ export function createTerminalConfined(
     const projectMicroVmSettings = opts?.launchSnapshot?.projectSettings
       ?? store.getProjectSettings(req.projectId);
     const launchConfig = opts?.launchSnapshot?.config ?? store.getConfig();
-    const useRemoteTools =
-      Boolean(req.remoteToolProxy)
-      && launchConfig.cliRemoteToolProxyEnabled === true
-      && Boolean(project.remote);
+    const useRemoteTools = usesCliRemoteToolProxy(project, req, launchConfig);
     const resolvedMicroVmImage =
       req.microVmImage ?? effectivePersona?.microVmImage ?? projectMicroVmSettings.microVmImage;
     const session = ptys.create({
@@ -3270,6 +3271,7 @@ async function launchAuthorizedTerminal(
   const personaSnapshot = personas.list();
   const projectSettings = await getAuthoritativeProjectSettings(req.projectId);
   const effectiveLaunch = resolveEffectiveLaunch(req, project);
+  const executionScope = launchExecutionScope(project, req, config);
   const userGaveTask = !!(req.prompt?.trim() || req.extraArgs?.length);
   const frameworkPersona = !req.personaId && req.frameworkIds?.length
     ? resolveFrameworkPersona(req.frameworkIds, !userGaveTask)
@@ -3289,7 +3291,7 @@ async function launchAuthorizedTerminal(
       personaId: req.personaId,
       teamId: req.cohort?.teamId,
       slotId: req.cohort?.slotId,
-      scope: project.remote ? 'remote' : 'local',
+      scope: executionScope,
       autonomous: spawnOpts?.autonomous === true,
       deadlineAt
     }),
@@ -3329,7 +3331,7 @@ async function launchAuthorizedTerminal(
     extraArgs: req.extraArgs,
     projectId: project.id,
     projectPath: effectiveLaunch.cwd,
-    scope: project.remote ? 'remote' : 'local',
+    scope: executionScope,
     mode: principal.kind === 'interactive-user' ? 'interactive' : 'unattended',
     idempotencyKey: plan.idempotencyKey,
     legacyPersonaFacetCompatibility
@@ -3386,7 +3388,7 @@ async function launchAuthorizedTerminal(
       slotId: req.cohort?.slotId,
       personaId: req.personaId,
       profileId: selection.profile,
-      scope: project.remote ? 'remote' as const : 'local' as const,
+      scope: executionScope,
       autonomous: spawnOpts?.autonomous === true,
       initialTaskDigest: launchDigest(req.prompt ?? '')
     };
@@ -3498,7 +3500,7 @@ async function launchAuthorizedTerminal(
         : undefined),
       projectSettings: currentSettings,
       harnessRouting: authorizedPlan.request.harnessRouting, extraArgs: authorizedPlan.request.extraArgs,
-      projectId: project.id, projectPath: authorizedPlan.resolved.effectiveLaunch.cwd, scope: currentProject.remote ? 'remote' : 'local',
+      projectId: project.id, projectPath: authorizedPlan.resolved.effectiveLaunch.cwd, scope: launchExecutionScope(currentProject, authorizedPlan.request, currentConfig),
       mode: principal.kind === 'interactive-user' ? 'interactive' : 'unattended',
       idempotencyKey: authorizedPlan.idempotencyKey,
       legacyPersonaFacetCompatibility
@@ -3544,12 +3546,13 @@ async function launchBackgroundTerminal(
   if (!project) throw new LaunchSpawnError('NOT_FOUND', 'project not found');
   const effectiveLaunch = resolveEffectiveLaunch(opts, project);
   const projectSettings = await getAuthoritativeProjectSettings(project.id);
+  const executionScope = launchExecutionScope(project, opts, opts.config);
   const plan = preflightLaunch(opts, {
     principal: () => principal,
     binding: () => ({
       consumerKind: opts.cohort ? 'team-slot' : 'terminal', personaId: opts.persona?.id,
       teamId: opts.cohort?.teamId, slotId: opts.cohort?.slotId,
-      scope: project.remote ? 'remote' : 'local', autonomous: opts.autonomous === true
+      scope: executionScope, autonomous: opts.autonomous === true
     }),
     resolve: () => ({
       project,
@@ -3576,7 +3579,7 @@ async function launchBackgroundTerminal(
     extraArgs: opts.extraArgs,
     projectId: project.id,
     projectPath: effectiveLaunch.cwd,
-    scope: project.remote ? 'remote' : 'local',
+    scope: executionScope,
     mode: opts.scheduled || opts.autonomous ? 'unattended' : 'headless',
     idempotencyKey: plan.idempotencyKey
   }, {
@@ -3632,7 +3635,7 @@ async function launchBackgroundTerminal(
         extraArgs: authorizedPlan.request.extraArgs,
         projectId: currentProject.id,
         projectPath: authorizedPlan.resolved.effectiveLaunch.cwd,
-        scope: currentProject.remote ? 'remote' : 'local',
+        scope: launchExecutionScope(currentProject, authorizedPlan.request, currentConfig),
         mode: authorizedPlan.request.scheduled || authorizedPlan.request.autonomous ? 'unattended' : 'headless',
         idempotencyKey: authorizedPlan.idempotencyKey
       }, {
@@ -3865,7 +3868,7 @@ export function authorizeTeamLaunch(
     const binding: LaunchAuthorizationBinding = {
       consumerKind: 'team-slot', teamId: team.id, slotId: expected.slotId, personaId: expected.personaId,
       profileId, initialTaskDigest: launchDigest(slots[index].initialTask),
-      scope: project.remote ? 'remote' : 'local',
+      scope: launchExecutionScope(project, {}, store.getConfig()),
       storeRevision: launchDigest({ team, personas: personaSnapshot }),
       projectIdentityDigest: launchDigest(project), autonomous, expiresAt, deadlineAt
     };
@@ -4022,7 +4025,7 @@ export async function launchTeam(
     slotId,
     authorizationBinding: launchDigest({
       consumerKind: 'team-slot', teamId: team.id, slotId, personaId,
-      projectId: targetProjectId, scope: project.remote ? 'remote' : 'local',
+      projectId: targetProjectId, scope: launchExecutionScope(project, {}, currentConfig),
       profile: profileFor(personaId), autonomous
     })
   }));
@@ -4077,7 +4080,7 @@ export async function launchTeam(
         || binding.slotId !== expected.slotId
         || binding.personaId !== expected.personaId
         || binding.profileId !== expectedProfile
-        || binding.scope !== (project.remote ? 'remote' : 'local')
+        || binding.scope !== launchExecutionScope(project, {}, currentConfig)
         || binding.autonomous !== autonomous
         || (structured.policy?.deadlineMs === undefined
           ? binding.deadlineAt !== undefined
@@ -4149,7 +4152,7 @@ export async function launchTeam(
       launchPrincipals.set(principal.id, principal);
       const binding: LaunchAuthorizationBinding = {
         consumerKind: 'team-slot', teamId: team.id, slotId, personaId, profileId,
-        initialTaskDigest: launchDigest(request.prompt ?? ''), scope: project.remote ? 'remote' : 'local',
+        initialTaskDigest: launchDigest(request.prompt ?? ''), scope: launchExecutionScope(project, request, currentConfig),
         storeRevision: launchDigest({ team, personas: personaSnapshot }),
          projectIdentityDigest: launchDigest(project), autonomous, expiresAt, deadlineAt: launchDeadlineAt
       };

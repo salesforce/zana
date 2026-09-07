@@ -23,7 +23,7 @@ vi.mock('electron', () => ({
   app: { getPath: (k: string) => (k === 'home' ? h.home : h.home) }
 }));
 
-const { store, scratchWorkspaceRoot, SCRATCH_DIR_NAME, normalizeConfig } = await import('./store.js');
+const { store, scratchWorkspaceRoot, SCRATCH_DIR_NAME, normalizeConfig, remoteProjectsRoot } = await import('./store.js');
 const { PROJECT_COLORS } = await import('@zana-ai/zcc-domain/project-colors');
 
 const dataDir = join(h.home, '.zcc');
@@ -69,6 +69,7 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'closeIdlePeersEnabled',
     'teamLaunchEnabled',
     'goalsEnabled',
+    'cliRemoteHostCatalogEnabled',
     'followUpsEnabled',
     'heartbeatEnabled',
     'autoRenameTabs',
@@ -401,6 +402,64 @@ describe('createScratchSubfolder', () => {
     expect(store.createScratchSubfolder('')).toMatch(/\/session-\d{14}(-\d+)?$/);
     expect(store.createScratchSubfolder('!!!')).toMatch(/\/session-\d{14}(-\d+)?$/);
     expect(store.createScratchSubfolder(undefined)).toMatch(/\/session-\d{14}(-\d+)?$/);
+  });
+});
+
+describe('addRemoteProject local working tree', () => {
+  it('creates ~/zcc-workspace/remotes/<tag>', () => {
+    const project = store.addRemoteProject({ host: 'limited-pony' });
+    expect(project.tag).toBe('limited-pony');
+    expect(project.path).toBe(join(remoteProjectsRoot(), 'limited-pony'));
+    expect(existsSync(project.path)).toBe(true);
+    expect(project.path.startsWith(scratchWorkspaceRoot())).toBe(true);
+  });
+
+  it('heals a missing dir on listProjects without changing the path', () => {
+    const project = store.addRemoteProject({ host: 'kit-kat' });
+    rmSync(project.path, { recursive: true, force: true });
+    expect(existsSync(project.path)).toBe(false);
+    const listed = store.listProjects().find((row) => row.id === project.id);
+    expect(listed?.path).toBe(project.path);
+    expect(existsSync(project.path)).toBe(true);
+  });
+
+  it('migrates ~/.zcc/remote-projects/<id> onto remotes/<tag> and keeps files', () => {
+    const project = store.addRemoteProject({ host: 'old-box' });
+    const legacy = join(h.home, '.zcc', 'remote-projects', project.id);
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, 'PLAN.md'), 'keep');
+    const file = readJson(projectsFile);
+    const row = file.projects.find((entry: { id: string }) => entry.id === project.id);
+    row.path = legacy;
+    writeFileSync(projectsFile, JSON.stringify(file, null, 2));
+    rmSync(project.path, { recursive: true, force: true });
+
+    const listed = store.listProjects().find((entry) => entry.id === project.id);
+    expect(listed?.path).toBe(join(remoteProjectsRoot(), project.tag!));
+    expect(existsSync(join(listed!.path, 'PLAN.md'))).toBe(true);
+    expect(existsSync(legacy)).toBe(false);
+  });
+
+  it('removeProject deletes the app-owned remotes folder', () => {
+    const project = store.addRemoteProject({ host: 'gone' });
+    const path = project.path;
+    store.removeProject(project.id);
+    expect(existsSync(path)).toBe(false);
+    expect(store.listProjects().some((row) => row.id === project.id)).toBe(false);
+  });
+
+  it('removeProject leaves a custom local path on disk', () => {
+    const custom = join(h.home, 'my-remote-docs');
+    mkdirSync(custom, { recursive: true });
+    writeFileSync(join(custom, 'keep.txt'), 'x');
+    const project = store.addRemoteProject({ host: 'custom-box' });
+    const file = readJson(projectsFile);
+    const row = file.projects.find((entry: { id: string }) => entry.id === project.id);
+    row.path = custom;
+    writeFileSync(projectsFile, JSON.stringify(file, null, 2));
+    rmSync(project.path, { recursive: true, force: true });
+    store.removeProject(project.id);
+    expect(existsSync(join(custom, 'keep.txt'))).toBe(true);
   });
 });
 

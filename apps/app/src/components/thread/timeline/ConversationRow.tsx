@@ -24,6 +24,8 @@ import { conversationFilePreviewPaths } from '../../markdown-local-file.js';
 import { dispatchThreadOpenFile } from '../secondary-panel/useThreadOpenFileSignal.js';
 import { ThreadOpenFilePreviewButton } from './TimelineTitleView.js';
 import { ThreadImageLightbox } from './ThreadImageLightbox.js';
+import { PlanExecutionCard } from './PlanExecutionCard.js';
+import type { PlanExecutionTask } from './plan-execution-card.js';
 
 function userRequestLabel(row: Extract<ThreadTimelineViewRow, { kind: 'conversation' }>): string | null {
   if (row.role !== 'user') return null;
@@ -32,7 +34,6 @@ function userRequestLabel(row: Extract<ThreadTimelineViewRow, { kind: 'conversat
   }
   const request = row.turnRequest;
   if (request.kind === 'steer') return request.status === 'rejected' ? 'Steer rejected' : 'Steer';
-  if (request.status === 'pending') return 'Pending';
   if (request.status === 'rejected') return 'Rejected';
   return null;
 }
@@ -47,7 +48,8 @@ export const ConversationRow = memo(function ConversationRow({
   streaming = false,
   onFork,
   messageActions,
-  includePluginMessageActions = true
+  includePluginMessageActions = true,
+  planExecution
 }: {
   row: Extract<ThreadTimelineViewRow, { kind: 'conversation' }>;
   onCopy?: (text: string) => void;
@@ -59,6 +61,7 @@ export const ConversationRow = memo(function ConversationRow({
   onFork?: (sourceSeqEnd?: number) => void;
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
+  planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
 }) {
   const testId = row.role === 'assistant' ? 'thread-assistant-text' : 'thread-user-text';
   const mentions = row.role === 'user' ? row.mentions : [];
@@ -371,6 +374,9 @@ export const ConversationRow = memo(function ConversationRow({
           alt={lightbox.name}
           onClose={() => setLightbox(null)}
         />
+      ) : null}
+      {row.role === 'user' && planExecution && planExecution.tasks.length > 0 ? (
+        <PlanExecutionCard title={planExecution.title} tasks={planExecution.tasks} />
       ) : null}
     </article>
   );

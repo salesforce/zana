@@ -74,6 +74,29 @@
       }
     },
     {
+      "id": "harness-claude",
+      "displayName": "Claude Code CLI Agent",
+      "description": "CLI Agent TUI for the native claude coding CLI.",
+      "icon": {
+        "lucide": "./icons/claude-code.svg"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/harness-claude",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
       "id": "provider-claude-code",
       "displayName": "Claude Code provider",
       "description": "Run Zana threads with Claude Code.",
@@ -92,6 +115,29 @@
         "git": {
           "url": "https://github.com/salesforce/zana",
           "subdir": "plugins/provider-claude-code",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "harness-codex",
+      "displayName": "Codex CLI Agent",
+      "description": "CLI Agent TUI for the native codex coding CLI.",
+      "icon": {
+        "lucide": "./icons/codex.svg"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/harness-codex",
           "ref": "HEAD"
         }
       }
@@ -143,6 +189,29 @@
       }
     },
     {
+      "id": "harness-cursor",
+      "displayName": "Cursor CLI Agent",
+      "description": "CLI Agent TUI for the native cursor-agent coding CLI.",
+      "icon": {
+        "lucide": "./icons/cursor.svg"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/harness-cursor",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
       "id": "custom-instructions",
       "displayName": "Custom instructions",
       "description": "Add persistent custom instructions to agent threads on this host.",
@@ -184,6 +253,29 @@
         "git": {
           "url": "https://github.com/salesforce/zana",
           "subdir": "plugins/docs",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "monaco-editor",
+      "displayName": "File Editor",
+      "description": "Edit code files from a thread with the Monaco editor.",
+      "icon": {
+        "lucide": "Code"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/monaco-editor",
           "ref": "HEAD"
         }
       }
@@ -260,7 +352,7 @@
     {
       "id": "memory",
       "displayName": "Memory",
-      "description": "Durable notes the agent should remember across threads.",
+      "description": "Durable global and project memories the agent can search and update.",
       "icon": {
         "lucide": "Brain"
       },
@@ -276,6 +368,75 @@
         "git": {
           "url": "https://github.com/salesforce/zana",
           "subdir": "plugins/memory",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "harness-opencode",
+      "displayName": "OpenCode CLI Agent",
+      "description": "CLI Agent TUI for the native opencode coding CLI.",
+      "icon": {
+        "lucide": "./icons/opencode.svg"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/harness-opencode",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "pdf-preview",
+      "displayName": "PDF preview",
+      "description": "Preview PDF files in the thread side panel with the built-in viewer.",
+      "icon": {
+        "lucide": "FileText"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/pdf-preview",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "harness-pi",
+      "displayName": "Pi CLI Agent",
+      "description": "CLI Agent TUI for the native pi coding CLI.",
+      "icon": {
+        "lucide": "./icons/pi.svg"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/harness-pi",
           "ref": "HEAD"
         }
       }
@@ -421,7 +582,7 @@
     {
       "id": "side-chat",
       "displayName": "Side chat",
-      "description": "Fork a compact chat beside the current thread.",
+      "description": "Reply to messages in hidden side-chat forks rendered in a thread panel.",
       "icon": {
         "lucide": "MessagesSquare"
       },

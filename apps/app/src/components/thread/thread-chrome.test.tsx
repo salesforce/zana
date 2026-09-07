@@ -110,6 +110,12 @@ describe('workspace banner', () => {
     expect(linked).toContain('border: 1px solid var(--border);');
     expect(linked).toContain('border-bottom: 0;');
     expect(linked).toContain('border-radius: 12px 12px 0 0;');
+    const stack = css.slice(
+      css.indexOf('.thread-composer-dock:has(.thread-composer-stack-card) .thread-composer-stack-card {'),
+      css.indexOf('.thread-composer-dock:has(.thread-composer-stack-card) .thread-composer-stack-card:first-child {')
+    );
+    expect(stack).toContain('width: 100%;');
+    expect(stack).toContain('box-sizing: border-box;');
     expect(css).toContain('.thread-composer-dock:has(> .thread-workspace-banner + .thread-command-composer) .thread-command-composer .ui-command-composer');
     const flatten = css.slice(
       css.indexOf('.thread-composer-dock:has(> .thread-workspace-banner + .thread-command-composer) .thread-command-composer .ui-command-composer {'),
@@ -121,14 +127,17 @@ describe('workspace banner', () => {
       css.indexOf('.thread-workspace-banner {'),
       css.indexOf('.thread-composer-dock > .thread-workspace-banner {')
     );
-    expect(bannerPad).toContain('margin-left: 1rem;');
-    expect(bannerPad).toContain('width: calc(100% - 2rem);');
-    expect(bannerPad).toContain('padding: 6px 24px 4px;');
+    expect(bannerPad).toContain('margin: 0;');
+    expect(bannerPad).toContain('width: 100%;');
+    expect(bannerPad).toContain('box-sizing: border-box;');
+    expect(bannerPad).toContain('padding: 6px 12px 4px;');
+    expect(bannerPad).not.toContain('margin-left: 1rem;');
+    expect(bannerPad).not.toContain('calc(100% - 2rem)');
     const openPad = css.slice(
       css.indexOf('.thread-workspace-banner.is-open {'),
       css.indexOf('.thread-workspace-banner-summary {')
     );
-    expect(openPad).toContain('padding: 8px 24px 6px;');
+    expect(openPad).toContain('padding: 8px 12px 6px;');
     const filesPad = css.slice(
       css.indexOf('.thread-workspace-files {'),
       css.indexOf('.thread-workspace-files[hidden] {')
@@ -694,7 +703,7 @@ describe('expandable row and chips', () => {
     expect(header).toContain('.thread-detail-search:focus-within input,');
     expect(header).toContain('.thread-detail-overflow-btn {');
     expect(header).toContain('.thread-detail-overflow-menu {');
-    expect(header).toContain('z-index: 80;');
+    expect(header).toContain('z-index: 110;');
     expect(header).not.toContain('position: absolute;');
   });
 
@@ -790,6 +799,7 @@ describe('expandable row and chips', () => {
     expect(source).not.toContain('thread-load-older');
     const column = source.slice(columnAt);
     expect(column).toContain('<ThreadTimeline');
+    expect(column).toContain('planExecution={durablePlan?.tasks.length');
     expect(column).toContain('<ThreadWorkspaceBanner');
     expect(column).toContain('<ThreadCommandComposer');
     expect(source).toContain('executionModeRequested={executionModeRequested}');
@@ -803,6 +813,7 @@ describe('expandable row and chips', () => {
     expect(composerAt).toBeGreaterThan(bannerAt);
     expect(column).toContain('<ThreadPromptModeCard');
     expect(column).toContain('<ThreadTodoCard');
+    expect(column).toContain('composerVisibleTodos(todos, durablePlan?.tasks.length');
     expect(source).toContain('product.threads.cancelPlan');
     expect(source).not.toContain('ThreadPromptModeChip');
 
@@ -818,6 +829,7 @@ describe('expandable row and chips', () => {
     expect(css).toContain('.thread-prompt-mode-card');
     expect(css).toContain('.thread-pending-banner-plan');
     expect(css).toContain('.thread-plan-panel');
+    expect(css).toContain('.thread-plan-execution');
     expect(css).toContain('.thread-todo-checklist');
     const mentionPopover = css.slice(
       css.indexOf('.thread-detail-view .mention-popover {'),

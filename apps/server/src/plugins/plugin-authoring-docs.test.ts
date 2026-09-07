@@ -65,6 +65,7 @@ const ZCC_PLUGIN_API_KEYS = [
   'status',
   'sdk',
   'host',
+  'services',
   'onDispose'
 ] as const satisfies readonly (keyof ZccPluginApi)[];
 

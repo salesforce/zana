@@ -70,7 +70,7 @@ this list fails CI):
   `type: "project"`. String settings may set `secret: true`.
 - `zcc.storage` — `storage.kv` (`get` / `set` / `delete` / `list`) and
   `storage.database()` (per-plugin SQLite under `<dataDir>/plugins/<id>/`).
-  `database().runScript(sql)`, `prepare(sql)`, `migrate(statements)`.
+  `database().runScript(sql)`, `prepare(sql)`, `migrate(statements)`, `transaction(fn)`.
 - `zcc.http` — `http.route(method, path, handler)` served at
   `/api/v1/plugins/<id>/http<path>`.
 - `zcc.rpc` — `rpc.method(name, handler)` for the plugin app via `callPluginRpc`.
@@ -112,6 +112,36 @@ this list fails CI):
   and `host.experimental_client()` (`call(method, input, { hostId? })`) dispatch
   to a `zcc.host` worker loaded via `experimental_defineHostEntry`. Throws
   `not available` until that entry (or a test `hostCall`) is wired.
+- `zcc.services` — experimental plugin-to-plugin SDK. `services.provide(impl)`
+  publishes an in-process object keyed by this plugin's id. `services.use(id)`
+  returns a live proxy that always dispatches to the current provider (survives
+  reload) and throws `service_unavailable` until that plugin is running and has
+  provided. `services.has(id)` is true after that plugin has called `provide`.
+  Declare `zcc.requires: ["other-plugin-id"]` so the host loads providers first.
+  A required plugin that is not running marks this plugin `needs-configuration`
+  (`needs plugin: <id>`) without crashing host `start()`. Do not put a product
+  API on `zcc.sdk`. Consumer example (Salesforce platform SDK — types only from
+  `@zcc-ext/salesforce/sdk`; never import `createSalesforceSdk` or that
+  plugin's internals). Method table: the Salesforce plugin's `SDK.md`.
+
+```ts
+import type { SalesforceSdk } from '@zcc-ext/salesforce/sdk';
+
+export default async function plugin(zcc) {
+  const sf = zcc.services.use<SalesforceSdk>('salesforce');
+  zcc.agents.registerTool({
+    name: 'gus_query',
+    description: 'SOQL against GUS via the shared Salesforce session',
+    execute: async (input) => {
+      const page = await sf.query(input.query);
+      return page.records;
+    }
+  });
+}
+```
+
+  Register agent tools on the **consumer**. Org selection stays on the Salesforce
+  tab (`defaultOrg`); `connect()` / `request()` never return `accessToken`.
 - `zcc.onDispose(hook)` — cleanup when the plugin unloads.
 
 Branding lives on the manifest (`zcc.name`, `zcc.description`, `zcc.branding`).

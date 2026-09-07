@@ -450,6 +450,19 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       database.prepare('INSERT INTO items (id, title) VALUES (?, ?)').run('1', 'Loop');
       expect(database.prepare('SELECT title FROM items WHERE id = ?').get('1')).toEqual({ title: 'Loop' });
       expect(handle.api.storage.database()).toBe(database);
+      database.migrate([
+        `CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT);
+         CREATE TRIGGER notes_insert AFTER INSERT ON notes BEGIN
+           UPDATE notes SET body = body || '!';
+         END;`
+      ]);
+      database.prepare('INSERT INTO notes (id, body) VALUES (?, ?)').run('1', 'hi');
+      expect(database.prepare('SELECT body FROM notes WHERE id = ?').get('1')).toEqual({ body: 'hi!' });
+      const counted = database.transaction(() => {
+        database.prepare('INSERT INTO items (id, title) VALUES (?, ?)').run('2', 'Two');
+        return database.prepare('SELECT COUNT(*) AS count FROM items').get() as { count: number };
+      });
+      expect(counted.count).toBe(2);
       await handle.dispose();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -535,6 +548,29 @@ describe('importServerFactory', () => {
     try {
       const factory = await importServerFactory(entry);
       expect(typeof factory).toBe('function');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('plugin services', () => {
+  it('provides an SDK to another plugin through a shared registry', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-services-'));
+    try {
+      const { createPluginServicesRegistry } = await import('@zana-ai/zcc-plugin-sdk/server');
+      const registry = createPluginServicesRegistry();
+      const alpha = createPluginApi('alpha', join(dir, 'alpha'), { services: registry });
+      const beta = createPluginApi('beta', join(dir, 'beta'), { services: registry });
+      alpha.api.services.provide({ ping: () => 'ok' });
+      expect(beta.api.services.has('alpha')).toBe(true);
+      expect(beta.api.services.has('missing')).toBe(false);
+      expect(beta.api.services.use<{ ping: () => string }>('alpha').ping()).toBe('ok');
+      await alpha.dispose();
+      expect(() => beta.api.services.use<{ ping: () => string }>('alpha').ping()).toThrow(
+        /unavailable/
+      );
+      await beta.dispose();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

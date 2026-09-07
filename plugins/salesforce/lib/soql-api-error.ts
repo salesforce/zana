@@ -7,6 +7,8 @@ export interface SoqlApiError {
   column?: number;
 }
 
+export type SalesforceApiError = SoqlApiError;
+
 export function parseSoqlApiError(status: number, json: unknown, text: string): SoqlApiError {
   const message = compactError(status, json, text);
   const row = Array.isArray(json) ? json[0] : json;
@@ -28,6 +30,8 @@ export function parseSoqlApiError(status: number, json: unknown, text: string): 
   }
   return { message, errorCode, line, column };
 }
+
+export const parseApiError = parseSoqlApiError;
 
 export function isAbortError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;

@@ -7,9 +7,9 @@ import type { ThreadStatus } from "./thread-status.js";
  * signals supersede each event.
  *
  * The execution status is the single source of truth for "what is this thread
- * doing": `idle` (quiescent), `starting` (preparing a run), `active` (agent
- * work is in progress), `stopping` (the current run/start is winding down),
- * and `error` (quiescent after failure). In-progress intent lives in the
+ * doing": `pending` (row exists, no run yet), `idle` (quiescent), `starting`
+ * (preparing a run), `active` (agent work is in progress), `stopping` (the
+ * current run/start is winding down), and `error` (quiescent after failure). In-progress intent lives in the
  * status, not in side-fields: a requested stop IS `status = stopping`, not a
  * separate `stopRequestedAt`. Only the orthogonal record dimensions
  * (deletedAt/archivedAt) are fields, surfaced here as supersession predicates.
@@ -70,6 +70,10 @@ export const THREAD_LIFECYCLE: Record<
   ThreadStatus,
   Partial<Record<ThreadLifecycleEventType, ThreadStatus>>
 > = {
+  pending: {
+    "run.preparing": "starting",
+    "run.started": "active",
+  },
   idle: {
     "run.preparing": "starting",
     "run.started": "active",

@@ -61,6 +61,24 @@ export function showOngoingThreadWork(
   return isRunningThreadRuntimeDisplayStatus(status);
 }
 
+const USER_WAIT_WORK_KINDS = new Set(['question', 'approval']);
+
+/** True when a visible work row is still running — tools already say that. */
+export function timelineHasRunningWork(rows: readonly TimelineRow[] | null | undefined): boolean {
+  if (!rows?.length) return false;
+  for (const row of rows) {
+    if (row.kind === 'turn') {
+      if (timelineHasRunningWork(row.children)) return true;
+      continue;
+    }
+    if (row.kind !== 'work') continue;
+    if (USER_WAIT_WORK_KINDS.has(row.workKind)) continue;
+    if (row.status === 'pending') return true;
+    if (row.workKind === 'delegation' && timelineHasRunningWork(row.childRows)) return true;
+  }
+  return false;
+}
+
 /** True when the latest timeline row is a retry/reconnect still in flight. */
 export function timelineHasInFlightRetry(rows: readonly TimelineRow[] | null | undefined): boolean {
   if (!rows?.length) return false;
@@ -162,6 +180,18 @@ export function visiblePendingTodos(
   if (!todos?.items.length) return null;
   if (todos.items.every((item) => item.status === 'completed')) return null;
   return todos;
+}
+
+/**
+ * Composer checklist is a mid-turn fallback. Once durable plan tasks exist,
+ * PlanExecutionCard (timeline) and ThreadPlanPanel own the list.
+ */
+export function composerVisibleTodos(
+  todos: ThreadTimelinePendingTodos | null | undefined,
+  durableTaskCount: number
+): ThreadTimelinePendingTodos | null {
+  if (durableTaskCount > 0) return null;
+  return visiblePendingTodos(todos);
 }
 
 export function workRowBody(row: {

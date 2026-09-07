@@ -6,6 +6,7 @@ import { detectHostName, persistHostId, resolveHostId } from './identity.js';
 import { acquireDaemonLock } from './lock.js';
 import { readHostAuth, writeHostAuth } from './machine-auth.js';
 import { startEnrolledHostConnection, type EnrolledHostConnection } from './server-connection.js';
+import { disposeHostFsWatcher } from './workspace-fs-watch.js';
 
 export interface EnrolledHostDaemon {
   hostId: string;
@@ -95,9 +96,11 @@ export async function startEnrolledHostDaemon(options: {
   try {
     const instanceId = randomUUID();
     const existing = readHostAuth(options.dataDir);
+    const existingUsable =
+      existing && (!options.hostId || existing.hostId === options.hostId);
     let hostId: string;
     let connection: EnrolledHostConnection;
-    if (existing) {
+    if (existingUsable) {
       try {
         connection = await openSession({
           dataDir: options.dataDir,
@@ -155,6 +158,7 @@ export async function startEnrolledHostDaemon(options: {
       instanceId,
       connection,
       async close() {
+        await disposeHostFsWatcher();
         await connection.close();
         releaseLock();
       }

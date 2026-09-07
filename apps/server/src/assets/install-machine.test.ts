@@ -84,4 +84,13 @@ describe('install-machine.sh flags', () => {
     expect(source.stdout).toContain('nohup ');
     expect(source.stdout).toContain('No systemd user bus');
   });
+
+  it('drops a leftover host.id when the join host id changed', () => {
+    const source = spawnSync('sh', ['-c', `grep -n "existing_id\\|host.id\\|auth.json" ${JSON.stringify(script)}`], {
+      encoding: 'utf8'
+    });
+    expect(source.stdout).toContain('host.id');
+    expect(source.stdout).toContain('auth.json');
+    expect(source.stdout).toContain('existing_id');
+  });
 });

@@ -8,13 +8,19 @@ describe('pairing header filter', () => {
       host: 'zcc.herokuapp.com',
       origin: 'https://evil.example',
       connection: 'keep-alive',
+      'content-length': '18',
       'x-zcc-host-id': 'abc'
     })).toEqual([
       ['authorization', 'Bearer zcde_x'],
+      ['content-length', '18'],
       ['x-zcc-host-id', 'abc']
     ]);
-    expect(pairsToObject([['content-type', 'application/json']])).toEqual({
-      'content-type': 'application/json'
+    expect(pairsToObject([
+      ['content-type', 'application/json'],
+      ['content-length', '18']
+    ])).toEqual({
+      'content-type': 'application/json',
+      'content-length': '18'
     });
   });
 });

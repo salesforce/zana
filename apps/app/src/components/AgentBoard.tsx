@@ -912,7 +912,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     const project = projects.find((row) => row.id === item.projectId);
     const runtime = threadCardRuntimeLabel(
       item.thread,
-      Boolean(project?.remote && (!project.hostId || item.thread.hostId !== project.hostId))
+      Boolean(project?.remote && (!project.hostId || item.thread.hostId !== project.hostId)),
+      Boolean(project?.remote && project.hostId && item.thread.hostId === project.hostId)
     );
     const showProjectChip = threadCardShowsProject(Boolean(showProject), grouped);
     return (

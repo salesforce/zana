@@ -1,0 +1,20 @@
+{
+  "name": "@zcc-ext/monaco-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Edit thread files with Monaco in the side panel. Explorer keeps the host editor.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "File Editor",
+    "description": "Edit code files from a thread with the Monaco editor.",
+    "branding": {
+      "icon": "Code"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

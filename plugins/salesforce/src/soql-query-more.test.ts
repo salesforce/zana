@@ -38,6 +38,19 @@ describe('confineQueryMorePath', () => {
   });
 });
 
+describe('asQueryPage', () => {
+  it('normalizes records and totals from a REST payload', async () => {
+    const { asQueryPage } = await import('../lib/soql-query-more.js');
+    expect(asQueryPage({ totalSize: 2, done: false, nextRecordsUrl: '/query/x', records: [{ Id: '1' }] })).toEqual({
+      totalSize: 2,
+      done: false,
+      nextRecordsUrl: '/query/x',
+      records: [{ Id: '1' }]
+    });
+    expect(asQueryPage(null)).toEqual({ totalSize: 0, done: true, nextRecordsUrl: null, records: [] });
+  });
+});
+
 describe('query page merge', () => {
   it('appends records and keeps the original totalSize', () => {
     const merged = mergeQueryPage(

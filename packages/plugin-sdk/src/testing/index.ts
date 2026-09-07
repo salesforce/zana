@@ -7,6 +7,8 @@ import type {
   ZccPluginApi,
   ZccPluginFactory
 } from '../server.js';
+import { bindPluginServices, createPluginServicesRegistry } from '../server.js';
+import type { PluginServicesRegistry } from '../server.js';
 import { enforcePluginCliOutputLimit } from '../server.js';
 
 export class PluginContextStaleError extends Error {
@@ -109,6 +111,8 @@ export interface FakePluginHostOptions {
   listProjects?: () =>
     | Array<{ id: string; name: string; path?: string }>
     | Promise<Array<{ id: string; name: string; path?: string }>>;
+  /** Shared registry so two fake hosts can provide/use each other. */
+  services?: PluginServicesRegistry;
 }
 
 export function createFakePluginHost(options?: FakePluginHostOptions): FakePluginHost {
@@ -140,6 +144,11 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   const assertLive = (): void => {
     if (stale) throw new PluginContextStaleError(pluginId);
   };
+
+  const servicesRegistry = options?.services ?? createPluginServicesRegistry();
+  const services = bindPluginServices(pluginId, servicesRegistry, (hook) => {
+    disposeHooks.push(hook);
+  });
 
   const api: ZccPluginApi = {
     pluginId,
@@ -197,6 +206,9 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
           },
           migrate() {
             /* no-op in harness */
+          },
+          transaction(fn) {
+            return fn();
           }
         };
       }
@@ -426,6 +438,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         needsConfiguration = message;
       }
     },
+    services,
     onDispose(hook) {
       disposeHooks.push(hook);
     }

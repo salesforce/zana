@@ -94,6 +94,7 @@ describe('registerBrowserAutomationTools', () => {
   it('forwards click, type, eval, and close to the host', async () => {
     const host = {
       ...stubHost,
+      snapshot: vi.fn(stubHost.snapshot),
       click: vi.fn(async () => undefined),
       type: vi.fn(async () => undefined),
       evaluate: vi.fn(async () => '2'),
@@ -103,9 +104,14 @@ describe('registerBrowserAutomationTools', () => {
     const { server, tools } = fakeServer();
     registerBrowserAutomationTools(server as never, { threadId: 'thr_1' });
     expect(payload(await tools.get('browser_click')!({ targetId: 'tgt_1', selector: 'a' }))).toEqual({ ok: true });
+    expect(host.click).toHaveBeenCalledWith('tgt_1', { selector: 'a', x: undefined, y: undefined }, 'thr_1');
     expect(payload(await tools.get('browser_type')!({ targetId: 'tgt_1', text: 'hi' }))).toEqual({ ok: true });
+    expect(host.type).toHaveBeenCalledWith('tgt_1', { text: 'hi', selector: undefined }, 'thr_1');
     expect(payload(await tools.get('browser_eval')!({ targetId: 'tgt_1', script: '1+1' }))).toEqual({ result: '2' });
+    expect(host.evaluate).toHaveBeenCalledWith('tgt_1', '1+1', 'thr_1');
     expect(payload(await tools.get('browser_close')!({ targetId: 'tgt_1' }))).toEqual({ ok: true });
+    expect(host.close).toHaveBeenCalledWith('tgt_1', 'thr_1');
     expect(payload(await tools.get('browser_snapshot')!({ targetId: 'tgt_1' })).targetId).toBe('tgt_1');
+    expect(host.snapshot).toHaveBeenCalledWith('tgt_1', 'thr_1');
   });
 });

@@ -27,7 +27,6 @@ function view(overrides: Partial<Parameters<typeof AddRemoteProjectDialogView>[0
       user=""
       remotePath=""
       proxyJump=""
-      installHost={true}
       created={false}
       busy={false}
       installing={false}
@@ -41,9 +40,7 @@ function view(overrides: Partial<Parameters<typeof AddRemoteProjectDialogView>[0
       onUserChange={vi.fn()}
       onRemotePathChange={vi.fn()}
       onProxyJumpChange={vi.fn()}
-      onInstallHostChange={vi.fn()}
       onSubmit={vi.fn()}
-      onSkip={vi.fn()}
       onClose={vi.fn()}
       {...overrides}
     />
@@ -51,23 +48,16 @@ function view(overrides: Partial<Parameters<typeof AddRemoteProjectDialogView>[0
 }
 
 describe('AddRemoteProjectDialogView', () => {
-  it('lists SSH hosts and defaults to installing the host daemon', () => {
+  it('lists SSH hosts and always installs the host daemon', () => {
     const html = renderToStaticMarkup(view());
     expect(html).toContain('Add remote project');
     expect(html).toContain('limited-pony');
     expect(html).toContain('educational-roadrunner');
     expect(html).toContain('kit-kat');
-    expect(html).toContain('data-testid="remote-install-host"');
-    expect(html).toContain('Install host daemon on the remote machine');
     expect(html).toContain('Add and install');
-    expect(html).toContain('checked=""');
-    expect(html).toContain('Remote machine');
-  });
-
-  it('lets the user add an SSH remote without installing a daemon', () => {
-    const html = renderToStaticMarkup(view({ installHost: false }));
-    expect(html).toContain('Add project');
-    expect(html).not.toContain('Add and install');
+    expect(html).toContain('Threads run on a host daemon');
+    expect(html).not.toContain('data-testid="remote-install-host"');
+    expect(html).not.toContain('Continue without daemon');
   });
 
   it('shows install progress and locks the form', () => {
@@ -91,9 +81,9 @@ describe('AddRemoteProjectDialogView', () => {
       canSubmit: true
     }));
     expect(html).toContain('Retry install');
-    expect(html).toContain('Continue without daemon');
+    expect(html).toContain('>Cancel<');
+    expect(html).not.toContain('Continue without daemon');
     expect(html).toContain('data-testid="remote-pairing-command"');
     expect(html).toContain('curl -fL https://box.example/install.sh | sh');
-    expect(html).not.toContain('>Cancel<');
   });
 });

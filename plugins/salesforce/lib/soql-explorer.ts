@@ -1,6 +1,6 @@
-import { ConnectionError, ConnectionManager } from './connection.js';
+import { ConnectionError } from './connection.js';
 import { compactError } from './dx-project.js';
-import { publicOrgView } from './org-resolution.js';
+import type { SalesforceSdk } from './sdk-contract.js';
 import { isAbortError, parseSoqlApiError } from './soql-api-error.js';
 import {
   globalCacheKey,
@@ -20,7 +20,7 @@ import {
   type SoqlHistoryItem,
   type SoqlHistoryKind
 } from './soql-history.js';
-import { confineQueryMorePath, QueryMoreError, type QueryPage } from './soql-query-more.js';
+import { QueryMoreError, type QueryPage } from './soql-query-more.js';
 import { inspectSoql } from './soql.js';
 import { stripSoqlComments } from './strip-soql-comments.js';
 import { type PublicOrgView, type SalesforceResponse } from './types.js';
@@ -47,33 +47,15 @@ function fromSObjectName(soql: string): string | undefined {
   return match?.[1];
 }
 
-function queryPath(useToolingApi: boolean, includeDeleted: boolean): '/query' | '/queryAll' | '/tooling/query' {
-  if (useToolingApi) return '/tooling/query';
-  return includeDeleted ? '/queryAll' : '/query';
-}
-
-function recordsOf(json: unknown): Array<Record<string, unknown>> {
-  const records = (json as { records?: unknown })?.records;
-  if (!Array.isArray(records)) return [];
-  return records.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object');
-}
-
-function asQueryPage(json: unknown): QueryPage {
-  const rec = json && typeof json === 'object' ? (json as Record<string, unknown>) : {};
-  return {
-    totalSize: typeof rec.totalSize === 'number' ? rec.totalSize : recordsOf(json).length,
-    done: rec.done !== false,
-    nextRecordsUrl: typeof rec.nextRecordsUrl === 'string' ? rec.nextRecordsUrl : null,
-    records: recordsOf(json)
-  };
-}
-
 export class SoqlExplorer {
   private readonly memory = new Map<string, unknown>();
   private readonly inflight = new Map<string, AbortController>();
 
   constructor(
-    private readonly connections: ConnectionManager,
+    private readonly sdk: Pick<
+      SalesforceSdk,
+      'connect' | 'request' | 'query' | 'queryMore' | 'describeGlobal' | 'describeSObject' | 'limits'
+    >,
     private readonly kv: ExplorerKv,
     private readonly now: () => number = () => Date.now()
   ) {}
@@ -96,18 +78,18 @@ export class SoqlExplorer {
 
   async describeGlobal(args: unknown): Promise<ExplorerResult<{ catalogs: SoqlDescribeCatalogs; org: PublicOrgView }>> {
     try {
-      const org = await this.connections.connect();
+      const org = await this.sdk.connect();
       const key = globalCacheKey(org.orgId, org.apiVersion);
       const forceRefresh = rpcBool(args, 'forceRefresh');
       if (!forceRefresh) {
         const cached = await this.readCache<SoqlDescribeCatalogs>(key);
-        if (cached) return { ok: true, catalogs: cached, org: publicOrgView(org) };
+        if (cached) return { ok: true, catalogs: cached, org };
       } else {
         this.memory.delete(key);
       }
       const [standardRes, toolingRes] = await Promise.all([
-        this.connections.request('/sobjects', { method: 'GET' }),
-        this.connections.request('/tooling/sobjects', { method: 'GET' })
+        this.sdk.describeGlobal(),
+        this.sdk.describeGlobal({ tooling: true })
       ]);
       if (standardRes.response.status >= 400) {
         return failResponse(standardRes.response);
@@ -120,7 +102,7 @@ export class SoqlExplorer {
             : normalizeSObjectList(toolingRes.response.json, 'tooling')
       };
       await this.writeCache(key, catalogs);
-      return { ok: true, catalogs, org: publicOrgView(org) };
+      return { ok: true, catalogs, org: standardRes.org };
     } catch (error) {
       return failCaught(error);
     }
@@ -132,22 +114,21 @@ export class SoqlExplorer {
     const useToolingApi = rpcBool(args, 'useToolingApi');
     const forceRefresh = rpcBool(args, 'forceRefresh');
     try {
-      const org = await this.connections.connect();
+      const org = await this.sdk.connect();
       const key = sobjectCacheKey(org.orgId, org.apiVersion, name, useToolingApi);
       if (!forceRefresh) {
         const cached = await this.readCache<SoqlSObjectDescribe>(key);
-        if (cached) return { ok: true, describe: cached, org: publicOrgView(org) };
+        if (cached) return { ok: true, describe: cached, org };
       } else {
         this.memory.delete(key);
       }
-      const path = useToolingApi
-        ? `/tooling/sobjects/${encodeURIComponent(name)}/describe`
-        : `/sobjects/${encodeURIComponent(name)}/describe`;
-      const { response } = await this.connections.request(path, { method: 'GET' });
+      const { org: fromDescribe, response } = await this.sdk.describeSObject(name, {
+        tooling: useToolingApi
+      });
       if (response.status >= 400) return failResponse(response);
       const describe = normalizeSObjectDescribe(response.json, useToolingApi ? 'tooling' : 'standard');
       await this.writeCache(key, describe);
-      return { ok: true, describe, org: publicOrgView(org) };
+      return { ok: true, describe, org: fromDescribe };
     } catch (error) {
       return failCaught(error);
     }
@@ -164,15 +145,14 @@ export class SoqlExplorer {
     const requestId = rpcString(args, 'requestId');
     const signal = this.arm(requestId);
     try {
-      const { org, response } = await this.connections.request(queryPath(useToolingApi, includeDeleted), {
-        method: 'GET',
-        query: { q: executable },
+      const result = await this.sdk.query(executable, {
+        tooling: useToolingApi,
+        allRows: includeDeleted,
         signal
       });
-      if (response.status >= 400) return failResponse(response);
-      const page = asQueryPage(response.json);
+      if (result.response.status >= 400) return failResponse(result.response);
       const sobjectName = fromSObjectName(executable);
-      await this.rememberRecent(org.orgId, {
+      await this.rememberRecent(result.org.orgId, {
         soql,
         useToolingApi,
         includeDeleted,
@@ -184,8 +164,11 @@ export class SoqlExplorer {
         sobjectName,
         useToolingApi,
         includeDeleted,
-        org: publicOrgView(org),
-        ...page
+        org: result.org,
+        totalSize: result.totalSize,
+        done: result.done,
+        nextRecordsUrl: result.nextRecordsUrl,
+        records: result.records
       };
     } catch (error) {
       return failCaught(error);
@@ -200,19 +183,19 @@ export class SoqlExplorer {
     const requestId = rpcString(args, 'requestId');
     const signal = this.arm(requestId);
     try {
-      const org = await this.connections.connect();
-      const path = confineQueryMorePath(org.instanceUrl, nextRecordsUrl);
-      const { response } = await this.connections.request(path, { method: 'GET', signal });
-      if (response.status >= 400) return failResponse(response);
-      const page = asQueryPage(response.json);
+      const result = await this.sdk.queryMore(nextRecordsUrl, { signal });
+      if (result.response.status >= 400) return failResponse(result.response);
       return {
         ok: true,
         soql: rpcString(args, 'soql'),
         sobjectName: rpcString(args, 'sobjectName') || undefined,
         useToolingApi: rpcBool(args, 'useToolingApi'),
         includeDeleted: rpcBool(args, 'includeDeleted'),
-        org: publicOrgView(org),
-        ...page
+        org: result.org,
+        totalSize: result.totalSize,
+        done: result.done,
+        nextRecordsUrl: result.nextRecordsUrl,
+        records: result.records
       };
     } catch (error) {
       return failCaught(error);
@@ -229,12 +212,12 @@ export class SoqlExplorer {
     if (!inspection.ok) return { ok: false, code: 'invalid_input', error: inspection.error };
     const useToolingApi = rpcBool(args, 'useToolingApi');
     try {
-      const { org, response } = await this.connections.request(useToolingApi ? '/tooling/query' : '/query', {
+      const { org, response } = await this.sdk.request(useToolingApi ? '/tooling/query' : '/query', {
         method: 'GET',
         query: { explain: executable }
       });
       if (response.status >= 400) return failResponse(response);
-      return { ok: true, plans: response.json, soql, org: publicOrgView(org) };
+      return { ok: true, plans: response.json, soql, org };
     } catch (error) {
       return failCaught(error);
     }
@@ -242,24 +225,9 @@ export class SoqlExplorer {
 
   async limits(): Promise<ExplorerResult<{ dailyApiRequests: { max: number; remaining: number } | null; org: PublicOrgView }>> {
     try {
-      const { org, response } = await this.connections.request('/limits', { method: 'GET' });
+      const { org, response, dailyApiRequests } = await this.sdk.limits();
       if (response.status >= 400) return failResponse(response);
-      const rec = response.json && typeof response.json === 'object'
-        ? (response.json as Record<string, unknown>)
-        : {};
-      const daily = rec.DailyApiRequests && typeof rec.DailyApiRequests === 'object'
-        ? (rec.DailyApiRequests as Record<string, unknown>)
-        : null;
-      return {
-        ok: true,
-        org: publicOrgView(org),
-        dailyApiRequests: daily
-          ? {
-              max: typeof daily.Max === 'number' ? daily.Max : 0,
-              remaining: typeof daily.Remaining === 'number' ? daily.Remaining : 0
-            }
-          : null
-      };
+      return { ok: true, org, dailyApiRequests };
     } catch (error) {
       return failCaught(error);
     }
@@ -267,9 +235,9 @@ export class SoqlExplorer {
 
   async historyList(): Promise<ExplorerResult<{ recent: SoqlHistoryItem[]; saved: SoqlHistoryItem[]; org: PublicOrgView }>> {
     try {
-      const org = await this.connections.connect();
+      const org = await this.sdk.connect();
       const store = await readHistory(this.kv, org.orgId);
-      return { ok: true, org: publicOrgView(org), recent: store.recent, saved: store.saved };
+      return { ok: true, org, recent: store.recent, saved: store.saved };
     } catch (error) {
       return failCaught(error);
     }
@@ -283,7 +251,7 @@ export class SoqlExplorer {
       return { ok: false, code: 'invalid_input', error: 'kind must be recent or saved.' };
     }
     try {
-      const org = await this.connections.connect();
+      const org = await this.sdk.connect();
       const store = await readHistory(this.kv, org.orgId);
       const item: SoqlHistoryItem = {
         id: rpcString(args, 'id') || `q-${this.now()}`,
@@ -314,7 +282,7 @@ export class SoqlExplorer {
       return { ok: false, code: 'invalid_input', error: 'kind must be recent or saved.' };
     }
     try {
-      const org = await this.connections.connect();
+      const org = await this.sdk.connect();
       const store = await readHistory(this.kv, org.orgId);
       if (kind === 'recent') {
         const recent = removeItem(store.recent, id);

@@ -1072,6 +1072,7 @@ describe('salesforce helpers', () => {
   it('names every guardrail envelope', () => {
     expect(envelopeTitle('org.production.read')).toMatch(/production/i);
     expect(envelopeTitle('org.unknown.read')).toMatch(/unknown/i);
+    expect(envelopeTitle('org.write')).toMatch(/Salesforce write/i);
     expect(envelopeTitle('apex.anonymous')).toMatch(/anonymous/i);
     expect(envelopeTitle('soql.unbounded')).toMatch(/unbounded/i);
     expect(envelopeTitle('soql.export')).toMatch(/export/i);

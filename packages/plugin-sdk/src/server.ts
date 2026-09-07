@@ -77,6 +77,7 @@ export interface PluginDatabase {
   runScript(sql: string): void;
   prepare(sql: string): PluginDatabaseStatement;
   migrate(statements: readonly string[]): void;
+  transaction<T>(fn: () => T): T;
 }
 
 export interface PluginStorage {
@@ -434,6 +435,17 @@ export interface PluginAgents {
 }
 
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PluginServices } from './plugin-services.js';
+
+export {
+  PLUGIN_SERVICE_UNAVAILABLE,
+  PluginServiceUnavailableError,
+  bindPluginServices,
+  createLiveServiceProxy,
+  createPluginServicesRegistry,
+  type PluginServices,
+  type PluginServicesRegistry
+} from './plugin-services.js';
 
 export type PluginInteractionCancelReason =
   | 'user'
@@ -516,6 +528,13 @@ export interface ZccPluginApi {
   readonly status: PluginStatusApi;
   readonly sdk: PluginSdk;
   readonly host: PluginHostApi;
+  /**
+   * Experimental plugin-to-plugin SDK registry. `provide` is keyed by this
+   * plugin's id; `use(id)` returns a live proxy that throws
+   * `service_unavailable` until that plugin is running and has provided.
+   * `has(id)` is true after that plugin has called `provide`.
+   */
+  readonly services: PluginServices;
   onDispose(hook: () => void | Promise<void>): void;
 }
 

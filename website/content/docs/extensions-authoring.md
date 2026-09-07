@@ -51,7 +51,8 @@ Skills, MCP, and extra notes live in the same `zcc` block (BB’s `bb.skills` sh
     },
     "extra": {
       "notes": "Forward-compat keys go here. Do not put tokens in extra."
-    }
+    },
+    "requires": ["salesforce"]
   }
 }
 ```
@@ -60,6 +61,7 @@ Skills, MCP, and extra notes live in the same `zcc` block (BB’s `bb.skills` sh
 - A skill is `skills/<name>/SKILL.md` (directory name is the skill name).
 - `mcpServers` is ZCC-only (Claude CLI). Host namespaces keys as `plugin:<id>:<name>`.
 - `extra` is an opaque bag. The host does not execute it. Keep `zcc` strict — unknown keys outside `extra` fail install.
+- `requires` lists other plugin ids this plugin consumes via `zcc.services.use`. The host loads those plugins first. A cycle marks both `degraded`. A required plugin that is not running marks the consumer `needs-configuration` (`needs plugin: <id>`).
 
 ## Server factory
 
@@ -70,6 +72,12 @@ export default function plugin(zcc) {
   zcc.onDispose(() => {});
 }
 ```
+
+To consume another plugin's SDK, declare `zcc.requires` and call
+`zcc.services.use(id)` (live proxy; throws `service_unavailable` until that
+plugin has `provide`d). Probe with `zcc.services.has(id)` before calling.
+Import **types** from that plugin's published SDK, not its internals. Example:
+`import type { SalesforceSdk } from '@zcc-ext/salesforce/sdk'`.
 
 The factory is time-boxed. A hang or throw marks the plugin `degraded` without
 wedging the server. Plugins never receive host-daemon credentials.

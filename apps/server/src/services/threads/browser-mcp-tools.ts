@@ -89,7 +89,7 @@ export function registerBrowserAutomationTools(
         targetId: z.string().min(1).describe('Target id returned by browser_open.')
       }
     },
-    async ({ targetId }) => run(async () => requireHost().snapshot(targetId))
+    async ({ targetId }) => run(async () => requireHost().snapshot(targetId, defaultThreadId ?? undefined))
   );
 
   server.registerTool(
@@ -104,7 +104,7 @@ export function registerBrowserAutomationTools(
       }
     },
     async ({ targetId, selector, x, y }) => run(async () => {
-      await requireHost().click(targetId, { selector, x, y });
+      await requireHost().click(targetId, { selector, x, y }, defaultThreadId ?? undefined);
       return { ok: true };
     })
   );
@@ -120,7 +120,7 @@ export function registerBrowserAutomationTools(
       }
     },
     async ({ targetId, text, selector }) => run(async () => {
-      await requireHost().type(targetId, { text, selector });
+      await requireHost().type(targetId, { text, selector }, defaultThreadId ?? undefined);
       return { ok: true };
     })
   );
@@ -134,7 +134,7 @@ export function registerBrowserAutomationTools(
         script: z.string().max(MAX_EVAL_SCRIPT_LENGTH)
       }
     },
-    async ({ targetId, script }) => run(async () => ({ result: await requireHost().evaluate(targetId, script) }))
+    async ({ targetId, script }) => run(async () => ({ result: await requireHost().evaluate(targetId, script, defaultThreadId ?? undefined) }))
   );
 
   server.registerTool(
@@ -146,7 +146,7 @@ export function registerBrowserAutomationTools(
       }
     },
     async ({ targetId }) => run(async () => {
-      await requireHost().close(targetId);
+      await requireHost().close(targetId, defaultThreadId ?? undefined);
       return { ok: true };
     })
   );

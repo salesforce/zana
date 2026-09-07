@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { defaultCliAlias, parseCliVersion, parseOrgDisplay, parseOrgList } from '../lib/sf-cli.js';
+import {
+  defaultCliAlias,
+  isUsableAccessToken,
+  parseAccessToken,
+  parseCliVersion,
+  parseOrgDisplay,
+  parseOrgList
+} from '../lib/sf-cli.js';
 
 describe('sf CLI parsers', () => {
   it('parses org list buckets without exposing tokens', () => {
@@ -105,6 +112,37 @@ describe('sf CLI parsers', () => {
   it('returns null when display JSON is missing credentials', () => {
     expect(parseOrgDisplay('{"result":{"username":"x"}}', 'a', '62.0')).toBeNull();
     expect(parseOrgDisplay('not-json', 'a', '62.0')).toBeNull();
+  });
+
+  it('parses org display without a usable token after CLI secret redaction', () => {
+    const org = parseOrgDisplay(
+      JSON.stringify({
+        result: {
+          alias: 'gus',
+          username: 'dev@example.com',
+          instanceUrl: 'https://gus.my.salesforce.com',
+          accessToken: "[REDACTED] Use 'sf org auth show-access-token' to view"
+        }
+      }),
+      'gus',
+      '62.0'
+    );
+    expect(org?.username).toBe('dev@example.com');
+    expect(org?.instanceUrl).toBe('https://gus.my.salesforce.com');
+    expect(org?.accessToken).toBe('');
+    expect(isUsableAccessToken(org?.accessToken ?? '')).toBe(false);
+  });
+
+  it('normalizes Bearer-prefixed tokens and rejects redacted CLI secrets', () => {
+    expect(isUsableAccessToken('TOKEN')).toBe(true);
+    expect(isUsableAccessToken("[REDACTED] Use 'sf org auth show-access-token' to view")).toBe(false);
+    expect(isUsableAccessToken('')).toBe(false);
+    expect(parseAccessToken(JSON.stringify({ result: { accessToken: '00Dxx!AQEA' } }))).toBe('00Dxx!AQEA');
+    expect(parseAccessToken(JSON.stringify({ result: { accessToken: 'Bearer 00Dxx!AQEA' } }))).toBe('00Dxx!AQEA');
+    expect(parseAccessToken(JSON.stringify({ result: '00Dxx!AQEA' }))).toBe('00Dxx!AQEA');
+    expect(parseAccessToken(JSON.stringify({ result: { accessToken: '[REDACTED] hidden' } }))).toBeNull();
+    expect(parseAccessToken('{"result":{}}')).toBeNull();
+    expect(parseAccessToken('not-json')).toBeNull();
   });
 
   it('parses CLI version from the first line', () => {

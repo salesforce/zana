@@ -10,6 +10,7 @@ import plugin from '../server.ts';
 import app from '../app.tsx';
 import { createSalesforcePlugin } from '../lib/plugin.js';
 import { CONSTITUTION_INSTRUCTIONS } from '../lib/constitution.js';
+import type { SalesforceSdk } from '../lib/sdk-contract.js';
 import type { SalesforceDeps, SalesforceRequest } from '../lib/types.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -83,6 +84,10 @@ describe('salesforce plugin contract', () => {
     expect(readFileSync(join(root, 'skills/salesforce-dx/SKILL.md'), 'utf8')).toContain('Agentforce');
     expect(readFileSync(join(root, 'skills/salesforce-dx/SKILL.md'), 'utf8')).toContain('diagnose');
     expect(readFileSync(join(root, 'NOTICE'), 'utf8')).toContain('Apache License 2.0');
+    expect(readFileSync(join(root, 'README.md'), 'utf8')).toContain('SalesforceSdk');
+    expect(readFileSync(join(root, 'README.md'), 'utf8')).toContain('zcc.services.use');
+    expect(readFileSync(join(root, 'README.md'), 'utf8')).toContain('SDK.md');
+    expect(readFileSync(join(root, 'SDK.md'), 'utf8')).toContain('SalesforceSdk');
     const server = readFileSync(join(root, 'server.ts'), 'utf8');
     expect(server).toContain('./lib/plugin.js');
     expect(server).not.toContain('./src/');
@@ -96,7 +101,7 @@ describe('salesforce plugin contract', () => {
     expect(set.threadPanelActions.map((row) => row.id)).toEqual(['playground', 'preview']);
     expect(set.threadPanelActions[0]).toMatchObject({ title: 'Playground', layout: 'flush' });
     expect(set.threadPanelActions[1]).toMatchObject({ title: 'Preview', layout: 'flush' });
-    expect(set.newThreadPanelActions.map((row) => row.id)).toEqual(['playground']);
+    expect(set.newThreadPanelActions).toEqual([]);
     expect(set.navPanels).toEqual([]);
     expect(set.projectMenuActions[0]).toMatchObject({
       id: 'open-soql',
@@ -189,6 +194,22 @@ describe('salesforce plugin behavior', () => {
     expect(org.stdout).toContain('Connected orgs:');
     expect(org.stdout).toContain('Target:');
     expect(org.stdout).not.toContain('SECRET_TOKEN');
+  });
+
+  it('provides SalesforceSdk on zcc.services without leaking accessToken', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zcc, mockDeps());
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    const sf = zcc.services.use<SalesforceSdk>('salesforce');
+    const org = await sf.connect();
+    expect(org).not.toHaveProperty('accessToken');
+    expect(JSON.stringify(org)).not.toContain('SECRET_TOKEN');
+    const listed = await sf.listOrgs();
+    expect(JSON.stringify(listed)).not.toContain('SECRET_TOKEN');
+    const { org: fromRequest } = await sf.request('/query', { method: 'GET' });
+    expect(fromRequest).not.toHaveProperty('accessToken');
+    const doctor = await sf.doctor();
+    expect(JSON.stringify(doctor)).not.toContain('SECRET_TOKEN');
   });
 
   it('generates a DX project via sf project generate', async () => {

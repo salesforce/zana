@@ -24,8 +24,8 @@ import {
 import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
-  prefetchThreadModelCatalog,
   reloadThreadProviderModels,
+  setThreadModelCatalogHost,
   subscribeThreadModelCatalog
 } from './thread-model-catalog.js';
 
@@ -62,6 +62,7 @@ export function useThreadComposerOptions(input: {
   initialModel?: string | null;
   initialReasoningLevel?: string | null;
   initialAcpMode?: string | null;
+  hostId?: string;
 }) {
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
@@ -131,8 +132,8 @@ export function useThreadComposerOptions(input: {
   }, [input.initialModel, input.initialReasoningLevel]);
 
   useEffect(() => {
-    void prefetchThreadModelCatalog();
-  }, []);
+    void setThreadModelCatalogHost(input.hostId);
+  }, [input.hostId]);
 
   const providers = composerProvidersFromCatalog(
     catalog.providers,
@@ -179,8 +180,8 @@ export function useThreadComposerOptions(input: {
 
   useEffect(() => {
     if (input.threadId || input.lockedProviderId) return;
-    const offered = composerProvidersFromCatalog(catalog.providers, false, providerId);
-    const next = snapNewThreadProviderId(offered.map((row) => row.id), providerId);
+    if (catalog.providers.length === 0) return;
+    const next = snapNewThreadProviderId(catalog.providers.map((row) => row.id), providerId);
     if (!next) return;
     setProviderIdState(next);
     const restored = restoreProviderSelection(next);

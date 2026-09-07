@@ -39,13 +39,22 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
       run(...params: unknown[]): { changes: number };
     };
     migrate(statements: readonly string[]): void;
+    transaction<T>(fn: () => T): T;
   }
 
   export interface ZccPluginApi {
     readonly pluginId: string;
     readonly log: { debug(m: string): void; info(m: string): void; warn(m: string): void; error(m: string): void };
     readonly settings: {
-      define(descriptors: Record<string, { type: string; label: string; default?: string | boolean }>): {
+      define(descriptors: Record<string, {
+        type: string;
+        label: string;
+        description?: string;
+        secret?: true;
+        multiline?: true;
+        options?: string[];
+        default?: string | boolean;
+      }>): {
         get(): Promise<Record<string, string | boolean | undefined>>;
         onChange(listener: (next: Record<string, string | boolean | undefined>) => void): void;
       };
@@ -109,7 +118,26 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
       experimental_registerProvider(declaration: {
         id: string;
         displayName: string;
+        icon?: string;
+        visibility?: 'always' | 'installed';
         capabilities: Record<string, unknown>;
+        composerActions?: string[];
+        deriveProviderOptions?: (context: {
+          threadId: string;
+          projectId: string;
+          model?: string;
+          permissionMode: string;
+          promptMode?: 'plan';
+          settings: Record<string, string | boolean | undefined>;
+        }) => Record<string, unknown> | void;
+      }): { id: string; unregister(): void };
+      experimental_registerPtyHarness(declaration: {
+        id: string;
+        displayName: string;
+        icon?: string;
+        profiles: Array<{ id: string; label: string }>;
+        alwaysEnabled?: boolean;
+        enableConfigKey?: string;
       }): { id: string; unregister(): void };
     };
     readonly events: {

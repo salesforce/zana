@@ -3,12 +3,15 @@ import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import {
   bootstrapOutcome,
+  composerBootstrapErrorMessage,
   composerHostActionChipLabel,
   composerHostsForProject,
-  composerRemoteToolsMark,
+  composerRemoteHostBadge,
   hostPickerDescription,
   hostPickerLabel,
   isForeignExecutionHost,
+  PAIRING_DOOR_ERROR,
+  DAEMON_UNRESPONSIVE_ERROR,
   resolveComposerHostAction,
   shortHostName,
   shouldBlockComposerSend,
@@ -48,47 +51,89 @@ const sshProject: Project = {
 };
 
 describe('composer host status', () => {
-  it('offers Install on an unbound SSH project without blocking send', () => {
+  it('offers Install on an unbound SSH project and blocks send', () => {
     const action = resolveComposerHostAction({
       hosts: [primary],
       project: sshProject,
       publicAppUrl: 'https://box.tailnet.ts.net'
     });
     expect(action).toMatchObject({ kind: 'install', label: 'Install' });
-    expect(shouldBlockComposerSend(action, sshProject)).toBe(false);
+    expect(shouldBlockComposerSend(action, sshProject)).toBe(true);
     expect(shouldShowHostPicker([primary], sshProject)).toBe(false);
     expect(shouldShowHostPicker([primary, remoteHost], sshProject)).toBe(false);
-    expect(composerRemoteToolsMark(sshProject)).toBe('Local agent · remote tools');
+    expect(composerRemoteHostBadge({ project: sshProject, host: primary })).toBeNull();
+    expect(composerHostActionChipLabel(action)).toBe('Install host daemon');
   });
 
-  it('keeps send available when install needs a public URL', () => {
+  it('blocks send when install needs a public URL', () => {
     const action = resolveComposerHostAction({
       hosts: [primary],
       project: sshProject,
       publicAppUrl: 'http://127.0.0.1:8780'
     });
     expect(action).toMatchObject({ kind: 'blocked', needsPublicUrl: true });
-    expect(shouldBlockComposerSend(action, sshProject)).toBe(false);
+    expect(shouldBlockComposerSend(action, sshProject)).toBe(true);
     expect(composerHostActionChipLabel(action)).toBeNull();
   });
 
-  it('lets a bound SSH project run on this machine while the remote daemon is offline', () => {
-    const project = { ...sshProject, hostId: 'h-remote' };
+  it('blocks send when the bound remote host row is gone', () => {
+    const project = { ...sshProject, hostId: 'h-missing' };
+    const action = resolveComposerHostAction({
+      hosts: [primary],
+      project,
+      selectedHostId: 'h-primary',
+      publicAppUrl: 'http://127.0.0.1:8780'
+    });
+    expect(action).toMatchObject({ kind: 'blocked', needsPublicUrl: true });
+    expect(shouldBlockComposerSend(action, project)).toBe(true);
+    expect(composerHostActionChipLabel(action)).toBeNull();
+    expect(composerRemoteHostBadge({ project, host: primary })).toBeNull();
+    expect(composerRemoteHostBadge({ project })).toBeNull();
+  });
+
+  it('does not offer this machine for a bound SSH project', () => {
+    const project = {
+      ...sshProject,
+      hostId: 'h-remote',
+      remote: { host: 'devbox', user: 'me', remotePath: '/src' }
+    };
     const action = resolveComposerHostAction({
       hosts: [primary, remoteHost],
       project,
       selectedHostId: 'h-primary',
       publicAppUrl: 'https://box.tailnet.ts.net'
     });
-    expect(action).toEqual({ kind: 'ready' });
-    expect(shouldBlockComposerSend(action, project)).toBe(false);
-    expect(shouldShowHostPicker([primary, remoteHost], project)).toBe(true);
+    expect(action).toMatchObject({ kind: 'fix', hostId: 'h-remote', label: 'Fix' });
+    expect(shouldBlockComposerSend(action, project)).toBe(true);
+    expect(shouldShowHostPicker([primary, remoteHost], project)).toBe(false);
     expect(composerHostsForProject([primary, remoteHost, host({ id: 'h-other', name: 'Other' })], project))
-      .toEqual([primary, remoteHost]);
-    expect(composerRemoteToolsMark(project, 'h-primary')).toBe('Local agent · remote tools');
-    expect(composerRemoteToolsMark(project, 'h-remote')).toBeNull();
+      .toEqual([remoteHost]);
+    expect(composerRemoteHostBadge({ project, host: remoteHost })).toEqual({
+      path: '/src',
+      status: 'offline'
+    });
     expect(hostPickerLabel(remoteHost, project)).toBe('Remote machine');
     expect(hostPickerDescription(remoteHost, project)).toBe('Devbox · Offline');
+  });
+
+  it('shows an online badge when the bound daemon is connected', () => {
+    const online = host({ id: 'h-remote', name: 'Devbox', status: 'connected' });
+    const project = {
+      ...sshProject,
+      hostId: 'h-remote',
+      remote: { host: 'devbox', user: 'me', remotePath: '/src' }
+    };
+    const action = resolveComposerHostAction({
+      hosts: [primary, online],
+      project,
+      publicAppUrl: 'https://box.tailnet.ts.net'
+    });
+    expect(action).toEqual({ kind: 'ready' });
+    expect(shouldBlockComposerSend(action, project)).toBe(false);
+    expect(composerRemoteHostBadge({ project, host: online })).toEqual({
+      path: '/src',
+      status: 'online'
+    });
   });
 
   it('blocks send when the remote machine is selected and offline', () => {
@@ -140,7 +185,7 @@ describe('composer host status', () => {
     });
     expect(action).toMatchObject({ kind: 'fix', hostId: 'h-remote', label: 'Fix' });
     expect(shouldBlockComposerSend(action, project)).toBe(true);
-    expect(composerHostActionChipLabel(action)).toBe('Fix');
+    expect(composerHostActionChipLabel(action)).toBe('Fix connection');
   });
 
   it('offers Fix and blocks send when an enrolled host is offline', () => {
@@ -248,6 +293,28 @@ describe('composer host status', () => {
     });
     expect(shouldBlockComposerSend(action, project)).toBe(true);
     expect(isForeignExecutionHost(project, [primary, online], 'h-remote')).toBe(true);
+  });
+
+  it('maps pairing-door failures to retry-in-place copy', () => {
+    expect(composerBootstrapErrorMessage({
+      code: 'join_expired',
+      message: 'The pairing join window has closed. Reopen Add a machine so this laptop can renew the window, then try again.'
+    })).toBe(PAIRING_DOOR_ERROR);
+    expect(composerBootstrapErrorMessage({
+      code: 'relay_offline',
+      message: 'The pairing relay is offline.'
+    })).toBe(PAIRING_DOOR_ERROR);
+    expect(composerBootstrapErrorMessage({
+      code: 'daemon_unresponsive',
+      message: 'host abc did not connect'
+    })).toBe(DAEMON_UNRESPONSIVE_ERROR);
+    expect(composerBootstrapErrorMessage({
+      code: 'ssh_identity_required',
+      message: 'Pick SSH'
+    })).toBe('Pick SSH');
+    expect(PAIRING_DOOR_ERROR).toContain('Retry,');
+    expect(PAIRING_DOOR_ERROR).not.toContain('Retry Install');
+    expect(PAIRING_DOOR_ERROR).not.toContain('Add a machine');
   });
 
   it('reads done and error events from bootstrap NDJSON', () => {

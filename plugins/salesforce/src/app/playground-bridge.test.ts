@@ -24,7 +24,7 @@ describe('playground bridge', () => {
       isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'setDialect', dialect: 'agentscript' })
     ).toBe(true);
     expect(
-      isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'setView', view: 'graph' })
+      isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'setOrg', org: null })
     ).toBe(true);
     expect(isHostToPlayground({ type: 'flushSave' })).toBe(false);
     expect(isPlaygroundToHost({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty' })).toBe(false);

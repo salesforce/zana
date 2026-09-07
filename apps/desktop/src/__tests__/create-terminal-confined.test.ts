@@ -94,7 +94,8 @@ vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
     listProjects: () => projects,
     getConfig: () => CONFIG,
     getProjectSettings: () => PROJECT_SETTINGS,
-    createScratchSubfolder
+    createScratchSubfolder,
+    ensureRemoteProjectLocalDir: (project: Project) => project
   },
   scratchWorkspaceRoot: () => '/tmp/scratch-root',
   worktreeRoot: () => '/tmp/zcc-worktrees',

@@ -3,8 +3,9 @@ import { hasDesktopBridge } from '../lib/app-surface.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Search, X } from 'lucide-react';
 import type { SshHostEntry } from '@zana-ai/zcc-domain/product';
-import { bootstrapOutcome } from './composer-host-status.js';
+import { bootstrapOutcome, composerBootstrapErrorMessage } from './composer-host-status.js';
 import { collectBootstrapLogs, remoteAddSubmitLabel } from './add-remote-project.js';
+import { runHostInstallWithDrawer } from '../lib/host-install-run.js';
 import { StencilList } from './ui/Skeleton.js';
 
 interface AddRemoteProjectDialogProps {
@@ -21,8 +22,8 @@ interface AddRemoteProjectDialogProps {
 
 /**
  * Modal that lists SSH hosts from `~/.ssh/config` and lets the user pick
- * one to register as a remote-backed Project. Threads can run on this
- * machine with SSH tools, or on a host daemon installed over SSH.
+ * one to register as a remote-backed Project. Threads run on a host daemon
+ * installed over SSH.
  * No mutation of the user's ssh config — read-only list.
  */
 export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemoteProjectDialogProps) {
@@ -35,7 +36,6 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
   const [user, setUser] = useState('');
   const [remotePath, setRemotePath] = useState('');
   const [proxyJump, setProxyJump] = useState('');
-  const [installHost, setInstallHost] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [installLogs, setInstallLogs] = useState<string[]>([]);
@@ -123,14 +123,19 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
     setPairingCommand(null);
     setInstallLogs(['Installing host daemon over SSH…']);
     try {
-      const events = await product.hosts.bootstrap(projectId);
+      const events = await runHostInstallWithDrawer({
+        kind: 'install',
+        target: picked ?? (name.trim() || 'remote'),
+        startLogs: ['Installing host daemon over SSH…'],
+        run: (onEvent) => product.hosts.bootstrap(projectId, onEvent)
+      });
       setInstallLogs(collectBootstrapLogs(events));
       const outcome = bootstrapOutcome(events);
       if (outcome.ok) {
         finish(projectId);
         return;
       }
-      setError(outcome.message);
+      setError(composerBootstrapErrorMessage(outcome));
       setPairingCommand(outcome.pairingCommand ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not install host daemon');
@@ -144,8 +149,7 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
   const submit = async () => {
     if (!picked || busy) return;
     if (createdId) {
-      if (installHost) await installDaemon(createdId);
-      else finish(createdId);
+      await installDaemon(createdId);
       return;
     }
     setSubmitting(true);
@@ -164,10 +168,6 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
         return;
       }
       setCreatedId(project.id);
-      if (!installHost) {
-        finish(project.id);
-        return;
-      }
       await installDaemon(project.id);
     } finally {
       setSubmitting(false);
@@ -187,7 +187,6 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
       user={user}
       remotePath={remotePath}
       proxyJump={proxyJump}
-      installHost={installHost}
       created={Boolean(createdId)}
       busy={busy}
       installing={installing}
@@ -201,9 +200,7 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
       onUserChange={setUser}
       onRemotePathChange={setRemotePath}
       onProxyJumpChange={setProxyJump}
-      onInstallHostChange={setInstallHost}
       onSubmit={() => void submit()}
-      onSkip={() => createdId && finish(createdId)}
       onClose={onClose}
     />
   );
@@ -221,7 +218,6 @@ export function AddRemoteProjectDialogView({
   user,
   remotePath,
   proxyJump,
-  installHost,
   created,
   busy,
   installing,
@@ -235,9 +231,7 @@ export function AddRemoteProjectDialogView({
   onUserChange,
   onRemotePathChange,
   onProxyJumpChange,
-  onInstallHostChange,
   onSubmit,
-  onSkip,
   onClose
 }: {
   hosts: SshHostEntry[] | null;
@@ -251,7 +245,6 @@ export function AddRemoteProjectDialogView({
   user: string;
   remotePath: string;
   proxyJump: string;
-  installHost: boolean;
   created: boolean;
   busy: boolean;
   installing: boolean;
@@ -265,9 +258,7 @@ export function AddRemoteProjectDialogView({
   onUserChange: (value: string) => void;
   onRemotePathChange: (value: string) => void;
   onProxyJumpChange: (value: string) => void;
-  onInstallHostChange: (value: boolean) => void;
   onSubmit: () => void;
-  onSkip: () => void;
   onClose: () => void;
 }) {
   const fieldsLocked = busy || created;
@@ -300,7 +291,7 @@ export function AddRemoteProjectDialogView({
 
           <div className="remote-host-hint-row">
             <div className="modal-hint">
-              Showing hosts from <code>~/.ssh/config</code>. Threads can run on this machine with SSH tools, or on a remote host daemon.
+              Showing hosts from <code>~/.ssh/config</code>. Threads run on a host daemon installed on that box.
             </div>
             <button
               type="button"
@@ -379,18 +370,8 @@ export function AddRemoteProjectDialogView({
                 disabled={!picked || fieldsLocked}
               />
             </label>
-            <label className="remote-install-toggle">
-              <input
-                type="checkbox"
-                checked={installHost}
-                data-testid="remote-install-host"
-                onChange={(e) => onInstallHostChange(e.target.checked)}
-                disabled={fieldsLocked}
-              />
-              <span>Install host daemon on the remote machine</span>
-            </label>
             <p className="modal-hint remote-install-hint">
-              SSHs from this computer and enrolls a daemon so you can pick <strong>Remote machine</strong> in the composer. Uncheck to keep using this machine with SSH tools; you can install later from the composer.
+              SSHs from this computer and enrolls a host daemon. Composer Send waits until that daemon is online.
             </p>
           </div>
 
@@ -407,20 +388,13 @@ export function AddRemoteProjectDialogView({
         </div>
 
         <div className="modal-footer">
-          {created && error && !installing ? (
-            <button className="btn" onClick={onSkip}>
-              Continue without daemon
-            </button>
-          ) : (
-            <button className="btn" onClick={onClose} disabled={busy}>
-              Cancel
-            </button>
-          )}
+          <button className="btn" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
           <button className="btn primary" disabled={!canSubmit} onClick={onSubmit}>
             {remoteAddSubmitLabel({
-              installHost,
               installing,
-              retry: created && installHost
+              retry: created
             })}
           </button>
         </div>

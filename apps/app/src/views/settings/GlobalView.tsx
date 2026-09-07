@@ -24,6 +24,7 @@ import {
   OPEN_LINKS_IN_APP_BROWSER_STORAGE_KEY
 } from '@/lib/in-app-browser-link-preference';
 import { hasDesktopBridge } from '@/lib/app-surface';
+import { KeyboardSettingsSection } from './KeyboardSettingsSection';
 import { CliSkillsSettings } from './CliSkillsSettings';
 
 interface GlobalTabProps {
@@ -153,6 +154,8 @@ export function GlobalView({
         </SettingsActionRow>
         {commandsReloadNote ? <p className="settings-help">{commandsReloadNote}</p> : null}
       </Section>
+
+      <KeyboardSettingsSection />
 
       <CliSkillsSettings />
 

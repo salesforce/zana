@@ -2,15 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { collectBootstrapLogs, remoteAddSubmitLabel } from './add-remote-project.js';
 
 describe('add remote project helpers', () => {
-  it('labels submit as add-and-install by default', () => {
-    expect(remoteAddSubmitLabel({ installHost: true, installing: false, retry: false }))
-      .toBe('Add and install');
-    expect(remoteAddSubmitLabel({ installHost: false, installing: false, retry: false }))
-      .toBe('Add project');
-    expect(remoteAddSubmitLabel({ installHost: true, installing: true, retry: false }))
-      .toBe('Installing…');
-    expect(remoteAddSubmitLabel({ installHost: true, installing: false, retry: true }))
-      .toBe('Retry install');
+  it('labels submit as add-and-install, then retry after a failed install', () => {
+    expect(remoteAddSubmitLabel({ installing: false, retry: false })).toBe('Add and install');
+    expect(remoteAddSubmitLabel({ installing: true, retry: false })).toBe('Installing…');
+    expect(remoteAddSubmitLabel({ installing: false, retry: true })).toBe('Retry install');
   });
 
   it('collects bootstrap log lines in order', () => {

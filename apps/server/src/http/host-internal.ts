@@ -41,12 +41,12 @@ function bearerToken(headers: IncomingMessage['headers']): string | null {
   return token.length > 0 ? token : null;
 }
 
-function publicOrigin(): string | undefined {
-  return resolvePublicAppUrl();
+function publicOrigin(ctx: ProductHttpContext): string | undefined {
+  return resolvePublicAppUrl({ configUrl: ctx.config.getConfig().publicAppUrl });
 }
 
 function hostInternalAllowed(request: IncomingMessage, ctx: ProductHttpContext): boolean {
-  return isAllowedHostInternalHost(requestHostHeader(request), publicOrigin());
+  return isAllowedHostInternalHost(requestHostHeader(request), publicOrigin(ctx));
 }
 
 function hasBrowserOrigin(request: IncomingMessage): boolean {

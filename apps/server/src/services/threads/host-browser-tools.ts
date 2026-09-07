@@ -221,34 +221,45 @@ export async function invokeHostBrowserTool(
       return pluginToolResultToResponse(name, await host.list(threadId));
     }
     if (name === BROWSER_SNAPSHOT_NAME) {
-      return pluginToolResultToResponse(name, await host.snapshot(requireString(fields.targetId, 'targetId')));
+      return pluginToolResultToResponse(
+        name,
+        await host.snapshot(requireString(fields.targetId, 'targetId'), threadId)
+      );
     }
     if (name === BROWSER_CLICK_NAME) {
-      await host.click(requireString(fields.targetId, 'targetId'), {
-        selector: typeof fields.selector === 'string' ? fields.selector.slice(0, MAX_SELECTOR_LENGTH) : undefined,
-        x: typeof fields.x === 'number' ? fields.x : undefined,
-        y: typeof fields.y === 'number' ? fields.y : undefined
-      });
+      await host.click(
+        requireString(fields.targetId, 'targetId'),
+        {
+          selector: typeof fields.selector === 'string' ? fields.selector.slice(0, MAX_SELECTOR_LENGTH) : undefined,
+          x: typeof fields.x === 'number' ? fields.x : undefined,
+          y: typeof fields.y === 'number' ? fields.y : undefined
+        },
+        threadId
+      );
       return pluginToolResultToResponse(name, { ok: true });
     }
     if (name === BROWSER_TYPE_NAME) {
       const text = typeof fields.text === 'string' ? fields.text : '';
       if (text.length > MAX_TYPED_TEXT_LENGTH) throw new Error('text is too long');
-      await host.type(requireString(fields.targetId, 'targetId'), {
-        text,
-        selector: typeof fields.selector === 'string' ? fields.selector.slice(0, MAX_SELECTOR_LENGTH) : undefined
-      });
+      await host.type(
+        requireString(fields.targetId, 'targetId'),
+        {
+          text,
+          selector: typeof fields.selector === 'string' ? fields.selector.slice(0, MAX_SELECTOR_LENGTH) : undefined
+        },
+        threadId
+      );
       return pluginToolResultToResponse(name, { ok: true });
     }
     if (name === BROWSER_EVAL_NAME) {
       const script = typeof fields.script === 'string' ? fields.script : '';
       if (script.length > MAX_EVAL_SCRIPT_LENGTH) throw new Error('script is too long');
       return pluginToolResultToResponse(name, {
-        result: await host.evaluate(requireString(fields.targetId, 'targetId'), script)
+        result: await host.evaluate(requireString(fields.targetId, 'targetId'), script, threadId)
       });
     }
     if (name === BROWSER_CLOSE_NAME) {
-      await host.close(requireString(fields.targetId, 'targetId'));
+      await host.close(requireString(fields.targetId, 'targetId'), threadId);
       return pluginToolResultToResponse(name, { ok: true });
     }
     return fail(name, `Unsupported browser tool: ${name}`);

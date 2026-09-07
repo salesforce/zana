@@ -118,15 +118,19 @@ export function ThreadPromptModeCard({
 export function ThreadWorkingIndicator({
   status,
   thinking,
-  waitingOnUser
+  waitingOnUser,
+  hasRunningWork = false
 }: {
   status: string;
   thinking: ActiveThinking | null;
   waitingOnUser?: boolean;
+  hasRunningWork?: boolean;
 }) {
-  const isThinking = thinking != null && showOngoingThreadWork(status, waitingOnUser);
-  const visible = showOngoingThreadWork(status, waitingOnUser);
-  const phrase = useThreadWorkingPhrase(visible);
+  const ongoing = showOngoingThreadWork(status, waitingOnUser);
+  const isThinking = thinking != null && ongoing;
+  // Running tools already communicate progress; keep reconnection copy.
+  const visible = ongoing && (status === 'host-reconnecting' || !hasRunningWork);
+  const phrase = useThreadWorkingPhrase(ongoing);
   if (!visible) return null;
   const details = thinking?.text?.trim() ?? '';
   const label = status === 'host-reconnecting'

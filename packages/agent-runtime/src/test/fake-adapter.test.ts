@@ -68,6 +68,15 @@ describe("fake adapter thread/delta", () => {
   });
 });
 
+describe("fake adapter provider/health", () => {
+  it("noops health so listing treats the fake harness as unsupported", () => {
+    const adapter = createFakeAdapter();
+    expect(adapter.buildCommandPlan({ type: "provider/health" })).toMatchObject({
+      kind: "noop",
+    });
+  });
+});
+
 describe("fake adapter translateAcceptedCommand", () => {
   it("synthesizes turn/input/accepted for a steered client request", () => {
     const adapter = createFakeAdapter();

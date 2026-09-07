@@ -20,7 +20,7 @@ import {
   type SpawnEnvironmentChoice
 } from '@zana-ai/zcc-domain';
 import type { Project } from '@zana-ai/zcc-domain/product';
-import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ReasoningLevel, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { clampPermissionModeToHost } from '../hosts/permission-ceiling.js';
 import type { EnvironmentProvisionCommand, EnvironmentProvisionResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { AmbiguousHostError, HostUnavailableError } from '../../http/host-hub.js';
@@ -40,17 +40,23 @@ import { ThreadCreateError } from '../../http/thread-create.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
 import { startLiveTurnCommand } from './conversation-live-turn.js';
 import {
+  boundRemoteHostId,
   isRemoteToolProxyActive,
   remoteWorkspacePath,
+  REMOTE_HOST_DAEMON_REQUIRED,
+  REMOTE_HOST_DAEMON_REQUIRED_MESSAGE,
   threadLaunchRemote
 } from './remote-tool-proxy.js';
 import { resolveSpawnChoiceForHost } from './spawn-choice-for-host.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
-import { hostPromptFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
+import { hostPromptInputFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
 import { latestProviderCheckpoint } from './conversation-edit-message.js';
 import { conversationThreadView } from './conversation-thread-view.js';
-import { requestedExecutionModeFromTurn, claudeCodePermissionModeForTurn } from './conversation-execution-mode.js';
+import {
+  requestedExecutionModeFromTurn,
+  claudeCodePermissionModeForTurn
+} from './conversation-execution-mode.js';
 import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
 import { recordThreadExecutionMode } from './conversation-plan.js';
 
@@ -178,7 +184,7 @@ async function startConversationOnHost(
     project: Project;
     thread: ConversationThreadRow;
     prompt: string[];
-    hostPrompt: string[];
+    hostPrompt: PromptInput[];
     environmentId: string;
     input: CreateConversationInput;
     remoteToolProxy: boolean;
@@ -191,7 +197,7 @@ async function startConversationOnHost(
   }
   const requestedMode = requestedExecutionModeFromTurn({
     acpMode: args.input.acpMode,
-    input: args.input.promptInput
+    input: args.hostPrompt
   });
   const claudeCodePermissionMode = claudeCodePermissionModeForTurn(providerId, requestedMode);
   recordThreadExecutionMode(ctx.db, {
@@ -288,7 +294,7 @@ export async function createConversationFromRequest(
   const resolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
   const textPrompt = flattenThreadInput(resolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);
   const promptSource = textPrompt.length > 0 ? textPrompt : input.input.map((part) => part.trim()).filter((part) => part.length > 0);
-  const prompt = hostPromptFromInput(
+  const prompt = hostPromptInputFromInput(
     resolvedPromptInput,
     promptSource,
     (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
@@ -298,12 +304,18 @@ export async function createConversationFromRequest(
   }
 
   const project = requireProject(ctx, input.projectId);
-  const remoteToolProxy = isRemoteToolProxyActive(project, input.hostId);
+  const boundRemote = boundRemoteHostId(project);
+  if (boundRemote === null) {
+    throw new ThreadCreateError(409, REMOTE_HOST_DAEMON_REQUIRED, REMOTE_HOST_DAEMON_REQUIRED_MESSAGE);
+  }
+  const remoteToolProxy = isRemoteToolProxyActive(project, boundRemote ?? input.hostId);
   const workspacePath = remoteWorkspacePath(project, remoteToolProxy);
   const primary = getPrimaryHost(ctx.db);
   let hostId: string;
   try {
-    if (remoteToolProxy) {
+    if (boundRemote) {
+      hostId = ctx.hostHub.resolveHostId(boundRemote);
+    } else if (remoteToolProxy) {
       if (!primary) {
         throw new ThreadCreateError(503, 'host-unavailable', 'This machine’s host daemon is not connected.');
       }

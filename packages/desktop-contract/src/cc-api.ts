@@ -314,8 +314,8 @@ export interface CcApi {
     ): Promise<Host>;
     retryUpdate(id: string): Promise<{ ok: true }>;
     remove(id: string): Promise<{ ok: true }>;
-    bootstrap(projectId: string): Promise<HostBootstrapEvent[]>;
-    repair(id: string): Promise<HostBootstrapEvent[]>;
+    bootstrap(projectId: string, onEvent?: (event: HostBootstrapEvent) => void): Promise<HostBootstrapEvent[]>;
+    repair(id: string, onEvent?: (event: HostBootstrapEvent) => void): Promise<HostBootstrapEvent[]>;
     updateSshIdentity(
       id: string,
       patch: { host: string; user?: string; proxyJump?: string }
@@ -578,7 +578,7 @@ export interface CcApi {
     }): Promise<{ delivered: number }>;
     onOpen(cb: (payload: unknown) => void): () => void;
     events(threadId: string): Promise<{ events: unknown[] }>;
-    executionOptions(query?: { providerId?: string }): Promise<{
+    executionOptions(query?: { providerId?: string; hostId?: string }): Promise<{
       providers: Array<{
         id: string;
         displayName: string;

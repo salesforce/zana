@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { terminalCreateTargetSchema } from "./terminals.js";
 
 // Plugin-panel ids include encoded params, so allow the bounded 1 MiB params
 // payload to expand under URI encoding while still capping request size.
@@ -31,12 +32,68 @@ const threadTabEnvironmentFileSourceSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+export const threadTabFileOpenerOwnerSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      environmentId: z.string().min(1).nullable(),
+      kind: z.literal("workspace-file-preview"),
+      projectId: z.string().min(1).nullable(),
+      tab: z
+        .object({
+          lineRange: threadTabLineRangeSchema.nullable(),
+          path: threadTabPathSchema,
+          source: threadTabEnvironmentFileSourceSchema,
+          statusLabel: z.literal("deleted").nullable(),
+        })
+        .strict(),
+      threadId: z.string().min(1).nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      environmentId: z.string().min(1).nullable().default(null),
+      hostId: z.string().min(1).nullable().default(null),
+      kind: z.literal("host-file-preview"),
+      tab: z
+        .object({
+          lineRange: threadTabLineRangeSchema.nullable(),
+          path: threadTabPathSchema,
+        })
+        .strict(),
+      threadId: z.string().min(1).nullable().default(null),
+    })
+    .strict()
+    .refine(
+      (owner) =>
+        owner.hostId !== null ||
+        (owner.environmentId !== null && owner.threadId !== null),
+      { message: "hostId or threadId/environmentId is required" },
+    ),
+  z
+    .object({
+      environmentId: z.string().min(1).nullable(),
+      kind: z.literal("thread-storage-file-preview"),
+      tab: z
+        .object({
+          lineRange: threadTabLineRangeSchema.nullable(),
+          path: threadTabPathSchema,
+        })
+        .strict(),
+      threadId: z.string().min(1),
+    })
+    .strict(),
+]);
+export type ThreadTabFileOpenerOwner = z.infer<
+  typeof threadTabFileOpenerOwnerSchema
+>;
+
 export const threadTabSchema = z.discriminatedUnion("kind", [
   z.object({ id: threadTabIdSchema, kind: z.literal("thread-info") }).strict(),
   z.object({ id: threadTabIdSchema, kind: z.literal("git-diff") }).strict(),
   z
     .object({
       actionId: z.string().min(1).max(THREAD_TAB_PATH_MAX_LENGTH),
+      fileOpenerOwner: threadTabFileOpenerOwnerSchema.optional(),
       id: threadTabIdSchema,
       kind: z.literal("plugin-panel"),
       paramsJson: z.string().max(THREAD_TAB_PARAMS_MAX_LENGTH).nullable(),
@@ -59,6 +116,7 @@ export const threadTabSchema = z.discriminatedUnion("kind", [
   z
     .object({
       environmentId: z.string().min(1).nullable(),
+      hostId: z.string().min(1).nullable().default(null),
       id: threadTabIdSchema,
       kind: z.literal("host-file-preview"),
       lineRange: threadTabLineRangeSchema.nullable(),
@@ -82,6 +140,14 @@ export const threadTabSchema = z.discriminatedUnion("kind", [
       environmentId: z.string().min(1).nullable(),
       id: threadTabIdSchema,
       kind: z.literal("browser"),
+      desktopTarget: z
+        .object({
+          hostId: z.string().min(1),
+          instanceId: z.string().min(1),
+          generation: z.string().min(1),
+        })
+        .strict()
+        .optional(),
       title: z.string().min(1).max(THREAD_TAB_TITLE_MAX_LENGTH).nullable(),
       url: z.string().max(THREAD_TAB_URL_MAX_LENGTH),
     })
@@ -101,6 +167,7 @@ export const threadTabSchema = z.discriminatedUnion("kind", [
     .object({
       id: threadTabIdSchema,
       kind: z.literal("terminal"),
+      target: terminalCreateTargetSchema.optional(),
       terminalId: z.string().min(1).max(THREAD_TAB_PATH_MAX_LENGTH),
     })
     .strict(),

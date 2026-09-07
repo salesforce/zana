@@ -27,11 +27,15 @@ import {
   type ThreadEventTurnStatus,
   errorEnvelopeSchema,
   experimental_COMPACTION_PRESENTATION as COMPACTION_PRESENTATION,
-  experimental_planStepsPresentation as planStepsPresentation,
+  planStepsPresentation,
   experimental_presentationTitle as presentationTitle,
   jsonRpcEnvelopeSchema,
   providerRawEventSchema,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
+import {
+  foldTodoPlanSnapshot,
+  type TodoPlanFoldState,
+} from "./todo-fold.js";
 import {
   ACP_COMPACTION_COMPLETED_METHOD,
   ACP_COMPACTION_STARTED_METHOD,
@@ -252,6 +256,7 @@ export function createAcpDeltaTranslator(
    * matching tool_call, per thread, oldest first.
    */
   const pendingInjectedCalls = new Map<string, AcpInjectedTool[]>();
+  const todoPlan: TodoPlanFoldState = new Map();
 
   function callKey(
     context: AcpDeltaTranslationContext | undefined,
@@ -659,6 +664,30 @@ export function createAcpDeltaTranslator(
    * given a fabricated `0`. Every other item closes with its output text as
    * `resultText`.
    */
+  function planStepsSnapshotDelta(
+    steps: ThreadEventPlanStep[],
+    noTurnFallback?: DeltaNoTurnFallback,
+  ): ThreadDelta {
+    return {
+      kind: "item.close",
+      key: { channel: PLAN_STEPS_CHANNEL },
+      status: "completed",
+      item: { type: "planSteps", steps },
+      presentation: planStepsPresentation(steps),
+      ...(noTurnFallback ? { noTurnFallback } : {}),
+    };
+  }
+
+  function toolCallCloseDeltas(args: AcpCloseArgs): ThreadDelta[] {
+    const close = toolCallClose(args);
+    const steps = foldTodoPlanSnapshot(todoPlan, args.event.rawInput);
+    if (!steps) return [close];
+    return [
+      close,
+      planStepsSnapshotDelta(steps, args.noTurnFallback),
+    ];
+  }
+
   function toolCallClose(args: AcpCloseArgs): ThreadDelta {
     const classified = withPermissionTitle(
       withDelegationReport(
@@ -728,7 +757,7 @@ export function createAcpDeltaTranslator(
     for (const [key, open] of threadCallEntries(context)) {
       mergedToolCalls.delete(key);
       deltas.push(
-        toolCallClose({
+        ...toolCallCloseDeltas({
           context,
           event: open.event,
           status,
@@ -820,7 +849,7 @@ export function createAcpDeltaTranslator(
           // Arrived already settled: close-without-open, no cache entry.
           return [
             ...flush,
-            toolCallClose({
+            ...toolCallCloseDeltas({
               context,
               event,
               status: mapAcpToolCallStatus(event.status),
@@ -862,7 +891,7 @@ export function createAcpDeltaTranslator(
         if (isTerminalAcpStatus(merged.status)) {
           mergedToolCalls.delete(key);
           return [
-            toolCallClose({
+            ...toolCallCloseDeltas({
               context,
               event: merged,
               status: mapAcpToolCallStatus(merged.status),

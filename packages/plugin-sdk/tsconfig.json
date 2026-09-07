@@ -9,5 +9,14 @@
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": [
+    "src/testing/fake-plugin-host.ts",
+    "src/testing/fake-sdk.ts",
+    "src/testing/fixtures.ts",
+    "src/testing/app.tsx",
+    "src/internal/composer-customization-validation.ts",
+    "src/internal/file-navigation-validation.ts",
+    "src/internal/plugin-app-collector.ts"
+  ]
 }

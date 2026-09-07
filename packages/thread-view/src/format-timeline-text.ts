@@ -12,6 +12,7 @@ import {
   formatTimelineActivityIntentDetail,
   getTimelineActivityIntentDetailDedupeKey,
   hasTimelineExplorationIntent,
+  timelineRowActivityIntents,
   type TimelineExplorationWorkRow,
 } from "./timeline-activity-intents.js";
 import {
@@ -376,7 +377,7 @@ function formatExplorationWorkDetails(
 ): string[] {
   let lastEmittedKey: string | null = null;
   const details: string[] = [];
-  for (const intent of row.activityIntents) {
+  for (const intent of timelineRowActivityIntents(row)) {
     if (intent.type === "unknown") {
       continue;
     }

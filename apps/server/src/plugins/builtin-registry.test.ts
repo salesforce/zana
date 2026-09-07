@@ -8,13 +8,14 @@ import {
   BUILTIN_PLUGINS,
   OFFICIAL_PLUGINS,
   PLUGIN_CATALOG_CATEGORIES,
+  RECLAIM_UNINSTALLED_AUTOINSTALL_IDS,
   RETIRED_FIRST_PARTY_PLUGIN_IDS,
   isRetiredFirstPartyPluginId
 } from './builtin-registry.js';
 
 const pluginsRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
 
-/** Definition completeness only. github/workflows/automations/memory/inline-vis stay installable stubs; bb feature ports are a separate decision. */
+/** Definition completeness only. github/workflows/automations/inline-vis stay installable stubs; bb feature ports are a separate decision. */
 
 const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[number]> = {
   'ask-user-question': 'Agent interaction',
@@ -31,9 +32,13 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
   'inline-vis': 'Interface',
   'keep-awake': 'Host access',
   memory: 'Context & knowledge',
+  'monaco-editor': 'Interface',
+  'pdf-preview': 'Interface',
   'plugin-guide': 'Developer tools',
   'pr-monitor': 'Developer tools',
   'provider-acp': 'Agent interaction',
+  'provider-claude-code': 'Agent interaction',
+  'provider-codex': 'Agent interaction',
   'provider-pi': 'Agent interaction',
   'provider-retry': 'Agent interaction',
   salesforce: 'Developer tools',
@@ -58,9 +63,13 @@ const EXPECTED_ICONS: Record<string, string> = {
   'inline-vis': 'ChartNoAxesColumn',
   'keep-awake': 'Coffee',
   memory: 'Brain',
+  'monaco-editor': 'Code',
+  'pdf-preview': 'FileText',
   'plugin-guide': 'Puzzle',
   'pr-monitor': 'GitPullRequest',
   'provider-acp': './icons/cursor.svg',
+  'provider-claude-code': './icons/claude-code.svg',
+  'provider-codex': './icons/codex.svg',
   'provider-pi': './icons/pi.svg',
   'provider-retry': 'RotateCcw',
   salesforce: 'Cloud',
@@ -82,8 +91,6 @@ describe('retired first-party plugins', () => {
   it('names the leftover hub rows and never overlaps the official catalog', () => {
     expect([...RETIRED_FIRST_PARTY_PLUGIN_IDS].sort()).toEqual([
       'consensus',
-      'provider-claude-code',
-      'provider-codex',
       'slack',
       'zana',
       'zana-hub'
@@ -95,6 +102,19 @@ describe('retired first-party plugins', () => {
     }
     expect(isRetiredFirstPartyPluginId('docs')).toBe(false);
     expect(isRetiredFirstPartyPluginId('salesforce')).toBe(false);
+  });
+});
+
+describe('promoted autoInstall reclaim', () => {
+  it('names Claude and Codex providers and keeps them autoInstall builtins', () => {
+    expect([...RECLAIM_UNINSTALLED_AUTOINSTALL_IDS].sort()).toEqual([
+      'provider-claude-code',
+      'provider-codex'
+    ]);
+    const builtins = new Map(BUILTIN_PLUGINS.map((plugin) => [plugin.pluginId, plugin]));
+    for (const id of RECLAIM_UNINSTALLED_AUTOINSTALL_IDS) {
+      expect(builtins.get(id)?.autoInstall).toBe(true);
+    }
   });
 });
 

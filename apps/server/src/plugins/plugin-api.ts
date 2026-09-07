@@ -43,7 +43,17 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 import { cronMatches, cronMinuteKey } from '@zana-ai/zcc-plugin-sdk';
+import {
+  bindPluginServices,
+  createPluginServicesRegistry,
+  type PluginServicesRegistry
+} from '@zana-ai/zcc-plugin-sdk/server';
 import { appendPluginLogLine } from './plugin-log.js';
+import {
+  mergeSecretSettings,
+  persistSecretSettings,
+  publicSettingsValues
+} from './plugin-secret-settings.js';
 
 export const HOST_ZCC_VERSION = '2.0.5';
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
@@ -198,6 +208,7 @@ export function createPluginApi(
     hostEntryPath?: string | null;
     hostCall?: (method: string, input?: unknown, hostId?: string) => Promise<unknown>;
     dataDir?: string;
+    services?: PluginServicesRegistry;
   }
 ): PluginHandle {
   mkdirSync(kvDir, { recursive: true });
@@ -226,10 +237,21 @@ export function createPluginApi(
   const assertLive = (): void => {
     if (stale) throw new Error(`plugin context is stale: ${pluginId}`);
   };
+  const services = bindPluginServices(
+    pluginId,
+    options?.services ?? createPluginServicesRegistry(),
+    (hook) => {
+      disposeHooks.push(hook);
+    }
+  );
   const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
   const readKv = (): Record<string, unknown> => readJsonFile<Record<string, unknown>>(kvPath, {});
   const readSettings = (): Record<string, PluginSettingValue | undefined> =>
-    readJsonFile<Record<string, PluginSettingValue | undefined>>(settingsPath, {});
+    mergeSecretSettings(
+      kvDir,
+      settingDescriptors,
+      readJsonFile<Record<string, PluginSettingValue | undefined>>(settingsPath, {})
+    );
 
   const ensureHostEntry = async (): Promise<void> => {
     if (hostEntryLoaded) {
@@ -327,17 +349,18 @@ export function createPluginApi(
         };
         const db = new Database(dbPath);
         sqliteHandles.push(db);
+        const runBatch = Reflect.get(db, 'exec') as (source: string) => unknown;
+        const beginTxn = Reflect.get(db, 'transaction') as <T>(fn: () => T) => () => T;
         const runScript = (sql: string) => {
-          for (const statement of sql.split(';').map((part) => part.trim()).filter(Boolean)) {
-            db.prepare(statement).run();
-          }
+          runBatch.call(db, sql);
         };
         sharedDatabase = {
           runScript,
           prepare: (sql) => db.prepare(sql),
           migrate: (statements) => {
             for (const statement of statements) runScript(statement);
-          }
+          },
+          transaction: (fn) => beginTxn.call(db, fn)()
         };
         return sharedDatabase;
       }
@@ -715,6 +738,7 @@ export function createPluginApi(
         options?.onNeedsConfiguration?.(message);
       }
     },
+    services,
     onDispose: (hook) => {
       disposeHooks.push(hook);
     }
@@ -749,7 +773,8 @@ export function createPluginApi(
     },
     async setSettings(values) {
       const next = { ...readSettings(), ...values };
-      writeJsonFile(settingsPath, next);
+      await persistSecretSettings(kvDir, settingDescriptors, next);
+      writeJsonFile(settingsPath, publicSettingsValues(settingDescriptors, next));
       const projected: Record<string, PluginSettingValue | undefined> = {};
       for (const [key, descriptor] of Object.entries(settingDescriptors)) {
         projected[key] = next[key] ?? descriptor.default;

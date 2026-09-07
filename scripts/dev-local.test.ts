@@ -64,6 +64,27 @@ describe('dev-local turbo TUI', () => {
     expect(createDevTurboCommand(true).args).not.toContain(`--filter=${DESKTOP_PACKAGE}`);
   });
 
+  it('seeds ZCC_APP_URL when unset', () => {
+    const dataDir = join(makeTempDir(), 'zcc');
+    mkdirSync(dataDir, { recursive: true });
+    const prepared = prepareLocalDevEnv({
+      ZCC_DATA_DIR: dataDir,
+      PATH: '/usr/bin'
+    });
+    expect(prepared.env.ZCC_APP_URL).toMatch(/^https:\/\/.+/);
+  });
+
+  it('honors an explicit ZCC_APP_URL over the repo file', () => {
+    const dataDir = join(makeTempDir(), 'zcc');
+    mkdirSync(dataDir, { recursive: true });
+    const prepared = prepareLocalDevEnv({
+      ZCC_DATA_DIR: dataDir,
+      ZCC_APP_URL: 'https://box.tailnet.ts.net/',
+      PATH: '/usr/bin'
+    });
+    expect(prepared.env.ZCC_APP_URL).toBe('https://box.tailnet.ts.net/');
+  });
+
   it('writes a shared enroll token before Turbo children start', () => {
     const dataDir = join(makeTempDir(), 'zcc');
     mkdirSync(dataDir, { recursive: true });

@@ -242,7 +242,7 @@ describe('pairing front door', () => {
     reclaimed.laptop.close();
   });
 
-  it('expires join paths after the join window while host ws still upgrades', async () => {
+  it('keeps join paths open after the join ttl while the laptop is attached', async () => {
     const nextOrigin = await listenNext();
     let now = 1_000_000;
     door = await startFrontDoor({
@@ -259,14 +259,13 @@ describe('pairing front door', () => {
     expect(script.status).toBe(200);
 
     now += 6_000;
-    const expired = await fetch(new URL(`t/${attached.hello.sessionId}/install.sh`, door.url));
-    expect(expired.status).toBe(410);
-    await expect(expired.json()).resolves.toEqual({ error: 'join_expired' });
+    const afterTtl = await fetch(new URL(`t/${attached.hello.sessionId}/install.sh`, door.url));
+    expect(afterTtl.status).toBe(200);
     const enroll = await fetch(new URL(`t/${attached.hello.sessionId}/internal/hosts/enroll`, door.url), {
       method: 'POST',
       body: '{}'
     });
-    expect(enroll.status).toBe(410);
+    expect(enroll.status).toBe(200);
 
     const hostWs = await connectWs({
       hostname: '127.0.0.1',
@@ -274,17 +273,7 @@ describe('pairing front door', () => {
       path: `/t/${attached.hello.sessionId}/internal/hosts/ws`
     });
     hostWs.close();
-
-    attached.laptop.send(encodeFrame(TYPE.JOIN_RENEW, FLAG.FIN, 0));
-    for (let i = 0; i < 40; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      const again = await fetch(new URL(`t/${attached.hello.sessionId}/install.sh`, door.url));
-      if (again.status === 200) {
-        attached.laptop.close();
-        return;
-      }
-    }
-    throw new Error('join window did not renew');
+    attached.laptop.close();
   });
 });
 

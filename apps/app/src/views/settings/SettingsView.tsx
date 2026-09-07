@@ -110,6 +110,7 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   global: [
     { id: 'appearance', label: 'Appearance' },
     { id: 'threads', label: 'Composer' },
+    { id: 'keyboard', label: 'Keyboard' },
     { id: 'cli-skills', label: 'CLI skills' },
     { id: 'debug', label: 'Debug' }
   ],
@@ -246,6 +247,9 @@ export function SettingsView() {
       }
       if (typeof patch.cliRemoteToolProxyEnabled === 'boolean') {
         useData.getState().setCliRemoteToolProxyEnabled(patch.cliRemoteToolProxyEnabled);
+      }
+      if (typeof patch.cliRemoteHostCatalogEnabled === 'boolean') {
+        useData.getState().setCliRemoteHostCatalogEnabled(patch.cliRemoteHostCatalogEnabled);
       }
       if (typeof patch.followUpsEnabled === 'boolean') {
         useData.getState().setFollowUpsEnabled(patch.followUpsEnabled);

@@ -48,37 +48,85 @@ function checkoutRepoFile(relPath: string): string | null {
 
 interface ArtifactInputs {
   joinCli: string;
+  enroll: string;
+  enrollRuntime: string;
+  serverUrl: string;
   shim: string;
   sqliteStub: string;
   bundleScript: string;
   workerEntry: string;
   piBridge: string;
   serverConnection: string;
+  pluginHostArtifactClient: string;
+  pluginToolCallClient: string;
+  interactiveRequestClient: string;
+  acpLaunchSpecs: string;
+  providerRegistry: string;
 }
 
 function artifactInputs(): ArtifactInputs {
   const joinCli = checkoutFile('src/join-cli.ts');
+  const enroll = checkoutFile('src/enroll.ts');
+  const enrollRuntime = checkoutFile('src/enroll-runtime.ts');
+  const serverUrl = checkoutFile('src/server-url.ts');
   const shim = checkoutFile('src/pty-pipe-shim.ts');
   const sqliteStub = checkoutFile('src/better-sqlite3-stub.ts');
   const bundleScript = checkoutFile('scripts/build-join.mjs');
   const serverConnection = checkoutFile('src/server-connection.ts');
+  const pluginHostArtifactClient = checkoutFile('src/plugin-host-artifact-client.ts');
+  const pluginToolCallClient = checkoutFile('src/plugin-tool-call-client.ts');
+  const interactiveRequestClient = checkoutFile('src/interactive-request-client.ts');
   const workerEntry = checkoutRepoFile('packages/provider-bridge-protocol/src/bridge-worker-entry.ts');
   const piBridge = checkoutRepoFile('packages/agent-runtime/src/pi/bridge/bridge.ts');
-  if (!joinCli || !shim || !sqliteStub || !bundleScript || !workerEntry || !piBridge || !serverConnection) {
+  const acpLaunchSpecs = checkoutRepoFile('packages/agent-runtime/src/acp-launch-specs.ts');
+  const providerRegistry = checkoutRepoFile('packages/agent-runtime/src/provider-registry.ts');
+  if (
+    !joinCli || !enroll || !enrollRuntime || !serverUrl || !shim || !sqliteStub || !bundleScript
+    || !workerEntry || !piBridge || !serverConnection || !pluginHostArtifactClient
+    || !pluginToolCallClient || !interactiveRequestClient
+    || !acpLaunchSpecs || !providerRegistry
+  ) {
     throw new Error('zcc-host join bundle sources are missing from this checkout');
   }
-  return { joinCli, shim, sqliteStub, bundleScript, workerEntry, piBridge, serverConnection };
+  return {
+    joinCli,
+    enroll,
+    enrollRuntime,
+    serverUrl,
+    shim,
+    sqliteStub,
+    bundleScript,
+    workerEntry,
+    piBridge,
+    serverConnection,
+    pluginHostArtifactClient,
+    pluginToolCallClient,
+    interactiveRequestClient,
+    acpLaunchSpecs,
+    providerRegistry
+  };
 }
 
 function artifactStamp(inputs: ArtifactInputs): string {
   const hash = createHash('sha256');
   hash.update(readFileSync(inputs.joinCli));
+  hash.update(readFileSync(inputs.enroll));
+  hash.update(readFileSync(inputs.enrollRuntime));
+  hash.update(readFileSync(inputs.serverUrl));
   hash.update(readFileSync(inputs.shim));
   hash.update(readFileSync(inputs.sqliteStub));
   hash.update(readFileSync(inputs.bundleScript));
   hash.update(readFileSync(inputs.workerEntry));
   hash.update(readFileSync(inputs.piBridge));
   hash.update(readFileSync(inputs.serverConnection));
+  hash.update(readFileSync(inputs.pluginHostArtifactClient));
+  hash.update(readFileSync(inputs.pluginToolCallClient));
+  hash.update(readFileSync(inputs.interactiveRequestClient));
+  // join.mjs inlines BUILT_IN_ACP_LAUNCH_SPECS. A Codex row added there must
+  // bust the cached tarball or enrolled remotes keep packing thread/start
+  // without acpLaunchSpec and the ACP bridge rejects the turn.
+  hash.update(readFileSync(inputs.acpLaunchSpecs));
+  hash.update(readFileSync(inputs.providerRegistry));
   hash.update(String(HOST_RPC_PROTOCOL_VERSION));
   hash.update('join-bridge-worker');
   return hash.digest('hex').slice(0, 8);

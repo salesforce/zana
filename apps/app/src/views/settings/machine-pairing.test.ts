@@ -43,7 +43,7 @@ describe('machine pairing command', () => {
     expect(formatJoinCountdown(65_000)).toBe('1:05');
   });
 
-  it('prefixes a relay session origin and min()s the join countdown', () => {
+  it('prefixes a relay session origin while the laptop is connected', () => {
     expect(resolveRelayPairingServerUrl({
       publicAppUrl: 'https://zcc.herokuapp.com/',
       relay: {
@@ -61,12 +61,16 @@ describe('machine pairing command', () => {
         joinUntil: 500
       },
       now: 1_000
-    }).error).toBe('join_expired');
+    })).toEqual({ url: 'https://zcc.herokuapp.com/t/zcrs_abcdefghijklmnopqr1234' });
     expect(resolveRelayPairingServerUrl({
       publicAppUrl: 'https://box.tailnet.ts.net',
       relay: { state: 'unconfigured' }
     }).url).toBe('https://box.tailnet.ts.net');
-    expect(joinCountdownMs(10_000, 4_000, 1_000)).toBe(3_000);
+    expect(joinCountdownMs(10_000, 1_000)).toBe(9_000);
+    expect(resolveRelayPairingServerUrl({
+      publicAppUrl: 'https://zcc.herokuapp.com',
+      relay: { state: 'connected' }
+    }).error).toBe('join_expired');
   });
 
   it('builds an SSH reverse-tunnel command for loopback pairing', () => {

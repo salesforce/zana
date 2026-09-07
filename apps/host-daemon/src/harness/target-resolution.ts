@@ -297,7 +297,10 @@ export function resolveRoleTarget(provider: LaunchProvider, input: TargetResolut
     if (!target && !provider.acceptsDynamicRoleTargets) {
       throw new Error(`Unknown role target for ${provider.adapter.descriptor.label}.`);
     }
-    if (input.scope && (target ? !target.scope.includes(input.scope) : input.scope !== 'local')) {
+    // Static catalog roles own their declared scopes. Dynamic roles (OpenCode
+    // `--agent` names from discovery) are not assumed local-only here — preflight
+    // `discoverRoleTargets` + evidence is the authoritative remote gate.
+    if (target && input.scope && !target.scope.includes(input.scope)) {
       throw new Error(`${provider.adapter.descriptor.label} role target is unavailable for ${input.scope} launches.`);
     }
     if (provider.roleContribution) contribution = provider.roleContribution(targetId);

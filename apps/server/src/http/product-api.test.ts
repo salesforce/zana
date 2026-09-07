@@ -97,7 +97,7 @@ describe('product HTTP', () => {
             supportsThreadRename: false,
             permissionModes: ['full']
           },
-          composerActions: id === 'claude-code' ? ['plan'] : undefined
+          composerActions: id === 'codex' ? ['plan', 'goal'] : id === 'claude-code' ? ['plan'] : []
         })
       );
     }
@@ -166,9 +166,10 @@ describe('product HTTP', () => {
       selectedOnlyModels?: Array<{ displayName: string; model: string }>;
     };
     expect(options.providers.map((row) => row.id)).toEqual(
-      expect.arrayContaining(['claude-code', 'codex', 'pi', 'acp-cursor', 'acp-opencode'])
+      expect.arrayContaining(['claude-code', 'codex', 'pi', 'acp-cursor'])
     );
     expect(options.providers.find((row) => row.id === 'claude-code')?.composerActions).toEqual(['plan']);
+    expect(options.providers.find((row) => row.id === 'codex')?.composerActions).toEqual(['plan', 'goal']);
     expect(options.models.map((row) => row.displayName)).toEqual(expect.arrayContaining([
       'Fable 5',
       'Opus 5 (1M)',
@@ -201,6 +202,136 @@ describe('product HTTP', () => {
     });
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173');
+  });
+
+  it('still offers OpenCode when the family CLI is installed even if ACP health says not_installed', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-health-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const capabilities = {
+      supportsServiceTier: false,
+      fork: 'checkpoint' as const,
+      supportsThreadArchive: false,
+      supportsThreadRename: false,
+      permissionModes: ['full' as const]
+    };
+    providerHandles.push(
+      registerThreadProvider('test', {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        capabilities
+      }),
+      registerThreadProvider('test', {
+        id: 'acp-opencode',
+        displayName: 'OpenCode',
+        visibility: 'installed',
+        capabilities
+      })
+    );
+    server.ctx.hostHub.resolveHostId = (hostId?: string) => hostId ?? 'sfwork';
+    server.ctx.hostHub.callHostOnlineRpc = async (input: { command: { type: string } }) => {
+      if (input.command.type === 'provider.status') {
+        return {
+          providers: [
+            {
+              family: 'claude',
+              label: 'Claude Code',
+              binary: 'claude',
+              enabled: true,
+              alwaysEnabled: true,
+              installed: true,
+              installHint: 'install claude'
+            },
+            {
+              family: 'opencode',
+              label: 'OpenCode',
+              binary: 'opencode',
+              enabled: true,
+              alwaysEnabled: false,
+              installed: true,
+              installHint: 'install opencode'
+            }
+          ]
+        };
+      }
+      if (input.command.type === 'provider.health') {
+        return { supported: true, health: { status: 'not_installed' } };
+      }
+      if (input.command.type === 'provider.list_models') {
+        return { models: [], selectedOnlyModels: [] };
+      }
+      throw new Error(`unexpected ${input.command.type}`);
+    };
+
+    const execution = await fetch(`${server.url}api/v1/system/execution-options?hostId=sfwork`);
+    expect(execution.status).toBe(200);
+    const options = await execution.json() as { providers: Array<{ id: string }> };
+    expect(options.providers.map((row) => row.id)).toContain('claude-code');
+    expect(options.providers.map((row) => row.id)).toContain('acp-opencode');
+  });
+
+  it('still offers OpenCode when health is a noop and that host reports the CLI installed', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-health-noop-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const capabilities = {
+      supportsServiceTier: false,
+      fork: 'checkpoint' as const,
+      supportsThreadArchive: false,
+      supportsThreadRename: false,
+      permissionModes: ['full' as const]
+    };
+    providerHandles.push(
+      registerThreadProvider('test', {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        capabilities
+      }),
+      registerThreadProvider('test', {
+        id: 'acp-opencode',
+        displayName: 'OpenCode',
+        visibility: 'installed',
+        capabilities
+      })
+    );
+    server.ctx.hostHub.resolveHostId = (hostId?: string) => hostId ?? 'sfwork';
+    server.ctx.hostHub.callHostOnlineRpc = async (input: { command: { type: string } }) => {
+      if (input.command.type === 'provider.status') {
+        return {
+          providers: [
+            {
+              family: 'opencode',
+              label: 'OpenCode',
+              binary: 'opencode',
+              enabled: true,
+              alwaysEnabled: false,
+              installed: true,
+              installHint: 'install opencode'
+            }
+          ]
+        };
+      }
+      if (input.command.type === 'provider.health') {
+        return { supported: false };
+      }
+      if (input.command.type === 'provider.list_models') {
+        return { models: [], selectedOnlyModels: [] };
+      }
+      throw new Error(`unexpected ${input.command.type}`);
+    };
+
+    const execution = await fetch(`${server.url}api/v1/system/execution-options?hostId=sfwork`);
+    expect(execution.status).toBe(200);
+    const options = await execution.json() as { providers: Array<{ id: string }> };
+    expect(options.providers.map((row) => row.id)).toContain('acp-opencode');
   });
 
   it('launches a terminal through a connected host and drives input/resize/close', async () => {

@@ -5,6 +5,7 @@ import {
   HostEnrollResponseSchema,
   type HostEnrollResponse
 } from '@zana-ai/zcc-contracts/host-rpc';
+import { joinServerUrl } from './server-url.js';
 
 export async function enrollDaemonHost(input: {
   serverUrl: string;
@@ -16,7 +17,7 @@ export async function enrollDaemonHost(input: {
   fetchFn?: typeof fetch;
 }): Promise<HostEnrollResponse> {
   const fetchFn = input.fetchFn ?? fetch;
-  const response = await fetchFn(new URL('/internal/hosts/enroll', input.serverUrl), {
+  const response = await fetchFn(joinServerUrl(input.serverUrl, '/internal/hosts/enroll'), {
     method: 'POST',
     headers: {
       authorization: `Bearer ${input.token}`,

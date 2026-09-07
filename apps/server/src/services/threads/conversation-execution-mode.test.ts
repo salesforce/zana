@@ -48,8 +48,28 @@ describe('portableWorkIntent', () => {
 });
 
 describe('requestedExecutionModeFromTurn', () => {
-  it('prefers ACP mode, then slash command mentions, then agent', () => {
+  it('prefers slash plan over a leftover ACP mode, then ACP, then agent', () => {
     expect(requestedExecutionModeFromTurn({ acpMode: 'plan', input: [{ type: 'text', text: 'hi' }] })).toBe('plan');
+    expect(requestedExecutionModeFromTurn({
+      acpMode: 'build',
+      input: [{
+        type: 'text',
+        text: '/plan inspect',
+        mentions: [{
+          start: 0,
+          end: 5,
+          resource: {
+            kind: 'command',
+            trigger: '/',
+            name: 'plan',
+            source: 'command',
+            origin: 'builtin',
+            label: 'plan',
+            argumentHint: null
+          }
+        }]
+      }]
+    })).toBe('plan');
     expect(requestedExecutionModeFromTurn({
       input: [{
         type: 'text',
@@ -90,7 +110,7 @@ describe('requestedExecutionModeFromTurn', () => {
     })).toBe('goal');
     expect(requestedExecutionModeFromTurn({
       input: [{ type: 'text', text: '/plan inspect' }]
-    })).toBe('agent');
+    })).toBe('plan');
     expect(requestedExecutionModeFromTurn({ input: [{ type: 'text', text: 'hi' }] })).toBe('agent');
   });
 });

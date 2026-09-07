@@ -155,6 +155,19 @@ describe('production execution routing preflight', () => {
     }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 
+  it('allows a discovered OpenCode role on Remote host (ssh -t) launches', async () => {
+    const services = deps();
+    const provider = new OpenCodeProvider();
+    provider.discoverAgentDescriptors = vi.fn(async () => ({ status: 'success' as const, descriptors: [
+      { id: 'general', label: 'general', mode: 'primary' as const, hidden: false, directLaunchAllowed: true }
+    ] }));
+    await expect(preflightTerminalExecution({
+      config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'remote',
+      mode: 'interactive', idempotencyKey: 'dynamic-direct-agent-remote',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'general' } } }
+    }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'remote' });
+  });
+
   it.each(['build', 'custom-reviewer'])('fails closed for %s when authoritative OpenCode role discovery fails', async (roleTargetId) => {
     const services = deps();
     const provider = new OpenCodeProvider();
@@ -199,6 +212,32 @@ describe('production execution routing preflight', () => {
       mode: 'interactive',
       idempotencyKey: 'cursor-live-model',
       harnessRouting: { schemaVersion: 1, byAdapter: { cursor: { modelTargetId: 'auto' } } }
+    }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+  });
+
+  it('blocks a Cursor model target on Remote host launches and allows it on local scope', async () => {
+    const services = deps();
+    services.installedVersion = vi.fn(async () => '2026.08.15');
+    const provider = new CursorProvider();
+    provider.setDiscoveredModels([
+      { id: 'auto', label: 'Auto', scope: ['local'] }
+    ]);
+    const routing = { schemaVersion: 1 as const, byAdapter: { cursor: { modelTargetId: 'auto' } } };
+    const base = {
+      config: { version: 1, theme: 'dark', harnessCursorEnabled: true } as AppConfig,
+      profile: 'cursor' as const,
+      projectId: 'p1',
+      mode: 'interactive' as const,
+      harnessRouting: routing
+    };
+    await expect(preflightTerminalExecution({
+      ...base, scope: 'remote', idempotencyKey: 'cursor-remote-host'
+    }, { ...services, provider })).resolves.toEqual({
+      decision: 'blocked',
+      reason: 'Cursor model target is unavailable for remote launches.'
+    });
+    await expect(preflightTerminalExecution({
+      ...base, scope: 'local', idempotencyKey: 'cursor-remote-tools'
     }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 

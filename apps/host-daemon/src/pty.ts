@@ -1183,8 +1183,10 @@ export class PtyManager extends EventEmitter {
     // any persona/project permissionMode (claude CLI: last occurrence wins).
     // --disallowedTools can come from persona.deniedTools, projectSettings.deniedTools,
     // autonomousArgs' `AskUserQuestion` suppression, AND per-tab extraArgs — fold
-    // every occurrence into one union (same rationale as mergeAllowedTools above;
-    // no external `extras`, since all the sources are already inline in this argv).
+    // every occurrence into one union (same rationale as mergeAllowedTools above).
+    // Remote-tools native-fs/shell deny is Claude-only (`--disallowedTools`); Cursor
+    // and other CLIs reject that flag (`unknown option`). Gate on the same
+    // injectsClaudeMcpConfig cap that already owns `--mcp-config` / inbox allow.
     const fullArgs = mergeDisallowedTools(
       mergeAllowedTools(
         [
@@ -1207,7 +1209,9 @@ export class PtyManager extends EventEmitter {
         ],
         inboxAllow
       ),
-      opts.remoteToolProxy ? [...REMOTE_TOOL_PROXY_DISALLOWED_TOOLS] : []
+      opts.remoteToolProxy && caps.injectsClaudeMcpConfig
+        ? [...REMOTE_TOOL_PROXY_DISALLOWED_TOOLS]
+        : []
     );
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),

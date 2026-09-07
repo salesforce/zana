@@ -11,7 +11,6 @@ export const COMPOSER_MODE_LABELS: Record<ComposerWorkMode, string> = {
 export function composerModesForActions(actions: readonly string[]): ComposerWorkMode[] {
   const modes: ComposerWorkMode[] = ['agent'];
   if (actions.includes('plan')) modes.push('plan');
-  if (actions.includes('goal')) modes.push('goal');
   return modes;
 }
 
@@ -62,7 +61,7 @@ export type ComposerModeCycleTarget =
     onChange: (value: ComposerWorkMode) => void;
   };
 
-/** Shift+Tab cycles Agent/Plan/Goal or native ACP modes in the focused composer. */
+/** Shift+Tab cycles Agent/Plan (Modern) or native ACP modes (CLI Agent). */
 export function isComposerModeCycleShortcut(event: ComposerModeCycleKeyEvent): boolean {
   return event.key === 'Tab'
     && event.shiftKey

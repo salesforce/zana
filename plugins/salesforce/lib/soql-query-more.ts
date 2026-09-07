@@ -61,6 +61,19 @@ export function confineQueryMorePath(instanceUrl: string, nextRecordsUrl: string
   return stripped;
 }
 
+export function asQueryPage(json: unknown): QueryPage {
+  const rec = json && typeof json === 'object' ? (json as Record<string, unknown>) : {};
+  const records = Array.isArray(rec.records)
+    ? rec.records.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
+    : [];
+  return {
+    totalSize: typeof rec.totalSize === 'number' ? rec.totalSize : records.length,
+    done: rec.done !== false,
+    nextRecordsUrl: typeof rec.nextRecordsUrl === 'string' ? rec.nextRecordsUrl : null,
+    records
+  };
+}
+
 export function mergeQueryPage(existing: QueryPage | null | undefined, page: QueryPage): QueryPage {
   const existingRecords = existing?.records ?? [];
   const pageRecords = page?.records ?? [];

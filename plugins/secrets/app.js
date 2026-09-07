@@ -11,7 +11,7 @@ export default {
   __zccPluginApp: true,
   setup(app) {
     app.slots.pendingInteraction({
-      id: "secret",
+      id: "secret-request",
       component: function SecretCard(props) {
         const React = hostReact();
         if (!React) return null;

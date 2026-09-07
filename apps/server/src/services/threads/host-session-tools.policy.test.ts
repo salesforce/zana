@@ -26,8 +26,7 @@ describe('host session tool policy', () => {
     const files = [
       new URL('./conversation-session-tools.ts', import.meta.url),
       new URL('./host-session-tools.ts', import.meta.url),
-      new URL('../../../../../plugins/provider-acp/src/bridge/bridge.ts', import.meta.url),
-      new URL('../../../../../plugins/provider-claude-code/src/bridge/bridge.ts', import.meta.url)
+      new URL('../../../../../plugins/provider-acp/src/bridge/bridge.ts', import.meta.url)
     ];
     for (const file of files) {
       const source = readFileSync(file, 'utf8');

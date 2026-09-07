@@ -1163,6 +1163,93 @@ describe("acp delta translation (moved from the legacy adapter suite)", () => {
     });
   });
 
+  it("folds Cursor updateTodos partial snapshots into planSteps", () => {
+    const harness = startedHarness();
+    harness.translate(
+      updateEvent({
+        sessionUpdate: "tool_call",
+        toolCallId: "todo-1",
+        kind: "other",
+        status: "completed",
+        rawInput: {
+          _toolName: "updateTodos",
+          todos: [
+            { id: "ping", content: "ping", status: "TODO_STATUS_PENDING" },
+            { id: "pong", content: "pong", status: "TODO_STATUS_PENDING" },
+          ],
+        },
+      }),
+    );
+    const mid = completedItems(
+      harness.translate(
+        updateEvent({
+          sessionUpdate: "tool_call",
+          toolCallId: "todo-2",
+          kind: "other",
+          status: "completed",
+          rawInput: {
+            _toolName: "updateTodos",
+            todos: [
+              { id: "ping", content: "ping", status: "TODO_STATUS_IN_PROGRESS" },
+            ],
+          },
+        }),
+      ),
+    );
+    expect(mid.find((item) => item.type === "planSteps")).toMatchObject({
+      steps: [
+        { step: "ping", status: "active" },
+        { step: "pong", status: "pending" },
+      ],
+    });
+    const done = completedItems(
+      harness.translate(
+        updateEvent({
+          sessionUpdate: "tool_call",
+          toolCallId: "todo-3",
+          kind: "other",
+          status: "completed",
+          rawInput: {
+            _toolName: "updateTodos",
+            todos: [
+              { id: "pong", content: "pong", status: "TODO_STATUS_COMPLETED" },
+            ],
+          },
+        }),
+      ),
+    );
+    expect(done.find((item) => item.type === "planSteps")).toMatchObject({
+      steps: [
+        { step: "ping", status: "active" },
+        { step: "pong", status: "completed" },
+      ],
+    });
+  });
+
+  it("folds OpenCode todos snapshots into planSteps", () => {
+    const harness = startedHarness();
+    const events = harness.translate(
+      updateEvent({
+        sessionUpdate: "tool_call",
+        toolCallId: "todo-oc",
+        kind: "other",
+        status: "completed",
+        rawInput: {
+          todos: [
+            { content: "ping", status: "in_progress" },
+            { content: "pong", status: "pending" },
+          ],
+        },
+      }),
+    );
+    expect(completedItems(events).find((item) => item.type === "planSteps")).toMatchObject({
+      steps: [
+        { step: "ping", status: "active" },
+        { step: "pong", status: "pending" },
+      ],
+    });
+  });
+
   it("translates bridge warnings", () => {
     const harness = createHarness();
 

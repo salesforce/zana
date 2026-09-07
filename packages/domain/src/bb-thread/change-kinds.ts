@@ -131,11 +131,28 @@ export const unsubscribeMessageSchema = z.object({
 });
 export type UnsubscribeMessage = z.infer<typeof unsubscribeMessageSchema>;
 
+export const pingMessageSchema = z.object({
+  type: z.literal("ping"),
+});
+export type PingMessage = z.infer<typeof pingMessageSchema>;
+
 export const clientMessageSchema = z.discriminatedUnion("type", [
   subscribeMessageSchema,
   unsubscribeMessageSchema,
+  pingMessageSchema,
 ]);
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
+
+export const pongMessageSchema = z
+  .object({
+    type: z.literal("pong"),
+  })
+  .strict();
+export type PongMessage = z.infer<typeof pongMessageSchema>;
+
+export const pongMessageLenientSchema = z.object({
+  type: z.literal("pong"),
+});
 
 function assertUnhandledRealtimeSubscriptionTarget(target: never): never {
   throw new Error(`Unhandled realtime subscription target: ${target}`);

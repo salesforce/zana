@@ -516,7 +516,7 @@ function AddMachineDialogContent({
       : pairingCommand({ publicAppUrl: serverUrl, joinCode: join.joinCode, hostId: join.hostId })
     : null;
   const remaining = join
-    ? joinCountdownMs(join.expiresAt, relay?.joinUntil, now)
+    ? joinCountdownMs(join.expiresAt, now)
     : null;
   const expired = joinWindowClosed || (remaining !== null && remaining <= 0);
 

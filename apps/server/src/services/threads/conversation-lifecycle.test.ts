@@ -246,7 +246,7 @@ describe('conversation lifecycle', () => {
       timeoutMs: LIVE_TURN_COMMAND_TIMEOUT_MS,
       command: expect.objectContaining({
         type: 'turn.submit',
-        input: ['follow up'],
+        input: [{ type: 'text', text: 'follow up', mentions: [] }],
         mode: 'start',
         clientRequestId: expect.stringMatching(/^creq_/),
         resume: expect.objectContaining({
@@ -286,14 +286,18 @@ describe('conversation lifecycle', () => {
       command: expect.objectContaining({
         type: 'turn.submit',
         input: expect.arrayContaining([
-          'fix @bug',
-          expect.stringContaining('Issue body')
+          expect.objectContaining({ type: 'text', text: 'fix @bug' }),
+          expect.objectContaining({
+            type: 'text',
+            visibility: 'agent-only',
+            text: expect.stringContaining('Issue body')
+          })
         ])
       })
     }));
   });
 
-  it('sends an image-only follow-up as a host disk marker', async () => {
+  it('sends an image-only follow-up as a localImage host prompt part', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
     await sendConversationTurn(
       ctx(callHostOnlineRpc),
@@ -304,7 +308,7 @@ describe('conversation lifecycle', () => {
       command: expect.objectContaining({
         type: 'turn.submit',
         input: [
-          '[Attached image. It is on disk at /tmp/zcc-data/attachments/proj-1/shot.png — use the Read tool to view it.]'
+          { type: 'localImage', path: '/tmp/zcc-data/attachments/proj-1/shot.png' }
         ]
       })
     }));
@@ -730,7 +734,7 @@ describe('conversation lifecycle', () => {
         type: 'thread.start',
         providerThreadId: 'prov-source',
         providerCheckpointId: 'cp-9',
-        input: ['continue from here']
+        input: [{ type: 'text', text: 'continue from here', mentions: [] }]
       })
     }));
     expect(setConversationProviderThreadId).toHaveBeenCalledWith(expect.anything(), forkId, 'prov-fork');
@@ -1105,6 +1109,29 @@ describe('conversation lifecycle', () => {
       requestedMode: 'plan',
       effectiveMode: 'plan'
     });
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        input: [{
+          type: 'text',
+          text: '/plan inspect the failing command',
+          mentions: [{
+            start: 0,
+            end: 5,
+            resource: {
+              kind: 'command',
+              trigger: '/',
+              name: 'plan',
+              source: 'command',
+              origin: 'builtin',
+              label: 'plan',
+              argumentHint: null
+            }
+          }]
+        }],
+        claudeCodePermissionMode: 'plan'
+      })
+    }));
 
     vi.mocked(upsertThreadExecutionState).mockClear();
     await sendConversationTurn(
@@ -1195,7 +1222,7 @@ describe('conversation lifecycle', () => {
     expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
       command: expect.objectContaining({
         type: 'turn.submit',
-        input: ['now'],
+        input: [{ type: 'text', text: 'now', mentions: [] }],
         mode: 'auto',
         permissionEscalation: 'deny'
       })

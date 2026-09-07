@@ -1,6 +1,7 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import type { TimelineViewWorkRow } from '@zana-ai/zcc-thread-view';
 import { formatDiffStatsText } from '@zana-ai/zcc-thread-view';
+import { isBackgroundAgentTaskType, isBackgroundCommandTaskType } from '@zana-ai/zcc-domain/thread-runtime';
 import { MarkdownContent } from '../../MarkdownContent.js';
 import { ExpandableLine } from './ExpandableLine.js';
 import { ansiToHtml, stripAnsi } from './ansi-output.js';
@@ -233,7 +234,7 @@ function FileChangeBody({
         ) : null}
       </div>
       {change.diff ? (
-        <div className="thread-file-change-diff">
+        <div className="thread-file-change-diff" data-testid="thread-inline-diff">
           <ThreadDiffHunkView path={change.path} patch={change.diff} wrap />
         </div>
       ) : null}
@@ -245,8 +246,13 @@ function FileChangeBody({
 function WorkflowBody({ row }: { row: Extract<TimelineViewWorkRow, { workKind: 'workflow' }> }) {
   const phases = row.workflow?.phases ?? [];
   const agents = row.workflow?.agents ?? [];
+  const backgroundTask =
+    isBackgroundCommandTaskType(row.taskType) || isBackgroundAgentTaskType(row.taskType);
   return (
-    <div className="thread-workflow-body">
+    <div
+      className="thread-workflow-body"
+      data-testid={backgroundTask ? 'thread-background-task-body' : undefined}
+    >
       {row.description ? <p className="thread-workflow-summary">{row.description}</p> : null}
       {phases.length > 0 ? (
         <ol className="thread-workflow-phases">

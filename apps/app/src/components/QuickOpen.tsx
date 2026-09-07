@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText } from 'lucide-react';
 import type { Project, WalkedFile } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store.js';
-import { fuzzyScore } from '../lib/fuzzy.js';
+import { fuzzyMatchPaths } from '../lib/fuzzy.js';
 import { highlightMatches } from './palette/highlight.js';
 
 interface Props {
@@ -87,13 +87,16 @@ export function QuickOpen({ project, onClose }: Props) {
       }
       return out;
     }
-    const out: ScoredEntry[] = [];
-    for (const file of files) {
-      const r = fuzzyScore(file.rel, q);
-      if (r) out.push({ file, score: r.score, matchIdx: r.matchIdx });
-    }
-    out.sort((a, b) => b.score - a.score);
-    return out.slice(0, MAX_RESULTS);
+    return fuzzyMatchPaths({
+      items: files,
+      query: q,
+      getPath: (file) => file.rel,
+      limit: MAX_RESULTS
+    }).map((match) => ({
+      file: match.item,
+      score: match.score,
+      matchIdx: match.positions
+    }));
   }, [files, query, recents]);
 
   useEffect(() => {

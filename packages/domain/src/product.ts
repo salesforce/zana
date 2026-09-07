@@ -2180,6 +2180,14 @@ export interface AppConfig {
    */
   cliRemoteToolProxyEnabled?: boolean;
   /**
+   * EXPERIMENTAL — CLI Agent asks the project’s execution host which CLIs and
+   * models are installed (`GET /system/execution-options?hostId=…`, same path
+   * Modern uses) instead of this machine’s local `harness.descriptors` list.
+   * Default OFF: the CLI Agent picker still reflects locally installed
+   * harnesses and trusted PTY adapter catalogs.
+   */
+  cliRemoteHostCatalogEnabled?: boolean;
+  /**
    * Master switch for the EXPERIMENTAL Follow-ups feature: when ON, the
    * "Follow-ups" project-scoped nav tab appears (durable parked questions from
    * idle-triage and other origins). Under evaluation, so it's hidden by default
@@ -2335,8 +2343,10 @@ export interface AppConfig {
    */
   cloneRoot?: string;
   /**
-   * Persisted leftover. Pairing uses runtime `ZCC_APP_URL` or the compile-time
-   * bake, not this field. `presentAppConfig` overwrites it for the renderer.
+   * Public origin remotes use to enroll (Tailscale Serve, Heroku pairing door).
+   * Pairing prefers runtime `ZCC_APP_URL` or the compile-time bake, then this
+   * field, then the repo `public-app-url` file. `presentAppConfig` overlays the
+   * resolved origin for the renderer and never includes the relay token.
    */
   publicAppUrl?: string;
   /**
@@ -4643,6 +4653,7 @@ export interface PluginSettingsSnapshot {
       label: string;
       description?: string;
       secret?: true;
+      multiline?: true;
       options?: string[];
       default?: string | boolean;
     }

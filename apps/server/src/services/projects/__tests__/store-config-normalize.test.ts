@@ -344,6 +344,13 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ feedNoiseClassifierEnabled: 'yes' }).feedNoiseClassifierEnabled).toBeUndefined();
   });
 
+  it('passes through a boolean cliRemoteHostCatalogEnabled, drops non-booleans', () => {
+    expect(normalizeConfig({ cliRemoteHostCatalogEnabled: true }).cliRemoteHostCatalogEnabled).toBe(true);
+    expect(normalizeConfig({ cliRemoteHostCatalogEnabled: false }).cliRemoteHostCatalogEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ cliRemoteHostCatalogEnabled: 'yes' }).cliRemoteHostCatalogEnabled).toBeUndefined();
+  });
+
   it('passes through a boolean suggestionsEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ suggestionsEnabled: true }).suggestionsEnabled).toBe(true);
     expect(normalizeConfig({ suggestionsEnabled: false }).suggestionsEnabled).toBe(false);

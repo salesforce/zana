@@ -5,6 +5,7 @@ import {
   fallbackMoreModelsForProvider,
   fallbackProviderOption,
   fallbackProvidersForNewThread,
+  isOfferedModernProvider,
   snapNewThreadProviderId
 } from './fallback-models.js';
 
@@ -64,15 +65,13 @@ describe('fallback thread catalogs', () => {
       'claude-code',
       'codex',
       'pi',
-      'acp-cursor',
-      'acp-opencode'
+      'acp-cursor'
     ]);
     expect(composerProvidersFromCatalog([], false, 'claude-code').map((row) => row.id)).toEqual([
       'claude-code',
       'codex',
       'pi',
-      'acp-cursor',
-      'acp-opencode'
+      'acp-cursor'
     ]);
     expect(composerProvidersFromCatalog([], true, 'codex').map((row) => row.id)).toEqual(['codex']);
     expect(composerProvidersFromCatalog(
@@ -87,14 +86,7 @@ describe('fallback thread catalogs', () => {
       ],
       false,
       'claude-code'
-    ).map((row) => row.id)).toEqual([
-      'claude-code',
-      'codex',
-      'pi',
-      'acp-cursor',
-      'acp-opencode',
-      'custom-agent'
-    ]);
+    ).map((row) => row.id)).toEqual(['claude-code', 'custom-agent']);
     expect(composerProvidersFromCatalog(
       [{ id: 'pi', displayName: 'Pi', permissionModes: ['full'], composerActions: [] }],
       true,
@@ -102,7 +94,21 @@ describe('fallback thread catalogs', () => {
     ).map((row) => row.id)).toEqual(['pi']);
   });
 
-  it('does not snap a builtin fallback that the new-thread picker still offers', () => {
+  it('does not keep offering a builtin the live catalog omitted', () => {
+    expect(composerProvidersFromCatalog(
+      [{ id: 'acp-cursor', displayName: 'Cursor', permissionModes: ['full'], composerActions: [] }],
+      false,
+      'claude-code'
+    ).map((row) => row.id)).toEqual(['acp-cursor']);
+  });
+
+  it('blocks a new-thread send unless the live roster includes the selected harness', () => {
+    expect(isOfferedModernProvider(['acp-cursor', 'pi'], 'claude-code')).toBe(false);
+    expect(isOfferedModernProvider(['claude-code', 'acp-cursor'], 'claude-code')).toBe(true);
+    expect(isOfferedModernProvider(['claude-code'], undefined)).toBe(false);
+  });
+
+  it('snaps off a remembered id the live roster no longer offers', () => {
     const loading = composerProvidersFromCatalog([], false, 'acp-cursor').map((row) => row.id);
     expect(snapNewThreadProviderId(loading, 'acp-cursor')).toBeNull();
     const live = composerProvidersFromCatalog(
@@ -111,7 +117,7 @@ describe('fallback thread catalogs', () => {
       'acp-cursor'
     ).map((row) => row.id);
     expect(snapNewThreadProviderId(live, 'claude-code')).toBeNull();
-    expect(snapNewThreadProviderId(live, 'acp-cursor')).toBeNull();
+    expect(snapNewThreadProviderId(live, 'acp-cursor')).toBe('claude-code');
     expect(snapNewThreadProviderId(live, 'gone-plugin')).toBe('claude-code');
     expect(snapNewThreadProviderId([], 'acp-cursor')).toBeNull();
   });

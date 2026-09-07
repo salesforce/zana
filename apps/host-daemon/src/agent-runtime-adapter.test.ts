@@ -16,7 +16,11 @@ import {
   resolveRuntimeBridgeLaunch,
   threadExecutionOptions
 } from './agent-runtime-adapter.js';
-import type { ThreadEvent } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PromptInput, ThreadEvent } from '@zana-ai/zcc-domain/thread-runtime';
+
+function prompt(...chunks: string[]): PromptInput[] {
+  return chunks.map((text) => ({ type: 'text' as const, text, mentions: [] }));
+}
 
 describe('agent runtime thread adapter', () => {
   let cwd: string;
@@ -69,12 +73,68 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     expect(events.some((event) => event.threadId === threadId)).toBe(true);
     await adapter.stopWork({ threadId });
     adapter.dispose();
+  });
+
+  it('forwards command mentions into AgentRuntime instead of wiping them', async () => {
+    const started: Array<{ input: PromptInput[] }> = [];
+    const turned: Array<{ input: PromptInput[] }> = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
+        });
+        return {
+          ...runtime,
+          startThread: async (input) => {
+            started.push({ input: input.input });
+            return runtime.startThread(input);
+          },
+          runTurn: async (input) => {
+            turned.push({ input: input.input });
+            return runtime.runTurn(input);
+          }
+        };
+      }
+    });
+    const threadId = randomUUID();
+    const planInput: PromptInput[] = [{
+      type: 'text',
+      text: '/plan inspect',
+      mentions: [{
+        start: 0,
+        end: 5,
+        resource: {
+          kind: 'command',
+          trigger: '/',
+          name: 'plan',
+          source: 'command',
+          origin: 'builtin',
+          label: 'plan',
+          argumentHint: null
+        }
+      }]
+    }];
+    await adapter.startWork({
+      threadId,
+      environmentId: randomUUID(),
+      projectId: 'p1',
+      providerId: 'fake',
+      input: planInput,
+      cwd
+    });
+    await adapter.submitTurn({ threadId, input: planInput });
+    adapter.dispose();
+    expect(started[0]?.input).toEqual(planInput);
+    expect(turned[0]?.input).toEqual(planInput);
   });
 
   it('applies Settings provider-bridge recording to process env before start', async () => {
@@ -107,7 +167,7 @@ describe('agent runtime thread adapter', () => {
         environmentId: randomUUID(),
         projectId: 'p1',
         providerId: 'fake',
-        input: ['hello'],
+        input: prompt('hello'),
         cwd
       });
       expect(process.env.ZCC_PROVIDER_BRIDGE_RECORD_DIR).toBe(
@@ -139,10 +199,10 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
-    await adapter.submitTurn({ threadId, input: ['follow up'] });
+    await adapter.submitTurn({ threadId, input: prompt('follow up') });
     await adapter.stopWork({ threadId });
     adapter.dispose();
     expect(events.some((event) => event.kind === 'turn.completed' || event.kind === 'thread.event')).toBe(true);
@@ -178,14 +238,14 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd,
       model: 'claude-sonnet-5',
       reasoningLevel: 'high'
     });
     await adapter.submitTurn({
       threadId,
-      input: ['follow up'],
+      input: prompt('follow up'),
       model: 'claude-sonnet-5',
       reasoningLevel: 'xhigh'
     });
@@ -219,12 +279,12 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     await adapter.submitTurn({
       threadId,
-      input: ['follow up'],
+      input: prompt('follow up'),
       permissionEscalation: 'ask'
     });
     adapter.dispose();
@@ -259,13 +319,13 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd,
       permissionMode: 'accept-edits'
     });
     await adapter.submitTurn({
       threadId,
-      input: ['follow up'],
+      input: prompt('follow up'),
       permissionMode: 'accept-edits',
       permissionEscalation: 'deny'
     });
@@ -301,7 +361,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['from checkpoint'],
+      input: prompt('from checkpoint'),
       cwd,
       providerThreadId: 'prov-source',
       providerCheckpointId: 'cp-9'
@@ -343,13 +403,13 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd,
       clientRequestId: 'creq_23456789ab'
     });
     await adapter.submitTurn({
       threadId,
-      input: ['follow up'],
+      input: prompt('follow up'),
       clientRequestId: 'creq_23456789ac'
     });
     adapter.dispose();
@@ -386,17 +446,17 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     await adapter.submitTurn({
       threadId,
-      input: ['nudge'],
+      input: prompt('nudge'),
       mode: 'steer'
     });
     await adapter.submitTurn({
       threadId,
-      input: ['next'],
+      input: prompt('next'),
       mode: 'auto'
     });
     adapter.dispose();
@@ -433,12 +493,12 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     await adapter.submitTurn({
       threadId,
-      input: ['next'],
+      input: prompt('next'),
       mode: 'auto'
     });
     adapter.dispose();
@@ -463,7 +523,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['delay:2000 keep this turn alive'],
+      input: prompt('delay:2000 keep this turn alive'),
       cwd,
       clientRequestId: 'creq_23456789ab'
     });
@@ -488,7 +548,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['delay:2000 keep this turn alive'],
+      input: prompt('delay:2000 keep this turn alive'),
       cwd,
       clientRequestId: 'creq_23456789ab'
     });
@@ -500,7 +560,7 @@ describe('agent runtime thread adapter', () => {
     });
     await adapter.submitTurn({
       threadId,
-      input: ['Is it done ?'],
+      input: prompt('Is it done ?'),
       mode: 'auto',
       clientRequestId: 'creq_23456789ac'
     });
@@ -528,7 +588,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['delay:2000 keep this turn alive'],
+      input: prompt('delay:2000 keep this turn alive'),
       cwd,
       clientRequestId: 'creq_23456789ab'
     });
@@ -541,13 +601,13 @@ describe('agent runtime thread adapter', () => {
     await Promise.all([
       adapter.submitTurn({
         threadId,
-        input: ['Is it done ?'],
+        input: prompt('Is it done ?'),
         mode: 'auto',
         clientRequestId: 'creq_23456789ac'
       }),
       adapter.submitTurn({
         threadId,
-        input: ['Is it done yet?'],
+        input: prompt('Is it done yet?'),
         mode: 'auto',
         clientRequestId: 'creq_23456789ad'
       })
@@ -579,7 +639,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     await adapter.stopWork({ threadId });
@@ -618,7 +678,7 @@ describe('agent runtime thread adapter', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'fake',
-      input: ['one'],
+      input: prompt('one'),
       cwd
     });
     await adapter.startWork({
@@ -626,7 +686,7 @@ describe('agent runtime thread adapter', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'fake',
-      input: ['two'],
+      input: prompt('two'),
       cwd: otherCwd
     });
     adapter.dispose();
@@ -665,7 +725,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p-ssh',
       providerId: 'fake',
-      input: ['inspect remote'],
+      input: prompt('inspect remote'),
       cwd,
       remote: { host: 'devbox', user: 'me', remotePath: '/src' },
       remoteToolProxy: true
@@ -712,7 +772,7 @@ describe('agent runtime thread adapter', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd,
       dynamicTools: [pluginTool],
       instructions: 'Use sf_soql.'
@@ -762,7 +822,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p-ssh',
       providerId: 'fake',
-      input: ['inspect remote'],
+      input: prompt('inspect remote'),
       cwd,
       remote: { host: 'devbox', user: 'me', remotePath: '/src' },
       remoteToolProxy: true,
@@ -812,7 +872,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     await expect(onToolCall!({
@@ -861,7 +921,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     await expect(onToolCall!({
@@ -902,7 +962,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p-ssh',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd,
       remote: { host: 'devbox' }
     });
@@ -929,7 +989,7 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     expect(seen).toEqual([{ bridgeBundleDir: '/tmp/zcc-packed-bridges' }]);
@@ -962,6 +1022,34 @@ describe('agent runtime thread adapter', () => {
     });
     expect(listed.models.length).toBeGreaterThan(0);
     expect(listed.models[0]?.model).toBeTruthy();
+    adapter.dispose();
+  });
+
+  it('reports unsupported health for the fake provider through AgentRuntime', async () => {
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) =>
+        createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
+        })
+    });
+    const health = await adapter.providerHealth({
+      providerId: 'fake',
+      bridgeLaunch: {
+        pluginId: 'provider-fake',
+        source: { kind: 'daemon-bundled', id: 'fake' },
+        capabilities: {
+          supportsServiceTier: false,
+          permissionModes: ['full'],
+          supportsThreadArchive: false,
+          supportsThreadRename: false,
+          fork: 'checkpoint'
+        }
+      }
+    });
+    expect(health).toEqual({ supported: false });
     adapter.dispose();
   });
 
@@ -1041,7 +1129,7 @@ describe('agent runtime thread adapter', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     await adapter.renameWork({ threadId, title: 'Renamed' });
@@ -1125,7 +1213,7 @@ describe('agent runtime thread adapter', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     await adapter.stopWork({ threadId });
@@ -1142,7 +1230,7 @@ describe('agent runtime thread adapter', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     expect(created).toBe(2);
@@ -1168,7 +1256,7 @@ describe('agent runtime thread adapter', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'fake',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd
     });
     mkdirSync(join(cwd, 'skills-generated', 'hello'), { recursive: true });
@@ -1183,7 +1271,7 @@ describe('agent runtime thread adapter', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'fake',
-      input: ['second'],
+      input: prompt('second'),
       cwd
     });
     expect(created).toBe(1);

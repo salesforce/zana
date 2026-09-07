@@ -271,6 +271,18 @@ export function createBridgeProtocolAdapter(
                 : {}),
             },
           };
+        case "provider/health":
+          return {
+            kind: "request",
+            method: BRIDGE_REQUEST_METHODS.providerHealth,
+            params: {
+              providerId: options.id,
+              ...(command.cwd !== undefined ? { cwd: command.cwd } : {}),
+              ...(options.staticProviderOptions !== undefined
+                ? { providerOptions: options.staticProviderOptions }
+                : {}),
+            },
+          };
         case "skills/configure":
           return {
             kind: "request",

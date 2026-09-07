@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   PRESENTATION_TITLE_MAX_LENGTH,
   fileReadPresentation,
+  planStepsPresentation,
   presentationDetail,
   presentationFileName,
   presentationTitle,
@@ -47,6 +48,26 @@ describe("bridge-kit presentation", () => {
       label: { pending: "Reading file", completed: "Read file" },
       icon: { glyph: "FileText" },
       title: "a.ts",
+    });
+  });
+
+  it("headlines the in-progress plan step and collapses the row", () => {
+    expect(
+      planStepsPresentation([
+        { step: "Read", status: "completed" },
+        { step: "Ship it", status: "active" },
+        { step: "Test", status: "pending" },
+      ]),
+    ).toEqual({
+      label: { pending: "Updating plan", completed: "Updated plan" },
+      icon: { glyph: "ListTodo" },
+      suppress: true,
+      title: "Ship it",
+    });
+    expect(planStepsPresentation([{ step: "Done", status: "completed" }])).toEqual({
+      label: { pending: "Updating plan", completed: "Updated plan" },
+      icon: { glyph: "ListTodo" },
+      suppress: true,
     });
   });
 });

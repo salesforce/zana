@@ -15,7 +15,7 @@ import {
   type AgentScriptTreeNode
 } from '../../lib/agent-script-file-tree.js';
 import { AGENT_SCRIPT_EXAMPLES } from '../../lib/agent-script-model.js';
-import { normalizeAgentScriptDialect, type AgentScriptDialect } from '../../lib/types.js';
+import { normalizeAgentScriptDialect, type AgentScriptDialect, type PublicOrgView } from '../../lib/types.js';
 import { takeQueuedAgentScriptOpen } from './agent-script-open.js';
 import { parseAgentforcePanelPath } from './agentforce-panel-params.js';
 import { OrgPicker } from './OrgPicker.js';
@@ -34,6 +34,8 @@ import {
   saveIsDisabled,
   shouldShowPlaygroundFailure
 } from './agent-script-panel-logic.js';
+import { orgSessionLabel } from '../../lib/org-session.js';
+import { fetchConnectedOrg } from './org-rpc.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -183,6 +185,7 @@ export function AgentScriptPanel(props: {
   const [fileQuery, setFileQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [examplesOpen, setExamplesOpen] = useState(true);
+  const [org, setOrg] = useState<PublicOrgView | null>(null);
   const dialect =
     dialectOverride ??
     normalizeAgentScriptDialect((settings.values as Record<string, unknown> | undefined)?.agentScriptDialect);
@@ -193,6 +196,18 @@ export function AgentScriptPanel(props: {
       projectId ? { projectId: projectId, ...extra } : extra,
     [projectId]
   );
+
+  const refreshOrg = useCallback(async () => {
+    const payload = await fetchConnectedOrg(pluginId);
+    const next = payload.ok ? payload.org : null;
+    setOrg(next);
+    postToPlayground(frameRef.current, {
+      source: PLAYGROUND_BRIDGE_SOURCE,
+      type: 'setOrg',
+      org: next
+    });
+    return next;
+  }, [pluginId]);
 
   const refreshFiles = useCallback(async () => {
     const listed = (await callPluginRpc(pluginId, 'agentFiles.list', rpcArgs())) as {
@@ -215,10 +230,11 @@ export function AgentScriptPanel(props: {
     void refreshFiles().catch((err) => {
       if (!cancelled) setError(err instanceof Error ? err.message : String(err));
     });
+    void refreshOrg().catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [pluginId, refreshFiles]);
+  }, [pluginId, refreshFiles, refreshOrg]);
 
   useEffect(() => {
     setExpanded(new Set(defaultExpandedFolders(files, activePath)));
@@ -324,8 +340,10 @@ export function AgentScriptPanel(props: {
           examples: AGENT_SCRIPT_EXAMPLES,
           files,
           saveEnabled,
-          view
+          view,
+          org
         });
+        void refreshOrg();
         const queued = projectId ? takeQueuedAgentScriptOpen(projectId) : null;
         void openFile(initialPath || queued || null);
         return;
@@ -344,7 +362,7 @@ export function AgentScriptPanel(props: {
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [dialect, files, openFile, persistFromPlayground, projectId, initialPath, saveEnabled, view]);
+  }, [dialect, files, openFile, persistFromPlayground, projectId, initialPath, refreshOrg, saveEnabled, view, org]);
 
   useEffect(() => {
     if (!projectId || !playgroundReady) return;
@@ -433,7 +451,12 @@ export function AgentScriptPanel(props: {
           ))}
         </nav>
         <span className="sf-as-spacer" />
-        <OrgPicker pluginId={pluginId} compact />
+        <OrgPicker pluginId={pluginId} compact onSelect={() => void refreshOrg()} />
+        {orgSessionLabel(org) ? (
+          <span className="sf-as-crumb-seg" data-testid="salesforce-playground-org">
+            {orgSessionLabel(org)}
+          </span>
+        ) : null}
         <select
           className="sf-as-dialect"
           aria-label="Agentforce dialect"

@@ -10,7 +10,8 @@ import {
 import type { ActiveThinking, ThreadTimelineGoal } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
-import { showOngoingThreadWork, timelineRowsAwaitUser } from './thread-timeline-model.js';
+import type { PlanExecutionTask } from './timeline/plan-execution-card.js';
+import { showOngoingThreadWork, timelineHasRunningWork, timelineRowsAwaitUser } from './thread-timeline-model.js';
 import { collectTimelineAutoExpansionRowIds } from './timeline/timeline-auto-expand.js';
 import {
   findStreamingAssistantMessageId,
@@ -55,6 +56,7 @@ export interface ThreadTimelineProps {
   searchHitRowId?: string | null;
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
+  planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
 }
 
 function flattenForUnread(rows: ThreadTimelineViewRow[]): Array<{ id: string; sourceSeqStart?: number }> {
@@ -95,7 +97,8 @@ export function ThreadTimeline({
   forceExpandedRowIds,
   searchHitRowId,
   messageActions,
-  includePluginMessageActions
+  includePluginMessageActions,
+  planExecution
 }: ThreadTimelineProps) {
   const [now, setNow] = useState(() => Date.now());
   const [retainedTerminalIds, setRetainedTerminalIds] = useState<string[]>([]);
@@ -231,10 +234,16 @@ export function ThreadTimeline({
             scopeActive={busy && !awaitingUser}
             messageActions={messageActions}
             includePluginMessageActions={includePluginMessageActions}
+            planExecution={planExecution}
           />
         )}
         <ThreadHostDisconnectedBanner status={status} />
-        <ThreadWorkingIndicator status={status} thinking={thinking} waitingOnUser={awaitingUser} />
+        <ThreadWorkingIndicator
+          status={status}
+          thinking={thinking}
+          waitingOnUser={awaitingUser}
+          hasRunningWork={timelineHasRunningWork(rows)}
+        />
       </div>
       {pinnedAway ? (
         <button

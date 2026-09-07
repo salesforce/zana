@@ -46,6 +46,31 @@
         "types": "./src/provider-bridge-testing.ts",
         "import": "./dist/provider-bridge-testing.js",
         "default": "./dist/provider-bridge-testing.js"
+      },
+      "./provider-bridge/acp": {
+        "types": "./src/provider-bridge-acp.ts",
+        "import": "./dist/provider-bridge-acp.js",
+        "default": "./dist/provider-bridge-acp.js"
+      },
+      "./host": {
+        "types": "./src/host.ts",
+        "import": "./dist/host.js",
+        "default": "./dist/host.js"
+      },
+      "./ai-services": {
+        "types": "./src/ai-services.ts",
+        "import": "./dist/ai-services.js",
+        "default": "./dist/ai-services.js"
+      },
+      "./internal/host-policy": {
+        "types": "./src/internal/host-policy.ts",
+        "import": "./dist/internal/host-policy.js",
+        "default": "./dist/internal/host-policy.js"
+      },
+      "./testing/host": {
+        "types": "./src/testing/host.ts",
+        "import": "./dist/testing/host.js",
+        "default": "./dist/testing/host.js"
       }
     }
   },
@@ -96,12 +121,42 @@
       "types": "./src/provider-bridge-testing.ts",
       "import": "./dist/provider-bridge-testing.js",
       "default": "./dist/provider-bridge-testing.js"
+    },
+    "./provider-bridge/acp": {
+      "source": "./src/provider-bridge-acp.ts",
+      "types": "./src/provider-bridge-acp.ts",
+      "import": "./dist/provider-bridge-acp.js",
+      "default": "./dist/provider-bridge-acp.js"
+    },
+    "./host": {
+      "source": "./src/host.ts",
+      "types": "./src/host.ts",
+      "import": "./dist/host.js",
+      "default": "./dist/host.js"
+    },
+    "./ai-services": {
+      "source": "./src/ai-services.ts",
+      "types": "./src/ai-services.ts",
+      "import": "./dist/ai-services.js",
+      "default": "./dist/ai-services.js"
+    },
+    "./internal/host-policy": {
+      "source": "./src/internal/host-policy.ts",
+      "types": "./src/internal/host-policy.ts",
+      "import": "./dist/internal/host-policy.js",
+      "default": "./dist/internal/host-policy.js"
+    },
+    "./testing/host": {
+      "source": "./src/testing/host.ts",
+      "types": "./src/testing/host.ts",
+      "import": "./dist/testing/host.js",
+      "default": "./dist/testing/host.js"
     }
   },
   "scripts": {
     "build": "node scripts/build-runtime.mjs",
     "prepack": "node scripts/build-runtime.mjs",
-    "test": "vitest run --config ../../vitest.config.ts src/testing/index.test.ts src/testing/app-render.test.tsx src/app.test.ts src/provider-bridge.test.ts src/pack.test.ts",
+    "test": "vitest run --config ../../vitest.config.ts src/testing/index.test.ts src/testing/app-render.test.tsx src/app.test.ts src/provider-bridge.test.ts src/pack.test.ts src/plugin-services.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "peerDependencies": {
@@ -120,7 +175,9 @@
     "@zana-ai/zcc-agent-process-utils": "workspace:*",
     "@zana-ai/zcc-domain": "workspace:*",
     "@zana-ai/zcc-host-daemon-contract": "workspace:*",
+    "@zana-ai/zcc-provider-bridge-acp": "workspace:*",
     "@zana-ai/zcc-provider-bridge-protocol": "workspace:*",
+    "@zana-ai/zcc-server-contract": "workspace:*",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -129,6 +186,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "zod": "^4.0.0"
   }
 }

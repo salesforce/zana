@@ -64,6 +64,17 @@ import {
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
 import {
+  EMPTY_HOST_INSTALL_DRAWER,
+  reduceHostInstallAppend,
+  reduceHostInstallEvent,
+  reduceHostInstallFinish,
+  reduceHostInstallOpen,
+  type HostInstallDrawerState,
+  type HostInstallFinish,
+  type HostInstallKind
+} from './lib/host-install-drawer.js';
+import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
+import {
   findProjectIdForSession,
   hasMissingSetup,
   pruneInboxMarkers,
@@ -457,6 +468,13 @@ interface UiState {
   notificationsDrawerOpen: boolean;
   toggleNotificationsDrawer: () => void;
   setNotificationsDrawerOpen: (open: boolean) => void;
+  /** Right-edge install log drawer — live NDJSON from host-daemon Install/Fix. */
+  hostInstallDrawer: HostInstallDrawerState;
+  openHostInstallDrawer: (input: { kind: HostInstallKind; target: string }) => void;
+  appendHostInstallLogs: (lines: string[]) => void;
+  applyHostInstallEvent: (event: HostBootstrapEvent) => void;
+  finishHostInstallDrawer: (outcome: HostInstallFinish) => void;
+  setHostInstallDrawerOpen: (open: boolean) => void;
   // explorer: file path open in viewer per project
   explorerFile: Record<string, string | undefined>;
   // explorer: pending goto request per project (consumed by ExplorerView)
@@ -748,6 +766,7 @@ function mirroredConfigFlags(config: AppConfig) {
     heartbeatEnabled: config.heartbeatEnabled ?? false,
     goalsEnabled: config.goalsEnabled ?? false,
     cliRemoteToolProxyEnabled: config.cliRemoteToolProxyEnabled ?? false,
+    cliRemoteHostCatalogEnabled: config.cliRemoteHostCatalogEnabled ?? false,
     followUpsEnabled: config.followUpsEnabled ?? false,
     idleAttentionSensitivity: config.idleAttentionSensitivity ?? 'medium',
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
@@ -959,6 +978,23 @@ export const useUi = create<UiState>((set, get) => ({
     }
     set({ notificationsDrawerOpen: open });
   },
+  hostInstallDrawer: EMPTY_HOST_INSTALL_DRAWER,
+  openHostInstallDrawer: (input) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallOpen(s.hostInstallDrawer, input),
+    notificationsDrawerOpen: false
+  })),
+  appendHostInstallLogs: (lines) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallAppend(s.hostInstallDrawer, lines)
+  })),
+  applyHostInstallEvent: (event) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallEvent(s.hostInstallDrawer, event)
+  })),
+  finishHostInstallDrawer: (outcome) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallFinish(s.hostInstallDrawer, outcome)
+  })),
+  setHostInstallDrawerOpen: (open) => set((s) => ({
+    hostInstallDrawer: { ...s.hostInstallDrawer, open }
+  })),
   sidebarCollapsed:
     typeof localStorage !== 'undefined' &&
     localStorage.getItem(sidebarCollapsedKey()) === '1',
@@ -1419,6 +1455,10 @@ interface DataState {
    *  Remote host vs Local agent · remote tools picker on SSH projects.
    *  Hydrated on init, kept live by the Settings toggle. Default off. */
   cliRemoteToolProxyEnabled: boolean;
+  /** Mirror of AppConfig.cliRemoteHostCatalogEnabled — CLI Agent asks the
+   *  execution host which CLIs/models are installed (Modern execution-options).
+   *  Hydrated on init, kept live by the Settings toggle. Default off. */
+  cliRemoteHostCatalogEnabled: boolean;
   /** Mirror of AppConfig.followUpsEnabled — gates the experimental Follow-ups
    *  project tab. Hydrated on init, kept live by the Settings toggle. Default off. */
   followUpsEnabled: boolean;
@@ -1526,6 +1566,7 @@ interface DataState {
   setHeartbeatEnabled: (on: boolean) => void;
   setGoalsEnabled: (on: boolean) => void;
   setCliRemoteToolProxyEnabled: (on: boolean) => void;
+  setCliRemoteHostCatalogEnabled: (on: boolean) => void;
   setFollowUpsEnabled: (on: boolean) => void;
   setCatchUpSummaryEnabled: (on: boolean) => void;
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
@@ -1844,6 +1885,7 @@ export const useData = create<DataState>((set, get) => ({
   heartbeatEnabled: false,
   goalsEnabled: false,
   cliRemoteToolProxyEnabled: false,
+  cliRemoteHostCatalogEnabled: false,
   followUpsEnabled: false,
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
@@ -1900,6 +1942,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setCliRemoteToolProxyEnabled(on) {
     set({ cliRemoteToolProxyEnabled: on });
+  },
+
+  setCliRemoteHostCatalogEnabled(on) {
+    set({ cliRemoteHostCatalogEnabled: on });
   },
 
   setFollowUpsEnabled(on) {

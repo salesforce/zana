@@ -68,4 +68,28 @@ describe('ThreadWorkingIndicator', () => {
     expect(screen.getByText('Waiting for reconnection…')).toBeTruthy();
     expect(screen.queryByText('Planning next move…')).toBeNull();
   });
+
+  it('hides thinking while tools are running and keeps the same phrase after', () => {
+    const { rerender } = render(
+      <ThreadWorkingIndicator status="active" thinking={thinkingWithText} hasRunningWork />
+    );
+    expect(screen.queryByTestId('thread-thinking')).toBeNull();
+    rerender(
+      <ThreadWorkingIndicator status="active" thinking={thinkingWithText} hasRunningWork={false} />
+    );
+    expect(screen.getByText('Thinking…')).toBeTruthy();
+    expect(screen.getByText('Inspect nearby files.')).toBeTruthy();
+    rerender(
+      <ThreadWorkingIndicator status="active" thinking={null} hasRunningWork={false} />
+    );
+    expect(screen.getByText('Planning next move…')).toBeTruthy();
+    expect(screen.queryByText(`${THREAD_WORKING_PHRASES[1]}…`)).toBeNull();
+  });
+
+  it('still shows reconnection copy when tools were left running', () => {
+    render(
+      <ThreadWorkingIndicator status="host-reconnecting" thinking={null} hasRunningWork />
+    );
+    expect(screen.getByText('Waiting for reconnection…')).toBeTruthy();
+  });
 });

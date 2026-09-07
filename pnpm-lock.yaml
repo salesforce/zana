@@ -253,6 +253,9 @@ importers:
       '@zana-ai/zcc-extension-sdk':
         specifier: workspace:*
         version: link:../../packages/extension-sdk
+      '@zana-ai/zcc-fuzzy-match':
+        specifier: workspace:*
+        version: link:../../packages/fuzzy-match
       '@zana-ai/zcc-plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
@@ -371,6 +374,9 @@ importers:
       '@zana-ai/zcc-host-daemon-contract':
         specifier: workspace:*
         version: link:../../packages/host-daemon-contract
+      '@zana-ai/zcc-host-watcher':
+        specifier: workspace:*
+        version: link:../../packages/host-watcher
       '@zana-ai/zcc-host-workspace':
         specifier: workspace:*
         version: link:../../packages/host-workspace
@@ -438,6 +444,9 @@ importers:
       '@zana-ai/zcc-plugin-templates':
         specifier: workspace:*
         version: link:../../packages/plugin-templates
+      '@zana-ai/zcc-secret-storage':
+        specifier: workspace:*
+        version: link:../../packages/secret-storage
       '@zana-ai/zcc-server-contract':
         specifier: workspace:*
         version: link:../../packages/server-contract
@@ -663,6 +672,22 @@ importers:
         specifier: ^19
         version: 19.2.8(react@19.2.8)
 
+  packages/fuzzy-match:
+    dependencies:
+      fzf:
+        specifier: ^0.5.2
+        version: 0.5.2
+    devDependencies:
+      '@zana-ai/zcc-tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+
   packages/harness-sdk: {}
 
   packages/hono-typed-routes:
@@ -705,6 +730,28 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+
+  packages/host-watcher:
+    dependencies:
+      '@parcel/watcher':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@zana-ai/zcc-domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      '@zana-ai/zcc-tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/host-workspace:
     dependencies:
@@ -764,12 +811,21 @@ importers:
 
   packages/plugin-build:
     dependencies:
+      '@zana-ai/zcc-agent-process-utils':
+        specifier: workspace:*
+        version: link:../agent-process-utils
+      '@zana-ai/zcc-domain':
+        specifier: workspace:*
+        version: link:../domain
       '@zana-ai/zcc-plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
+      saxes:
+        specifier: ^6.0.0
+        version: 6.0.0
     devDependencies:
       '@types/node':
         specifier: ^26.2.0
@@ -780,6 +836,25 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.25.12)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/plugin-interaction-contracts:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      '@zana-ai/zcc-tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/plugin-sdk:
     devDependencies:
@@ -801,9 +876,15 @@ importers:
       '@zana-ai/zcc-host-daemon-contract':
         specifier: workspace:*
         version: link:../host-daemon-contract
+      '@zana-ai/zcc-provider-bridge-acp':
+        specifier: workspace:*
+        version: link:../provider-bridge-acp
       '@zana-ai/zcc-provider-bridge-protocol':
         specifier: workspace:*
         version: link:../provider-bridge-protocol
+      '@zana-ai/zcc-server-contract':
+        specifier: workspace:*
+        version: link:../server-contract
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
@@ -822,6 +903,9 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.25.12)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
 
   packages/plugin-templates:
     dependencies:
@@ -841,6 +925,34 @@ importers:
 
   packages/process-utils:
     devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      '@zana-ai/zcc-tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/provider-bridge-acp:
+    dependencies:
+      '@zana-ai/zcc-domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@zana-ai/zcc-provider-bridge-protocol':
+        specifier: workspace:*
+        version: link:../provider-bridge-protocol
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.30.0(zod@4.4.3)
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0
@@ -875,6 +987,25 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+
+  packages/secret-storage:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      '@zana-ai/zcc-tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/server-contract:
     dependencies:
@@ -1060,6 +1191,10 @@ importers:
 
   plugins/memory: {}
 
+  plugins/monaco-editor: {}
+
+  plugins/pdf-preview: {}
+
   plugins/plugin-guide: {}
 
   plugins/pr-monitor:
@@ -1101,6 +1236,12 @@ importers:
       '@zana-ai/zcc-plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
+      smol-toml:
+        specifier: ^1.7.1
+        version: 1.8.0
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zod:
         specifier: ^4.3.6
         version: 4.4.3
@@ -1117,6 +1258,77 @@ importers:
       '@zana-ai/zcc-host-daemon-contract':
         specifier: workspace:*
         version: link:../../packages/host-daemon-contract
+      '@zana-ai/zcc-provider-bridge-protocol':
+        specifier: workspace:*
+        version: link:../../packages/provider-bridge-protocol
+      react:
+        specifier: ^19.0.0
+        version: 19.2.8
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  plugins/provider-claude-code:
+    dependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.3.245
+        version: 0.3.261(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.30.0(zod@4.4.3)
+      '@zana-ai/zcc-plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.18
+      '@zana-ai/zcc-domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@zana-ai/zcc-provider-bridge-protocol':
+        specifier: workspace:*
+        version: link:../../packages/provider-bridge-protocol
+      react:
+        specifier: ^19.0.0
+        version: 19.2.8
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  plugins/provider-codex:
+    dependencies:
+      '@zana-ai/zcc-plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.18
+      '@zana-ai/zcc-agent-process-utils':
+        specifier: workspace:*
+        version: link:../../packages/agent-process-utils
+      '@zana-ai/zcc-domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@zana-ai/zcc-provider-bridge-protocol':
         specifier: workspace:*
         version: link:../../packages/provider-bridge-protocol
@@ -1275,13 +1487,29 @@ packages:
     cpu: [arm64]
     os: [darwin]
 
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.261':
+    resolution: {integrity: sha512-oI8SPd6g+xUF6EnEqIInxz5CjSSJXoDlaqefjbSJvTFCawGGBhxlQs0g9jzsYou6Rdu+i2tJBToJZLsKSnN/0Q==}
+    cpu: [arm64]
+    os: [darwin]
+
   '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.239':
     resolution: {integrity: sha512-QNbBXz3Pb3pQ7a+Kcbets6t9IrQhStKsfl5D518nYiGFoRMioO7efkZ6zHUcrGDqDC0LIzrs7tY2KNzH4RfwZA==}
     cpu: [x64]
     os: [darwin]
 
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.261':
+    resolution: {integrity: sha512-PODd45XbrKxwngebFmc60Xd68QDb7xCo+0toYTJKfFumU24b/JT2WpO5sTSfc5+fahd/P11q0uF5v9YeSjWmjg==}
+    cpu: [x64]
+    os: [darwin]
+
   '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.239':
     resolution: {integrity: sha512-Ajc3cuszVdOwfMZVsGdxrCTmgWOeJpQWAIqu8jNEvERIeNnBxvWfGrjmLPxYT3/LJ9Uj/tFTpp52J4IcmrJE5w==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.261':
+    resolution: {integrity: sha512-BAUG2EremVyy8bA14jKF35VRJjGE2TqREpFerA0CRBWg9/sUJZVWdmIRXUiXCKh0MvenPRUJbEgwcHFllQETOw==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
@@ -1292,8 +1520,20 @@ packages:
     os: [linux]
     libc: [glibc]
 
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.261':
+    resolution: {integrity: sha512-C+y3N3MD2ExrwrbCYcbLdM39VkbJkQKUv23oubvoZr0CtHiH2LESyUUC3JsUbHJ1TRKO8fbzLqvPkjZ9UsBIcw==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
   '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.239':
     resolution: {integrity: sha512-zIUHiG4Romm/t6m/S9n8x4BKluyRCPk0147hPVo4xxkHkp4Di/7TnDMRKO3Wau4x361wRqlE2i5EpYT+CyJjHg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.261':
+    resolution: {integrity: sha512-H7sCtM7X9OyQ+ZCEhh6TY/Z1i+5WIn8YyHRVJ2LrZRFOaszPeDbl1SzSxxuOd5ibwJZA9gx+2uQ78dx+bDkQUA==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
@@ -1304,8 +1544,19 @@ packages:
     os: [linux]
     libc: [glibc]
 
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.261':
+    resolution: {integrity: sha512-MdojjfN0HJHT0JMiZJ6rTj3/ODNi5OdY0py1JZmVVEVTYOdvgH6OG3oy9/BmmJTx0mp/BBCHbOGNpibtnqE+1g==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
   '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.239':
     resolution: {integrity: sha512-RxA29NdX9g3ZbpcXvSeWxpbg/Eoo3wXfO2eA1Vc7qa5JyAYjrl9xu6dIGAWMiyk/gnFxNh1WoFER77J9P6LTiQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.261':
+    resolution: {integrity: sha512-zvZfec4+wDooqF/ZOI3lthgq9WfZLIrSserS6tULpBqCLKNRbTIpARDcljY7SrRuMGb3Ex+LFn/yXazgajpwzg==}
     cpu: [arm64]
     os: [win32]
 
@@ -1314,8 +1565,21 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.261':
+    resolution: {integrity: sha512-tepSwNpNsl4tyDdJ1+YcRXeY7VZNirPqpCtKDuh2YVwDkMfzQevCqojURtACAdLwI8BUXeOGaecwRbh3zoSUtA==}
+    cpu: [x64]
+    os: [win32]
+
   '@anthropic-ai/claude-agent-sdk@0.3.239':
     resolution: {integrity: sha512-cIuZhK4u76S5Otq78U890GSA6BFT4SLqOuMqzU/bP/tWRWKhHhNp/3/pvgLwoVGlkdhD7luXWduqXKyLC+VNBQ==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      '@anthropic-ai/sdk': '>=0.93.0'
+      '@modelcontextprotocol/sdk': ^1.29.0
+      zod: ^4.0.0
+
+  '@anthropic-ai/claude-agent-sdk@0.3.261':
+    resolution: {integrity: sha512-CDG9z14JVKYRHjpp/g6zJ2k8xM5uSoRgjGdpTiK9woLDZxXtXcxV93ipCh55jQ3REj7M7H3GieMsETGZXB/ydw==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
@@ -2674,6 +2938,94 @@ packages:
 
   '@oxc-project/types@0.144.0':
     resolution: {integrity: sha512-nuhZIOLuI6TFQ32I/WnUx+SCPY7SdSKwgnFHydAuoS1+Z4BRcaP+RRJmGzl9lw+0OFF7UmaESf7KQRXaNLHypg==}
+
+  '@parcel/watcher-android-arm64@2.5.6':
+    resolution: {integrity: sha512-YQxSS34tPF/6ZG7r/Ih9xy+kP/WwediEUsqmtf0cuCV5TPPKw/PQHRhueUo6JdeFJaqV3pyjm0GdYjZotbRt/A==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [arm64]
+    os: [android]
+
+  '@parcel/watcher-darwin-arm64@2.5.6':
+    resolution: {integrity: sha512-Z2ZdrnwyXvvvdtRHLmM4knydIdU9adO3D4n/0cVipF3rRiwP+3/sfzpAwA/qKFL6i1ModaabkU7IbpeMBgiVEA==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@parcel/watcher-darwin-x64@2.5.6':
+    resolution: {integrity: sha512-HgvOf3W9dhithcwOWX9uDZyn1lW9R+7tPZ4sug+NGrGIo4Rk1hAXLEbcH1TQSqxts0NYXXlOWqVpvS1SFS4fRg==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@parcel/watcher-freebsd-x64@2.5.6':
+    resolution: {integrity: sha512-vJVi8yd/qzJxEKHkeemh7w3YAn6RJCtYlE4HPMoVnCpIXEzSrxErBW5SJBgKLbXU3WdIpkjBTeUNtyBVn8TRng==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@parcel/watcher-linux-arm-glibc@2.5.6':
+    resolution: {integrity: sha512-9JiYfB6h6BgV50CCfasfLf/uvOcJskMSwcdH1PHH9rvS1IrNy8zad6IUVPVUfmXr+u+Km9IxcfMLzgdOudz9EQ==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [arm]
+    os: [linux]
+    libc: [glibc]
+
+  '@parcel/watcher-linux-arm-musl@2.5.6':
+    resolution: {integrity: sha512-Ve3gUCG57nuUUSyjBq/MAM0CzArtuIOxsBdQ+ftz6ho8n7s1i9E1Nmk/xmP323r2YL0SONs1EuwqBp2u1k5fxg==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [arm]
+    os: [linux]
+    libc: [musl]
+
+  '@parcel/watcher-linux-arm64-glibc@2.5.6':
+    resolution: {integrity: sha512-f2g/DT3NhGPdBmMWYoxixqYr3v/UXcmLOYy16Bx0TM20Tchduwr4EaCbmxh1321TABqPGDpS8D/ggOTaljijOA==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@parcel/watcher-linux-arm64-musl@2.5.6':
+    resolution: {integrity: sha512-qb6naMDGlbCwdhLj6hgoVKJl2odL34z2sqkC7Z6kzir8b5W65WYDpLB6R06KabvZdgoHI/zxke4b3zR0wAbDTA==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@parcel/watcher-linux-x64-glibc@2.5.6':
+    resolution: {integrity: sha512-kbT5wvNQlx7NaGjzPFu8nVIW1rWqV780O7ZtkjuWaPUgpv2NMFpjYERVi0UYj1msZNyCzGlaCWEtzc+exjMGbQ==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@parcel/watcher-linux-x64-musl@2.5.6':
+    resolution: {integrity: sha512-1JRFeC+h7RdXwldHzTsmdtYR/Ku8SylLgTU/reMuqdVD7CtLwf0VR1FqeprZ0eHQkO0vqsbvFLXUmYm/uNKJBg==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@parcel/watcher-win32-arm64@2.5.6':
+    resolution: {integrity: sha512-3ukyebjc6eGlw9yRt678DxVF7rjXatWiHvTXqphZLvo7aC5NdEgFufVwjFfY51ijYEWpXbqF5jtrK275z52D4Q==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@parcel/watcher-win32-ia32@2.5.6':
+    resolution: {integrity: sha512-k35yLp1ZMwwee3Ez/pxBi5cf4AoBKYXj00CZ80jUz5h8prpiaQsiRPKQMxoLstNuqe2vR4RNPEAEcjEFzhEz/g==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [ia32]
+    os: [win32]
+
+  '@parcel/watcher-win32-x64@2.5.6':
+    resolution: {integrity: sha512-hbQlYcCq5dlAX9Qx+kFb0FHue6vbjlf0FrNzSKdYK2APUf7tGfGxQCk2ihEREmbR6ZMc0MVAD5RIX/41gpUzTw==}
+    engines: {node: '>= 10.0.0'}
+    cpu: [x64]
+    os: [win32]
+
+  '@parcel/watcher@2.5.6':
+    resolution: {integrity: sha512-tmmZ3lQxAe/k/+rNnXQRawJ4NjxO2hqiOLTHvWchtGZULp4RyFeh6aU4XdOYBFe2KE1oShQTv4AblOs2iOrNnQ==}
+    engines: {node: '>= 10.0.0'}
 
   '@peculiar/asn1-schema@2.9.0':
     resolution: {integrity: sha512-AKvPMOM7LfK0uFe1m7o7+veOa8xQGPqsqOrKi3QKgCElzwjGp39mbhr2g7mt/v/mXQHiIvJmDj5cJS173x8Q9Q==}
@@ -4812,6 +5164,9 @@ packages:
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
 
+  fzf@0.5.2:
+    resolution: {integrity: sha512-Tt4kuxLXFKHy8KT40zwsUPUkg1CrsgY25FxA2U/j/0WgEDCk3ddc/zLTCCcbSHX9FcKtLuVaDGtGE/STWC+j3Q==}
+
   gaxios@7.3.1:
     resolution: {integrity: sha512-kB3rzJV7d9juLZh8/56QTXCwQfxyhdOMdyYk1HdQKFtF8TJTDTZQJtixWIwXdE9Jji91mC41DUNpjleo4L4eAQ==}
     engines: {node: '>=18'}
@@ -5068,9 +5423,17 @@ packages:
   is-decimal@2.0.1:
     resolution: {integrity: sha512-AAB9hiomQs5DXWcRB1rqsxGUstbRroFOPPVAomNk/3XHR5JyEZChOyTWe2oayKnsSsr/kcGqF+z6yuH6HHpN0A==}
 
+  is-extglob@2.1.1:
+    resolution: {integrity: sha512-SbKbANkN603Vi4jEZv49LeVJMn4yGwsbzZworEoyEiutsN3nJYdbO36zfhGJ6QEDpOZIFkDtnq5JRxmvl3jsoQ==}
+    engines: {node: '>=0.10.0'}
+
   is-fullwidth-code-point@3.0.0:
     resolution: {integrity: sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg==}
     engines: {node: '>=8'}
+
+  is-glob@4.0.3:
+    resolution: {integrity: sha512-xelSayHH36ZgE7ZWhli7pW34hNbNl8Ojv5KVmkJD4hBdD3th8Tfk9vYasLM+mXWOZhFkgZfxhLSnrwRr4elSSg==}
+    engines: {node: '>=0.10.0'}
 
   is-hexadecimal@2.0.1:
     resolution: {integrity: sha512-DgZQp241c8oO6cA1SbTEWiXeoxV42vlcJxgH+B3hi1AiqqKruZR3ZGF8In3fj4+/y/7rHvlOZLZtgJ/4ttYGZg==}
@@ -7019,25 +7382,49 @@ snapshots:
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.239':
     optional: true
 
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.261':
+    optional: true
+
   '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.239':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.261':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.239':
     optional: true
 
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.261':
+    optional: true
+
   '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.239':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.261':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.239':
     optional: true
 
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.261':
+    optional: true
+
   '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.239':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.261':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.239':
     optional: true
 
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.261':
+    optional: true
+
   '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.239':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.261':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk@0.3.239(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)':
@@ -7054,6 +7441,21 @@ snapshots:
       '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.239
       '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.239
       '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.239
+
+  '@anthropic-ai/claude-agent-sdk@0.3.261(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)':
+    dependencies:
+      '@anthropic-ai/sdk': 0.93.0(zod@4.4.3)
+      '@modelcontextprotocol/sdk': 1.30.0(zod@4.4.3)
+      zod: 4.4.3
+    optionalDependencies:
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.261
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.261
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.261
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.261
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.261
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.261
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.261
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.261
 
   '@anthropic-ai/sdk@0.91.1(zod@4.4.3)':
     dependencies:
@@ -8390,6 +8792,66 @@ snapshots:
 
   '@oxc-project/types@0.144.0': {}
 
+  '@parcel/watcher-android-arm64@2.5.6':
+    optional: true
+
+  '@parcel/watcher-darwin-arm64@2.5.6':
+    optional: true
+
+  '@parcel/watcher-darwin-x64@2.5.6':
+    optional: true
+
+  '@parcel/watcher-freebsd-x64@2.5.6':
+    optional: true
+
+  '@parcel/watcher-linux-arm-glibc@2.5.6':
+    optional: true
+
+  '@parcel/watcher-linux-arm-musl@2.5.6':
+    optional: true
+
+  '@parcel/watcher-linux-arm64-glibc@2.5.6':
+    optional: true
+
+  '@parcel/watcher-linux-arm64-musl@2.5.6':
+    optional: true
+
+  '@parcel/watcher-linux-x64-glibc@2.5.6':
+    optional: true
+
+  '@parcel/watcher-linux-x64-musl@2.5.6':
+    optional: true
+
+  '@parcel/watcher-win32-arm64@2.5.6':
+    optional: true
+
+  '@parcel/watcher-win32-ia32@2.5.6':
+    optional: true
+
+  '@parcel/watcher-win32-x64@2.5.6':
+    optional: true
+
+  '@parcel/watcher@2.5.6':
+    dependencies:
+      detect-libc: 2.1.2
+      is-glob: 4.0.3
+      node-addon-api: 7.1.1
+      picomatch: 4.0.5
+    optionalDependencies:
+      '@parcel/watcher-android-arm64': 2.5.6
+      '@parcel/watcher-darwin-arm64': 2.5.6
+      '@parcel/watcher-darwin-x64': 2.5.6
+      '@parcel/watcher-freebsd-x64': 2.5.6
+      '@parcel/watcher-linux-arm-glibc': 2.5.6
+      '@parcel/watcher-linux-arm-musl': 2.5.6
+      '@parcel/watcher-linux-arm64-glibc': 2.5.6
+      '@parcel/watcher-linux-arm64-musl': 2.5.6
+      '@parcel/watcher-linux-x64-glibc': 2.5.6
+      '@parcel/watcher-linux-x64-musl': 2.5.6
+      '@parcel/watcher-win32-arm64': 2.5.6
+      '@parcel/watcher-win32-ia32': 2.5.6
+      '@parcel/watcher-win32-x64': 2.5.6
+
   '@peculiar/asn1-schema@2.9.0':
     dependencies:
       '@peculiar/utils': 2.0.3
@@ -9364,7 +9826,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+      vitest: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.6)(jsdom@26.1.0)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
 
   '@vitest/expect@4.1.10':
     dependencies:
@@ -10571,6 +11033,8 @@ snapshots:
 
   function-bind@1.1.2: {}
 
+  fzf@0.5.2: {}
+
   gaxios@7.3.1:
     dependencies:
       extend: 3.0.2
@@ -10921,7 +11385,13 @@ snapshots:
 
   is-decimal@2.0.1: {}
 
+  is-extglob@2.1.1: {}
+
   is-fullwidth-code-point@3.0.0: {}
+
+  is-glob@4.0.3:
+    dependencies:
+      is-extglob: 2.1.1
 
   is-hexadecimal@2.0.1: {}
 

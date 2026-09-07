@@ -204,7 +204,7 @@ describe('parseOpenCodeAgentDescriptors', () => {
       { id: 'build', label: 'Build', scope: ['local'] },
       { id: 'plan', label: 'Plan', scope: ['local'] }
     ])).toEqual([
-      { id: 'general', label: 'general', scope: ['local'] }
+      { id: 'general', label: 'general', scope: ['local', 'remote'] }
     ]);
   });
 
@@ -449,6 +449,14 @@ describe('OpenCodeProvider', () => {
     )).toEqual({
       id: 'opencode.role.discovery', label: 'custom-reviewer', scope: ['local'], evidenceVersion: '1.18.0'
     });
+    expect(p.dynamicRoleEvidenceTarget(
+      { id: 'general', label: 'general', scope: ['local', 'remote'] },
+      '1.18.10'
+    )).toEqual({
+      id: 'opencode.role.discovery', label: 'general', scope: ['local', 'remote'], evidenceVersion: '1.18.0'
+    });
+    expect(p.adapter.evidence.filter(({ id }) => id === 'opencode.role.discovery').map(({ scope }) => scope))
+      .toEqual(['local', 'remote']);
   });
 
   it('declares approved global execution-state mappings', () => {

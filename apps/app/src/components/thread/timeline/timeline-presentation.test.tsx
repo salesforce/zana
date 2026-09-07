@@ -168,6 +168,31 @@ describe('WorkRowBody', () => {
     );
     expect(html).toContain('README.md');
     expect(html).toContain('+1');
+    expect(html).toContain('thread-inline-diff');
+  });
+
+  it('renders background-task workflow bodies', () => {
+    const html = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'bg1',
+        workKind: 'workflow',
+        status: 'pending',
+        itemId: 'bg-item',
+        taskType: 'local_bash',
+        workflowName: null,
+        description: 'npm test',
+        model: null,
+        taskStatus: 'running',
+        workflow: null,
+        usage: null,
+        summary: null,
+        error: null,
+        completedAt: null
+      }} />
+    );
+    expect(html).toContain('thread-background-task-body');
+    expect(html).toContain('npm test');
   });
 
   it('renders workflow progress and image stubs', () => {

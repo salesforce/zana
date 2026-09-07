@@ -421,11 +421,14 @@ type ThreadProviderListItem = {
 };
 
 const BUILTIN_THREAD_PROVIDERS: readonly ThreadProviderListItem[] = [
-  { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-acp' },
-  { id: 'codex', displayName: 'Codex', pluginId: 'provider-acp' },
+  { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-claude-code' },
+  { id: 'codex', displayName: 'Codex', pluginId: 'provider-codex' },
   { id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' },
   { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' },
-  { id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' }
+  { id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' },
+  { id: 'acp-omp', displayName: 'OMP', pluginId: 'provider-acp' },
+  { id: 'acp-grok', displayName: 'Grok Build', pluginId: 'provider-acp' },
+  { id: 'acp-hermes-agent', displayName: 'Hermes Agent', pluginId: 'provider-acp' }
 ];
 
 export function mergeBuiltinThreadProviders(rows: ThreadProviderListItem[]): ThreadProviderListItem[] {
@@ -445,12 +448,15 @@ const THREAD_PROVIDER_PROFILE: Record<string, LaunchProfileId> = {
 };
 
 const THREAD_PROVIDER_BLURB: Record<string, string> = {
-  'claude-code': 'Anthropic’s Claude Code — the default Modern provider.',
+  'claude-code': 'Anthropic’s Claude Code — dedicated Agent SDK Modern provider.',
   'acp-cursor': 'Cursor via the Agent Client Protocol (ACP).',
   cursor: 'Cursor via the Agent Client Protocol (ACP).',
   'acp-opencode': 'OpenCode via the Agent Client Protocol (ACP).',
+  'acp-omp': 'OMP via the Agent Client Protocol (ACP).',
+  'acp-grok': 'Grok Build via the Agent Client Protocol (ACP).',
+  'acp-hermes-agent': 'Hermes Agent via the Agent Client Protocol (ACP).',
   opencode: 'OpenCode via the Agent Client Protocol (ACP).',
-  codex: 'OpenAI’s Codex coding CLI.',
+  codex: 'OpenAI’s Codex — dedicated app-server Modern provider.',
   pi: 'The multi-provider Pi coding-agent CLI.',
   fake: 'Test-only provider used by AgentRuntime.'
 };
@@ -852,7 +858,7 @@ export function HarnessView({
     <Section
       anchorId="harness-status"
       title="Install status"
-      help="Coding CLIs used by Modern and CLI agents. Enable a family here to show it in launch UIs. Check re-probes each binary and, for Cursor and Codex, whether you are signed in — a successful check also refreshes their model lists."
+      help="Coding CLIs used by Modern and CLI agents. Enable a family here to show it in launch UIs. Check re-probes each binary and whether Cursor, Codex, Pi, and OpenCode are signed in — a successful check also refreshes their model lists."
     >
       <div className={`harness-health harness-health--${health.ok ? 'ok' : 'warn'}`} role="status">
         {health.ok ? <CheckCircle2 size={16} aria-hidden /> : <AlertTriangle size={16} aria-hidden />}

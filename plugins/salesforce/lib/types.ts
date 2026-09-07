@@ -33,6 +33,7 @@ export type OrgKind = 'production' | 'sandbox' | 'scratch' | 'unknown';
 export type EnvelopeKind =
   | 'org.production.read'
   | 'org.unknown.read'
+  | 'org.write'
   | 'apex.anonymous'
   | 'soql.unbounded'
   | 'soql.export'
@@ -48,14 +49,25 @@ export interface ExecResult {
   stderr: string;
 }
 
+export type SalesforceHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
 export interface SalesforceRequest {
-  method: 'GET' | 'POST';
+  method: SalesforceHttpMethod;
   path: string;
   query?: Record<string, string>;
   body?: unknown;
   apiVersion?: string;
   signal?: AbortSignal;
 }
+
+export type SalesforceRequestInit = {
+  method?: SalesforceHttpMethod;
+  query?: Record<string, string>;
+  body?: unknown;
+  apiVersion?: string;
+  signal?: AbortSignal;
+  alias?: string;
+};
 
 export interface SalesforceResponse {
   status: number;

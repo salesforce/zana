@@ -123,6 +123,29 @@ function stringField(row: Record<string, unknown>, ...keys: string[]): string {
   return '';
 }
 
+/** Salesforce CLI 2.136+ redacts secrets as `[REDACTED] Use 'sf org auth …' to view`. */
+export function isUsableAccessToken(value: string): boolean {
+  const token = value.trim();
+  if (!token) return false;
+  return !/^\[REDACTED\]/i.test(token);
+}
+
+export function normalizeAccessToken(value: string): string {
+  return value.trim().replace(/^Bearer\s+/i, '').trim();
+}
+
+export function parseAccessToken(stdout: string): string | null {
+  const root = readJsonObject(stdout);
+  const result = root?.result;
+  if (typeof result === 'string') {
+    const token = normalizeAccessToken(result);
+    return isUsableAccessToken(token) ? token : null;
+  }
+  if (!result || typeof result !== 'object') return null;
+  const token = normalizeAccessToken(stringField(result as Record<string, unknown>, 'accessToken'));
+  return isUsableAccessToken(token) ? token : null;
+}
+
 function boolField(row: Record<string, unknown>, key: string): boolean | undefined {
   const value = row[key];
   return typeof value === 'boolean' ? value : undefined;
@@ -200,8 +223,9 @@ export function parseOrgDisplay(stdout: string, fallbackAlias: string, fallbackA
   const row = result as Record<string, unknown>;
   const username = stringField(row, 'username');
   const instanceUrl = stringField(row, 'instanceUrl');
-  const accessToken = stringField(row, 'accessToken');
-  if (!username || !instanceUrl || !accessToken) return null;
+  if (!username || !instanceUrl) return null;
+  const rawToken = stringField(row, 'accessToken');
+  const accessToken = isUsableAccessToken(rawToken) ? normalizeAccessToken(rawToken) : '';
   const alias = stringField(row, 'alias') || fallbackAlias || username;
   const orgId = stringField(row, 'orgId', 'id');
   const apiVersion = stringField(row, 'apiVersion') || fallbackApiVersion || DEFAULT_API_VERSION;

@@ -1,10 +1,29 @@
-import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { lstat, cp, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildPluginHost } from './build-plugin-host.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
+
+async function stagePluginForHostBuild(
+  source: string,
+  root: string,
+  extraPaths: readonly string[] = []
+): Promise<void> {
+  await cp(join(source, 'package.json'), join(root, 'package.json'));
+  await cp(join(source, 'src'), join(root, 'src'), { recursive: true });
+  for (const extra of extraPaths) {
+    await cp(join(source, extra), join(root, extra), { recursive: true });
+  }
+  const nodeModules = join(source, 'node_modules');
+  try {
+    await lstat(nodeModules);
+    await symlink(nodeModules, join(root, 'node_modules'));
+  } catch {
+    // Isolated copies still build when the plugin has no extra npm deps.
+  }
+}
 
 describe('builtin host artifacts', () => {
   const tempDirs: string[] = [];
@@ -40,9 +59,31 @@ describe('builtin host artifacts', () => {
     const root = await mkdtemp(join(repositoryRoot, '.builtin-host-test-'));
     tempDirs.push(root);
     const source = join(repositoryRoot, 'plugins', 'provider-acp');
-    await cp(join(source, 'package.json'), join(root, 'package.json'));
-    await cp(join(source, 'src'), join(root, 'src'), { recursive: true });
-    await cp(join(source, 'icons'), join(root, 'icons'), { recursive: true });
+    await stagePluginForHostBuild(source, root, ['icons']);
+    const built = await buildPluginHost(root, '0.9.0-test');
+    const imported: unknown = await import(`${pathToFileURL(built.jsPath).href}?test=${Date.now()}`);
+    const bridge = Reflect.get(Object(imported), 'experimental_providerBridge');
+    expect(bridge).toMatchObject({ experimental_apiVersion: 1 });
+    expect(typeof Reflect.get(Object(bridge), 'handleLine')).toBe('function');
+  }, 90_000);
+
+  it('builds the provider-claude-code host entry as a relocatable Agent SDK bridge', async () => {
+    const root = await mkdtemp(join(repositoryRoot, '.builtin-host-test-'));
+    tempDirs.push(root);
+    const source = join(repositoryRoot, 'plugins', 'provider-claude-code');
+    await stagePluginForHostBuild(source, root);
+    const built = await buildPluginHost(root, '0.9.0-test');
+    const imported: unknown = await import(`${pathToFileURL(built.jsPath).href}?test=${Date.now()}`);
+    const bridge = Reflect.get(Object(imported), 'experimental_providerBridge');
+    expect(bridge).toMatchObject({ experimental_apiVersion: 1 });
+    expect(typeof Reflect.get(Object(bridge), 'handleLine')).toBe('function');
+  }, 90_000);
+
+  it('builds the provider-codex host entry as a relocatable app-server bridge', async () => {
+    const root = await mkdtemp(join(repositoryRoot, '.builtin-host-test-'));
+    tempDirs.push(root);
+    const source = join(repositoryRoot, 'plugins', 'provider-codex');
+    await stagePluginForHostBuild(source, root);
     const built = await buildPluginHost(root, '0.9.0-test');
     const imported: unknown = await import(`${pathToFileURL(built.jsPath).href}?test=${Date.now()}`);
     const bridge = Reflect.get(Object(imported), 'experimental_providerBridge');

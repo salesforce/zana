@@ -2,6 +2,7 @@ import { useData, useUi, usePersonas, sortProjectsForDisplay } from './store.js'
 import { getTerminal } from './lib/findRegistry.js';
 import { projectDefaultLaunch, type ProjectDefaultLaunch } from './lib/launchProfile.js';
 import { cliAgentDeleteConfirm, cliAgentRestartConfirm } from './components/agentCardActions.js';
+import { shortcutForCommand } from './lib/keyboard-shortcut-settings.js';
 
 /** The project's one-click "+" default: a pinned persona (on its baseProfile)
  *  or the profile default. Shared with TabBar / the menu so ⌘T agrees. */
@@ -34,22 +35,22 @@ export function installShortcuts(): () => void {
     const activeIdx = activeTabId ? tabs.findIndex((t) => t.id === activeTabId) : -1;
 
     // cmd+b — toggle terminals/explorer mode (flips between the two
-    // text-editing modes).
-    if (e.key === 'b' && !e.shiftKey) {
+    // text-editing modes). Remappable in Settings → Keyboard.
+    if (shortcutForCommand('sidebar.toggle', e)) {
       if (!projectId) return;
       e.preventDefault();
       const cur = ui.projectView[projectId] ?? 'terminals';
       ui.setProjectView(projectId, cur === 'explorer' ? 'terminals' : 'explorer');
       return;
     }
-    // cmd+p — project switcher / command palette
-    if (e.key === 'p' && !e.shiftKey) {
+    // cmd+p — project switcher / command palette. Remappable in Settings → Keyboard.
+    if (shortcutForCommand('thread.search', e)) {
       e.preventDefault();
       ui.setPaletteOpen(true);
       return;
     }
-    // cmd+e — quick open file in selected project
-    if (e.key === 'e' && !e.shiftKey) {
+    // cmd+e — quick open file in selected project. Remappable in Settings → Keyboard.
+    if (shortcutForCommand('file.quickOpen', e)) {
       if (!projectId) return;
       e.preventDefault();
       ui.setQuickOpenOpen(true);
@@ -68,8 +69,8 @@ export function installShortcuts(): () => void {
       data.restartTerminal(activeTabId, projectId).catch(() => {});
       return;
     }
-    // cmd+, — toggle Settings
-    if (e.key === ',') {
+    // cmd+, — toggle Settings. Remappable in Settings → Keyboard.
+    if (shortcutForCommand('settings.open', e)) {
       e.preventDefault();
       ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
       return;

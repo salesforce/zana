@@ -71,7 +71,7 @@ describe('ModelReasoningPicker', () => {
     expect(html).toMatch(/model-reasoning-picker-trigger-icon"[^>]*>F</);
   });
 
-  it('shows the PI configuration hint on the trigger when that catalog is empty', () => {
+  it('shows the Pi sign-in hint on the trigger when that catalog is empty', () => {
     const html = renderToStaticMarkup(
       <ModelReasoningPicker
         providerOptions={[{ value: 'pi', label: 'Pi' }]}
@@ -81,7 +81,7 @@ describe('ModelReasoningPicker', () => {
         onModelChange={() => undefined}
       />
     );
-    expect(html).toContain('No models available. Verify your PI configuration.');
+    expect(html).toContain('Sign in with pi');
     expect(html).not.toContain('Select model');
   });
 

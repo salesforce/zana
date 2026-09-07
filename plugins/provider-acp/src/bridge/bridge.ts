@@ -90,6 +90,7 @@ import {
   getCursorProviderUsage,
   isCursorLaunchCommand,
 } from "./cursor-maintenance.js";
+import { getGenericAcpProviderHealth } from "./acp-health.js";
 import {
   agentAdvertisesSessionFork,
   narrowAcpForkCapability,
@@ -2561,19 +2562,24 @@ async function handleAcpProviderMaintenance(
     }
   >,
 ): Promise<unknown> {
-  if (!isCursorMaintenanceTarget(request.params)) {
-    return { supported: false };
+  if (isCursorMaintenanceTarget(request.params)) {
+    switch (request.method) {
+      case "provider/health":
+        return getCursorProviderHealth();
+      case "provider/usage":
+        return getCursorProviderUsage();
+      case "provider/installation/status":
+        return getCursorProviderInstallationStatus();
+      case "provider/installation/run":
+        return getCursorProviderInstallationRun(request.params.action);
+    }
   }
-  switch (request.method) {
-    case "provider/health":
-      return getCursorProviderHealth();
-    case "provider/usage":
-      return getCursorProviderUsage();
-    case "provider/installation/status":
-      return getCursorProviderInstallationStatus();
-    case "provider/installation/run":
-      return getCursorProviderInstallationRun(request.params.action);
+  if (request.method === "provider/health") {
+    return getGenericAcpProviderHealth(
+      decodeLaunchProfile(request.params.providerOptions)?.agentCommand.command ?? null,
+    );
   }
+  return { supported: false };
 }
 
 async function handleRequest(

@@ -1,6 +1,12 @@
 import { DEFAULT_API_VERSION, type ResolvedOrg, type SalesforceDeps } from './types.js';
 import { envTargetOrg, resolveTargetOrgAlias } from './org-resolution.js';
-import { defaultCliAlias, parseOrgDisplay, parseOrgList } from './sf-cli.js';
+import {
+  defaultCliAlias,
+  isUsableAccessToken,
+  parseAccessToken,
+  parseOrgDisplay,
+  parseOrgList
+} from './sf-cli.js';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
@@ -40,9 +46,9 @@ export class ConnectionManager {
     return parseOrgList(result.stdout);
   }
 
-  async connect(forceRefresh = false): Promise<ResolvedOrg> {
+  async connect(opts?: { alias?: string; forceRefresh?: boolean }): Promise<ResolvedOrg> {
     const settings = await this.getSettings();
-    const alias = await this.resolveAlias();
+    const alias = opts?.alias?.trim() || (await this.resolveAlias());
     if (!alias) {
       throw new ConnectionError(
         'No target org. Pick a CLI-connected org on the Salesforce tab, or set defaultOrg / SF_TARGET_ORG, then run zcc sf doctor.',
@@ -50,7 +56,7 @@ export class ConnectionManager {
       );
     }
     const cached = this.cache.get(alias);
-    if (!forceRefresh && cached && this.deps.now() - cached.at < CACHE_TTL_MS) {
+    if (!opts?.forceRefresh && cached && this.deps.now() - cached.at < CACHE_TTL_MS) {
       return cached.org;
     }
     const org = await this.display(alias, settings.apiVersion || DEFAULT_API_VERSION);
@@ -61,14 +67,16 @@ export class ConnectionManager {
   async request(
     path: string,
     init: {
-      method?: 'GET' | 'POST';
+      method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
       query?: Record<string, string>;
       body?: unknown;
       apiVersion?: string;
       signal?: AbortSignal;
+      alias?: string;
     }
   ) {
-    let org = await this.connect();
+    const alias = init.alias?.trim() || undefined;
+    let org = await this.connect({ alias });
     const req = {
       method: init.method ?? ('GET' as const),
       path,
@@ -80,7 +88,7 @@ export class ConnectionManager {
     let response = await this.deps.request(org, req);
     if (response.status === 401 && !init.signal?.aborted) {
       this.invalidate(org.alias);
-      org = await this.connect(true);
+      org = await this.connect({ alias: alias || org.alias, forceRefresh: true });
       response = await this.deps.request(org, req);
     }
     return { org, response };
@@ -102,7 +110,38 @@ export class ConnectionManager {
       throw new ConnectionError('sf org display returned no usable username/instanceUrl.', 'org_display_failed');
     }
     if (apiVersion.trim()) org.apiVersion = apiVersion.replace(/^v/i, '');
-    return org;
+    if (isUsableAccessToken(org.accessToken)) return org;
+    return { ...org, accessToken: await this.readAccessToken(alias) };
+  }
+
+  private async readAccessToken(alias: string): Promise<string> {
+    const result = await this.deps.execSf([
+      'org',
+      'auth',
+      'show-access-token',
+      '--json',
+      '--target-org',
+      alias
+    ]);
+    if (result.code === 127) {
+      throw new ConnectionError('Salesforce CLI (sf) was not found on PATH.', 'cli_missing');
+    }
+    if (result.code !== 0) {
+      throw new ConnectionError(
+        result.stderr.trim()
+          || result.stdout.trim()
+          || `sf org auth show-access-token failed (${result.code})`,
+        'org_display_failed'
+      );
+    }
+    const token = parseAccessToken(result.stdout);
+    if (!token) {
+      throw new ConnectionError(
+        'sf org auth show-access-token returned no usable access token. Re-authenticate with sf org login, then retry.',
+        'org_display_failed'
+      );
+    }
+    return token;
   }
 }
 

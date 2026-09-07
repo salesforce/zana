@@ -112,3 +112,51 @@ describe('TimelineRows current-turn sticky wrap', () => {
     expect(html).toContain('Nested ask');
   });
 });
+
+describe('TimelineRows plan-execution card', () => {
+  const plan = {
+    title: 'Force host daemon',
+    tasks: [
+      { id: '1', text: 'Block Send on unbound remotes', status: 'in_progress' },
+      { id: '2', text: 'Reject SSH thread create', status: 'pending' }
+    ]
+  };
+
+  it('sticks named plan tasks to the latest user message only', () => {
+    const html = renderToStaticMarkup(
+      <ThreadTimeline
+        rows={[
+          userRow('u1', 'First ask'),
+          assistantRow('a1', 'First reply'),
+          userRow('u2', 'Latest ask'),
+          assistantRow('a2', 'Latest reply')
+        ]}
+        status="idle"
+        thinking={null}
+        planExecution={plan}
+      />
+    );
+    expect(html.split('data-testid="thread-plan-execution"').length - 1).toBe(1);
+    const firstWrap = html.indexOf('thread-timeline-current-turn');
+    const secondWrap = html.indexOf('thread-timeline-current-turn', firstWrap + 1);
+    const firstTurn = html.slice(firstWrap, secondWrap);
+    const secondTurn = html.slice(secondWrap);
+    expect(firstTurn).not.toContain('thread-plan-execution');
+    expect(secondTurn).toContain('Latest ask');
+    expect(secondTurn).toContain('thread-plan-execution');
+    expect(secondTurn).toContain('1/2');
+    expect(secondTurn).toContain('Force host daemon');
+  });
+
+  it('does not render a plan card from conversation text alone', () => {
+    const html = renderToStaticMarkup(
+      <ThreadTimeline
+        rows={[userRow('u1', 'Write some todos')]}
+        status="idle"
+        thinking={null}
+      />
+    );
+    expect(html).toContain('Write some todos');
+    expect(html).not.toContain('thread-plan-execution');
+  });
+});

@@ -3,6 +3,7 @@ import {
   hostDaemonToolCallResponseSchema,
   type HostDaemonToolCallRequest
 } from '@zana-ai/zcc-host-daemon-contract';
+import { joinServerUrl } from './server-url.js';
 
 export interface PluginToolCallHttpClient {
   invoke(request: ToolCallRequest): Promise<ToolCallResponse>;
@@ -16,10 +17,6 @@ export function createPluginToolCallHttpClient(options: {
   fetchFn?: typeof fetch;
 }): PluginToolCallHttpClient {
   const fetchFn = options.fetchFn ?? fetch;
-
-  function url(path: string): string {
-    return new URL(path, options.serverUrl.endsWith('/') ? options.serverUrl : `${options.serverUrl}/`).toString();
-  }
 
   function headers(): Record<string, string> {
     return {
@@ -40,7 +37,7 @@ export function createPluginToolCallHttpClient(options: {
         tool: request.tool,
         ...(request.arguments !== undefined ? { arguments: request.arguments } : {})
       };
-      const response = await fetchFn(url('internal/hosts/tool-call'), {
+      const response = await fetchFn(joinServerUrl(options.serverUrl, '/internal/hosts/tool-call').href, {
         method: 'POST',
         headers: headers(),
         body: JSON.stringify(payload)

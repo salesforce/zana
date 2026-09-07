@@ -171,7 +171,27 @@ describe('isThreadProviderOffered', () => {
     expect(isThreadProviderOffered({ id: 'codex' }, [verify('codex')])).toBe(true);
     expect(isThreadProviderOffered({ id: 'acp-opencode', visibility: 'installed' }, [verify('opencode', { installed: false })])).toBe(false);
     expect(isThreadProviderOffered({ id: 'acp-opencode', visibility: 'installed' }, [verify('opencode')])).toBe(true);
-    expect(isThreadProviderOffered({ id: 'acp-omp', visibility: 'installed' }, [])).toBe(true);
+    expect(isThreadProviderOffered(
+      { id: 'acp-opencode', visibility: 'installed' },
+      [verify('opencode')],
+      { 'acp-opencode': false }
+    )).toBe(true);
+    expect(isThreadProviderOffered(
+      { id: 'acp-opencode', visibility: 'installed' },
+      [verify('opencode', { enabled: false })],
+      { 'acp-opencode': true }
+    )).toBe(false);
+    expect(isThreadProviderOffered(
+      { id: 'acp-opencode', visibility: 'installed' },
+      [verify('opencode', { installed: false })],
+      { 'acp-opencode': true }
+    )).toBe(true);
+    expect(isThreadProviderOffered(
+      { id: 'acp-opencode', visibility: 'installed' },
+      [verify('opencode', { installed: false })],
+      { 'acp-opencode': false }
+    )).toBe(false);
+    expect(isThreadProviderOffered({ id: 'acp-omp', visibility: 'installed' }, [])).toBe(false);
     expect(isThreadProviderOffered({ id: 'acp-omp', visibility: 'installed' }, [], { 'acp-omp': false })).toBe(false);
     expect(isThreadProviderOffered({ id: 'acp-omp', visibility: 'installed' }, [], { 'acp-omp': true })).toBe(true);
     expect(isThreadProviderOffered({ id: 'acp-grok', visibility: 'installed' }, [], { 'acp-grok': false })).toBe(false);
@@ -317,6 +337,11 @@ describe('execution-options API wiring', () => {
     expect(source).toContain('classifyModelListError');
     expect(source).toContain('listError');
     expect(source).toContain('timeoutMs: 45_000');
+    expect(source).toContain('probeInstalledProviderHealth');
+    expect(source).toContain('mergeHealthIntoExtraInstalled');
+    const probe = readFileSync(new URL('./provider-health-probe.ts', import.meta.url), 'utf8');
+    expect(probe).toContain("type: 'provider.health'");
+    expect(probe).toContain('mergeHealthIntoExtraInstalled');
   });
 });
 

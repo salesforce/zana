@@ -9,6 +9,7 @@ import {
   type TimelineTitle,
   type TimelineViewWorkRow
 } from '@zana-ai/zcc-thread-view';
+import { isBackgroundAgentTaskType, isBackgroundCommandTaskType } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ReactNode } from 'react';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { ExpandableTimelineRow } from './ExpandableTimelineRow.js';
@@ -27,6 +28,7 @@ import { pastRowDimClassName } from './timeline-title.js';
 import { TimelineDetailScroll } from './TimelineDetailScroll.js';
 import { stickyTurnRanges } from './timeline-sticky-user.js';
 import type { TimelineTitleActionHandler, TimelineTitleLinkHandler } from './TimelineTitleView.js';
+import type { PlanExecutionTask } from './plan-execution-card.js';
 
 const TITLE_OPTIONS = { summaryStyle: 'bundle' as const, workStyle: 'default' as const };
 
@@ -70,11 +72,14 @@ interface TimelineRowsProps {
   scopeActive?: boolean;
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
+  planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
 }
 
 export function TimelineRows(props: TimelineRowsProps) {
-  const { rows, unreadRowId, nested, scopeActive = false } = props;
+  const { rows, unreadRowId, nested, scopeActive = false, planExecution } = props;
   const activeLatestBundleId = findActiveLatestBundleId(rows);
+  const turns = stickyTurnRanges(rows);
+  const latestUserRowId = !nested && turns.length > 0 ? rows[turns[turns.length - 1]!.start]?.id : null;
   const renderItems = (slice: ThreadTimelineViewRow[]) =>
     slice.map((row) => {
       const title = buildTimelineRowTitle(row, {
@@ -96,11 +101,11 @@ export function TimelineRows(props: TimelineRowsProps) {
             row={row}
             title={title}
             activeLatestBundleId={activeLatestBundleId}
+            planExecution={row.id === latestUserRowId ? planExecution : null}
           />
         </div>
       );
     });
-  const turns = stickyTurnRanges(rows);
   const list = (() => {
     if (turns.length === 0) return renderItems(rows);
     const prefix = turns[0]!.start > 0 ? renderItems(rows.slice(0, turns[0]!.start)) : null;
@@ -141,7 +146,8 @@ function TimelineRowView({
   threadIdle,
   onFork,
   messageActions,
-  includePluginMessageActions
+  includePluginMessageActions,
+  planExecution
 }: TimelineRowsProps & {
   row: ThreadTimelineViewRow;
   title: TimelineTitle;
@@ -190,6 +196,7 @@ function TimelineRowView({
         onFork={onFork}
         messageActions={messageActions}
         includePluginMessageActions={includePluginMessageActions}
+        planExecution={planExecution}
       />
     );
   }
@@ -296,10 +303,14 @@ function TimelineRowView({
   const expandable = isRowExpandable(row);
   const hasBody = Boolean(body) || Boolean(nested);
   const glyph = row.kind === 'work' ? workRowGlyph(row) : null;
+  const backgroundTask =
+    row.kind === 'work'
+    && row.workKind === 'workflow'
+    && (isBackgroundCommandTaskType(row.taskType) || isBackgroundAgentTaskType(row.taskType));
 
   return (
     <ExpandableTimelineRow
-      testId="thread-work-row"
+      testId={backgroundTask ? 'thread-background-task-row' : 'thread-work-row'}
       rowId={row.id}
       status={'status' in row ? row.status : undefined}
       dim={dim}

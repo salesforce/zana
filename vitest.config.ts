@@ -192,8 +192,40 @@ export default defineConfig({
         )
       },
       {
+        find: /^@zana-ai\/zcc-plugin-sdk\/testing\/host$/,
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/testing/host.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-sdk\/provider-bridge\/acp$/,
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/provider-bridge-acp.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-sdk\/provider-bridge$/,
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/provider-bridge.ts')
+      },
+      {
         find: /^@zana-ai\/zcc-plugin-sdk\/(.*)$/,
         replacement: resolve(__dirname, 'packages/plugin-sdk/src/$1.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-interaction-contracts$/,
+        replacement: resolve(__dirname, 'packages/plugin-interaction-contracts/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-fuzzy-match$/,
+        replacement: resolve(__dirname, 'packages/fuzzy-match/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-secret-storage$/,
+        replacement: resolve(__dirname, 'packages/secret-storage/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-host-watcher$/,
+        replacement: resolve(__dirname, 'packages/host-watcher/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-provider-bridge-acp$/,
+        replacement: resolve(__dirname, 'packages/provider-bridge-acp/src/index.ts')
       },
       {
         find: /^@zana-ai\/zcc-plugin-templates$/,

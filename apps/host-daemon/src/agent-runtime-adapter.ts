@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveZccDataDir } from './host-config.js';
-import type { HostBridgeLaunch, HostEventEnvelope, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
+import type { HostBridgeLaunch, HostEventEnvelope, ProviderHealthResult, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import type { HostDaemonAcpLaunchSpec } from '@zana-ai/zcc-host-daemon-contract';
 import {
   createAgentRuntime,
@@ -19,7 +19,6 @@ import {
   type PermissionMode,
   type PendingInteractionCreate,
   type PendingInteractionResolution,
-  type PromptInput,
   type ReasoningLevel,
   type RuntimeThreadExecutionOptions,
   type ThreadEvent,
@@ -81,13 +80,6 @@ export function mergeSessionTooling(input: {
 }
 
 export type CreateAgentRuntimeFn = (options: AgentRuntimeOptions) => AgentRuntime;
-
-function textInput(chunks: readonly string[]): PromptInput[] {
-  return chunks
-    .map((text) => text.trim())
-    .filter((text) => text.length > 0)
-    .map((text) => ({ type: 'text' as const, text, mentions: [] }));
-}
 
 function permissionPolicy(
   mode: RuntimeThreadExecutionOptions['permissionMode']
@@ -409,6 +401,21 @@ export function createAgentRuntimeAdapter(options: {
         ...(listed.acpMode ? { acpMode: listed.acpMode } : {})
       };
     },
+    async providerHealth(input: {
+      providerId: string;
+      bridgeLaunch: HostBridgeLaunch;
+      cwd?: string;
+    }): Promise<ProviderHealthResult> {
+      syncProviderBridgeRecording();
+      const workspaceCwd = input.cwd ?? join(storageRoot, 'provider-health', input.providerId);
+      if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
+      const runtime = runtimeFor(`provider-health:${input.providerId}`, workspaceCwd);
+      return runtime.providerHealth({
+        providerId: input.providerId,
+        bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
+        ...(input.cwd ? { cwd: input.cwd } : {})
+      });
+    },
     async startWork(input: ThreadWorkInput) {
       syncProviderBridgeRecording();
       const runtime = runtimeFor(input.environmentId, input.cwd);
@@ -427,7 +434,7 @@ export function createAgentRuntimeAdapter(options: {
         threadId: input.threadId,
         projectId: input.projectId,
         providerId: input.providerId,
-        input: textInput(input.input),
+        input: input.input,
         clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
         options: executionOptions({
           permissionMode: input.permissionMode,
@@ -472,7 +479,7 @@ export function createAgentRuntimeAdapter(options: {
         });
         const payload = {
           threadId: input.threadId,
-          input: textInput(input.input),
+          input: input.input,
           clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
           options
         };

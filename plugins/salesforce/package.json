@@ -25,6 +25,9 @@
       "skills"
     ]
   },
+  "exports": {
+    "./sdk": "./lib/sdk-contract.ts"
+  },
   "dependencies": {
     "@sf-agentscript/agentforce": "2.10.38",
     "@sf-agentscript/lsp": "2.6.33",

@@ -24,7 +24,6 @@ export function HomeAgentComposer({
   const showAutonomousTeam = teams.length > 0;
   const [kind, setKind] = useState<LaunchMode>('thread');
   const [composerProjectId, setComposerProjectId] = useState(project?.id ?? '');
-  const [cliRemoteToolProxy, setCliRemoteToolProxy] = useState(false);
   useEffect(() => {
     if (walkthroughHomeMode === 'thread' || walkthroughHomeMode === 'agent') {
       setKind(walkthroughHomeMode);
@@ -50,8 +49,6 @@ export function HomeAgentComposer({
           project={project}
           composerProjectId={composerProjectId}
           onComposerProjectIdChange={setComposerProjectId}
-          cliRemoteToolProxy={cliRemoteToolProxy}
-          onCliRemoteToolProxyChange={setCliRemoteToolProxy}
         />
       ) : allowLegacyAgent && kind === 'autonomous' ? (
         <AutonomousTeamComposer

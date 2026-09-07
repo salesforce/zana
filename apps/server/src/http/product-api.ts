@@ -85,6 +85,7 @@ import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify, harnessVerifyBundle } from './harness-via-rpc.js';
+import { mergeHealthIntoExtraInstalled, probeInstalledProviderHealth } from '../services/threads/provider-health-probe.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
 import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
@@ -2557,7 +2558,14 @@ export async function handleProductHttp(
       try {
         const bundle = await harnessVerifyBundle(ctx.hostHub, requestedHostId);
         availability = bundle.availability;
-        extraInstalled = bundle.extraInstalled;
+        extraInstalled = mergeHealthIntoExtraInstalled(
+          bundle.extraInstalled,
+          await probeInstalledProviderHealth({
+            hub: ctx.hostHub,
+            hostId: requestedHostId,
+            artifacts: ctx.pluginHostArtifacts
+          })
+        );
       } catch {
         availability = [];
         extraInstalled = {};

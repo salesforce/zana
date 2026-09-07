@@ -42,8 +42,8 @@ describe('Experimental voice settings', () => {
   });
 });
 
-describe('Experimental CLI Agent remote tools', () => {
-  it('defaults the CLI remote-tools toggle off', () => {
+describe('Experimental CLI Agent host catalog', () => {
+  it('offers an off-by-default toggle for the host execution-options catalog', () => {
     const html = renderToStaticMarkup(
       <ExperimentalView
         config={base}
@@ -51,7 +51,22 @@ describe('Experimental CLI Agent remote tools', () => {
         onUpdate={vi.fn()}
       />
     );
-    expect(html).toContain('CLI Agent remote tools');
-    expect(html).toContain('ssh -t');
+    expect(html).toContain('CLI Agent host catalog');
+    expect(html).toContain('execution-options');
+    expect(html).toContain('local install list');
+  });
+});
+
+describe('Experimental CLI Agent remote tools', () => {
+  it('hides the CLI remote-tools toggle (CLI Agent is Remote host only)', () => {
+    const html = renderToStaticMarkup(
+      <ExperimentalView
+        config={{ ...base, cliRemoteToolProxyEnabled: true }}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn()}
+      />
+    );
+    expect(html).not.toContain('CLI Agent remote tools');
+    expect(html).not.toContain('ssh -t');
   });
 });

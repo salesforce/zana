@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { derivePluginId, isPluginId } from './plugin-id.js';
+import { PLUGIN_REQUIRES_MAX, parsePluginRequires } from './plugin-requires.js';
 
 const requiredManifestString = z.string().trim().min(1).max(256);
 
@@ -142,6 +143,7 @@ export const pluginZccManifestSchema = z
     skills: z.array(requiredManifestString).optional(),
     mcpServers: pluginMcpServersSchema.optional(),
     extra: pluginExtraSchema.optional(),
+    requires: z.array(requiredManifestString).max(PLUGIN_REQUIRES_MAX).optional(),
     projectTab: pluginProjectTabSchema.optional(),
     themes: z
       .array(
@@ -204,6 +206,7 @@ export interface PluginManifest {
   skillNames: string[];
   mcpServers: PluginMcpServerContribution[];
   extra: PluginExtra;
+  requires: string[];
   projectTab: PluginZccManifest['projectTab'];
   themes: NonNullable<PluginZccManifest['themes']>;
   engines: { zcc?: string; zccPluginSdk?: string };
@@ -233,6 +236,7 @@ export function readPluginManifest(packageJson: unknown): PluginManifest {
     skillNames: [],
     mcpServers,
     extra: parsed.zcc.extra ?? {},
+    requires: parsePluginRequires(parsed.zcc.requires),
     projectTab: parsed.zcc.projectTab,
     themes: parsed.zcc.themes ?? [],
     engines: {
