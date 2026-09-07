@@ -101,6 +101,13 @@ describe('agent runtime thread adapter', () => {
           runTurn: async (input) => {
             turned.push({ input: input.input });
             return runtime.runTurn(input);
+          },
+          // A follow-up racing the still-active initial turn steers instead of
+          // running a fresh turn (a CI-timing window); both carry the same
+          // input, so capture either path.
+          steerTurn: async (input) => {
+            turned.push({ input: input.input });
+            return runtime.steerTurn(input);
           }
         };
       }
@@ -415,6 +422,13 @@ describe('agent runtime thread adapter', () => {
             turned.push(input.options as { providerOptions?: { acpMode?: string } });
             return runtime.runTurn(input);
           },
+          // A follow-up submitTurn racing the still-active initial turn is
+          // dispatched as a steer, not a fresh runTurn (a CI-timing window).
+          // Both carry the same options payload, so capture either path.
+          steerTurn: async (input) => {
+            turned.push(input.options as { providerOptions?: { acpMode?: string } });
+            return runtime.steerTurn(input);
+          },
           resumeThread: async (input) => {
             resumed.push(input.options as { providerOptions?: { acpMode?: string } });
             return runtime.resumeThread(input);
@@ -481,6 +495,13 @@ describe('agent runtime thread adapter', () => {
           runTurn: async (input) => {
             turned.push(input.clientRequestId);
             return runtime.runTurn(input);
+          },
+          // A follow-up racing the still-active initial turn steers instead of
+          // running a fresh turn (a CI-timing window); both carry the same
+          // clientRequestId, so capture either path.
+          steerTurn: async (input) => {
+            turned.push(input.clientRequestId);
+            return runtime.steerTurn(input);
           }
         };
       }
