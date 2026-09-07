@@ -17,4 +17,20 @@ describe('execution message IPC compatibility', () => {
     expect(resolveExecutionMessageArgs('execution-1', 4, [blocker('other', 'slot-2')], ['slot-1', 'Answer']))
       .toBeUndefined();
   });
+
+  it('rejects arg counts other than 2 or 3', () => {
+    expect(resolveExecutionMessageArgs('execution-1', 4, [], [])).toBeUndefined();
+    expect(resolveExecutionMessageArgs('execution-1', 4, [], ['only-one'])).toBeUndefined();
+    expect(resolveExecutionMessageArgs('execution-1', 4, [], ['a', 'b', 'c', 'd'])).toBeUndefined();
+  });
+
+  it('ignores resolved blockers when matching a legacy slot', () => {
+    const resolved = { ...blocker('done'), resolved: true };
+    // Only the resolved blocker matches the slot -> no live blocker to answer.
+    expect(resolveExecutionMessageArgs('execution-1', 4, [resolved], ['slot-1', 'Answer']))
+      .toBeUndefined();
+    // A resolved sibling on the same slot must not make the live one "ambiguous".
+    expect(resolveExecutionMessageArgs('execution-1', 4, [resolved, blocker('live')], ['slot-1', 'Answer']))
+      .toEqual({ blockerId: 'live', clientRequestId: 'execution-1:4:live', message: 'Answer' });
+  });
 });

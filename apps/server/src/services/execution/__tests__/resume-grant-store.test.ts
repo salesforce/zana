@@ -146,22 +146,46 @@ describe('resume grant store', () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
-  it('caps persisted grants at newest 2,000 records', async () => {
+  it('rejects a new grant when active capacity is exceeded instead of silently dropping active grants', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zcc-resume-grant-'));
     const filePath = join(dir, 'grants.json');
     try {
-      const grants = Array.from({ length: 2_001 }, (_, index) => ({
+      // 2,000 active (unexpired, unrevoked) grants — exactly at MAX_GRANTS.
+      const grants = Array.from({ length: 2_000 }, (_, index) => ({
         version: 1, executionId: `execution-${index}`, projectId: 'project-1', callerPrincipalId: 'owner',
         tokenDigest: `digest-${index}`, mintedAt: index, expiresAt: 5_000, generation: 0
       }));
       const generations = grants.map(({ executionId, projectId }) => ({ executionId, projectId, generation: 0 }));
       await writeFile(filePath, JSON.stringify({ version: 1, revision: 0, grants, generations }));
       const store = createResumeGrantStore({ filePath, now: () => 1_000, token: () => 'new-token' });
-      await store.mint({ executionId: 'execution-new', projectId: 'project-1', callerPrincipalId: 'owner', expiresAt: 5_000 });
+      await expect(store.mint({ executionId: 'execution-new', projectId: 'project-1', callerPrincipalId: 'owner', expiresAt: 5_000 }))
+        .rejects.toThrow('execution resume grant capacity exceeded');
+      // The pre-existing active grants must NOT have been dropped to make room.
       const persisted = JSON.parse(await readFile(filePath, 'utf8')) as { grants: Array<{ executionId: string }> };
       expect(persisted.grants).toHaveLength(2_000);
-      expect(persisted.grants[0].executionId).toBe('execution-2');
-      expect(persisted.grants.at(-1)?.executionId).toBe('execution-new');
+      expect(persisted.grants[0].executionId).toBe('execution-0');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('prunes only terminal (expired or revoked) grants on persist, never active ones', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zcc-resume-grant-'));
+    const filePath = join(dir, 'grants.json');
+    try {
+      await writeFile(filePath, JSON.stringify({ version: 1, revision: 0, grants: [
+        { version: 1, executionId: 'active', projectId: 'project-1', callerPrincipalId: 'owner', tokenDigest: 'a', mintedAt: 1, expiresAt: 5_000, generation: 0 },
+        { version: 1, executionId: 'expired', projectId: 'project-1', callerPrincipalId: 'owner', tokenDigest: 'b', mintedAt: 1, expiresAt: 500, generation: 0 },
+        { version: 1, executionId: 'revoked', projectId: 'project-1', callerPrincipalId: 'owner', tokenDigest: 'c', mintedAt: 1, expiresAt: 5_000, revokedAt: 900, generation: 0 }
+      ], generations: [
+        { executionId: 'active', projectId: 'project-1', generation: 0 },
+        { executionId: 'expired', projectId: 'project-1', generation: 0 },
+        { executionId: 'revoked', projectId: 'project-1', generation: 0 }
+      ] }));
+      const store = createResumeGrantStore({ filePath, now: () => 1_000, token: () => 'new-token' });
+      // Mint on an unrelated execution triggers a persist without touching the others.
+      await store.mint({ executionId: 'fresh', projectId: 'project-1', callerPrincipalId: 'owner', expiresAt: 5_000 });
+      const persisted = JSON.parse(await readFile(filePath, 'utf8')) as { grants: Array<{ executionId: string }> };
+      const ids = persisted.grants.map((grant) => grant.executionId).sort();
+      expect(ids).toEqual(['active', 'fresh']);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });

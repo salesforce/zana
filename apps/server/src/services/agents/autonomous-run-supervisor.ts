@@ -275,8 +275,12 @@ export class AutonomousRunSupervisor extends EventEmitter {
 
     if (nudgedAny) {
       entry.run.rounds += 1;
-      this.emit('nudge', runId, eligibleSessions[0], entry.run.rounds);
+      this.emit('nudge', runId, eligibleSessions, entry.run.rounds);
       this.emit('changed', { ...entry.run });
+      // Nudge delivered (agent still responding to at-rest) → reset the run timeout,
+      // so a nudge landing near the timeout boundary isn't raced by a premature
+      // timeout before the resulting state transition is observed.
+      this.resetTimeout(entry);
     }
 
     const stillHasIdle = [...entry.sessions.values()].some((s) => atRest(s.lastState));

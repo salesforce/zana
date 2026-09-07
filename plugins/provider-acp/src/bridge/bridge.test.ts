@@ -1702,21 +1702,34 @@ describe("acp bridge", () => {
     const configText = agentMessageTexts().find((text) => text.startsWith(configPrefix));
     if (!configText) throw new Error("Fake ACP agent did not report MCP server config");
     const [server] = JSON.parse(configText.slice(configPrefix.length)) as Array<{
-      headers: unknown[];
+      headers: { name: string; value: string }[];
       name: string;
       type: string;
       url: string;
     }>;
     expect(server).toMatchObject({
-      headers: [],
       name: ACP_BRIDGE_MCP_SERVER_NAME,
       type: "http",
     });
     expect(server?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/thread-/);
+    // The HTTP MCP transport must carry the per-bridge bearer token — a thread
+    // id alone is a routing key, not a secret.
+    expect(server.headers).toEqual([
+      { name: "Authorization", value: expect.stringMatching(/^Bearer \S+$/) },
+    ]);
+    const authHeaders = Object.fromEntries(server.headers.map((h) => [h.name, h.value]));
+
+    // A request WITHOUT the bearer token is rejected before it can drive tools.
+    const unauthorized = await fetch(server!.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-03-26" } }),
+    });
+    expect(unauthorized.status).toBe(401);
 
     const initialize = await fetch(server!.url, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...authHeaders },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26" } }),
     });
     const initializeBody = await initialize.json();
@@ -1726,7 +1739,7 @@ describe("acp bridge", () => {
     });
     const listed = await fetch(server!.url, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...authHeaders },
       body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
     });
     expect(await listed.json()).toMatchObject({ result: { tools: [{ name: "execution_start" }] } });
@@ -1854,7 +1867,8 @@ describe("acp bridge", () => {
       () => agentMessageTexts().find((text) => text.startsWith(configPrefix)),
       "MCP server config",
     );
-    const [mcpServerConfig] = JSON.parse(configText.slice(configPrefix.length)) as Array<{ url: string }>;
+    const [mcpServerConfig] = JSON.parse(configText.slice(configPrefix.length)) as Array<{ url: string; headers: { name: string; value: string }[] }>;
+    const authHeaders = Object.fromEntries(mcpServerConfig.headers.map((h) => [h.name, h.value]));
 
     const turnId = sendTurnRequest("turn/start", providerThreadId, {
       input: [{ type: "text", text: "announce-mcp-tool", mentions: [] }],
@@ -1869,7 +1883,7 @@ describe("acp bridge", () => {
 
     const bridgeCall = fetch(mcpServerConfig.url, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...authHeaders },
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: "execution-start-call",

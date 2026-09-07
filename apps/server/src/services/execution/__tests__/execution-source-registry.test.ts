@@ -424,4 +424,54 @@ describe('execution source registry', () => {
     const snapshot = await registry.resolve({ windowId: 7, projectId: 'project-1', capabilityIds: capabilities.map(({ id }) => id), snapshotKey: 'empty' });
     await expect(registry.read(snapshot.contentRef, snapshot.sources[0].id)).resolves.toEqual({ content: '', totalBytes: 0 });
   }));
+
+  it.each([
+    ['traversal', '../escape'],
+    ['separator', 'nested/key'],
+    ['dot', '..']
+  ])('rejects a %s snapshotKey before writing outside the store root', async (_label, snapshotKey) => fixture(async (dir) => {
+    const path = join(dir, 'source.txt'); await writeFile(path, 'safe');
+    const rootDir = join(dir, 'store');
+    const registry = createExecutionSourceRegistry({ rootDir });
+    const [capability] = await issue(registry, [path]);
+    await expect(registry.resolve({ windowId: 7, projectId: 'project-1', capabilityIds: [capability.id], snapshotKey }))
+      .rejects.toMatchObject({ code: 'INVALID_CONTENT_REF' });
+    // Nothing escaped the root: the parent directory holds only the store dir.
+    await expect(stat(join(dir, 'escape'))).rejects.toThrow();
+  }));
+
+  it('upgrades a TRANSFORMED legacy snapshot using a fresh extracted-text digest, not the raw contentDigest', async () => fixture(async (dir) => {
+    // HTML is transformed on extraction, so extractedText != raw bytes and thus
+    // digest(extractedText) != contentDigest. The old contentDigest fallback would
+    // have wrongly failed integrity; the fix must upgrade using the fresh digest.
+    const path = join(dir, 'page.html'); await writeFile(path, '<p>Hello</p><b>world</b>');
+    const rootDir = join(dir, 'store');
+    const registry = createExecutionSourceRegistry({ rootDir });
+    const [capability] = await issue(registry, [path]);
+    const snapshot = await registry.resolve({ windowId: 7, projectId: 'project-1', capabilityIds: [capability.id], snapshotKey: 'legacy-html' });
+    expect(snapshot.sources[0].extractedTextDigest).not.toBe(snapshot.sources[0].contentDigest);
+    const snapshotPath = join(rootDir, 'legacy-html', 'sources.json');
+    const stored = JSON.parse(await readFile(snapshotPath, 'utf8'));
+    stored.version = 1;
+    delete stored.sources[0].extractedTextDigest;
+    await writeFile(snapshotPath, JSON.stringify(stored));
+    const expected = snapshot.sources.map(({ extractedText: _text, extractedTextDigest: _digest, ...metadata }) => metadata);
+    const persistUpgrade = vi.fn(async () => undefined);
+
+    await expect(registry.read(snapshot.contentRef, snapshot.sources[0].id, {}, expected, persistUpgrade))
+      .resolves.toMatchObject({ content: snapshot.sources[0].extractedText });
+    expect(persistUpgrade).toHaveBeenCalledWith([expect.objectContaining({ extractedTextDigest: snapshot.sources[0].extractedTextDigest })]);
+    const upgraded = JSON.parse(await readFile(snapshotPath, 'utf8'));
+    expect(upgraded).toMatchObject({ version: 2, sources: [expect.objectContaining({ extractedTextDigest: snapshot.sources[0].extractedTextDigest })] });
+  }));
+
+  it('counts reused capability bytes toward the aggregate total cap', async () => fixture(async (dir) => {
+    const a = join(dir, 'a.txt'); const b = join(dir, 'b.txt');
+    await writeFile(a, '123456'); await writeFile(b, '123456');
+    const registry = createExecutionSourceRegistry({ rootDir: join(dir, 'store'), limits: { maxFiles: 4, maxFileBytes: 20, maxTotalBytes: 8 } });
+    await issue(registry, [a]);
+    await issue(registry, [b]);
+    // Both are reused (already live); their bytes (6 + 6) must exceed maxTotalBytes (8).
+    await expect(issue(registry, [a, b])).rejects.toMatchObject({ code: 'TOTAL_SOURCE_TOO_LARGE' });
+  }));
 });

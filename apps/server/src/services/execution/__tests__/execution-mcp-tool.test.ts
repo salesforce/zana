@@ -211,6 +211,20 @@ describe('execution MCP tools', () => {
     await rm(file, { force: true });
   });
 
+  it('converts a rejected service op into a sanitized MCP error without leaking the internal message', async () => {
+    const execution = service();
+    execution.status.mockRejectedValueOnce(new Error('sensitive stack: db credentials at /etc/secret'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
+    const result = await tools.get('execution.status')!({ executionId: 'execution-1' });
+    expect(result).toMatchObject({ isError: true });
+    expect(text(result)).toBe('execution.status failed: internal error.');
+    expect(text(result)).not.toContain('sensitive');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('execution.status'), expect.any(Error));
+    errorSpy.mockRestore();
+  });
+
   it('uses generic execution start wording and forwards generic launch metadata', async () => {
     const execution = service();
     const { server, tools, definitions } = fakeServer();

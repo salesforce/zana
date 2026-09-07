@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   atomicDurableWrite,
@@ -70,6 +70,9 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
   if (options.maxRecords !== undefined && (!Number.isInteger(options.maxRecords) || options.maxRecords < 1)) {
     throw new Error('invalid execution artifact max records');
   }
+  if (options.maxRecordsPerExecution !== undefined && (!Number.isInteger(options.maxRecordsPerExecution) || options.maxRecordsPerExecution < 1)) {
+    throw new Error('invalid execution artifact max records per execution');
+  }
   const now = options.now ?? Date.now;
   const id = options.id ?? randomUUID;
   const maxRecords = Math.min(options.maxRecords ?? MAX_RECORDS, MAX_RECORDS);
@@ -89,7 +92,7 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
     }
   }
 
-  function persist(state: ArtifactStateFile, expectedHash: string | null): void {
+  async function persist(state: ArtifactStateFile, expectedHash: string | null): Promise<void> {
     const byExecution = new Map<string, ExecutionArtifactRecord[]>();
     for (const record of state.records) {
       const group = byExecution.get(record.executionId) ?? [];
@@ -101,7 +104,7 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
       .sort((left, right) => left.createdAt - right.createdAt)
       .slice(-maxRecords);
     state.revision += 1;
-    mkdirSync(dirname(options.filePath), { recursive: true });
+    await mkdir(dirname(options.filePath), { recursive: true });
     atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
   }
 
@@ -110,9 +113,11 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
     const projectId = string(input.projectId, 'project id');
     const name = string(input.name, 'name');
     const mediaType = string(input.mediaType, 'media type');
-    const content = string(input.content, 'content', MAX_CONTENT_BYTES);
+    if (typeof input.content !== 'string' || !input.content.trim()) throw new Error('invalid execution artifact content');
+    const content = input.content;
     if (Buffer.byteLength(content, 'utf8') > MAX_CONTENT_BYTES) throw new Error('invalid execution artifact content');
     if (!Number.isInteger(input.attempt) || input.attempt < 1) throw new Error('invalid execution artifact attempt');
+    if (input.producerRole !== undefined && input.producerRole !== 'worker' && input.producerRole !== 'orchestrator') throw new Error('invalid execution artifact producer role');
     const digest = contentDigest(content);
     return queue.run(async () => {
       const snapshot = read();
@@ -130,7 +135,7 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
         ...(input.producerSlotId ? { producerSlotId: string(input.producerSlotId, 'producer slot id') } : {})
       };
       snapshot.state.records.push(record);
-      persist(snapshot.state, snapshot.hash);
+      await persist(snapshot.state, snapshot.hash);
       return { outcome: 'stored' as const, record: clone(record) };
     });
   }

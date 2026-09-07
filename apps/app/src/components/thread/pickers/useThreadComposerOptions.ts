@@ -128,10 +128,19 @@ export function useThreadComposerOptions(input: {
     if (input.initialReasoningLevel) {
       setReasoningLevelState(asReasoningLevel(input.initialReasoningLevel, 'medium'));
     }
+  }, [input.initialModel, input.initialReasoningLevel]);
+
+  useEffect(() => {
     // Adopt the existing thread's persisted native role once the fetch resolves,
     // so the picker shows the mode the thread is actually running (not neutral).
-    if (input.initialAcpMode) setAcpMode(input.initialAcpMode);
-  }, [input.initialModel, input.initialReasoningLevel, input.initialAcpMode]);
+    // This effect only re-fires when `initialAcpMode` itself changes value, which
+    // only happens once the caller's fetch for the CURRENT thread resolves (an
+    // unresolved/pending render repeats the same value, so no spurious re-fire
+    // clobbers a pick the user already made this session). Unconditional so a
+    // thread reused with a persisted mode of `null` (explicit "no role") clears a
+    // previous thread's mode instead of leaving it selected.
+    setAcpMode(input.initialAcpMode ?? undefined);
+  }, [input.initialAcpMode]);
 
   useEffect(() => {
     void setThreadModelCatalogHost(input.hostId);

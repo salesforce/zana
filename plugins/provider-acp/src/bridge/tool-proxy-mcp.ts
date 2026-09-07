@@ -107,12 +107,15 @@ export function buildAcpMcpServerConfig(
   };
 }
 
-export function buildAcpHttpMcpServerConfig(url: string): AcpHttpMcpServerConfig {
+export function buildAcpHttpMcpServerConfig(
+  url: string,
+  token: string,
+): AcpHttpMcpServerConfig {
   return {
     name: ACP_BRIDGE_MCP_SERVER_NAME,
     type: "http",
     url,
-    headers: [],
+    headers: [{ name: "Authorization", value: `Bearer ${token}` }],
   };
 }
 

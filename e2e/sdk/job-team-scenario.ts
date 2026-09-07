@@ -46,6 +46,19 @@ export async function answerJobBlockerThroughUi(args: {
     return execution?.currentBlocker?.question ?? '';
   }, { timeout: 60_000, intervals: [1_000] }).toContain('label');
 
+  // A CLI Agent owner launch opens the owner's foreground terminal modal
+  // (launcher → navigate to the session route → AgentTerminalModal). It
+  // legitimately lingers over the board until the exited owner's tombstone
+  // clears (~60s), and its `.modal-backdrop` intercepts pointer events, so
+  // dismiss it before driving the board. Escape is deliberately NOT a close
+  // here (it reaches the embedded terminal as an interrupt) — use the X. The
+  // UI / Modern owner paths never open this modal, so this is a no-op there.
+  const ownerModal = window.getByRole('dialog', { name: /^Agent / }).first();
+  if (await ownerModal.count()) {
+    await ownerModal.getByRole('button', { name: 'Close' }).click();
+    await expect(ownerModal).toBeHidden();
+  }
+
   const agentsNav = window.getByTestId('nav-agents').or(window.getByTestId('project-nav-agents'));
   await agentsNav.click();
   const card = window.locator('.agent-card').filter({ hasText: jobTitle }).first();

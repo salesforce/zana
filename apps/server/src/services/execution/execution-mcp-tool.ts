@@ -265,7 +265,20 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     ? { content: [{ type: 'text' as const, text: JSON.stringify(value.value) }] }
     : { isError: true, content: [{ type: 'text' as const, text: `${name} failed: ${value.message}` }] };
 
-  server.registerTool('execution.whoami', {
+  // Shared registration wrapper: any handler that throws is logged with tool +
+  // project context and returned to the caller as a SANITIZED MCP error, so an
+  // internal failure never leaks a stack/message across the MCP boundary.
+  const register: McpServer['registerTool'] = ((name: string, config: unknown, handler: (args: unknown) => unknown) =>
+    server.registerTool(name as never, config as never, (async (args: unknown) => {
+      try {
+        return await (handler(args) as Promise<unknown>);
+      } catch (error) {
+        console.error(`[execution-mcp] tool ${name} failed for project ${options.projectId}`, error);
+        return { isError: true, content: [{ type: 'text' as const, text: `${name} failed: internal error.` }] };
+      }
+    }) as never)) as McpServer['registerTool'];
+
+  register('execution.whoami', {
     description: 'Read this live session MCP route identity. Execution starts in this session project unless a host feature explicitly selects another project.',
     inputSchema: {}
   }, async () => {
@@ -282,60 +295,60 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     };
   });
 
-  server.registerTool('execution.plan.register', { description: 'Coordinator registers one bounded durable work DAG.', inputSchema: executionPlanSchema }, async ({ executionId, workUnits }) => {
+  register('execution.plan.register', { description: 'Coordinator registers one bounded durable work DAG.', inputSchema: executionPlanSchema }, async ({ executionId, workUnits }) => {
     if (!authorized()) return denied('execution.plan.register'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.plan.register');
     return boundResult('execution.plan.register', await options.service.registerPlan(bound, workUnits));
   });
-  server.registerTool('execution.work.claim', { description: 'Worker claims one ready work unit using its host-bound slot.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
+  register('execution.work.claim', { description: 'Worker claims one ready work unit using its host-bound slot.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
     if (!authorized()) return denied('execution.work.claim'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.claim');
     return boundResult('execution.work.claim', await options.service.claimWork(bound, workUnitId, assignedSlotId));
   });
-  server.registerTool('execution.work.assign', { description: 'Coordinator assigns one ready work unit to a worker slot.', inputSchema: executionWorkAssignSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
+  register('execution.work.assign', { description: 'Coordinator assigns one ready work unit to a worker slot.', inputSchema: executionWorkAssignSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
     if (!authorized()) return denied('execution.work.assign'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.assign');
     return boundResult('execution.work.assign', await options.service.assignWork(bound, workUnitId, assignedSlotId));
   });
-  server.registerTool('execution.work.dispatch_ready', { description: 'Coordinator hands scheduling to the engine: auto-assign EVERY ready work unit to a free worker slot and notify each worker. Call once after the plan is structured (units have tasks + dependencies); the engine then re-dispatches newly-ready units automatically as work completes, so no per-unit assign is needed.', inputSchema: executionIdSchema }, async ({ executionId }) => {
+  register('execution.work.dispatch_ready', { description: 'Coordinator hands scheduling to the engine: auto-assign EVERY ready work unit to a free worker slot and notify each worker. Call once after the plan is structured (units have tasks + dependencies); the engine then re-dispatches newly-ready units automatically as work completes, so no per-unit assign is needed.', inputSchema: executionIdSchema }, async ({ executionId }) => {
     if (!authorized()) return denied('execution.work.dispatch_ready'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.dispatch_ready');
     return boundResult('execution.work.dispatch_ready', await options.service.dispatchReady(bound));
   });
-  server.registerTool('execution.work.complete', { description: 'Complete one assigned work unit.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result }) => {
+  register('execution.work.complete', { description: 'Complete one assigned work unit.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result }) => {
     if (!authorized()) return denied('execution.work.complete'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.complete');
     return boundResult('execution.work.complete', await options.service.completeWork(bound, workUnitId, result));
   });
-  server.registerTool('execution.work.fail', { description: 'Fail one assigned work unit durably.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure }) => {
+  register('execution.work.fail', { description: 'Fail one assigned work unit durably.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure }) => {
     if (!authorized()) return denied('execution.work.fail'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.fail');
     return boundResult('execution.work.fail', await options.service.failWork(bound, workUnitId, failure));
   });
-  server.registerTool('execution.work.block', { description: 'Block one assigned work unit with a durable question.', inputSchema: executionWorkBlockSchema }, async ({ executionId, workUnitId, blockerId, question, options: choices }) => {
+  register('execution.work.block', { description: 'Block one assigned work unit with a durable question.', inputSchema: executionWorkBlockSchema }, async ({ executionId, workUnitId, blockerId, question, options: choices }) => {
     if (!authorized()) return denied('execution.work.block'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.block');
     return boundResult('execution.work.block', await options.service.blockWork(bound, workUnitId, { id: blockerId, question, options: choices }));
   });
-  server.registerTool('execution.work.release', { description: 'Release one assigned work unit.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId }) => {
+  register('execution.work.release', { description: 'Release one assigned work unit.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId }) => {
     if (!authorized()) return denied('execution.work.release'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.release');
     return boundResult('execution.work.release', await options.service.releaseWork(bound, workUnitId));
   });
-  server.registerTool('execution.work.retry', { description: 'Coordinator retries and optionally reassigns failed or blocked work.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
+  register('execution.work.retry', { description: 'Coordinator retries and optionally reassigns failed or blocked work.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
     if (!authorized()) return denied('execution.work.retry'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.retry');
     return boundResult('execution.work.retry', await options.service.retryWork(bound, workUnitId, assignedSlotId));
   });
-  server.registerTool('execution.delivery.pull', { description: 'Pull one pending blocker response bound to this worker route.', inputSchema: {} }, async () => {
+  register('execution.delivery.pull', { description: 'Pull one pending blocker response bound to this worker route.', inputSchema: {} }, async () => {
     if (!authorized()) return denied('execution.delivery.pull'); const bound = await binding(); if (!bound) return boundDenied('execution.delivery.pull');
     return boundResult('execution.delivery.pull', await options.service.pullDelivery(bound));
   });
-  server.registerTool('execution.delivery.ack', { description: 'Acknowledge one leased blocker response from this exact worker route.', inputSchema: executionDeliveryAckSchema }, async ({ deliveryId, leaseId, delivered, error }) => {
+  register('execution.delivery.ack', { description: 'Acknowledge one leased blocker response from this exact worker route.', inputSchema: executionDeliveryAckSchema }, async ({ deliveryId, leaseId, delivered, error }) => {
     if (!authorized()) return denied('execution.delivery.ack'); const bound = await binding(); if (!bound) return boundDenied('execution.delivery.ack');
     return boundResult('execution.delivery.ack', await options.service.ackDelivery(bound, deliveryId, leaseId, { delivered, error }));
   });
-  server.registerTool('execution.source.list', { description: 'Coordinator lists bounded source snapshot metadata.', inputSchema: executionSourceListSchema }, async ({ executionId, offset, limit }) => {
+  register('execution.source.list', { description: 'Coordinator lists bounded source snapshot metadata.', inputSchema: executionSourceListSchema }, async ({ executionId, offset, limit }) => {
     if (!authorized()) return denied('execution.source.list'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.source.list');
     return boundResult('execution.source.list', await options.service.listSources(bound, { offset, limit }));
   });
-  server.registerTool('execution.source.read', { description: 'Coordinator reads one bounded source snapshot chunk.', inputSchema: executionSourceReadSchema }, async ({ executionId, sourceId, offset, maxBytes }) => {
+  register('execution.source.read', { description: 'Coordinator reads one bounded source snapshot chunk.', inputSchema: executionSourceReadSchema }, async ({ executionId, sourceId, offset, maxBytes }) => {
     if (!authorized()) return denied('execution.source.read'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.source.read');
     return boundResult('execution.source.read', await options.service.readSource(bound, sourceId, { offset, maxBytes }));
   });
 
-  server.registerTool('execution.start', {
+  register('execution.start', {
     description: 'Start one execution in this live session project. Pass either full request fields or a bounded requestPath. Main authorizes launch slots and stores launch identity before launch.',
     inputSchema: executionStartInputSchema
   }, async (input) => {
@@ -363,7 +376,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.start failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.status', {
+  register('execution.status', {
     description: 'Read one project-scoped execution.', inputSchema: executionIdSchema
   }, async ({ executionId }) => {
     if (!authorized()) return denied('execution.status');
@@ -373,7 +386,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: 'execution.status failed: execution not found for caller.' }] };
   });
 
-  server.registerTool('execution.resume_binding', {
+  register('execution.resume_binding', {
     description: 'Bind this fresh session to an execution using a durable resume grant. Retry same token after a transient binding failure.', inputSchema: resumeBindingSchema
   }, async ({ executionId, token }) => {
     if (!await ownerAuthorized()) return denied('execution.resume_binding');
@@ -383,7 +396,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.resume_binding failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.mint_resume_grant', {
+  register('execution.mint_resume_grant', {
     description: 'Mint a replacement resume grant for an active execution owned by this session when its start token was lost.', inputSchema: mintResumeGrantSchema
   }, async ({ executionId }) => {
     if (!authorized()) return denied('execution.mint_resume_grant');
@@ -393,7 +406,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.mint_resume_grant failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.revoke_resume_grant', {
+  register('execution.revoke_resume_grant', {
     description: 'Revoke pending durable resume grants for one owner-scoped execution.', inputSchema: revokeResumeGrantSchema
   }, async ({ executionId, effectiveOwnerPrincipalId }) => {
     if (!authorized()) return denied('execution.revoke_resume_grant');
@@ -403,7 +416,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.revoke_resume_grant failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.list', {
+  register('execution.list', {
     description: 'List recent project-scoped executions started by this session identity.', inputSchema: {}
   }, async () => {
     if (!authorized()) return denied('execution.list');
@@ -411,7 +424,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     return { content: [{ type: 'text' as const, text: JSON.stringify(records.map(toMcpSafeExecution)) }] };
   });
 
-  server.registerTool('execution.events', {
+  register('execution.events', {
     description: 'Read ordered execution events after an optional sequence cursor.', inputSchema: executionEventsSchema
   }, async ({ executionId, after, limit }) => {
     if (!authorized()) return denied('execution.events');
@@ -419,7 +432,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     return { content: [{ type: 'text' as const, text: JSON.stringify(events) }] };
   });
 
-  server.registerTool('execution.snapshot', {
+  register('execution.snapshot', {
     description: 'Read one bounded durable execution snapshot. Does not reconcile or poll Team workers.', inputSchema: executionSnapshotSchema
   }, async ({ executionId, after }) => {
     if (!await ownerAuthorized()) return denied('execution.snapshot');
@@ -451,7 +464,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     }
   });
 
-  server.registerTool('execution.event', {
+  register('execution.event', {
     description: 'Record one idempotent, owner-scoped lifecycle, blocker, failure, or outcome event.', inputSchema: executionProducerEventSchema
   }, async ({ executionId, eventId, slotId, producerRole, type, severity, summary, detail, blocker, attention, progress, references }) => {
     if (!authorized()) return denied('execution.event');
@@ -469,7 +482,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.event failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.stop', {
+  register('execution.stop', {
     description: 'Request a stop for one project-scoped Squad execution at an expected state version.', inputSchema: executionControlSchema
   }, async ({ executionId, expectedStateVersion }) => {
     if (!authorized()) return denied('execution.stop');
@@ -479,7 +492,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.stop failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.complete', {
+  register('execution.complete', {
     description: 'Coordinator-only durable completion for one Team job, with a final summary.', inputSchema: executionCompleteSchema
   }, async ({ executionId, summary }) => {
     if (!authorized()) return denied('execution.complete');
@@ -495,7 +508,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.complete failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.retry', {
+  register('execution.retry', {
     description: 'Retry a pre-dispatch blocked execution using a fresh Team launch identity.', inputSchema: executionControlSchema
   }, async ({ executionId, expectedStateVersion }) => {
     if (!authorized()) return denied('execution.retry');
@@ -505,7 +518,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.retry failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.respond', {
+  register('execution.respond', {
     description: 'Deliver a response to one authorized execution slot.', inputSchema: executionMessageSchema
   }, async ({ executionId, expectedStateVersion, slotId, message }) => {
     if (!authorized()) return denied('execution.respond');
@@ -515,7 +528,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.respond failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.resume', {
+  register('execution.resume', {
     description: 'Resume a blocked execution by delivering a message to one authorized live slot. Does not relaunch stopped work.', inputSchema: executionMessageSchema
   }, async ({ executionId, expectedStateVersion, slotId, message }) => {
     if (!authorized()) return denied('execution.resume');
@@ -525,7 +538,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.resume failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.artifact.put', {
+  register('execution.artifact.put', {
     description: 'Store one write-once, content-addressed execution artifact.', inputSchema: executionArtifactSchema
   }, async ({ executionId, name, mediaType, content }) => {
     if (!authorized()) return denied('execution.artifact.put');
@@ -541,7 +554,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.artifact.put failed: ${result.message}` }] };
   });
 
-  server.registerTool('execution.artifact.list', {
+  register('execution.artifact.list', {
     description: 'List execution artifacts scoped to this authenticated project and caller.', inputSchema: executionIdSchema
   }, async ({ executionId }) => {
     if (!authorized()) return denied('execution.artifact.list');
@@ -588,7 +601,7 @@ function withoutArtifactContent(value: unknown): unknown {
         return { isError: true as const, content: [{ type: 'text' as const, text: `execution handoff failed: ${error instanceof Error ? error.message : String(error)}` }] };
       }
     };
-    server.registerTool('request_execution_handoff', {
+    register('request_execution_handoff', {
       description: 'Request one short-lived, single-use execution.control capability for a live session in this project.',
       inputSchema: handoffRequestSchema
     }, async ({ targetSessionId, executionId, operations }) => {
@@ -596,14 +609,14 @@ function withoutArtifactContent(value: unknown): unknown {
       return requestHandoff(targetSessionId, executionId, operations[0]);
     });
 
-    server.registerTool('request_execution_resume_monitor_handoff', {
+    register('request_execution_resume_monitor_handoff', {
       description: 'Request one approved resume plus ten-minute read-only monitoring capability for one live session and bound execution.', inputSchema: resumeMonitorRequestSchema
     }, async ({ targetSessionId, executionId }) => {
       if (!authorized()) return denied('request_execution_resume_monitor_handoff');
       return requestHandoff(targetSessionId, executionId, EXECUTION_RESUME_MONITOR_OPERATION);
     });
 
-    server.registerTool('request_execution_monitor_handoff', {
+    register('request_execution_monitor_handoff', {
       description: 'Request fresh human approval for another ten-minute read-only monitor window on one live execution.', inputSchema: monitorRequestSchema
     }, async ({ targetSessionId, executionId }) => {
       if (!authorized()) return denied('request_execution_monitor_handoff');
@@ -622,7 +635,7 @@ function withoutArtifactContent(value: unknown): unknown {
       }
     });
 
-    server.registerTool('execute_execution_handoff', {
+    register('execute_execution_handoff', {
       description: 'Use one handoff capability from its exact target session to stop, respond to, or resume its bound execution.',
       inputSchema: handoffExecuteSchema
     }, async ({ token, executionId, expectedStateVersion, action, slotId, message }) => {
@@ -641,7 +654,7 @@ function withoutArtifactContent(value: unknown): unknown {
       }
     });
 
-    server.registerTool('execute_execution_resume_monitor_handoff', {
+    register('execute_execution_resume_monitor_handoff', {
       description: 'Consume an approved one-time resume handoff, then receive a ten-minute read-only monitor token.', inputSchema: resumeMonitorExecuteSchema
     }, async ({ token, executionId, expectedStateVersion, slotId, message }) => {
       if (!authorized()) return denied('execute_execution_resume_monitor_handoff');
@@ -660,7 +673,7 @@ function withoutArtifactContent(value: unknown): unknown {
     });
 
     const readMonitor = async (token: string, executionId: string) => options.handoffs!.inspect({ token, targetSessionId: options.sessionId!, projectId: options.projectId, executionId, operation: EXECUTION_RESUME_MONITOR_OPERATION });
-    server.registerTool('execution_handoff_status', { description: 'Read status using one valid ten-minute resume-monitor capability.', inputSchema: monitorStatusSchema }, async ({ token, executionId }) => {
+    register('execution_handoff_status', { description: 'Read status using one valid ten-minute resume-monitor capability.', inputSchema: monitorStatusSchema }, async ({ token, executionId }) => {
       if (!authorized()) return denied('execution_handoff_status');
       try {
         const grant = await readMonitor(token, executionId);
@@ -668,7 +681,7 @@ function withoutArtifactContent(value: unknown): unknown {
         return record ? { content: [{ type: 'text' as const, text: JSON.stringify(toMcpSafeExecution(record)) }] } : { isError: true, content: [{ type: 'text' as const, text: 'execution_handoff_status failed: execution not found.' }] };
       } catch { return { isError: true, content: [{ type: 'text' as const, text: 'execution_handoff_status failed: monitor capability is not current.' }] }; }
     });
-    server.registerTool('execution_handoff_events', { description: 'Read events using one valid ten-minute resume-monitor capability.', inputSchema: monitorEventsSchema }, async ({ token, executionId, after, limit }) => {
+    register('execution_handoff_events', { description: 'Read events using one valid ten-minute resume-monitor capability.', inputSchema: monitorEventsSchema }, async ({ token, executionId, after, limit }) => {
       if (!authorized()) return denied('execution_handoff_events');
       try {
         const grant = await readMonitor(token, executionId);

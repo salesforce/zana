@@ -606,9 +606,27 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     let cancelled = false;
     const refresh = () => {
       const targets = projectId ? [projectId] : projects.map((project) => project.id);
-      void Promise.all(targets.map((id) => window.cc.executionBoard.listProject(id))).then((lists) => {
-        if (!cancelled) setExecutions(lists.flatMap((list) => list.executions));
-      });
+      // allSettled: one project's rejection must not blank out every other
+      // project's fresh data for this tick, nor its own previously-fetched
+      // executions (a persistent per-project failure would otherwise silently
+      // freeze `executions` forever). On rejection, fall back to whatever this
+      // project last had in state.
+      void Promise.allSettled(targets.map((id) => window.cc.executionBoard.listProject(id))).then(
+        (results) => {
+          if (cancelled) return;
+          setExecutions((prev) =>
+            results.flatMap((result, i) => {
+              const pid = targets[i];
+              if (result.status === 'fulfilled') return result.value.executions;
+              console.error(
+                `[SquadFlowView] executionBoard.listProject failed for project ${pid}`,
+                result.reason
+              );
+              return prev.filter((execution) => execution.projectId === pid);
+            })
+          );
+        }
+      );
     };
     refresh();
     const timer = window.setInterval(refresh, 5_000);

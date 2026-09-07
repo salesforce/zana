@@ -52,6 +52,24 @@ export type AgentsBoardScope =
   | { kind: 'global' }
   | { kind: 'project'; project: Project };
 
+/**
+ * Merge a freshly-polled first page of executions with the previously known
+ * list: fresh entries go first (so a brand-new execution that landed on the
+ * first page shows up), then any prior entries — including ones brought in
+ * via `loadMoreExecutions` beyond the first page — whose id is NOT present in
+ * the fresh page, so paginated-in history survives a poll refresh instead of
+ * being silently dropped. Exported (pure, no React) so it has direct unit
+ * coverage without a render harness.
+ */
+export function mergeExecutionsPage(
+  prev: readonly ExecutionBoardProjection[],
+  freshFirstPage: readonly ExecutionBoardProjection[]
+): ExecutionBoardProjection[] {
+  const freshIds = new Set(freshFirstPage.map((e) => e.executionId));
+  const survivingOld = prev.filter((e) => !freshIds.has(e.executionId));
+  return [...freshFirstPage, ...survivingOld];
+}
+
 function groupSessionIdsByProject(cards: AgentCard[]): Map<string, string[]> {
   const byProject = new Map<string, string[]>();
   for (const c of cards) {
@@ -124,11 +142,14 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const [selectedExecution, setSelectedExecution] = useState<{ projectId: string; executionId: string } | null>(null);
 
   const loadMoreExecutions = async () => {
-    if (loadingMore || !hasMoreExecutions || executions.length === 0) return;
+    // Can be invoked while the board is in GLOBAL scope (no scoped project) —
+    // pagination is project-scoped only, so no-op rather than risk a crash on
+    // a non-null assertion against an absent project.
+    if (!scopedProject || loadingMore || !hasMoreExecutions || executions.length === 0) return;
     setLoadingMore(true);
     try {
       const oldest = executions[executions.length - 1].createdAt;
-      const next = await window.cc.executionBoard.listProject(scopedProject!.id, oldest);
+      const next = await window.cc.executionBoard.listProject(scopedProject.id, oldest);
       setExecutions((prev) => {
         const existing = new Set(prev.map((e) => e.executionId));
         const added = next.executions.filter((e) => !existing.has(e.executionId));
@@ -142,29 +163,36 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
 
   useEffect(() => {
     let cancelled = false;
-    const refresh = () => {
-      if (scopedProject) {
-        void window.cc.executionBoard.listProject(scopedProject.id).then((next) => {
+    // Single-flight guard: an interval tick that fires while the previous
+    // refresh is still in flight is skipped rather than starting an
+    // overlapping request (which could otherwise apply a stale response after
+    // a newer one, or double up on unhandled rejections).
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        if (scopedProject) {
+          const next = await window.cc.executionBoard.listProject(scopedProject.id);
           if (cancelled) return;
-          setExecutions((prev) => {
-            if (prev.length > next.executions.length) {
-              const nextMap = new Map(next.executions.map((e) => [e.executionId, e]));
-              return prev.map((e) => nextMap.get(e.executionId) ?? e);
-            }
-            return next.executions;
-          });
+          setExecutions((prev) => mergeExecutionsPage(prev, next.executions));
           setHasMoreExecutions(next.hasMore);
-        });
-      } else {
-        void Promise.all(
-          projects.map((project) => window.cc.executionBoard.listProject(project.id))
-        ).then((lists) => {
+        } else {
+          const lists = await Promise.all(
+            projects.map((project) => window.cc.executionBoard.listProject(project.id))
+          );
           if (!cancelled) setExecutions(lists.flatMap((list) => list.executions));
-        });
+        }
+      } catch (error) {
+        console.error('[AgentsBoard] executionBoard.listProject refresh failed', error);
+      } finally {
+        inFlight = false;
       }
     };
-    refresh();
-    const timer = setInterval(refresh, 5_000);
+    void refresh();
+    const timer = setInterval(() => {
+      void refresh();
+    }, 5_000);
     return () => {
       cancelled = true;
       clearInterval(timer);

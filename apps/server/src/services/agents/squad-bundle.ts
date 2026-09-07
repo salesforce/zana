@@ -106,11 +106,18 @@ export function sanitizeWorkflowMetadata(value: unknown): SquadBundleWorkflowMet
   if (!controller || typeof controller !== 'object' || !hasExactKeys(controller, CONTROLLER_KEYS)) return undefined;
   const controllerPersonaId = boundedWorkflowString(controller?.personaId);
   const controllerSlotId = boundedWorkflowString(controller?.slotId);
-  if (!profileId || !profileVersion || !controllerPersonaId || !controllerSlotId
-    || !Array.isArray(metadata.workers) || metadata.workers.length > MAX_WORKFLOW_WORKERS
-    || !Array.isArray(metadata.supportedRequestVersions) || metadata.supportedRequestVersions.length === 0
-    || metadata.supportedRequestVersions.length > 8
-    || metadata.supportedRequestVersions.some((version) => !Number.isInteger(version) || version < 1 || version > 100)) {
+  // Sequential early-return guards (one per malformed field) rather than one compound
+  // boolean — each rejection reason is now distinguishable/loggable in isolation.
+  if (!profileId) return undefined;
+  if (!profileVersion) return undefined;
+  if (!controllerPersonaId) return undefined;
+  if (!controllerSlotId) return undefined;
+  if (!Array.isArray(metadata.workers) || metadata.workers.length > MAX_WORKFLOW_WORKERS) return undefined;
+  if (!Array.isArray(metadata.supportedRequestVersions) || metadata.supportedRequestVersions.length === 0
+    || metadata.supportedRequestVersions.length > 8) {
+    return undefined;
+  }
+  if (metadata.supportedRequestVersions.some((version) => !Number.isInteger(version) || version < 1 || version > 100)) {
     return undefined;
   }
   const workers: SquadBundleWorkflowMetadataV1['workers'] = [];

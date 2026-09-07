@@ -41,7 +41,7 @@ import {
   experimental_defineProviderBridge,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { execFile } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { promises as fs, readFileSync } from "node:fs";
 import {
   createServer as createHttpServer,
@@ -434,6 +434,24 @@ function handleDynamicToolBridgeSocket(
   });
 }
 
+const MAX_PAYLOAD_SIZE_BYTES = 1_000_000;
+
+// The HTTP MCP transport must be as authenticated as the socket path: a thread
+// id in the URL is a routing key, not a secret, so a request that reaches the
+// loopback port with only a thread id could otherwise drive dynamic tools. We
+// require the same per-bridge token the socket path already checks, compared in
+// constant time so a bad token can't be discovered by timing.
+function isAuthorizedMcpHttpRequest(request: IncomingMessage, token: string): boolean {
+  const header = request.headers.authorization;
+  const value = Array.isArray(header) ? header[0] : header;
+  const match = value ? value.match(/^Bearer\s+(.+)$/i) : null;
+  const provided = match?.[1];
+  if (!provided) return false;
+  const providedBuf = Buffer.from(provided);
+  const expectedBuf = Buffer.from(token);
+  return providedBuf.length === expectedBuf.length && timingSafeEqual(providedBuf, expectedBuf);
+}
+
 function writeMcpHttpJson(response: ServerResponse, status: number, body?: unknown): void {
   response.statusCode = status;
   if (body === undefined) {
@@ -448,7 +466,7 @@ async function readMcpHttpBody(request: IncomingMessage): Promise<unknown> {
   let body = "";
   for await (const chunk of request) {
     body += chunk.toString();
-    if (body.length > 1_000_000) throw new Error("MCP request body too large");
+    if (body.length > MAX_PAYLOAD_SIZE_BYTES) throw new Error("MCP request body too large");
   }
   return JSON.parse(body);
 }
@@ -467,9 +485,14 @@ function dynamicToolMcpThreadId(request: IncomingMessage): string | undefined {
 async function handleDynamicToolMcpHttp(
   request: IncomingMessage,
   response: ServerResponse,
+  bridge: AcpDynamicToolBridge,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeMcpHttpJson(response, 405);
+    return;
+  }
+  if (!isAuthorizedMcpHttpRequest(request, bridge.token)) {
+    writeMcpHttpJson(response, 401, { error: "Unauthorized" });
     return;
   }
   const threadId = dynamicToolMcpThreadId(request);
@@ -547,7 +570,9 @@ async function ensureDynamicToolBridge(): Promise<AcpDynamicToolBridge> {
       });
     });
     const httpServer = createHttpServer((request, response) => {
-      void handleDynamicToolMcpHttp(request, response).catch((error) => {
+      void dynamicToolBridgePromise
+        ?.then((bridge) => handleDynamicToolMcpHttp(request, response, bridge))
+        .catch((error) => {
         if (!response.headersSent) {
           writeMcpHttpJson(response, 500, {
             error: error instanceof Error ? error.message : String(error),
@@ -618,6 +643,7 @@ async function buildSessionMcpServers(
   return [
     buildAcpHttpMcpServerConfig(
       `http://${bridge.host}:${bridge.httpPort}/mcp/${encodeURIComponent(params.threadId)}`,
+      bridge.token,
     ),
   ];
 }

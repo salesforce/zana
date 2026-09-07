@@ -23,8 +23,8 @@ var W=globalThis.__ZCC_HOST_REACT__;var js=W.Children,Ks=W.Component,Xs=W.Fragme
   flex: var(--zcc-kanban-col-flex, 1 1 200px);
   width: var(--zcc-kanban-col-width, auto);
   min-height: 0;
-  background: var(--bg-panel, var(--zcc-surface, #10151c));
-  border: 1px solid var(--border, var(--zcc-border, #1f2731));
+  background: var(--bg-panel, var(--zcc-surface, #1e1e1e));
+  border: 1px solid var(--border, var(--zcc-border, #2e2e2e));
   border-radius: 10px;
   overflow: visible;
 }
@@ -48,8 +48,8 @@ var W=globalThis.__ZCC_HOST_REACT__;var js=W.Children,Ks=W.Component,Xs=W.Fragme
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted, var(--zcc-foreground-muted, #8b949e));
-  background: var(--bg-panel, var(--zcc-surface, #10151c));
-  border-bottom: 1px solid var(--border, var(--zcc-border, #1f2731));
+  background: var(--bg-panel, var(--zcc-surface, #1e1e1e));
+  border-bottom: 1px solid var(--border, var(--zcc-border, #2e2e2e));
 }
 
 .zcc-kanban-col.is-collapsed .zcc-kanban-col-header {
@@ -85,7 +85,7 @@ var W=globalThis.__ZCC_HOST_REACT__;var js=W.Children,Ks=W.Component,Xs=W.Fragme
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-dim, var(--zcc-foreground-muted, #8b949e));
-  background: var(--bg-elevated, var(--zcc-surface-raised, #161c25));
+  background: var(--bg-elevated, var(--zcc-surface-raised, #242424));
   border-radius: 9px;
   padding: 0 7px;
   line-height: 16px;
@@ -132,7 +132,7 @@ var W=globalThis.__ZCC_HOST_REACT__;var js=W.Children,Ks=W.Component,Xs=W.Fragme
 }
 
 .zcc-kanban-col-collapse:hover {
-  background: var(--bg-hover, var(--zcc-surface-hover, #1a212c));
+  background: var(--bg-hover, var(--zcc-surface-hover, #2a2a2a));
   color: var(--text-primary, var(--zcc-foreground, #e6edf3));
 }
 
@@ -2919,7 +2919,7 @@ lucide-react/dist/esm/icons/wrench.mjs:
 lucide-react/dist/esm/icons/x.mjs:
 lucide-react/dist/esm/lucide-react.mjs:
   (**
-   * @license lucide-react v1.31.0 - ISC
+   * @license lucide-react v1.35.0 - ISC
    *
    * This source code is licensed under the ISC license.
    * See the LICENSE file in the root directory of this source tree.

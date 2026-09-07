@@ -49,7 +49,7 @@
     "test:e2e:headed": "pnpm run build:legacy && playwright test --headed",
     "test:smoke": "pnpm run build:legacy && playwright test e2e/smoke.spec.ts",
     "test:smoke:only": "playwright test e2e/smoke.spec.ts",
-    "test:e2e:jobteam": "pnpm run build:legacy && pnpm run rebuild:electron && (playwright test e2e/job-team-launch-ui.spec.ts e2e/cli-agent-job-team-run.spec.ts e2e/modern-owner-job-team-run.spec.ts; code=$?; node scripts/ensure-better-sqlite3.mjs; exit $code)",
+    "test:e2e:jobteam": "node scripts/run-jobteam-e2e.mjs",
     "test:e2e:jobteam:only": "playwright test e2e/job-team-launch-ui.spec.ts e2e/cli-agent-job-team-run.spec.ts e2e/modern-owner-job-team-run.spec.ts",
     "test:codex:live": "ZCC_LIVE_CODEX=1 vitest run apps/host-daemon/src/harness/__tests__/codex-provider.live.test.ts",
     "rebuild": "electron-rebuild -f -w node-pty && node scripts/ensure-better-sqlite3.mjs",

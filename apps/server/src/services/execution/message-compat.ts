@@ -14,8 +14,7 @@ export function resolveExecutionMessageArgs(
   if (args.length !== 2) return undefined;
   const [slotId, message] = args;
   const matches = blockers.filter((blocker) => !blocker.resolved && blocker.slotId === slotId);
-  if (matches.length !== 1) return matches.length > 1
-    ? { error: 'execution slot has multiple unresolved blockers; select exact blocker' }
-    : undefined;
+  if (matches.length > 1) return { error: 'execution slot has multiple unresolved blockers; select exact blocker' };
+  if (matches.length === 0) return undefined;
   return { blockerId: matches[0].id, clientRequestId: `${executionId}:${expectedStateVersion}:${matches[0].id}`, message };
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue, hashBytes, readRawFile } from '../harness-routing/storage.js';
 
@@ -92,11 +92,28 @@ export function createDeliveryStore(options: { filePath: string; now?: () => num
       return { state: parsed as StateFile, hash: hashBytes(bytes) };
     } catch (error) { throw new Error(`corrupt delivery store: ${error instanceof Error ? error.message : String(error)}`); }
   }
-  function persist(state: StateFile, expectedHash: string | null): void {
-    state.grants = state.grants.slice(-MAX_RECORDS);
-    state.results = state.results.slice(-MAX_RECORDS);
+  function assertGrantCapacity(state: StateFile, timestamp: number): void {
+    if (state.grants.filter((grant) => grant.expiresAt > timestamp).length >= MAX_RECORDS) {
+      throw new Error('delivery grant capacity exceeded');
+    }
+  }
+
+  function assertResultCapacity(state: StateFile): void {
+    if (state.results.filter((result) => result.state === 'DELIVERY_IN_FLIGHT').length >= MAX_RECORDS) {
+      throw new Error('delivery result capacity exceeded');
+    }
+  }
+
+  async function persist(state: StateFile, expectedHash: string | null): Promise<void> {
+    const timestamp = now();
+    // Prune only expired grants; never drop an unexpired grant. Keep in-flight
+    // results plus any terminal result still tied to a retained grant (dispatch
+    // idempotency). Growth is bounded by the capacity guards at the add sites.
+    state.grants = state.grants.filter((grant) => grant.expiresAt > timestamp);
+    const retainedGrantIds = new Set(state.grants.map((grant) => grant.id));
+    state.results = state.results.filter((result) => result.state === 'DELIVERY_IN_FLIGHT' || retainedGrantIds.has(result.grantId));
     state.revision += 1;
-    mkdirSync(dirname(options.filePath), { recursive: true });
+    await mkdir(dirname(options.filePath), { recursive: true });
     atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
   }
   async function grant(input: Omit<DeliveryGrantV1, 'id'>) {
@@ -109,9 +126,10 @@ export function createDeliveryStore(options: { filePath: string; now?: () => num
         return { outcome: 'replay' as const, grant: clone(existing) };
       }
       if (existing) snapshot.state.grants = snapshot.state.grants.filter((candidate) => candidate.id !== existing.id);
+      assertGrantCapacity(snapshot.state, now());
       const record = { id: string(id(), 'grant id'), ...bounded };
       snapshot.state.grants.push(record);
-      persist(snapshot.state, snapshot.hash);
+      await persist(snapshot.state, snapshot.hash);
       return { outcome: 'granted' as const, grant: clone(record) };
     });
   }
@@ -122,10 +140,11 @@ export function createDeliveryStore(options: { filePath: string; now?: () => num
       if (!grant || grant.descriptorDigest !== string(descriptorDigest, 'descriptor digest') || grant.revocationEpoch !== expectedEpoch || grant.expiresAt <= now()) throw new Error('delivery grant is not current');
       const existing = snapshot.state.results.find((candidate) => candidate.grantId === grant.id);
       if (existing) return clone(existing);
+      assertResultCapacity(snapshot.state);
       const timestamp = now();
       const result = { id: string(id(), 'result id'), grantId: grant.id, executionId: grant.executionId, projectId: grant.projectId, descriptorDigest: grant.descriptorDigest, state: 'DELIVERY_IN_FLIGHT' as const, createdAt: timestamp, updatedAt: timestamp };
       snapshot.state.results.push(result);
-      persist(snapshot.state, snapshot.hash);
+      await persist(snapshot.state, snapshot.hash);
       return clone(result);
     });
   }
@@ -137,7 +156,7 @@ export function createDeliveryStore(options: { filePath: string; now?: () => num
       result.state = 'DELIVERED';
       result.receipt = string(receipt, 'receipt');
       result.updatedAt = now();
-      persist(snapshot.state, snapshot.hash);
+      await persist(snapshot.state, snapshot.hash);
       return clone(result);
     });
   }

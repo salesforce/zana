@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import type { ExecutionBoardProjection } from '@zana-ai/zcc-domain/product';
+import { mergeExecutionsPage } from './AgentsBoard';
 
 const board = readFileSync(new URL('./AgentsBoard.tsx', import.meta.url), 'utf8');
 const view = readFileSync(new URL('./AgentsView.tsx', import.meta.url), 'utf8');
@@ -69,6 +71,67 @@ describe('AgentsBoard', () => {
     expect(board).toContain('schedulesForAgentView');
     expect(board).toContain('revealSchedule(item.task.id)');
     expect(board).toContain('item.kind === \'schedule\'');
+  });
+});
+
+function fakeExecution(id: string, createdAt: number): ExecutionBoardProjection {
+  return {
+    executionId: id,
+    projectId: 'p1',
+    jobTitle: `Job ${id}`,
+    state: 'RUNNING',
+    attempt: 1,
+    createdAt,
+    updatedAt: createdAt
+  };
+}
+
+describe('AgentsBoard poll refresh — mergeExecutionsPage', () => {
+  it('keeps a brand-new first-page execution and prior paginated-in executions', () => {
+    // Simulate: user loaded a second page (older executions e2 beyond the
+    // first page), then a poll refresh's first page comes back containing a
+    // NEW execution (e3) the client never saw before. Both must survive —
+    // the new one because it's fresh, the old one because it was paginated in.
+    const prev = [fakeExecution('e1', 300), fakeExecution('e2', 200)];
+    const freshFirstPage = [fakeExecution('e3', 400), fakeExecution('e1', 300)];
+
+    const merged = mergeExecutionsPage(prev, freshFirstPage);
+
+    expect(merged.map((e) => e.executionId)).toEqual(['e3', 'e1', 'e2']);
+  });
+
+  it('drops nothing and adds nothing when the fresh page matches prior state exactly', () => {
+    const prev = [fakeExecution('e1', 300)];
+    const merged = mergeExecutionsPage(prev, [fakeExecution('e1', 300)]);
+    expect(merged.map((e) => e.executionId)).toEqual(['e1']);
+  });
+
+  it('replaces a stale entry\'s data with the fresh version rather than keeping the old copy', () => {
+    const prev = [{ ...fakeExecution('e1', 300), state: 'RUNNING' as const }];
+    const freshFirstPage = [{ ...fakeExecution('e1', 300), state: 'COMPLETED' as const }];
+    const merged = mergeExecutionsPage(prev, freshFirstPage);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].state).toBe('COMPLETED');
+  });
+
+  it('starts from an empty prior list without throwing', () => {
+    const merged = mergeExecutionsPage([], [fakeExecution('e1', 100)]);
+    expect(merged.map((e) => e.executionId)).toEqual(['e1']);
+  });
+});
+
+describe('AgentsBoard poll refresh — single-flight + guarded pagination', () => {
+  it('guards loadMoreExecutions against a null scoped project instead of asserting', () => {
+    expect(board).not.toContain('scopedProject!.id');
+    expect(board).toContain('if (!scopedProject || loadingMore || !hasMoreExecutions || executions.length === 0) return;');
+  });
+
+  it('skips an overlapping refresh tick and logs a failed refresh instead of throwing unhandled', () => {
+    expect(board).toContain('let inFlight = false;');
+    expect(board).toContain('if (inFlight) return;');
+    expect(board).toContain('inFlight = true;');
+    expect(board).toContain("console.error('[AgentsBoard] executionBoard.listProject refresh failed', error);");
+    expect(board).toContain('inFlight = false;');
   });
 });
 

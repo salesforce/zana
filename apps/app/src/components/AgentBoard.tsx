@@ -354,6 +354,14 @@ export function partitionExecutionMembers(
   }
   for (const execution of executions) {
     if (hostByExecution.has(execution.executionId) || syntheticByExecution.has(execution.executionId)) continue;
+    // No live agent card carries this execution's cohort at all (fully
+    // orphaned — every member exited). ExecutionBoardProjection itself only
+    // carries `projectId` (used above, unhardcoded); it has no projectName or
+    // launch profile field, so there is no live host of this profile to
+    // template from and the execution's own record can't supply either value
+    // directly. Best-effort: borrow projectName/profile from any OTHER live
+    // card in the same project as a stand-in; executionHost() falls back to
+    // the hardcoded 'Project'/'claude' placeholder only when even that misses.
     const template = items.find((item) => item.projectId === execution.projectId);
     const host = executionHost(template, execution);
     syntheticByExecution.set(execution.executionId, host);
@@ -1062,6 +1070,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
                 ? await window.cc.executionBoard.retry(execution.projectId, execution.executionId, execution.stateVersion)
                 : await window.cc.executionBoard.stop(execution.projectId, execution.executionId, execution.stateVersion);
               if (!result.ok) useUi.getState().pushToast(`Job control failed: ${result.message ?? result.code}`, 'error');
+            } catch (err) {
+              console.error(`[AgentBoard] ${execution.executionId} control (retry/stop) failed`, err);
+              useUi.getState().pushToast(`Job control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
             } finally { setControllingExecutionId(null); }
           }}
         >
@@ -1081,6 +1092,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           try {
             const result = await window.cc.executionBoard.relaunchMonitor(execution.projectId, execution.executionId);
             if (!result.ok) useUi.getState().pushToast(`Monitor relaunch failed: ${result.message ?? result.code}`, 'error');
+          } catch (err) {
+            console.error(`[AgentBoard] ${execution.executionId} relaunchMonitor failed`, err);
+            useUi.getState().pushToast(`Monitor relaunch failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
           } finally { setRelaunchingExecutionId(null); }
         }}
       >
@@ -1270,8 +1284,13 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
               const { execution } = executionMenu;
               setExecutionMenu(null);
               if (execution.stateVersion === undefined) return;
-              const result = await window.cc.executionBoard.stop(execution.projectId, execution.executionId, execution.stateVersion);
-              if (!result.ok) useUi.getState().pushToast(`Job control failed: ${result.message ?? result.code}`, 'error');
+              try {
+                const result = await window.cc.executionBoard.stop(execution.projectId, execution.executionId, execution.stateVersion);
+                if (!result.ok) useUi.getState().pushToast(`Job control failed: ${result.message ?? result.code}`, 'error');
+              } catch (err) {
+                console.error(`[AgentBoard] ${execution.executionId} stop (context menu) failed`, err);
+                useUi.getState().pushToast(`Job control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+              }
             }}>Stop job</button>
           )}
           {['COMPLETED', 'FAILED', 'STOPPED'].includes(executionMenu.execution.state) && (
@@ -1282,13 +1301,18 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
                 onClick={async () => {
                   const { execution } = executionMenu;
                   setExecutionMenu(null);
-                  const result = await window.cc.executionBoard.dismiss(execution.projectId, execution.executionId);
-                  if (!result.ok) {
-                    useUi.getState().pushToast(`Job dismissal failed: ${result.message ?? result.code}`, 'error');
-                    return;
+                  try {
+                    const result = await window.cc.executionBoard.dismiss(execution.projectId, execution.executionId);
+                    if (!result.ok) {
+                      useUi.getState().pushToast(`Job dismissal failed: ${result.message ?? result.code}`, 'error');
+                      return;
+                    }
+                    useData.getState().dismissTerminals(result.value.dismissedSessionIds);
+                    onDismissExecution?.(execution.executionId);
+                  } catch (err) {
+                    console.error(`[AgentBoard] ${execution.executionId} dismiss failed`, err);
+                    useUi.getState().pushToast(`Job dismissal failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
                   }
-                  useData.getState().dismissTerminals(result.value.dismissedSessionIds);
-                  onDismissExecution?.(execution.executionId);
                 }}
               >
                 Dismiss

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Bot, Crown, PanelRight, Plus, Sparkles, Users } from 'lucide-react';
 import type { AgentState, ExecutionBoardProjection, IdleTriageResult, TerminalSession } from '@zana-ai/zcc-domain/product';
@@ -88,6 +88,33 @@ export function sideListNeedsYou(
 
 export function openFullAgentsList(setView: (view: 'list') => void): void {
   setView('list');
+}
+
+/**
+ * Apply one poll tick's `Promise.allSettled` results over the execution-board
+ * `listProject` calls: a fulfilled project's executions REPLACE its entry in
+ * `priorByProject` (mutated in place — the caller's ref); a rejected
+ * project's prior entry is left untouched (retained) and reported via
+ * `onError`, so one failing project never blanks its own last-known state OR
+ * discards sibling projects' fresh results for this tick. Pure aside from the
+ * map mutation + error callback — exported for direct unit coverage since
+ * this app's test setup has no DOM/render harness to exercise the effect.
+ */
+export function applyExecutionRefreshResults(
+  ids: readonly string[],
+  results: readonly PromiseSettledResult<{ executions: ExecutionBoardProjection[] }>[],
+  priorByProject: Map<string, ExecutionBoardProjection[]>,
+  onError: (projectId: string, error: unknown) => void
+): ExecutionBoardProjection[] {
+  results.forEach((result, i) => {
+    const id = ids[i];
+    if (result.status === 'fulfilled') {
+      priorByProject.set(id, result.value.executions);
+    } else {
+      onError(id, result.reason);
+    }
+  });
+  return ids.flatMap((id) => priorByProject.get(id) ?? []);
 }
 
 /**
@@ -246,6 +273,10 @@ export function AgentsListPane() {
   // Durable Job Team executions surfaced on this list (mirrors AgentsBoard's
   // own polling), so a Job-backed cohort collapses into one host row here too.
   const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+  // Per-project last-known executions, so a rejected `listProject` call for one
+  // project (this tick) retains that project's prior data instead of blanking
+  // it, while sibling projects' fresh results still apply.
+  const executionsByProjectRef = useRef<Map<string, ExecutionBoardProjection[]>>(new Map());
   const [selectedExecution, setSelectedExecution] = useState<{ projectId: string; executionId: string } | null>(null);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const location = useLocation();
@@ -272,8 +303,18 @@ export function AgentsListPane() {
     let cancelled = false;
     const refresh = () => {
       const ids = scopedProjectId ? [scopedProjectId] : projects.map((project) => project.id);
-      void Promise.all(ids.map((id) => window.cc.executionBoard.listProject(id))).then((lists) => {
-        if (!cancelled) setExecutions(lists.flatMap((list) => list.executions));
+      void Promise.allSettled(ids.map((id) => window.cc.executionBoard.listProject(id))).then((results) => {
+        if (cancelled) return;
+        // A per-project rejection must not wipe out sibling projects' results
+        // for this tick, nor blank a failed project's prior state — retain
+        // whatever we last had for it and log the failure with context.
+        const merged = applyExecutionRefreshResults(ids, results, executionsByProjectRef.current, (id, error) => {
+          console.error(
+            `[AgentsListPane] executionBoard.listProject failed for project ${id}; retaining prior state`,
+            error
+          );
+        });
+        setExecutions(merged);
       });
     };
 

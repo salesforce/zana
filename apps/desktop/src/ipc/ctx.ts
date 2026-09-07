@@ -1,3 +1,17 @@
+import type { BrowserWindow } from 'electron';
+
+type SafeHandle = <TArgs extends unknown[], TResult>(
+  channel: string,
+  handler: (...args: TArgs) => TResult | Promise<TResult>,
+  onError: (err: unknown, ...args: TArgs) => TResult
+) => void;
+
+type SafeHandleFromWindow = <TArgs extends unknown[], TResult>(
+  channel: string,
+  handler: (win: BrowserWindow, ...args: TArgs) => TResult | Promise<TResult>,
+  onError: (err: unknown, ...args: TArgs) => TResult
+) => void;
+
 /** Compatibility IPC host bindings. Bound once by apps/desktop/src/host.ts before family registration. */
 export interface IpcCtx {
   E2E_TAP_ENABLED: any;
@@ -83,8 +97,8 @@ export interface IpcCtx {
   restorePrincipal: any;
   runDiskSync: any;
   runtimeSupervisor: any;
-  safeHandle: any;
-  safeHandleFromWindow: any;
+  safeHandle: SafeHandle;
+  safeHandleFromWindow: SafeHandleFromWindow;
   safeSend: any;
   sanitizeRendererTerminalRequest: any;
   savedStore: any;

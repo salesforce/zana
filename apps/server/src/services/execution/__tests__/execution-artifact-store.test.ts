@@ -40,4 +40,16 @@ describe('execution artifact store', () => {
     expect(await store.list('execution-1', 'project-1')).toHaveLength(2);
     expect(await store.list('execution-2', 'project-1')).toHaveLength(1);
   }));
+
+  it('accepts a valid producerRole and rejects an unknown one before it is persisted', async () => fixture(async (filePath) => {
+    const store = createExecutionArtifactStore({ filePath });
+    await expect(store.put({ ...artifact, name: 'worker.json', producerRole: 'worker' })).resolves.toMatchObject({ outcome: 'stored', record: { producerRole: 'worker' } });
+    await expect(store.put({ ...artifact, name: 'bad.json', producerRole: 'boss' as unknown as 'worker' })).rejects.toThrow('invalid execution artifact producer role');
+  }));
+
+  it('rejects blank content and invalid per-execution record caps', async () => fixture(async (filePath) => {
+    expect(() => createExecutionArtifactStore({ filePath, maxRecordsPerExecution: 0 })).toThrow('invalid execution artifact max records per execution');
+    const store = createExecutionArtifactStore({ filePath });
+    await expect(store.put({ ...artifact, content: '   ' })).rejects.toThrow('invalid execution artifact content');
+  }));
 });

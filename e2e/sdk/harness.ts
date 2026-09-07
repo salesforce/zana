@@ -412,7 +412,12 @@ async function handleNavigationLabel() {
     log('answer', text);
     return text;
   }
-  return 'About';
+  throw new Error(
+    'handleNavigationLabel: exhausted 60 delivery-nudge attempts (15s wait each) without a valid ' +
+      'delivery for blockerId=' + blockerId + ' on executionId=' + EXECUTION_ID +
+      ' (question="Which label should result.txt use?"). No real answer was ever delivered — this ' +
+      'indicates the delivery/nudge path regressed; failing loudly instead of returning a fallback label.'
+  );
 }
 
 // Execute ONE engine-assigned unit (the engine already CLAIMed it to this
@@ -449,7 +454,13 @@ async function doUnit(unitId) {
       return;
     }
     log('completed', unitId);
-  } catch (e) { log('unit error', unitId, String((e && e.message) || e)); }
+  } catch (e) {
+    log('unit error', unitId, String((e && e.message) || e));
+    // Do not swallow: a failed unit (e.g. handleNavigationLabel's exhausted-
+    // attempts throw) must fail the process loudly, not silently stall with
+    // the unit never completed and the run limping toward a timeout.
+    throw e;
+  }
 }
 
 function setWorking() { try { process.stdout.write(ESC + ']2;' + '✻ working' + BEL); } catch (e) { /* best-effort */ } }

@@ -140,12 +140,24 @@ export function registerLaunchTeamTool(
 ): void {
   const { sessionId, projectId, launchTeam, authorizeTeamLaunch, cancelTeamLaunch, getTeamLaunch, reportTeamTask, validateRouteIdentity } = opts;
 
+  // validateRouteIdentity may hit an async probe (HTTP /live fallback). A
+  // rejecting probe must DENY, not throw out of the tool handler — treat any
+  // rejection as "not live", the same closed-fail posture as an explicit false.
+  const routeIdentityDenied = async (): Promise<boolean> => {
+    if (!validateRouteIdentity || !sessionId) return false;
+    try {
+      return (await validateRouteIdentity(sessionId, projectId)) === false;
+    } catch {
+      return true;
+    }
+  };
+
   if (authorizeTeamLaunch) server.registerTool(
     'authorize_team_launch',
     { description: 'Authorize exact per-slot Team launch tasks. Returns host slot ids and one-time authorization ids.', inputSchema: authorizeTeamLaunchInputSchema },
     async ({ teamId, projectId: target, launchRequestId, deadlineMs, maxConcurrent, maxLaunches, slots }) => {
       if (!sessionId) return { isError: true, content: [{ type: 'text' as const, text: 'authorize_team_launch failed: no originating session.' }] };
-      if ((await validateRouteIdentity?.(sessionId, projectId)) === false) {
+      if (await routeIdentityDenied()) {
         return { isError: true, content: [{ type: 'text' as const, text: 'authorize_team_launch failed: originating session is not live in this project.' }] };
       }
       if (typeof target === 'string' && target && target !== projectId) {
@@ -180,7 +192,7 @@ export function registerLaunchTeamTool(
           ]
         };
       }
-      if ((await validateRouteIdentity?.(sessionId, projectId)) === false) {
+      if (await routeIdentityDenied()) {
         return { isError: true, content: [{ type: 'text' as const, text: 'launch_team failed: originating session is not live in this project.' }] };
       }
       if (typeof target === 'string' && target && target !== projectId) {
@@ -227,7 +239,7 @@ export function registerLaunchTeamTool(
       inputSchema: cancelTeamLaunchInputSchema
     },
     async ({ launchRequestId }) => {
-      if (!sessionId || (await validateRouteIdentity?.(sessionId, projectId)) === false) {
+      if (!sessionId || (await routeIdentityDenied())) {
         return { isError: true, content: [{ type: 'text' as const, text: 'cancel_team_launch failed: originating session is not live in this project.' }] };
       }
       const result = await cancelTeamLaunch(sessionId, launchRequestId);
@@ -243,7 +255,7 @@ export function registerLaunchTeamTool(
     'get_team_launch',
     { description: 'Read caller-scoped durable Team launch and worker lifecycle state.', inputSchema: getTeamLaunchInputSchema },
     async ({ launchRequestId }) => {
-      if (!sessionId || (await validateRouteIdentity?.(sessionId, projectId)) === false) {
+      if (!sessionId || (await routeIdentityDenied())) {
         return { isError: true, content: [{ type: 'text' as const, text: 'get_team_launch failed: originating session is not live in this project.' }] };
       }
       const result = await getTeamLaunch(sessionId, launchRequestId);
@@ -257,7 +269,7 @@ export function registerLaunchTeamTool(
     'report_team_task',
     { description: 'Report caller-scoped Team slot task completion or failure.', inputSchema: reportTeamTaskInputSchema },
     async ({ launchRequestId, slotId, outcome }) => {
-      if (!sessionId || (await validateRouteIdentity?.(sessionId, projectId)) === false) {
+      if (!sessionId || (await routeIdentityDenied())) {
         return { isError: true, content: [{ type: 'text' as const, text: 'report_team_task failed: originating session is not live in this project.' }] };
       }
       const result = await reportTeamTask(sessionId, launchRequestId, slotId, outcome);

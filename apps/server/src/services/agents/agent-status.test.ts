@@ -174,6 +174,41 @@ describe('AgentStatusTracker (debounced emits)', () => {
     expect(titles).toEqual(['Same task', 'New task']);
   });
 
+  it('classifies via the 2-arg (sessionId, chunk) signature', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.observeData('s1', '\x1b]2;⠹ Working…\x07');
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['working']);
+    expect(tracker.get('s1')).toBe('working');
+  });
+
+  it('classifies via the legacy 3-arg (sessionId, profile, chunk) signature, ignoring the profile string', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    // A profile string in position 2 must NOT itself be classified — only the
+    // real chunk (position 3) drives the OSC state transition.
+    tracker.observeData('s1', 'claude-code', '\x1b]2;⠹ Working…\x07');
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['working']);
+    expect(tracker.get('s1')).toBe('working');
+  });
+
+  it('reports the same idle-title event regardless of 2-arg vs 3-arg call shape', () => {
+    const tracker = new AgentStatusTracker();
+    const titles: Array<[string, string]> = [];
+    tracker.on('title', (id, title) => titles.push([id, title]));
+
+    tracker.observeData('s1', 'shell', '\x1b]2;✳ Fix the login bug\x07');
+    expect(titles).toEqual([['s1', 'Fix the login bug']]);
+  });
+
   it('ignores data chunks with no agent signal', () => {
     const tracker = new AgentStatusTracker();
     const seen: string[] = [];

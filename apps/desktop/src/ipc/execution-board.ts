@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { dialog, type BrowserWindow } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
@@ -13,8 +12,18 @@ import type {
   TeamJobLaunchInput,
   TeamJobLaunchResult,
   ExecutionBoardProjection,
-  ExecutionBoardSnapshot
+  ExecutionBoardSnapshot,
+  TerminalSession,
+  Team,
+  Persona
 } from '@zana-ai/zcc-domain/product';
+
+/** Default page size for {@link IPC.executionBoard.listProject} when the caller omits one. */
+const DEFAULT_EXECUTION_PAGE_LIMIT = 50;
+/** Cap on a single {@link IPC.executionBoard.relaunchMonitor} source read (bytes). */
+const RELAUNCH_MONITOR_SOURCE_READ_MAX_BYTES = 64 * 1024;
+/** Exponential backoff base (ms) between resume-binding retries during monitor relaunch. */
+const RELAUNCH_MONITOR_BIND_RETRY_BASE_MS = 100;
 
 export function registerExecutionBoardIpc(): void {
   const { safeHandle, safeHandleFromWindow, ptys, teams, personas, windows,
@@ -27,7 +36,7 @@ export function registerExecutionBoardIpc(): void {
   };
 
   const executionProjection = (record: ExecutionRecord): ExecutionBoardProjection => {
-    const live = ptys.list(record.projectId).find((session) => session.cohort?.executionId === record.id
+    const live = (ptys.list(record.projectId) as TerminalSession[]).find((session) => session.cohort?.executionId === record.id
       && session.cohort.role === 'orchestrator' && session.status !== 'exited');
     return executionBoardProjection(record, live?.id);
   };
@@ -46,7 +55,7 @@ export function registerExecutionBoardIpc(): void {
 
   safeHandleFromWindow<[string, number | undefined, number | undefined], { executions: ExecutionBoardProjection[]; hasMore: boolean }>(
     IPC.executionBoard.listProject,
-    async (win, projectId, before, limit = 50) => {
+    async (win, projectId, before, limit = DEFAULT_EXECUTION_PAGE_LIMIT) => {
       if (typeof projectId !== 'string' || !projectId.trim()) return { executions: [], hasMore: false };
       if (!isExecutionProjectAllowed(win, projectId)) return { executions: [], hasMore: false };
       const project = store.listProjects().find((candidate) => candidate.id === projectId);
@@ -55,7 +64,7 @@ export function registerExecutionBoardIpc(): void {
       const executions = projectExecutionProjection(page.records, ptys.list(project.id)).map((execution) => ({
         ...execution,
         hasResumeToken: executionResumeTokens.status(project.id, execution.executionId).state === 'available',
-        teamName: teams.list().find((team) => team.id === execution.teamId)?.name ?? execution.teamId
+        teamName: (teams.list() as Team[]).find((team) => team.id === execution.teamId)?.name ?? execution.teamId
       }));
       return { executions, hasMore: page.hasMore };
     },
@@ -76,11 +85,11 @@ export function registerExecutionBoardIpc(): void {
       const execution = executionProjection(snapshot.execution);
       return {
         execution,
-        events: snapshot.events.map(({ id, sequence, severity, summary, createdAt, detail, blocker, progress, slotId, producerRole, eventType, references }) =>
+        events: (snapshot.events as ExecutionBoardSnapshot['events']).map(({ id, sequence, severity, summary, createdAt, detail, blocker, progress, slotId, producerRole, eventType, references }) =>
           ({ id, sequence, severity, summary, createdAt, ...(detail ? { detail } : {}), ...(blocker ? { blocker } : {}), ...(progress ? { progress } : {}), ...(slotId ? { slotId } : {}), ...(producerRole ? { producerRole } : {}), ...(eventType ? { eventType } : {}), ...(references ? { references } : {}) })),
         nextAfter: snapshot.nextAfter,
         truncated: snapshot.truncated,
-        artifacts: snapshot.artifacts.map(({ id, name, mediaType, contentDigest, attempt, createdAt, producerRole, producerSlotId }) =>
+        artifacts: (snapshot.artifacts as ExecutionBoardSnapshot['artifacts']).map(({ id, name, mediaType, contentDigest, attempt, createdAt, producerRole, producerSlotId }) =>
           ({ id, name, mediaType, contentDigest, attempt, createdAt, ...(producerRole ? { producerRole } : {}), ...(producerSlotId ? { producerSlotId } : {}) })),
         artifactsTruncated: snapshot.artifactsTruncated
       };
@@ -146,13 +155,31 @@ export function registerExecutionBoardIpc(): void {
       ? { ok: true, value: executionProjection(result.value) }
       : { ok: false, code: result.code, message: result.message };
   };
-  const executionMessageHandler = (action: 'respond' | 'resume') => async (win: BrowserWindow, projectId: string, executionId: string, expectedStateVersion: number, ...args: string[]) => {
+  // `expectedStateVersion === -1` is a deliberate "use the execution's current
+  // stateVersion" sentinel — the Inbox reply flow (apps/app/src/lib/inboxBlockerRespond.ts)
+  // doesn't track an execution's live stateVersion, so it can't supply a real one.
+  // Silently honoring -1 for EVERY caller would let any renderer code bypass
+  // optimistic concurrency by just passing -1, so the sentinel is only ever
+  // honored when the caller passes an explicit trailing `allowLatestVersion: true`.
+  // The trailing flag is optional and (unlike blockerId/clientRequestId/message)
+  // never a string, so it can be popped off the compat-shaped variadic tail
+  // without disturbing the existing 2-arg (slotId, message) / 3-arg
+  // (blockerId, clientRequestId, message) shapes resolveExecutionMessageArgs parses.
+  const executionMessageHandler = (action: 'respond' | 'resume') => async (win: BrowserWindow, projectId: string, executionId: string, expectedStateVersion: number, ...rawArgs: Array<string | boolean>) => {
     if (!isExecutionProjectAllowed(win, projectId)) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found' };
-    const record = await executionStore.getInProject(projectId, executionId);
+    const record = await executionStore.getInProject(projectId, executionId) as ExecutionRecord | undefined;
     if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found' };
+
+    const allowLatestVersion = rawArgs.length > 0 && typeof rawArgs[rawArgs.length - 1] === 'boolean'
+      ? (rawArgs.pop() as boolean)
+      : false;
+    const args = rawArgs as string[];
 
     let effectiveStateVersion = expectedStateVersion;
     if (expectedStateVersion === -1) {
+      if (!allowLatestVersion) {
+        return { ok: false as const, code: 'INVALID', message: 'expectedStateVersion -1 requires allowLatestVersion' };
+      }
       effectiveStateVersion = record.stateVersion;
     }
 
@@ -166,11 +193,11 @@ export function registerExecutionBoardIpc(): void {
 
     return executionMessageControl(action, projectId, executionId, effectiveStateVersion, resolved.blockerId, resolved.clientRequestId, resolved.message);
   };
-  safeHandleFromWindow<[string, string, number, ...string[]], Result<ExecutionBoardProjection>>(IPC.executionBoard.respond,
+  safeHandleFromWindow<[string, string, number, ...Array<string | boolean>], Result<ExecutionBoardProjection>>(IPC.executionBoard.respond,
     executionMessageHandler('respond'),
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
   );
-  safeHandleFromWindow<[string, string, number, ...string[]], Result<ExecutionBoardProjection>>(IPC.executionBoard.resume,
+  safeHandleFromWindow<[string, string, number, ...Array<string | boolean>], Result<ExecutionBoardProjection>>(IPC.executionBoard.resume,
     executionMessageHandler('resume'),
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
   );
@@ -284,7 +311,7 @@ export function registerExecutionBoardIpc(): void {
             ? { ok: true as const, value: { token: rotated.value.token, generation: rotated.value.generation } }
             : rotated;
         },
-        readSource: (contentRef, sourceId, offset) => executionSources.read(contentRef, sourceId, { offset, maxBytes: 64 * 1024 }),
+        readSource: (contentRef, sourceId, offset) => executionSources.read(contentRef, sourceId, { offset, maxBytes: RELAUNCH_MONITOR_SOURCE_READ_MAX_BYTES }),
         getWorkerRoster: async (record) => {
           const result = await getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
           const lifecycle = (result.ok ? result.value : undefined) as {
@@ -295,13 +322,13 @@ export function registerExecutionBoardIpc(): void {
             ...(worker.title ? { label: worker.title } : {}), ...(worker.process ? { status: worker.process } : {})
           }));
         },
-        findOrchestratorPersona: () => personas.list().find((candidate) => candidate.id === 'builtin:orchestrator'),
+        findOrchestratorPersona: () => (personas.list() as Persona[]).find((candidate) => candidate.id === 'builtin:orchestrator'),
         createMonitor: createTerminalConfined,
         bindMonitor: (sessionId, id, execution, token) => squadExecutionService.resumeBinding(sessionId, id, execution, token),
         closeMonitor: (sessionId) => ptys.close(sessionId),
         clearToken: (id, execution) => executionResumeTokens.clear(id, execution),
         revokeBinding: (sessionId, id, execution) => squadExecutionService.abandonResumeBinding(id, execution, sessionId),
-        waitBeforeBindRetry: (attempt) => new Promise((resolve) => setTimeout(resolve, 100 * 2 ** (attempt - 1)))
+        waitBeforeBindRetry: (attempt) => new Promise((resolve) => setTimeout(resolve, RELAUNCH_MONITOR_BIND_RETRY_BASE_MS * 2 ** (attempt - 1)))
       }, projectId, executionId);
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'monitor relaunch unavailable' })

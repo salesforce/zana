@@ -82,4 +82,67 @@ describe('ExecutionDeliveryDrainService', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(reply).not.toHaveBeenCalled();
   });
+
+  it('serializes concurrent triggers into a single announce', async () => {
+    queue.worker = [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }];
+    restful.worker = true;
+    // A burst of overlapping edges must coalesce: without serialization these
+    // would each run pending()->reply() and double-nudge the same worker.
+    service.observe('worker', 'idle');
+    service.forceCheck('worker');
+    service.forceCheck('worker');
+    await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reply).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs and schedules a bounded retry when the pending lookup fails', async () => {
+    const timers: Array<() => void> = [];
+    const logError = vi.fn();
+    const localReply = vi.fn((): boolean => true);
+    let failNext = true;
+    const deps: ExecutionDeliveryDrainDeps = {
+      pending: async () => {
+        if (failNext) { failNext = false; throw new Error('store unavailable'); }
+        return [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }];
+      },
+      isRestful: () => true,
+      reply: localReply as ExecutionDeliveryDrainDeps['reply'],
+      logError,
+      setTimer: (fn) => { timers.push(fn); return timers.length; },
+      clearTimer: () => {}
+    };
+    const svc = new ExecutionDeliveryDrainService(deps);
+    svc.observe('worker', 'idle');
+    await vi.waitFor(() => expect(logError).toHaveBeenCalledTimes(1));
+    expect(logError.mock.calls[0][0]).toContain('worker');
+    expect(localReply).not.toHaveBeenCalled();
+    expect(timers).toHaveLength(1);
+    // Fire the scheduled retry; the lookup now succeeds and the nudge lands.
+    timers[0]();
+    await vi.waitFor(() => expect(localReply).toHaveBeenCalledTimes(1));
+  });
+
+  it('stops retrying after MAX_PENDING_RETRIES consecutive failures', async () => {
+    const timers: Array<() => void> = [];
+    const deps: ExecutionDeliveryDrainDeps = {
+      pending: async () => { throw new Error('store unavailable'); },
+      isRestful: () => true,
+      reply: (() => true) as ExecutionDeliveryDrainDeps['reply'],
+      logError: () => {},
+      setTimer: (fn) => { timers.push(fn); return timers.length; },
+      clearTimer: () => {}
+    };
+    const svc = new ExecutionDeliveryDrainService(deps);
+    svc.observe('worker', 'idle');
+    await vi.waitFor(() => expect(timers).toHaveLength(1));
+    timers[0]();
+    await vi.waitFor(() => expect(timers).toHaveLength(2));
+    timers[1]();
+    await vi.waitFor(() => expect(timers).toHaveLength(3));
+    timers[2]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Retry budget exhausted (3) — no fourth timer is scheduled.
+    expect(timers).toHaveLength(3);
+  });
 });

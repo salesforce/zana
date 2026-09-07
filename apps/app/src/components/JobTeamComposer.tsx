@@ -54,6 +54,7 @@ export function JobTeamComposer({
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
   const [jobSources, setJobSources] = useState<ExecutionSourceCapabilityView[]>([]);
+  const [pickingSources, setPickingSources] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -115,22 +116,40 @@ export function JobTeamComposer({
     };
   }, [loadProjects, pinnedProject, projectId, projects, selectedTeam?.defaultProjectId]);
 
+  // A previous project's picked source capabilities are meaningless (and
+  // unsafe to submit) once the effective project changes — clear them so a
+  // stale capability id from project A never rides along with a job launched
+  // against project B.
+  useEffect(() => {
+    setJobSources([]);
+  }, [project?.id]);
+
   const goalReady = field.text.trim().length > 0 || field.images.length > 0;
   const canLaunch = Boolean(teamId && project && goalReady && !launching);
 
   const pickSources = async () => {
     if (!project) return;
-    const result = await product.executionSources.pick(project.id);
-    if (!result.ok) {
-      const message = result.message ?? result.code;
+    setPickingSources(true);
+    try {
+      const result = await product.executionSources.pick(project.id);
+      if (!result.ok) {
+        const message = result.message ?? result.code;
+        setError(message);
+        pushToast(message, 'error');
+        return;
+      }
+      setJobSources((current) => {
+        const ids = new Set(current.map(({ id }) => id));
+        return [...current, ...result.value.filter(({ id }) => !ids.has(id))];
+      });
+    } catch (err) {
+      const message = `Failed to attach sources: ${err instanceof Error ? err.message : String(err)}`;
+      console.error('[JobTeamComposer] pickSources failed', err);
       setError(message);
       pushToast(message, 'error');
-      return;
+    } finally {
+      setPickingSources(false);
     }
-    setJobSources((current) => {
-      const ids = new Set(current.map(({ id }) => id));
-      return [...current, ...result.value.filter(({ id }) => !ids.has(id))];
-    });
   };
 
   const launch = async () => {
@@ -142,16 +161,30 @@ export function JobTeamComposer({
       const serialized = field.serialize();
       let promptText = serialized.text;
       if (project.remote) {
+        // Upload concurrently — the awaits are independent per file. Each
+        // file still reports its own success/failure via its own toast
+        // (order preserved), but we preserve the original semantics of
+        // aborting the launch if any upload failed, since a partially
+        // uploaded mention set is not safe to submit as a job goal.
+        const remoteHost = project.remote.host;
+        const uploads = await Promise.all(
+          absolutePathMentions(serialized.mentions).map(async (localPath) => ({
+            localPath,
+            result: await product.fs.uploadToRemote(project.id, localPath, '.')
+          }))
+        );
         const uploaded: Array<{ from: string; to: string }> = [];
-        for (const localPath of absolutePathMentions(serialized.mentions)) {
-          const result = await product.fs.uploadToRemote(project.id, localPath, '.');
+        let uploadFailed = false;
+        for (const { localPath, result } of uploads) {
           if (!result.ok || !result.path) {
             pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
-            return;
+            uploadFailed = true;
+            continue;
           }
           uploaded.push({ from: localPath, to: posixQuote(result.path) });
-          pushToast(`Uploaded ${attachmentName(localPath)} to ${project.remote.host}`);
+          pushToast(`Uploaded ${attachmentName(localPath)} to ${remoteHost}`);
         }
+        if (uploadFailed) return;
         promptText = rewritePromptPaths(promptText, uploaded);
       }
       const imagePaths = field.images.length === 0
@@ -272,7 +305,7 @@ export function JobTeamComposer({
                 </ComposerIconButton>
                 <ComposerIconButton
                   onClick={() => void pickSources()}
-                  disabled={!project}
+                  disabled={!project || pickingSources}
                   title="Attach source files for the team to work from"
                   aria-label="Attach sources"
                 >

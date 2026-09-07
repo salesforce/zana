@@ -55,6 +55,9 @@ resources/scheduled-supervisor
 .zcc/
 
 
+# TypeScript incremental build cache (per-package, machine-local)
+*.tsbuildinfo
+
 # menubar-popover dev preview screenshots
 .mbp-live.png
 

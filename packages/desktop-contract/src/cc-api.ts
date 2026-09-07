@@ -193,8 +193,16 @@ export interface CcApi {
     retryWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId?: string): Promise<Result<ExecutionBoardProjection>>;
     releaseWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string): Promise<Result<ExecutionBoardProjection>>;
     reassignWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId: string): Promise<Result<ExecutionBoardProjection>>;
-    respond(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string): Promise<Result<ExecutionBoardProjection>>;
-    resume(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string): Promise<Result<ExecutionBoardProjection>>;
+    /**
+     * `expectedStateVersion === -1` means "use the execution's current
+     * stateVersion" — main only honors that sentinel when `allowLatestVersion`
+     * is explicitly `true` (otherwise -1 is rejected as invalid), so a caller
+     * can't silently skip optimistic-concurrency by passing -1. Only the Inbox
+     * reply flow — which doesn't track a live stateVersion — should pass `true`;
+     * every other caller should supply a real stateVersion and omit this.
+     */
+    respond(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string, allowLatestVersion?: boolean): Promise<Result<ExecutionBoardProjection>>;
+    resume(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string, allowLatestVersion?: boolean): Promise<Result<ExecutionBoardProjection>>;
     retryDelivery(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, deliveryId: string): Promise<Result<ExecutionBoardProjection>>;
     clearResumeToken(projectId: string, executionId: string): Promise<Result<true>>;
     relaunchMonitor(projectId: string, executionId: string): Promise<Result<{ sessionId: string }>>;

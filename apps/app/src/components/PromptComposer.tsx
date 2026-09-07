@@ -293,7 +293,7 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
       {homeVariant ? (
         <div className="ui-command-composer-toolbar prompt-composer-home-toolbar">
           <ComposerIconButton
-            onClick={() => { void (onPickAttachments ? onPickAttachments() : product.fs.pickFiles().then(onAddAttachments)); }}
+            onClick={() => { void Promise.resolve(onPickAttachments ? onPickAttachments() : product.fs.pickFiles().then(onAddAttachments)).catch((err: unknown) => console.error('[PromptComposer] attachment pick failed', err)); }}
             title="Attach files"
             aria-label="Attach files"
           >
@@ -318,7 +318,7 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
         <div className="prompt-composer-actions">
           <div className="prompt-composer-input-actions">
             <ComposerIconButton
-              onClick={() => { void (onPickAttachments ? onPickAttachments() : product.fs.pickFiles().then(onAddAttachments)); }}
+              onClick={() => { void Promise.resolve(onPickAttachments ? onPickAttachments() : product.fs.pickFiles().then(onAddAttachments)).catch((err: unknown) => console.error('[PromptComposer] attachment pick failed', err)); }}
               title="Attach files"
               aria-label="Attach files"
             >

@@ -346,8 +346,18 @@ export class AgentStatusTracker extends EventEmitter {
    * Feed a raw PTY data chunk through the OSC-title detector. Called from the
    * pty `data` event. Cheap: a regex over the chunk, only acts when the chunk
    * actually sets a title with an agent signal.
+   *
+   * Two call shapes are accepted for compatibility: the current
+   * `(sessionId, chunk)` and the legacy `(sessionId, profile, chunk)` (some
+   * callers/integrations still pass a launch-profile string as the 2nd arg).
+   * Either way the PTY chunk is always the LAST string argument — the profile,
+   * when present, is accepted but ignored; classification only ever runs on
+   * the actual chunk, never the profile string.
    */
-  observeData(sessionId: string, chunk: string): void {
+  observeData(sessionId: string, chunk: string): void;
+  observeData(sessionId: string, profile: string, chunk: string): void;
+  observeData(sessionId: string, second: string, third?: string): void {
+    const chunk = third ?? second;
     const title = extractLastOscTitle(chunk);
     if (title === null) return;
     const state = classifyOscTitle(title);

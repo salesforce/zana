@@ -7,7 +7,13 @@ import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './pol
 import { isResumeGrantTerminal, type createResumeGrantStore } from './resume-grant-store.js';
 import type { createExecutionSourceRegistry } from './source-registry.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
+import type { InboxInput } from '../inbox/inbox-store.js';
 import { ExecutionDeadlineWatchdog } from './deadline-watchdog.js';
+
+/** Wall-clock ceiling for a single bounded snapshot read. */
+const SNAPSHOT_TIMEOUT_MS = 15_000;
+/** Hard cap on event pages walked per snapshot (Rule 5: bound unbounded reads). */
+const MAX_SNAPSHOT_EVENT_PAGES = 1_000;
 
 export interface ExecutionCohortBinding extends ExecutionCohortAuthority {
   executionId: string;
@@ -74,7 +80,7 @@ export interface ExecutionServiceDeps {
    */
   deliverToWorker?: (sessionId: string, text: string) => boolean;
   triggerDeliveryDrain?: (sessionId: string) => void;
-  inbox?: { append: (input: any) => Promise<any> };
+  inbox?: { append: (input: InboxInput) => Promise<unknown> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
   resumeGrants?: ReturnType<typeof createResumeGrantStore>;
   hasLivePredecessor?: (projectId: string, ownerPrincipalIds: readonly string[]) => boolean;
@@ -374,7 +380,7 @@ export class ExecutionService {
    */
   async snapshot(callerPrincipalId: string, projectId: string, executionId: string, after = 0) {
     const now = this.deps.monotonicNow ?? (() => performance.now());
-    const deadline = now() + 15_000;
+    const deadline = now() + SNAPSHOT_TIMEOUT_MS;
     const checkDeadline = () => {
       if (now() >= deadline) throw new ExecutionSnapshotTimeoutError();
     };
@@ -389,7 +395,7 @@ export class ExecutionService {
 
   async snapshotBound(binding: ExecutionCohortBinding, after = 0) {
     const now = this.deps.monotonicNow ?? (() => performance.now());
-    const deadline = now() + 15_000;
+    const deadline = now() + SNAPSHOT_TIMEOUT_MS;
     const checkDeadline = () => {
       if (now() >= deadline) throw new ExecutionSnapshotTimeoutError();
     };
@@ -403,12 +409,16 @@ export class ExecutionService {
   private async readSnapshot(execution: ExecutionRecord, executions: ExecutionRecord[], projectId: string, after: number, checkDeadline: () => void) {
     const events = [];
     let cursor = after;
-    for (;;) {
+    let truncated = false;
+    for (let pageIndex = 0; pageIndex < MAX_SNAPSHOT_EVENT_PAGES; pageIndex += 1) {
       const page = await this.deps.store.eventsInProject(projectId, execution.id, cursor, 100);
       checkDeadline();
       events.push(...page.events);
       if (page.nextSequence === undefined) break;
       cursor = page.nextSequence;
+      // Reached the page ceiling with more events pending: report truncation
+      // rather than walking an unbounded backlog on the caller's deadline.
+      if (pageIndex === MAX_SNAPSHOT_EVENT_PAGES - 1) truncated = true;
     }
     const artifacts = await this.deps.artifacts.list(execution.id, projectId);
     checkDeadline();
@@ -417,7 +427,7 @@ export class ExecutionService {
       executions,
       events,
       nextAfter: events.at(-1)?.sequence ?? after,
-      truncated: false,
+      truncated,
       artifacts: artifacts.slice(0, 100),
       artifactsTruncated: artifacts.length > 100
     };

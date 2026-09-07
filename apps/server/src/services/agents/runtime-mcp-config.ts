@@ -14,6 +14,7 @@ export function createRuntimeMcpConfig() {
         return;
       }
       current = next;
+      pending = null;
     },
     started(): void {
       if (!pending) return;

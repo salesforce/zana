@@ -187,7 +187,7 @@ import { SkillBundlesStore } from '@zana-ai/zcc-server/services/skills/skill-bun
 import { listCommands } from '@zana-ai/zcc-server/services/skills/commands';
 import { ScheduleGroupsStore } from '@zana-ai/zcc-server/services/scheduler/schedule-groups-store';
 import { watch as fsWatch, mkdirSync, type FSWatcher } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { realpath, rm } from 'node:fs/promises';
 import { parseSshConfig } from '@zana-ai/zcc-server/services/projects/ssh-config';
 import {
   SshHostProviderRegistry,
@@ -209,7 +209,7 @@ import { createDoctor, hasMissingDeps, type Doctor } from '@zana-ai/zcc-server/s
 import { TemplateStore } from '@zana-ai/zcc-server/services/library/template-store';
 import { QuickPromptStore } from '@zana-ai/zcc-server/services/library/quick-prompt-store';
 import { resolveRulesGuidance } from '@zana-ai/zcc-server/services/projects/rules-file';
-import { PromptRegistry, LlmService, ClaudeCliProvider, OpenAiProvider, GeminiProvider, runTabNamerOnce, type LlmProvider } from '@zana-ai/zcc-llm';
+import { PromptRegistry, LlmService, ClaudeCliProvider, OpenAiProvider, GeminiProvider, runTabNamerOnce, redactTranscript, type LlmProvider } from '@zana-ai/zcc-llm';
 import { VoiceService } from './native/voice/voice-service.js';
 import { OpenAiVoiceProvider } from './native/voice/openai-provider.js';
 import { getOpenAiKey, getGeminiKey } from './native/voice/secrets.js';
@@ -1192,7 +1192,10 @@ const idleTriage = new IdleTriageService({
     if (!entry) {
       return Promise.resolve({ ok: false, text: '', error: 'no idle-triage prompt', provider: 'claude-cli', ms: 0 });
     }
-    return llmService.run(entry, { lastTurn }, `idle-triage:${dedupeKey}`);
+    // Redact obvious secrets from the transcript before it reaches the provider:
+    // this prompt feeds raw agent-transcript prose to a coding harness, so any
+    // credential the agent printed must never be forwarded verbatim (security).
+    return llmService.run(entry, { lastTurn: redactTranscript(lastTurn) }, `idle-triage:${dedupeKey}`);
   },
   now: () => Date.now(),
   setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -1256,7 +1259,10 @@ const catchUpSummary = new CatchUpSummaryService({
     if (!entry) {
       return Promise.resolve({ ok: false, text: '', error: 'no catch-up-summary prompt', provider: 'claude-cli', ms: 0 });
     }
-    return llmService.run(entry, { digest, trigger }, `catch-up-summary:${dedupeKey}`);
+    // Redact obvious secrets from the transcript digest before it reaches the
+    // provider: this prompt feeds raw agent-transcript prose to a coding harness,
+    // so any credential the agent printed must never be forwarded verbatim (security).
+    return llmService.run(entry, { digest: redactTranscript(digest), trigger }, `catch-up-summary:${dedupeKey}`);
   },
   now: () => Date.now(),
   setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -2527,7 +2533,7 @@ async function probeConversationThreadLive(threadId: string, projectId: string):
   try {
     const url = new URL(`api/v1/threads/${encodeURIComponent(threadId)}/live`, productServerUrl());
     url.searchParams.set('projectId', projectId);
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
     if (!response.ok) return false;
     const body = await response.json() as { live?: boolean };
     return body.live === true;
@@ -3484,7 +3490,7 @@ async function launchAuthorizedTerminal(
     }
   }
   let currentAuthorizationId = preissuedAuthorizationId;
-  let JITPreissuedAuthorization = preissuedAuthorization;
+  let jitPreissuedAuthorization = preissuedAuthorization;
   if (preissuedAuthorizationId && preissuedAuthorization) {
     launchAuthorization.revoke(preissuedAuthorizationId);
     const JITExpiresAt = Math.min(Date.now() + TEAM_AUTHORIZATION_TTL_MS, preissuedAuthorization.binding.deadlineAt ?? Infinity);
@@ -3499,7 +3505,7 @@ async function launchAuthorizedTerminal(
       return { ok: false, code: 'DENIED', message: JITDecision.reason };
     }
     currentAuthorizationId = JITDecision.authorization.id;
-    JITPreissuedAuthorization = launchAuthorization.get(currentAuthorizationId);
+    jitPreissuedAuthorization = launchAuthorization.get(currentAuthorizationId);
   }
   const coordinator = createLaunchCoordinator<CreateTerminalRequest, typeof plan.resolved, TerminalSession>({
     ledger: launchLedger,
@@ -3557,8 +3563,8 @@ async function launchAuthorizedTerminal(
     },
     onLedgerError: (error) => logMainError('launch ledger post-spawn transition', error)
   });
-  return coordinator.launch(JITPreissuedAuthorization && currentAuthorizationId
-    ? { ...finalPlan, preissuedAuthorization: { id: currentAuthorizationId, binding: JITPreissuedAuthorization.binding } }
+  return coordinator.launch(jitPreissuedAuthorization && currentAuthorizationId
+    ? { ...finalPlan, preissuedAuthorization: { id: currentAuthorizationId, binding: jitPreissuedAuthorization.binding } }
     : finalPlan) as Promise<Result<TerminalSession>>;
 
   async function revalidateTerminalCommit(
@@ -3927,9 +3933,9 @@ function jobCoordinatorPrompt(input: {
  * picker-selected sources. Supported and unsupported formats therefore have the
  * same snapshot or visible-failure behavior without granting raw path access.
  */
-export function goalExecutionSourcePaths(goal: string, home = homedir()): ExecutionSourcePathDescriptor[] {
+export async function goalExecutionSourcePaths(goal: string, home = homedir()): Promise<ExecutionSourcePathDescriptor[]> {
   const paths = new Map<string, ExecutionSourcePathDescriptor>();
-  const realHome = realpathSync(home);
+  const realHome = await realpath(home);
   const sensitiveRoots = [join(realHome, '.ssh'), join(realHome, '.aws'), join(realHome, '.zcc')];
   const matches = goal.match(/(?:^|[\s`'"(])(\/[^\s`'"),;:]+)/g) ?? [];
   for (const match of matches) {
@@ -3938,7 +3944,7 @@ export function goalExecutionSourcePaths(goal: string, home = homedir()): Execut
     if (raw.endsWith('.')) candidates.push(raw.slice(0, -1));
     for (const candidate of candidates) {
       try {
-        const real = realpathSync(candidate);
+        const real = await realpath(candidate);
         const rel = relative(realHome, real);
         if (rel === '' || rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel)) continue;
         if (sensitiveRoots.some((root) => real === root || real.startsWith(`${root}${sep}`))) continue;
@@ -4733,7 +4739,7 @@ export async function startTeamJobFromUi(
   if (sourceCapabilityIds.length && !sourceContext) {
     return { ok: false, code: 'INVALID_CAPABILITY', message: 'Execution source capabilities require a trusted window' };
   }
-  const goalSourceDescriptors = goalExecutionSourcePaths(originalGoal);
+  const goalSourceDescriptors = await goalExecutionSourcePaths(originalGoal);
   if (goalSourceDescriptors.length && !sourceContext) {
     return { ok: false, code: 'INVALID_CAPABILITY', message: 'Goal execution sources require a trusted window' };
   }

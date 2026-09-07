@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue, hashBytes, readRawFile } from '../harness-routing/storage.js';
 
@@ -62,11 +62,11 @@ export function createExecutionHandoffStore(options: { filePath: string; now?: (
       throw new Error(`corrupt execution handoff store: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  function persist(state: StateFile, expectedHash: string | null): void {
+  async function persist(state: StateFile, expectedHash: string | null): Promise<void> {
     const timestamp = now();
     state.grants = state.grants.filter((grant) => grant.usedAt === undefined && grant.expiresAt > timestamp).slice(-MAX_GRANTS);
     state.revision += 1;
-    mkdirSync(dirname(options.filePath), { recursive: true });
+    await mkdir(dirname(options.filePath), { recursive: true });
     atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
   }
   async function mint(input: Omit<ExecutionHandoffGrant, 'id' | 'tokenDigest' | 'createdAt' | 'usedAt'>) {
@@ -87,7 +87,7 @@ export function createExecutionHandoffStore(options: { filePath: string; now?: (
       const rawToken = string(token(), 'token');
       const record: ExecutionHandoffGrant = { id: string(id(), 'id'), tokenDigest: digest(rawToken), ...bounded, createdAt: now() };
       snapshot.state.grants.push(record);
-      persist(snapshot.state, snapshot.hash);
+      await persist(snapshot.state, snapshot.hash);
       return { token: rawToken, expiresAt: record.expiresAt };
     });
   }
@@ -105,7 +105,7 @@ export function createExecutionHandoffStore(options: { filePath: string; now?: (
         throw new Error('execution handoff is not current');
       }
       grant.usedAt = now();
-      persist(snapshot.state, snapshot.hash);
+      await persist(snapshot.state, snapshot.hash);
       return clone(grant);
     });
   }

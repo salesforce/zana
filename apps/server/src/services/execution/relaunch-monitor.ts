@@ -52,6 +52,7 @@ export interface RelaunchMonitorDeps {
   clearToken(projectId: string, executionId: string): void;
   revokeBinding(sessionId: string, projectId: string, executionId: string): Promise<void>;
   waitBeforeBindRetry(attempt: number): Promise<void>;
+  logError?(message: string, error: unknown): void;
 }
 
 const inFlightRelaunches = new Set<string>();
@@ -100,37 +101,47 @@ export async function relaunchExecutionMonitor(
         teamName: record.teamId,
         role: 'orchestrator',
         executionId: record.id,
-        executionJobTitle: record.jobTitle
-        , slotId: 'orchestrator:recovery', coordinationMode: 'job-team'
+        executionJobTitle: record.jobTitle,
+        slotId: 'orchestrator:recovery',
+        coordinationMode: 'job-team'
       }
     });
     if (!created.ok) return created;
 
+    const logError = deps.logError ?? ((message, error) => console.error(message, error));
+    let succeeded = false;
     let bound: Result<unknown> = { ok: false, code: 'BINDING_TRANSIENT', message: 'execution resume binding could not be persisted' };
-    for (let attempt = 1; attempt <= MAX_BIND_ATTEMPTS; attempt += 1) {
-      try {
-        bound = await deps.bindMonitor(created.value.id, project.id, record.id, rotated.value.token, rotated.value.generation);
-      } catch (error) {
-        bound = { ok: false, code: 'BINDING_TRANSIENT', message: error instanceof Error ? error.message : String(error) };
+    try {
+      for (let attempt = 1; attempt <= MAX_BIND_ATTEMPTS; attempt += 1) {
+        try {
+          bound = await deps.bindMonitor(created.value.id, project.id, record.id, rotated.value.token, rotated.value.generation);
+        } catch (error) {
+          bound = { ok: false, code: 'BINDING_TRANSIENT', message: error instanceof Error ? error.message : String(error) };
+        }
+        if (bound.ok || bound.code !== 'BINDING_TRANSIENT' || attempt === MAX_BIND_ATTEMPTS) break;
+        await deps.waitBeforeBindRetry(attempt);
       }
-      if (bound.ok || bound.code !== 'BINDING_TRANSIENT' || attempt === MAX_BIND_ATTEMPTS) break;
-      await deps.waitBeforeBindRetry(attempt);
-    }
-    if (bound.ok) {
-      try {
-        deps.clearToken(project.id, record.id);
-      } catch {
-        // Binding is durable authority. A local token-cache cleanup failure must
-        // not close the newly bound monitor and strand the execution.
+      if (bound.ok) {
+        succeeded = true;
+        try {
+          deps.clearToken(project.id, record.id);
+        } catch (error) {
+          // Binding is durable authority. A local token-cache cleanup failure must
+          // not close the newly bound monitor and strand the execution.
+          logError('relaunch-monitor: clearToken after successful bind failed', error);
+        }
+        return { ok: true, value: { sessionId: created.value.id } };
       }
-      return { ok: true, value: { sessionId: created.value.id } };
+      return { ok: false, code: bound.code, message: bound.message };
+    } finally {
+      if (!succeeded) {
+        deps.closeMonitor(created.value.id);
+        if (!bound.ok && bound.code === 'BINDING_TRANSIENT') {
+          try { await deps.revokeBinding(created.value.id, project.id, record.id); } catch (error) { logError('relaunch-monitor: revokeBinding during cleanup failed', error); }
+        }
+        try { deps.clearToken(project.id, record.id); } catch (error) { logError('relaunch-monitor: clearToken during cleanup failed', error); }
+      }
     }
-    deps.closeMonitor(created.value.id);
-    if (bound.code === 'BINDING_TRANSIENT') {
-      try { await deps.revokeBinding(created.value.id, project.id, record.id); } catch { /* Best effort; rotated recovery can supersede this grant. */ }
-    }
-    try { deps.clearToken(project.id, record.id); } catch { /* Durable grant validation remains authoritative. */ }
-    return { ok: false, code: bound.code, message: bound.message };
   } catch (error) {
     return { ok: false, code: 'SPAWN_FAILED', message: error instanceof Error ? error.message : String(error) };
   } finally {

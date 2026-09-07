@@ -114,6 +114,31 @@ export interface IdleTriageDeps {
 }
 
 /**
+ * Global concurrency ceiling on in-flight `builtin:idle-triage` micro-calls
+ * (across all sessions). A burst of simultaneous idle transitions (e.g. a
+ * squad of workers settling at once) must not spawn an unbounded number of
+ * `claude --print` processes at the same instant. Restored from the prior
+ * (pre-cohort) implementation's value.
+ */
+export const MAX_CONCURRENT_TRIAGES = 5;
+
+/**
+ * Per-session lifetime budget on triage runs. Without this, an agent that
+ * cycles state (working ↔ at-rest) repeatedly — whether by design or by a
+ * flapping harness — could trigger unbounded token spend on the SAME session.
+ * Restored from the prior (pre-cohort) implementation's value.
+ */
+export const MAX_TRIAGES_PER_SESSION = 6;
+
+/**
+ * Retry delay (ms) when the dwell elapses but the global concurrency cap is
+ * saturated. The one-shot is released and the dwell timer is re-armed for
+ * this long rather than dropping the triage outright, so a session simply
+ * waits its turn instead of losing its one triage for the spell.
+ */
+const CONCURRENCY_RETRY_MS = 1_000;
+
+/**
  * Coerce a model's JSON reply into an {@link IdleResolution} + summary. Tolerant:
  * the model may wrap the JSON in stray prose or code fences despite the prompt,
  * so we extract the first {...} and parse that. Unparsable / unknown → null (the
@@ -177,6 +202,8 @@ interface Entry {
   fired: boolean;
   /** The armed dwell timer (null when not at rest / already elapsed / cancelled). */
   timer: NodeJS.Timeout | null;
+  /** Lifetime budget prevents agent-controlled state cycling from spending without bound. */
+  runs: number;
 }
 
 /**
@@ -186,6 +213,8 @@ interface Entry {
  */
 export class IdleTriageService extends EventEmitter {
   private entries = new Map<string, Entry>();
+  /** Count of currently in-flight triage calls, capped at {@link MAX_CONCURRENT_TRIAGES}. */
+  private pending = 0;
 
   constructor(private readonly deps: IdleTriageDeps) {
     super();
@@ -204,7 +233,7 @@ export class IdleTriageService extends EventEmitter {
   observe(sessionId: string, state: AgentState): void {
     let entry = this.entries.get(sessionId);
     if (!entry) {
-      entry = { lastState: 'unknown', fired: false, timer: null };
+      entry = { lastState: 'unknown', fired: false, timer: null, runs: 0 };
       this.entries.set(sessionId, entry);
     }
     const wasAtRest = atRest(entry.lastState);
@@ -243,23 +272,39 @@ export class IdleTriageService extends EventEmitter {
 
   /**
    * The dwell elapsed. If the agent is still at rest (observe() would have
-   * disarmed on leaving, but guard the race), claim the one-shot and fire the
-   * triage. The LLM call is fired-and-forgotten; a failure releases the
-   * one-shot so a later working→at-rest cycle can retry.
+   * disarmed on leaving, but guard the race), and the session hasn't
+   * exhausted its lifetime budget, claim the one-shot and fire the triage —
+   * unless the global concurrency cap is saturated, in which case the
+   * one-shot is released and the dwell is re-armed for a short retry rather
+   * than dropped. The LLM call is fired-and-forgotten; a failure also
+   * releases the one-shot so a later working→at-rest cycle can retry.
    */
   private onDwellElapsed(sessionId: string): void {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
     entry.timer = null;
-    if (!atRest(entry.lastState) || entry.fired) return;
+    if (!atRest(entry.lastState) || entry.fired || entry.runs >= MAX_TRIAGES_PER_SESSION) return;
     entry.fired = true; // claim the one-shot before any await
 
-    void this.triage(sessionId).catch(() => {
-      // Never let a triage failure crash the timer callback. Release the one-shot
-      // so a future working→at-rest cycle gets a fresh attempt.
-      const e = this.entries.get(sessionId);
-      if (e) e.fired = false;
-    });
+    if (this.pending >= MAX_CONCURRENT_TRIAGES) {
+      // Global cap saturated: give up the one-shot and retry shortly rather
+      // than spending a call outside the budget or dropping this spell.
+      entry.fired = false;
+      entry.timer = this.deps.setTimer(() => this.onDwellElapsed(sessionId), CONCURRENCY_RETRY_MS);
+      return;
+    }
+    this.pending++;
+    entry.runs++;
+    void this.triage(sessionId)
+      .catch(() => {
+        // Never let a triage failure crash the timer callback. Release the one-shot
+        // so a future working→at-rest cycle gets a fresh attempt.
+        const e = this.entries.get(sessionId);
+        if (e) e.fired = false;
+      })
+      .finally(() => {
+        this.pending--;
+      });
   }
 
   private async triage(sessionId: string): Promise<void> {

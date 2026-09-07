@@ -3175,6 +3175,15 @@ export const useData = create<DataState>((set, get) => ({
   dismissTerminals(sessionIds) {
     const ids = new Set(sessionIds);
     if (ids.size === 0) return;
+    // Capture each session's owning project BEFORE the `set` below removes it
+    // from `terminals` — `findProjectIdForSession` reads the live store, so
+    // calling it after the mutation always returns null (see store.ts history).
+    const projectIdBySession = new Map<string, string>();
+    for (const [projectId, sessions] of Object.entries(get().terminals)) {
+      for (const session of sessions) {
+        if (ids.has(session.id)) projectIdBySession.set(session.id, projectId);
+      }
+    }
     set((s) => ({
       terminals: Object.fromEntries(Object.entries(s.terminals).map(([projectId, sessions]) => [
         projectId,
@@ -3187,7 +3196,7 @@ export const useData = create<DataState>((set, get) => ({
     }));
     for (const sessionId of ids) {
       useUi.getState().clearUnread(sessionId);
-      const projectId = findProjectIdForSession(sessionId);
+      const projectId = projectIdBySession.get(sessionId) ?? null;
       if (projectId) useAgentStatus.getState().clear(sessionId, projectId);
       useIdleTriage.getState().clear(sessionId);
       useOverseerActivity.getState().clear(sessionId);

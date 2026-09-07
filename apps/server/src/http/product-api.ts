@@ -889,7 +889,19 @@ export async function handleProductHttp(
       // store lives in this standalone product server, not a forked child).
       // The canonical rule stays in isThreadLiveInProject — the exact same
       // check the packaged runtime child answers for the `thread-live` op.
+      // Transport auth is the loopback bind + Origin guard on this server; the
+      // authorization decision is isThreadLiveInProject's exact projectId match
+      // (the strictest thread route — a thread only authorizes launches in the
+      // one project it was probed for). An unscoped probe has no project to
+      // match, so it can never be live: refuse rather than fall through to a
+      // '' comparison. The response is a deliberately non-disclosing boolean —
+      // an unknown/dead thread is `live:false`, never a 404 that would confirm
+      // the id exists.
       const projectId = requestUrl.searchParams.get('projectId') ?? '';
+      if (!projectId) {
+        sendJson(response, 200, { live: false });
+        return true;
+      }
       const thread = getConversationThread(ctx.db, threadLive.id);
       sendJson(response, 200, { live: isThreadLiveInProject(thread, projectId) });
       return true;

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { CornerDownLeft, MessageSquare } from 'lucide-react';
 import type { InboxEntry, InboxQuestion } from '@zana-ai/zcc-domain/product';
-import { product } from '../lib/product-client.js';
-import { replyToInboxEntry, useInboxAnswered, useUi } from '../store.js';
+import { replyToInboxEntry, useInboxAnswered } from '../store.js';
+import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
 import { MarkdownContent } from './MarkdownContent.js';
 
 /**
@@ -137,29 +137,17 @@ export function QuestionBlock({
     if (busy || !canSend) return;
     setSending(true);
     let ok = false;
-    if (entry.executionId && entry.blockerId) {
-      const clientRequestId = `${entry.executionId}:${entry.blockerId}:${Date.now()}`;
-      const result = await product.executionBoard.respond(
-        entry.projectId,
-        entry.executionId,
-        -1, // use latest stateVersion in main
-        entry.blockerId,
-        clientRequestId,
-        buildReply()
-      );
-      if (result.ok) {
-        ok = true;
-        useInboxAnswered.getState().markAnswered(entry.id);
-        useUi.getState().pushToast('Response sent', 'info');
+    try {
+      if (entry.executionId && entry.blockerId) {
+        ok = await respondToInboxBlocker(entry, buildReply());
       } else {
-        useUi.getState().pushToast(result.message || 'Failed to send response', 'error');
+        ok = dead
+          ? await onAnswerDeadSession!(buildReply())
+          : await replyToInboxEntry(entry.id, sessionId!, buildReply());
       }
-    } else {
-      ok = dead
-        ? await onAnswerDeadSession!(buildReply())
-        : await replyToInboxEntry(entry.id, sessionId!, buildReply());
+    } finally {
+      setSending(false);
     }
-    setSending(false);
     if (ok) setReopened(false);
   };
 

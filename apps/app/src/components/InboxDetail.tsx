@@ -27,6 +27,7 @@ import { renderReportHtml, type ReportDoc } from '../lib/renderReportHtml.js';
 import { inboxPrimaryTitle, inboxShortTitle, inboxContextLine } from '../lib/inboxPresentation.js';
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
 import { resolveAnswerSurface } from '../lib/answerSurface.js';
+import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../lib/launchProfile.js';
 import type {
   InboxDoc,
@@ -831,29 +832,17 @@ function ReplyBox({
     if (busy || !text.trim()) return;
     setSending(true);
     let ok = false;
-    if (entry.executionId && entry.blockerId) {
-      const clientRequestId = `${entry.executionId}:${entry.blockerId}:${Date.now()}`;
-      const result = await product.executionBoard.respond(
-        entry.projectId,
-        entry.executionId,
-        -1, // use latest stateVersion in main
-        entry.blockerId,
-        clientRequestId,
-        text
-      );
-      if (result.ok) {
-        ok = true;
-        useInboxAnswered.getState().markAnswered(entry.id);
-        useUi.getState().pushToast('Response sent', 'info');
+    try {
+      if (entry.executionId && entry.blockerId) {
+        ok = await respondToInboxBlocker(entry, text);
       } else {
-        useUi.getState().pushToast(result.message || 'Failed to send response', 'error');
+        ok = dead
+          ? await onAnswerDeadSession!(text)
+          : await replyToInboxEntry(entry.id, sessionId!, text);
       }
-    } else {
-      ok = dead
-        ? await onAnswerDeadSession!(text)
-        : await replyToInboxEntry(entry.id, sessionId!, text);
+    } finally {
+      setSending(false);
     }
-    setSending(false);
     if (ok) {
       setText('');
       setReopened(false);

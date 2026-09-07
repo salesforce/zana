@@ -224,6 +224,12 @@ const OWNER_EXECUTION_TOOL_DEFS: readonly ToolDef[] = [
   }
 ];
 
+// Single source of truth for which verbs are owner-execution tools — derived
+// from the tool defs above so a new owner verb can't drift out of the gate.
+const OWNER_EXECUTION_MCP_NAMES: ReadonlySet<string> = new Set(
+  OWNER_EXECUTION_TOOL_DEFS.map((def) => def.mcpName ?? def.name)
+);
+
 /** Build the credentialed loopback MCP route for one thread's tool call. */
 export function modernTeamLaunchRoute(base: string, projectId: string, threadId: string, credential: string): string {
   const trimmed = base.replace(/\/+$/, '');
@@ -274,7 +280,7 @@ function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps): PluginAgentT
     async execute(input: unknown, ctx: PluginAgentToolContext) {
       const { mcpBaseUrl, teamLaunchEnabled, teamJobLaunchEnabled } = deps.getConfig();
       const mcpName = def.mcpName ?? def.name;
-      const ownerVerb = (['execution.start', 'execution.snapshot', 'execution.resume_binding'] as readonly string[]).includes(mcpName);
+      const ownerVerb = OWNER_EXECUTION_MCP_NAMES.has(mcpName);
       const enabled = ownerVerb ? teamJobLaunchEnabled === true : teamLaunchEnabled;
       if (!enabled) {
         return {

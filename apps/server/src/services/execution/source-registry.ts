@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, open, realpath, readdir, rm, stat } from 'node:fs/promises';
-import { basename, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue } from '../harness-routing/storage.js';
 import type { ExecutionSourceCapabilityView, ExecutionSourceSnapshot } from '@zana-ai/zcc-domain/product';
 
@@ -10,8 +10,8 @@ export const EXECUTION_SOURCE_LIMITS = Object.freeze({
   maxFileBytes: 4 * 1024 * 1024,
   maxTotalBytes: 16 * 1024 * 1024,
   maxExtractedBytes: 8 * 1024 * 1024,
-  maxSerializedSnapshotBytes: 9 * 1024 * 1024
-  , maxOutstandingCapabilities: 128
+  maxSerializedSnapshotBytes: 9 * 1024 * 1024,
+  maxOutstandingCapabilities: 128
 });
 
 interface SourceLimits {
@@ -117,6 +117,13 @@ function decode(bytes: Buffer): string {
   }
 }
 
+// Regex-based stripping is acceptable here because the result is only ever used
+// as a PLAIN-TEXT extraction digest (`extractedText`) — it is never rendered as
+// HTML in a webview or injected into the DOM. It removes active elements and
+// resource references defensively, but its correctness contract is "produce
+// readable plain text", not "produce safe HTML". Do not repurpose this output as
+// sanitized markup for rendering; use a real sanitizer (DOMPurify) if that need
+// ever arises.
 function sanitizeHtml(value: string): { text: string; warnings: string[] } {
   const withoutActive = value
     .replace(/<(script|style|iframe|object|embed|svg|math|template|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
@@ -171,6 +178,18 @@ function pathRepresentations(exactPath: string, canonicalPath: string): string[]
 
 function validDigest(value: unknown): value is string {
   return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
+}
+
+// A snapshot key is a single path segment used to build the on-disk snapshot
+// directory. It is renderer/agent-influenced, so it must never contain path
+// separators or traversal segments (Rule 2): reject anything that isn't exactly
+// one clean segment before it reaches join()/write.
+function assertSnapshotKey(key: string): string {
+  if (typeof key !== 'string' || !key || key.length > 256 || key === '.' || key === '..'
+    || /[\\/]/.test(key) || normalize(key) !== key) {
+    throw new ExecutionSourceError('INVALID_CONTENT_REF', 'Execution source snapshot key is invalid');
+  }
+  return key;
 }
 
 function validStoredSource(value: unknown): value is ExecutionSourceSnapshot & { extractedText: string; extractedTextDigest: string } {
@@ -263,11 +282,19 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
   }
 
   async function readDescriptorBounded(path: string, maxBytes: number): Promise<Buffer> {
+    // Open once (no-follow) and read via the fd, then re-fstat the SAME handle and
+    // compare identity/size — this detects a file swapped or resized underneath us
+    // during the read without a second open() that could race a replacement.
     const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
       const info = await handle.stat();
       if (!info.isFile()) throw new ExecutionSourceError('NOT_REGULAR_FILE', 'Execution source must be a regular file');
-      return await readHandleBounded(handle, info.size, path, maxBytes);
+      const bytes = await readHandleBounded(handle, info.size, path, maxBytes);
+      const after = await handle.stat();
+      if (after.dev !== info.dev || after.ino !== info.ino || after.size !== info.size || !after.isFile()) {
+        throw new ExecutionSourceError('SOURCE_CHANGED', 'Execution source changed during read');
+      }
+      return bytes;
     } finally {
       await handle.close();
     }
@@ -332,6 +359,8 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
         && capability.path === path
       );
       if (existing) {
+        total += existing.byteSize;
+        if (total > limits.maxTotalBytes) throw new ExecutionSourceError('TOTAL_SOURCE_TOO_LARGE', 'Execution sources exceed total byte limit');
         existing.representations = [...new Set([...existing.representations, ...representations])];
         views.push({ id: existing.id, name: existing.name, byteSize: existing.byteSize, expiresAt: existing.expiresAt });
         continue;
@@ -408,15 +437,16 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     if (serializedSnapshot.byteLength > limits.maxSerializedSnapshotBytes) {
       throw new ExecutionSourceError('SERIALIZED_SNAPSHOT_TOO_LARGE', 'Serialized execution source snapshot exceeds limit');
     }
-    const relative = `${input.snapshotKey}/sources.json`;
+    const snapshotKey = assertSnapshotKey(input.snapshotKey);
+    const contentRef = `${snapshotKey}/sources.json`;
+    const snapshotFile = confinedSnapshotPath(contentRef);
     await snapshotQueue.run(async () => {
-      const directory = join(options.rootDir, input.snapshotKey);
-      await mkdir(directory, { recursive: true });
-      atomicDurableWrite(join(directory, 'sources.json'), serializedSnapshot, { expectedHash: null });
+      await mkdir(dirname(snapshotFile), { recursive: true });
+      atomicDurableWrite(snapshotFile, serializedSnapshot, { expectedHash: null });
     });
     return {
       sources: frozen,
-      contentRef: relative,
+      contentRef,
       pathDescriptors: Object.freeze(selected.map((capability) => Object.freeze({
         exactPath: capability.exactPath,
         canonicalPath: capability.path,
@@ -457,12 +487,19 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
       if (!(legacy ? parsed.sources.every(validLegacyStoredSource) : parsed.sources.every(validStoredSource))) throw new Error('invalid shape');
       const sources = parsed.sources as Array<ExecutionSourceSnapshot & { extractedText: string }>;
       let extractedBytes = 0;
-      for (const [index, source] of sources.entries()) {
+      for (const source of sources) {
         const textBytes = Buffer.from(source.extractedText, 'utf8');
         extractedBytes += textBytes.byteLength;
-        const textDigest = digest(textBytes);
-        const trustedDigest = legacy ? expectedSources?.[index]?.extractedTextDigest ?? source.contentDigest : source.extractedTextDigest;
-        if (extractedBytes > limits.maxExtractedBytes || textDigest !== trustedDigest) {
+        if (extractedBytes > limits.maxExtractedBytes) {
+          throw new ExecutionSourceError('SOURCE_CHANGED', 'Execution source snapshot integrity check failed');
+        }
+        // v2 carries a trusted extracted-text digest; verify it. v1 (legacy) has
+        // NO trusted extracted-text digest — contentDigest is the RAW-bytes hash,
+        // which diverges from the extracted text after transforms (HTML sanitize,
+        // CRLF normalize), so it must NOT be used as a fallback. Legacy integrity
+        // rests on metadata equality (checked below) plus the fresh digest
+        // persisted on upgrade.
+        if (!legacy && digest(textBytes) !== source.extractedTextDigest) {
           throw new ExecutionSourceError('SOURCE_CHANGED', 'Execution source snapshot integrity check failed');
         }
       }

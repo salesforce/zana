@@ -41,7 +41,7 @@ function digest(token: string): string {
 }
 
 function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+  return structuredClone(value);
 }
 
 function validGrant(value: unknown): value is ResumeGrantV1 {
@@ -75,14 +75,6 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
     if (!bytes) return { state: { version: 1, revision: 0, grants: [], generations: [] }, hash: null };
     try {
       const parsed = JSON.parse(bytes.toString('utf8')) as Partial<StateFile>;
-      if (Array.isArray(parsed.generations)) {
-        const grantMintedAt = new Map((Array.isArray(parsed.grants) ? parsed.grants : [])
-          .filter(validGrant)
-          .map((grant) => [`${grant.projectId}\u0000${grant.executionId}`, grant.mintedAt]));
-        parsed.generations = parsed.generations.map((entry) => entry && typeof entry === 'object' && !('updatedAt' in entry)
-          ? { ...entry, updatedAt: grantMintedAt.get(`${(entry as GenerationRecord).projectId}\u0000${(entry as GenerationRecord).executionId}`) ?? 0 }
-          : entry) as GenerationRecord[];
-      }
       if (!Array.isArray(parsed.generations) && Array.isArray(parsed.grants)) {
         const migrated = new Map<string, GenerationRecord>();
         for (const grant of parsed.grants) {
@@ -102,9 +94,22 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
     }
   }
 
+  function isActive(grant: ResumeGrantV1, timestamp: number): boolean {
+    return grant.expiresAt > timestamp && grant.revokedAt === undefined;
+  }
+
+  function assertGrantCapacity(state: StateFile, timestamp: number): void {
+    if (state.grants.filter((grant) => isActive(grant, timestamp)).length >= MAX_GRANTS) {
+      throw new Error('execution resume grant capacity exceeded');
+    }
+  }
+
   function persist(state: StateFile, expectedHash: string | null): void {
     const timestamp = now();
-    state.grants = state.grants.filter((grant) => grant.expiresAt > timestamp).slice(-MAX_GRANTS);
+    // Prune only terminal grants (expired or revoked). Active grants — including
+    // consumed-and-bound ones needed for idempotent recovery — are never dropped;
+    // growth is bounded by assertGrantCapacity at the mint/rotate sites instead.
+    state.grants = state.grants.filter((grant) => isActive(grant, timestamp));
     state.revision += 1;
     mkdirSync(dirname(options.filePath), { recursive: true });
     atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
@@ -144,6 +149,7 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
         generationRecord = { executionId, projectId, generation };
         snapshot.state.generations.push(generationRecord);
       }
+      assertGrantCapacity(snapshot.state, timestamp);
       snapshot.state.grants.push(grant);
       persist(snapshot.state, snapshot.hash);
       return { token: rawToken, expiresAt: grant.expiresAt, generation };
@@ -167,6 +173,7 @@ export function createResumeGrantStore(options: { filePath: string; now?: () => 
       }
       if (generationRecord) generationRecord.generation = generation;
       else snapshot.state.generations.push({ executionId, projectId, generation });
+      assertGrantCapacity(snapshot.state, timestamp);
       snapshot.state.grants.push({
         version: 1, executionId, projectId, callerPrincipalId, tokenDigest: digest(rawToken), mintedAt: timestamp, expiresAt, generation
       });

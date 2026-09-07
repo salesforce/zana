@@ -219,10 +219,15 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.executionBoard.releaseWork, projectId, executionId, expectedStateVersion, workUnitId),
     reassignWork: (projectId, executionId, expectedStateVersion, workUnitId, assignedSlotId) =>
       ipcRenderer.invoke(IPC.executionBoard.reassignWork, projectId, executionId, expectedStateVersion, workUnitId, assignedSlotId),
-    respond: (projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message) =>
-      ipcRenderer.invoke(IPC.executionBoard.respond, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message),
-    resume: (projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message) =>
-      ipcRenderer.invoke(IPC.executionBoard.resume, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message),
+    // `allowLatestVersion` is the explicit opt-in required to honor the
+    // `expectedStateVersion === -1` "use current stateVersion" sentinel — main
+    // rejects -1 outright unless this is `true` (see execution-board.ts). Always
+    // sent as a real boolean (never left `undefined`) so main can distinguish it
+    // from the compat blockerId/clientRequestId/message string tail.
+    respond: (projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, allowLatestVersion) =>
+      ipcRenderer.invoke(IPC.executionBoard.respond, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, allowLatestVersion === true),
+    resume: (projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, allowLatestVersion) =>
+      ipcRenderer.invoke(IPC.executionBoard.resume, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, allowLatestVersion === true),
     retryDelivery: (projectId, executionId, expectedStateVersion, blockerId, deliveryId) =>
       ipcRenderer.invoke(IPC.executionBoard.retryDelivery, projectId, executionId, expectedStateVersion, blockerId, deliveryId),
     clearResumeToken: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.clearResumeToken, projectId, executionId),

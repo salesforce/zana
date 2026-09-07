@@ -93,8 +93,13 @@ function writeAppConfig(home: string, initialConfig: Record<string, unknown> = {
  * HOME-rooted artifacts the CLI needs:
  *   - `~/.claude.json`   — onboarding flag + userID
  *   - `~/.claude/`       — settings.json (apiKeyHelper + ANTHROPIC_* gateway env)
- *   - `~/.devbar` (symlink) — the apiKeyHelper's daemon socket lives here and its
- *     path is HOME-relative, so rewriting HOME would break auth without it.
+ *   - `~/.devbar/devbar.sock` (symlink to the live socket only) — the
+ *     apiKeyHelper's daemon socket lives here and its path is HOME-relative, so
+ *     rewriting HOME would break auth without it. Only the socket file is
+ *     linked in, never the whole `.devbar` dir (which also holds
+ *     `devbar-install-id`, `jwks-cache.json`, `config.yaml`, plugin state, and
+ *     real binaries) — symlinking the whole dir would let the sandboxed app and
+ *     copied OpenCode plugins read/modify those real credentials/state.
  *
  * Returns true if it seeded a usable state, false if the source artifacts are
  * absent (so the spec can skip cleanly on a machine without a logged-in claude).
@@ -118,12 +123,16 @@ export function seedClaudeAuthState(home: string): boolean {
       /* best-effort — settings may be partially copyable */
     }
   }
-  // The apiKeyHelper resolves its daemon socket under $HOME/.devbar; symlink the
-  // real one so the rewritten HOME still reaches the live auth daemon.
-  const srcDevbar = join(realHome, '.devbar');
-  if (existsSync(srcDevbar)) {
+  // The apiKeyHelper resolves its daemon socket under $HOME/.devbar/devbar.sock;
+  // symlink ONLY that socket file (never the whole `.devbar` dir — which also
+  // holds `devbar-install-id`, `jwks-cache.json`, `config.yaml`, plugin state,
+  // and real binaries) so the rewritten HOME still reaches the live auth daemon
+  // without exposing unrelated real credentials/state to the sandboxed app.
+  const srcDevbarSock = join(realHome, '.devbar', 'devbar.sock');
+  if (existsSync(srcDevbarSock)) {
     try {
-      symlinkSync(srcDevbar, join(home, '.devbar'));
+      mkdirSync(join(home, '.devbar'), { recursive: true, mode: 0o700 });
+      symlinkSync(srcDevbarSock, join(home, '.devbar', 'devbar.sock'));
     } catch {
       /* best-effort — absent on machines not using the devbar auth helper */
     }
@@ -155,7 +164,13 @@ export function seedOpenCodeAuthState(home: string): boolean {
       if (name === '.aisuite') {
         cpSync(source, join(home, name), { recursive: true });
       } else {
-        symlinkSync(source, join(home, name));
+        // Only the live daemon socket is needed (see seedClaudeAuthState) —
+        // never symlink the whole `.devbar` dir into the sandbox.
+        const sock = join(source, 'devbar.sock');
+        if (existsSync(sock)) {
+          mkdirSync(join(home, name), { recursive: true, mode: 0o700 });
+          symlinkSync(sock, join(home, name, 'devbar.sock'));
+        }
       }
     } catch {
       /* best-effort — absent when auth does not use these helpers */

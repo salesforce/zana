@@ -167,7 +167,18 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         if (!event.currentTarget.open || artifactContent[artifact.id] !== undefined) return;
         void window.cc.executionBoard.readArtifact(projectId, executionId, artifact.id).then((result) => {
           if (result.ok) setArtifactContent((current) => ({ ...current, [artifact.id]: result.value.content }));
-          else useUi.getState().pushToast(`Artifact read failed: ${result.message}`, 'error');
+          else {
+            console.error(`[ExecutionJobDetails] artifact read failed (execution ${executionId}, artifact ${artifact.id}): ${result.message}`);
+            useUi.getState().pushToast(`Artifact read failed: ${result.message}`, 'error');
+            // Mirror the failure into the same state the successful path uses, so the
+            // <pre> below shows the error instead of "Loading…" forever.
+            setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${result.message ?? 'read failed'}` }));
+          }
+        }).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[ExecutionJobDetails] artifact read rejected (execution ${executionId}, artifact ${artifact.id})`, err);
+          useUi.getState().pushToast(`Artifact read failed: ${message}`, 'error');
+          setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${message}` }));
         });
       }}><summary>{artifact.name} · {artifact.mediaType} · {artifact.contentDigest}</summary><pre>{artifactContent[artifact.id] ?? 'Loading…'}</pre></details>)}
       <h4>Final summary</h4><p>{execution.finalSummary ?? 'Not completed.'}</p>

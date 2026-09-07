@@ -438,6 +438,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   const maxRecords = Math.min(options.maxRecords ?? MAX_RECORDS, MAX_RECORDS);
   const maxEvents = Math.min(options.maxEvents ?? MAX_EVENTS, MAX_EVENTS);
   const maxEventsPerExecution = Math.min(options.maxEventsPerExecution ?? MAX_EVENTS_PER_EXECUTION, MAX_EVENTS_PER_EXECUTION);
+  // Ensure the store directory exists once, at construction — not on every
+  // persist(). atomicDurableWrite writes tmp+rename within this directory.
+  mkdirSync(dirname(options.filePath), { recursive: true });
 
   function read(): { state: ExecutionStateFile; hash: string | null } {
     const bytes = readRawFile(options.filePath);
@@ -495,7 +498,6 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     state.events = compactEvents(state.events, maxEventsPerExecution, maxEvents);
     if (!state.records.every(validRecord) || !state.events.every(validEvent)) throw new Error('invalid execution state before persistence');
     state.revision += 1;
-    mkdirSync(dirname(options.filePath), { recursive: true });
     atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });
   }
 
