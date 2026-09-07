@@ -89,30 +89,6 @@ describe('builtin host artifacts', () => {
     const bridge = Reflect.get(Object(imported), 'experimental_providerBridge');
     expect(bridge).toMatchObject({ experimental_apiVersion: 1 });
     expect(typeof Reflect.get(Object(bridge), 'handleLine')).toBe('function');
-  }, 90_000);
-
-  it('builds the provider-claude-code host entry as a relocatable Agent SDK bridge', async () => {
-    const root = await mkdtemp(join(repositoryRoot, '.builtin-host-test-'));
-    tempDirs.push(root);
-    const source = join(repositoryRoot, 'plugins', 'provider-claude-code');
-    await stagePluginForHostBuild(source, root);
-    const built = await buildPluginHost(root, '0.9.0-test');
-    const imported: unknown = await import(`${pathToFileURL(built.jsPath).href}?test=${Date.now()}`);
-    const bridge = Reflect.get(Object(imported), 'experimental_providerBridge');
-    expect(bridge).toMatchObject({ experimental_apiVersion: 1 });
-    expect(typeof Reflect.get(Object(bridge), 'handleLine')).toBe('function');
-  }, 90_000);
-
-  it('builds the provider-codex host entry as a relocatable app-server bridge', async () => {
-    const root = await mkdtemp(join(repositoryRoot, '.builtin-host-test-'));
-    tempDirs.push(root);
-    const source = join(repositoryRoot, 'plugins', 'provider-codex');
-    await stagePluginForHostBuild(source, root);
-    const built = await buildPluginHost(root, '0.9.0-test');
-    const imported: unknown = await import(`${pathToFileURL(built.jsPath).href}?test=${Date.now()}`);
-    const bridge = Reflect.get(Object(imported), 'experimental_providerBridge');
-    expect(bridge).toMatchObject({ experimental_apiVersion: 1 });
-    expect(typeof Reflect.get(Object(bridge), 'handleLine')).toBe('function');
 
     const stdout = await runMcpProbe(
       process.execPath,
@@ -152,6 +128,30 @@ describe('builtin host artifacts', () => {
         ]
       }
     });
+  }, 90_000);
+
+  it('builds the provider-claude-code host entry as a relocatable Agent SDK bridge', async () => {
+    const root = await mkdtemp(join(repositoryRoot, '.builtin-host-test-'));
+    tempDirs.push(root);
+    const source = join(repositoryRoot, 'plugins', 'provider-claude-code');
+    await stagePluginForHostBuild(source, root);
+    const built = await buildPluginHost(root, '0.9.0-test');
+    const imported: unknown = await import(`${pathToFileURL(built.jsPath).href}?test=${Date.now()}`);
+    const bridge = Reflect.get(Object(imported), 'experimental_providerBridge');
+    expect(bridge).toMatchObject({ experimental_apiVersion: 1 });
+    expect(typeof Reflect.get(Object(bridge), 'handleLine')).toBe('function');
+  }, 90_000);
+
+  it('builds the provider-codex host entry as a relocatable app-server bridge', async () => {
+    const root = await mkdtemp(join(repositoryRoot, '.builtin-host-test-'));
+    tempDirs.push(root);
+    const source = join(repositoryRoot, 'plugins', 'provider-codex');
+    await stagePluginForHostBuild(source, root);
+    const built = await buildPluginHost(root, '0.9.0-test');
+    const imported: unknown = await import(`${pathToFileURL(built.jsPath).href}?test=${Date.now()}`);
+    const bridge = Reflect.get(Object(imported), 'experimental_providerBridge');
+    expect(bridge).toMatchObject({ experimental_apiVersion: 1 });
+    expect(typeof Reflect.get(Object(bridge), 'handleLine')).toBe('function');
   }, 90_000);
 
   it('leaves Pi on the daemon-bundled bridge instead of a plugin host artifact', async () => {
