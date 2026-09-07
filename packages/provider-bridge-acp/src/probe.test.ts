@@ -11,7 +11,7 @@ describe("probeAcpAgent", () => {
     });
 
     expect(probe.reachable).toBe(false);
-    expect(probe.reachable === false && probe.reason).toContain("ENOENT");
+    expect(probe.reachable === false && probe.reason).toMatch(/not installed|not found/);
     expect(acpAgentProbeSchema.safeParse(probe).success).toBe(true);
   });
 
