@@ -71,7 +71,7 @@ describe('launch mode', () => {
 
   it('paints the thread composer on a panel surface distinct from the launch modal', () => {
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
-    const start = css.indexOf('.launch-modal .thread-command-composer .ui-command-composer {');
+    const start = css.indexOf('.launch-modal .thread-command-composer .ui-command-composer');
     expect(start).toBeGreaterThan(-1);
     const block = css.slice(start, css.indexOf('}', start));
     expect(block).toContain('background: var(--bg-panel);');

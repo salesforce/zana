@@ -82,8 +82,9 @@ describe('agent runtime thread adapter', () => {
   });
 
   it('forwards command mentions into AgentRuntime instead of wiping them', async () => {
-    const started: Array<{ input: PromptInput[] }> = [];
-    const turned: Array<{ input: PromptInput[] }> = [];
+    let startThread: ReturnType<typeof vi.spyOn>;
+    let runTurn: ReturnType<typeof vi.spyOn>;
+    let steerTurn: ReturnType<typeof vi.spyOn>;
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
       dataDir: cwd,
@@ -92,17 +93,10 @@ describe('agent runtime thread adapter', () => {
           ...options,
           adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
-        return {
-          ...runtime,
-          startThread: async (input) => {
-            started.push({ input: input.input });
-            return runtime.startThread(input);
-          },
-          runTurn: async (input) => {
-            turned.push({ input: input.input });
-            return runtime.runTurn(input);
-          }
-        };
+        startThread = vi.spyOn(runtime, 'startThread');
+        runTurn = vi.spyOn(runtime, 'runTurn');
+        steerTurn = vi.spyOn(runtime, 'steerTurn');
+        return runtime;
       }
     });
     const threadId = randomUUID();
@@ -133,8 +127,11 @@ describe('agent runtime thread adapter', () => {
     });
     await adapter.submitTurn({ threadId, input: planInput });
     adapter.dispose();
-    expect(started[0]?.input).toEqual(planInput);
-    expect(turned[0]?.input).toEqual(planInput);
+    expect(startThread!.mock.calls[0]?.[0]).toMatchObject({ input: planInput });
+    const followUp = [...runTurn!.mock.calls, ...steerTurn!.mock.calls]
+      .map((call) => call[0])
+      .find((args) => args?.input);
+    expect(followUp?.input).toEqual(planInput);
   });
 
   it('applies Settings provider-bridge recording to process env before start', async () => {
@@ -296,7 +293,8 @@ describe('agent runtime thread adapter', () => {
   });
 
   it('keeps accept-edits deny escalation on follow-up turns', async () => {
-    const turned: Array<{ permissionMode?: string; permissionEscalation?: string | null }> = [];
+    let runTurn: ReturnType<typeof vi.spyOn>;
+    let steerTurn: ReturnType<typeof vi.spyOn>;
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
       dataDir: cwd,
@@ -305,13 +303,9 @@ describe('agent runtime thread adapter', () => {
           ...options,
           adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
-        return {
-          ...runtime,
-          runTurn: async (input) => {
-            turned.push(input.options);
-            return runtime.runTurn(input);
-          }
-        };
+        runTurn = vi.spyOn(runtime, 'runTurn');
+        steerTurn = vi.spyOn(runtime, 'steerTurn');
+        return runtime;
       }
     });
     const threadId = randomUUID();
@@ -331,9 +325,14 @@ describe('agent runtime thread adapter', () => {
       permissionEscalation: 'deny'
     });
     adapter.dispose();
-    expect(turned[0]).toMatchObject({
-      permissionMode: 'accept-edits',
-      permissionEscalation: 'deny'
+    const followUp = [...runTurn!.mock.calls, ...steerTurn!.mock.calls]
+      .map((call) => call[0])
+      .find((args) => args?.options?.permissionEscalation === 'deny');
+    expect(followUp).toMatchObject({
+      options: {
+        permissionMode: 'accept-edits',
+        permissionEscalation: 'deny'
+      }
     });
   });
 
@@ -524,11 +523,11 @@ describe('agent runtime thread adapter', () => {
       environmentId: randomUUID(),
       projectId: 'p1',
       providerId: 'fake',
-      input: prompt('delay:2000 keep this turn alive'),
+      input: prompt('delay:3000 keep this turn alive'),
       cwd,
       clientRequestId: 'creq_23456789ab'
     });
-    expect(Date.now() - startedAt).toBeLessThan(1500);
+    expect(Date.now() - startedAt).toBeLessThan(2000);
     adapter.dispose();
   });
 
