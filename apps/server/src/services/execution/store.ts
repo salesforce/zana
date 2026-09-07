@@ -42,6 +42,19 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   history: Array<{ action: 'claimed' | 'released' | 'retried' | 'blocked' | 'failed' | 'completed'; slotId?: string; attempt: number; at: number; detail?: string }>;
 }
 
+/**
+ * One engine auto-dispatch assignment (store side). The store transitions the
+ * unit to CLAIMED and returns these so the service can resolve each `slotId` to
+ * a live worker session and push the task text.
+ */
+export interface ExecutionDispatchAssignment {
+  workUnitId: string;
+  slotId: string;
+  title: string;
+  task: string;
+  files?: string[];
+}
+
 export interface ExecutionBlocker {
   id: string;
   workUnitId: string;
@@ -860,6 +873,68 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Work unit claimed: ${workUnitId}`);
   }
 
+  /**
+   * Engine-driven auto-dispatch: assign every currently-READY work unit to a free
+   * worker slot and return the assignments so the service can push each to its
+   * live session. Generic + Rule-6-clean — a unit's `preferredRole` matches a
+   * slot's opaque `personaId` (no tier/domain literal in core); with no match (or
+   * none set) it round-robins onto any free worker slot. A slot is "free" when it
+   * holds no CLAIMED unit; a unit whose mutating file scope overlaps one already
+   * in flight (incl. one just claimed in this pass) is left READY for a later
+   * cascade. Reads the live record inside the store queue — no optimistic version
+   * needed, this is the engine, not a client — and bumps the version ONLY when it
+   * actually assigns, so an idle cascade is a true no-op (no spurious event/bump).
+   */
+  async function dispatchReady(executionId: string, opts?: { deprioritizeSlotId?: string }): Promise<{ record: ExecutionRecord; assignments: ExecutionDispatchAssignment[] }> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const assignments: ExecutionDispatchAssignment[] = [];
+      const slots = record.authorizationContext?.slots;
+      if (!terminalStates.has(record.state) && record.workUnits?.length && slots?.length) {
+        const workerSlots = slots.filter((slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:'));
+        const busy = new Set((record.workUnits ?? []).filter((unit) => unit.state === 'CLAIMED' && unit.assignedSlotId).map((unit) => unit.assignedSlotId!));
+        const freeSlots = workerSlots.filter((slot) => !busy.has(slot.slotId));
+        // Soft-deprioritize the slot whose completion/release triggered this
+        // cascade: it just finished a turn and is still winding down, so send the
+        // next unit to a genuinely-idle peer FIRST. It stays eligible (sorted
+        // last, not removed) so a single-worker team still dispatches to it. An
+        // explicit assignedSlotId / preferredRole match still wins over this order.
+        if (opts?.deprioritizeSlotId) {
+          freeSlots.sort((a, b) => Number(a.slotId === opts.deprioritizeSlotId) - Number(b.slotId === opts.deprioritizeSlotId));
+        }
+        const timestamp = now();
+        for (const unit of record.workUnits ?? []) {
+          if (!freeSlots.length) break;
+          if (unit.state !== 'READY') continue;
+          // Never claim a mutating unit whose file scope overlaps one already in
+          // flight (incl. one just claimed in this pass) — leave it READY.
+          try { assertScopeAvailable(record, unit); } catch { continue; }
+          let index = -1;
+          if (unit.assignedSlotId) index = freeSlots.findIndex((slot) => slot.slotId === unit.assignedSlotId);
+          if (index < 0 && unit.preferredRole) index = freeSlots.findIndex((slot) => slot.personaId === unit.preferredRole);
+          if (index < 0) index = 0;
+          const slot = freeSlots[index];
+          unit.state = 'CLAIMED';
+          unit.assignedSlotId = slot.slotId;
+          unit.attempt += 1;
+          unit.failure = undefined;
+          unit.history.push({ action: 'claimed', slotId: slot.slotId, attempt: unit.attempt, at: timestamp });
+          freeSlots.splice(index, 1);
+          assignments.push({ workUnitId: unit.id, slotId: slot.slotId, title: unit.title, task: unit.task, ...(unit.files?.length ? { files: unit.files } : {}) });
+        }
+        if (assignments.length) {
+          record.stateVersion += 1;
+          record.updatedAt = timestamp;
+          append(snapshot.state, record, record.state, 'info', `Auto-dispatched ${assignments.length} ready work unit(s)`, timestamp, { kind: 'command' });
+          persist(snapshot.state, snapshot.hash);
+        }
+      }
+      return { record: clone(record), assignments };
+    });
+  }
+
   async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
@@ -906,6 +981,19 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       if (unit.state !== 'FAILED' && unit.state !== 'BLOCKED') throw new Error('work unit retry is not allowed');
+      // Never pre-empt an in-flight human answer. A PENDING/LEASED delivery for
+      // this unit's unresolved blocker is still recoverable by the at-least-once
+      // outbox + drain re-announce (and lease rebind on recovery); resolving the
+      // blocker here would discard the human's answer and force the worker to
+      // re-ask. Only a delivery-exhausted (FAILED) or delivery-free blocker may
+      // be retried — while a delivery is in flight the human can still force an
+      // answer via respondToBlocker/resumeBlocker or the board "retry delivery".
+      if (unit.state === 'BLOCKED' && (record.deliveries ?? []).some((delivery) =>
+        (delivery.state === 'PENDING' || delivery.state === 'LEASED')
+        && (record.blockers ?? []).some((blocker) =>
+          blocker.id === delivery.blockerId && !blocker.resolved && blocker.workUnitId === unit.id))) {
+        throw new Error('work unit has an in-flight blocker response; retry the delivery or wait for acknowledgement');
+      }
       if (assignedSlotId) assertAuthorizedSlot(record, assignedSlotId);
       unit.state = 'READY';
       unit.assignedSlotId = assignedSlotId ? string(assignedSlotId, 'assigned slot id') : undefined;
@@ -1276,7 +1364,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, completeWork, failWork, releaseWork, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

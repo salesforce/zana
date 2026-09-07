@@ -380,6 +380,32 @@ This is a **privileged** capability: the first call raises a permission prompt
 the user blesses once (like `agent_send`). It is pre-approved only inside
 autonomous team runs.
 
+## Running a durable squad execution
+
+CLI Agent and Modern expose the same owner workflow. Tool spelling differs only
+because each UI's provider applies its MCP namespace:
+
+| Operation | CLI Agent MCP tool | Modern/OpenCode tool |
+|---|---|---|
+| Start | `mcp__zcc-inbox__execution.start` | `zcc_execution_start` |
+| Monitor | `mcp__zcc-inbox__execution.snapshot` | `zcc_execution_snapshot` |
+| Recover after restart | `mcp__zcc-inbox__execution.resume_binding` | `zcc_execution_resume_binding` |
+
+1. Build one bounded `execution.start` request with squad `teamId`, a unique
+   `launchRequestId`, and one `initialTask` per requested worker slot. Call Start
+   once; the job-team engine launches workers and gives each slot its task.
+2. Keep returned `executionId`. Call Monitor with `{ executionId, after }`, then
+   advance `after` to the newest event cursor. Treat execution state, work units,
+   blockers, and events as authoritative.
+3. Continue monitoring until `COMPLETED`, `FAILED`, or `STOPPED`. When blocked,
+   surface the durable question to the user; do not invent an answer.
+4. Use Recover only after owner session restart and only with the stored resume
+   token. Do not call it during normal kickoff.
+
+Do not launch an ad-hoc bare squad and separately simulate durable work. Start is
+the single owner handoff; job-team execution owns planning, worker work delivery,
+durable state, and completion.
+
 **Check a remote build:**
 
 ```

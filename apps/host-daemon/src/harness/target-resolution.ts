@@ -60,6 +60,19 @@ export function allowsLiveListedModelTarget(provider: LaunchProvider, targetId: 
   return catalog.length === 0 && isLiveListedModelTargetId(targetId) && !!provider.modelContribution;
 }
 
+/**
+ * A provider that can probe the LIVE model inventory (`discoverModelTargets`)
+ * owns a release-maintained static snapshot that DRIFTS when the gateway renames
+ * models (aisuite/* → llmgw/*). A well-formed id absent from that snapshot must
+ * NOT hard-fail resolution — it may be a valid NEW gateway id — so we accept it
+ * here and defer the authoritative yes/no to the launch-time live probe in
+ * preflightStructuredRouting. (An unavailable id is caught there, or — if the
+ * probe couldn't run — surfaced as a specific exit-64 message at teardown.)
+ */
+export function acceptsDriftedModelTarget(provider: LaunchProvider, targetId: string): boolean {
+  return isLiveListedModelTargetId(targetId) && !!provider.modelContribution && !!provider.discoverModelTargets;
+}
+
 const MODEL_LEVELS: readonly ModelLevel[] = ['low', 'medium', 'high', 'extra-high'];
 const EXECUTION_STATES = ['plan', 'interactive', 'accept-edits', 'autonomous'] as const;
 
@@ -225,7 +238,7 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
     const catalogModels = provider.adapter.descriptor.targets?.models ?? [];
     const target = catalogModels.find((candidate) => candidate.id === targetId);
     if (!target) {
-      if (!allowsLiveListedModelTarget(provider, targetId)) {
+      if (!allowsLiveListedModelTarget(provider, targetId) && !acceptsDriftedModelTarget(provider, targetId)) {
         throw new Error(`Unknown model target for ${provider.adapter.descriptor.label}.`);
       }
     } else if (input.scope && !target.scope.includes(input.scope)) {

@@ -273,6 +273,19 @@ describe('IdleTriageService', () => {
     expect(deps.runTriage).not.toHaveBeenCalled();
   });
 
+  it('skips a job-team worker via the immutable cohort role even when headless was cleared', async () => {
+    // A worker spawns headless, but a user opening its card clears the bit;
+    // the immutable cohort.role stamp must still suppress triage.
+    const { deps, clock } = makeDeps({
+      getSession: () => ({ ...baseSession, scheduled: undefined, headless: undefined, cohortRole: 'worker' })
+    });
+    const svc = new IdleTriageService(deps);
+    svc.observe('s', 'idle');
+    clock.fireNext();
+    await tick();
+    expect(deps.runTriage).not.toHaveBeenCalled();
+  });
+
   it('does not spend a call when there is no last turn to classify', async () => {
     const { deps, clock } = makeDeps({ readLastTurn: vi.fn(async () => '') });
     const svc = new IdleTriageService(deps);

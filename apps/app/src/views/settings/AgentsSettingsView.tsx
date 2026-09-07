@@ -168,8 +168,8 @@ export function AgentsSettingsView({
         />
         <CheckboxField
           label="Team jobs"
-          help="Show durable Job Team mode in New agent. Jobs persist on Agents board after closing launcher. On by default."
-          checked={config.teamJobLaunchEnabled !== false}
+          help="Show durable Job Team mode in New agent. Jobs persist on Agents board after closing launcher. Off by default."
+          checked={config.teamJobLaunchEnabled === true}
           onChange={(v) => onUpdate({ teamJobLaunchEnabled: v })}
         />
       </Section>

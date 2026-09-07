@@ -60,6 +60,7 @@ import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/sto
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
+import { IdleGatedInjector } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
 import { createExecutionSourceRegistry, ExecutionSourceError, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
 import { createExecutionHandoffStore } from '@zana-ai/zcc-server/services/execution/handoff-store';
@@ -809,7 +810,11 @@ const executionResumeGrants = createResumeGrantStore({
   filePath: join(app.getPath('userData'), 'squad-execution-resume-grants.json')
 });
 const executionResumeTokens = createResumeTokenStore({
-  filePath: join(app.getPath('home'), '.zcc', 'execution-resume.enc')
+  filePath: join(app.getPath('home'), '.zcc', 'execution-resume.enc'),
+  // E2E-only: a headless macOS runner has no Keychain session, so
+  // safeStorage.isEncryptionAvailable() blocks the main thread forever and
+  // wedges every durable launch. Store plaintext base64 under a throwaway HOME.
+  insecure: Boolean(process.env.ZCC_E2E_HOME)
 });
 const restoreCapabilities = createRestoreCapabilityStore({
   filePath: join(app.getPath('userData'), 'restore-capabilities.json')
@@ -1166,7 +1171,8 @@ const idleTriage = new IdleTriageService({
           createdAt: s.createdAt,
           status: s.status,
           scheduled: s.scheduled,
-          headless: s.headless
+          headless: s.headless,
+          cohortRole: s.cohort?.role
         }
       : null;
   },
@@ -1229,7 +1235,8 @@ const catchUpSummary = new CatchUpSummaryService({
           createdAt: s.createdAt,
           status: s.status,
           scheduled: s.scheduled,
-          headless: s.headless
+          headless: s.headless,
+          cohortRole: s.cohort?.role
         }
       : null;
   },
@@ -1681,7 +1688,8 @@ const autoCloseIdle = new AutoCloseIdleService({
           scheduled: s.scheduled,
           headless: s.headless,
           liveSubagents: agentStatus.subagents(sessionId),
-          lastInputAt: s.lastInputAt
+          lastInputAt: s.lastInputAt,
+          cohortRole: s.cohort?.role
         }
       : null;
   },
@@ -1740,7 +1748,7 @@ const executionDeliveryDrain = new ExecutionDeliveryDrainService({
     const record = await executionStore.getInProject(session.projectId, cohort.executionId);
     return (record?.deliveries ?? [])
       .filter((delivery) => delivery.slotId === cohort.slotId && delivery.state === 'PENDING')
-      .map((delivery) => ({ id: delivery.id, executionId: record!.id }));
+      .map((delivery) => ({ id: delivery.id, executionId: record!.id, attempt: delivery.attempt }));
   },
   isRestful: (sessionId) => isRestfulAgentState(agentStatus.get(sessionId)),
   reply: (sessionId, text) => ptys.reply(sessionId, text)
@@ -2498,6 +2506,27 @@ let mcpServer: McpServerHandle | null = null;
 let controlPlane: ControlPlaneHandle | null = null;
 let runtimeSupervisor: RuntimeSupervisor | null = null;
 
+/**
+ * Owner-session liveness probe for the Modern/ACP loopback owner-auth gate when
+ * Electron-main runs NO in-process runtime supervisor. In dev the conversation
+ * thread store lives in the standalone product server (not a forked child), so
+ * we ask it over the same loopback HTTP main already uses for thread ops. The
+ * canonical liveness rule stays server-side (`isThreadLiveInProject`); we only
+ * read the boolean. Any failure ⇒ false (never authorizes on error).
+ */
+async function probeConversationThreadLive(threadId: string, projectId: string): Promise<boolean> {
+  try {
+    const url = new URL(`api/v1/threads/${encodeURIComponent(threadId)}/live`, productServerUrl());
+    url.searchParams.set('projectId', projectId);
+    const response = await fetch(url);
+    if (!response.ok) return false;
+    const body = await response.json() as { live?: boolean };
+    return body.live === true;
+  } catch {
+    return false;
+  }
+}
+
 function resolvedAppVersion(): string {
   const version = app.getVersion();
   const e2eVersion = process.env.ZCC_E2E_APP_VERSION;
@@ -2527,6 +2556,13 @@ async function ensureRendererStaticHost(): Promise<void> {
   runtimeSupervisor.onPluginAppsChanged((apps) => {
     safeSend(IPC.pluginApps.onChanged, apps);
   });
+  if (mcpServer) {
+    runtimeSupervisor.setMcpBaseUrl(
+      mcpServer.url,
+      store.getConfig().teamLaunchEnabled === true,
+      store.getConfig().teamJobLaunchEnabled === true
+    );
+  }
   setRuntimeHostSupervisor(runtimeSupervisor);
   setProductionRendererOrigin(runtimeSupervisor.rendererUrl);
 }
@@ -3823,12 +3859,13 @@ function jobCoordinatorPrompt(input: {
     `You are coordinator of Job Team "${input.team.name}"${input.executionId ? ` for execution \`${input.executionId}\`` : ''}. Your coordinator identity, execution binding, and worker roster are already host-bound. Do not discover, register, recover, or replace them during normal kickoff.`,
     `Workers are already running:\n${rosterLines.join('\n') || '- No workers.'}`,
     [
-      'Snapshot-first kickoff:',
-      `- First call \`execution.snapshot\`${input.executionId ? ` for execution \`${input.executionId}\`` : ''}. Treat its execution state and work units as authoritative; use the host-provided worker roster above for assignment.`,
-      '- If the snapshot has existing non-empty `workUnits`, use those exact units and do not call `execution.plan.register`.',
-      '- If the snapshot has empty `workUnits` and execution sources exist, call `execution.source.list`, read each source fully with bounded `execution.source.read` pages, derive bounded generic work units, and call `execution.plan.register` exactly once.',
-      '- If the snapshot has empty `workUnits` and no execution sources exist, derive bounded generic work units from the goal and available context and call `execution.plan.register` exactly once; if that context cannot support a bounded plan, fail clearly without registering a speculative plan.',
-      '- Assign each ready unit with `execution.work.assign`, passing the required worker roster `assignedSlotId`, then delegate with `agent_send`. Never assign work to the orchestrator slot.',
+      'Snapshot-first kickoff, then hand scheduling to the engine:',
+      `- First call \`execution.snapshot\`${input.executionId ? ` for execution \`${input.executionId}\`` : ''}. Treat its execution state and work units as authoritative; use the host-provided worker roster above.`,
+      '- Plan-readiness check: if the snapshot already has non-empty `workUnits` that form a valid structured DAG (every unit has a `task` and its `dependencies` reference real unit ids), use those exact units and do not call `execution.plan.register`.',
+      '- If `workUnits` are empty (or not yet a valid DAG) and execution sources exist, call `execution.source.list`, read each source fully with bounded `execution.source.read` pages, derive bounded generic work units, and call `execution.plan.register` exactly once.',
+      '- If `workUnits` are empty and no execution sources exist, derive bounded generic work units from the goal and available context and call `execution.plan.register` exactly once; if that context cannot support a bounded plan, fail clearly without registering a speculative plan.',
+      '- Once a valid structured plan exists, call `execution.work.dispatch_ready` EXACTLY ONCE. The engine assigns every ready unit to a free worker slot, notifies each worker, and AUTOMATICALLY re-dispatches newly-ready units as work completes. Do NOT assign or delegate units yourself — no `execution.work.assign`, no per-unit `agent_send`. Never assign work to the orchestrator slot.',
+      '- Do not poll for progress. Worker completions, blockers, and results inject when you are idle; act only on an injected notification.',
       '- Do not call execution.status during normal kickoff.',
       '- Do not call execution.list during normal kickoff.',
       '- Do not call execution.events during normal kickoff.',
@@ -3858,7 +3895,7 @@ function jobCoordinatorPrompt(input: {
       'Coordination contract:',
       '- Preserve source-declared execution semantics in generic work units: dependency ids become `dependencies`; bounded work becomes `task`; mutating paths become `files`; read-only work sets `readOnly: true`; checks become `verification`. Every mutating unit needs non-empty `files` before registration.',
       '- Workers must close each unit with `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`.',
-      '- Delegate only ready work units with `agent_send` using worker session ids. Do not poll `agent_inbox`; messages inject when idle. Never let workers independently execute the whole goal.',
+      '- After the plan is structured, hand scheduling to the engine with a single `execution.work.dispatch_ready`; the engine assigns and re-dispatches ready units to workers. Do not relay per-unit assignments with `agent_send`. Do not poll `agent_inbox`; messages inject when idle. Never let workers independently execute the whole goal.',
       '- Record meaningful progress and outcomes with `execution.event`. Route human-required questions through `execution.work.block`, never event-only blockers or AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId; report delivered false plus error when application fails.',
       '- Store durable outputs with `execution.artifact.put`.',
       '- Resolve or escalate blockers, synthesize worker results, and verify completion criteria.',
@@ -4576,6 +4613,16 @@ export async function getTeamLaunch(callerPrincipalId: string, launchRequestId: 
   return result.ok ? { ok: true, value: result.record } : { ok: false, code: result.code, message: 'team launch request not found for caller' };
 }
 
+// Idle-gated assignment delivery for the engine cascade — see
+// `IdleGatedInjector`. The cascade pushes a newly-ready unit the instant a
+// worker COMPLETES its previous one, when the worker is still mid-turn; a raw
+// `reply()` then wedges the busy TUI. This queues the task and flushes it on the
+// worker's next idle edge (driven from the `agentStatus` 'status' subscription).
+const workerInjector = new IdleGatedInjector({
+  getState: (sessionId) => agentStatus.get(sessionId),
+  reply: (sessionId, text) => ptys.reply(sessionId, text)
+});
+
 const squadExecutionService = new SquadExecutionService({
   store: executionStore,
   artifacts: executionArtifacts,
@@ -4590,6 +4637,7 @@ const squadExecutionService = new SquadExecutionService({
   },
   cancelTeamLaunch: async (callerPrincipalId, launchRequestId) => cancelTeamLaunch(callerPrincipalId, launchRequestId),
   replyToSession: (sessionId, text) => ptys.reply(sessionId, text),
+  deliverToWorker: (sessionId, text) => workerInjector.deliver(sessionId, text),
   resumeGrants: executionResumeGrants,
   hasLivePredecessor: (projectId, ownerPrincipalIds) => {
     const owners = new Set(ownerPrincipalIds);
@@ -4630,7 +4678,7 @@ export async function startTeamJobFromUi(
   input: TeamJobLaunchInput,
   sourceContext?: { windowId: number }
 ): Promise<Result<TeamJobLaunchResult>> {
-  if (store.getConfig().teamJobLaunchEnabled === false) {
+  if (store.getConfig().teamJobLaunchEnabled !== true) {
     return { ok: false, code: 'DISABLED', message: 'Team jobs are disabled' };
   }
   if (!input || typeof input !== 'object') {
@@ -5058,6 +5106,9 @@ function wireBridgeListeners() {
     agentStatus.remove(sessionId);
     outputActivity.remove(sessionId);
     screenScanBlocked.remove(sessionId);
+    // Drop any engine-cascade assignment queued for a worker that exited before
+    // idling — it never received the task and won't now (Rule 3).
+    workerInjector.forget(sessionId);
     idleTriage.remove(sessionId);
     // Drop any question held for this session — an agent that finished and closed
     // without ever idling never wanted the answer (a deliberate self-resolve on
@@ -5180,6 +5231,10 @@ function wireBridgeListeners() {
   });
   agentStatus.on('status', (sessionId: string, state, seq) => {
     safeSend(IPC.terminals.onAgentStatus, sessionId, state, seq);
+    // Flush any engine-cascade assignment queued while this worker was mid-turn
+    // (see `workerInjector`): the moment it lands on idle its next unit's task is
+    // safe to inject. Cheap no-op for non-idle states or an empty queue.
+    workerInjector.onState(sessionId, state);
     const session = ptys.getSession(sessionId);
     if (session) void transcriptSource.observe(transcriptRefForSession(session));
     void teamLifecycleIntegration.onAgentStatus(sessionId, state).catch((error) =>
@@ -6442,7 +6497,13 @@ async function bootstrapNormal() {
           for (const pid of projectIds) {
             const idle = ptys
               .list(pid)
-              .filter((s) => s.id !== callerSessionId && s.profile !== 'shell')
+              // Never reap a Job Team / squad ORCHESTRATOR: it sits idle whenever
+              // the job is at rest — including while BLOCKED on a human answer —
+              // and closing it tears the whole execution down (the parked
+              // question dies, the job flips to STOPPED). Its lifecycle is the
+              // execution's, not a peer-cleanup sweep's. (Workers are excluded by
+              // the `waiting`/scheduled guards below.) Main-authoritative, CLAUDE.md #1.
+              .filter((s) => s.id !== callerSessionId && s.profile !== 'shell' && s.cohort?.role !== 'orchestrator')
               .filter((s) => {
                 const state = agentStatus.get(s.id);
                 // `waiting` = a non-OSC harness (codex/cursor/pi/opencode) at rest
@@ -6478,11 +6539,11 @@ async function bootstrapNormal() {
     // `closeIdlePeersEnabled` pattern. main authorizes the whole launch.
     launchTeam: store.getConfig().teamLaunchEnabled ? launchTeam : undefined,
     authorizeTeamLaunch: store.getConfig().teamLaunchEnabled ? authorizeTeamLaunch : undefined,
-    cancelTeamLaunch: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled !== false) ? cancelTeamLaunch : undefined,
-    getTeamLaunch: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled !== false) ? getTeamLaunch : undefined,
-    reportTeamTask: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled !== false) ? reportTeamTask : undefined,
-    executionService: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled !== false) ? squadExecutionService : undefined,
-    executionHandoffs: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled !== false) ? executionHandoffs : undefined,
+    cancelTeamLaunch: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled === true) ? cancelTeamLaunch : undefined,
+    getTeamLaunch: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled === true) ? getTeamLaunch : undefined,
+    reportTeamTask: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled === true) ? reportTeamTask : undefined,
+    executionService: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled === true) ? squadExecutionService : undefined,
+    executionHandoffs: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled === true) ? executionHandoffs : undefined,
     resolveExecutionCohortBinding: (sessionId, projectId) => {
       const session = ptys.getSession(sessionId);
       const cohort = session?.cohort;
@@ -6497,7 +6558,7 @@ async function bootstrapNormal() {
       const record = await executionStore.getInProject(binding.projectId, binding.executionId);
       return record?.effectiveOwnerPrincipalIds?.includes(sessionId) ?? false;
     },
-    validateExecutionHandoffTarget: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled !== false)
+    validateExecutionHandoffTarget: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled === true)
       ? (sourceSessionId, targetSessionId, projectId) => {
           const source = ptys.getSession(sourceSessionId);
           const target = ptys.getSession(targetSessionId);
@@ -6505,7 +6566,7 @@ async function bootstrapNormal() {
             && !!target && target.status !== 'exited' && target.projectId === projectId;
         }
       : undefined,
-    approveExecutionHandoff: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled !== false)
+    approveExecutionHandoff: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled === true)
       ? async (sourceSessionId, targetSessionId, projectId, executionId, operation) => {
           const source = ptys.getSession(sourceSessionId);
           const target = ptys.getSession(targetSessionId);
@@ -6529,10 +6590,30 @@ async function bootstrapNormal() {
           return result.response === 0;
         }
       : undefined,
-    validateTeamRouteIdentity: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled !== false)
+    validateTeamRouteIdentity: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled === true)
       ? (sessionId, projectId) => {
           const session = ptys.getSession(sessionId);
           return !!session && session.status !== 'exited' && session.projectId === projectId;
+        }
+      : undefined,
+    // Owner-session identity for launch_team AND execution.start / snapshot /
+    // resume_binding. Accepts a live pty session (same check as above) OR —
+    // for the Modern/ACP loopback forwarder, which has no pty — a live
+    // conversation thread, probed async in the server-runtime that owns the
+    // thread store. Cohort / worker execution verbs stay pty-only via
+    // validateTeamRouteIdentity.
+    validateLaunchRouteIdentity: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled === true)
+      ? async (sessionId, projectId) => {
+          const session = ptys.getSession(sessionId);
+          if (session && session.status !== 'exited' && session.projectId === projectId) return true;
+          // Modern/ACP loopback owner has no pty — probe conversation-thread
+          // liveness. Prod: the in-process runtime supervisor owns the forked
+          // thread store. Dev: no supervisor is started, so probe the standalone
+          // product server over loopback HTTP (same origin main uses for threads).
+          if (runtimeSupervisor) {
+            return (await runtimeSupervisor.isThreadLive(sessionId, projectId)) === true;
+          }
+          return probeConversationThreadLive(sessionId, projectId);
         }
       : undefined,
     // Project discovery (list_projects) — the read counterpart to
@@ -6632,6 +6713,15 @@ async function bootstrapNormal() {
       mcpServer = handle;
       writeMcpPort(mcpPortFile, handle.port);
       ptys.setMcpBaseUrl(handle.url);
+      // Modern (ACP) threads have no `.mcp.json`; hand the server-runtime the
+      // loopback MCP base URL so its team-launch + owner-execution forwarder
+      // can reach this same route. `teamLaunchEnabled` gates launch_team;
+      // `teamJobLaunchEnabled` gates execution.start / snapshot / resume_binding.
+      runtimeSupervisor?.setMcpBaseUrl(
+        handle.url,
+        store.getConfig().teamLaunchEnabled === true,
+        store.getConfig().teamJobLaunchEnabled === true
+      );
       // Backfill .mcp.json for any project that doesn't already have one
       // (idempotent — safe to re-run on every boot).
       for (const project of store.listProjects()) {

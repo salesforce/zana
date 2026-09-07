@@ -388,7 +388,23 @@ export interface McpServerOptions {
   cancelTeamLaunch?: RegisterLaunchTeamToolOpts['cancelTeamLaunch'];
   getTeamLaunch?: RegisterLaunchTeamToolOpts['getTeamLaunch'];
   reportTeamTask?: RegisterLaunchTeamToolOpts['reportTeamTask'];
-  validateTeamRouteIdentity?: RegisterLaunchTeamToolOpts['validateRouteIdentity'];
+  /**
+   * SYNC pty-only liveness gate. Feeds the cohort / worker `execution.*` plane
+   * (`plan.register`, `work.*`, `delivery.*`, …) AND is the fallback base for
+   * launch identity. Deliberately sync and pty-only — a Modern thread is a
+   * launcher, never a cohort member. Keep it distinct from
+   * {@link validateLaunchRouteIdentity}.
+   */
+  validateTeamRouteIdentity?: (sessionId: string, projectId: string) => boolean;
+  /**
+   * ASYNC owner-session identity gate for `launch_team` siblings AND the
+   * owner execution verbs (`execution.start`, `execution.snapshot`,
+   * `execution.resume_binding`). Wider than {@link validateTeamRouteIdentity}:
+   * main accepts either a live pty session OR a live Modern/ACP conversation
+   * thread (the latter needs an async cross-process liveness probe). Falls back
+   * to the sync pty gate when unset. Cohort verbs stay on the pty-only gate.
+   */
+  validateLaunchRouteIdentity?: RegisterLaunchTeamToolOpts['validateRouteIdentity'];
   resolveExecutionCohortBinding?: RegisterExecutionToolOptions['resolveCohortBinding'];
   validateExecutionRecoveryBinding?: RegisterExecutionToolOptions['validateRecoveryBinding'];
   executionService?: ExecutionService;
@@ -532,6 +548,7 @@ function buildProjectMcpServer(opts: {
   getTeamLaunch?: McpServerOptions['getTeamLaunch'];
   reportTeamTask?: McpServerOptions['reportTeamTask'];
   validateTeamRouteIdentity?: McpServerOptions['validateTeamRouteIdentity'];
+  validateLaunchRouteIdentity?: McpServerOptions['validateLaunchRouteIdentity'];
   resolveExecutionCohortBinding?: McpServerOptions['resolveExecutionCohortBinding'];
   validateExecutionRecoveryBinding?: McpServerOptions['validateExecutionRecoveryBinding'];
   executionService?: McpServerOptions['executionService'];
@@ -772,8 +789,14 @@ function buildProjectMcpServer(opts: {
       cancelTeamLaunch: opts.cancelTeamLaunch,
       getTeamLaunch: opts.getTeamLaunch,
       reportTeamTask: opts.reportTeamTask,
-      validateRouteIdentity: (sessionId, projectId) => routeAuthenticated
-        && (opts.validateTeamRouteIdentity?.(sessionId, projectId) ?? false)
+      // Launch identity accepts a live pty session OR a live Modern/ACP thread
+      // (async probe). Falls back to the sync pty-only gate when the async one
+      // isn't wired. Distinct from the execution plane's sync gate below.
+      validateRouteIdentity: async (sessionId, projectId) => {
+        if (!routeAuthenticated) return false;
+        const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;
+        return (await gate?.(sessionId, projectId)) ?? false;
+      }
     });
   }
   if (opts.sessionId && opts.executionService) {
@@ -790,7 +813,12 @@ function buildProjectMcpServer(opts: {
       validateHandoffTarget: opts.validateExecutionHandoffTarget,
       approveHandoff: opts.approveExecutionHandoff,
       validateRouteIdentity: (sessionId, projectId) => routeAuthenticated
-        && (opts.validateTeamRouteIdentity?.(sessionId, projectId) ?? false)
+        && (opts.validateTeamRouteIdentity?.(sessionId, projectId) ?? false),
+      validateOwnerRouteIdentity: async (sessionId, projectId) => {
+        if (!routeAuthenticated) return false;
+        const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;
+        return (await gate?.(sessionId, projectId)) ?? false;
+      }
     });
   }
   // list_projects: read-only project discovery. Identity-free (no sessionId
@@ -1704,6 +1732,7 @@ async function handleRequest(
     getTeamLaunch: opts.getTeamLaunch,
     reportTeamTask: opts.reportTeamTask,
     validateTeamRouteIdentity: opts.validateTeamRouteIdentity,
+    validateLaunchRouteIdentity: opts.validateLaunchRouteIdentity,
     resolveExecutionCohortBinding: opts.resolveExecutionCohortBinding,
     validateExecutionRecoveryBinding: opts.validateExecutionRecoveryBinding,
     executionService: opts.executionService,

@@ -115,6 +115,29 @@ describe('resume token store', () => {
     }
   });
 
+  it('insecure mode round-trips without touching safeStorage (headless E2E)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-resume-token-'));
+    const filePath = join(dir, 'tokens.enc');
+    // safeStorage reports unavailable AND would throw on decrypt: an insecure
+    // store must never call it, so it still round-trips. This mirrors a headless
+    // macOS runner where isEncryptionAvailable() blocks/fails.
+    cryptoState.available = false;
+    cryptoState.decryptThrows = true;
+    try {
+      const store = createResumeTokenStore({ filePath, now: () => 1_000, insecure: true });
+      store.set({ projectId: 'project-1', executionId: 'execution-1', token: 'plain-token', expiresAt: 2_000 });
+      expect(store.readForBinding('project-1', 'execution-1')).toBe('plain-token');
+      expect(store.status('project-1', 'execution-1')).toEqual({ state: 'available', expiresAt: 2_000 });
+      // Stored as plaintext base64 (no `enc:` prefix from the safeStorage mock).
+      const stored = JSON.parse(readFileSync(filePath, 'utf8')).tokens[0].tokenEnc;
+      expect(Buffer.from(stored, 'base64').toString('utf8')).toBe('plain-token');
+    } finally {
+      cryptoState.available = true;
+      cryptoState.decryptThrows = false;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.runIf(process.platform !== 'win32')('writes 0600 token file', () => {
     const { dir, filePath, store } = fixture();
     try {

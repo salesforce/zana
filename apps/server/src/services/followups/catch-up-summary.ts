@@ -49,6 +49,14 @@ export interface CatchUpSessionInfo {
    *  they must not surface for the user's attention. */
   scheduled?: boolean;
   headless?: boolean;
+  /**
+   * Cohort role when this session belongs to a durable execution (Job Team /
+   * squad). A `worker` is a background slot — never summarized. Unlike
+   * {@link headless} (mutable: a user viewing the worker card flips it via
+   * `restoreTerminal`), `cohort.role` is host-stamped and immutable for the
+   * session's life, so it's the reliable background signal for a worker.
+   */
+  cohortRole?: 'worker' | 'orchestrator';
 }
 
 export interface CatchUpSummaryDeps {
@@ -294,7 +302,9 @@ export class CatchUpSummaryService extends EventEmitter {
     const session = this.deps.getSession(sessionId);
     if (!session || session.status === 'exited') return fail('ineligible');
     // Background agents (scheduled runs, team workers) never request attention.
-    if (session.scheduled || session.headless) return fail('background');
+    // A job-team worker's `headless` bit is mutable (a user opening its card
+    // clears it), so also key off the immutable cohort stamp.
+    if (session.scheduled || session.headless || session.cohortRole === 'worker') return fail('background');
     if (!this.deps.hasTranscript(session.profile)) return fail('no-transcript');
 
     const digest = await this.deps.readDigest({

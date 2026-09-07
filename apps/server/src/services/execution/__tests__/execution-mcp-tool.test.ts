@@ -78,6 +78,7 @@ function service() {
     ,pullDelivery: vi.fn(async () => ({ ok: true as const, value: null }))
     ,ackDelivery: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } }))
     ,snapshotBound: vi.fn(async () => ({ execution: executionRecord, executions: [executionRecord], events: [], nextAfter: 0, truncated: false, artifacts: [], artifactsTruncated: false }))
+    ,dispatchReady: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1' } }))
   };
 }
 
@@ -116,6 +117,28 @@ describe('execution MCP tools', () => {
     });
     expect(result.isError).toBe(true);
     expect(text(result)).toBe('execution.start unavailable: session MCP is not authorized for this live session.');
+  });
+
+  it('accepts owner start when only the owner-session gate is live', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never,
+      validateRouteIdentity: () => false,
+      validateOwnerRouteIdentity: async () => true
+    });
+    const started = await tools.get('execution.start')!({
+      version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }]
+    });
+    expect(started.isError).toBeFalsy();
+    expect(execution.start).toHaveBeenCalledWith('thread-1', 'project-1', expect.objectContaining({ teamId: 'team-1' }));
+
+    const plan = await tools.get('execution.plan.register')!({
+      executionId: 'execution-1', workUnits: [{ id: 'unit-1', title: 'Unit', task: 'Do it', dependencies: [] }]
+    });
+    expect(plan.isError).toBe(true);
+    expect(text(plan)).toContain('session MCP is not authorized for this live session');
+    expect(execution.registerPlan).not.toHaveBeenCalled();
   });
 
   it('does not expose raw recovery credentials from routine execution.start', async () => {
@@ -241,6 +264,16 @@ describe('execution MCP tools', () => {
     expect(inputSchema.assignedSlotId.safeParse(undefined).success).toBe(false);
     await tools.get('execution.work.assign')!({ executionId: 'execution-1', workUnitId: 'unit-1', assignedSlotId: 'worker-1' });
     expect(execution.assignWork).toHaveBeenCalledWith(binding, 'unit-1', 'worker-1');
+  });
+
+  it('delegates engine-cascade dispatch through the coordinator host binding', async () => {
+    const execution = service();
+    const binding = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'coordinator', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, resolveCohortBinding: () => binding });
+    const result = await tools.get('execution.work.dispatch_ready')!({ executionId: 'execution-1' });
+    expect(result.isError).toBeFalsy();
+    expect(execution.dispatchReady).toHaveBeenCalledWith(binding);
   });
 
   it('describes claim as worker-only despite shared Job Team preapproval', () => {

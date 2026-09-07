@@ -75,7 +75,8 @@ export async function sendConversationTurn(
     promptInput: resolvedInput,
     kind: 'new-turn',
     model: execution?.model,
-    reasoningLevel: execution?.reasoningLevel
+    reasoningLevel: execution?.reasoningLevel,
+    acpMode: execution?.acpMode
   });
   updateConversationThreadStatus(ctx.db, live.id, 'active');
   try {

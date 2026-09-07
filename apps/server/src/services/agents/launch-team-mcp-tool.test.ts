@@ -127,6 +127,26 @@ describe('registerLaunchTeamTool', () => {
     expect(launchTeam).toHaveBeenCalledOnce();
   });
 
+  it('awaits an async (Promise) route-identity gate — a Modern/ACP liveness probe', async () => {
+    // The gate is now boolean | Promise<boolean> (main may cross-process probe a
+    // live ACP thread). A Promise<false> MUST block — a naive `=== false` on the
+    // unresolved Promise would wrongly pass. Prove every tool awaits it.
+    const launchTeam = vi.fn((): Result<any> => ({ ok: true, value: { launched: 1, cohortId: 'cohort-1', launchRequestId: 'req', workers: [], failedSlots: [] } }));
+    const validateRouteIdentity = vi.fn(async () => false);
+    const { server, tools } = fakeServer();
+    registerLaunchTeamTool(server as never, makeOpts({ launchTeam, validateRouteIdentity }));
+
+    const blocked = await tools.get('launch_team')!(structuredLaunchArgs);
+    expect(blocked.isError).toBe(true);
+    expect(text(blocked)).toContain('originating session is not live in this project');
+    expect(launchTeam).not.toHaveBeenCalled();
+
+    validateRouteIdentity.mockResolvedValue(true);
+    const allowed = await tools.get('launch_team')!(structuredLaunchArgs);
+    expect(allowed.isError).toBeFalsy();
+    expect(launchTeam).toHaveBeenCalledOnce();
+  });
+
   it('preauthorizes route-bound request policy and per-slot tasks', async () => {
     const authorizeTeamLaunch = vi.fn(() => ({ ok: true, value: {
       teamId: 'squad', projectId: 'p1', slots: [

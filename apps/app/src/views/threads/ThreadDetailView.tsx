@@ -122,6 +122,7 @@ export function ThreadDetail({
   const [threadProviderId, setThreadProviderId] = useState<string | null>(null);
   const [threadModel, setThreadModel] = useState<string | null>(null);
   const [threadReasoning, setThreadReasoning] = useState<string | null>(null);
+  const [threadAcpMode, setThreadAcpMode] = useState<string | null>(null);
   const [rows, setRows] = useState<TimelineRow[]>([]);
   const [thinking, setThinking] = useState<ActiveThinking | null>(null);
   const [todos, setTodos] = useState<ThreadTimelinePendingTodos | null>(null);
@@ -286,6 +287,7 @@ export function ThreadDetail({
           archivedAt?: number | null;
           model?: string | null;
           reasoningLevel?: string | null;
+          acpMode?: string | null;
         };
         const nextStatus = thread.status ?? timeline.status;
         setTitle(thread.title?.trim() || 'Agent');
@@ -298,6 +300,7 @@ export function ThreadDetail({
         setThreadProviderId(typeof thread.providerId === 'string' ? thread.providerId : null);
         setThreadModel(typeof thread.model === 'string' ? thread.model : null);
         setThreadReasoning(typeof thread.reasoningLevel === 'string' ? thread.reasoningLevel : null);
+        setThreadAcpMode(typeof thread.acpMode === 'string' ? thread.acpMode : null);
         setParentThreadId((thread as { parentThreadId?: string | null }).parentThreadId ?? null);
         if (thread.id) {
           upsertThread({
@@ -771,6 +774,7 @@ export function ThreadDetail({
                 providerId={threadProviderId ?? undefined}
                 model={threadModel}
                 reasoningLevel={threadReasoning}
+                acpMode={threadAcpMode}
               />
             </div>
           </div>

@@ -1493,7 +1493,11 @@ describe("acp bridge", () => {
     }
     const [mcpServerConfig] = JSON.parse(
       configText.slice(configPrefix.length),
-    ) as { env: { name: string; value: string }[] }[];
+    ) as { args: string[]; env: { name: string; value: string }[] }[];
+    expect(mcpServerConfig?.args.at(-2)).toBe(
+      fileURLToPath(new URL("./bridge.ts", import.meta.url)),
+    );
+    expect(mcpServerConfig?.args.at(-1)).toBe("--mcp-stdio");
     expect(
       mcpServerConfig?.env.find(({ name }) => name === "ELECTRON_RUN_AS_NODE")
         ?.value,
@@ -1614,6 +1618,7 @@ describe("acp bridge", () => {
   });
 
   it("passes dynamic tools to ACP sessions as an MCP server", async () => {
+    expect(ACP_BRIDGE_MCP_SERVER_NAME).toBe("zcc");
     const { providerThreadId } = await startThread({
       dynamicTools: [
         {
@@ -1637,6 +1642,58 @@ describe("acp bridge", () => {
     expect(agentMessageTexts()).toContain(
       `mcp-servers:${ACP_BRIDGE_MCP_SERVER_NAME}`,
     );
+  });
+
+  it("uses session-scoped HTTP MCP when the ACP agent advertises it", async () => {
+    const { providerThreadId } = await startThread({
+      dynamicTools: [
+        {
+          name: "execution_start",
+          description: "Start durable execution.",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+      envVars: { FAKE_ACP_HTTP_MCP: "1" },
+    });
+
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-mcp-server-config", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    const configPrefix = "mcp-server-config:";
+    const configText = agentMessageTexts().find((text) => text.startsWith(configPrefix));
+    if (!configText) throw new Error("Fake ACP agent did not report MCP server config");
+    const [server] = JSON.parse(configText.slice(configPrefix.length)) as Array<{
+      headers: unknown[];
+      name: string;
+      type: string;
+      url: string;
+    }>;
+    expect(server).toMatchObject({
+      headers: [],
+      name: ACP_BRIDGE_MCP_SERVER_NAME,
+      type: "http",
+    });
+    expect(server?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/thread-/);
+
+    const initialize = await fetch(server!.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26" } }),
+    });
+    const initializeBody = await initialize.json();
+    expect(initialize.status, JSON.stringify(initializeBody)).toBe(200);
+    expect(initializeBody).toMatchObject({
+      result: { capabilities: { tools: {} }, protocolVersion: "2025-03-26" },
+    });
+    const listed = await fetch(server!.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+    });
+    expect(await listed.json()).toMatchObject({ result: { tools: [{ name: "execution_start" }] } });
   });
 
   it("forwards ACP dynamic tool calls through the runtime tool-call contract", async () => {
@@ -1729,6 +1786,90 @@ describe("acp bridge", () => {
       ok: true,
     });
   });
+
+  it("binds a forwarded dynamic tool to the agent's generic MCP announcement", async () => {
+    const { bbThreadId, providerThreadId } = await startThread({
+      dynamicTools: [
+        {
+          name: "execution_start",
+          description: "Start a durable execution.",
+          inputSchema: { type: "object" },
+        },
+        {
+          name: "ask_user_question",
+          description: "Ask the user a question.",
+          inputSchema: { type: "object" },
+        },
+      ],
+      envVars: { FAKE_ACP_HTTP_MCP: "1" },
+    });
+
+    const configPrefix = "mcp-server-config:";
+    const configTurnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-mcp-server-config", mentions: [] }],
+    });
+    await waitForResponse(configTurnId);
+    await waitForTurnCompleted();
+    const configText = await waitFor(
+      () => agentMessageTexts().find((text) => text.startsWith(configPrefix)),
+      "MCP server config",
+    );
+    const [mcpServerConfig] = JSON.parse(configText.slice(configPrefix.length)) as Array<{ url: string }>;
+
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "announce-mcp-tool", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    await waitFor(
+      () => threadEventsOfType("item/started").find((event) =>
+        (event.item as { type?: string; tool?: string } | undefined)?.type === "toolCall" &&
+        (event.item as { tool?: string } | undefined)?.tool === "other"),
+      "generic MCP tool announcement",
+    );
+
+    const bridgeCall = fetch(mcpServerConfig.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "execution-start-call",
+        method: "tools/call",
+        params: { name: "execution_start", arguments: { launchRequestId: "launch-1" } },
+      }),
+    }).then((response) => response.json());
+    const forwarded = await waitFor(
+      () => output.messages.find((message) =>
+        message.method === "item/tool/call" && message.id !== undefined),
+      "forwarded execution tool call",
+    );
+    handleLine(JSON.stringify({
+      jsonrpc: "2.0",
+      id: forwarded.id,
+      result: { success: true, contentItems: [{ type: "inputText", text: "started" }] },
+    }));
+    await expect(bridgeCall).resolves.toMatchObject({
+      result: { content: [{ text: "started", type: "text" }] },
+    });
+
+    const stopId = sendRequest("thread/stop", {
+      threadId: bbThreadId,
+      providerThreadId,
+      intent: "interrupt",
+      activeTurnId: null,
+    });
+    await waitForResponse(stopId);
+    const completed = await waitFor(
+      () => threadEventsOfType("item/completed").find((event) =>
+        (event.item as { type?: string; tool?: string } | undefined)?.type === "toolCall" &&
+        (event.item as { tool?: string } | undefined)?.tool === "execution_start"),
+      "bound execution tool completion",
+    );
+    expect(completed.item).toMatchObject({
+      server: "bb",
+      tool: "execution_start",
+    });
+    startedProviderThreadIds.pop();
+  }, 10_000);
 
   // Canonical sessions carry no skill roots in their options; the roots the
   // runtime configures once per process must reach the session instructions of

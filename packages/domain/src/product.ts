@@ -5188,7 +5188,7 @@ export interface ExecutionBoardProjection {
     total: number;
     completed: number;
     counts: Record<'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED', number>;
-    assignments: Array<{ workUnitId: string; title: string; slotId?: string; state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' }>;
+    assignments: Array<{ workUnitId: string; title: string; slotId?: string; state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED'; result?: string }>;
     rosterSlotIds: string[];
   };
   currentBlocker?: {

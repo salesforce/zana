@@ -34,12 +34,33 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('rememberComposerSelection({ providerId, model: nextModel, reasoningLevel })');
   });
 
-  it('gates Native role on advertised modes, adopts the session default, and exposes refresh', () => {
+  it('gates Native role on advertised modes, adopts the session default via the pure selector, and exposes refresh', () => {
     const source = readFileSync(new URL('./useThreadComposerOptions.ts', import.meta.url), 'utf8');
     expect(source).toContain("const acpModeOptions = cached?.acpMode?.options ?? []");
-    expect(source).toContain('setAcpMode(current)');
-    expect(source).toContain('acpModeOptions.some((option) => option.value === acpMode)');
+    expect(source).toContain('nextAcpModeSelection');
+    expect(source).toContain('selected: acpMode');
+    expect(source).toContain('options: acpModeOptions');
+    expect(source).toContain('if (next !== undefined && next !== acpMode) setAcpMode(next)');
     expect(source).toContain('reloadThreadProviderModels(providerId)');
     expect(source).toContain('refreshAcpModeOptions');
+  });
+
+  it('only auto-seeds the native role on a NEW thread, never for an existing thread', () => {
+    // An existing thread has no per-thread mode source; seeding the sessionless
+    // provider default (build) both misled the picker and force-reset the running
+    // mode on every follow-up turn. The seed effect must bail for existing threads.
+    const source = readFileSync(new URL('./useThreadComposerOptions.ts', import.meta.url), 'utf8');
+    expect(source).toContain('Existing threads: never auto-seed or reset the native role');
+    expect(source).toContain('if (input.threadId) return;');
+  });
+
+  it('adopts the existing thread persisted native role via initialAcpMode', () => {
+    // The picker must show the mode the thread is actually running: acpMode state
+    // seeds from the fetched persisted value, and the rehydrate effect re-applies
+    // it once the async thread fetch resolves.
+    const source = readFileSync(new URL('./useThreadComposerOptions.ts', import.meta.url), 'utf8');
+    expect(source).toContain('initialAcpMode?: string | null');
+    expect(source).toContain('useState<string | undefined>(() => input.initialAcpMode ?? undefined)');
+    expect(source).toContain('if (input.initialAcpMode) setAcpMode(input.initialAcpMode);');
   });
 });

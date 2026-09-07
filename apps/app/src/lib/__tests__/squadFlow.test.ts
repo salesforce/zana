@@ -7,7 +7,7 @@ import type {
   SquadFlowNode,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
-import { buildSquadFlow, SOLO_LAUNCH_ID, type SquadFlowInputs } from '../squadFlow.js';
+import { buildSquadFlow, isQuiescentSquad, SOLO_LAUNCH_ID, type SquadFlowInputs } from '../squadFlow.js';
 
 // ---- builders ---------------------------------------------------------------
 
@@ -459,5 +459,22 @@ describe('buildSquadFlow — summary', () => {
     expect(g!.summary).toEqual({ total: 4, working: 1, blocked: 1, idle: 1, exited: 1 });
     expect(g!.builtAt).toBe(5000);
     expect(g!.squad?.id).toBe('frontend-squad');
+  });
+});
+
+describe('isQuiescentSquad', () => {
+  it('is true only when every member has exited', () => {
+    expect(isQuiescentSquad({ total: 6, exited: 6 })).toBe(true);
+  });
+
+  it('is false while any member is still live (not all exited)', () => {
+    // the done-job screenshot regression: a single non-exited member keeps the
+    // graph animated so a live squad never renders as frozen/done.
+    expect(isQuiescentSquad({ total: 6, exited: 5 })).toBe(false);
+    expect(isQuiescentSquad({ total: 4, exited: 0 })).toBe(false);
+  });
+
+  it('is false for an empty squad (no members to be done)', () => {
+    expect(isQuiescentSquad({ total: 0, exited: 0 })).toBe(false);
   });
 });

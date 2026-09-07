@@ -761,7 +761,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessPiEnabled: config.harnessPiEnabled ?? false,
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
-    teamJobLaunchEnabled: config.teamJobLaunchEnabled ?? true,
+    teamJobLaunchEnabled: config.teamJobLaunchEnabled ?? false,
     openerHiddenTargets: config.openerHiddenTargets ?? [],
     steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false
   };
@@ -1841,7 +1841,7 @@ export const useData = create<DataState>((set, get) => ({
   editorStatus: [],
   openerHiddenTargets: [],
   microVmEnabled: false,
-  teamJobLaunchEnabled: true,
+  teamJobLaunchEnabled: false,
   worktreeIsolationDefault: false,
 
   setFontSize(n) {

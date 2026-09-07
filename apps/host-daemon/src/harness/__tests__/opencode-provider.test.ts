@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
 import { providerFor, registrationFor } from '../registry.js';
 import {
   OpenCodeAgentDiscoveryCache,
@@ -7,10 +7,14 @@ import {
   enrichOpenCodeAgentDescriptors,
   parseOpenCodeAgentDescriptors,
   parseOpenCodeAgentDebugOutput,
-  parseOpenCodeAgentDiscoveryOutput
+  parseOpenCodeAgentDiscoveryOutput,
+  parseOpenCodeModelIds
 } from '../opencode/provider.js';
 import type { AppConfig, ProjectRemote } from '@zana-ai/zcc-domain/product';
 import { shellQuote, shellQuoteArgv } from '../shell-quote.js';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const CONFIG: AppConfig = {
   version: 1,
@@ -691,6 +695,90 @@ describe('OpenCodeProvider', () => {
         p.detectBlockedPrompt('opencode', 'I will submit the PR and dismiss the warning.')
       ).toBe(false);
     });
+  });
+});
+
+describe('parseOpenCodeModelIds', () => {
+  it('keeps provider/model ids, trims, dedupes first-seen, and drops noise', () => {
+    expect(parseOpenCodeModelIds([
+      '  llmgw/gpt-5.6-sol-1M  ',
+      'Available models:',        // banner — no slash
+      'llmgw/grok-4.6',
+      'llmgw/gpt-5.6-sol-1M',     // duplicate
+      '',                         // blank
+      '-flag',                    // starts with '-' → rejected id shape
+      'bare-model',               // no slash
+      'llmgw/gemini-3.5-flash'
+    ].join('\n'))).toEqual([
+      'llmgw/gpt-5.6-sol-1M',
+      'llmgw/grok-4.6',
+      'llmgw/gemini-3.5-flash'
+    ]);
+  });
+
+  it('returns an empty list for whitespace or pure-banner output', () => {
+    expect(parseOpenCodeModelIds(' \n\t\r\n')).toEqual([]);
+    expect(parseOpenCodeModelIds('Fetching models...\nNo models configured')).toEqual([]);
+  });
+});
+
+describe('OpenCodeProvider.explainUnexpectedExit', () => {
+  const p = new OpenCodeProvider();
+  const NOT_FOUND = 'Error: ProviderModelNotFoundError: model llmgw/aisuite-old not found';
+
+  it('explains an exit-64 ProviderModelNotFoundError with an actionable message', () => {
+    const msg = p.explainUnexpectedExit('opencode', 64, NOT_FOUND);
+    expect(msg).toContain('no longer available on the gateway');
+    expect(msg).toMatch(/--agent|routing|persona/i);
+  });
+
+  it('matches the generic model-not-found phrasing case-insensitively', () => {
+    expect(p.explainUnexpectedExit('opencode', 64, 'ModelNotFoundError')).toBeTruthy();
+    expect(p.explainUnexpectedExit('opencode', 64, 'the requested Model X not Found here')).toBeTruthy();
+  });
+
+  it('stays silent for a different exit code or an unrelated crash', () => {
+    expect(p.explainUnexpectedExit('opencode', 1, NOT_FOUND)).toBeUndefined();
+    expect(p.explainUnexpectedExit('opencode', 64, 'Segmentation fault')).toBeUndefined();
+    expect(p.explainUnexpectedExit('opencode', 0, NOT_FOUND)).toBeUndefined();
+  });
+});
+
+describe('OpenCodeProvider.discoverModelTargets', () => {
+  const p = new OpenCodeProvider();
+  const scripts: string[] = [];
+
+  const fakeBinary = (body: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-oc-models-'));
+    const path = join(dir, 'opencode');
+    writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    chmodSync(path, 0o755);
+    scripts.push(dir);
+    return path;
+  };
+
+  afterAll(() => {
+    for (const dir of scripts) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns the live gateway ids parsed from `opencode models`', async () => {
+    const bin = fakeBinary('printf "llmgw/gpt-5.6-sol-1M\\nllmgw/grok-4.6\\n"');
+    const cfg: AppConfig = { ...CONFIG, opencodeBinary: bin };
+    // Unique cwd per binary keeps the module-level discovery cache from colliding.
+    await expect(p.discoverModelTargets({ cwd: tmpdir(), config: cfg }))
+      .resolves.toEqual(['llmgw/gpt-5.6-sol-1M', 'llmgw/grok-4.6']);
+  });
+
+  it('returns undefined when the CLI exits non-zero (probe unavailable → snapshot fallback)', async () => {
+    const bin = fakeBinary('echo "boom" >&2\nexit 1');
+    const cfg: AppConfig = { ...CONFIG, opencodeBinary: bin };
+    await expect(p.discoverModelTargets({ cwd: tmpdir(), config: cfg })).resolves.toBeUndefined();
+  });
+
+  it('returns undefined when the CLI lists nothing usable (empty parse is not authoritative)', async () => {
+    const bin = fakeBinary('printf "Fetching models...\\nNo models configured\\n"');
+    const cfg: AppConfig = { ...CONFIG, opencodeBinary: bin };
+    await expect(p.discoverModelTargets({ cwd: tmpdir(), config: cfg })).resolves.toBeUndefined();
   });
 });
 

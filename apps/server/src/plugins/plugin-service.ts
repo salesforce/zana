@@ -282,6 +282,12 @@ export interface PluginServiceOptions {
    * on change. Gated by ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD at attach.
    */
   watchBuiltinPluginSources?: boolean;
+  /**
+   * Host-contributed agent tool source (not a plugin) — surfaced ahead of
+   * plugin tools in `agentToolSources()`. Used for the Modern team-launch
+   * forwarder, whose tools reach Electron-main's loopback MCP route.
+   */
+  hostAgentToolSource?: PluginAgentToolSource;
 }
 
 interface LivePlugin {
@@ -498,7 +504,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   }
 
   function agentToolSources(): PluginAgentToolSource[] {
-    return [...live.entries()]
+    const pluginSources = [...live.entries()]
       .filter(([, current]) => current.handle)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([pluginId, current]) => ({
@@ -507,6 +513,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         configurers: current.handle!.agentConfigurers,
         extraInstructions: current.handle!.extraInstructions
       }));
+    // Host source first so its tool names win the dedupe in
+    // resolvePluginSessionTools over any collision from a plugin.
+    return opts.hostAgentToolSource ? [opts.hostAgentToolSource, ...pluginSources] : pluginSources;
   }
 
   async function configuredInstructions(): Promise<Array<{ pluginId: string; text: string }>> {

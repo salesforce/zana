@@ -938,6 +938,31 @@ describe('listBundledPluginCatalog', () => {
   });
 });
 
+describe('host agent-tool source', () => {
+  it('prepends ACP-safe owner execution names into sessionTools', async () => {
+    const { createModernTeamLaunchSource } = await import('../services/agents/modern-team-launch-tools.js');
+    const dataDir = root();
+    const service = createPluginService({
+      dataDir,
+      bundledRoot: root(),
+      hostAgentToolSource: createModernTeamLaunchSource({
+        getConfig: () => ({
+          mcpBaseUrl: 'http://127.0.0.1:9',
+          teamLaunchEnabled: false,
+          teamJobLaunchEnabled: true
+        }),
+        callMcpTool: async () => ({ ok: true, text: '{}' })
+      })
+    });
+    const session = await service.sessionTools({ threadId: 'thr-1', projectId: 'proj-1' });
+    expect(session.tools.map((row) => row.name)).toEqual(expect.arrayContaining([
+      'execution_start',
+      'execution_snapshot',
+      'execution_resume_binding'
+    ]));
+  });
+});
+
 describe('installBundledPlugin', () => {
   it('returns null when the id is not a plugin package in the bundled root', async () => {
     expect(await installBundledPlugin('echo', { dataDir: root(), bundledRoot: root() })).toBeNull();

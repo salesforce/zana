@@ -34,6 +34,18 @@ export const SQUAD_FLOW_EDGE_MESSAGE_CAP = 200;
  */
 export const SOLO_LAUNCH_ID = '__solo__';
 
+/**
+ * A squad is QUIESCENT when it has members and EVERY one has exited — the whole
+ * team is done. The Flow view uses this to render a finished squad as a static,
+ * muted graph: the `hot` (gold, most-recent-handoff) edge highlight and the
+ * flowing chevron animation are frozen so a done job doesn't keep animating a
+ * "working" flow after every node exited. Strictly all-exited (not "no work
+ * right now") so a still-live idle/working/blocked member keeps the graph alive.
+ */
+export function isQuiescentSquad(summary: { total: number; exited: number }): boolean {
+  return summary.total > 0 && summary.exited === summary.total;
+}
+
 /** Raw, already-project-scoped slice data the projection folds into a graph. */
 export interface SquadFlowInputs {
   projectId: string;

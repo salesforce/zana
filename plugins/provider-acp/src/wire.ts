@@ -250,6 +250,13 @@ export const acpInitializeResultSchema = z
     agentCapabilities: z
       .object({
         loadSession: z.boolean().optional(),
+        mcpCapabilities: z
+          .object({
+            http: z.boolean().optional(),
+            sse: z.boolean().optional(),
+          })
+          .passthrough()
+          .optional(),
         sessionCapabilities: z
           .object({
             fork: z.object({}).passthrough().nullable().optional(),

@@ -1,6 +1,6 @@
 import type { ExecutionSourceSnapshot, SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, type ExecutionCohortAuthority, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -62,6 +62,17 @@ export interface ExecutionServiceDeps {
     value?: { canceledSessionIds: string[]; pendingSessionIds: string[] };
   }>;
   replyToSession: (sessionId: string, text: string) => boolean;
+  /**
+   * Idle-gated variant of {@link replyToSession} used ONLY for engine-cascade
+   * assignment pushes. The cascade dispatches a newly-ready unit the instant a
+   * worker COMPLETES its previous one — but at that instant the worker is still
+   * mid-turn (its `execution.work.complete` call hasn't returned), so a raw
+   * `reply()` injects the next task into a busy TUI and wedges it. This variant
+   * queues the text and flushes it on the worker's next transition INTO idle
+   * (delivering immediately when the worker is already idle). Falls back to
+   * {@link replyToSession} when the host doesn't wire it (tests / mesh-less).
+   */
+  deliverToWorker?: (sessionId: string, text: string) => boolean;
   triggerDeliveryDrain?: (sessionId: string) => void;
   inbox?: { append: (input: any) => Promise<any> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
@@ -124,6 +135,39 @@ function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
     launchResult: lifecycle.launchResult,
     outcome: lifecycle.outcome
   };
+}
+
+/** Per-dependency result char budget spliced into a dependent unit's assignment
+ *  text (Rule 5 bound) — a chosen label fits; a whole upstream document won't be
+ *  pasted into the task prompt. Mirrors the projection's `MAX_UNIT_RESULT_CHARS`. */
+export const MAX_DEP_RESULT_CHARS = 2_048;
+
+/** Summary stamped when the engine auto-finalizes a fully-completed DAG that the
+ *  orchestrator never explicitly closed. A later coordinator execution.complete
+ *  is a graceful no-op (the record is already terminal), so this is the floor. */
+export const AUTO_FINALIZE_SUMMARY = 'All work units completed; execution finalized automatically by the engine.';
+
+/**
+ * Build the "Upstream results" section for a dependent unit's assignment text so
+ * a downstream worker INHERITS each COMPLETED direct dependency's result (e.g. a
+ * navigation label already chosen by an upstream unit) instead of re-blocking to
+ * re-ask the human. The worker's session differs from the upstream unit's and
+ * the snapshot historically stripped `result`, so without this a dependent unit
+ * had no engine-supported way to read an answered dependency. Returns '' when no
+ * direct dependency has a stored result. Pure; exported for unit tests.
+ */
+export function dependencyResultsSection(record: ExecutionRecord, workUnitId: string): string {
+  const unit = record.workUnits?.find((candidate) => candidate.id === workUnitId);
+  if (!unit?.dependencies?.length) return '';
+  const lines: string[] = [];
+  for (const depId of unit.dependencies) {
+    const dependency = record.workUnits?.find((candidate) => candidate.id === depId);
+    if (dependency?.result === undefined) continue;
+    const title = dependency.title ? ` (${dependency.title})` : '';
+    lines.push(`- \`${depId}\`${title}: ${dependency.result.slice(0, MAX_DEP_RESULT_CHARS)}`);
+  }
+  if (!lines.length) return '';
+  return `\n\nUpstream results (outputs of your completed dependencies — use these, do NOT re-ask the human for information already decided here):\n${lines.join('\n')}`;
 }
 
 export class ExecutionService {
@@ -409,9 +453,119 @@ export class ExecutionService {
     return this.mutateBound(binding, (record) => this.deps.store.claimWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId));
   }
 
+  /**
+   * Coordinator hands scheduling to the engine: assign every currently-READY work
+   * unit to a free worker slot and push the task to each. Called once at kickoff
+   * (after the plan is structured); the engine then re-dispatches newly-ready
+   * units on each completion edge (see {@link cascadeDispatch}), so the
+   * coordinator never relays per-unit assignments.
+   */
+  async dispatchReady(binding: ExecutionCohortBinding) {
+    if (binding.role !== 'orchestrator') return deniedBound('only coordinator can dispatch work');
+    const record = await this.getBound(binding);
+    if (!record) return deniedBound('execution not found for bound cohort');
+    if (isResumeGrantTerminal(record.state)) return terminalBound(record);
+    // Defensive plan-readiness gate (generic-tool invariant): NEVER trust that a
+    // producer registered a plan before dispatching. With no work units the store
+    // dispatch is a SILENT no-op (store.ts) — a caller that skipped
+    // execution.plan.register would otherwise hang WORKING forever with no signal.
+    // Surface it so the coordinator structures a plan first. The cascade path
+    // (cascadeDispatch → store.dispatchReady directly) is unaffected: mid-run
+    // "nothing READY yet" stays a legitimate no-op, not an error.
+    if (!record.workUnits?.length) {
+      return invalidBound(new Error('no structured plan to dispatch — register a work DAG with execution.plan.register before execution.work.dispatch_ready'));
+    }
+    try {
+      const { record: updated, assignments } = await this.deps.store.dispatchReady(record.id);
+      await this.pushAssignments(updated, assignments);
+      return { ok: true as const, value: updated };
+    } catch (error) {
+      return invalidBound(error);
+    }
+  }
+
   async completeWork(binding: ExecutionCohortBinding, workUnitId: string, result: string) {
     if (binding.role !== 'worker') return deniedBound('only assigned worker can complete work');
-    return this.mutateBound(binding, (record) => this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result));
+    const outcome = await this.mutateBound(binding, (record) => this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result));
+    // Deprioritize the just-completed slot: it's still mid-turn winding down, and
+    // idle peers should take the next unit before it. It stays eligible (falls
+    // back to it when it's the only free worker), and the idle-gated push keeps a
+    // fallback-to-self delivery safe.
+    if (outcome.ok) {
+      await this.cascadeDispatch(outcome.value.id, binding.slotId);
+      await this.maybeAutoFinalize(outcome.value.id);
+    }
+    return outcome;
+  }
+
+  /**
+   * Engine-side finalization safety net. When a completed unit leaves the DAG
+   * fully resolved — EVERY work unit COMPLETED (so nothing PENDING/READY/CLAIMED/
+   * BLOCKED and none FAILED) — transition the execution to COMPLETED without
+   * waiting for the orchestrator's execution.complete. Symmetric with
+   * auto-dispatch: the engine owns the whole DAG lifecycle, so a run never hangs
+   * WORKING because an external orchestrator (which Zana must not depend on —
+   * the generic-tool invariant) never finalized. A later coordinator
+   * execution.complete is a graceful no-op (record already terminal). Runs the
+   * SAME terminal side-effects as a coordinator complete (cleanup + cancel the
+   * team launch). Best-effort: never fails the worker's own close, and
+   * completeExecution's own guards (incomplete units, unresolved blockers,
+   * non-RUNNING state) throw-and-skip here rather than force a bad transition.
+   */
+  private async maybeAutoFinalize(executionId: string): Promise<void> {
+    try {
+      const record = await this.deps.store.get(executionId);
+      if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') return;
+      const units = record.workUnits ?? [];
+      if (!units.length || !units.every((unit) => unit.state === 'COMPLETED')) return;
+      const completed = await this.deps.store.completeExecution(record.id, record.stateVersion, AUTO_FINALIZE_SUMMARY);
+      await this.cleanupTerminal(completed);
+      await this.deps.cancelTeamLaunch(completed.callerPrincipalId, completed.teamLaunchRequestId);
+    } catch { /* best-effort; the orchestrator's execution.complete remains a valid path */ }
+  }
+
+  /**
+   * After a unit closes (freeing a slot and satisfying dependents), auto-assign
+   * the newly-ready units and push them — the engine schedules the DAG so the
+   * coordinator stays out of the per-unit relay. Best-effort: a cascade failure
+   * never fails the worker's own close; the next completion (or an explicit
+   * coordinator dispatch_ready) re-dispatches.
+   */
+  private async cascadeDispatch(executionId: string, deprioritizeSlotId?: string): Promise<void> {
+    try {
+      const { record, assignments } = await this.deps.store.dispatchReady(executionId, deprioritizeSlotId ? { deprioritizeSlotId } : undefined);
+      await this.pushAssignments(record, assignments);
+    } catch { /* best-effort */ }
+  }
+
+  /**
+   * Resolve each engine assignment's slot to its live worker session and push the
+   * task text (same primitive as {@link deliverLegacyMessage}). Best-effort per
+   * assignment — a gone session is left for reconcile, not fatal to the batch.
+   */
+  private async pushAssignments(record: ExecutionRecord, assignments: ExecutionDispatchAssignment[]): Promise<void> {
+    if (!assignments.length) return;
+    let lifecycle: ExtractedLifecycle | undefined;
+    try {
+      lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+    } catch {
+      return; // transient lifecycle read failure — coordinator/reconcile can re-dispatch
+    }
+    for (const assignment of assignments) {
+      const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
+      if (!worker?.sessionId) continue;
+      const upstream = dependencyResultsSection(record, assignment.workUnitId);
+      const text = `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${upstream}\n\nWhen the unit is done call execution.work.complete; if it needs human input call execution.work.block; if it fails call execution.work.fail; to hand it back call execution.work.release. Report progress and results to the coordinator with agent_send.`;
+      try {
+        // Idle-gated: never inject an assignment into a mid-turn worker (the
+        // cascade fires from the worker's own completion, so it is busy). Falls
+        // back to the raw reply when the host doesn't wire the idle-gated dep.
+        const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
+        if (deliver(worker.sessionId, text)) {
+          try { this.deps.triggerDeliveryDrain?.(worker.sessionId); } catch { /* nudge best-effort */ }
+        }
+      } catch { /* push best-effort; a gone session is handled by reconcile */ }
+    }
   }
 
   async failWork(binding: ExecutionCohortBinding, workUnitId: string, failure: string) {
@@ -441,7 +595,9 @@ export class ExecutionService {
 
   async releaseWork(binding: ExecutionCohortBinding, workUnitId: string) {
     if (binding.role !== 'worker') return deniedBound('only assigned worker can release work');
-    return this.mutateBound(binding, (record) => this.deps.store.releaseWork(record.id, record.stateVersion, binding, workUnitId));
+    const outcome = await this.mutateBound(binding, (record) => this.deps.store.releaseWork(record.id, record.stateVersion, binding, workUnitId));
+    if (outcome.ok) await this.cascadeDispatch(outcome.value.id, binding.slotId); // released unit → READY → re-dispatch (prefer an idle peer over the just-released slot)
+    return outcome;
   }
 
   async retryWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string) {

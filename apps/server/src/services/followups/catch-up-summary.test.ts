@@ -322,6 +322,19 @@ describe('CatchUpSummaryService', () => {
       expect(headless.deps.runSummary).not.toHaveBeenCalled();
     });
 
+    it('skips a job-team worker via the immutable cohort role even when headless was cleared', async () => {
+      // A worker spawns headless, but a user opening its card clears the bit.
+      // The immutable cohort.role stamp must still suppress the summary.
+      const { deps, clock } = makeDeps({
+        getSession: () => ({ ...baseSession, scheduled: undefined, headless: undefined, cohortRole: 'worker' })
+      });
+      const svc = new CatchUpSummaryService(deps);
+      svc.observe('s', 'idle');
+      clock.fireNext();
+      await tick();
+      expect(deps.runSummary).not.toHaveBeenCalled();
+    });
+
     it('skips non-claude sessions', async () => {
       const { deps, clock } = makeDeps({ getSession: () => ({ ...baseSession, profile: 'shell' }) });
       const svc = new CatchUpSummaryService(deps);

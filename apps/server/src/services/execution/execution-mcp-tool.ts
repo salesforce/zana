@@ -117,7 +117,14 @@ export interface RegisterExecutionToolOptions {
   /** Host-resolved display name only; never accepted from an MCP caller. */
   projectName?: string;
   service: ExecutionService;
+  /** SYNC pty-only gate. Cohort / worker plane (`plan.register`, `work.*`, …). */
   validateRouteIdentity?: (sessionId: string, projectId: string) => boolean;
+  /**
+   * ASYNC owner-session gate for start / snapshot / resume_binding.
+   * Accepts a live pty session OR a live Modern thread. Falls back to the
+   * pty-only gate when unset so existing callers stay byte-identical.
+   */
+  validateOwnerRouteIdentity?: (sessionId: string, projectId: string) => boolean | Promise<boolean>;
   resolveCohortBinding?: (sessionId: string, projectId: string) => ExecutionCohortBinding | undefined;
   validateRecoveryBinding?: (sessionId: string, binding: ExecutionCohortBinding) => Promise<boolean>;
   handoffs?: ReturnType<typeof createExecutionHandoffStore>;
@@ -241,6 +248,11 @@ export async function readStartRequestFile(
 export function registerExecutionTools(server: McpServer, options: RegisterExecutionToolOptions): void {
   const authorized = (): boolean => !!options.sessionId
     && (options.validateRouteIdentity?.(options.sessionId, options.projectId) ?? false);
+  const ownerAuthorized = async (): Promise<boolean> => {
+    if (!options.sessionId) return false;
+    const gate = options.validateOwnerRouteIdentity ?? options.validateRouteIdentity;
+    return (await gate?.(options.sessionId, options.projectId)) ?? false;
+  };
   const binding = async (correlationExecutionId?: string): Promise<ExecutionCohortBinding | undefined> => {
     const resolved = options.sessionId ? options.resolveCohortBinding?.(options.sessionId, options.projectId) : undefined;
     if (!resolved || correlationExecutionId && resolved.executionId !== correlationExecutionId) return undefined;
@@ -281,6 +293,10 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   server.registerTool('execution.work.assign', { description: 'Coordinator assigns one ready work unit to a worker slot.', inputSchema: executionWorkAssignSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
     if (!authorized()) return denied('execution.work.assign'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.assign');
     return boundResult('execution.work.assign', await options.service.assignWork(bound, workUnitId, assignedSlotId));
+  });
+  server.registerTool('execution.work.dispatch_ready', { description: 'Coordinator hands scheduling to the engine: auto-assign EVERY ready work unit to a free worker slot and notify each worker. Call once after the plan is structured (units have tasks + dependencies); the engine then re-dispatches newly-ready units automatically as work completes, so no per-unit assign is needed.', inputSchema: executionIdSchema }, async ({ executionId }) => {
+    if (!authorized()) return denied('execution.work.dispatch_ready'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.dispatch_ready');
+    return boundResult('execution.work.dispatch_ready', await options.service.dispatchReady(bound));
   });
   server.registerTool('execution.work.complete', { description: 'Complete one assigned work unit.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result }) => {
     if (!authorized()) return denied('execution.work.complete'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.complete');
@@ -323,7 +339,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     description: 'Start one execution in this live session project. Pass either full request fields or a bounded requestPath. Main authorizes launch slots and stores launch identity before launch.',
     inputSchema: executionStartInputSchema
   }, async (input) => {
-    if (!authorized()) return denied('execution.start');
+    if (!await ownerAuthorized()) return denied('execution.start');
     let start: z.infer<typeof executionStartSchema>;
     try {
       start = 'requestPath' in input ? await readStartRequestFile(input.requestPath) : input;
@@ -360,7 +376,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   server.registerTool('execution.resume_binding', {
     description: 'Bind this fresh session to an execution using a durable resume grant. Retry same token after a transient binding failure.', inputSchema: resumeBindingSchema
   }, async ({ executionId, token }) => {
-    if (!authorized()) return denied('execution.resume_binding');
+    if (!await ownerAuthorized()) return denied('execution.resume_binding');
     const result = await options.service.resumeBinding(options.sessionId!, options.projectId, executionId, token);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -406,7 +422,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   server.registerTool('execution.snapshot', {
     description: 'Read one bounded durable execution snapshot. Does not reconcile or poll Team workers.', inputSchema: executionSnapshotSchema
   }, async ({ executionId, after }) => {
-    if (!authorized()) return denied('execution.snapshot');
+    if (!await ownerAuthorized()) return denied('execution.snapshot');
     try {
       const hostBinding = options.sessionId ? options.resolveCohortBinding?.(options.sessionId, options.projectId) : undefined;
       const bound = await binding(executionId);

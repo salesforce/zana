@@ -287,7 +287,7 @@ async function handleHostToolCall(
 
   const ac = new AbortController();
   const onClose = () => ac.abort();
-  request.on('close', onClose);
+  response.on('close', onClose);
   try {
     const result = await ctx.plugins.invokeAgentTool({
       name: parsed.data.tool,
@@ -308,7 +308,7 @@ async function handleHostToolCall(
       }]
     }));
   } finally {
-    request.removeListener('close', onClose);
+    response.removeListener('close', onClose);
   }
   return true;
 }

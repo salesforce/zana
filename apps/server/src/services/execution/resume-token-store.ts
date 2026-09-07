@@ -32,6 +32,16 @@ interface StoredResumeTokenFile {
 export interface ResumeTokenStoreOptions {
   filePath?: string;
   now?: () => number;
+  /**
+   * E2E-ONLY. When true, bypass Electron `safeStorage` entirely and store the
+   * token as plaintext base64. On a headless macOS runner
+   * `safeStorage.isEncryptionAvailable()` blocks forever on a Keychain access it
+   * cannot complete (no GUI session), which wedges the whole durable launch on
+   * the main thread. `--password-store=basic` does NOT help — that switch is
+   * Linux-only; macOS always uses the Keychain backend. The built app sets this
+   * from `ZCC_E2E_HOME` (see host.ts); production never enables it.
+   */
+  insecure?: boolean;
 }
 
 function defaultFilePath(): string {
@@ -69,6 +79,16 @@ function isStoredToken(value: unknown): value is StoredResumeToken {
 export function createResumeTokenStore(options: ResumeTokenStoreOptions = {}) {
   const filePath = options.filePath ?? defaultFilePath();
   const now = options.now ?? Date.now;
+  const insecure = options.insecure === true;
+
+  // safeStorage seam. In `insecure` E2E mode these never touch the native
+  // Keychain (which blocks headless on macOS); plaintext base64 keeps the
+  // on-disk file shape identical so the rest of the store is unchanged.
+  const encAvailable = (): boolean => (insecure ? true : safeStorage.isEncryptionAvailable());
+  const encrypt = (value: string): string =>
+    insecure ? Buffer.from(value, 'utf8').toString('base64') : safeStorage.encryptString(value).toString('base64');
+  const decrypt = (enc: string): string =>
+    insecure ? Buffer.from(enc, 'base64').toString('utf8') : safeStorage.decryptString(Buffer.from(enc, 'base64'));
 
   function read(): StoredResumeTokenFile {
     try {
@@ -102,12 +122,12 @@ export function createResumeTokenStore(options: ResumeTokenStoreOptions = {}) {
     const executionId = assertString(input.executionId, 'execution id');
     const token = assertString(input.token, 'token');
     const expiresAt = assertExpiresAt(input.expiresAt, timestamp);
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('Encryption unavailable - safeStorage not ready');
+    if (!encAvailable()) throw new Error('Encryption unavailable - safeStorage not ready');
 
     const state = read();
     removeExpired(state, timestamp);
     state.tokens = state.tokens.filter((entry) => entry.projectId !== projectId || entry.executionId !== executionId);
-    state.tokens.push({ projectId, executionId, tokenEnc: safeStorage.encryptString(token).toString('base64'), expiresAt });
+    state.tokens.push({ projectId, executionId, tokenEnc: encrypt(token), expiresAt });
     write(state);
   }
 
@@ -151,9 +171,9 @@ export function createResumeTokenStore(options: ResumeTokenStoreOptions = {}) {
       return undefined;
     }
 
-    if (!safeStorage.isEncryptionAvailable()) return undefined;
+    if (!encAvailable()) return undefined;
     try {
-      return safeStorage.decryptString(Buffer.from(entry.tokenEnc, 'base64'));
+      return decrypt(entry.tokenEnc);
     } catch {
       state.tokens = state.tokens.filter((candidate) => candidate !== entry);
       write(state);

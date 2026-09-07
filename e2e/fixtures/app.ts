@@ -131,6 +131,60 @@ export function seedClaudeAuthState(home: string): boolean {
   return true;
 }
 
+/** Seed real OpenCode config/auth while keeping ZCC state in the sandbox HOME. */
+export function seedOpenCodeAuthState(home: string): boolean {
+  const realHome = homedir();
+  let seeded = false;
+  for (const [source, destination] of [
+    [join(realHome, '.config', 'opencode'), join(home, '.config', 'opencode')],
+    [join(realHome, '.local', 'share', 'opencode'), join(home, '.local', 'share', 'opencode')]
+  ]) {
+    if (!existsSync(source)) continue;
+    try {
+      mkdirSync(join(destination, '..'), { recursive: true });
+      cpSync(source, destination, { recursive: true });
+      seeded = true;
+    } catch {
+      /* best-effort — caller's live test will expose unusable auth */
+    }
+  }
+  for (const name of ['.devbar', '.aisuite']) {
+    const source = join(realHome, name);
+    if (!existsSync(source)) continue;
+    try {
+      if (name === '.aisuite') {
+        cpSync(source, join(home, name), { recursive: true });
+      } else {
+        symlinkSync(source, join(home, name));
+      }
+    } catch {
+      /* best-effort — absent when auth does not use these helpers */
+    }
+  }
+  const gatewayKey = join(realHome, '.config', 'opencode', '.llmgw-key');
+  if (existsSync(gatewayKey)) {
+    try {
+      mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
+      copyFileSync(gatewayKey, join(home, '.config', 'opencode', '.llmgw-key'));
+    } catch {
+      /* best-effort — plugin credential command may remain available */
+    }
+  }
+  // Sandbox uses copied OpenCode's file-backed provider config. Its AI Suite
+  // provider plugin shells to a HOME-scoped credential manager and cannot read
+  // developer auth under isolated HOME, despite the copied key being valid.
+  try {
+    rmSync(join(home, '.config', 'opencode', 'plugins', 'aisuite_provider.js'), { force: true });
+    // Live provider E2E needs developer auth, not developer MCP/tool injection.
+    // Leaving sync enabled floods the model catalog and lets it route a
+    // session-local MCP call through AI Suite's Python proxy instead.
+    rmSync(join(home, '.config', 'opencode', 'plugins', 'aisuite_sync.js'), { force: true });
+  } catch {
+    /* best-effort — absent when OpenCode is not managed by AI Suite */
+  }
+  return seeded;
+}
+
 /**
  * Pre-accept claude's per-folder "Is this a project you trust?" dialog for `dir`
  * by writing `projects[dir].hasTrustDialogAccepted = true` into the sandbox
@@ -297,6 +351,8 @@ type Fixtures = {
    * that spawn a real model need it. See {@link seedClaudeAuthState}.
    */
   seedClaudeAuth: boolean;
+  /** Seed real OpenCode config/auth before Electron launches. */
+  seedOpenCodeAuth: boolean;
   /** The booted registry (null unless useRegistry). */
   registry: LocalRegistry | null;
   /** A freshly booted, isolated Electron app. */
@@ -314,10 +370,13 @@ export const test = base.extend<Fixtures>({
   launchEnv: [{}, { option: true }],
   initialConfig: [{}, { option: true }],
   seedClaudeAuth: [false, { option: true }],
+  seedOpenCodeAuth: [false, { option: true }],
 
   home: async ({}, use) => {
     const home = mkdtempSync(join(tmpdir(), 'zcc-e2e-home-'));
+    if (process.env.ZCC_E2E_KEEP_HOME === '1') console.error(`[e2e] preserving HOME ${home}`);
     await use(home);
+    if (process.env.ZCC_E2E_KEEP_HOME === '1') return;
     try {
       rmSync(home, { recursive: true, force: true });
     } catch {
@@ -338,7 +397,7 @@ export const test = base.extend<Fixtures>({
     }
   },
 
-  app: async ({ home, registry, requireSignature, e2e, launchEnv, initialConfig, seedClaudeAuth, isolateBundledCatalog }, use) => {
+  app: async ({ home, registry, requireSignature, e2e, launchEnv, initialConfig, seedClaudeAuth, seedOpenCodeAuth, isolateBundledCatalog }, use) => {
     if (registry) {
       writeRegistryConfig(home, {
         enabled: true,
@@ -350,6 +409,7 @@ export const test = base.extend<Fixtures>({
     // AI specs need a real, authenticated `claude` — seed the sandbox HOME with
     // its onboarding/auth artifacts BEFORE launch (the CLI reads them at spawn).
     if (seedClaudeAuth) seedClaudeAuthState(home);
+    if (seedOpenCodeAuth) seedOpenCodeAuthState(home);
     // SAFETY: on macOS the app resolves ~/.zcc via app.getPath('home') and
     // IGNORES the sandbox HOME, so any test that calls `config.set(...)` writes
     // the DEVELOPER's real ~/.zcc/config.json. A spec pointing `claudeBinary` at

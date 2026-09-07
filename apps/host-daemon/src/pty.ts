@@ -1169,6 +1169,7 @@ export class PtyManager extends EventEmitter {
           'mcp__zcc-inbox__execution.plan.register',
           'mcp__zcc-inbox__execution.work.claim',
           'mcp__zcc-inbox__execution.work.assign',
+          'mcp__zcc-inbox__execution.work.dispatch_ready',
           'mcp__zcc-inbox__execution.work.complete',
           'mcp__zcc-inbox__execution.work.fail',
           'mcp__zcc-inbox__execution.work.block',
@@ -1618,8 +1619,22 @@ export class PtyManager extends EventEmitter {
    */
   private finalizeExit(sessionId: string, exitCode: number): void {
     this.flushData(sessionId);
-    this.clearDataBuffer(sessionId);
     const live = this.live.get(sessionId);
+    // Diagnose an opaque non-zero exit from the retained output tail BEFORE the
+    // backlog is dropped. A provider may turn a bare exit code into a specific,
+    // actionable message (OpenCode exit-64 = a pinned model gone from the gateway).
+    // Emit it as a terminal `data` event so the renderer shows it inline, ahead of
+    // `exit`. Read the backlog first — clearDataBuffer() deletes it.
+    if (live && exitCode !== 0) {
+      const provider = providerFor(live.session.profile);
+      const explanation = provider.explainUnexpectedExit?.(
+        live.session.profile,
+        exitCode,
+        this.getBacklog(sessionId)
+      );
+      if (explanation) this.emit('data', sessionId, `\r\n\x1b[31m${explanation}\x1b[0m\r\n`);
+    }
+    this.clearDataBuffer(sessionId);
     if (!live) return;
     if (live.session.status === 'running') this.startupFailures.delete(sessionId);
     live.session.status = 'exited';

@@ -11,7 +11,7 @@ import {
   agentViewTerminals
 } from '@/store';
 import { useCanvasPan } from '@/hooks/useCanvasPan';
-import { buildSquadFlow } from '@/lib/squadFlow';
+import { buildSquadFlow, isQuiescentSquad } from '@/lib/squadFlow';
 import {
   ALL_SQUADS,
   reconcileSquadLaunchSelection,
@@ -396,6 +396,9 @@ function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onIn
 
   const newestTs = graph.edges.reduce((mx, e) => Math.max(mx, e.lastTs), 0);
   const rollup = graph.summary;
+  // A done (all-exited) squad must render as a static, muted graph — no gold
+  // hot edge, no flowing chevrons — so it doesn't keep looking like live work.
+  const quiescent = isQuiescentSquad(rollup);
   const { isPanning, canvasPanProps } = useCanvasPan();
 
   const handlePointerDown = useCallback(
@@ -493,7 +496,7 @@ function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onIn
               const from = byId.get(e.fromSessionId);
               const to = byId.get(e.toSessionId);
               if (!from || !to) return null;
-              const hot = e.lastTs === newestTs && newestTs > 0;
+              const hot = !quiescent && e.lastTs === newestTs && newestTs > 0;
               return (
                 <FlowEdge
                   key={`${e.fromSessionId}->${e.toSessionId}`}
@@ -501,7 +504,7 @@ function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onIn
                   hot={hot}
                   pending={e.pending}
                   strokeWidth={Math.min(4, 1.5 + (e.count - 1) * 0.6)}
-                  animate={animateFlow}
+                  animate={animateFlow && !quiescent}
                 />
               );
             })}

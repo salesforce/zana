@@ -106,6 +106,21 @@ describe('target-resolution main authorization', () => {
     expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-5.6-terra-1M']);
   });
 
+  it('accepts a well-formed snapshot-ABSENT model for a live-listing provider (drift deferred to preflight)', () => {
+    // The gateway renamed models; the pinned id is not in the release snapshot.
+    // OpenCode live-lists models, so resolution must NOT hard-throw — it emits the
+    // --model arg and defers the authoritative yes/no to the launch-time probe.
+    const resolved = resolveModelTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.0-nova-1M' } } },
+      scope: 'local'
+    });
+    expect(resolved).toMatchObject({ targetId: 'llmgw/gpt-6.0-nova-1M', structuredSelected: true });
+    expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-6.0-nova-1M']);
+  });
+
   it('validates provider target as a filter over the effective combined model target', () => {
     expect(() => resolveModelTarget(opencode, {
       config: config(), profile: 'opencode', extraArgs: [], scope: 'local',

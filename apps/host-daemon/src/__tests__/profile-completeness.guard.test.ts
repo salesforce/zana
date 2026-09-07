@@ -25,7 +25,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   VALID_PROFILES,
   isClaudeProfile,
@@ -39,7 +40,12 @@ import {
 import { providerFor } from '../harness/registry.js';
 import type { LaunchProfileId } from '@zana-ai/zcc-domain/product';
 
-const repoRoot = process.cwd();
+// Resolve the mirror files from THIS test's own location, not process.cwd():
+// the guard reads repo-relative source files, and a per-package runner (vitest
+// under `pnpm --filter`) sets cwd to the package dir, not the repo root. This
+// file lives at <repoRoot>/apps/host-daemon/src/__tests__/, so four levels up is
+// the repo root regardless of where the runner was invoked.
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
 /** Extract every quoted `'...'` / `"..."` token from a `type X = | '...' ...`
  *  union declaration body (a crude but sufficient mirror scan). */

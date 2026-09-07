@@ -194,6 +194,79 @@ describe('agent runtime thread adapter', () => {
     expect(turned[0]).toMatchObject({ model: 'claude-sonnet-5', reasoningLevel: 'xhigh' });
   });
 
+  it('carries acpMode (native role) into providerOptions across start, follow-up, and resume', async () => {
+    // Regression guard for the Modern-composer native-role passthrough. The role
+    // is wrapped as options.providerOptions.acpMode; provider-acp then applies it
+    // via session/set_config_option. If this hop drops it, the ACP session
+    // silently stays in its default mode (build) — the CLI Agent path has its own
+    // launch-boundary coverage, so the Modern path needs this too.
+    const started: Array<{ providerOptions?: { acpMode?: string } }> = [];
+    const turned: Array<{ providerOptions?: { acpMode?: string } }> = [];
+    const resumed: Array<{ providerOptions?: { acpMode?: string } }> = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
+        });
+        return {
+          ...runtime,
+          startThread: async (input) => {
+            started.push(input.options as { providerOptions?: { acpMode?: string } });
+            return runtime.startThread(input);
+          },
+          runTurn: async (input) => {
+            turned.push(input.options as { providerOptions?: { acpMode?: string } });
+            return runtime.runTurn(input);
+          },
+          resumeThread: async (input) => {
+            resumed.push(input.options as { providerOptions?: { acpMode?: string } });
+            return runtime.resumeThread(input);
+          }
+        };
+      }
+    });
+    const threadId = randomUUID();
+    const environmentId = randomUUID();
+    const startedResult = await adapter.startWork({
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd,
+      acpMode: 'reviewer'
+    });
+    await adapter.submitTurn({ threadId, input: ['follow up'], acpMode: 'reviewer' });
+    await adapter.stopWork({ threadId });
+    await adapter.resumeWork({
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'fake',
+      providerThreadId: startedResult?.providerThreadId ?? 'pt-1',
+      cwd,
+      acpMode: 'reviewer'
+    });
+    // A second thread with no role must NOT carry providerOptions — provider-acp
+    // only attempts a mode switch when providerOptions.acpMode is a non-empty string.
+    await adapter.startWork({
+      threadId: randomUUID(),
+      environmentId: randomUUID(),
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['no role'],
+      cwd
+    });
+    adapter.dispose();
+    expect(started[0]?.providerOptions?.acpMode).toBe('reviewer');
+    expect(turned[0]?.providerOptions?.acpMode).toBe('reviewer');
+    expect(resumed[0]?.providerOptions?.acpMode).toBe('reviewer');
+    expect(started[1]?.providerOptions).toBeUndefined();
+  });
+
   it('forwards clientRequestId into startThread and runTurn', async () => {
     const started: (string | undefined)[] = [];
     const turned: string[] = [];

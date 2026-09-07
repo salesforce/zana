@@ -19,6 +19,12 @@
  *  - Fires on `idle` ONLY — never `working` (busy) or `blocked` (a permission /
  *    interactive prompt is left alone; the timer never answers a prompt).
  *  - Background agents (scheduled / headless) are never closed.
+ *  - Job coordinators are never closed — a cohort ORCHESTRATOR (Job Team / squad
+ *    lead) sits idle whenever the job is at rest, INCLUDING while the execution
+ *    is BLOCKED waiting on a human answer. Its lifecycle belongs to the execution,
+ *    not the idle timer; reaping it tears the whole job down (the parked question
+ *    dies unanswered, the execution flips to STOPPED). Workers are already spared
+ *    as background (`scheduled`).
  *  - A delegating parent (live sub-agents > 0) is never closed — that would
  *    orphan its children mid-orchestration.
  *  - Shell tabs are never closed (no agent to reclaim).
@@ -72,6 +78,19 @@ export interface AutoCloseSessionInfo {
    * Absent/0 ⇒ never typed (eligible on that axis).
    */
   lastInputAt?: number;
+  /**
+   * Cohort role when this session belongs to a durable execution (Job Team /
+   * squad). An `orchestrator` is the job's live COORDINATOR: its lifecycle is
+   * owned by the execution, not by the idle timer. It sits `idle` whenever the
+   * job is at rest — INCLUDING while the execution is BLOCKED waiting on a human
+   * answer — and reaping it tears the whole job down (the blocked question dies
+   * unanswered and the execution flips to STOPPED). So an orchestrator is never
+   * auto-closed. A `worker` is a background slot and is spared here too: its
+   * `headless` bit is mutable (a user opening its card clears it), so it can't
+   * be relied on — this immutable role stamp is the reliable signal. Absent
+   * ⇒ not a cohort member (an ordinary agent, eligible on this axis).
+   */
+  cohortRole?: 'worker' | 'orchestrator';
 }
 
 export interface AutoCloseIdleDeps {
@@ -255,6 +274,8 @@ export class AutoCloseIdleService extends EventEmitter {
     if ((s.liveSubagents ?? 0) > 0) return false; // delegating — would orphan children
     if (this.deps.activeSessionId() === sessionId) return false; // foreground spare
     if (this.deps.isFavorite(sessionId)) return false; // starred — user pinned it; only an explicit close may reclaim
+    if (s.cohortRole === 'orchestrator') return false; // job coordinator — owned by the execution, not the idle timer; reaping it tears the whole job down (incl. a job blocked on a human answer)
+    if (s.cohortRole === 'worker') return false; // background job-team slot — headless bit is mutable (opening its card clears it), so key off the immutable role stamp
     return true;
   }
 

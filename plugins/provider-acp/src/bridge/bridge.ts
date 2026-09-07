@@ -16,6 +16,7 @@ import {
   pendingInteractionResolutionSchema,
   reasoningEffortsForLevels,
   type AvailableModel,
+  type DynamicTool,
   type PromptInput,
   type ReasoningLevel,
   hostDaemonAcpLaunchSpecSchema,
@@ -42,6 +43,12 @@ import {
 import { execFile } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { promises as fs, readFileSync } from "node:fs";
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from "node:http";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -121,7 +128,9 @@ import {
   findAcpModeConfigOption,
 } from "./model-catalog.js";
 import {
+  ACP_BRIDGE_MCP_SERVER_NAME,
   buildAcpMcpServerConfig,
+  buildAcpHttpMcpServerConfig,
   runAcpDynamicToolMcpServer,
   type AcpMcpServerConfig,
 } from "./tool-proxy-mcp.js";
@@ -182,6 +191,7 @@ const pendingRuntimeRequests = new Map<
 >();
 let runtimeRequestIdCounter = 0;
 let dynamicToolBridgePromise: Promise<AcpDynamicToolBridge> | null = null;
+const dynamicToolsByThreadId = new Map<string, readonly DynamicTool[]>();
 
 // Runtime waits on thread/stop until the agent settles the cancelled prompt or
 // this timeout forces disposal. Stop remains a best-effort success boundary.
@@ -321,10 +331,7 @@ function emitSessionError(session: AcpThreadSession, message: string): void {
 }
 
 function resolveBridgeProcessArgsForMcpServer(): string[] {
-  const entryPoint = process.argv[1]
-    ? resolve(process.argv[1])
-    : fileURLToPath(import.meta.url);
-  return [...process.execArgv, entryPoint, "--mcp-stdio"];
+  return [...process.execArgv, fileURLToPath(import.meta.url), "--mcp-stdio"];
 }
 
 function resolveBridgeProcessEnvForMcpServer(): AcpMcpServerConfig["env"] {
@@ -353,6 +360,7 @@ async function forwardDynamicToolCall(args: {
   }
 
   try {
+    session.translator.noteInjectedToolCall(session.bbThreadId, args.tool);
     const result = await sendRuntimeRequest("item/tool/call", {
       providerThreadId: session.providerThreadId,
       threadId: session.bbThreadId,
@@ -403,6 +411,106 @@ function handleDynamicToolBridgeSocket(
   });
 }
 
+function writeMcpHttpJson(response: ServerResponse, status: number, body?: unknown): void {
+  response.statusCode = status;
+  if (body === undefined) {
+    response.end();
+    return;
+  }
+  response.setHeader("content-type", "application/json");
+  response.end(JSON.stringify(body));
+}
+
+async function readMcpHttpBody(request: IncomingMessage): Promise<unknown> {
+  let body = "";
+  for await (const chunk of request) {
+    body += chunk.toString();
+    if (body.length > 1_000_000) throw new Error("MCP request body too large");
+  }
+  return JSON.parse(body);
+}
+
+function dynamicToolMcpThreadId(request: IncomingMessage): string | undefined {
+  if (!request.url) return;
+  const match = /^\/mcp\/([^/?]+)$/.exec(new URL(request.url, "http://127.0.0.1").pathname);
+  if (!match?.[1]) return;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return;
+  }
+}
+
+async function handleDynamicToolMcpHttp(
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeMcpHttpJson(response, 405);
+    return;
+  }
+  const threadId = dynamicToolMcpThreadId(request);
+  const tools = threadId ? dynamicToolsByThreadId.get(threadId) : undefined;
+  if (!threadId || !tools) {
+    writeMcpHttpJson(response, 404);
+    return;
+  }
+
+  let message: { id?: string | number; method?: string; params?: unknown };
+  try {
+    message = (await readMcpHttpBody(request)) as typeof message;
+  } catch {
+    writeMcpHttpJson(response, 400);
+    return;
+  }
+  if (message.id === undefined) {
+    writeMcpHttpJson(response, 202);
+    return;
+  }
+  const result = (value: unknown) =>
+    writeMcpHttpJson(response, 200, { jsonrpc: "2.0", id: message.id, result: value });
+  if (message.method === "initialize") {
+    result({
+      protocolVersion: "2025-03-26",
+      capabilities: { tools: {} },
+      serverInfo: { name: ACP_BRIDGE_MCP_SERVER_NAME, version: "1.0.0" },
+    });
+    return;
+  }
+  if (message.method === "tools/list") {
+    result({ tools });
+    return;
+  }
+  if (message.method === "tools/call") {
+    const params = message.params && typeof message.params === "object"
+      ? (message.params as { name?: unknown; arguments?: unknown })
+      : {};
+    const name = typeof params.name === "string" ? params.name : "";
+    if (!tools.some((tool) => tool.name === name)) {
+      result({ content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true });
+      return;
+    }
+    const toolArguments = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
+      ? (params.arguments as Record<string, unknown>)
+      : {};
+    const forwarded = await forwardDynamicToolCall({
+      arguments: toolArguments,
+      callId: `acp-mcp-${name}-${randomUUID()}`,
+      threadId,
+      tool: name,
+    });
+    result(forwarded.ok
+      ? { content: [{ type: "text", text: forwarded.content }], ...(forwarded.isError ? { isError: true } : {}) }
+      : { content: [{ type: "text", text: forwarded.error }], isError: true });
+    return;
+  }
+  writeMcpHttpJson(response, 200, {
+    jsonrpc: "2.0",
+    id: message.id,
+    error: { code: -32601, message: `Unsupported MCP method: ${message.method ?? ""}` },
+  });
+}
+
 async function ensureDynamicToolBridge(): Promise<AcpDynamicToolBridge> {
   if (dynamicToolBridgePromise) {
     return dynamicToolBridgePromise;
@@ -415,20 +523,44 @@ async function ensureDynamicToolBridge(): Promise<AcpDynamicToolBridge> {
         handleDynamicToolBridgeSocket(bridge, socket);
       });
     });
-    server.once("error", rejectBridge);
+    const httpServer = createHttpServer((request, response) => {
+      void handleDynamicToolMcpHttp(request, response).catch((error) => {
+        if (!response.headersSent) {
+          writeMcpHttpJson(response, 500, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } else {
+          response.end();
+        }
+      });
+    });
+    const fail = (error: Error) => {
+      server.close();
+      httpServer.close();
+      rejectBridge(error);
+    };
+    server.once("error", fail);
+    httpServer.once("error", fail);
     server.listen(0, host, () => {
       const address = server.address();
       if (!address || typeof address === "string") {
-        rejectBridge(
-          new Error("ACP dynamic tool bridge did not bind a TCP port"),
-        );
+        fail(new Error("ACP dynamic tool bridge did not bind a TCP port"));
         return;
       }
-      resolveBridge({
-        host,
-        port: address.port,
-        server,
-        token: randomBytes(32).toString("hex"),
+      httpServer.listen(0, host, () => {
+        const httpAddress = httpServer.address();
+        if (!httpAddress || typeof httpAddress === "string") {
+          fail(new Error("ACP dynamic tool MCP server did not bind an HTTP port"));
+          return;
+        }
+        resolveBridge({
+          host,
+          httpPort: httpAddress.port,
+          httpServer,
+          port: address.port,
+          server,
+          token: randomBytes(32).toString("hex"),
+        });
       });
     });
   });
@@ -438,23 +570,32 @@ async function ensureDynamicToolBridge(): Promise<AcpDynamicToolBridge> {
 
 async function buildSessionMcpServers(
   params: AcpSessionParams,
+  supportsHttpMcp = false,
 ): Promise<AcpMcpServerConfig[]> {
   const dynamicTools = params.dynamicTools ?? [];
   if (dynamicTools.length === 0) {
     return [];
   }
   const bridge = await ensureDynamicToolBridge();
+  dynamicToolsByThreadId.set(params.threadId, dynamicTools);
+  if (!supportsHttpMcp) {
+    return [
+      buildAcpMcpServerConfig({
+        bridgeArgs: resolveBridgeProcessArgsForMcpServer(),
+        command: process.execPath,
+        dynamicTools,
+        host: bridge.host,
+        port: bridge.port,
+        runtimeEnv: resolveBridgeProcessEnvForMcpServer(),
+        threadId: params.threadId,
+        token: bridge.token,
+      }),
+    ];
+  }
   return [
-    buildAcpMcpServerConfig({
-      bridgeArgs: resolveBridgeProcessArgsForMcpServer(),
-      command: process.execPath,
-      dynamicTools,
-      host: bridge.host,
-      port: bridge.port,
-      runtimeEnv: resolveBridgeProcessEnvForMcpServer(),
-      threadId: params.threadId,
-      token: bridge.token,
-    }),
+    buildAcpHttpMcpServerConfig(
+      `http://${bridge.host}:${bridge.httpPort}/mcp/${encodeURIComponent(params.threadId)}`,
+    ),
   ];
 }
 
@@ -690,6 +831,8 @@ function applyPermissionCliArgs(
 interface AcpDynamicToolBridge {
   host: string;
   port: number;
+  httpPort: number;
+  httpServer: HttpServer;
   server: Server;
   token: string;
 }
@@ -1684,6 +1827,7 @@ async function handleFsWriteTextFile(
 // ---------------------------------------------------------------------------
 
 function removeSession(session: AcpThreadSession): void {
+  dynamicToolsByThreadId.delete(session.bbThreadId);
   if (sessionsByBbThreadId.get(session.bbThreadId) === session) {
     sessionsByBbThreadId.delete(session.bbThreadId);
   }
@@ -1732,6 +1876,7 @@ async function startAgentSession(
     params.cwd,
     params.agent.command,
   );
+  translator.configureInjectedTools(params.dynamicTools ?? []);
   // Ordering guarantee: thread/identity precedes any thread/event for the
   // session, so pre-identity notifications are held and flushed after the
   // identity goes out.
@@ -1845,8 +1990,10 @@ async function startAgentSession(
       );
     }
     session.supportsLoadSession = supportsLoadSession;
-    const mcpServers = await buildSessionMcpServers(params);
-
+    const mcpServers = await buildSessionMcpServers(
+      params,
+      initializeResult.agentCapabilities?.mcpCapabilities?.http === true,
+    );
     let sessionId: string | undefined;
     let loadedConfigOptions: readonly AcpConfigOption[] | undefined;
     let loadedModels: AcpSessionModels | undefined;
@@ -2709,6 +2856,13 @@ async function stopAllSessions(): Promise<void> {
       return;
     }
     dynamicToolBridge.server.close(() => resolveClose());
+  });
+  await new Promise<void>((resolveClose) => {
+    if (!dynamicToolBridge) {
+      resolveClose();
+      return;
+    }
+    dynamicToolBridge.httpServer.close(() => resolveClose());
   });
 }
 

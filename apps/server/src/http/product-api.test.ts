@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createConversationThread, createEnvironment, updateConversationThreadStatus, upsertHost, appendConversationThreadEvent } from '@zana-ai/zcc-db';
+import { archiveConversationThread, createConversationThread, createEnvironment, updateConversationThreadStatus, upsertHost, appendConversationThreadEvent } from '@zana-ai/zcc-db';
 import { turnScope } from '@zana-ai/zcc-domain/thread-runtime';
 import { EMPTY_THREAD_ACTIVITY } from '@zana-ai/zcc-thread-view';
 import { startProductServer, type ProductServer } from './product-server.js';
@@ -410,6 +410,40 @@ describe('product HTTP', () => {
         activity: EMPTY_THREAD_ACTIVITY
       })
     ]);
+  });
+
+  it('reports Modern/ACP owner-session liveness via /threads/:id/live', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-thread-live-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'acp-opencode',
+      title: 'Owner'
+    });
+    updateConversationThreadStatus(server.ctx.db, thread.id, 'idle');
+    const live = (id: string, projectId: string) =>
+      fetch(`${server!.url}api/v1/threads/${id}/live?projectId=${projectId}`).then((r) => r.json());
+
+    // A live thread in its own project authorizes the loopback owner-auth gate.
+    expect(await live(thread.id, 'proj-1')).toEqual({ live: true });
+    // A mismatched project must NOT authorize (Rule 1: owner identity is exact).
+    expect(await live(thread.id, 'proj-2')).toEqual({ live: false });
+    // An unknown thread id is a miss, not a 404 — the gate reads a plain boolean.
+    expect(await live('11111111-1111-1111-1111-111111111111', 'proj-1')).toEqual({ live: false });
+    // An archived (dead) owner thread never authorizes.
+    archiveConversationThread(server.ctx.db, thread.id);
+    expect(await live(thread.id, 'proj-1')).toEqual({ live: false });
   });
 
   it('projects running background bash onto thread list activity', async () => {

@@ -178,7 +178,11 @@ describe('production execution routing preflight', () => {
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 
-  it('blocks a live-listed id on adapters that own a static model catalog', async () => {
+  it('blocks a snapshot-absent OpenCode model when no live probe is possible (no project path)', async () => {
+    // OpenCode live-lists models, so a well-formed snapshot-absent id no longer
+    // hard-throws at resolution — but with no projectPath the live probe can't run,
+    // so preflight falls back to the snapshot rule and blocks it (a non-empty
+    // catalog rejects an unknown id) rather than letting it reach argv.
     const services = deps();
     await expect(preflightTerminalExecution({
       config: config(),
@@ -190,8 +194,49 @@ describe('production execution routing preflight', () => {
       harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'openai/gpt-5.2' } } }
     }, services)).resolves.toEqual({
       decision: 'blocked',
-      reason: 'Unknown model target for OpenCode.'
+      reason: 'model target unavailable'
     });
+  });
+
+  it('allows a snapshot-ABSENT OpenCode model that the LIVE gateway inventory lists (rename-forward drift)', async () => {
+    // The gateway renamed a model to an id not yet in the release snapshot; the
+    // live probe confirms it exists, so preflight accepts it.
+    const services = deps();
+    const provider = new OpenCodeProvider();
+    provider.discoverModelTargets = vi.fn(async () => ['llmgw/gpt-6.0-nova-1M', 'llmgw/grok-5']);
+    await expect(preflightTerminalExecution({
+      config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
+      mode: 'interactive', idempotencyKey: 'drift-forward',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.0-nova-1M' } } }
+    }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+    expect(provider.discoverModelTargets).toHaveBeenCalledWith({ cwd: '/tmp/p1', config: expect.any(Object) });
+  });
+
+  it('blocks a snapshot-PRESENT OpenCode model the LIVE gateway inventory no longer lists (prevents exit-64)', async () => {
+    // The pinned id is still in the (stale) snapshot but the gateway dropped it;
+    // the live probe is authoritative and blocks the spawn before it dies with
+    // ProviderModelNotFoundError / exit 64 at runtime.
+    const services = deps();
+    const provider = new OpenCodeProvider();
+    provider.discoverModelTargets = vi.fn(async () => ['llmgw/grok-4.6']);
+    await expect(preflightTerminalExecution({
+      config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
+      mode: 'interactive', idempotencyKey: 'drift-gone',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } } }
+    }, { ...services, provider })).resolves.toEqual({ decision: 'blocked', reason: 'model target unavailable' });
+  });
+
+  it('falls back to snapshot evidence for a snapshot-present model when the live probe is unavailable', async () => {
+    // A transient probe failure returns undefined — do not block a valid snapshot
+    // id on it; fall back to the reviewed-evidence rule (which allows it).
+    const services = deps();
+    const provider = new OpenCodeProvider();
+    provider.discoverModelTargets = vi.fn(async () => undefined);
+    await expect(preflightTerminalExecution({
+      config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
+      mode: 'interactive', idempotencyKey: 'probe-unavailable',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } } }
+    }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 
   it('allows launching an unrestricted (yolo) profile without a per-tab execution target', async () => {

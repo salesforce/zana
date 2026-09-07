@@ -68,6 +68,14 @@ export interface TriageSessionInfo {
    *  they must not surface for the user's attention. */
   scheduled?: boolean;
   headless?: boolean;
+  /**
+   * Cohort role when this session belongs to a durable execution (Job Team /
+   * squad). A `worker` is a background slot — never triaged. Unlike
+   * {@link headless} (mutable: a user viewing the worker card flips it via
+   * `restoreTerminal`), `cohort.role` is host-stamped and immutable for the
+   * session's life, so it's the reliable background signal for a worker.
+   */
+  cohortRole?: 'worker' | 'orchestrator';
 }
 
 export interface IdleTriageDeps {
@@ -259,7 +267,9 @@ export class IdleTriageService extends EventEmitter {
     const session = this.deps.getSession(sessionId);
     if (!session || session.status === 'exited') return;
     // Background agents (scheduled runs, team workers) never request attention.
-    if (session.scheduled || session.headless) return;
+    // A job-team worker's `headless` bit is mutable (a user opening its card
+    // clears it), so also key off the immutable cohort stamp.
+    if (session.scheduled || session.headless || session.cohortRole === 'worker') return;
     if (!this.deps.hasTranscript(session.profile)) return;
 
     const lastTurn = await this.deps.readLastTurn({

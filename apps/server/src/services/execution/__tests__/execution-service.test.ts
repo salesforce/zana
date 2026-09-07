@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ExecutionService, type ExecutionRequestV1, SquadExecutionService, deriveJobTitle } from '../service.js';
-import { createExecutionStore } from '../store.js';
+import { ExecutionService, type ExecutionRequestV1, SquadExecutionService, deriveJobTitle, dependencyResultsSection, MAX_DEP_RESULT_CHARS, AUTO_FINALIZE_SUMMARY } from '../service.js';
+import { createExecutionStore, type ExecutionRecord } from '../store.js';
 import { createExecutionArtifactStore } from '../artifact-store.js';
 import { createResumeGrantStore } from '../resume-grant-store.js';
 
@@ -32,6 +32,33 @@ function deps(filePath: string, over: Partial<ConstructorParameters<typeof Squad
     ...over
   };
 }
+
+describe('dependencyResultsSection', () => {
+  const rec = (units: ExecutionRecord['workUnits']): ExecutionRecord =>
+    ({ workUnits: units } as unknown as ExecutionRecord);
+
+  it('injects each completed direct dependency result, bounded per dep', () => {
+    const section = dependencyResultsSection(rec([
+      { id: 'choose', title: 'Choose label', task: 't', dependencies: [], state: 'COMPLETED', attempt: 1, result: 'x'.repeat(3_000), history: [] },
+      { id: 'assemble', title: 'Assemble', task: 't', dependencies: ['choose'], state: 'READY', attempt: 1, history: [] }
+    ]), 'assemble');
+    expect(section).toContain('Upstream results');
+    expect(section).toContain('`choose` (Choose label):');
+    // per-dep char cap applied (2 KiB), not the raw 3 KiB result
+    expect(section).toContain('x'.repeat(MAX_DEP_RESULT_CHARS));
+    expect(section).not.toContain('x'.repeat(MAX_DEP_RESULT_CHARS + 1));
+  });
+
+  it('returns empty when the unit has no dependency with a stored result', () => {
+    const units: ExecutionRecord['workUnits'] = [
+      { id: 'a', title: 'A', task: 't', dependencies: [], state: 'READY', attempt: 1, history: [] },
+      { id: 'b', title: 'B', task: 't', dependencies: ['a'], state: 'READY', attempt: 1, history: [] }
+    ];
+    expect(dependencyResultsSection(rec(units), 'b')).toBe(''); // dep 'a' not completed → no result
+    expect(dependencyResultsSection(rec(units), 'a')).toBe(''); // no dependencies at all
+    expect(dependencyResultsSection(rec(units), 'ghost')).toBe(''); // unknown unit
+  });
+});
 
 describe('SquadExecutionService', () => {
   it('exposes generic execution API while defaulting durable launch metadata to Team', async () => fixture(async (filePath) => {
@@ -130,6 +157,118 @@ describe('SquadExecutionService', () => {
     await expect(service.blockWork(coordinator, 'a', { id: 'b', question: 'Wrong?' })).resolves.toMatchObject({ ok: false, code: 'DENIED' });
     await expect(service.releaseWork(coordinator, 'a')).resolves.toMatchObject({ ok: false, code: 'DENIED' });
     await expect(service.completeWork(worker, 'a', 'done')).resolves.toMatchObject({ ok: true });
+  }));
+
+  it('dispatch_ready is coordinator-only and pushes the assigned task to the worker session', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    const worker = { ...coordinator, slotId: 'slot-1', role: 'worker' as const };
+    await expect(service.dispatchReady(worker)).resolves.toMatchObject({ ok: false, code: 'DENIED' });
+    const dispatched = await service.dispatchReady(coordinator);
+    expect(dispatched).toMatchObject({ ok: true, value: { workUnits: [{ id: 'a', state: 'CLAIMED', assignedSlotId: 'slot-1' }] } });
+    expect(replyToSession).toHaveBeenCalledWith('worker-1', expect.stringContaining('assigned work unit `a`'));
+  }));
+
+  it('dispatch_ready surfaces a clear error when no plan is registered (defensive plan-readiness gate)', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store, replyToSession }));
+    await service.start('owner', 'project-1', request);
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    // No execution.plan.register call — a producer that skipped structuring the
+    // plan must NOT silently hang; the engine surfaces the missing plan.
+    const dispatched = await service.dispatchReady(coordinator);
+    expect(dispatched).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(dispatched.ok === false && dispatched.message).toContain('execution.plan.register');
+    expect(replyToSession).not.toHaveBeenCalled();
+  }));
+
+  it('cascades a newly-ready dependent to a free worker on completion with no coordinator relay', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] },
+      { id: 'b', title: 'B', task: 'do b', dependencies: ['a'], files: ['b.txt'], verification: ['check b'] }
+    ] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    const worker = { ...coordinator, slotId: 'slot-1', role: 'worker' as const };
+    await service.dispatchReady(coordinator); // a → slot-1 (push #1)
+    await expect(service.completeWork(worker, 'a', 'done')).resolves.toMatchObject({ ok: true }); // frees slot-1, makes b READY → cascade
+    const record = await store.get('execution-1');
+    expect(record?.workUnits?.find((u) => u.id === 'b')).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1' });
+    expect(replyToSession).toHaveBeenLastCalledWith('worker-1', expect.stringContaining('assigned work unit `b`'));
+  }));
+
+  it('engine auto-finalizes a fully-completed DAG without an orchestrator execution.complete', async () => fixture(async (filePath) => {
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true as const, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession: () => true, cancelTeamLaunch,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] },
+      { id: 'b', title: 'B', task: 'do b', dependencies: ['a'], files: ['b.txt'], verification: ['check b'] }
+    ] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    const worker = { ...coordinator, slotId: 'slot-1', role: 'worker' as const };
+    await service.dispatchReady(coordinator);
+    await service.completeWork(worker, 'a', 'done'); // a done, b still pending → NOT finalized
+    expect((await store.get('execution-1'))?.state).toBe('RUNNING');
+    expect(cancelTeamLaunch).not.toHaveBeenCalled();
+    await service.completeWork(worker, 'b', 'done'); // terminal unit → engine auto-finalizes
+    const record = await store.get('execution-1');
+    expect(record?.state).toBe('COMPLETED');
+    expect(record?.finalSummary).toBe(AUTO_FINALIZE_SUMMARY);
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('owner', 'request-1');
+  }));
+
+  it('routes assignment pushes through deliverToWorker (idle-gated) when provided, bypassing raw replyToSession', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const deliverToWorker = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession, deliverToWorker,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }
+    ] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.dispatchReady(coordinator);
+    // idle-gate is the single delivery path — raw replyToSession must not be used for the push
+    expect(deliverToWorker).toHaveBeenCalledWith('worker-1', expect.stringContaining('assigned work unit `a`'));
+    expect(replyToSession).not.toHaveBeenCalledWith('worker-1', expect.stringContaining('assigned work unit `a`'));
   }));
 
   it('lets execution owner retry, release, and reassign eligible work only within durable roster', async () => fixture(async (filePath) => {

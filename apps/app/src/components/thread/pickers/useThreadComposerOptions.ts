@@ -28,6 +28,7 @@ import {
   reloadThreadProviderModels,
   subscribeThreadModelCatalog
 } from './thread-model-catalog.js';
+import { nextAcpModeSelection } from './acp-mode-selection.js';
 
 export type { ThreadComposerProviderOption };
 
@@ -61,6 +62,7 @@ export function useThreadComposerOptions(input: {
   lockedProviderId?: string;
   initialModel?: string | null;
   initialReasoningLevel?: string | null;
+  initialAcpMode?: string | null;
 }) {
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
@@ -82,7 +84,7 @@ export function useThreadComposerOptions(input: {
     const provider = input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code';
     return restoreProviderSelection(provider).reasoningLevel;
   });
-  const [acpMode, setAcpMode] = useState<string | undefined>();
+  const [acpMode, setAcpMode] = useState<string | undefined>(() => input.initialAcpMode ?? undefined);
   const persistSelection = !input.threadId;
 
   const setModel = useCallback((value: string) => {
@@ -124,7 +126,10 @@ export function useThreadComposerOptions(input: {
     if (input.initialReasoningLevel) {
       setReasoningLevelState(asReasoningLevel(input.initialReasoningLevel, 'medium'));
     }
-  }, [input.initialModel, input.initialReasoningLevel]);
+    // Adopt the existing thread's persisted native role once the fetch resolves,
+    // so the picker shows the mode the thread is actually running (not neutral).
+    if (input.initialAcpMode) setAcpMode(input.initialAcpMode);
+  }, [input.initialModel, input.initialReasoningLevel, input.initialAcpMode]);
 
   useEffect(() => {
     void prefetchThreadModelCatalog();
@@ -149,11 +154,22 @@ export function useThreadComposerOptions(input: {
   const acpModeOptions = cached?.acpMode?.options ?? [];
 
   useEffect(() => {
-    const current = cached?.acpMode?.currentValue;
-    if (current && !acpModeOptions.some((option) => option.value === acpMode)) {
-      setAcpMode(current);
-    }
-  }, [acpMode, acpModeOptions, cached?.acpMode?.currentValue]);
+    // Existing threads: never auto-seed or reset the native role. There is NO
+    // per-thread source for the running mode (the catalog `currentValue` is a
+    // sessionless provider probe, always the default e.g. `build`), so seeding it
+    // would (1) mislead the picker into showing a mode the thread may not be
+    // running and (2) force that default onto every follow-up turn, silently
+    // resetting a thread launched under another role. Leave acpMode undefined
+    // until the user explicitly picks; an omitted acpMode leaves the running mode
+    // untouched. Only a NEW thread seeds the provider default at compose time.
+    if (input.threadId) return;
+    const next = nextAcpModeSelection({
+      current: cached?.acpMode?.currentValue,
+      selected: acpMode,
+      options: acpModeOptions
+    });
+    if (next !== undefined && next !== acpMode) setAcpMode(next);
+  }, [input.threadId, acpMode, acpModeOptions, cached?.acpMode?.currentValue]);
 
   useEffect(() => {
     if (input.threadId || input.lockedProviderId) return;

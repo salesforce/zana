@@ -24,8 +24,12 @@ export function NativeRolePicker({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const selected = options.find((option) => option.value === value) ?? options[0];
-  const label = selected?.name ?? selected?.value ?? 'Role';
+  // When no role is explicitly selected (undefined), show a neutral placeholder
+  // rather than falling back to options[0]. For an existing thread the running
+  // mode is unknown here, so claiming the first option (e.g. `build`) would be a
+  // lie; leaving it unselected keeps the picker honest and sends no override.
+  const selected = value !== undefined ? options.find((option) => option.value === value) : undefined;
+  const label = selected?.name ?? selected?.value ?? 'Agent';
 
   useEffect(() => {
     if (!open || !triggerRef.current || !menuRef.current) return;

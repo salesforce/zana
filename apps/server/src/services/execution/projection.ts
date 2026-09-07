@@ -1,6 +1,29 @@
 import type { ExecutionBoardProjection, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { MAX_DELIVERY_ATTEMPTS, type ExecutionRecord } from './store.js';
 
+/**
+ * Surface a delivery error as a human-readable message, never a stack trace:
+ * the first non-empty line only, internal whitespace collapsed, bounded to the
+ * projection's 1 KiB budget. Workers control the ack `error` string, so this is
+ * the single sanitizer that keeps a multi-line stack out of Job Details.
+ */
+function firstErrorLine(raw: string): string {
+  const line = raw.split('\n').map((part) => part.trim()).find((part) => part.length > 0) ?? '';
+  return line.replace(/\s+/g, ' ').slice(0, 1_024);
+}
+
+/**
+ * Per-unit completed `result` surfaced on the board + read by a dependent unit's
+ * worker via `execution.snapshot` (so a downstream unit can inherit an upstream
+ * answer instead of re-asking the human). Bounded to a 2 KiB char budget (Rule 5)
+ * so a verbose result can't bloat the projection; newlines preserved (a result
+ * can be structured, unlike a single-line error).
+ */
+const MAX_UNIT_RESULT_CHARS = 2_048;
+function resultPreview(raw: string): string {
+  return raw.slice(0, MAX_UNIT_RESULT_CHARS);
+}
+
 /** Build bounded project-local board data from durable records and live tabs. */
 export function projectExecutionProjection(
   records: readonly ExecutionRecord[],
@@ -61,7 +84,8 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
       completed: counts.COMPLETED,
       counts,
       assignments: (record.workUnits ?? []).map((unit) => ({
-        workUnitId: unit.id, title: unit.title, ...(unit.assignedSlotId ? { slotId: unit.assignedSlotId } : {}), state: unit.state
+        workUnitId: unit.id, title: unit.title, ...(unit.assignedSlotId ? { slotId: unit.assignedSlotId } : {}), state: unit.state,
+        ...(unit.result !== undefined ? { result: resultPreview(unit.result) } : {})
       })),
       rosterSlotIds: record.authorizationContext?.slots.map((slot) => slot.slotId) ?? []
     },
@@ -75,7 +99,7 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
         attempt: currentDelivery.attempt,
         maxAttempts: MAX_DELIVERY_ATTEMPTS,
         retryEligible: currentDelivery.state === 'FAILED' && (currentDelivery.manualRetryCount ?? 0) < 1,
-        ...(currentDelivery.lastError ? { error: currentDelivery.lastError.slice(0, 1_024) } : {})
+        ...(currentDelivery.lastError ? { error: firstErrorLine(currentDelivery.lastError) } : {})
       } } : {})
     } } : {}),
     ...(record.finalSummary ? { finalSummary: record.finalSummary } : {}),

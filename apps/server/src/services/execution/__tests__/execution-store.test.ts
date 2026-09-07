@@ -139,7 +139,7 @@ describe('execution store', () => {
     await expect(store.enqueueBlockerDelivery(record.id, enqueued.record.stateVersion, { clientRequestId: 'client-3', blockerId: 'blocker-1', text: '😀'.repeat(4097) })).rejects.toThrow('delivery payload exceeds 16384 bytes');
   }));
 
-  it('fails active delivery when blocker resolves through retry and rejects stale ack', async () => fixture(async (filePath) => {
+  it('rejects a work retry while a human answer is in flight and keeps the delivery deliverable', async () => fixture(async (filePath) => {
     let id = 0;
     const store = createExecutionStore({ filePath, id: () => id++ === 0 ? 'execution-1' : `id-${id}` });
     let record = (await store.claim(request())).record;
@@ -150,9 +150,37 @@ describe('execution store', () => {
     record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'retry', { id: 'blocker-retry', question: 'Q?' });
     record = (await store.enqueueBlockerDelivery(record.id, record.stateVersion, { clientRequestId: 'retry-client', blockerId: 'blocker-retry', text: 'Retry answer' })).record;
     const leased = await store.pullBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' });
-    record = await store.retryWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'retry');
-    expect(record.deliveries?.find((delivery) => delivery.blockerId === 'blocker-retry')).toMatchObject({ state: 'FAILED', lastError: 'blocker resolved by work retry' });
-    await expect(store.ackBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' }, leased!.id, leased!.leaseId!, { delivered: true })).rejects.toThrow('delivery is no longer active');
+    // A LEASED answer is still in flight; retrying the unit here would discard it.
+    await expect(store.retryWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'retry'))
+      .rejects.toThrow('in-flight blocker response');
+    // The delivery survived: acknowledging it resolves the blocker with the answer intact.
+    const ack = await store.ackBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' }, leased!.id, leased!.leaseId!, { delivered: true });
+    expect(ack.outcome).toBe('accepted');
+    expect(ack.record.blockers?.find((blocker) => blocker.id === 'blocker-retry')).toMatchObject({ resolved: true, response: 'Retry answer' });
+  }));
+
+  it('allows a work retry once an in-flight answer exhausts its delivery attempts', async () => fixture(async (filePath) => {
+    let now = 0;
+    let id = 0;
+    const store = createExecutionStore({ filePath, now: () => now, id: () => id++ === 0 ? 'execution-1' : `id-${id}` });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'retry', title: 'Retry', task: 'Retry', dependencies: [] }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'retry', 'slot-1');
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'retry', { id: 'blocker-retry', question: 'Q?' });
+    await store.enqueueBlockerDelivery(record.id, record.stateVersion, { clientRequestId: 'retry-client', blockerId: 'blocker-retry', text: 'Retry answer' });
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
+      const lease = await store.pullBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' });
+      const ack = await store.ackBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' }, lease!.id, lease!.leaseId!, { delivered: false, error: 'worker offline' });
+      now = ack.delivery.nextAttemptAt ?? now;
+    }
+    record = (await store.get(record.id))!;
+    expect(record.deliveries?.[0]?.state).toBe('FAILED');
+    // With no deliverable answer left, the coordinator may retry the blocked unit.
+    const retried = await store.retryWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'retry');
+    expect(retried.workUnits?.find((unit) => unit.id === 'retry')).toMatchObject({ state: 'READY' });
+    expect(retried.blockers?.find((blocker) => blocker.id === 'blocker-retry')).toMatchObject({ resolved: true });
   }));
 
   it('fails active delivery when blocker resolves through alternate response path', async () => fixture(async (filePath) => {
@@ -818,5 +846,140 @@ describe('execution store', () => {
     const acked = await store.ackBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'orchestrator:med', role: 'orchestrator' }, pulled!.id, pulled!.leaseId!, { delivered: true });
     expect(acked.outcome).toBe('accepted');
     expect(acked.record.blockers?.[0]).toMatchObject({ resolved: true, response: 'Answer' });
+  }));
+});
+
+describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
+  type Slot = { slotId: string; personaId: string; authorizationIdDigest: string };
+  const TWO_WORKERS: Slot[] = [
+    { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+    { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' },
+    { slotId: 'slot-2', personaId: 'worker', authorizationIdDigest: 'w2-d' }
+  ];
+
+  async function running(store: ReturnType<typeof createExecutionStore>, slots: Slot[], units: unknown[]) {
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    let record = await store.transition(claimed.record.id, 0, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.setAuthorizationContext(record.id, record.stateVersion, {
+      version: 1, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots
+    }, 'context');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return store.registerPlan(record.id, record.stateVersion, units as any);
+  }
+
+  it('assigns each READY unit to a free worker slot, excludes orchestrator slots, and bumps once', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'] },
+      { id: 'b', title: 'B', task: 'do b', dependencies: [], files: ['b.txt'] }
+    ]);
+    const before = record.stateVersion;
+    const { record: updated, assignments } = await store.dispatchReady(record.id);
+    expect(assignments.map((a) => a.workUnitId).sort()).toEqual(['a', 'b']);
+    expect(new Set(assignments.map((a) => a.slotId))).toEqual(new Set(['slot-1', 'slot-2']));
+    expect(assignments.every((a) => a.slotId !== 'orchestrator:lead')).toBe(true);
+    expect(updated.workUnits?.every((u) => u.state === 'CLAIMED' && u.attempt === 1)).toBe(true);
+    expect(updated.stateVersion).toBe(before + 1); // single bump for the whole pass
+  }));
+
+  it('routes a unit to the slot whose persona matches its preferredRole before round-robin', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, [
+      { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+      { slotId: 'alpha', personaId: 'alpha', authorizationIdDigest: 'a-d' },
+      { slotId: 'beta', personaId: 'beta', authorizationIdDigest: 'b-d' }
+    ], [
+      { id: 'x', title: 'X', task: 'do x', dependencies: [], preferredRole: 'beta', files: ['x.txt'] }
+    ]);
+    const { assignments } = await store.dispatchReady(record.id);
+    expect(assignments).toMatchObject([{ workUnitId: 'x', slotId: 'beta' }]);
+  }));
+
+  it('skips a worker slot already busy with a claimed unit', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'] },
+      { id: 'b', title: 'B', task: 'do b', dependencies: [], files: ['b.txt'] }
+    ]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'a', 'slot-1');
+    const { assignments } = await store.dispatchReady(record.id);
+    expect(assignments).toMatchObject([{ workUnitId: 'b', slotId: 'slot-2' }]); // slot-1 busy → only slot-2 free
+  }));
+
+  it('leaves a scope-overlapping mutating unit READY instead of double-claiming a file', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['shared.txt'] },
+      { id: 'b', title: 'B', task: 'do b', dependencies: [], files: ['shared.txt'] }
+    ]);
+    const { record: updated, assignments } = await store.dispatchReady(record.id);
+    expect(assignments).toHaveLength(1); // only the first over shared.txt claims
+    const claimed = assignments[0].workUnitId;
+    const other = claimed === 'a' ? 'b' : 'a';
+    expect(updated.workUnits?.find((u) => u.id === other)?.state).toBe('READY');
+  }));
+
+  it('leaves extra READY units for the next cascade when workers are outnumbered', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'] },
+      { id: 'b', title: 'B', task: 'do b', dependencies: [], files: ['b.txt'] },
+      { id: 'c', title: 'C', task: 'do c', dependencies: [], files: ['c.txt'] }
+    ]);
+    const { record: updated, assignments } = await store.dispatchReady(record.id);
+    expect(assignments).toHaveLength(2); // two free workers
+    const stillReady = (updated.workUnits ?? []).filter((u) => u.state === 'READY');
+    expect(stillReady).toHaveLength(1);
+  }));
+
+  it('is a no-op that does not bump stateVersion when nothing is READY', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [] },
+      { id: 'b', title: 'B', task: 'do b', dependencies: ['a'] }
+    ]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'a', 'slot-1');
+    const before = record.stateVersion; // a CLAIMED, b PENDING → no READY unit
+    const { record: updated, assignments } = await store.dispatchReady(record.id);
+    expect(assignments).toHaveLength(0);
+    expect(updated.stateVersion).toBe(before);
+  }));
+
+  it('deprioritizes the just-completed slot in favor of an idle peer', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, TWO_WORKERS, [
+      // no preferredRole → falls to round-robin, which would pick slot-1 (index 0)
+      // absent the deprioritize hint; the completing slot-1 must be skipped.
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'] }
+    ]);
+    const { assignments } = await store.dispatchReady(record.id, { deprioritizeSlotId: 'slot-1' });
+    expect(assignments).toMatchObject([{ workUnitId: 'a', slotId: 'slot-2' }]);
+  }));
+
+  it('falls back to the deprioritized slot when it is the only free worker', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'] },
+      { id: 'b', title: 'B', task: 'do b', dependencies: [], files: ['b.txt'] }
+    ]);
+    // slot-2 busy → slot-1 (the deprioritized one) is the only free worker; it
+    // must still receive the unit rather than leaving it undispatched.
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'b', 'slot-2');
+    const { assignments } = await store.dispatchReady(record.id, { deprioritizeSlotId: 'slot-1' });
+    expect(assignments).toMatchObject([{ workUnitId: 'a', slotId: 'slot-1' }]);
+  }));
+
+  it('honors an explicit preferredRole even when that slot is deprioritized', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], preferredRole: 'worker', files: ['a.txt'] }
+    ]);
+    // preferredRole 'worker' matches BOTH slots; the match scans the post-sort
+    // freeSlots (deprioritized slot-1 last) so it picks slot-2 — deprioritize
+    // still steers a persona-tie away from the just-completed slot.
+    const { assignments } = await store.dispatchReady(record.id, { deprioritizeSlotId: 'slot-1' });
+    expect(assignments).toMatchObject([{ workUnitId: 'a', slotId: 'slot-2' }]);
   }));
 });

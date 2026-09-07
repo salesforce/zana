@@ -123,7 +123,8 @@ describe('attachProductPluginService', () => {
 describe('listen.ts', () => {
   it('starts the plugin service on the standalone product server', () => {
     const source = readFileSync(new URL('./listen.ts', import.meta.url), 'utf8');
-    expect(source).toContain('attachProductPluginService(host.ctx)');
+    expect(source).toContain('standaloneModernTeamLaunchSource(');
+    expect(source).toContain("process.env.ZCC_E2E_HOME ? join(process.env.ZCC_E2E_HOME, 'electron-user-data') : undefined");
   });
 
   it('wires sdk thread archive fork and unarchive onto the product plugin service', () => {

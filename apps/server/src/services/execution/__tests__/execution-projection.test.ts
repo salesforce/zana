@@ -43,6 +43,16 @@ describe('projectExecutionProjection', () => {
     });
   });
 
+  it('exposes a completed unit result on its assignment, bounded to 2 KiB, and omits it when absent', () => {
+    const input = record();
+    input.workUnits![0].result = 'z'.repeat(3_000);
+    const assignments = projectExecutionProjection([input], [])[0].work!.assignments;
+    const build = assignments.find((a) => a.workUnitId === 'build')!;
+    const verify = assignments.find((a) => a.workUnitId === 'verify')!;
+    expect(build.result).toHaveLength(2_048);
+    expect(verify).not.toHaveProperty('result'); // verify has no stored result
+  });
+
   it('does not claim an exited orchestrator as live', () => {
     const session = { id: 'orch', status: 'exited', cohort: { executionId: 'execution-1', role: 'orchestrator' } } as TerminalSession;
     expect(projectExecutionProjection([record()], [session])[0].orchestratorSessionId).toBeUndefined();
@@ -110,5 +120,19 @@ describe('projectExecutionProjection', () => {
     });
     expect(JSON.stringify(blocker)).not.toContain('secret response text');
     expect(blocker?.delivery?.error?.length ?? 0).toBeLessThanOrEqual(1_024);
+  });
+
+  it('surfaces a delivery error as a first-line message, never a multi-line stack trace', () => {
+    const input = record();
+    input.deliveries = [{
+      id: 'delivery-1', clientRequestId: 'client-1', blockerId: 'current', workUnitId: 'verify', slotId: 'reviewer',
+      payload: { text: 'secret response text' }, state: 'FAILED', attempt: 8, manualRetryCount: 0,
+      lastError: '  Cannot apply answer: file locked  \n    at Worker.run (worker.js:42:7)\n    at process._tickCallback',
+      createdAt: 3, updatedAt: 4
+    }];
+    const error = projectExecutionProjection([input], [])[0].currentBlocker?.delivery?.error;
+    expect(error).toBe('Cannot apply answer: file locked');
+    expect(error).not.toContain('\n');
+    expect(error).not.toContain('worker.js');
   });
 });

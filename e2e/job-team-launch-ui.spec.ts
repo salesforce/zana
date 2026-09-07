@@ -24,12 +24,15 @@
  * tmp project and stop the launched execution in `finally`.
  */
 import { test, expect } from './fixtures/app.js';
-import { makeFakeAgentBinary } from './sdk/harness.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { makeJobTeamCoordinatorBinary } from './sdk/harness.js';
+import { answerJobBlockerThroughUi } from './sdk/job-team-scenario.js';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-test.use({ e2e: true });
+test.use({ e2e: true, initialConfig: { teamJobLaunchEnabled: true } });
+
+test.setTimeout(120_000);
 
 test('launching a durable Job Team through the real UI surfaces it on the board', async ({
   app
@@ -41,7 +44,7 @@ test('launching a durable Job Team through the real UI surfaces it on the board'
   // the `shell` adapter cannot do — only claude/codex/cursor/pi/opencode can. The
   // stub emits the working spinner then settles to idle, so the durable job spawns
   // and surfaces on the board with no model call.
-  const agent = makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' });
+  const agent = makeJobTeamCoordinatorBinary();
 
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-job-team-ui-proj-'));
   const projectName = basename(projectDir);
@@ -65,12 +68,20 @@ test('launching a durable Job Team through the real UI surfaces it on the board'
       permissionMode: 'default',
       systemPrompt: ''
     }));
+    await window.evaluate(() => window.cc.personas.save({
+      id: 'e2e-worker',
+      name: 'E2E Worker',
+      description: 'Claude worker for the job-team launch spec',
+      baseProfile: 'claude',
+      permissionMode: 'default',
+      systemPrompt: ''
+    }));
 
     await window.evaluate(() => window.cc.teams.save({
       id: 'e2e-job-team',
       name: 'E2E Job Team',
       description: 'Durable job team under test',
-      slots: [{ personaId: 'e2e-orchestrator' }],
+      slots: [{ personaId: 'e2e-worker', quantity: 2 }],
       orchestratorPersonaId: 'e2e-orchestrator'
     }));
 
@@ -130,6 +141,24 @@ test('launching a durable Job Team through the real UI surfaces it on the board'
     //    given title.
     await expect(modal).toBeHidden();
     await expect(window.getByText('Named job spec', { exact: true })).toBeVisible({ timeout: 15_000 });
+
+    await expect.poll(async () => window.evaluate(async ({ projectId }) => {
+      const page = await window.cc.executionBoard.listProject(projectId);
+      return page.executions.find((execution) => execution.jobTitle === 'Named job spec')?.executionId ?? '';
+    }, { projectId: projectId! }), { timeout: 15_000, intervals: [500] }).not.toBe('');
+    const executionId = await window.evaluate(async ({ projectId }) => {
+      const page = await window.cc.executionBoard.listProject(projectId);
+      return page.executions.find((execution) => execution.jobTitle === 'Named job spec')!.executionId;
+    }, { projectId: projectId! });
+
+    await answerJobBlockerThroughUi({
+      window,
+      projectId: projectId!,
+      executionId,
+      jobTitle: 'Named job spec'
+    });
+    await expect.poll(() => existsSync(join(projectDir, 'result.txt')), { timeout: 15_000 }).toBe(true);
+    expect(readFileSync(join(projectDir, 'result.txt'), 'utf8')).toContain('LABEL: About Atlas');
   } finally {
     if (projectId) {
       await window.evaluate(async (pid) => {
@@ -161,5 +190,6 @@ test('launching a durable Job Team through the real UI surfaces it on the board'
     } catch {
       /* best-effort */
     }
+    agent.cleanup();
   }
 });
