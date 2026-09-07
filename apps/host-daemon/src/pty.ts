@@ -838,13 +838,9 @@ export class PtyManager extends EventEmitter {
     // opened tabs get only the inbox guidance. Built once so the claude
     // `--append-system-prompt` path and the codex `-c developer_instructions`
     // path (guidanceArgs) deliver IDENTICAL guidance.
-<<<<<<< HEAD
-    const guidanceText = buildSystemPromptGuidance(Boolean(opts.scheduled), opts.coordinationMode);
-=======
     const guidanceText = opts.remoteToolProxy
-      ? `${buildSystemPromptGuidance(Boolean(opts.scheduled))}\n\n${CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS}`
-      : buildSystemPromptGuidance(Boolean(opts.scheduled));
->>>>>>> main
+      ? `${buildSystemPromptGuidance(Boolean(opts.scheduled), opts.coordinationMode)}\n\n${CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS}`
+      : buildSystemPromptGuidance(Boolean(opts.scheduled), opts.coordinationMode);
     // Operator RULES.md (WARP-C5): the composed global + project standing
     // instructions, or null when neither file exists. Resolved via the injected
     // resolver (file I/O + Rule-2 confinement live in `rules-file.ts` + the boot

@@ -63,10 +63,7 @@ export function useThreadComposerOptions(input: {
   initialModel?: string | null;
   initialReasoningLevel?: string | null;
   initialAcpMode?: string | null;
-<<<<<<< HEAD
-=======
   hostId?: string;
->>>>>>> main
 }) {
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
@@ -88,14 +85,10 @@ export function useThreadComposerOptions(input: {
     const provider = input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code';
     return restoreProviderSelection(provider).reasoningLevel;
   });
-<<<<<<< HEAD
-  const [acpMode, setAcpMode] = useState<string | undefined>(() => input.initialAcpMode ?? undefined);
-=======
   const [acpMode, setAcpMode] = useState<string | undefined>(
     () => input.initialAcpMode?.trim() || undefined
   );
   const appliedRequestedAcpModeRef = useRef<string | undefined>(undefined);
->>>>>>> main
   const persistSelection = !input.threadId;
 
   const setModel = useCallback((value: string) => {
