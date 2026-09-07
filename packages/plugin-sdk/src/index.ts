@@ -92,8 +92,24 @@ export type {
   PluginStatusApi,
   PluginSettingsSnapshot,
   PluginServices,
-  PluginServicesRegistry
+  PluginServicesRegistry,
+  PluginSettingDescriptors,
+  PluginSettingValue
 } from './server.js';
+
+export type { JsonValue } from './json-value.js';
+export { defineRpcContract } from './rpc-contract.js';
+export type {
+  PluginRpcError,
+  PluginRpcValidationIssue,
+  StandardSchemaV1,
+  StandardSchemaV1Issue,
+  StandardSchemaV1Result
+} from './rpc-contract.js';
+export type {
+  PluginProviderReasoningLevel,
+  PluginProviderStrings
+} from './backend-contract.js';
 
 export {
   PLUGIN_CLI_OUTPUT_MAX_BYTES,

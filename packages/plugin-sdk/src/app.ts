@@ -69,6 +69,7 @@ export type {
   PluginThreadHeaderActionRegistration,
   PluginThreadListProps,
   PluginThreadListRegistration,
+  PluginThreadPanelActionContext,
   PluginThreadPanelActionRegistration,
   PluginThreadPanelProps,
   PluginThreadPanelScope,

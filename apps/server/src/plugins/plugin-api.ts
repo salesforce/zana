@@ -360,7 +360,7 @@ export function createPluginApi(
           migrate: (statements) => {
             for (const statement of statements) runScript(statement);
           },
-          transaction: (fn) => beginTxn.call(db, fn)()
+          transaction: <T>(fn: () => T): T => beginTxn.call(db, fn)() as T
         };
         return sharedDatabase;
       }
@@ -479,18 +479,26 @@ export function createPluginApi(
           if (!options?.forkThread) {
             throw new Error('zcc.sdk is not available in this runtime');
           }
-          const threadId = typeof args?.sourceThreadId === 'string' && args.sourceThreadId.trim()
-            ? args.sourceThreadId.trim()
-            : typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          const record = (args ?? {}) as {
+            threadId?: string;
+            sourceThreadId?: string;
+            sourceSeqEnd?: number;
+            visibility?: 'visible' | 'hidden';
+            title?: string;
+            agentContextSeed?: unknown[];
+          };
+          const threadId = typeof record.sourceThreadId === 'string' && record.sourceThreadId.trim()
+            ? record.sourceThreadId.trim()
+            : typeof record.threadId === 'string' ? record.threadId.trim() : '';
           if (!threadId) throw new Error('threadId is required');
-          const sourceSeqEnd = typeof args?.sourceSeqEnd === 'number' && Number.isInteger(args.sourceSeqEnd) && args.sourceSeqEnd >= 0
-            ? args.sourceSeqEnd
+          const sourceSeqEnd = typeof record.sourceSeqEnd === 'number' && Number.isInteger(record.sourceSeqEnd) && record.sourceSeqEnd >= 0
+            ? record.sourceSeqEnd
             : undefined;
-          const visibility = args?.visibility === 'hidden' || args?.visibility === 'visible'
-            ? args.visibility
+          const visibility = record.visibility === 'hidden' || record.visibility === 'visible'
+            ? record.visibility
             : undefined;
-          const title = typeof args?.title === 'string' && args.title.trim() ? args.title.trim() : undefined;
-          const agentContextSeed = Array.isArray(args?.agentContextSeed) ? args.agentContextSeed : undefined;
+          const title = typeof record.title === 'string' && record.title.trim() ? record.title.trim() : undefined;
+          const agentContextSeed = Array.isArray(record.agentContextSeed) ? record.agentContextSeed : undefined;
           return options.forkThread({
             pluginId,
             threadId,

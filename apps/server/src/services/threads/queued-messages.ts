@@ -63,6 +63,11 @@ function toQueuedMessage(
     serviceTier: extras?.serviceTier ?? 'default',
     groupWithNext: false,
     senderThreadId: extras?.senderThreadId ?? null,
+    sendAt: null,
+    waitingOn: null,
+    failureReason: null,
+    payload: { kind: 'inline' },
+    editable: true,
     createdAt: now,
     updatedAt: now
   };

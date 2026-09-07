@@ -45,6 +45,7 @@ export type PluginSettingDescriptor =
   | { type: 'project'; label: string; description?: string; default?: string };
 
 export type PluginSettingValue = string | boolean;
+export type PluginSettingDescriptors = Record<string, PluginSettingDescriptor>;
 
 export interface PluginSettingsHandle {
   get(): Promise<Record<string, PluginSettingValue | undefined>>;
@@ -358,7 +359,7 @@ export interface PluginBackground {
 export interface PluginProviderCapabilities {
   supportsServiceTier: boolean;
   supportsNativeUserQuestion?: boolean;
-  fork: string;
+  fork: ProviderFork;
   supportsManualCompaction?: boolean;
   supportsThreadArchive: boolean;
   supportsThreadRename: boolean;
@@ -381,11 +382,27 @@ export interface PluginProviderOptionsContext {
 export interface PluginProviderDeclaration {
   id: string;
   displayName: string;
+  family?: string;
   icon?: string;
   capabilities: PluginProviderCapabilities;
   composerActions?: string[];
   /** Hide from the picker until CLI health reports the binary is installed. */
   visibility?: PluginProviderVisibility;
+  experimental_visibility?: PluginProviderVisibility;
+  experimental_bridgeOptions?: Readonly<Record<string, JsonValue>>;
+  maintenance?: PluginProviderMaintenance;
+  strings?: PluginProviderStrings;
+  serviceTiers?: readonly PluginProviderOptionDescriptor[];
+  reasoningLevels?: readonly PluginProviderOptionDescriptor[];
+  extensionKinds?: Readonly<Record<string, PluginProviderExtensionKindDeclaration>>;
+  models?: {
+    fallback?: readonly PluginProviderFallbackModel[];
+    scope?: PluginProviderModelCatalogScope;
+  };
+  env?: { passthrough: readonly string[] };
+  experimental_nativeSkillRoots?: PluginProviderNativeRoots;
+  experimental_nativeCommandRoots?: PluginProviderNativeRoots;
+  experimental_resolvesNativeRoots?: boolean;
   deriveProviderOptions?: (
     context: PluginProviderOptionsContext
   ) => Record<string, unknown> | void;
@@ -434,8 +451,17 @@ export interface PluginAgents {
   ): void;
 }
 
-import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
+import type { JsonValue, ProviderFork } from '@zana-ai/zcc-domain/thread-runtime';
 import type { PluginServices } from './plugin-services.js';
+import type {
+  PluginProviderExtensionKindDeclaration,
+  PluginProviderFallbackModel,
+  PluginProviderMaintenance,
+  PluginProviderModelCatalogScope,
+  PluginProviderNativeRoots,
+  PluginProviderOptionDescriptor,
+  PluginProviderStrings
+} from './backend-contract.js';
 
 export {
   PLUGIN_SERVICE_UNAVAILABLE,

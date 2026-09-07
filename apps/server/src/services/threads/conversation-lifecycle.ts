@@ -182,7 +182,7 @@ export async function sendConversationTurn(
   if (prompt.length === 0) {
     throw new ThreadCreateError(400, 'invalid-input', 'input is required');
   }
-  const steerTurnId = resolvedMode === 'steer' || resolvedMode === 'steer-if-active'
+  const steerTurnId = resolvedMode === 'steer'
     ? findOpenConversationTurn(ctx.db, live.id)?.turnId ?? null
     : null;
   const clientRequestId = appendClientTurnRequested(ctx, {

@@ -978,9 +978,8 @@ export function createAcpDeltaTranslator(
               : {}),
           }),
         );
-        const explanation = typeof (parsed.data as { explanation?: unknown }).explanation === "string"
-          ? (parsed.data as { explanation: string }).explanation.trim()
-          : "";
+        const explanationRaw = (parsed.data as unknown as { explanation?: unknown }).explanation;
+        const explanation = typeof explanationRaw === "string" ? explanationRaw.trim() : "";
         return [
           {
             kind: "item.close",

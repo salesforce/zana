@@ -469,8 +469,8 @@ export async function readWorkspaceDiff(
   const overflowed = Boolean(result.truncated) || Buffer.byteLength(result.stdout, 'utf8') > maxDiffBytes;
   const diff = overflowed ? truncateToMaxBytes(result.stdout, maxDiffBytes) : result.stdout;
   const truncated = overflowed;
-  const nameOnly = await runGit(cwd, [...diffArgsFor(target), '--name-only'], { allowFail: true });
-  const short = await runGit(cwd, [...diffArgsFor(target), '--shortstat'], { allowFail: true });
+  const nameOnly = await runGit(cwd, [...diffArgsFor(target, mergeBaseRef), '--name-only'], { allowFail: true });
+  const short = await runGit(cwd, [...diffArgsFor(target, mergeBaseRef), '--shortstat'], { allowFail: true });
   return {
     diff,
     truncated,

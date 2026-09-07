@@ -37,7 +37,7 @@ export function parseOrgRpc(payload: unknown): OrgRpc {
     return { ok: false, error: 'Could not connect to a Salesforce org.' };
   }
   if (payload.ok === true && isPublicOrgView(payload.org)) {
-    return { ok: true, org: asPublicOrgView(payload.org) };
+    return { ok: true, org: payload.org };
   }
   return {
     ok: false,

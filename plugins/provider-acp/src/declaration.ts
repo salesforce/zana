@@ -95,7 +95,7 @@ export function acpProviderDeclaration(
         : {}),
       reasoningLevels:
         agent.reasoningLevels === undefined
-          ? [...ACP_BASE_CAPABILITIES.reasoningLevels]
+          ? [...(ACP_BASE_CAPABILITIES.reasoningLevels ?? [])]
           : [...agent.reasoningLevels],
     },
     composerActions: [],

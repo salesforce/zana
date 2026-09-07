@@ -93,6 +93,7 @@ export type {
   InitializeResult,
   ProviderHealth,
   ProviderHealthResult,
+  ProviderInstallationCommand,
   ProviderInstallationRunParams,
   ProviderInstallationRunResult,
   ProviderInstallationStatus,

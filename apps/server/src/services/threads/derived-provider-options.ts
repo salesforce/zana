@@ -6,7 +6,7 @@ import { getThreadProvider } from './thread-provider-catalog.js';
 
 export interface PluginSettingsReader {
   getSettings(pluginId: string): {
-    descriptors: Record<string, { secret?: true } | undefined>;
+    descriptors: Record<string, { secret?: true } | undefined | { type?: string; secret?: true }>;
     values: Record<string, PluginSettingValue | undefined>;
   };
 }

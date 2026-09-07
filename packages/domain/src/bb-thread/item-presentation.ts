@@ -97,6 +97,15 @@ export const threadEventItemPresentationSchema = z.object({
   suppress: z.boolean().optional(),
   /** Accent colour per theme; omitted rows use the neutral row tint. */
   tint: threadEventItemPresentationTintSchema.optional(),
+  /** Optional status badge (sandbox escape, approval, etc.). */
+  badge: z
+    .object({
+      glyph: z.string().min(1),
+      label: z.string().min(1),
+      hint: z.string().min(1).optional(),
+      tone: z.string().min(1).optional()
+    })
+    .optional()
 });
 export type ThreadEventItemPresentation = z.infer<
   typeof threadEventItemPresentationSchema

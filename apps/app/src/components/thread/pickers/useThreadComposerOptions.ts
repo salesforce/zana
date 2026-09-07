@@ -87,7 +87,7 @@ export function useThreadComposerOptions(input: {
   const [acpMode, setAcpMode] = useState<string | undefined>(
     () => input.initialAcpMode?.trim() || undefined
   );
-  const appliedRequestedAcpModeRef = useRef<string | undefined>();
+  const appliedRequestedAcpModeRef = useRef<string | undefined>(undefined);
   const persistSelection = !input.threadId;
 
   const setModel = useCallback((value: string) => {
