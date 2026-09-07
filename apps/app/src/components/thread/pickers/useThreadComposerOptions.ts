@@ -85,9 +85,7 @@ export function useThreadComposerOptions(input: {
     const provider = input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code';
     return restoreProviderSelection(provider).reasoningLevel;
   });
-  const [acpMode, setAcpMode] = useState<string | undefined>(
-    () => input.initialAcpMode?.trim() || undefined
-  );
+  const [acpMode, setAcpMode] = useState<string | undefined>(() => input.initialAcpMode ?? undefined);
   const appliedRequestedAcpModeRef = useRef<string | undefined>(undefined);
   const persistSelection = !input.threadId;
 
