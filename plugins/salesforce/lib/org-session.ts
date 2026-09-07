@@ -20,14 +20,14 @@ export function isPublicOrgView(value: unknown): value is PublicOrgView {
   );
 }
 
-function asPublicOrgView(value: Record<string, unknown>): PublicOrgView {
+function asPublicOrgView(value: PublicOrgView): PublicOrgView {
   return {
-    alias: String(value.alias),
-    username: String(value.username),
-    orgId: String(value.orgId),
-    instanceUrl: String(value.instanceUrl),
-    apiVersion: String(value.apiVersion),
-    kind: value.kind as PublicOrgView['kind'],
+    alias: value.alias,
+    username: value.username,
+    orgId: value.orgId,
+    instanceUrl: value.instanceUrl,
+    apiVersion: value.apiVersion,
+    kind: value.kind,
     isDefault: value.isDefault === true
   };
 }
@@ -37,7 +37,7 @@ export function parseOrgRpc(payload: unknown): OrgRpc {
     return { ok: false, error: 'Could not connect to a Salesforce org.' };
   }
   if (payload.ok === true && isPublicOrgView(payload.org)) {
-    return { ok: true, org: payload.org };
+    return { ok: true, org: asPublicOrgView(payload.org) };
   }
   return {
     ok: false,

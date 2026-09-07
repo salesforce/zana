@@ -11,6 +11,13 @@ import { bindPluginServices, createPluginServicesRegistry } from '../server.js';
 import type { PluginServicesRegistry } from '../server.js';
 import { enforcePluginCliOutputLimit } from '../server.js';
 
+export { scanPublicSdkOnly as experimental_scanPublicSdkOnly } from './public-sdk-only.js';
+export type {
+  PublicSdkOnlyScan,
+  PublicSdkOnlyScanOptions,
+  PublicSdkOnlyViolation
+} from './public-sdk-only.js';
+
 export class PluginContextStaleError extends Error {
   constructor(pluginId: string) {
     super(`plugin context is stale: ${pluginId}`);
@@ -28,6 +35,9 @@ export interface FakePluginHarness {
   extraInstructions: string[];
   providers: import('../server.js').PluginProviderDeclaration[];
   ptyHarnesses: import('../server.js').PluginPtyHarnessDeclaration[];
+  registrations: {
+    providerRegistrations: import('../server.js').PluginProviderDeclaration[];
+  };
   mentionProviders: import('../server.js').PluginMentionProviderRegistration[];
   agentConfigurers: Array<
     (
@@ -63,6 +73,8 @@ export interface FakePluginHarness {
 
 export interface FakePluginHost {
   zcc: ZccPluginApi;
+  /** Alias of `zcc` for leftover BB-shaped plugin tests. */
+  bb: ZccPluginApi;
   harness: FakePluginHarness;
 }
 
@@ -454,6 +466,9 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     extraInstructions,
     providers,
     ptyHarnesses,
+    get registrations() {
+      return { providerRegistrations: providers };
+    },
     mentionProviders,
     agentConfigurers,
     get cli() {
@@ -526,5 +541,5 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     }
   };
 
-  return { zcc: api, harness };
+  return { zcc: api, bb: api, harness };
 }

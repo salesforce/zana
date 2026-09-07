@@ -149,7 +149,8 @@ describe('closeAgentWithFollowup', () => {
 describe('CLI agent rail delete wiring', () => {
   it('shows a delete bin on workspace-rail CLI agents instead of a status dot', () => {
     const projects = readFileSync(new URL('./listpane/ProjectsList.tsx', import.meta.url), 'utf8');
-    expect(projects).toContain('<AgentDeleteQuickAction session={session} projectId={projectId} />');
+    const rows = readFileSync(new URL('./listpane/project-session-rail-rows.tsx', import.meta.url), 'utf8');
+    expect(rows).toContain('<AgentDeleteQuickAction session={session} projectId={projectId} />');
     expect(projects).not.toContain('agentActions.remove(sessionToCard(t, p))');
     expect(projects).not.toContain('AgentStatusDot');
   });

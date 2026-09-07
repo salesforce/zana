@@ -209,8 +209,9 @@ describe('agent runtime thread adapter', () => {
   });
 
   it('passes model and reasoningLevel through startThread and runTurn', async () => {
-    const started: Array<{ model?: string; reasoningLevel?: string }> = [];
-    const turned: Array<{ model?: string; reasoningLevel?: string }> = [];
+    let startThread: ReturnType<typeof vi.spyOn>;
+    let runTurn: ReturnType<typeof vi.spyOn>;
+    let steerTurn: ReturnType<typeof vi.spyOn>;
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
       dataDir: cwd,
@@ -219,17 +220,10 @@ describe('agent runtime thread adapter', () => {
           ...options,
           adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
-        return {
-          ...runtime,
-          startThread: async (input) => {
-            started.push(input.options);
-            return runtime.startThread(input);
-          },
-          runTurn: async (input) => {
-            turned.push(input.options);
-            return runtime.runTurn(input);
-          }
-        };
+        startThread = vi.spyOn(runtime, 'startThread');
+        runTurn = vi.spyOn(runtime, 'runTurn');
+        steerTurn = vi.spyOn(runtime, 'steerTurn');
+        return runtime;
       }
     });
     const threadId = randomUUID();
@@ -250,8 +244,15 @@ describe('agent runtime thread adapter', () => {
       reasoningLevel: 'xhigh'
     });
     adapter.dispose();
-    expect(started[0]).toMatchObject({ model: 'claude-sonnet-5', reasoningLevel: 'high' });
-    expect(turned[0]).toMatchObject({ model: 'claude-sonnet-5', reasoningLevel: 'xhigh' });
+    expect(startThread!.mock.calls[0]?.[0]).toMatchObject({
+      options: { model: 'claude-sonnet-5', reasoningLevel: 'high' }
+    });
+    const followUp = [...runTurn!.mock.calls, ...steerTurn!.mock.calls]
+      .map((call) => call[0])
+      .find((args) => args?.options?.reasoningLevel === 'xhigh');
+    expect(followUp).toMatchObject({
+      options: { model: 'claude-sonnet-5', reasoningLevel: 'xhigh' }
+    });
   });
 
   it('sends a valid full policy on follow-up even when submit asks to escalate', async () => {

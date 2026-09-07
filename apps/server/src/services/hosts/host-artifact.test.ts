@@ -33,9 +33,10 @@ describe('host-artifact', () => {
     expect(joinScript).toContain('host.list_dir');
     expect(joinScript).toContain('host-rpc.request');
     expect(joinScript).not.toContain('Host artifact response is missing Content-Length');
-    expect(joinScript).toMatch(
-      /displayName:\s*"Codex"[\s\S]{0,400}?command:\s*"codex-acp"/
-    );
+    // Codex/Claude live in provider plugins; join.mjs inlines the remaining
+    // built-in ACP launch specs (Cursor, OpenCode, …).
+    expect(joinScript).toMatch(/displayName:\s*"Cursor"/);
+    expect(joinScript).toMatch(/command:\s*"cursor-agent"/);
   }, 60_000);
 
   it('packs the provider-bridge worker so remotes do not resolve workspace packages', () => {

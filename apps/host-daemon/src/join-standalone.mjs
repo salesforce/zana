@@ -10,7 +10,7 @@ import { homedir, hostname } from 'node:os';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const PROTOCOL_VERSION = 21;
+const PROTOCOL_VERSION = 23;
 
 function joinServerUrl(serverUrl, path) {
   const base = serverUrl.endsWith('/') ? serverUrl : `${serverUrl}/`;
