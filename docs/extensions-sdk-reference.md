@@ -43,13 +43,13 @@ org credentials. Reuse + extraction map: `plugins/salesforce/SDK.md`.
 
 Slots (also mapped in the in-app Plugin Guide):
 
-- `navPanel` — sidebar entry + full view, or `placement: "extensions"` under Plugins
+- `navPanel` — sidebar entry + full view, `placement: "extensions"` under Plugins, or `placement: "unlisted"` (no rail row; open via `toPluginPanel`)
 - `settingsSection` — plugin settings on the Plugins hub detail (Configure)
 - `homepageSection` — Home dashboard
 - `projectTab` — per-project tab (`global: false` hides the sidebar entry)
 - `experimental_projectMenuAction` — project row overflow or workspace organize menu (`toProject` opens a `projectTab`)
 - `experimental_createProjectAction` — Add project (+) menu (`openDialog` mounts an optional create wizard; `addProject` registers the folder)
-- `sidebarFooterAction` — host-rendered footer icon
+- `sidebarFooterAction` — host-rendered footer icon (`openSettings` / `toPluginPanel`)
 - `projectStatusbarItem` — project workspace footer chip (`align` left/right;
   `run` may `toProject` / `toPluginPanel` / `openDialog` / `openMenu`)
 - `pendingInteraction` / `threadPanelAction` (thread side-panel tabs; optional
@@ -59,7 +59,7 @@ Slots (also mapped in the in-app Plugin Guide):
 - `fileOpener` / `messageDirective` / `messageAction` / `experimental_timelineRenderer`
 - `experimental_agentCardAction` / `experimental_agentsBoardAction`
 - `commandPaletteAction` / `experimental_providerIcon`
-- `composer.customize` / `contentScripts.register`
+- `composer.customize` / `contentScripts.register` — `meta` / `advanced` placements, `cli-agent` scope, `experimental_setLaunchPatch`
 
 Headless (no pixels): `zcc.skills` / `contributeSkills`, `zcc.cli`, `zcc.mcpServers`,
 `zcc.settings.define`, `zcc.background`.

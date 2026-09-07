@@ -41,7 +41,7 @@ export function useAllAgentCards(): AgentCard[] {
     for (const [projectId, list] of Object.entries(terminals)) {
       const project = byProjectId.get(projectId);
       if (!project) continue; // tombstoned/unknown project — skip
-      for (const s of agentViewTerminals(list, includeScheduled)) {
+      for (const s of agentViewTerminals(list, includeScheduled, byId)) {
         if (s.profile === 'shell') continue;
         out.push({
           session: s,

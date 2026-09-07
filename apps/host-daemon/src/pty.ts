@@ -782,7 +782,8 @@ export class PtyManager extends EventEmitter {
     });
     const combinationError = provider.validateRoutingCombination?.({
       roleTargetId: roleTarget.targetId,
-      executionOrigin: execution.origin
+      executionOrigin: execution.origin,
+      executionTargetId: execution.targetId
     });
     if (combinationError) throw new Error(`${combinationError}.`);
 

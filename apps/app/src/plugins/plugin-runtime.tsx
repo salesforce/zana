@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ComponentType } from 'react';
+import { lazy, Suspense, useContext, useEffect, useMemo, useState, type ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
   PluginComposerApi,
@@ -19,7 +19,7 @@ import {
 } from '../lib/route-paths.js';
 import { appNavigate } from '../lib/app-navigate.js';
 import { hrefForPluginNavPanel, hrefForPluginProjectTab } from './plugin-nav-href.js';
-import { getActiveComposerApi } from './plugin-composer-api.js';
+import { ComposerViewContext, getActiveComposerApi, getActiveComposerView, setPluginLaunchPatch } from './plugin-composer-api.js';
 import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
 import { openPluginThreadPanel } from './plugin-thread-panel.js';
 
@@ -121,7 +121,8 @@ const composerFallback: PluginComposerApi = {
   setInputLock() {},
   addQuote() {},
   insertMention() {},
-  focus() {}
+  focus() {},
+  experimental_setLaunchPatch() {}
 };
 
 function ThreadChatImpl(props: ThreadChatProps) {
@@ -173,8 +174,17 @@ export function installPluginRuntime(): void {
     useSettings: useSettingsImpl,
     useZccContext: useZccContextImpl,
     useZccNavigate: useZccNavigateImpl,
-    useComposer: () => getActiveComposerApi() ?? composerFallback,
-    useComposerView: () => ({
+    useComposer: () => {
+      const { pluginId } = usePluginRuntimeContext();
+      const api = getActiveComposerApi() ?? composerFallback;
+      return {
+        ...api,
+        experimental_setLaunchPatch(patch) {
+          setPluginLaunchPatch(pluginId, patch);
+        }
+      };
+    },
+    useComposerView: () => useContext(ComposerViewContext) ?? getActiveComposerView() ?? {
       scope: getActiveComposerApi()?.scope ?? { kind: 'new-thread', projectId: null },
       layout: 'expanded',
       draft: {
@@ -183,7 +193,7 @@ export function installPluginRuntime(): void {
         attachmentCount: 0
       },
       run: { isRunning: false, isSubmitting: false }
-    }),
+    },
     experimental_useSidebarThreads: () => {
       const threads = useThreads.getState().threads.map((thread) => ({
         id: thread.id,

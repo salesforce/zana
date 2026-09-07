@@ -192,6 +192,7 @@ describe('thread provider catalog', () => {
     expect(canonicalThreadProviderId('cursor')).toBe('acp-cursor');
     expect(canonicalThreadProviderId('opencode')).toBe('acp-opencode');
     expect(canonicalThreadProviderId('opencode-resume')).toBe('acp-opencode');
+    expect(canonicalThreadProviderId('opencode-yolo')).toBe('acp-opencode');
     expect(canonicalThreadProviderId('codex')).toBe('codex');
   });
 

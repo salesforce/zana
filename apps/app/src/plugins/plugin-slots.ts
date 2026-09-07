@@ -32,7 +32,7 @@ import type {
   PluginThreadPanelActionRegistration,
   PluginTimelineRendererRegistration
 } from '@zana-ai/zcc-plugin-sdk';
-import { collectPluginApp, emptyRegistrationSet, isPluginAppDefinition } from '@zana-ai/zcc-plugin-sdk';
+import { collectPluginApp, emptyRegistrationSet, isPluginAppDefinition, navPanelListsInExtensionsHub, navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
 
 const sets = new Map<string, PluginRegistrationSet>();
 const generations = new Map<string, number>();
@@ -84,8 +84,8 @@ function rebuildSnapshot(): void {
   snapshot = {
     sets: orderedSets,
     navPanels,
-    sidebarNavPanels: navPanels.filter((panel) => panel.placement !== 'extensions'),
-    extensionsHubPanels: navPanels.filter((panel) => panel.placement === 'extensions'),
+    sidebarNavPanels: navPanels.filter((panel) => navPanelListsInSidebar(panel.placement)),
+    extensionsHubPanels: navPanels.filter((panel) => navPanelListsInExtensionsHub(panel.placement)),
     homepageSections: orderedSets.flatMap((set) => set.homepageSections),
     settingsSections: orderedSets.flatMap((set) => set.settingsSections),
     projectTabs: orderedSets.flatMap((set) => set.projectTabs),

@@ -86,6 +86,46 @@ describe('PluginHubIncludes', () => {
     expect(screen.queryByText('Sidebar panels (1)')).toBeNull();
   });
 
+  it('labels unlisted navPanels separately from sidebar and hub pages', () => {
+    interpretPluginApp(
+      'hello',
+      definePluginApp((app) => {
+        app.slots.navPanel({
+          id: 'orgs',
+          title: 'Hello',
+          icon: 'Cloud',
+          placement: 'unlisted',
+          component: () => null
+        });
+        app.slots.sidebarFooterAction({
+          id: 'orgs',
+          title: 'Hello',
+          icon: 'Cloud',
+          run: () => undefined
+        });
+      })
+    );
+    const plugin: PluginAppEntry = {
+      id: 'hello',
+      name: 'Hello',
+      description: '',
+      icon: 'Cloud',
+      enabled: true,
+      provenance: 'direct',
+      status: 'running',
+      appUrl: null
+    };
+    render(
+      <MemoryRouter>
+        <PluginHubIncludes plugin={plugin} />
+      </MemoryRouter>
+    );
+    expect(screen.getByText('Unlisted pages (1)')).toBeTruthy();
+    expect(screen.getByText('Sidebar footer actions (1)')).toBeTruthy();
+    expect(screen.queryByText('Sidebar panels (1)')).toBeNull();
+    expect(screen.queryByText('Plugins hub pages (1)')).toBeNull();
+  });
+
   it('lists Agents board slot contributions', () => {
     interpretPluginApp(
       'hello',

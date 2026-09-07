@@ -152,7 +152,10 @@ export function adaptSidebarFooterAction(
     icon: registration.icon,
     kind: "action",
     onActivate: ({ openPluginDetails }) =>
-      registration.run({ openSettings: openPluginDetails }),
+      registration.run({
+        openSettings: openPluginDetails,
+        toPluginPanel: () => false
+      }),
     runtime: new SidebarFooterItemRuntime(),
   };
 }

@@ -19,9 +19,10 @@ test('scheduler: clicking a row opens the schedule workbench', async ({ app }) =
   expect(projectId).toBeTruthy();
 
   try {
-    await window.locator('.nav-item').filter({ hasText: 'Projects' }).first().click();
-    await window.locator('button[aria-label="Reload project list"]').click();
-    await window.locator('.list-filter input').fill(projectName);
+    const workspaces = window.locator('[data-testid="sidebar-projects-heading"]');
+    if ((await workspaces.getAttribute('aria-expanded')) === 'false') {
+      await workspaces.click();
+    }
     await expect(
       window.locator('.project-item').filter({ hasText: projectName }).first()
     ).toBeVisible({ timeout: 15_000 });
@@ -85,9 +86,10 @@ test('scheduler: Open in split seeds the catalogue beside the schedule', async (
   expect(projectId).toBeTruthy();
 
   try {
-    await window.locator('.nav-item').filter({ hasText: 'Projects' }).first().click();
-    await window.locator('button[aria-label="Reload project list"]').click();
-    await window.locator('.list-filter input').fill(projectName);
+    const workspaces = window.locator('[data-testid="sidebar-projects-heading"]');
+    if ((await workspaces.getAttribute('aria-expanded')) === 'false') {
+      await workspaces.click();
+    }
     await expect(
       window.locator('.project-item').filter({ hasText: projectName }).first()
     ).toBeVisible({ timeout: 15_000 });

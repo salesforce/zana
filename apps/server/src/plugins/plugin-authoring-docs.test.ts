@@ -311,7 +311,7 @@ const FRONTEND_SLOT_PROP_FIELDS = {
   settingsSection: ['pluginId'],
   navPanel: ['pluginId', 'subPath'],
   projectTab: ['pluginId', 'projectId'],
-  sidebarFooterAction: ['title', 'icon', 'run'],
+  sidebarFooterAction: ['title', 'icon', 'run', 'openSettings', 'toPluginPanel'],
   projectStatusbarItem: ['projectId', 'toProject', 'toPluginPanel', 'openDialog', 'openMenu'],
   pendingInteraction: ['interaction', 'submit', 'cancel'],
   threadPanelAction: ['pluginId', 'threadId', 'params'],

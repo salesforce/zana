@@ -44,7 +44,8 @@ export const PROFILE_LABEL: Record<LaunchProfileId, string> = {
   pi: 'pi',
   'pi-resume': 'pi --continue',
   opencode: 'opencode',
-  'opencode-resume': 'opencode --continue'
+  'opencode-resume': 'opencode --continue',
+  'opencode-yolo': 'opencode --auto'
 };
 
 /** Whitelist of lucide icon names we honor in template metadata. Anything

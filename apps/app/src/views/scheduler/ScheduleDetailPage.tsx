@@ -81,7 +81,7 @@ function ScheduleDetailView({
   const location = useLocation();
   const pane = useOptionalPaneContext();
   const hostedSecondary = pane?.secondaryPanelHost != null;
-  const panel = useSecondaryPanel(ownerId, { defaultOpen: true });
+  const panel = useSecondaryPanel(ownerId, { defaultOpen: Boolean(task) });
   useInAppBrowserPanel(ownerId, panel);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const isExternal = task?.external?.kind === 'claude-loop';

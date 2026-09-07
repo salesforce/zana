@@ -53,6 +53,7 @@ describe('AgentDetailPanel source', () => {
     const source = readFileSync(new URL('../AgentDetailPanel.tsx', import.meta.url), 'utf8');
     expect(source).toContain('collapsible?: boolean');
     expect(source).toContain("variant: 'monitor' | 'modal' | 'embedded'");
+    expect(source).toContain("import { formatDuration } from './AgentBoard.js'");
     expect(source).toContain('if (collapsible && collapsed)');
     expect(source).toContain('{collapsible ? (');
   });

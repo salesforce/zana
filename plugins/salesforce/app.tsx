@@ -3,6 +3,7 @@ import { definePluginApp, useZccContext, useZccNavigate, type PluginCreateProjec
 import { AgentforcePlaygroundPanel } from './src/app/AgentScriptPanel.js';
 import { AgentforcePreviewPanel } from './src/app/AgentforcePreviewPanel.js';
 import { OrgPicker } from './src/app/OrgPicker.js';
+import { SalesforceOrgsPanel } from './src/app/SalesforceOrgsPanel.js';
 import { SalesforceProjectTab } from './src/app/SalesforceProjectTab.js';
 import { SoqlExplorerPanel } from './src/app/soql/SoqlExplorerPanel.js';
 import { openAgentforcePlayground, openAgentforcePreview } from './src/app/agentforce-panel-params.js';
@@ -301,6 +302,21 @@ export default definePluginApp((app) => {
     description: 'Salesforce CLI orgs. Selecting one sets the shared default org.',
     component: OrgPicker
   });
+  app.slots.navPanel({
+    id: 'orgs',
+    title: 'Salesforce',
+    icon: 'Cloud',
+    placement: 'unlisted',
+    component: SalesforceOrgsPanel
+  });
+  app.slots.sidebarFooterAction({
+    id: 'orgs',
+    title: 'Salesforce',
+    icon: 'Cloud',
+    run: ({ toPluginPanel }) => {
+      toPluginPanel('orgs');
+    }
+  });
   app.slots.fileOpener({
     id: 'agent',
     title: 'Agentforce Playground',
@@ -366,6 +382,13 @@ export default definePluginApp((app) => {
     id: 'salesforce-banner',
     scopes: ['thread', 'new-thread'],
     banners: [{ id: 'org-status', chrome: 'card', component: SalesforceComposerBanner }]
+  });
+  app.slots.commandPaletteAction({
+    id: 'open-orgs',
+    title: 'Open Salesforce orgs',
+    run: (ctx) => {
+      ctx.toPluginPanel('orgs');
+    }
   });
   app.slots.commandPaletteAction({
     id: 'open-playground',

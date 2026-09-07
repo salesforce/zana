@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { listCreateProjectActions, listHomepageSections, listNavPanels, listPendingInteractionSlots, listProjectTabs } from './plugin-slots.js';
+import { listComposerCustomizations, listCreateProjectActions, listHomepageSections, listNavPanels, listPendingInteractionSlots, listProjectTabs } from './plugin-slots.js';
 import { pluginAppIsLoadable, reconcilePluginApps, usePluginAppModules } from './plugin-app-loader.js';
 
 afterEach(async () => {
@@ -231,5 +231,40 @@ describe('server plugin app loader', () => {
     expect(urls).toEqual(['/plugins/tasks/assets/app.js?v=1']);
     await reconcilePluginApps([{ ...entry, appUrl: '/plugins/tasks/assets/app.js?v=2' }], { importer });
     expect(urls).toEqual(['/plugins/tasks/assets/app.js?v=1', '/plugins/tasks/assets/app.js?v=2']);
+  });
+
+  it('registers composer-only apps that have no nav panel or project tab', async () => {
+    await reconcilePluginApps(
+      [{
+        id: 'harness-claude',
+        name: 'Claude Code CLI Agent',
+        description: '',
+        icon: 'Bot',
+        enabled: true,
+        provenance: 'builtin',
+        status: 'running',
+        appUrl: '/plugins/harness-claude/assets/app.js?v=1'
+      }],
+      {
+        importer: async () => ({
+          default: {
+            __zccPluginApp: true,
+            setup(app: {
+              composer: { customize(registration: object): void };
+            }) {
+              app.composer.customize({
+                id: 'chip',
+                scopes: ['cli-agent'],
+                meta: [{ id: 'chip', component: () => null }]
+              });
+            }
+          }
+        })
+      }
+    );
+    expect(usePluginAppModules.getState().modules).toEqual([]);
+    expect(listComposerCustomizations()).toEqual([
+      expect.objectContaining({ pluginId: 'harness-claude', id: 'chip' })
+    ]);
   });
 });

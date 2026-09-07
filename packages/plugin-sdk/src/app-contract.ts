@@ -15,15 +15,30 @@ export interface PluginNavPanelProps {
   subPath: string;
 }
 
+export const PLUGIN_NAV_PANEL_PLACEMENTS = ['sidebar', 'extensions', 'unlisted'] as const;
+export type PluginNavPanelPlacement = (typeof PLUGIN_NAV_PANEL_PLACEMENTS)[number];
+
+/** True when the panel is a global rail row (`sidebar`, or omitted). */
+export function navPanelListsInSidebar(placement?: PluginNavPanelPlacement): boolean {
+  return placement !== 'extensions' && placement !== 'unlisted';
+}
+
+/** True when the panel is listed under Plugins instead of the rail. */
+export function navPanelListsInExtensionsHub(placement?: PluginNavPanelPlacement): boolean {
+  return placement === 'extensions';
+}
+
 export interface PluginNavPanelRegistration extends PluginSlotBase {
   title: string;
   icon: string;
   path?: string;
   /**
    * `sidebar` (default) is a global rail row. `extensions` lists the page
-   * under Plugins instead of on the main sidebar.
+   * under Plugins instead of on the main sidebar. `unlisted` is a full
+   * `/plugins/<id>/<path>` page with no rail row and no hub listing — open it
+   * from `sidebarFooterAction` / `commandPaletteAction` via `toPluginPanel`.
    */
-  placement?: 'sidebar' | 'extensions';
+  placement?: PluginNavPanelPlacement;
   component: ComponentType<PluginNavPanelProps>;
   experimental_sidebarAccessory?: ComponentType;
   headerContent?: ComponentType<PluginNavPanelProps>;
@@ -93,6 +108,11 @@ export interface PluginCreateProjectActionRegistration extends PluginSlotBase {
 
 export interface PluginSidebarFooterActionContext {
   openSettings(): void;
+  /**
+   * Navigate to one of this plugin's `navPanel` routes. Returns true when a
+   * router consumed the navigation.
+   */
+  toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }): boolean;
 }
 
 export interface PluginSidebarFooterActionRegistration extends PluginSlotBase {
@@ -414,7 +434,15 @@ export interface PluginProviderIconRegistration {
   icon: ComponentType<{ className?: string }>;
 }
 
-export type PluginComposerScopeKind = 'thread' | 'queued-message' | 'side-chat' | 'new-thread';
+export const PLUGIN_COMPOSER_SCOPE_KINDS = [
+  'thread',
+  'queued-message',
+  'side-chat',
+  'new-thread',
+  'cli-agent'
+] as const;
+
+export type PluginComposerScopeKind = (typeof PLUGIN_COMPOSER_SCOPE_KINDS)[number];
 
 export type PluginComposerScope =
   | { kind: 'thread'; threadId: string }
@@ -426,13 +454,38 @@ export type PluginComposerScope =
       tabId: string;
       childThreadId: string | null;
     }
-  | { kind: 'new-thread'; projectId: string | null };
+  | { kind: 'new-thread'; projectId: string | null }
+  | { kind: 'cli-agent'; projectId: string | null };
 
 export interface ComposerView {
   scope: PluginComposerScope;
   layout: 'expanded' | 'compact' | 'zen';
   draft: { text: string; isEmpty: boolean; attachmentCount: number };
   run: { isRunning: boolean; isSubmitting: boolean };
+  /** Selected CLI harness family (`claude`, `codex`, …) when the composer is CLI Agent. */
+  familyId?: string;
+  /** Selected thread/CLI provider id (`claude-code`, `codex`, …). */
+  providerId?: string;
+}
+
+/**
+ * Advisory spawn overlay a composer customization may attach. The host merges
+ * patches at send time; main still authorizes cwd/profile and sanitizes args.
+ */
+export interface PluginComposerLaunchPatch {
+  extraArgs?: string[];
+  profileId?: string;
+  harnessRouting?: {
+    schemaVersion: 1;
+    byAdapter: Record<
+      string,
+      {
+        roleTargetId?: string;
+        modelTargetId?: string;
+        executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
+      }
+    >;
+  };
 }
 
 export interface ComposerPlusMenuItem {
@@ -467,6 +520,10 @@ export interface ComposerCustomization {
   banners?: readonly { id: string; chrome?: 'card' | 'bare'; component: ComponentType }[];
   plusMenu?: readonly ComposerPlusMenuItem[];
   richText?: ComposerRichTextSpec;
+  /** Chips in the composer meta row (project / environment / permission). */
+  meta?: readonly { id: string; component: ComponentType }[];
+  /** Fields inside the host-owned Customize launch disclosure. */
+  advanced?: readonly { id: string; component: ComponentType }[];
 }
 
 export interface PluginComposerTextEffect {
@@ -490,6 +547,11 @@ export interface PluginComposerApi {
   addQuote(text: string): void;
   insertMention(mention: PluginComposerMention): void;
   focus(): void;
+  /**
+   * Overlay spawn options for this plugin. Pass `null` to clear. The host
+   * merges every plugin's patch at send; main still authorizes.
+   */
+  experimental_setLaunchPatch(patch: PluginComposerLaunchPatch | null): void;
 }
 
 export interface PluginComposerThreadRowStatus {
@@ -876,8 +938,11 @@ export function collectPluginApp(
         ) {
           throw new Error(`${kind}: "experimental_sidebarAccessory" must be a React component function when set`);
         }
-        if (registration.placement !== undefined && registration.placement !== 'sidebar' && registration.placement !== 'extensions') {
-          throw new Error(`${kind}: "placement" must be "sidebar" or "extensions"`);
+        if (
+          registration.placement !== undefined &&
+          !PLUGIN_NAV_PANEL_PLACEMENTS.includes(registration.placement)
+        ) {
+          throw new Error(`${kind}: "placement" must be "sidebar", "extensions", or "unlisted"`);
         }
         set.navPanels.push(
           stamp({
@@ -1238,14 +1303,25 @@ export function collectPluginApp(
         );
       }
     },
-    composer: {
-      customize: (registration) => {
-        const kind = 'composer.customize';
-        const id = requireSlotId(kind, registration.id);
-        requireUniqueId(kind, seen.composerCustomization, id);
-        set.composerCustomizations.push(stamp({ ...registration, id }));
-      }
-    },
+      composer: {
+        customize: (registration) => {
+          const kind = 'composer.customize';
+          const id = requireSlotId(kind, registration.id);
+          requireUniqueId(kind, seen.composerCustomization, id);
+          const scopes = registration.scopes;
+          if (scopes !== undefined) {
+            if (!Array.isArray(scopes) || scopes.length === 0) {
+              throw new Error(`${kind}: "scopes" must be a non-empty array when set`);
+            }
+            for (const scope of scopes) {
+              if (!PLUGIN_COMPOSER_SCOPE_KINDS.includes(scope as PluginComposerScopeKind)) {
+                throw new Error(`${kind}: invalid scope kind ${JSON.stringify(scope)}`);
+              }
+            }
+          }
+          set.composerCustomizations.push(stamp({ ...registration, id }));
+        }
+      },
     contentScripts: {
       register: (registration) => {
         const kind = 'contentScripts.register';

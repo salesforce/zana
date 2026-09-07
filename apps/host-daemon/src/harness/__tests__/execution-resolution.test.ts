@@ -236,8 +236,8 @@ describe('execution-state resolution', () => {
   });
 
   it('ignores inherited execution on unrestricted profiles but rejects same-request Agent execution', () => {
-    for (const profile of ['claude-yolo', 'codex-yolo'] as const) {
-      const family = profile === 'claude-yolo' ? 'claude' : 'codex';
+    for (const profile of ['claude-yolo', 'codex-yolo', 'opencode-yolo'] as const) {
+      const family = profile === 'claude-yolo' ? 'claude' : profile === 'codex-yolo' ? 'codex' : 'opencode';
       expect(resolveExecutionState(providerFor(profile), {
         config: config({ defaultExecutionState: 'plan' }), profile, extraArgs: [],
         persona: { id: 'p', name: 'P', executionState: 'interactive' },

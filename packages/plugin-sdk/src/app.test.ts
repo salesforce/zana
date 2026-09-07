@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { definePluginApp, isPluginAppDefinition } from './app.js';
 import {
   collectPluginApp,
+  PLUGIN_COMPOSER_SCOPE_KINDS,
   threadPanelActionMatchesScope
 } from './app-contract.js';
 import { shimLegacyExtensionManifest } from './legacy-shim.js';
@@ -118,6 +119,37 @@ describe('definePluginApp', () => {
     expect(set.messageDirectives[0]?.id).toBe('task');
     expect(set.composerCustomizations[0]?.id).toBe('retry');
     expect(set.contentScripts[0]?.id).toBe('boot');
+  });
+
+  it('collects composer meta/advanced and accepts the cli-agent scope', () => {
+    const def = definePluginApp((app) => {
+      app.composer.customize({
+        id: 'yolo',
+        scopes: ['cli-agent'],
+        meta: [{ id: 'yolo-chip', component: () => null }],
+        advanced: [{ id: 'extra', component: () => null }]
+      });
+    });
+    const set = collectPluginApp('harness-claude', 1, def);
+    expect(set.composerCustomizations[0]?.scopes).toEqual(['cli-agent']);
+    expect(set.composerCustomizations[0]?.meta?.[0]?.id).toBe('yolo-chip');
+    expect(set.composerCustomizations[0]?.advanced?.[0]?.id).toBe('extra');
+    expect(PLUGIN_COMPOSER_SCOPE_KINDS).toContain('cli-agent');
+  });
+
+  it('rejects an unknown composer scope', () => {
+    expect(() =>
+      collectPluginApp(
+        'bad',
+        1,
+        definePluginApp((app) => {
+          app.composer.customize({
+            id: 'bad-scope',
+            scopes: ['sidebar'] as never
+          });
+        })
+      )
+    ).toThrow(/invalid scope kind/);
   });
 
   it('defaults threadPanelAction scopes to thread-only', () => {
@@ -304,6 +336,47 @@ describe('definePluginApp', () => {
         })
       )
     ).toThrow(/duplicate id/);
+  });
+
+  it('collects unlisted navPanels and footer toPluginPanel registrations', () => {
+    const def = definePluginApp((app) => {
+      app.slots.navPanel({
+        id: 'orgs',
+        title: 'Salesforce',
+        icon: 'Cloud',
+        placement: 'unlisted',
+        component: () => null
+      });
+      app.slots.sidebarFooterAction({
+        id: 'orgs',
+        title: 'Salesforce',
+        icon: 'Cloud',
+        run: ({ toPluginPanel }) => {
+          toPluginPanel('orgs');
+        }
+      });
+    });
+    const set = collectPluginApp('salesforce', 1, def);
+    expect(set.navPanels[0]?.placement).toBe('unlisted');
+    expect(set.sidebarFooterActions[0]?.title).toBe('Salesforce');
+  });
+
+  it('rejects unknown navPanel placement', () => {
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.navPanel({
+            id: 'orgs',
+            title: 'Salesforce',
+            icon: 'Cloud',
+            placement: 'hidden' as 'sidebar',
+            component: () => null
+          });
+        })
+      )
+    ).toThrow(/unlisted/);
   });
 });
 

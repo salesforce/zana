@@ -44,6 +44,22 @@ describe('hrefForPluginNavPanel', () => {
     );
     expect(hrefForPluginNavPanel('tasks', 'panel')).toBe('/plugins/tasks/panel');
   });
+
+  it('keeps unlisted panels on /plugins', () => {
+    interpretPluginApp(
+      'salesforce',
+      definePluginApp((app) => {
+        app.slots.navPanel({
+          id: 'orgs',
+          title: 'Salesforce',
+          icon: 'Cloud',
+          placement: 'unlisted',
+          component: () => null
+        });
+      })
+    );
+    expect(hrefForPluginNavPanel('salesforce', 'orgs')).toBe('/plugins/salesforce/orgs');
+  });
 });
 
 describe('extensionsHubRedirectForPath', () => {
@@ -61,11 +77,24 @@ describe('extensionsHubRedirectForPath', () => {
         });
       })
     );
+    interpretPluginApp(
+      'salesforce',
+      definePluginApp((app) => {
+        app.slots.navPanel({
+          id: 'orgs',
+          title: 'Salesforce',
+          icon: 'Cloud',
+          placement: 'unlisted',
+          component: () => null
+        });
+      })
+    );
     expect(extensionsHubRedirectForPath('/plugins/guide/guide')).toBe('/extensions/pages/guide/guide');
     expect(extensionsHubRedirectForPath('/plugins/guide/guide/app-shell')).toBe(
       '/extensions/pages/guide/guide/app-shell'
     );
     expect(extensionsHubRedirectForPath('/plugins/tasks/panel')).toBeNull();
+    expect(extensionsHubRedirectForPath('/plugins/salesforce/orgs')).toBeNull();
     expect(extensionsHubRedirectForPath('/agents')).toBeNull();
   });
 });

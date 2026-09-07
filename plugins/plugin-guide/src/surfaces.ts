@@ -32,6 +32,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         bullets: [
           'Default `placement: "sidebar"` registers a rail row at `/plugins/<id>/<path>`.',
           '`placement: "extensions"` lists the page in the Plugins hub instead.',
+          '`placement: "unlisted"` is a full `/plugins/<id>/<path>` page with no rail row and no hub listing — open it from a footer or palette action via `toPluginPanel`.',
           'Optional header and sidebar accessory.'
         ],
         apiSymbols: ['PluginAppSlots.navPanel', 'PluginNavPanelRegistration'],
@@ -62,9 +63,13 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         id: 'sidebarFooterAction',
         title: 'Sidebar footer',
         summary: 'An action in the rail utility dock.',
-        bullets: ['`run` receives `openSettings()`.'],
+        bullets: [
+          '`run` receives `openSettings()` and `toPluginPanel(path)`.',
+          '`openSettings()` opens this plugin’s Plugins hub detail.',
+          '`toPluginPanel` opens a `navPanel`, including `placement: "unlisted"` pages.'
+        ],
         apiSymbols: ['PluginAppSlots.sidebarFooterAction', 'PluginSidebarFooterActionRegistration'],
-        firstParty: ['Connect']
+        firstParty: ['Connect', 'Salesforce']
       }
     ]
   },
@@ -147,8 +152,12 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
       {
         id: 'composer',
         title: 'Composer chrome',
-        summary: 'Actions, banners, plus-menu items, and rich-text effects.',
-        bullets: ['Scope to `thread`, `new-thread`, `queued-message`, or `side-chat`.'],
+        summary: 'Actions, banners, plus-menu items, meta chips, advanced fields, and rich-text effects.',
+        bullets: [
+          'Scope to `thread`, `new-thread`, `cli-agent`, `queued-message`, or `side-chat`.',
+          '`meta` lands in the composer chip row; `advanced` lands in Customize launch.',
+          '`useComposer().experimental_setLaunchPatch` overlays spawn extraArgs / profile / routing.'
+        ],
         apiSymbols: ['PluginAppComposer.customize', 'ComposerCustomization'],
         firstParty: ['Workflows', 'Salesforce']
       }

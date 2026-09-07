@@ -191,6 +191,9 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('compactLabel: row.compactLabel');
     expect(source).toContain('description: row.description');
     expect(source).toContain('permissionOptions.length > 1');
+    expect(source).toContain('PluginComposerMeta');
+    expect(source).toContain('PluginComposerAdvanced');
+    expect(source).toContain('providerId={resolvedProviderId}');
     expect(source).not.toContain('permissionChipLabel');
     expect(source).not.toContain('permissionModes[0]');
     expect(source).toContain('product.threads.send');

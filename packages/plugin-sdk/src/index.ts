@@ -134,6 +134,7 @@ export type {
   PluginAppSetup,
   PluginAppSlots,
   PluginRegistrationSet,
+  PluginNavPanelPlacement,
   PluginNavPanelRegistration,
   PluginSettingsSectionRegistration,
   PluginHomepageSectionRegistration,
@@ -173,6 +174,10 @@ export type {
   PluginProviderIconRegistration,
   PluginContentScriptRegistration,
   ComposerCustomization,
+  PluginComposerApi,
+  PluginComposerLaunchPatch,
+  PluginComposerScope,
+  PluginComposerScopeKind,
   PluginSdkApp,
   PluginSlotBase
 } from './app-contract.js';
@@ -204,6 +209,10 @@ export {
   collectPluginApp,
   DEFAULT_PLUGIN_THREAD_PANEL_SCOPES,
   emptyRegistrationSet,
+  navPanelListsInExtensionsHub,
+  navPanelListsInSidebar,
+  PLUGIN_COMPOSER_SCOPE_KINDS,
+  PLUGIN_NAV_PANEL_PLACEMENTS,
   PLUGIN_PROJECT_STATUSBAR_ALIGNS,
   PLUGIN_THREAD_PANEL_SCOPES,
   threadPanelActionMatchesScope

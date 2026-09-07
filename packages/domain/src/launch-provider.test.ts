@@ -336,6 +336,17 @@ describe('launch-provider', () => {
             "isAgent": true,
             "supportsHooks": false,
           },
+          "opencode-yolo": {
+            "acceptsPermissionMode": false,
+            "acceptsPromptArgv": true,
+            "acceptsSessionId": false,
+            "canAutoCloseOnFinish": false,
+            "emitsOscStatus": false,
+            "hasTranscript": true,
+            "injectsClaudeMcpConfig": false,
+            "isAgent": true,
+            "supportsHooks": false,
+          },
           "pi": {
             "acceptsPermissionMode": false,
             "acceptsPromptArgv": true,
@@ -524,6 +535,10 @@ describe('launch-provider', () => {
       // OpenCode positional is a DIR, so the seed prompt must be a flag.
       expect(seedPromptArgs('opencode', 'fix the test')).toEqual(['--prompt', 'fix the test']);
       expect(seedPromptArgs('opencode-resume', 'fix the test')).toEqual([
+        '--prompt',
+        'fix the test'
+      ]);
+      expect(seedPromptArgs('opencode-yolo', 'fix the test')).toEqual([
         '--prompt',
         'fix the test'
       ]);

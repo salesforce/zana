@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
-import type { PluginComposerApi, PluginComposerScope } from '@zana-ai/zcc-plugin-sdk/app';
+import type {
+  ComposerView,
+  PluginComposerApi,
+  PluginComposerScope
+} from '@zana-ai/zcc-plugin-sdk/app';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 import {
   listComposerCustomizations,
@@ -9,7 +13,12 @@ import {
   composerContributionKey,
   composerCustomizationApplies
 } from './plugin-slot-resolvers.js';
-import { setActiveComposerApi } from './plugin-composer-api.js';
+import {
+  clearLaunchPatches,
+  ComposerViewContext,
+  setActiveComposerApi,
+  setActiveComposerView
+} from './plugin-composer-api.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { CREATE_PLUGIN_PROMPT } from '../lib/create-resource-prompts.js';
 
@@ -18,12 +27,16 @@ export function PluginComposerChrome({
   text,
   setText,
   focus,
+  familyId,
+  providerId,
   children
 }: {
   scope: PluginComposerScope;
   text: string;
   setText: (next: string) => void;
   focus: () => void;
+  familyId?: string;
+  providerId?: string;
   children: ReactNode;
 }) {
   const customizations = useSyncExternalStore(
@@ -35,6 +48,14 @@ export function PluginComposerChrome({
     () => customizations.filter((row) => composerCustomizationApplies(row, scope.kind)),
     [customizations, scope.kind]
   );
+  const view: ComposerView = useMemo(() => ({
+    scope,
+    layout: 'expanded',
+    draft: { text, isEmpty: !text, attachmentCount: 0 },
+    run: { isRunning: false, isSubmitting: false },
+    ...(familyId ? { familyId } : {}),
+    ...(providerId ? { providerId } : {})
+  }), [familyId, providerId, scope, text]);
   const api: PluginComposerApi = useMemo(() => ({
     scope,
     get text() {
@@ -55,15 +76,25 @@ export function PluginComposerChrome({
     insertMention(mention) {
       setText(`${text}@${mention.label} `);
     },
-    focus
+    focus,
+    experimental_setLaunchPatch() {}
   }), [focus, scope, setText, text]);
+
+  // Set before children render so `useComposerView()` in meta chips sees
+  // `familyId` on the first paint, not only after a later state update.
+  setActiveComposerApi(api);
+  setActiveComposerView(view);
 
   useEffect(() => {
     setActiveComposerApi(api);
-    return () => {
-      setActiveComposerApi(null);
-    };
-  }, [api]);
+    setActiveComposerView(view);
+  }, [api, view]);
+
+  useEffect(() => () => {
+    setActiveComposerApi(null);
+    setActiveComposerView(null);
+    clearLaunchPatches();
+  }, []);
 
   const pluginActions = matching.flatMap((row) =>
     (row.actions ?? []).map((action) => {
@@ -91,12 +122,7 @@ export function PluginComposerChrome({
           onClick={() => {
             void item.run({
               composer: api,
-              view: {
-                scope,
-                layout: 'expanded',
-                draft: { text, isEmpty: !text, attachmentCount: 0 },
-                run: { isRunning: false, isSubmitting: false }
-              }
+              view
             });
           }}
         >
@@ -106,10 +132,11 @@ export function PluginComposerChrome({
       );
     })
   );
-  const showCreatePlugin = scope.kind === 'new-thread';
+  const showCreatePlugin = scope.kind === 'new-thread' || scope.kind === 'cli-agent';
   const hasActions = pluginActions.length > 0 || plusItems.length > 0 || showCreatePlugin;
 
   return (
+    <ComposerViewContext.Provider value={view}>
     <div className="plugin-composer-chrome">
       {matching.flatMap((row) =>
         (row.banners ?? []).map((banner) => {
@@ -152,5 +179,6 @@ export function PluginComposerChrome({
         </div>
       ) : null}
     </div>
+    </ComposerViewContext.Provider>
   );
 }

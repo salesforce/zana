@@ -2,6 +2,10 @@ import type {
   ComposerCustomization,
   PluginComposerThreadRowStatus,
 } from "@zana-ai/zcc-plugin-sdk";
+import {
+  PLUGIN_COMPOSER_SCOPE_KINDS,
+  type PluginComposerScopeKind,
+} from "../app-contract.js";
 
 export const PLUGIN_SLOT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const PLUGIN_MESSAGE_DIRECTIVE_ID_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -197,7 +201,7 @@ function parseRegions(
   onRejected: RejectionReporter,
 ): Pick<
   ComposerCustomization,
-  "actions" | "banners" | "plusMenu" | "richText"
+  "actions" | "banners" | "plusMenu" | "richText" | "meta" | "advanced"
 > {
   const actions = parseContributionArray<
     NonNullable<ComposerCustomization["actions"]>[number]
@@ -321,11 +325,37 @@ function parseRegions(
     }
   }
 
+  const meta = parseContributionArray<
+    NonNullable<ComposerCustomization["meta"]>[number]
+  >(`${kind}.meta`, registration.meta, onRejected, (entryKind, value) => {
+    const entry = value as Record<string, unknown> | null;
+    return {
+      id: requireSlotId(entryKind, entry?.id),
+      component: requireComponent(entryKind, entry?.component),
+    };
+  });
+  const advanced = parseContributionArray<
+    NonNullable<ComposerCustomization["advanced"]>[number]
+  >(
+    `${kind}.advanced`,
+    registration.advanced,
+    onRejected,
+    (entryKind, value) => {
+      const entry = value as Record<string, unknown> | null;
+      return {
+        id: requireSlotId(entryKind, entry?.id),
+        component: requireComponent(entryKind, entry?.component),
+      };
+    },
+  );
+
   return {
     ...(actions !== undefined ? { actions } : {}),
     ...(banners !== undefined ? { banners } : {}),
     ...(plusMenu !== undefined ? { plusMenu } : {}),
     ...(richText !== undefined ? { richText } : {}),
+    ...(meta !== undefined ? { meta } : {}),
+    ...(advanced !== undefined ? { advanced } : {}),
   };
 }
 
@@ -349,10 +379,7 @@ export function collectComposerCustomization(
       }
       for (const scope of scopes) {
         if (
-          scope !== "thread" &&
-          scope !== "queued-message" &&
-          scope !== "side-chat" &&
-          scope !== "new-thread"
+          !PLUGIN_COMPOSER_SCOPE_KINDS.includes(scope as PluginComposerScopeKind)
         ) {
           throw new Error(
             `${kind}: invalid scope kind ${JSON.stringify(scope)}`,

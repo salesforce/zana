@@ -179,7 +179,9 @@ Frontend runtime exports you may import from `@zana-ai/zcc-plugin-sdk/app`:
 `getPluginSettings`, `setPluginSettings`, `collectPluginApp`,
 `emptyRegistrationSet`, `PLUGIN_THREAD_PANEL_SCOPES`,
 `DEFAULT_PLUGIN_THREAD_PANEL_SCOPES`, `threadPanelActionMatchesScope`,
-`PLUGIN_PROJECT_STATUSBAR_ALIGNS`,
+`PLUGIN_COMPOSER_SCOPE_KINDS`, `PLUGIN_PROJECT_STATUSBAR_ALIGNS`,
+`PLUGIN_NAV_PANEL_PLACEMENTS`, `navPanelListsInSidebar`,
+`navPanelListsInExtensionsHub`,
 `useRpc`, `useRealtime`,
 `useRealtimeConnectionState`, `useSettings`, `useZccContext`,
 `useZccNavigate`, `useComposer`, `useComposerView`,
@@ -188,23 +190,31 @@ Frontend runtime exports you may import from `@zana-ai/zcc-plugin-sdk/app`:
 `experimental_useSidebarThreadSplit`, `ThreadChat`, `Markdown`,
 `experimental_NewThreadComposer`.
 
-`composer.customize({ id, scopes?, actions?, banners?, plusMenu?, richText? })`
-adds chrome on the shared prompt box. `contentScripts.register({ id, mount })`
+`composer.customize({ id, scopes?, actions?, banners?, plusMenu?, richText?, meta?, advanced? })`
+adds chrome on the shared prompt box. `scopes` may include `"cli-agent"` for the
+CLI Agent composer (Modern stays `"new-thread"`). `meta` chips land in the
+composer meta row; `advanced` fields land in Customize launch.
+`useComposer().experimental_setLaunchPatch({ extraArgs?, profileId?, harnessRouting? })`
+overlays spawn options — the host merges at send, and main still authorizes.
+`contentScripts.register({ id, mount })`
 runs a headless same-origin script with an `AbortSignal` on unload.
 
 `PluginAppSlots` (every slot name and its props):
 
 - `navPanel` — registration fields `id`, `title`, `icon`, `path`, `placement`
-  (`sidebar` | `extensions`, default `sidebar`), `component`,
+  (`sidebar` | `extensions` | `unlisted` via `PLUGIN_NAV_PANEL_PLACEMENTS`, default `sidebar`), `component`,
   `headerContent`, `experimental_sidebarAccessory`.
   Component props: `pluginId`, `subPath`. `placement: "extensions"` lists the
-  page under Plugins instead of the global sidebar.
+  page under Plugins instead of the global sidebar. `placement: "unlisted"` is a
+  full `/plugins/<id>/<path>` page with no rail row and no hub listing — open it
+  from `sidebarFooterAction` or `commandPaletteAction` via `toPluginPanel`.
 - `settingsSection` — `id`, `title`, `description`, `component`. Props: `pluginId`.
 - `homepageSection` — `id`, `title`, `component`. Props: `pluginId`, `projectId`.
 - `projectTab` — `id`, `label`, `icon`, `order`, `global`, `component`.
   Props: `pluginId`, `projectId`.
 - `sidebarFooterAction` — `id`, `title`, `icon`, `run`. `run` receives
-  `{ openSettings() }`.
+  `{ openSettings(), toPluginPanel(path) }`. `openSettings()` opens this plugin’s
+  Plugins hub detail. `toPluginPanel` opens a `navPanel` route.
 - `projectStatusbarItem` — a chip on the project workspace footer (path/git
   strip). Registration: `id`, `align` (`"left"` | `"right"`, default `"right"`;
   `PLUGIN_PROJECT_STATUSBAR_ALIGNS`), `order`, `tooltip`, `icon`, `label`

@@ -1,3 +1,4 @@
+import { navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
 import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import {
   Blocks,
@@ -92,7 +93,7 @@ export function Sidebar() {
     [navPanels]
   );
   const pluginPanels = useMemo(
-    () => navPanels.filter((panel) => panel.placement !== 'extensions'),
+    () => navPanels.filter((panel) => navPanelListsInSidebar(panel.placement)),
     [navPanels]
   );
   const extraItems = useMemo(() => {

@@ -18,6 +18,7 @@ import { useRouteState } from '../hooks/useRouteState.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import { hrefForPluginNavPanel } from '../plugins/plugin-nav-href.js';
 import { getPluginDetailRoutePath } from '../lib/route-paths.js';
 import { appNavigate } from '../lib/app-navigate.js';
 import { SidebarResizer } from './SidebarResizer.js';
@@ -214,17 +215,24 @@ export function SidebarRail({
         </button>
         {footerActions.map((action) => {
           const Icon = resolveIcon(action.icon);
+          const active = nav === action.pluginId;
           return (
             <button
               key={`${action.id}:${action.generation}`}
               type="button"
-              className="sidebar-utility-button"
+              className={`sidebar-utility-button${active ? ' active' : ''}`}
               aria-label={action.title}
+              aria-current={active ? 'page' : undefined}
               title={action.title}
               onClick={() => {
                 void action.run({
                   openSettings() {
                     appNavigate(getPluginDetailRoutePath(action.pluginId));
+                  },
+                  toPluginPanel(path, options) {
+                    return appNavigate(hrefForPluginNavPanel(action.pluginId, path, options?.subPath), {
+                      replace: options?.replace
+                    });
                   }
                 });
               }}

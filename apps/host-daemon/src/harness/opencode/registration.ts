@@ -9,7 +9,8 @@ export const openCodeHarness: HarnessRegistration = {
   label: 'OpenCode',
   profiles: [
     { id: 'opencode', posture: 'default' },
-    { id: 'opencode-resume', posture: 'resume' }
+    { id: 'opencode-resume', posture: 'resume' },
+    { id: 'opencode-yolo', posture: 'unrestricted' }
   ],
   defaultProfileId: 'opencode',
   implementation,

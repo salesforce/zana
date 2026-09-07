@@ -52,7 +52,8 @@ const h = vi.hoisted(() => ({
   },
   hostedRegistration: null as null | {
     onToggle: () => void;
-  }
+  },
+  secondaryPanelDefaultOpen: undefined as boolean | undefined
 }));
 
 vi.mock('../../store.js', () => ({
@@ -82,10 +83,13 @@ vi.mock('../thread-detail/PaneContext.js', () => ({
 }));
 
 vi.mock('../../components/thread/secondary-panel/useThreadSecondaryPanel.js', () => ({
-  useSecondaryPanel: () => ({
-    state: h.panel,
-    ...h.panelApi
-  })
+  useSecondaryPanel: (_ownerId: string, options?: { defaultOpen?: boolean }) => {
+    h.secondaryPanelDefaultOpen = options?.defaultOpen;
+    return {
+      state: h.panel,
+      ...h.panelApi
+    };
+  }
 }));
 
 vi.mock('../../lib/desktop-browser.js', () => ({
@@ -265,6 +269,7 @@ describe('ScheduleDetailPage', () => {
     h.locationState = null;
     h.deleteResult = { ok: true, message: undefined };
     h.hostedRegistration = null;
+    h.secondaryPanelDefaultOpen = undefined;
     h.navigate.mockReset();
     h.pushToast.mockReset();
     for (const fn of Object.values(h.panelApi)) fn.mockReset();
@@ -286,12 +291,14 @@ describe('ScheduleDetailPage', () => {
     expect(screen.getByTestId('schedule-editor')).toBeTruthy();
     expect(screen.getByTestId('schedule-info-panel')).toBeTruthy();
     expect(screen.getByText('Morning digest')).toBeTruthy();
+    expect(h.secondaryPanelDefaultOpen).toBe(true);
   });
 
   it('renders the create page when no schedule id is routed', () => {
     render(<ScheduleDetailPage projectId={null} scheduleId={null} />);
     expect(screen.getByTestId('schedule-detail')).toBeTruthy();
     expect(screen.getByText('New schedule')).toBeTruthy();
+    expect(h.secondaryPanelDefaultOpen).toBe(false);
   });
 
   it('titles a template-seeded create page', () => {
@@ -333,6 +340,14 @@ describe('ScheduleDetailPage', () => {
     render(<ScheduleDetailPage projectId={null} scheduleId={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Saved' }));
     expect(h.navigate).toHaveBeenCalledWith('/schedules/created-1', { replace: true });
+  });
+
+  it('renders the editor for a just-created id already in the live list', () => {
+    tasks.push({ ...sample, id: 'created-1', name: 'Nightly' });
+    render(<ScheduleDetailPage projectId={null} scheduleId="created-1" />);
+    expect(screen.getByTestId('schedule-detail')).toBeTruthy();
+    expect(screen.queryByTestId('schedule-missing')).toBeNull();
+    expect(screen.getByText('Nightly')).toBeTruthy();
   });
 
   it('reopens the secondary panel from the header', () => {

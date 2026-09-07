@@ -15218,7 +15218,12 @@ body.resizing-col .explorer-resizer::after {
 .schedule-editor-actions {
   display: flex;
   justify-content: flex-end;
-  padding-top: 8px;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 0 -20px -32px;
+  padding: 12px 20px 16px;
+  background: var(--bg-panel);
 }
 
 .schedule-info-panel {
@@ -21876,7 +21881,8 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 /* Thread composer sits on `--bg-panel` so it reads as a field on the palette
    (`--bg-elevated`), not the same wash. Drop the thread-detail upward shadow
    so it does not look like a dialog inside the dialog. */
-.launch-modal .thread-command-composer .ui-command-composer {
+.launch-modal .thread-command-composer .ui-command-composer,
+.launch-modal .launch-advanced {
   background: var(--bg-panel);
   box-shadow: none;
 }
@@ -22819,14 +22825,17 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   font-weight: 600;
 }
 
-/* The expanded panel — the pickers stack, offset with a hairline so they read as
-   one grouped disclosure under the toggle. */
+/* The expanded panel — Extra args / Persona sit in a compact card under the
+   disclosure, matching the prompt card rather than a full settings form. */
 .launch-advanced {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px 0 2px;
-  border-top: 1px solid var(--border);
+  gap: 12px;
+  margin-top: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-background, var(--bg-elevated));
 }
 
 /* Framework/persona rows can wrap tall, so top-align the label with the chips
@@ -23165,8 +23174,8 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 .launch-extra-args {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 2px 0 0;
+  gap: 10px;
+  padding: 0;
 }
 
 .launch-extra-args .settings-field {
@@ -23186,6 +23195,10 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 .launch-extra-args .settings-chip-input,
 .launch-extra-args .settings-input-full {
   grid-column: 2;
+}
+
+.launch-advanced .settings-chip-input {
+  background: var(--bg-input);
 }
 
 .launch-extra-args .settings-help {
@@ -36057,12 +36070,6 @@ textarea.thread-command-editor {
   max-height: min(82vh, 100%);
 }
 
-/* An expanded customization section gets a definite modal height so the form
-   scrolls inside .launch-scroll while Send stays pinned beneath it. */
-.palette.launch-modal:has(.launch-advanced) {
-  height: min(82vh, calc(100vh - 12vh));
-}
-
 .palette.launch-modal:has(.launch-advanced) > .launch-panel {
   flex: 1 1 auto;
   min-height: 0;
@@ -37584,6 +37591,28 @@ textarea.thread-command-editor {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.plugin-composer-meta,
+.plugin-composer-advanced {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.plugin-composer-advanced {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.launch-advanced-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  padding: 0 2px;
 }
 
 .plugin-composer-plus {

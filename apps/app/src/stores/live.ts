@@ -639,6 +639,23 @@ export const useScheduler = create<SchedulerLiveState>(() => ({
   loading: true
 }));
 
+/**
+ * Merge a schedule into the live list before `scheduler:onChanged` arrives.
+ * Create navigates to `/schedules/:id` on the IPC result; without this the
+ * detail page can render "no longer available" while the push is still in flight.
+ */
+export function upsertSchedulerTask(task: ScheduledTask): void {
+  const { tasks } = useScheduler.getState();
+  const index = tasks.findIndex((row) => row.id === task.id);
+  if (index === -1) {
+    useScheduler.setState({ tasks: [...tasks, task], loading: false });
+    return;
+  }
+  const next = tasks.slice();
+  next[index] = task;
+  useScheduler.setState({ tasks: next, loading: false });
+}
+
 interface GoalsLiveState {
   goals: Goal[];
   loading: boolean;

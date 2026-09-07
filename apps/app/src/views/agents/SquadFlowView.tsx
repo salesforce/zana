@@ -592,7 +592,7 @@ export function SquadFlowView({ projectId }: SquadFlowViewProps = {}) {
       if (!byProjectId.has(pid)) continue;
       const graph = buildSquadFlow({
         projectId: pid,
-        sessions: agentViewTerminals(list, includeScheduled),
+        sessions: agentViewTerminals(list, includeScheduled, statusById),
         agents: agents.filter((a) => a.projectId === pid),
         messages: messages.filter((m) => m.projectId === pid),
         statusById,
@@ -646,7 +646,7 @@ export function SquadFlowView({ projectId }: SquadFlowViewProps = {}) {
     const pid = selected;
     if (!pid) return { groups: [] as ReturnType<typeof squadLaunchGroups>, byLaunch: new Map<string, SquadFlowGraph>() };
     const list = terminals[pid];
-    const sessions = agentViewTerminals(list, includeScheduled);
+    const sessions = agentViewTerminals(list, includeScheduled, statusById);
     const projAgents = agents.filter((a) => a.projectId === pid);
     const projMessages = messages.filter((m) => m.projectId === pid);
     const groups = squadLaunchGroups(projAgents, sessions);

@@ -124,7 +124,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const cards = useMemo<AgentCard[]>(() => {
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
     if (scopedProject) {
-      return agentViewTerminals(terminals[scopedProject.id], includeScheduled)
+      return agentViewTerminals(terminals[scopedProject.id], includeScheduled, byId)
         .filter((s) => s.profile !== 'shell')
         .map((s) =>
           toCard(s, scopedProject, byId, sinceById, triageById, overseerById, subagentsById)
@@ -134,7 +134,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     for (const [projectId, list] of Object.entries(terminals)) {
       const project = byProjectId.get(projectId);
       if (!project) continue;
-      for (const s of agentViewTerminals(list, includeScheduled)) {
+      for (const s of agentViewTerminals(list, includeScheduled, byId)) {
         if (s.profile === 'shell') continue;
         out.push(toCard(s, project, byId, sinceById, triageById, overseerById, subagentsById));
       }
