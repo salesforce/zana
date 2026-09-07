@@ -27,6 +27,7 @@ async function runMcpProbe(command: string, args: string[], env: NodeJS.ProcessE
     });
     child.stdin.end(input);
   });
+}
 
 async function stagePluginForHostBuild(
   source: string,
