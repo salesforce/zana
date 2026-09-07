@@ -270,6 +270,13 @@ describe('agent runtime thread adapter', () => {
           runTurn: async (input) => {
             turned.push(input.options);
             return runtime.runTurn(input);
+          },
+          // A follow-up submitTurn arriving before the initial turn goes idle is
+          // dispatched as a steer, not a fresh runTurn (observed as a CI-timing
+          // flake). Both paths carry the same options payload, so capture either.
+          steerTurn: async (input) => {
+            turned.push(input.options);
+            return runtime.steerTurn(input);
           }
         };
       }
@@ -310,6 +317,13 @@ describe('agent runtime thread adapter', () => {
           runTurn: async (input) => {
             turned.push(input.options);
             return runtime.runTurn(input);
+          },
+          // A follow-up submitTurn arriving before the initial turn goes idle is
+          // dispatched as a steer, not a fresh runTurn (observed as a CI-timing
+          // flake). Both paths carry the same options payload, so capture either.
+          steerTurn: async (input) => {
+            turned.push(input.options);
+            return runtime.steerTurn(input);
           }
         };
       }
