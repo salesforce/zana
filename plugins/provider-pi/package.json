@@ -12,6 +12,10 @@
     "build": "node ../../packages/plugin-build/scripts/build-app.mjs .",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.84.0",
+    "@earendil-works/pi-coding-agent": "0.84.0"
+  },
   "devDependencies": {
     "@zana-ai/zcc-plugin-sdk": "workspace:*",
     "@types/react": "^19.0.0",
