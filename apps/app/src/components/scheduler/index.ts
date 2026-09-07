@@ -17,8 +17,9 @@ export {
   sourceLabel,
   templateIcon,
   PROFILE_LABEL,
-  INBOX_LEVELS
+  INBOX_LEVELS,
+  liveSessionIdForTask
 } from './schedulerUtils.js';
-export { openScheduledLive, openScheduledLiveInSplit } from './openScheduledLive.js';
+export { openScheduledLive, openScheduleFromAgents, scheduledLivePath } from './openScheduledLive.js';
 export { isScheduleSeed, scheduleSeedFromLocationState } from './schedule-seed.js';
 export type { ScheduleSeed } from './schedule-seed.js';

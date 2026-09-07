@@ -15203,8 +15203,82 @@ body.resizing-col .explorer-resizer::after {
   grid-column: 2 / -1;
 }
 
-.schedule-detail-view .schedule-editor-body {
-  overflow: auto;
+.schedule-detail-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-panel);
+}
+
+.schedule-detail-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.schedule-detail-pane-header h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-detail-pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.schedule-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 360px);
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.schedule-detail-editor {
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg-panel);
+}
+
+.schedule-detail-info {
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+}
+
+.schedule-detail-pane .schedule-detail-layout {
+  flex: 1 1 auto;
+}
+
+.schedule-detail-editor .schedule-editor {
+  max-width: none;
+}
+
+.schedule-detail-pane .thread-detail-empty {
+  padding: 32px 20px;
+}
+
+@media (max-width: 800px) {
+  .schedule-detail-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .schedule-detail-info {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
 }
 
 .schedule-editor {
@@ -17115,8 +17189,8 @@ body.resizing-col .explorer-resizer::after {
 }
 
 .overview-kpi {
-  background: var(--panel-bg, rgba(255, 255, 255, 0.03));
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 14px 16px;
   display: flex;
@@ -17168,13 +17242,16 @@ body.resizing-col .explorer-resizer::after {
   }
 }
 
-.overview-card {
-  background: var(--panel-bg, rgba(255, 255, 255, 0.03));
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+.scheduler-overview .overview-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  padding: 0;
+  gap: 0;
+  cursor: default;
 }
 
 /* Live scheduled agents: a success wash so "Running now" reads as active,

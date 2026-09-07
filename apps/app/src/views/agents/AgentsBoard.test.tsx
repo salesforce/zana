@@ -67,8 +67,10 @@ describe('AgentsBoard', () => {
     expect(board).toContain('<AgentMonitor cards={visibleFleet}');
     expect(board).toContain('projectRemote: Boolean(project.remote)');
     expect(board).toContain('schedulesForAgentView');
-    expect(board).toContain('revealSchedule(item.task.id)');
+    expect(board).toContain('openScheduleFromAgents');
     expect(board).toContain('item.kind === \'schedule\'');
+    expect(board).toContain('getAgentSessionRoutePath(item.card.session.id, item.projectId)');
+    expect(board).toContain('item.card.session.scheduled');
   });
 });
 

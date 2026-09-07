@@ -318,6 +318,10 @@ function recomputeRollup(
   const sessions = useData.getState().terminals[projectId] ?? [];
   let best: AgentState = 'unknown';
   for (const sess of sessions) {
+    // Scheduled jobs are not nested under the project tree, so they must not
+    // paint the sidebar status dot (that would be a working/idle mark with no
+    // matching row). Agent View still tracks them via byId.
+    if (sess.scheduled) continue;
     const st = byId[sess.id];
     if (st && AGENT_STATE_RANK[st] > AGENT_STATE_RANK[best]) best = st;
   }

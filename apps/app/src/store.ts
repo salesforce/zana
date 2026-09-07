@@ -1828,8 +1828,9 @@ function isActiveScheduledRun(
  * Sessions for the Agents board / list / flow. When `includeScheduled` is on,
  * every scheduler-spawned job is kept (waiting ones sit in the Scheduled
  * column). When off, waiting and exited scheduled jobs are dropped, but a
- * scheduled run that is working or blocked stays visible in Working. Project
- * rails and focus buckets keep using {@link listedTerminals}.
+ * scheduled run that is working or blocked stays visible in Working. The
+ * Projects sidebar (global + per-project) never lists scheduled jobs — that
+ * tree uses {@link projectRailTerminals} / {@link listedTerminals}.
  */
 export function agentViewTerminals(
   list: TerminalSession[] | undefined,
@@ -1842,14 +1843,13 @@ export function agentViewTerminals(
 }
 
 /**
- * Live sessions for a project's inline rail expansion, including scheduler
- * jobs while they are running. The project rollup includes those jobs, so the
- * matching row must remain visible instead of leaving an unexplained status
- * dot. Exited/dismissed agents drop out automatically; scheduler history still
- * stays out of the project's drill-in focus view.
+ * Live sessions for a project's inline rail expansion (global Workspaces tree
+ * and the focused-project session rail). Scheduler jobs stay off this tree —
+ * they belong on the Agents board / list when that setting is on, and in the
+ * Scheduler panel. Exited/dismissed agents drop out automatically.
  */
 export function projectRailTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
-  return (list ?? []).filter((t) => t.status !== 'exited');
+  return listedTerminals(list).filter((t) => t.status !== 'exited');
 }
 
 /**

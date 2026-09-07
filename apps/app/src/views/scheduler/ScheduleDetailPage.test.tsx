@@ -3,57 +3,23 @@
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderToStaticMarkup } from 'react-dom/server';
-import type { ReactNode } from 'react';
 import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
 
 const tasks: ScheduledTask[] = [];
 let loading = false;
 
 const h = vi.hoisted(() => ({
-  panel: {
-    isOpen: true,
-    isMaximized: false,
-    widthPx: 352,
-    activeId: 'info',
-    tabs: [] as Array<{
-      id: string;
-      kind: string;
-      title: string;
-      path?: string;
-      moduleId?: string;
-      automationTargetId?: string | null;
-    }>,
-    version: 1 as const
-  },
   pane: null as null | {
     isSplitPane: boolean;
     isFocused: boolean;
     isMaximized: boolean;
-    secondaryPanelHost?: unknown;
     onToggleMaximize?: () => void;
     onRequestClose?: () => void;
   },
   navigate: vi.fn(),
   locationState: null as unknown,
   deleteResult: { ok: true, message: undefined as string | undefined },
-  pushToast: vi.fn(),
-  panelApi: {
-    open: vi.fn(),
-    close: vi.fn(),
-    selectPin: vi.fn(),
-    openNewTab: vi.fn(),
-    closeTab: vi.fn(),
-    activateTab: vi.fn(),
-    toggleMaximized: vi.fn(),
-    setWidth: vi.fn(),
-    addTab: vi.fn(),
-    patchTab: vi.fn()
-  },
-  hostedRegistration: null as null | {
-    onToggle: () => void;
-  },
-  secondaryPanelDefaultOpen: undefined as boolean | undefined
+  pushToast: vi.fn()
 }));
 
 vi.mock('../../store.js', () => ({
@@ -76,31 +42,7 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('../thread-detail/PaneContext.js', () => ({
-  useOptionalPaneContext: () => h.pane,
-  usePaneSecondaryPanelRegistration: (value: { onToggle: () => void } | null) => {
-    h.hostedRegistration = value;
-  }
-}));
-
-vi.mock('../../components/thread/secondary-panel/useThreadSecondaryPanel.js', () => ({
-  useSecondaryPanel: (_ownerId: string, options?: { defaultOpen?: boolean }) => {
-    h.secondaryPanelDefaultOpen = options?.defaultOpen;
-    return {
-      state: h.panel,
-      ...h.panelApi
-    };
-  }
-}));
-
-vi.mock('../../lib/desktop-browser.js', () => ({
-  getDesktopBrowserApi: () => ({
-    stopAutomation: vi.fn(),
-    onOpenTab: () => () => undefined
-  })
-}));
-
-vi.mock('../../components/thread/secondary-panel/useInAppBrowserPanel.js', () => ({
-  useInAppBrowserPanel: () => undefined
+  useOptionalPaneContext: () => h.pane
 }));
 
 vi.mock('../../components/scheduler/ScheduleEditor.js', () => ({
@@ -155,91 +97,6 @@ vi.mock('../../components/scheduler/DeleteConfirmModal.js', () => ({
   )
 }));
 
-vi.mock('../../components/thread/secondary-panel/ThreadSecondaryPanel.js', () => ({
-  ThreadSecondaryPanel: ({
-    children,
-    onSelectInfo,
-    onSelectDiff,
-    onNewTab,
-    onCloseTab,
-    onActivateTab,
-    onToggleMaximized,
-    onHide,
-    onResize
-  }: {
-    children?: ReactNode;
-    onSelectInfo: () => void;
-    onSelectDiff: () => void;
-    onNewTab: () => void;
-    onCloseTab: (id: string) => void;
-    onActivateTab: (id: string) => void;
-    onToggleMaximized: () => void;
-    onHide: () => void;
-    onResize: (n: number) => void;
-  }) => {
-    onSelectInfo();
-    onSelectDiff();
-    onNewTab();
-    onCloseTab('x');
-    onActivateTab('x');
-    onToggleMaximized();
-    onHide();
-    onResize(400);
-    return <aside>{children}</aside>;
-  }
-}));
-
-vi.mock('../../components/thread/secondary-panel/BrowserTabDeck.js', () => ({
-  BrowserTabDeck: ({
-    onUpdate,
-    onStopAutomation
-  }: {
-    onUpdate: (args: { tabId: string; url: string; title?: string }) => void;
-    onStopAutomation: (id: string) => void;
-  }) => {
-    onUpdate({ tabId: 'tab-6', url: 'https://example.com', title: '' });
-    onUpdate({ tabId: 'tab-6', url: 'https://example.com', title: 'Example' });
-    onStopAutomation('auto-1');
-    return <div data-testid="browser-deck" />;
-  }
-}));
-
-vi.mock('../../components/thread/secondary-panel/ThreadNewTabPage.js', () => ({
-  ThreadNewTabPage: ({
-    onOpenFile,
-    onOpenBrowser,
-    onOpenExplorer,
-    onOpenPlugin
-  }: {
-    onOpenFile: (path: string, title: string) => void;
-    onOpenBrowser: () => void;
-    onOpenExplorer: () => void;
-    onOpenPlugin: (moduleId: string, title: string) => void;
-  }) => {
-    onOpenFile('/tmp/a.md', 'a.md');
-    onOpenBrowser();
-    onOpenExplorer();
-    onOpenPlugin('docs', 'Docs');
-    return <div data-testid="new-tab-page" />;
-  }
-}));
-
-vi.mock('../../components/thread/secondary-panel/ThreadFilePreviewTab.js', () => ({
-  ThreadFilePreviewTab: ({ storage }: { storage?: boolean }) => (
-    <div data-testid={storage ? 'storage-preview' : 'file-preview'} />
-  )
-}));
-
-vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
-  ThreadPluginTab: ({ threadId }: { threadId?: string }) => (
-    <div data-testid="plugin-tab" data-thread-id={threadId ?? ''} />
-  )
-}));
-
-vi.mock('../../components/thread/secondary-panel/ThreadExplorerTab.js', () => ({
-  ThreadExplorerTab: () => <div data-testid="explorer-tab" />
-}));
-
 import { ScheduleDetailPage } from './ScheduleDetailPage.js';
 
 const sample = {
@@ -261,50 +118,49 @@ describe('ScheduleDetailPage', () => {
     cleanup();
     tasks.length = 0;
     loading = false;
-    h.panel.isOpen = true;
-    h.panel.isMaximized = false;
-    h.panel.activeId = 'info';
-    h.panel.tabs = [];
     h.pane = null;
     h.locationState = null;
     h.deleteResult = { ok: true, message: undefined };
-    h.hostedRegistration = null;
-    h.secondaryPanelDefaultOpen = undefined;
     h.navigate.mockReset();
     h.pushToast.mockReset();
-    for (const fn of Object.values(h.panelApi)) fn.mockReset();
   });
 
   it('shows an empty state when the schedule is gone', () => {
-    const html = renderToStaticMarkup(
-      <ScheduleDetailPage projectId={null} scheduleId="missing" />
-    );
-    expect(html).toContain('data-testid="schedule-missing"');
-    expect(html).toContain('This schedule is no longer available.');
-    expect(html).not.toContain('data-testid="schedule-detail"');
+    render(<ScheduleDetailPage projectId={null} scheduleId="missing" />);
+    expect(screen.getByTestId('schedule-missing')).toBeTruthy();
+    expect(screen.getByText('This schedule is no longer available.')).toBeTruthy();
+    expect(screen.queryByTestId('schedule-detail')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Schedule unavailable' })).toBeTruthy();
   });
 
-  it('renders the editor workbench when the schedule exists', () => {
+  it('opens the editor in a page over the catalogue', () => {
     tasks.push(sample);
     render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
+    expect(document.querySelector('.schedule-detail-pane')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Morning digest' })).toBeTruthy();
     expect(screen.getByTestId('schedule-detail')).toBeTruthy();
     expect(screen.getByTestId('schedule-editor')).toBeTruthy();
     expect(screen.getByTestId('schedule-info-panel')).toBeTruthy();
-    expect(screen.getByText('Morning digest')).toBeTruthy();
-    expect(h.secondaryPanelDefaultOpen).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('closes the page back to the catalogue', () => {
+    tasks.push(sample);
+    render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Back to schedules' }));
+    expect(h.navigate).toHaveBeenCalledWith('/scheduler');
   });
 
   it('renders the create page when no schedule id is routed', () => {
     render(<ScheduleDetailPage projectId={null} scheduleId={null} />);
+    expect(screen.getByRole('heading', { name: 'New schedule' })).toBeTruthy();
     expect(screen.getByTestId('schedule-detail')).toBeTruthy();
-    expect(screen.getByText('New schedule')).toBeTruthy();
-    expect(h.secondaryPanelDefaultOpen).toBe(false);
   });
 
   it('titles a template-seeded create page', () => {
     h.locationState = { seed: { kind: 'template', template: { name: 'Standup' } } };
     render(<ScheduleDetailPage projectId={null} scheduleId={null} />);
-    expect(screen.getByText('New schedule · Standup')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'New schedule · Standup' })).toBeTruthy();
   });
 
   it('duplicates into the new-schedule route', () => {
@@ -347,35 +203,10 @@ describe('ScheduleDetailPage', () => {
     render(<ScheduleDetailPage projectId={null} scheduleId="created-1" />);
     expect(screen.getByTestId('schedule-detail')).toBeTruthy();
     expect(screen.queryByTestId('schedule-missing')).toBeNull();
-    expect(screen.getByText('Nightly')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Nightly' })).toBeTruthy();
   });
 
-  it('reopens the secondary panel from the header', () => {
-    tasks.push(sample);
-    h.panel.isOpen = false;
-    render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
-    fireEvent.click(screen.getByTestId('thread-secondary-show'));
-    expect(h.panelApi.open).toHaveBeenCalled();
-  });
-
-  it('registers a hosted secondary panel and toggles it', () => {
-    tasks.push(sample);
-    h.pane = {
-      isSplitPane: true,
-      isFocused: true,
-      isMaximized: false,
-      secondaryPanelHost: true
-    };
-    render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
-    expect(h.hostedRegistration).not.toBeNull();
-    h.hostedRegistration?.onToggle();
-    expect(h.panelApi.close).toHaveBeenCalled();
-    h.panel.isOpen = false;
-    h.hostedRegistration?.onToggle();
-    expect(h.panelApi.open).toHaveBeenCalled();
-  });
-
-  it('shows split-pane chrome and closable tab bodies', () => {
+  it('fills a split pane with the same page chrome', () => {
     tasks.push(sample);
     const onToggleMaximize = vi.fn();
     const onRequestClose = vi.fn();
@@ -386,44 +217,13 @@ describe('ScheduleDetailPage', () => {
       onToggleMaximize,
       onRequestClose
     };
-    h.panel.activeId = 'tab-1';
-    h.panel.tabs = [{ id: 'tab-1', kind: 'new-tab', title: 'New' }];
     render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.querySelector('.schedule-detail-pane')).toBeTruthy();
+    expect(screen.getByTestId('schedule-detail')).toBeTruthy();
     fireEvent.click(screen.getByTestId('split-pane-maximize'));
     expect(onToggleMaximize).toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('split-pane-close'));
     expect(onRequestClose).toHaveBeenCalled();
-    expect(screen.getByTestId('new-tab-page')).toBeTruthy();
-
-    cleanup();
-    h.panel.activeId = 'tab-2';
-    h.panel.tabs = [{ id: 'tab-2', kind: 'file-preview', title: 'File', path: '/tmp/a.md' }];
-    render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
-    expect(screen.getByTestId('file-preview')).toBeTruthy();
-
-    cleanup();
-    h.panel.activeId = 'tab-3';
-    h.panel.tabs = [{ id: 'tab-3', kind: 'storage-preview', title: 'Store', path: 's3://x' }];
-    render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
-    expect(screen.getByTestId('storage-preview')).toBeTruthy();
-
-    cleanup();
-    h.panel.activeId = 'tab-4';
-    h.panel.tabs = [{ id: 'tab-4', kind: 'plugin', title: 'Plugin', moduleId: 'docs' }];
-    render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
-    expect(screen.getByTestId('plugin-tab')).toBeTruthy();
-    expect(screen.getByTestId('plugin-tab').getAttribute('data-thread-id')).toBe('sched-1');
-
-    cleanup();
-    h.panel.activeId = 'tab-5';
-    h.panel.tabs = [{ id: 'tab-5', kind: 'explorer', title: 'Explorer' }];
-    render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
-    expect(screen.getByTestId('explorer-tab')).toBeTruthy();
-
-    cleanup();
-    h.panel.activeId = 'tab-6';
-    h.panel.tabs = [{ id: 'tab-6', kind: 'browser', title: 'Browser', automationTargetId: 'auto-1' }];
-    render(<ScheduleDetailPage projectId={null} scheduleId="sched-1" />);
-    expect(screen.getByTestId('browser-deck')).toBeTruthy();
   });
 });

@@ -51,7 +51,7 @@ vi.mock('../../store.js', () => ({
   }),
   useSubagents: (selector: (state: { byId: Record<string, number> }) => unknown) => selector({ byId: {} }),
   projectRailTerminals: (list: TerminalSession[] | undefined) =>
-    (list ?? []).filter((session) => session.status !== 'exited')
+    (list ?? []).filter((session) => session.status !== 'exited' && !session.scheduled)
 }));
 vi.mock('../../thread-store.js', () => ({
   useThreads: Object.assign(
@@ -193,6 +193,27 @@ describe('ProjectSessionRail', () => {
     expect(markup).toContain('Idle 0');
     expect(markup).toContain(`Idle ${RAIL_IDLE_THREAD_LIMIT - 1}`);
     expect(markup).not.toContain(`Idle ${RAIL_IDLE_THREAD_LIMIT}`);
+  });
+
+  it('does not nest scheduled jobs under the project tree', () => {
+    h.data.terminals = {
+      'proj-1': [
+        session({ id: 'live-cli', title: 'Running CLI' }),
+        session({
+          id: 'sched',
+          title: 'Scheduled: Inbox watcher',
+          scheduled: true
+        })
+      ]
+    };
+    h.status.byId = { 'live-cli': 'idle', sched: 'idle' };
+    h.threads = [];
+
+    const markup = renderRail();
+    expect(markup).toContain('Running CLI');
+    expect(markup).not.toContain('Inbox watcher');
+    expect(markup).not.toContain('Scheduled:');
+    expect(markup).toContain('>1<');
   });
 
   it('opens nested rows on the project-scoped session and thread routes', () => {

@@ -1992,9 +1992,9 @@ export interface AppConfig {
    * Agents board, list, and flow. Default ON: waiting jobs sit in a **Scheduled**
    * lane; working / exited ones use the normal Working / Done lanes. Turn off
    * to hide that column (and armed schedule cards). A scheduled run that is
-   * working or blocked still appears in Working. A live run remains visible in
-   * its project's sidebar tree so the project status dot always has a matching
-   * row. Does not change the tab strip or focus buckets.
+   * working or blocked still appears in Working. Scheduled runs never appear
+   * under a project in the sidebar. Does not change the tab strip or focus
+   * buckets.
    */
   includeScheduledAgentsInAgentView?: boolean;
   /**

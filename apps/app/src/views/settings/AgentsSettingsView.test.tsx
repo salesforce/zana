@@ -59,6 +59,7 @@ describe('AgentsTab worktree isolation', () => {
     expect(html).toContain('aria-label="Include scheduled agents in Agent View"');
     expect(html).toContain('Scheduled column');
     expect(html).toContain('working or blocked still appears in Working');
+    expect(html).toContain('Scheduled runs never appear under a project in the sidebar');
     expect(html).toContain(
       'aria-checked="true" aria-label="Include scheduled agents in Agent View"'
     );

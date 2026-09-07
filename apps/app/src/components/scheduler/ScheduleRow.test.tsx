@@ -40,6 +40,7 @@ vi.mock('../../lib/product-client.js', () => ({
 }));
 
 import { ScheduleRow } from './ScheduleRow.js';
+import { MemoryRouter } from 'react-router-dom';
 
 describe('ScheduleRow', () => {
   afterEach(() => {
@@ -49,22 +50,7 @@ describe('ScheduleRow', () => {
   it('opens the schedule on row click instead of expanding in place', () => {
     const onOpen = vi.fn();
     const html = renderToStaticMarkup(
-      <ScheduleRow
-        task={task}
-        projectName="Demo"
-        onOpen={onOpen}
-        onOpenInSplit={() => undefined}
-        onDuplicate={() => undefined}
-        onAskDelete={() => undefined}
-      />
-    );
-    expect(html).toContain('title="Open schedule"');
-    expect(html).not.toContain('aria-expanded');
-    expect(html).not.toContain('Show details');
-    expect(html).not.toContain('Recent runs');
-
-    render(
-      <ul>
+      <MemoryRouter>
         <ScheduleRow
           task={task}
           projectName="Demo"
@@ -73,7 +59,26 @@ describe('ScheduleRow', () => {
           onDuplicate={() => undefined}
           onAskDelete={() => undefined}
         />
-      </ul>
+      </MemoryRouter>
+    );
+    expect(html).toContain('title="Open schedule"');
+    expect(html).not.toContain('aria-expanded');
+    expect(html).not.toContain('Show details');
+    expect(html).not.toContain('Recent runs');
+
+    render(
+      <MemoryRouter>
+        <ul>
+          <ScheduleRow
+            task={task}
+            projectName="Demo"
+            onOpen={onOpen}
+            onOpenInSplit={() => undefined}
+            onDuplicate={() => undefined}
+            onAskDelete={() => undefined}
+          />
+        </ul>
+      </MemoryRouter>
     );
     fireEvent.click(screen.getByTitle('Open schedule'));
     expect(onOpen).toHaveBeenCalledTimes(1);
@@ -82,16 +87,18 @@ describe('ScheduleRow', () => {
   it('offers Open in split from the row context menu', () => {
     const onOpenInSplit = vi.fn();
     render(
-      <ul>
-        <ScheduleRow
-          task={task}
-          projectName="Demo"
-          onOpen={() => undefined}
-          onOpenInSplit={onOpenInSplit}
-          onDuplicate={() => undefined}
-          onAskDelete={() => undefined}
-        />
-      </ul>
+      <MemoryRouter>
+        <ul>
+          <ScheduleRow
+            task={task}
+            projectName="Demo"
+            onOpen={() => undefined}
+            onOpenInSplit={onOpenInSplit}
+            onDuplicate={() => undefined}
+            onAskDelete={() => undefined}
+          />
+        </ul>
+      </MemoryRouter>
     );
     fireEvent.contextMenu(screen.getByTitle('Open schedule'));
     fireEvent.click(screen.getByRole('menuitem', { name: /Open in split/ }));

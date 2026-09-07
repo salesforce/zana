@@ -10,6 +10,34 @@ files:
   - out/**/*
   - package.json
   - "!**/*.{md,markdown,d.ts.map,js.map}"
+  # Renderer-only libraries are already bundled into out/renderer. They used to
+  # ride into app.asar because they were root production deps (~150–250 MB).
+  # Keep this denylist even after they leave root package.json so a stray
+  # hoist cannot re-pack them.
+  - "!node_modules/monaco-editor/**"
+  - "!node_modules/@monaco-editor/**"
+  - "!node_modules/mermaid/**"
+  - "!node_modules/@mermaid-js/**"
+  - "!node_modules/lucide-react/**"
+  - "!node_modules/highlight.js/**"
+  - "!node_modules/@xterm/**"
+  - "!node_modules/@dnd-kit/**"
+  - "!node_modules/react-markdown/**"
+  - "!node_modules/react-diff-viewer-continued/**"
+  - "!node_modules/rehype-highlight/**"
+  - "!node_modules/remark-gfm/**"
+  - "!node_modules/react/**"
+  - "!node_modules/react-dom/**"
+  - "!node_modules/zustand/**"
+  - "!node_modules/@earendil-works/**"
+  - "!node_modules/cytoscape/**"
+  - "!node_modules/cytoscape-*/**"
+  - "!node_modules/katex/**"
+  - "!node_modules/dagre-d3-es/**"
+  - "!node_modules/d3-*/**"
+  - "!node_modules/openai/**"
+  - "!node_modules/@mistralai/**"
+  - "!node_modules/@aws-sdk/**"
 
 extraResources:
   - from: resources/scheduled-supervisor
@@ -39,6 +67,9 @@ extraResources:
   # finds resourcesPath/zcc-cli/bin/zcc.
   - from: packages/cli/dist
     to: zcc-cli
+    filter:
+      - "**/*"
+      - "!**/*.map"
   # The embedded `opencode serve` binary the `opencode` chat harness backend
   # spawns (see src/main/zcc-harness/backends/opencode/process-pool.ts).
   # `npm run fetch:opencode` (chained ahead of electron-builder in the
@@ -46,6 +77,8 @@ extraResources:
   # from registry.npmjs.org into vendor/opencode/<arch>/opencode; this copies
   # that tree to resourcesPath/opencode, where src/main/env.ts
   # `resolveOpencodeBinDir` finds resourcesPath/opencode/<arch>/opencode.
+  # afterPack then deletes the unused arch so an arm64 artifact does not also
+  # ship the 138 MB x64 binary (and vice versa).
   - from: vendor/opencode
     to: opencode
   # Packed join.mjs + provider-bridge worker + Pi bridge. The desktop host-daemon
@@ -66,10 +99,18 @@ extraResources:
     filter:
       - "**/*"
       - "!README.md"
+      - "!**/README.md"
       - "!*/src/**"
+      - "!**/playground/src/**"
       - "!*/scripts/**"
       - "!*/node_modules/**"
       - "!**/*.{test,spec}.{ts,tsx,js,mjs}"
+      - "!**/*.map"
+      - "!**/vitest.config.ts"
+      - "!**/vite.config.ts"
+      - "!**/tsconfig.json"
+      - "!**/tsconfig.*.json"
+      - "!**/.turbo/**"
   # Bundled agent-detection manifests (herdr TOML format), read by
   # src/main/manifest-detector.ts via process.resourcesPath/manifests in packaged
   # builds; dev falls back to the repo-relative manifests/ dir. User overrides
@@ -98,6 +139,10 @@ publish:
   provider: github
   owner: salesforce
   repo: zana
+
+# Drop the unused OpenCode arch after extraResources copies vendor/opencode.
+# See scripts/after-pack-trim-opencode.mjs.
+afterPack: scripts/after-pack-trim-opencode.mjs
 
 asar: true
 asarUnpack:

@@ -1,13 +1,14 @@
 /**
- * Clicking a schedule opens the dedicated workbench (editor + secondary panel).
- * "Open in split" from the catalogue seeds the catalogue beside the detail.
+ * Clicking a schedule opens the editor as a normal page (not a modal over the
+ * catalogue). "Open in split" from the catalogue seeds the catalogue beside
+ * the detail pane.
  */
 import { test, expect } from './fixtures/app.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-test('scheduler: clicking a row opens the schedule workbench', async ({ app }) => {
+test('scheduler: clicking a row opens the schedule page', async ({ app }) => {
   const { window } = app;
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-sched-detail-'));
   const projectName = basename(projectDir);
@@ -45,8 +46,12 @@ test('scheduler: clicking a row opens the schedule workbench', async ({ app }) =
     await row.locator('.scheduler-card-main').click();
 
     await expect(window.locator('[data-testid="schedule-detail"]')).toBeVisible({ timeout: 15_000 });
+    await expect(window.locator('.schedule-detail-pane')).toBeVisible();
     await expect(window.locator('[data-testid="schedule-editor"]')).toBeVisible();
-    await expect(window.locator('[data-testid="thread-secondary-panel"]')).toBeVisible();
+    await expect(window.locator('[data-testid="schedule-info-panel"]')).toBeVisible();
+    await expect(window.locator('.scheduler-page')).toHaveCount(0);
+    await expect(window.locator('.schedule-detail-modal')).toHaveCount(0);
+    await expect(window.locator('[data-testid="thread-secondary-panel"]')).toHaveCount(0);
     await expect(window.locator('#sched-name')).toHaveValue('E2E detail-me');
   } finally {
     await window.evaluate(async (pid) => {

@@ -59,12 +59,7 @@ describe('agentViewTerminals', () => {
     expect(listedTerminals(list).map((t) => t.id)).toEqual(['i']);
   });
 
-  it('keeps a running scheduled agent in the project rail', () => {
-    expect(projectRailTerminals(list).map((t) => t.id)).toEqual([
-      'i',
-      'wait',
-      'work',
-      'block'
-    ]);
+  it('drops scheduled agents from the project rail, even while they are running', () => {
+    expect(projectRailTerminals(list).map((t) => t.id)).toEqual(['i']);
   });
 });

@@ -1,4 +1,4 @@
-import type { ScheduledTask, LaunchProfileId, Project, ScheduleTemplate, ScheduleRun } from '@zana-ai/zcc-domain/product';
+import type { ScheduledTask, LaunchProfileId, Project, ScheduleTemplate, ScheduleRun, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { parseEvery, formatInterval } from '@zana-ai/zcc-domain/parse-every';
 import {
   ShieldCheck,
@@ -109,6 +109,17 @@ export function pickLiveRun(
     if (!finishedOpen) finishedOpen = run; // newest finished-but-open, remembered
   }
   return finishedOpen;
+}
+
+/** Alive pty/thread id for a schedule, or null when nothing is running. */
+export function liveSessionIdForTask(
+  task: Pick<ScheduledTask, 'projectId' | 'status'>,
+  terminals: Record<string, Array<Pick<TerminalSession, 'id' | 'status'>> | undefined>
+): string | null {
+  const list = terminals[task.projectId] ?? [];
+  const isAlive = (sessionId: string) =>
+    list.some((s) => s.id === sessionId && (s.status === 'running' || s.status === 'starting'));
+  return pickLiveRun(task.status.runs ?? [], isAlive)?.sessionId ?? null;
 }
 
 export function formatRelative(d: Date): string {

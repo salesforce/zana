@@ -60,3 +60,20 @@ describe('pickLiveRun', () => {
     expect(pickLiveRun([newer, older], aliveAll)?.sessionId).toBe('N');
   });
 });
+
+describe('liveSessionIdForTask', () => {
+  it('returns the alive working session for a schedule', async () => {
+    const { liveSessionIdForTask } = await import('@/components/scheduler/schedulerUtils');
+    const task = {
+      projectId: 'p1',
+      status: {
+        runs: [{ at: '2026-01-01T00:00:00Z', result: 'success' as const, sessionId: 'sess-1' }]
+      }
+    };
+    expect(
+      liveSessionIdForTask(task, { p1: [{ id: 'sess-1', status: 'running' }] })
+    ).toBe('sess-1');
+    expect(liveSessionIdForTask(task, { p1: [{ id: 'sess-1', status: 'exited' }] })).toBeNull();
+    expect(liveSessionIdForTask(task, {})).toBeNull();
+  });
+});
