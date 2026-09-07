@@ -48,8 +48,14 @@ export interface PluginProjectTabRegistration extends PluginSlotBase {
   component: ComponentType<{ pluginId: string; projectId: string }>;
 }
 
+export interface ZccNavigateToProjectOptions {
+  /** Open this plugin's `projectTab` with the given slot id. */
+  tabId?: string;
+}
+
 export interface PluginProjectMenuActionContext {
   projectId: string | null;
+  toProject(projectId: string, options?: ZccNavigateToProjectOptions): void;
 }
 
 export interface PluginProjectMenuActionRegistration extends PluginSlotBase {
@@ -58,6 +64,31 @@ export interface PluginProjectMenuActionRegistration extends PluginSlotBase {
   /** `project` = row overflow; `workspace` = Projects list-header organize menu (legacy name kept) */
   placement: 'project' | 'workspace';
   run: (ctx: PluginProjectMenuActionContext) => void | Promise<void>;
+}
+
+export interface PluginCreateProjectActionContext {
+  pickDirectory(): Promise<string | null>;
+  addProject(path: string): Promise<{ id: string } | null>;
+  cloneRoot(): Promise<string | null>;
+  toProject(projectId: string, options?: ZccNavigateToProjectOptions): void;
+  openDialog(options?: { title?: string; params?: JsonValue }): boolean;
+}
+
+export interface PluginCreateProjectDialogProps {
+  pluginId: string;
+  params: JsonValue | null;
+  pickDirectory(): Promise<string | null>;
+  addProject(path: string): Promise<{ id: string } | null>;
+  cloneRoot(): Promise<string | null>;
+  toProject(projectId: string, options?: ZccNavigateToProjectOptions): void;
+  close(): void;
+}
+
+export interface PluginCreateProjectActionRegistration extends PluginSlotBase {
+  title: string;
+  icon?: string;
+  component?: ComponentType<PluginCreateProjectDialogProps>;
+  run: (ctx: PluginCreateProjectActionContext) => void | Promise<void>;
 }
 
 export interface PluginSidebarFooterActionContext {
@@ -310,6 +341,11 @@ export interface PluginCommandPaletteActionContext {
    * router consumed the navigation.
    */
   toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }): boolean;
+  /**
+   * Focus a ZCC project and, when `tabId` is set, open that plugin project tab.
+   * Returns true when a router consumed the navigation.
+   */
+  toProject(projectId: string, options?: ZccNavigateToProjectOptions): boolean;
 }
 
 /**
@@ -449,6 +485,9 @@ export interface PluginAppSlots {
   experimental_projectMenuAction(
     registration: Omit<PluginProjectMenuActionRegistration, 'generation' | 'pluginId'>
   ): void;
+  experimental_createProjectAction(
+    registration: Omit<PluginCreateProjectActionRegistration, 'generation' | 'pluginId'>
+  ): void;
   sidebarFooterAction(registration: Omit<PluginSidebarFooterActionRegistration, 'generation' | 'pluginId'>): void;
   pendingInteraction(registration: Omit<PluginPendingInteractionRegistration, 'generation' | 'pluginId'>): void;
   threadPanelAction(registration: Omit<PluginThreadPanelActionRegistration, 'generation' | 'pluginId'>): void;
@@ -498,6 +537,7 @@ export interface PluginRegistrationSet {
   homepageSections: PluginHomepageSectionRegistration[];
   projectTabs: PluginProjectTabRegistration[];
   projectMenuActions: PluginProjectMenuActionRegistration[];
+  createProjectActions: PluginCreateProjectActionRegistration[];
   sidebarFooterActions: PluginSidebarFooterActionRegistration[];
   pendingInteractions: PluginPendingInteractionRegistration[];
   threadPanelActions: PluginThreadPanelActionRegistration[];
@@ -530,10 +570,18 @@ export interface ZccContext {
 
 export interface ZccNavigate {
   toThread(threadId: string): void;
-  toProject(projectId: string): void;
+  toProject(projectId: string, options?: ZccNavigateToProjectOptions): void;
   toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }): void;
   toCompose(options?: { initialPrompt?: string; focusPrompt?: boolean }): void;
   openThreadPanel(options: { actionId: string; title?: string; params?: JsonValue }): boolean;
+}
+
+export interface ThreadChatMessageAction {
+  id: string;
+  title: string;
+  icon?: string;
+  roles?: readonly ('user' | 'assistant')[];
+  run(message: ThreadChatMessageReference): void | Promise<void>;
 }
 
 export interface ThreadChatProps {
@@ -544,6 +592,8 @@ export interface ThreadChatProps {
   permissionPolicy?: 'inherit' | 'editable';
   className?: string;
   leadingContent?: ReactNode;
+  messageActions?: readonly ThreadChatMessageAction[];
+  includePluginMessageActions?: boolean;
 }
 
 export interface MarkdownProps {
@@ -604,6 +654,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     homepageSections: [],
     projectTabs: [],
     projectMenuActions: [],
+    createProjectActions: [],
     sidebarFooterActions: [],
     pendingInteractions: [],
     threadPanelActions: [],
@@ -703,6 +754,7 @@ export function collectPluginApp(
     navPanel: new Set<string>(),
     projectTab: new Set<string>(),
     projectMenuAction: new Set<string>(),
+    createProjectAction: new Set<string>(),
     threadPanelAction: new Set<string>(),
     newThreadPanelAction: new Set<string>(),
     composerCustomization: new Set<string>(),
@@ -811,6 +863,28 @@ export function collectPluginApp(
               ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
               : {}),
             placement: registration.placement,
+            run: registration.run
+          })
+        );
+      },
+      experimental_createProjectAction: (registration) => {
+        const kind = 'slots.experimental_createProjectAction';
+        const id = requireSlotId(kind, registration.id);
+        requireUniqueId(kind, seen.createProjectAction, id);
+        if (typeof registration.run !== 'function') {
+          throw new Error(`${kind}: "run" must be a function`);
+        }
+        if (registration.component !== undefined) {
+          requireComponent(kind, 'component', registration.component);
+        }
+        set.createProjectActions.push(
+          stamp({
+            id,
+            title: requireNonEmptyString(kind, 'title', registration.title),
+            ...(registration.icon !== undefined
+              ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
+              : {}),
+            ...(registration.component !== undefined ? { component: registration.component } : {}),
             run: registration.run
           })
         );

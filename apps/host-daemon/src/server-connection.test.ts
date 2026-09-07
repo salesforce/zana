@@ -98,4 +98,35 @@ describe('enrolled host websocket', () => {
     expect(source).toContain('createPluginHostArtifactHttpClient');
     expect(source).toContain('fetchPluginHostArtifact');
   });
+
+  it('keeps the pairing session prefix on the host websocket', async () => {
+    const opened: string[] = [];
+    class CaptureSocket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+      readyState = 3;
+      constructor(url: string) {
+        opened.push(String(url));
+      }
+      addEventListener(type: string, fn: (event?: unknown) => void) {
+        if (type === 'close') queueMicrotask(() => fn({ code: 1006 }));
+      }
+      close() {}
+      send() {}
+    }
+    globalThis.WebSocket = CaptureSocket as unknown as typeof WebSocket;
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-ws-prefix-'));
+    const connection = startEnrolledHostConnection({
+      serverUrl: 'https://zcc.example/t/zcrs_abcdefghijklmnopqr',
+      hostId: '11111111-1111-4111-8111-111111111111',
+      hostKey: 'key-1',
+      dataDir,
+      runtime: stubRuntime(dataDir)
+    });
+    await expect(connection.ready).rejects.toThrow(/closed before hello/);
+    expect(opened[0]).toContain('/t/zcrs_abcdefghijklmnopqr/internal/hosts/ws');
+    await connection.close();
+  });
 });

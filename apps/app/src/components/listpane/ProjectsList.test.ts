@@ -25,6 +25,12 @@ describe('project-row workspace actions', () => {
     expect(source).toContain('enterProjectFocus(p.id);\n    setLauncherOpen(true);');
   });
 
+  it('hands plugin project-menu actions a toProject navigator', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('projectMenuNavigateContext');
+    expect(source).toContain('void action.run(projectMenuNavigateContext(action.pluginId, p.id');
+  });
+
   it('opens a workspace directly from its project row', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain('if (consumeProjectClick()) return;');
@@ -33,16 +39,19 @@ describe('project-row workspace actions', () => {
 
   it('opens a CLI agent row as a session page, with the same split drag as threads', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const rows = readFileSync(new URL('./project-session-rail-rows.tsx', import.meta.url), 'utf8');
     expect(source).toContain('getAgentSessionRoutePath(t.id, scopedProjectId)');
     expect(source).not.toContain('openAgentModal');
-    expect(source).toContain('usePaneContentSplitDrag');
-    expect(source).toContain("kind: 'agent-session'");
+    expect(rows).toContain('usePaneContentSplitDrag');
+    expect(rows).toContain("kind: 'agent-session'");
   });
 
   it('shows Default Project for the scratch folder without renaming the tag', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain('composerProjectLabel');
     expect(source).toContain('<span className="project-name">{displayName}</span>');
+    expect(source).toContain('isRemoteWorkspaceProject(p)');
+    expect(source).toContain('className="project-remote-icon"');
   });
 
   it('opens the shared agent lifecycle menu from a nested session row', () => {
@@ -193,6 +202,32 @@ describe('sidebar workspace header menus', () => {
     expect(css).toContain('.sidebar-projects-add-menu {\n  position: fixed;\n  z-index: 20;');
     expect(css).toContain('.sidebar-projects-organize-menu {\n  position: fixed;\n  z-index: 20;');
   });
+
+  it('renders plugin create-project actions in the add menu, not Organize', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('listCreateProjectActions');
+    expect(source).toContain('launchCreateProjectAction(action)');
+    expect(source).toContain('PluginCreateProjectDialog');
+    const addMenu = source.slice(source.indexOf('className="sidebar-projects-add-menu"'));
+    expect(addMenu).toContain('createProjectActions.map');
+    expect(addMenu).toContain('launchCreateProjectAction(action)');
+    const organizeBlock = source.slice(
+      source.indexOf('aria-label="Organize projects"'),
+      source.indexOf('aria-label="Add project"')
+    );
+    expect(organizeBlock).toContain('headerMenuActions');
+    expect(organizeBlock).not.toContain('createProjectActions');
+  });
+
+  it('hosts plugin create-project dialogs in the local-project modal chrome', () => {
+    const source = readFileSync(
+      new URL('../../plugins/PluginCreateProjectDialog.tsx', import.meta.url),
+      'utf8'
+    );
+    expect(source).toContain('className="local-project-modal plugin-create-project-modal"');
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(css).toContain('.plugin-create-project-actions {');
+  });
 });
 
 describe('workspace move up/down', () => {
@@ -214,22 +249,27 @@ describe('workspace move up/down', () => {
 describe('nested live threads', () => {
   it('nests live agents and recent threads under the owning project', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const rows = readFileSync(new URL('./project-session-rail-rows.tsx', import.meta.url), 'utf8');
     expect(source).toContain('railThreadsForProject');
     expect(source).toContain('threadIsLiveForRail');
-    expect(source).toContain('data-testid="project-thread-row"');
+    expect(source).toContain('ProjectAgentRailRow');
+    expect(source).toContain('ProjectThreadRailRow');
+    expect(rows).toContain('data-testid="project-thread-row"');
     expect(source).toContain('navigate(getThreadRoutePath(thread.id, scopedProjectId))');
-    expect(source).toContain('onPointerDown={(e) => {');
+    expect(rows).toContain('onPointerDown={(e) => {');
     expect(source).toContain('active={activeThreadId === thread.id}');
-    expect(source).toContain("active ? ' active' : ''");
+    expect(rows).toContain("active ? ' active' : ''");
     expect(source).toContain('useRouteState()');
     expect(source).toContain('railThreadsByProject.get(p.id)');
     expect(source).toContain('liveList.length === 0 && railThreads.length === 0');
+    expect(source).toContain('projectRailTerminals(terminals[p.id]).length > 0');
     expect(source).toContain('isProjectRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p))');
+    expect(rows).toContain('!session.scheduled && <AgentDeleteQuickAction');
     expect(source).toContain('pinFavoriteProjectsFirst(sorted)');
     expect(source).not.toContain('p.id === selectedId && projectHasNestableSessions(p)');
-    expect(source).toContain('<ProviderIcon providerId={thread.providerId}');
-    expect(source).toContain('threadRailStatus');
-    expect(source).toContain('threadRailStatusClass');
+    expect(rows).toContain('<ProviderIcon providerId={thread.providerId}');
+    expect(rows).toContain('threadRailStatus');
+    expect(rows).toContain('threadRailStatusClass');
     expect(source).toContain('projectRemote={Boolean(p.remote)}');
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
     const working = css.slice(
@@ -240,9 +280,9 @@ describe('nested live threads', () => {
     expect(working).toContain('animation: nav-badge-pulse');
     expect(source).not.toContain('MessageSquare');
     expect(source).not.toContain('FleetKindChip');
-    expect(source).toContain("fleetKindLabel('thread')");
-    expect(source).toContain('data-kind="agent"');
-    expect(source).toContain('<AgentDeleteQuickAction session={session} projectId={projectId} />');
+    expect(rows).toContain("fleetKindLabel('thread')");
+    expect(rows).toContain('data-kind="agent"');
+    expect(rows).toContain('<AgentDeleteQuickAction session={session} projectId={projectId} />');
     expect(source).not.toContain('AgentStatusDot');
     expect(css).toContain('.project-thread-row-wrap .project-terminal-close {\n  visibility: hidden;\n}');
     expect(css).toContain('.project-thread-row-wrap:hover .project-terminal-close,');

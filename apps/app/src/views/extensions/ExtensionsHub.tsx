@@ -99,7 +99,6 @@ export function ExtensionsHub({
   onTabChange?: (tab: HubTab) => void;
   showTabs?: boolean;
 } = {}) {
-  const navigate = useNavigate();
   const [uncontrolledTab, setUncontrolledTab] = useState<HubTab>(initialTab);
   const tab = controlledTab ?? uncontrolledTab;
   const [reloading, setReloading] = useState(false);
@@ -108,7 +107,6 @@ export function ExtensionsHub({
   const [moreOpen, setMoreOpen] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
-  const selectedProjectId = useUi((s) => s.selectedProjectId);
 
   useEffect(() => {
     if (!moreOpen) return;
@@ -160,12 +158,6 @@ export function ExtensionsHub({
       })
       .catch(() => setRedeployNote('Redeploy failed'))
       .finally(() => setRedeploying(false));
-  };
-
-  const startCreatePlugin = (prompt: string = CREATE_PLUGIN_PROMPT) => {
-    setMoreOpen(false);
-    const target = createPluginComposeNavigation({ prompt, projectId: selectedProjectId });
-    void navigate(target.pathname, { state: target.state });
   };
 
   const checkUpdates = () => {
@@ -254,7 +246,6 @@ export function ExtensionsHub({
         <InstalledView toolbarExtra={showTabs ? undefined : maintenanceActions} />
       ) : (
         <Marketplace
-          onCreate={startCreatePlugin}
           toolbarExtra={showTabs ? undefined : maintenanceActions}
         />
       )}

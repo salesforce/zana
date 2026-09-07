@@ -1,9 +1,9 @@
 import { definePluginApp } from "@zana-ai/zcc-plugin-sdk/app";
 
 /**
- * The Claude mark, drawn inline so `currentColor` resolves against the app
- * theme. The manifest's `branding.icon` SVG is fetched through `<img>`, a
- * separate document where `currentColor` is black — invisible on dark themes.
+ * The Claude mark, drawn inline so `currentColor` resolves against the app theme.
+ * The manifest's `branding.icon` SVG is fetched through `<img>`, a separate
+ * document where `currentColor` is black — invisible on dark themes.
  */
 function ClaudeIcon({ className }: { className?: string }) {
   return (

@@ -12,22 +12,20 @@ import {
   RefreshCw,
   X
 } from 'lucide-react';
-import { useSetup, useUi, hasMissingSetup } from '../store.js';
+import { useSetup, useUi } from '../store.js';
 import type { DependencyState } from '@zana-ai/zcc-domain/product';
 
 /**
  * First-run setup checklist — the visible half of the dependency doctor
- * (src/main/dependency-doctor.ts). It shows, in one nicely-laid-out card, the
- * state of every companion piece the installer normally sets up (the Claude
- * Code CLI, the Zana MCP server + plugins, and the bundled
- * extensions), and lets the user:
- *   - "Install missing" → run the auto-installable steps (npm + claude CLI),
- *     with per-step progress streamed under each row;
+ * (dependency-doctor.ts). It shows, in one nicely-laid-out card, the
+ * state of the companion CLIs (Claude Code, Cursor, OpenCode, Pi, Codex,
+ * and Salesforce), and lets the user:
  *   - copy the exact command for the pieces we can't install for them
  *     (the manual Claude Code installation);
- *   - re-check after they've installed something out-of-band.
+ *   - re-check after they've installed something out-of-band;
+ *   - "Install missing" when an auto-installable companion is listed.
  *
- * Auto-opens once on first launch when something is missing (gated on
+ * Auto-opens once on first launch when a *required* CLI is missing (gated on
  * AppConfig.setupDismissed in the store init); re-openable from Settings.
  * Dismissing flips `setupDismissed` so it won't auto-open again.
  */
@@ -89,8 +87,8 @@ function CopyCommand({ command }: { command: string }) {
 }
 
 function SetupRow({ dep, progress }: { dep: DependencyState; progress?: string }) {
-  const needsManual =
-    dep.kind === 'manual' && (dep.phase === 'missing' || dep.phase === 'failed') && dep.manualCommand;
+  const showCommand =
+    (dep.phase === 'missing' || dep.phase === 'failed') && dep.manualCommand;
   return (
     <li className="setup-row">
       <PhaseIcon dep={dep} />
@@ -103,7 +101,7 @@ function SetupRow({ dep, progress }: { dep: DependencyState; progress?: string }
         {dep.phase === 'installing' && progress && (
           <p className="setup-row-progress">{progress}</p>
         )}
-        {needsManual && (
+        {showCommand && (
           <div className="setup-row-manual">
             <span className="setup-row-manual-hint">Install it yourself:</span>
             <CopyCommand command={dep.manualCommand!} />
@@ -123,11 +121,11 @@ function SetupChecklist({ onClose }: Props) {
   const progress = useSetup((s) => s.progress);
 
   const items = status.items;
-  const missing = hasMissingSetup(status);
+  const anyUnresolved = items.some((i) => i.phase === 'missing' || i.phase === 'failed');
   const installable = items.some(
     (i) => i.kind === 'installable' && (i.phase === 'missing' || i.phase === 'failed')
   );
-  const allGood = items.length > 0 && !missing && !status.busy;
+  const allGood = items.length > 0 && !anyUnresolved && !status.busy;
 
   return (
     <div className="palette-backdrop setup-backdrop" onMouseDown={onClose}>
@@ -152,8 +150,8 @@ function SetupChecklist({ onClose }: Props) {
             </h3>
             <p className="setup-subtitle">
               {allGood
-                ? 'Everything Zana needs is installed.'
-                : 'These companion pieces make agents and Zana work. Install the missing ones below.'}
+                ? 'All listed CLIs are installed.'
+                : 'These CLIs power agents and Salesforce work. Install anything missing below.'}
             </p>
           </div>
         </div>
@@ -191,27 +189,25 @@ function SetupChecklist({ onClose }: Props) {
               <button type="button" className="btn ghost" onClick={onClose}>
                 Later
               </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => void product.deps.install()}
-                disabled={status.busy || !installable}
-                title={
-                  installable
-                    ? 'Install the pieces we can set up automatically'
-                    : 'Nothing left to auto-install — the rest need a manual command above'
-                }
-              >
-                {status.busy ? (
-                  <>
-                    <Loader2 size={14} className="setup-row-icon--spin" /> Installing…
-                  </>
-                ) : (
-                  <>
-                    <Download size={14} /> Install missing
-                  </>
-                )}
-              </button>
+              {installable && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void product.deps.install()}
+                  disabled={status.busy}
+                  title="Install the pieces we can set up automatically"
+                >
+                  {status.busy ? (
+                    <>
+                      <Loader2 size={14} className="setup-row-icon--spin" /> Installing…
+                    </>
+                  ) : (
+                    <>
+                      <Download size={14} /> Install missing
+                    </>
+                  )}
+                </button>
+              )}
             </>
           )}
         </div>

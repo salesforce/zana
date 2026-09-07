@@ -91,3 +91,12 @@ describe('marketplace overlay stacking', () => {
     expect(source).toContain("creates a stacking context");
   });
 });
+
+describe('marketplace install result', () => {
+  it('marks the row installed and refreshes instead of waiting only on onChanged', () => {
+    const source = readFileSync(new URL('./MarketplaceView.tsx', import.meta.url), 'utf8');
+    const installThen = source.slice(source.indexOf('.install(source)'));
+    expect(installThen).toContain('installed: true');
+    expect(installThen).toContain('refresh()');
+  });
+});

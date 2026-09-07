@@ -6,16 +6,102 @@ import {
   type HostRow
 } from '@zana-ai/zcc-db';
 import type { ProjectRemote } from '@zana-ai/zcc-domain/product';
+import { sshPairingCommand } from '@zana-ai/zcc-domain/machine-pairing';
 import { isLoopbackHttpHost } from '../../browser-bootstrap.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { HostUnavailableError } from '../../http/host-hub.js';
 import { resolvePublicAppUrl } from '../../http/public-app-url.js';
-import { pairingSessionServerUrl, relayJoinWindowOpen } from '../../http/pairing-session-url.js';
+import { isRelaySessionId, pairingSessionServerUrl, relayJoinWindowOpen } from '../../http/pairing-session-url.js';
+import { serverPortFromEnv } from '../../http/ports.js';
 import { resolveHostArtifact } from './host-artifact.js';
 import type { ProjectRecord } from '../../project-store.js';
+import type { PeerDaemonStatusResult } from '@zana-ai/zcc-contracts/host-rpc';
+
+const PEER_HOST_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Reuse the id already on the machine so a retry does not mint a conflicting host. */
+export function reuseRemoteHostId(hostId: string | null | undefined): string | null {
+  if (typeof hostId !== 'string') return null;
+  const trimmed = hostId.trim();
+  return PEER_HOST_ID_RE.test(trimmed) ? trimmed : null;
+}
 
 const PEER_RPC_TIMEOUT_MS = 4 * 60_000;
 const CONNECT_WAIT_MS = 90_000;
+const CONNECT_WAIT_TICK_MS = 15_000;
+const DAEMON_UNRESPONSIVE_RE =
+  /did not report connected|did not connect|service-managed daemon did not report connected/i;
+
+export const PAIRING_DOOR_ERROR =
+  'Could not reach the pairing door. Retry, or copy the SSH command.';
+
+export const DAEMON_UNRESPONSIVE_ERROR =
+  'The host daemon started but never connected back. Retry, or copy the SSH command.';
+
+type HostBootstrapListener = (event: HostBootstrapEvent) => void;
+
+function createEventSink(onEvent?: HostBootstrapListener) {
+  const events: HostBootstrapEvent[] = [];
+  const emit = (event: HostBootstrapEvent) => {
+    events.push(event);
+    onEvent?.(event);
+  };
+  const absorb = (extra: HostBootstrapEvent[]) => {
+    events.push(...extra);
+  };
+  return { events, emit, absorb };
+}
+
+export function installFailureLogLines(message: string): string[] {
+  return message
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+$/u, ''))
+    .filter((line) => line.length > 0);
+}
+
+export function classifyInstallFailure(error: unknown): { code: string; message: string } {
+  if (error instanceof HostBootstrapError) {
+    return { code: error.code, message: error.message };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (DAEMON_UNRESPONSIVE_RE.test(message)) {
+    return { code: 'daemon_unresponsive', message: DAEMON_UNRESPONSIVE_ERROR };
+  }
+  return { code: 'install_failed', message };
+}
+
+export async function waitForPeerConnect(
+  wait: (timeoutMs: number) => Promise<void>,
+  emit: HostBootstrapListener,
+  options?: { timeoutMs?: number; tickMs?: number; now?: () => number }
+): Promise<void> {
+  const timeoutMs = options?.timeoutMs ?? CONNECT_WAIT_MS;
+  const tickMs = options?.tickMs ?? CONNECT_WAIT_TICK_MS;
+  const now = options?.now ?? Date.now;
+  emit({ type: 'log', text: 'Waiting for the remote daemon to connect…' });
+  const started = now();
+  for (;;) {
+    const elapsed = now() - started;
+    const remaining = timeoutMs - elapsed;
+    if (remaining <= 0) {
+      throw new HostUnavailableError('host did not connect');
+    }
+    try {
+      await wait(Math.min(tickMs, remaining));
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!DAEMON_UNRESPONSIVE_RE.test(message)) throw error;
+      const nextElapsed = now() - started;
+      if (nextElapsed >= timeoutMs) throw error;
+      emit({
+        type: 'log',
+        text: `Still waiting for the remote daemon… ${Math.round(nextElapsed / 1000)}s`
+      });
+    }
+  }
+}
 
 export type HostBootstrapEvent =
   | { type: 'log'; text: string }
@@ -68,12 +154,14 @@ export function sshRemoteFromProject(project: ProjectRecord): ProjectRemote | nu
   return parsed;
 }
 
-export function requirePublicAppUrl(ctx: ProductHttpContext): string {
-  const url = resolvePublicAppUrl();
+export async function requirePublicAppUrl(ctx: ProductHttpContext): Promise<string> {
+  const url = resolvePublicAppUrl({
+    configUrl: ctx.config.getConfig().publicAppUrl
+  });
   if (!url) {
     throw new HostBootstrapError(
       'public_url_required',
-      'Set ZCC_APP_URL (or build the app with it) before installing a remote host daemon.'
+      'Set a public app URL before installing a remote host daemon.'
     );
   }
   let hostname: string;
@@ -85,24 +173,25 @@ export function requirePublicAppUrl(ctx: ProductHttpContext): string {
   if (isLoopbackHttpHost(hostname)) {
     throw new HostBootstrapError(
       'public_url_required',
-      'A loopback address cannot enroll another computer. Set ZCC_APP_URL to a public origin first.'
+      'A loopback address cannot enroll another computer. Set a public app URL first.'
     );
   }
   if (ctx.pairingRelay?.state() === 'offline') {
-    throw new HostBootstrapError(
-      'relay_offline',
-      'The pairing relay is offline. Keep Zana running so remotes can reach this machine.'
-    );
+    throw new HostBootstrapError('relay_offline', PAIRING_DOOR_ERROR);
   }
   if (ctx.pairingRelay?.state() === 'connected') {
-    const snapshot = ctx.pairingRelay.snapshot();
-    if (!relayJoinWindowOpen(snapshot)) {
-      throw new HostBootstrapError(
-        'join_expired',
-        'The pairing join window has closed. Reopen Add a machine so this laptop can renew the window, then try again.'
-      );
+    let snapshot = ctx.pairingRelay.snapshot();
+    if (!isRelaySessionId(snapshot.sessionId) || !relayJoinWindowOpen(snapshot)) {
+      try {
+        snapshot = await ctx.pairingRelay.renewJoinWindow();
+      } catch {
+        snapshot = ctx.pairingRelay.snapshot();
+      }
     }
-    return pairingSessionServerUrl(url, snapshot.sessionId!);
+    if (!isRelaySessionId(snapshot.sessionId)) {
+      throw new HostBootstrapError('relay_offline', PAIRING_DOOR_ERROR);
+    }
+    return pairingSessionServerUrl(url, snapshot.sessionId);
   }
   return url;
 }
@@ -126,6 +215,46 @@ function pairingCommand(server: string, joinCode: string, hostId: string): strin
     `curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 ${server}/install.sh` +
     ` | sh -s -- --join-code ${joinCode} --host-id ${hostId} --server ${server}`
   );
+}
+
+export function sshFallbackPairingCommand(input: {
+  sshHost: string;
+  joinCode: string;
+  hostId: string;
+  listenPort: number;
+}): string | undefined {
+  return sshPairingCommand({
+    sshHost: input.sshHost,
+    localServerUrl: `http://127.0.0.1:${input.listenPort}`,
+    joinCode: input.joinCode,
+    hostId: input.hostId
+  }) ?? undefined;
+}
+
+export function attachSshFallbackPairingCommand(
+  error: HostBootstrapError,
+  ctx: ProductHttpContext,
+  remote: ProjectRemote | null,
+  hostId?: string
+): HostBootstrapError {
+  if (error.code !== 'join_expired' && error.code !== 'relay_offline' && error.code !== 'daemon_unresponsive') {
+    return error;
+  }
+  if (error.pairingCommand && error.code !== 'daemon_unresponsive') return error;
+  if (!remote) return error;
+  try {
+    const issued = hostId ? ctx.joinCodes.mintForHost(hostId) : ctx.joinCodes.mint();
+    const command = sshFallbackPairingCommand({
+      sshHost: remote.host,
+      joinCode: issued.joinCode,
+      hostId: issued.hostId,
+      listenPort: serverPortFromEnv()
+    });
+    if (!command) return error;
+    return new HostBootstrapError(error.code, error.message, command);
+  } catch {
+    return error;
+  }
 }
 
 export type HostBootstrapPlan =
@@ -160,6 +289,44 @@ function executionPath(remote: ProjectRemote, homeDir: string | null): string {
   throw new HostBootstrapError('path_unknown', 'Could not determine a path on the remote machine.');
 }
 
+function emitLogLines(emit: HostBootstrapListener, text: string): void {
+  for (const line of installFailureLogLines(text)) {
+    emit({ type: 'log', text: line });
+  }
+}
+
+async function issueJoinCodeForRemote(
+  ctx: ProductHttpContext,
+  remote: ProjectRemote,
+  serverUrl: string,
+  emit: HostBootstrapListener
+): Promise<{ joinCode: string; hostId: string }> {
+  try {
+    const serverHost = new URL(serverUrl).hostname;
+    const primary = requirePrimaryHost(ctx);
+    const status = await ctx.hostHub.callHostOnlineRpc<PeerDaemonStatusResult>({
+      hostId: primary.id,
+      command: {
+        type: 'peer_daemon.status',
+        remote: {
+          host: remote.host,
+          ...(remote.user ? { user: remote.user } : {}),
+          ...(remote.proxyJump ? { proxyJump: remote.proxyJump } : {})
+        },
+        serverHost
+      }
+    });
+    const reuse = reuseRemoteHostId(status.hostId);
+    if (reuse) {
+      emit({ type: 'log', text: 'Reusing the host id already on that machine…' });
+      return ctx.joinCodes.mintForHost(reuse);
+    }
+  } catch {
+    /* First install, or the identity probe failed — mint a new host id. */
+  }
+  return ctx.joinCodes.mint();
+}
+
 async function installPeer(
   ctx: ProductHttpContext,
   input: {
@@ -167,31 +334,40 @@ async function installPeer(
     joinCode: string;
     hostId: string;
     serverUrl: string;
-    events: HostBootstrapEvent[];
+    emit: HostBootstrapListener;
   }
 ): Promise<void> {
   const primary = requirePrimaryHost(ctx);
   const artifact = resolveHostArtifact();
-  input.events.push({ type: 'log', text: 'Installing host daemon over SSH…' });
-  const result = await ctx.hostHub.callHostOnlineRpc<{ ok: true; log: string }>({
-    hostId: primary.id,
-    timeoutMs: PEER_RPC_TIMEOUT_MS,
-    command: {
-      type: 'peer_daemon.install',
-      remote: {
-        host: input.remote.host,
-        ...(input.remote.user ? { user: input.remote.user } : {}),
-        ...(input.remote.proxyJump ? { proxyJump: input.remote.proxyJump } : {})
-      },
-      joinCode: input.joinCode,
-      hostId: input.hostId,
-      serverUrl: input.serverUrl,
-      artifactPath: artifact.tarballPath
-    }
-  });
-  if (result.log.trim()) input.events.push({ type: 'log', text: result.log.trim() });
-  input.events.push({ type: 'log', text: 'Waiting for the remote daemon to connect…' });
-  await ctx.hostHub.waitUntilConnected(input.hostId, CONNECT_WAIT_MS);
+  input.emit({ type: 'log', text: 'Installing host daemon over SSH…' });
+  try {
+    const result = await ctx.hostHub.callHostOnlineRpc<{ ok: true; log: string }>({
+      hostId: primary.id,
+      timeoutMs: PEER_RPC_TIMEOUT_MS,
+      command: {
+        type: 'peer_daemon.install',
+        remote: {
+          host: input.remote.host,
+          ...(input.remote.user ? { user: input.remote.user } : {}),
+          ...(input.remote.proxyJump ? { proxyJump: input.remote.proxyJump } : {})
+        },
+        joinCode: input.joinCode,
+        hostId: input.hostId,
+        serverUrl: input.serverUrl,
+        artifactPath: artifact.tarballPath
+      }
+    });
+    if (result.log.trim()) emitLogLines(input.emit, result.log.trim());
+    await waitForPeerConnect(
+      (timeoutMs) => ctx.hostHub.waitUntilConnected(input.hostId, timeoutMs),
+      input.emit
+    );
+  } catch (error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    emitLogLines(input.emit, raw);
+    const classified = classifyInstallFailure(error);
+    throw new HostBootstrapError(classified.code, classified.message);
+  }
 }
 
 async function bindRemoteProject(
@@ -200,7 +376,7 @@ async function bindRemoteProject(
     projectId: string;
     remote: ProjectRemote;
     hostId: string;
-    events: HostBootstrapEvent[];
+    emit: HostBootstrapListener;
   }
 ): Promise<void> {
   const host = getHost(ctx.db, input.hostId);
@@ -208,18 +384,40 @@ async function bindRemoteProject(
   await ctx.projects.bindToHost(input.projectId, { hostId: input.hostId, path });
   ctx.hub.emit('projects:changed', ctx.projects.list());
   ctx.hub.emit('hosts:changed', undefined);
-  input.events.push({ type: 'done', hostId: input.hostId });
+  input.emit({ type: 'done', hostId: input.hostId });
+}
+
+function pairingCommandForFailure(code: string, command: string): string | undefined {
+  return code === 'daemon_unresponsive' ? undefined : command;
+}
+
+function emitBootstrapError(
+  emit: HostBootstrapListener,
+  error: HostBootstrapError,
+  ctx: ProductHttpContext,
+  remote: ProjectRemote | null,
+  hostId?: string
+): void {
+  const enriched = attachSshFallbackPairingCommand(error, ctx, remote, hostId);
+  emit({
+    type: 'error',
+    code: enriched.code,
+    message: enriched.message,
+    ...(enriched.pairingCommand ? { pairingCommand: enriched.pairingCommand } : {})
+  });
 }
 
 export async function bootstrapHostForProject(
   ctx: ProductHttpContext,
-  projectId: string
+  projectId: string,
+  onEvent?: HostBootstrapListener
 ): Promise<HostBootstrapEvent[]> {
-  const events: HostBootstrapEvent[] = [];
+  const { events, emit, absorb } = createEventSink(onEvent);
+  let remote: ProjectRemote | null = null;
   try {
     const project = ctx.projects.list().find((row) => row.id === projectId);
     if (!project) throw new HostBootstrapError('unknown_project', 'Project not found.');
-    const remote = sshRemoteFromProject(project);
+    remote = sshRemoteFromProject(project);
     if (!remote) throw new HostBootstrapError('not_remote_project', 'This project is not an SSH remote.');
     const existing = findHostBySsh(ctx.db, {
       host: remote.host,
@@ -228,20 +426,19 @@ export async function bootstrapHostForProject(
     const connected = Boolean(existing && ctx.hostHub.connectedHostIds().includes(existing.id));
     const plan = resolveHostBootstrapPlan({ existing, connected });
     if (plan.kind === 'bind') {
-      events.push({ type: 'log', text: 'Reusing the enrolled daemon for this SSH host…' });
-      await bindRemoteProject(ctx, { projectId: project.id, remote, hostId: plan.hostId, events });
+      emit({ type: 'log', text: 'Reusing the enrolled daemon for this SSH host…' });
+      await bindRemoteProject(ctx, { projectId: project.id, remote, hostId: plan.hostId, emit });
       return events;
     }
     if (plan.kind === 'repair') {
-      const repaired = await repairHost(ctx, plan.hostId);
-      events.push(...repaired);
-      if (repaired.some((event) => event.type === 'error')) return events;
-      events.push({ type: 'log', text: 'Binding this project to the enrolled machine…' });
-      await bindRemoteProject(ctx, { projectId: project.id, remote, hostId: plan.hostId, events });
+      absorb(await repairHost(ctx, plan.hostId, onEvent));
+      if (events.some((event) => event.type === 'error')) return events;
+      emit({ type: 'log', text: 'Binding this project to the enrolled machine…' });
+      await bindRemoteProject(ctx, { projectId: project.id, remote, hostId: plan.hostId, emit });
       return events;
     }
-    const serverUrl = requirePublicAppUrl(ctx);
-    const issued = ctx.joinCodes.mint();
+    const serverUrl = await requirePublicAppUrl(ctx);
+    const issued = await issueJoinCodeForRemote(ctx, remote, serverUrl, emit);
     const command = pairingCommand(serverUrl, issued.joinCode, issued.hostId);
     try {
       await installPeer(ctx, {
@@ -249,14 +446,14 @@ export async function bootstrapHostForProject(
         joinCode: issued.joinCode,
         hostId: issued.hostId,
         serverUrl,
-        events
+        emit
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const classified = classifyInstallFailure(error);
       throw new HostBootstrapError(
-        error instanceof HostBootstrapError ? error.code : 'install_failed',
-        message,
-        command
+        classified.code,
+        classified.message,
+        pairingCommandForFailure(classified.code, command)
       );
     }
     const host = getHost(ctx.db, issued.hostId);
@@ -267,16 +464,11 @@ export async function bootstrapHostForProject(
         proxyJump: remote.proxyJump
       });
     }
-    await bindRemoteProject(ctx, { projectId: project.id, remote, hostId: issued.hostId, events });
+    await bindRemoteProject(ctx, { projectId: project.id, remote, hostId: issued.hostId, emit });
     return events;
   } catch (error) {
     if (error instanceof HostBootstrapError) {
-      events.push({
-        type: 'error',
-        code: error.code,
-        message: error.message,
-        ...(error.pairingCommand ? { pairingCommand: error.pairingCommand } : {})
-      });
+      emitBootstrapError(emit, error, ctx, remote);
       return events;
     }
     throw error;
@@ -285,24 +477,26 @@ export async function bootstrapHostForProject(
 
 export async function repairHost(
   ctx: ProductHttpContext,
-  hostId: string
+  hostId: string,
+  onEvent?: HostBootstrapListener
 ): Promise<HostBootstrapEvent[]> {
-  const events: HostBootstrapEvent[] = [];
+  const { events, emit } = createEventSink(onEvent);
+  let remote: ProjectRemote | null = null;
   try {
     const host = getHost(ctx.db, hostId);
     if (!host || host.destroyedAt) throw new HostBootstrapError('unknown_host', 'Host not found.');
     if (host.isPrimary) throw new HostBootstrapError('primary_host', 'This machine is already the primary host.');
-    const remote = sshRemoteFromHost(host);
+    remote = sshRemoteFromHost(host);
     if (!remote) {
       throw new HostBootstrapError(
         'ssh_identity_required',
         'Pick an SSH host so Zana can reconnect this machine.'
       );
     }
-    const serverUrl = requirePublicAppUrl(ctx);
+    const serverUrl = await requirePublicAppUrl(ctx);
     const serverHost = new URL(serverUrl).hostname;
     const primary = requirePrimaryHost(ctx);
-    events.push({ type: 'log', text: 'Checking the remote host daemon…' });
+    emit({ type: 'log', text: 'Checking the remote host daemon…' });
     const status = await ctx.hostHub.callHostOnlineRpc<{
       state: 'connected' | 'disconnected' | 'not_installed';
       message?: string;
@@ -319,7 +513,7 @@ export async function repairHost(
       }
     });
     if (resolveRepairPlan(status.state) === 'restart') {
-      events.push({ type: 'log', text: 'Restarting the remote host daemon…' });
+      emit({ type: 'log', text: 'Restarting the remote host daemon…' });
       try {
         const restarted = await ctx.hostHub.callHostOnlineRpc<{ ok: true; log: string }>({
           hostId: primary.id,
@@ -334,15 +528,18 @@ export async function repairHost(
             serverHost
           }
         });
-        if (restarted.log.trim()) events.push({ type: 'log', text: restarted.log.trim() });
-        await ctx.hostHub.waitUntilConnected(hostId, CONNECT_WAIT_MS);
-        events.push({ type: 'done', hostId });
+        if (restarted.log.trim()) emitLogLines(emit, restarted.log.trim());
+        await waitForPeerConnect(
+          (timeoutMs) => ctx.hostHub.waitUntilConnected(hostId, timeoutMs),
+          emit
+        );
+        emit({ type: 'done', hostId });
         return events;
       } catch {
-        events.push({ type: 'log', text: 'Restart did not reconnect; reinstalling…' });
+        emit({ type: 'log', text: 'Restart did not reconnect; reinstalling…' });
       }
     } else {
-      events.push({ type: 'log', text: 'Installing a fresh host-daemon artifact…' });
+      emit({ type: 'log', text: 'Installing a fresh host-daemon artifact…' });
     }
     const issued = ctx.joinCodes.mintForHost(hostId);
     const command = pairingCommand(serverUrl, issued.joinCode, issued.hostId);
@@ -352,14 +549,14 @@ export async function repairHost(
         joinCode: issued.joinCode,
         hostId: issued.hostId,
         serverUrl,
-        events
+        emit
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const classified = classifyInstallFailure(error);
       throw new HostBootstrapError(
-        error instanceof HostBootstrapError ? error.code : 'install_failed',
-        message,
-        command
+        classified.code,
+        classified.message,
+        pairingCommandForFailure(classified.code, command)
       );
     }
     updateHostSshIdentity(ctx.db, hostId, {
@@ -368,16 +565,11 @@ export async function repairHost(
       proxyJump: remote.proxyJump
     });
     ctx.hub.emit('hosts:changed', undefined);
-    events.push({ type: 'done', hostId });
+    emit({ type: 'done', hostId });
     return events;
   } catch (error) {
     if (error instanceof HostBootstrapError) {
-      events.push({
-        type: 'error',
-        code: error.code,
-        message: error.message,
-        ...(error.pairingCommand ? { pairingCommand: error.pairingCommand } : {})
-      });
+      emitBootstrapError(emit, error, ctx, remote, hostId);
       return events;
     }
     throw error;

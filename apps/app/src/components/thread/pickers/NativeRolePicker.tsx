@@ -1,137 +1,83 @@
-import { useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
-import { Check, ChevronDown, RefreshCw, Users } from 'lucide-react';
-import { placePopoverMenu, useExclusivePopover } from '../../ui/PopoverPicklist.js';
-
-const MENU_MIN_WIDTH = 200;
+import { RefreshCw } from 'lucide-react';
+import { PopoverPicklist } from '../../ui/PopoverPicklist.js';
+import { ComposerModeIcon } from './composer-mode-icon.js';
+import { composerWorkModeForNativeLabel } from './composer-mode.js';
 
 export type NativeRoleOption = { value: string; name?: string };
+
+const REFRESH_VALUE = '__refresh__';
 
 export function NativeRolePicker({
   value,
   options,
   onChange,
   onRefresh,
-  disabled
+  disabled,
+  ariaLabel = 'Native role',
+  refreshLabel = 'Refresh roles'
 }: {
   value: string | undefined;
   options: readonly NativeRoleOption[];
   onChange: (value: string | undefined) => void;
   onRefresh: () => void;
   disabled?: boolean;
+  ariaLabel?: string;
+  refreshLabel?: string;
 }) {
-  const [open, setOpen] = useExclusivePopover();
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  if (options.length === 0) return null;
 
   // When no role is explicitly selected (undefined), show a neutral placeholder
   // rather than falling back to options[0]. For an existing thread the running
   // mode is unknown here, so claiming the first option (e.g. `build`) would be a
   // lie; leaving it unselected keeps the picker honest and sends no override.
   const selected = value !== undefined ? options.find((option) => option.value === value) : undefined;
-  const label = selected?.name ?? selected?.value ?? 'Agent';
-
-  useEffect(() => {
-    if (!open || !triggerRef.current || !menuRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    const position = placePopoverMenu(rect, { width: window.innerWidth, height: window.innerHeight }, MENU_MIN_WIDTH);
-    const menu = menuRef.current;
-    menu.style.left = `${position.left}px`;
-    menu.style.width = `${Math.max(position.width, MENU_MIN_WIDTH)}px`;
-    menu.style.maxHeight = `${position.maxHeight}px`;
-    if (position.bottom != null) {
-      menu.style.bottom = `${position.bottom}px`;
-      menu.style.top = 'auto';
-    } else {
-      menu.style.top = `${position.top}px`;
-      menu.style.bottom = 'auto';
-    }
-  }, [open, options.length]);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener('mousedown', close, true);
-    return () => document.removeEventListener('mousedown', close, true);
-  }, [open, setOpen]);
-
-  if (options.length === 0) return null;
-
-  const trigger = (
-    <button
-      ref={triggerRef}
-      type="button"
-      className="reasoning-effort-picker-trigger"
-      aria-label="Native role"
-      aria-haspopup="listbox"
-      aria-expanded={open}
-      disabled={disabled}
-      title="Native role"
-      data-testid="native-role-picker-trigger"
-      onClick={() => setOpen((current) => !current)}
-    >
-      <Users size={14} aria-hidden="true" />
-      <span className="reasoning-effort-picker-label">{label}</span>
-      {disabled ? null : <ChevronDown size={14} aria-hidden="true" />}
-    </button>
-  );
-
-  if (disabled) return trigger;
-
+  const selectedMode = composerWorkModeForNativeLabel(selected?.value ?? '', selected?.name);
+  const selectedLabel = selected?.name ?? selected?.value ?? ariaLabel;
   return (
-    <>
-      {trigger}
-      {open && createPortal(
-        <div
-          ref={menuRef}
-          className="model-reasoning-picker-menu"
-          role="listbox"
-          aria-label="Native role"
-          data-testid="native-role-picker-menu"
-        >
-          {options.map((option) => {
-            const isSelected = option.value === (selected?.value ?? '');
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                className={`model-reasoning-picker-row${isSelected ? ' is-selected' : ''}`}
-                data-testid={`native-role-${option.value}`}
-                onClick={() => {
-                  onChange(option.value || undefined);
-                  setOpen(false);
-                }}
-              >
-                <span className="reasoning-effort-picker-row-label">
-                  {option.name ?? option.value}
-                </span>
-                {isSelected ? <Check size={14} aria-hidden="true" /> : null}
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            className="model-reasoning-picker-row"
-            data-testid="native-role-refresh"
-            onClick={() => {
-              onRefresh();
-              setOpen(false);
-            }}
-          >
+    <PopoverPicklist
+      ariaLabel={ariaLabel}
+      title={`${selectedLabel} (Shift+Tab)`}
+      ariaKeyshortcuts="Shift+Tab"
+      value={selected?.value ?? ''}
+      disabled={disabled}
+      searchable
+      searchPlaceholder={`Search ${ariaLabel.toLowerCase()}…`}
+      triggerClassName="composer-mode-picker-trigger"
+      triggerTestId="native-role-picker-trigger"
+      triggerIcon={<ComposerModeIcon mode={selectedMode} />}
+      options={[
+        ...options.map((option) => {
+          const label = option.name ?? option.value;
+          return {
+            value: option.value,
+            label,
+            content: (
+              <span className="composer-mode-picker-row-label">
+                <ComposerModeIcon mode={composerWorkModeForNativeLabel(option.value, option.name)} />
+                {label}
+              </span>
+            )
+          };
+        }),
+        {
+          value: REFRESH_VALUE,
+          label: refreshLabel,
+          sticky: true,
+          content: (
             <span className="reasoning-effort-picker-row-label">
               <RefreshCw size={14} aria-hidden="true" />
-              Refresh roles
+              {refreshLabel}
             </span>
-          </button>
-        </div>,
-        document.body
-      )}
-    </>
+          )
+        }
+      ]}
+      onChange={(next) => {
+        if (next === REFRESH_VALUE) {
+          onRefresh();
+          return;
+        }
+        onChange(next || undefined);
+      }}
+    />
   );
 }

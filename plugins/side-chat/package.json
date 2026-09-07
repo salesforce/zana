@@ -3,18 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Fork a compact chat beside the current thread.",
+  "description": "Reply to messages in hidden side-chat forks rendered in a thread panel.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
+  "scripts": {
+    "build": "node ../../packages/plugin-build/scripts/build-app.mjs ."
+  },
   "zcc": {
     "name": "Side chat",
-    "description": "Fork a compact chat beside the current thread.",
+    "description": "Reply to messages in hidden side-chat forks rendered in a thread panel.",
     "branding": {
       "icon": "MessagesSquare"
     },
-    "server": "./server.mjs",
-    "app": "./app.js"
+    "server": "./server.ts",
+    "app": "./app.tsx"
   }
 }

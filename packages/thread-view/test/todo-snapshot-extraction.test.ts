@@ -113,6 +113,36 @@ function turnPlanEvent({ plan, seq }: TurnPlanEventArgs): ThreadEventWithMeta {
   };
 }
 
+function planStepsEvent({
+  seq,
+  steps,
+  type = "item/completed",
+}: {
+  seq: number;
+  steps: ThreadEventPlanStep[];
+  type?: "item/started" | "item/completed";
+}): ThreadEventWithMeta {
+  return {
+    event: {
+      type,
+      threadId: "thread-1",
+      providerThreadId: "provider-thread-1",
+      scope: turnScope("turn-1"),
+      item: {
+        type: "planSteps",
+        id: `plan-${seq}`,
+        steps,
+        status: type === "item/completed" ? "completed" : "pending",
+      },
+    },
+    meta: {
+      id: `event-${seq}`,
+      seq,
+      createdAt: seq,
+    },
+  };
+}
+
 function nonTodoToolCallEvent(seq: number): ThreadEventWithMeta {
   return {
     event: {
@@ -538,7 +568,7 @@ describe("extractThreadTimelinePendingTodos", () => {
     expect(result).toBeNull();
   });
 
-  it("keeps TodoWrite snapshots even when a newer plan snapshot exists", () => {
+  it("keeps TodoWrite snapshots even when a newer turn/plan/updated event exists", () => {
     const todoOlder = todoWriteEvent({
       seq: 30,
       todos: [{ content: "todo first", status: "pending" }],
@@ -552,6 +582,79 @@ describe("extractThreadTimelinePendingTodos", () => {
     ).toMatchObject({
       sourceSeq: 30,
       items: [{ text: "todo first", status: "pending" }],
+    });
+  });
+
+  it("maps planSteps snapshots onto pending todos, translating active to in_progress", () => {
+    const result = extractThreadTimelinePendingTodos(ACTIVE, [
+      planStepsEvent({
+        seq: 15,
+        steps: [
+          { step: "Read the spec", status: "completed" },
+          { step: "Wire the renderer", status: "active" },
+          { step: "Write tests", status: "pending" },
+          { step: "Broken", status: "failed" },
+          { step: "   " },
+        ],
+      }),
+    ]);
+    expect(result).toEqual({
+      sourceSeq: 15,
+      updatedAt: 15,
+      items: [
+        { id: "seq:15:0", text: "Read the spec", status: "completed" },
+        { id: "seq:15:1", text: "Wire the renderer", status: "in_progress" },
+        { id: "seq:15:2", text: "Write tests", status: "pending" },
+      ],
+    });
+  });
+
+  it("lets a later planSteps snapshot replace an earlier TodoWrite snapshot", () => {
+    const result = extractThreadTimelinePendingTodos(ACTIVE, [
+      todoWriteEvent({
+        seq: 10,
+        todos: [{ content: "todo first", status: "pending" }],
+      }),
+      planStepsEvent({
+        seq: 20,
+        steps: [{ step: "plan won", status: "active" }],
+      }),
+    ]);
+    expect(result).toEqual({
+      sourceSeq: 20,
+      updatedAt: 20,
+      items: [{ id: "seq:20:0", text: "plan won", status: "in_progress" }],
+    });
+  });
+
+  it("lets a later TodoWrite snapshot replace an earlier planSteps snapshot", () => {
+    const result = extractThreadTimelinePendingTodos(ACTIVE, [
+      planStepsEvent({
+        seq: 10,
+        steps: [{ step: "plan first", status: "pending" }],
+      }),
+      todoWriteEvent({
+        seq: 20,
+        todos: [{ content: "todo won", status: "in_progress" }],
+      }),
+    ]);
+    expect(result).toMatchObject({
+      sourceSeq: 20,
+      items: [{ text: "todo won", status: "in_progress" }],
+    });
+  });
+
+  it("observes planSteps item/started events", () => {
+    const result = extractThreadTimelinePendingTodos(ACTIVE, [
+      planStepsEvent({
+        seq: 8,
+        type: "item/started",
+        steps: [{ step: "Starting", status: "pending" }],
+      }),
+    ]);
+    expect(result).toMatchObject({
+      sourceSeq: 8,
+      items: [{ text: "Starting", status: "pending" }],
     });
   });
 

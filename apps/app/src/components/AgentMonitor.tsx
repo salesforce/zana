@@ -437,7 +437,7 @@ function AgentMonitorTerminal({
       >
         {thread ? (
           <div className="agent-monitor-thread" data-testid="agent-monitor-thread">
-            <ThreadDetail threadId={thread.id} embedded />
+            <ThreadDetail key={thread.id} threadId={thread.id} embedded />
           </div>
         ) : agent ? (
           <AgentMonitorSession

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   reconcileReasoningLevel,
   reasoningLevelSchema,
@@ -24,8 +24,8 @@ import {
 import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
-  prefetchThreadModelCatalog,
   reloadThreadProviderModels,
+  setThreadModelCatalogHost,
   subscribeThreadModelCatalog
 } from './thread-model-catalog.js';
 import { nextAcpModeSelection } from './acp-mode-selection.js';
@@ -63,6 +63,10 @@ export function useThreadComposerOptions(input: {
   initialModel?: string | null;
   initialReasoningLevel?: string | null;
   initialAcpMode?: string | null;
+<<<<<<< HEAD
+=======
+  hostId?: string;
+>>>>>>> main
 }) {
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
@@ -84,7 +88,14 @@ export function useThreadComposerOptions(input: {
     const provider = input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code';
     return restoreProviderSelection(provider).reasoningLevel;
   });
+<<<<<<< HEAD
   const [acpMode, setAcpMode] = useState<string | undefined>(() => input.initialAcpMode ?? undefined);
+=======
+  const [acpMode, setAcpMode] = useState<string | undefined>(
+    () => input.initialAcpMode?.trim() || undefined
+  );
+  const appliedRequestedAcpModeRef = useRef<string | undefined>(undefined);
+>>>>>>> main
   const persistSelection = !input.threadId;
 
   const setModel = useCallback((value: string) => {
@@ -132,12 +143,8 @@ export function useThreadComposerOptions(input: {
   }, [input.initialModel, input.initialReasoningLevel, input.initialAcpMode]);
 
   useEffect(() => {
-    void prefetchThreadModelCatalog();
-  }, []);
-
-  useEffect(() => {
-    void ensureThreadProviderModels(providerId);
-  }, [providerId]);
+    void setThreadModelCatalogHost(input.hostId);
+  }, [input.hostId]);
 
   const providers = composerProvidersFromCatalog(
     catalog.providers,
@@ -149,11 +156,30 @@ export function useThreadComposerOptions(input: {
   const cached = catalog.byProvider[providerId];
   const models = cached?.models ?? fallbackModelsForProvider(providerId);
   const moreModels = cached?.selectedOnlyModels ?? fallbackMoreModelsForProvider(providerId);
-  const loading = !cached;
+  const loading = !cached && catalog.inflight.has(providerId);
   const modelLoadError = cached?.modelLoadError ?? null;
   const acpModeOptions = cached?.acpMode?.options ?? [];
 
   useEffect(() => {
+    if (cached) return;
+    void ensureThreadProviderModels(providerId);
+  }, [providerId, cached]);
+
+  useEffect(() => {
+    appliedRequestedAcpModeRef.current = undefined;
+  }, [input.threadId]);
+
+  useEffect(() => {
+    const requested = input.initialAcpMode?.trim() || undefined;
+    const requestedValid = Boolean(
+      requested && acpModeOptions.some((option) => option.value === requested)
+    );
+    if (requestedValid && requested !== appliedRequestedAcpModeRef.current) {
+      appliedRequestedAcpModeRef.current = requested;
+      if (acpMode !== requested) setAcpMode(requested);
+      return;
+    }
+
     // Existing threads: never auto-seed or reset the native role. There is NO
     // per-thread source for the running mode (the catalog `currentValue` is a
     // sessionless provider probe, always the default e.g. `build`), so seeding it
@@ -169,12 +195,12 @@ export function useThreadComposerOptions(input: {
       options: acpModeOptions
     });
     if (next !== undefined && next !== acpMode) setAcpMode(next);
-  }, [input.threadId, acpMode, acpModeOptions, cached?.acpMode?.currentValue]);
+  }, [input.threadId, acpMode, acpModeOptions, cached?.acpMode?.currentValue, input.initialAcpMode]);
 
   useEffect(() => {
     if (input.threadId || input.lockedProviderId) return;
-    const offered = composerProvidersFromCatalog(catalog.providers, false, providerId);
-    const next = snapNewThreadProviderId(offered.map((row) => row.id), providerId);
+    if (catalog.providers.length === 0) return;
+    const next = snapNewThreadProviderId(catalog.providers.map((row) => row.id), providerId);
     if (!next) return;
     setProviderIdState(next);
     const restored = restoreProviderSelection(next);

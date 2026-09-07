@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Project } from '@zana-ai/zcc-domain/product';
-import { isRemoteToolProxyActive, remoteWorkspacePath, threadLaunchRemote } from './remote-tool-proxy.js';
+import {
+  boundRemoteHostId,
+  isRemoteToolProxyActive,
+  remoteWorkspacePath,
+  REMOTE_HOST_DAEMON_REQUIRED,
+  threadLaunchRemote
+} from './remote-tool-proxy.js';
 
 const sshProject: Project = {
   id: 'p-ssh',
@@ -12,17 +18,11 @@ const sshProject: Project = {
 };
 
 describe('isRemoteToolProxyActive', () => {
-  it('is on for an unbound SSH project', () => {
-    expect(isRemoteToolProxyActive(sshProject)).toBe(true);
-    expect(isRemoteToolProxyActive(sshProject, 'h-primary')).toBe(true);
-  });
-
-  it('is on when a bound SSH project still runs on this machine', () => {
-    expect(isRemoteToolProxyActive({ ...sshProject, hostId: 'h-enrolled' })).toBe(true);
-    expect(isRemoteToolProxyActive({ ...sshProject, hostId: 'h-enrolled' }, 'h-primary')).toBe(true);
-  });
-
-  it('is off when executing on the enrolled host or when the project is local', () => {
+  it('is off for new SSH threads, bound or not', () => {
+    expect(isRemoteToolProxyActive(sshProject)).toBe(false);
+    expect(isRemoteToolProxyActive(sshProject, 'h-primary')).toBe(false);
+    expect(isRemoteToolProxyActive({ ...sshProject, hostId: 'h-enrolled' })).toBe(false);
+    expect(isRemoteToolProxyActive({ ...sshProject, hostId: 'h-enrolled' }, 'h-primary')).toBe(false);
     expect(isRemoteToolProxyActive({ ...sshProject, hostId: 'h-enrolled' }, 'h-enrolled')).toBe(false);
     expect(isRemoteToolProxyActive({
       id: 'p-local',
@@ -31,6 +31,21 @@ describe('isRemoteToolProxyActive', () => {
       createdAt: 1,
       lastActiveAt: 1
     })).toBe(false);
+  });
+});
+
+describe('boundRemoteHostId', () => {
+  it('requires a bound daemon on SSH remotes', () => {
+    expect(boundRemoteHostId(sshProject)).toBeNull();
+    expect(boundRemoteHostId({ ...sshProject, hostId: 'h-enrolled' })).toBe('h-enrolled');
+    expect(boundRemoteHostId({
+      id: 'p-local',
+      name: 'Local',
+      path: '/tmp/local',
+      createdAt: 1,
+      lastActiveAt: 1
+    })).toBeUndefined();
+    expect(REMOTE_HOST_DAEMON_REQUIRED).toBe('host-daemon-required');
   });
 });
 

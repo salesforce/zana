@@ -17,6 +17,7 @@ export interface HomeAgentComposerProps extends ThreadCommandComposerProps {
 /** Dashboard wrapper only — thread detail must not inherit this spacing. */
 export function HomeAgentComposer({
   allowLegacyAgent = false,
+  project,
   ...props
 }: HomeAgentComposerProps) {
   const walkthroughHomeMode = useUi((s) => s.walkthroughHomeMode);
@@ -25,6 +26,7 @@ export function HomeAgentComposer({
   const showAutonomousTeam = teams.length > 0;
   const showJobTeam = teamJobLaunchEnabled && teams.length > 0;
   const [kind, setKind] = useState<LaunchMode>('thread');
+  const [composerProjectId, setComposerProjectId] = useState(project?.id ?? '');
   useEffect(() => {
     if (walkthroughHomeMode === 'thread' || walkthroughHomeMode === 'agent') {
       setKind(walkthroughHomeMode);
@@ -34,6 +36,9 @@ export function HomeAgentComposer({
     if (kind === 'autonomous' && !showAutonomousTeam) setKind('thread');
     if (kind === 'job' && !showJobTeam) setKind('thread');
   }, [kind, showAutonomousTeam, showJobTeam]);
+  useEffect(() => {
+    if (project?.id) setComposerProjectId(project.id);
+  }, [project?.id]);
   return (
     <div className={`home-agent-composer${walkthroughHomeMode ? ' is-walkthrough-spotlight' : ''}`}>
       {allowLegacyAgent && (
@@ -45,13 +50,26 @@ export function HomeAgentComposer({
         />
       )}
       {allowLegacyAgent && kind === 'agent' ? (
-        <LegacyAgentHomeComposer project={props.project} />
+        <LegacyAgentHomeComposer
+          project={project}
+          composerProjectId={composerProjectId}
+          onComposerProjectIdChange={setComposerProjectId}
+        />
       ) : allowLegacyAgent && kind === 'autonomous' ? (
-        <AutonomousTeamComposer project={props.project} />
+        <AutonomousTeamComposer
+          project={project}
+          composerProjectId={composerProjectId}
+          onComposerProjectIdChange={setComposerProjectId}
+        />
       ) : allowLegacyAgent && kind === 'job' ? (
-        <JobTeamComposer project={props.project} />
+        <JobTeamComposer project={project} />
       ) : (
-        <ThreadCommandComposer {...props} />
+        <ThreadCommandComposer
+          {...props}
+          project={project}
+          composerProjectId={composerProjectId}
+          onComposerProjectIdChange={setComposerProjectId}
+        />
       )}
     </div>
   );

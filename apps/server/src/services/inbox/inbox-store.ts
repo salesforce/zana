@@ -27,6 +27,7 @@ import { readFile, appendFile, mkdir, writeFile, rename } from 'node:fs/promises
 import { dirname, join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import type { InboxDoc, InboxEntry, InboxNotifyLevel, InboxQuestion } from '@zana-ai/zcc-domain/product';
+import { isThreadPendingInboxClone } from '@zana-ai/zcc-domain/product';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 
 export type { InboxDoc, InboxEntry } from '@zana-ai/zcc-domain/product';
@@ -250,6 +251,13 @@ function validateInput(input: InboxInput): void {
   if (!hasDocs && !hasComments && !hasQuestion) {
     throw new Error(
       'InboxStore.append: at least one of docs, comments, or question must be present'
+    );
+  }
+  // Thread approvals stay on the thread. A leftover (or reintroduced) fan-out
+  // of "Open thread" clones must not persist or emit inbox:appended.
+  if (isThreadPendingInboxClone(input)) {
+    throw new Error(
+      'InboxStore.append: thread pending-interaction clones are not stored'
     );
   }
   // Normalize the author-set subject in place (single line, trimmed, capped) so

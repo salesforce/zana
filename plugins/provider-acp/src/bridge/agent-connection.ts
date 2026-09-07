@@ -63,6 +63,22 @@ export class AcpAgentExitedError extends Error {
   }
 }
 
+export function formatAcpLaunchFailure(command: string, error: Error): string {
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  const missing = code === "ENOENT" || /\bENOENT\b/.test(error.message);
+  if (!missing) {
+    return `Failed to launch ACP agent "${command}": ${error.message}`;
+  }
+  const base = command.replace(/\\/g, "/").split("/").pop() ?? command;
+  const name =
+    base === "opencode"
+      ? "OpenCode"
+      : base === "cursor-agent" || base === "agent"
+        ? "Cursor"
+        : base;
+  return `${name} is not installed on this machine (command "${command}" was not found). Install it on this host, or pick another agent.`;
+}
+
 interface PendingAgentRequest {
   resolve(value: unknown): void;
   reject(error: Error): void;
@@ -209,7 +225,7 @@ export function createAcpAgentConnection(
     exited = true;
     rejectAllPending(
       new AcpAgentExitedError(
-        `Failed to launch ACP agent "${options.command}": ${error.message}`,
+        formatAcpLaunchFailure(options.command, error),
       ),
     );
     options.onExit({ code: null, signal: null, stderrTail: error.message });

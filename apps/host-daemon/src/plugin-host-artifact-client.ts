@@ -1,4 +1,5 @@
 import { HOST_ARTIFACT_MAX_BYTES } from '@zana-ai/zcc-host-daemon-contract';
+import { joinServerUrl } from './server-url.js';
 
 export interface PluginHostArtifactHttpClient {
   fetch(args: {
@@ -19,9 +20,15 @@ function assertHostArtifactContentLength(
   response: Response,
   expectedByteLength: number
 ): void {
-  const contentLength = parseContentLength(response.headers.get('content-length'));
+  const raw = response.headers.get('content-length');
+  if (raw === null || raw.trim().length === 0) {
+    // Pairing used to strip Content-Length as hop-by-hop; the body is still
+    // bounded by expectedByteLength in readHostArtifactBytes.
+    return;
+  }
+  const contentLength = parseContentLength(raw);
   if (contentLength === null) {
-    throw new Error('Host artifact response is missing Content-Length');
+    throw new Error('Host artifact response has an invalid Content-Length');
   }
   if (contentLength > HOST_ARTIFACT_MAX_BYTES) {
     throw new Error(
@@ -97,13 +104,6 @@ export function createPluginHostArtifactHttpClient(options: {
 }): PluginHostArtifactHttpClient {
   const fetchFn = options.fetchFn ?? fetch;
 
-  function url(path: string): string {
-    return new URL(
-      path,
-      options.serverUrl.endsWith('/') ? options.serverUrl : `${options.serverUrl}/`
-    ).toString();
-  }
-
   function headers(): Record<string, string> {
     return {
       authorization: `Bearer ${options.hostKey}`,
@@ -119,9 +119,10 @@ export function createPluginHostArtifactHttpClient(options: {
         );
       }
       const response = await fetchFn(
-        url(
-          `internal/plugins/${encodeURIComponent(args.pluginId)}/host/${encodeURIComponent(args.digest)}`
-        ),
+        joinServerUrl(
+          options.serverUrl,
+          `/internal/plugins/${encodeURIComponent(args.pluginId)}/host/${encodeURIComponent(args.digest)}`
+        ).href,
         { method: 'GET', headers: headers() }
       );
       if (!response.ok) {

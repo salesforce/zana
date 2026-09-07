@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  describeCopiedForkStart,
   lastCompletedTurnSequence,
+  resolveConversationForkPoint,
   selectInheritedForkEventRows
 } from './conversation-fork-history.js';
 import type { ConversationThreadEventRow } from '@zana-ai/zcc-db';
@@ -91,5 +93,74 @@ describe('selectInheritedForkEventRows', () => {
     ];
     expect(selectInheritedForkEventRows(rows, 2).map((row) => row.sequence)).toEqual([1, 2, 3]);
     expect(selectInheritedForkEventRows(rows, 5).map((row) => row.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+});
+
+describe('resolveConversationForkPoint', () => {
+  const completed = [
+    event(1, 'turn/started', {
+      scope: { kind: 'turn', turnId: 't1' },
+      providerThreadId: 'prov-source'
+    }),
+    event(2, 'turn/completed', {
+      scope: { kind: 'turn', turnId: 't1' },
+      providerThreadId: 'prov-source',
+      providerCheckpointId: 'cp-1'
+    }),
+    event(3, 'turn/started', {
+      scope: { kind: 'turn', turnId: 't2' },
+      providerThreadId: 'prov-source'
+    }),
+    event(4, 'turn/completed', {
+      scope: { kind: 'turn', turnId: 't2' },
+      providerThreadId: 'prov-source',
+      providerCheckpointId: 'cp-2'
+    })
+  ];
+
+  it('clones the session tip when no sourceSeqEnd is given', () => {
+    expect(resolveConversationForkPoint({
+      events: completed,
+      forkCapability: 'checkpoint',
+      sourceProviderThreadId: 'prov-source'
+    })).toEqual({ sourceProviderThreadId: 'prov-source' });
+  });
+
+  it('forks a checkpoint provider at an earlier completed turn', () => {
+    expect(resolveConversationForkPoint({
+      events: completed,
+      forkCapability: 'checkpoint',
+      sourceProviderThreadId: 'prov-source',
+      sourceSeqEnd: 2
+    })).toEqual({
+      sourceProviderThreadId: 'prov-source',
+      sourceProviderCheckpointId: 'cp-1'
+    });
+  });
+
+  it('rejects a mid-session fork on a tip-only provider', () => {
+    expect(() => resolveConversationForkPoint({
+      events: completed,
+      forkCapability: 'tip',
+      sourceProviderThreadId: 'prov-source',
+      sourceSeqEnd: 2
+    })).toThrow(/only fork at the end of a session/);
+  });
+
+  it('reads the clone point from copied fork history', () => {
+    expect(describeCopiedForkStart([
+      event(1, 'turn/started', {
+        scope: { kind: 'turn', turnId: 't1' },
+        providerThreadId: 'prov-source'
+      }),
+      event(2, 'turn/completed', {
+        scope: { kind: 'turn', turnId: 't1' },
+        providerThreadId: 'prov-source',
+        providerCheckpointId: 'cp-9'
+      })
+    ], 'checkpoint')).toEqual({
+      sourceProviderThreadId: 'prov-source',
+      sourceProviderCheckpointId: 'cp-9'
+    });
   });
 });

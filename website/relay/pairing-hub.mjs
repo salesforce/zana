@@ -1,7 +1,6 @@
 import { isAllowedHttp, isAllowedWs, normalizePairingPath } from './allowlist.mjs';
 import { createPairingSession } from './pairing-session.mjs';
 import {
-  isJoinHttp,
   isRelaySessionId,
   mintRelaySessionId,
   parseRelaySessionPath,
@@ -105,6 +104,9 @@ export function createPairingHub(options = {}) {
     request.url = `${rest}${search}`;
   }
 
+  // Join HTTP stays open while this laptop is attached. `joinUntil` is a HELLO
+  // hint the client keepalive refreshes; a dropped laptop already returns
+  // relay_offline.
   function resolveHttpTarget(request) {
     const parsedUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
     const pathname = normalizePairingPath(parsedUrl.pathname);
@@ -115,9 +117,6 @@ export function createPairingHub(options = {}) {
       if (!entry?.session.hasLaptop()) {
         return { handled: true, status: 503, error: 'relay_offline' };
       }
-      if (isJoinHttp(method, prefixed.rest) && clock() >= entry.joinUntil) {
-        return { handled: true, status: 410, error: 'join_expired' };
-      }
       rewriteUrl(request, prefixed.rest);
       return { handled: true, entry };
     }
@@ -125,11 +124,7 @@ export function createPairingHub(options = {}) {
     const live = liveEntries();
     if (live.length === 0) return { handled: true, status: 503, error: 'relay_offline' };
     if (live.length > 1) return { handled: true, status: 503, error: 'relay_ambiguous' };
-    const entry = live[0];
-    if (isJoinHttp(method, pathname) && clock() >= entry.joinUntil) {
-      return { handled: true, status: 410, error: 'join_expired' };
-    }
-    return { handled: true, entry };
+    return { handled: true, entry: live[0] };
   }
 
   function resolveWsTarget(request) {

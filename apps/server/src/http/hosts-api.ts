@@ -16,7 +16,7 @@ import {
   updateHostPermissionCeiling,
   updateHostSshIdentity
 } from '@zana-ai/zcc-db';
-import { readJsonBody, sendJson, sendNdjson } from './json.js';
+import { readJsonBody, sendJson, sendNdjson, beginNdjson } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
 import { listPublicHosts, parseHostRename, toPublicHost } from '../services/hosts/host-public.js';
 import { relaunchLocalHostDaemon } from '../services/hosts/host-relaunch.js';
@@ -96,8 +96,18 @@ export async function handleHostsApi(
       sendJson(response, 400, { error: 'invalid bootstrap request' });
       return true;
     }
-    const events = await bootstrapHostForProject(ctx, parsed.data.projectId);
-    sendNdjson(response, events);
+    const stream = beginNdjson(response);
+    try {
+      await bootstrapHostForProject(ctx, parsed.data.projectId, (event) => stream.write(event));
+    } catch (error) {
+      stream.write({
+        type: 'error',
+        code: 'unknown',
+        message: error instanceof Error ? error.message : 'Host install failed'
+      });
+    } finally {
+      stream.end();
+    }
     return true;
   }
 
@@ -131,8 +141,18 @@ export async function handleHostsApi(
       sendJson(response, 404, { error: 'host not found' });
       return true;
     }
-    const events = await repairHost(ctx, host.id);
-    sendNdjson(response, events);
+    const stream = beginNdjson(response);
+    try {
+      await repairHost(ctx, host.id, (event) => stream.write(event));
+    } catch (error) {
+      stream.write({
+        type: 'error',
+        code: 'unknown',
+        message: error instanceof Error ? error.message : 'Host repair failed'
+      });
+    } finally {
+      stream.end();
+    }
     return true;
   }
 

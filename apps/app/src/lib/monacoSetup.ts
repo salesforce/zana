@@ -37,3 +37,4 @@ import TsWorker from 'monaco-editor/language/typescript/ts.worker.js?worker';
   }
 };
 loader.config({ monaco });
+(globalThis as { __ZCC_MONACO__?: typeof monaco }).__ZCC_MONACO__ = monaco;

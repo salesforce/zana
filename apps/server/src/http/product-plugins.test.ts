@@ -135,6 +135,12 @@ describe('listen.ts', () => {
     expect(source).toContain('archiveThread:');
     expect(source).toContain('forkThread:');
     expect(source).toContain('unarchiveThread:');
+    expect(source).toContain('spawnThread:');
+    expect(source).toContain('createConversationFromRequest');
+    expect(source).toContain('queryConversationThreads');
+    expect(source).toContain('createQueuedMessage');
+    expect(source).toContain('listQueuedMessages');
+    expect(source).toContain('originPluginId: pluginId');
   });
 });
 

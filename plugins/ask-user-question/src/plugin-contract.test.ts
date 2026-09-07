@@ -6,6 +6,7 @@ import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { derivePluginId, readPluginManifest } from '@zana-ai/zcc-domain';
 import { discoverPluginSkillNames } from '@zana-ai/zcc-server/plugins/plugin-skills';
+import { ASK_USER_QUESTION_RENDERER_ID } from '@zana-ai/zcc-plugin-interaction-contracts';
 import plugin from '../server.mjs';
 import app from '../app.js';
 
@@ -27,6 +28,6 @@ describe('ask-user-question plugin', () => {
     await plugin(zcc);
     expect(harness.agentTools[0]?.name).toBe('ask_user_question');
     const set = collectTestPluginApp(app, 'ask-user-question');
-    expect(set.pendingInteractions[0]?.id).toBe('ask-user-question');
+    expect(set.pendingInteractions[0]?.id).toBe(ASK_USER_QUESTION_RENDERER_ID);
   });
 });

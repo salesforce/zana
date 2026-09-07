@@ -1,18 +1,16 @@
 /**
- * Tests for the first-run dependency doctor — the detection sweep + the
- * auto-install of the installable pieces. `node:child_process`.execFile is
- * mocked with a per-command script so we can drive "claude present / missing",
- * "@zana-ai/mcp installed / not", etc., without spawning anything. The bundled-
- * extension scan over `node:fs/promises` is mocked to an empty dir.
+ * Tests for the first-run dependency doctor — CLI detection + auto-install of
+ * installable companions. `node:child_process`.execFile is mocked with a
+ * per-command script so we can drive present / missing without spawning.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SetupStatus } from '@zana-ai/zcc-domain/product';
 
 /**
  * Command router for the execFile mock. Keys are `cmd argv.join(' ')`; values
- * are the {error, stdout} to return. A missing key ⇒ ENOENT (command absent).
+ * are the {error, stdout, stderr} to return. A missing key ⇒ ENOENT.
  */
-let cmdMap: Record<string, { err?: boolean; stdout?: string }> = {};
+let cmdMap: Record<string, { err?: boolean; stdout?: string; stderr?: string }> = {};
 
 vi.mock('node:child_process', () => ({
   execFile: (
@@ -27,16 +25,20 @@ vi.mock('node:child_process', () => ({
       cb(new Error(`ENOENT: ${key}`), '', 'not found');
       return;
     }
-    cb(hit.err ? new Error('failed') : null, hit.stdout ?? '', '');
+    cb(hit.err ? new Error('failed') : null, hit.stdout ?? '', hit.stderr ?? '');
   }
 }));
 
-vi.mock('node:fs/promises', () => ({
-  readdir: vi.fn(async () => []),
-  readFile: vi.fn(async () => '{}')
-}));
-
 const { createDoctor, hasMissingDeps } = await import('./dependency-doctor.js');
+
+const ALL_IDS = [
+  'claude-cli',
+  'cursor-cli',
+  'opencode-cli',
+  'pi-cli',
+  'codex-cli',
+  'sf-cli'
+] as const;
 
 function makeDeps() {
   const sent: Array<{ channel: string; args: unknown[] }> = [];
@@ -57,6 +59,17 @@ function makeDeps() {
 const phaseOf = (status: SetupStatus, id: string) =>
   status.items.find((i) => i.id === id)?.phase;
 
+const idsOf = (status: SetupStatus) => status.items.map((i) => i.id);
+
+const ALL_PRESENT: Record<string, { stdout: string }> = {
+  'claude --version': { stdout: '2.1.260 (Claude Code)' },
+  'cursor-agent --version': { stdout: '2026.1.0' },
+  'opencode --version': { stdout: '1.2.3' },
+  'pi --version': { stdout: '0.4.1' },
+  'codex --version': { stdout: 'codex-cli 0.136.0' },
+  'sf --version': { stdout: '@salesforce/cli/2.50.0 darwin-arm64' }
+};
+
 describe('dependency doctor — detection', () => {
   beforeEach(() => {
     cmdMap = {};
@@ -65,63 +78,39 @@ describe('dependency doctor — detection', () => {
     vi.clearAllMocks();
   });
 
-  it('marks everything missing when no companion tool is on PATH', async () => {
+  it('lists Claude, Cursor, OpenCode, Pi, Codex, and SF CLIs and marks them missing when absent', async () => {
     const { deps } = makeDeps();
     const doctor = createDoctor(deps);
     await doctor.check();
     const s = doctor.snapshot();
-    expect(phaseOf(s, 'claude-cli')).toBe('missing');
-    expect(phaseOf(s, 'zana-mcp')).toBe('missing');
-    expect(phaseOf(s, 'zana-plugins')).toBe('missing');
+    expect(idsOf(s)).toEqual([...ALL_IDS]);
+    for (const id of ALL_IDS) expect(phaseOf(s, id)).toBe('missing');
     expect(hasMissingDeps(s)).toBe(true);
     expect(s.busy).toBe(false);
   });
 
-  it('reports a fully set-up machine as all-present', async () => {
-    // Mirrors a real machine: MCP registered via `npx -y @zana-ai/mcp` with NO
-    // global npm install (npm ls would exit 1 — deliberately omitted here), and
-    // the plugins actually installed (not just the marketplace configured).
-    cmdMap = {
-      'claude --version': { stdout: '1.2.3 (Claude Code)' },
-      'claude mcp get zana': { stdout: 'zana:\n  Status: ✔ Connected\n  Command: npx' },
-      'claude plugin list': { stdout: '  ❯ zana@zana-marketplace\n  ❯ zana-loop@zana-marketplace' }
-    };
+  it('reports every CLI as present on a fully set-up machine', async () => {
+    cmdMap = { ...ALL_PRESENT };
+    const { deps } = makeDeps();
+    const doctor = createDoctor(deps);
+    await doctor.check();
+    const s = doctor.snapshot();
+    expect(idsOf(s)).toEqual([...ALL_IDS]);
+    for (const id of ALL_IDS) expect(phaseOf(s, id)).toBe('present');
+    expect(s.items.find((i) => i.id === 'claude-cli')?.note).toBe('2.1.260 (Claude Code)');
+    expect(hasMissingDeps(s)).toBe(false);
+  });
+
+  it('does not auto-open when only optional CLIs are missing', async () => {
+    cmdMap = { 'claude --version': { stdout: '2.1.260 (Claude Code)' } };
     const { deps } = makeDeps();
     const doctor = createDoctor(deps);
     await doctor.check();
     const s = doctor.snapshot();
     expect(phaseOf(s, 'claude-cli')).toBe('present');
-    expect(phaseOf(s, 'zana-mcp')).toBe('present');
-    expect(phaseOf(s, 'zana-plugins')).toBe('present');
+    expect(phaseOf(s, 'cursor-cli')).toBe('missing');
+    expect(phaseOf(s, 'sf-cli')).toBe('missing');
     expect(hasMissingDeps(s)).toBe(false);
-  });
-
-  it('counts the MCP as present from `claude mcp get` alone (npx, no npm global)', async () => {
-    // The regression that real-command probing caught: a working npx-based MCP
-    // has `npm ls -g @zana-ai/mcp` exit 1, but `claude mcp get zana` succeeds.
-    // Registration is authoritative — the machine must NOT be flagged missing.
-    cmdMap = {
-      'claude --version': { stdout: '1.2.3' },
-      'claude mcp get zana': { stdout: 'zana:\n  Status: ✔ Connected' }
-      // no `npm ls` entry ⇒ npm global absent; must still be "present"
-    };
-    const { deps } = makeDeps();
-    const doctor = createDoctor(deps);
-    await doctor.check();
-    expect(phaseOf(doctor.snapshot(), 'zana-mcp')).toBe('present');
-  });
-
-  it('treats a configured marketplace with no installed plugin as missing', async () => {
-    cmdMap = {
-      'claude --version': { stdout: '1.2.3' },
-      'claude mcp get zana': { stdout: 'zana: ✔ Connected' },
-      // plugin list does NOT contain zana@zana-marketplace ⇒ not installed
-      'claude plugin list': { stdout: '  ❯ something-else@aisuite' }
-    };
-    const { deps } = makeDeps();
-    const doctor = createDoctor(deps);
-    await doctor.check();
-    expect(phaseOf(doctor.snapshot(), 'zana-plugins')).toBe('missing');
   });
 
   it('pushes the snapshot on the deps:onStatus channel', async () => {
@@ -132,46 +121,57 @@ describe('dependency doctor — detection', () => {
   });
 });
 
-describe('dependency doctor — install', () => {
+describe('dependency doctor — install / dismiss', () => {
   beforeEach(() => {
     cmdMap = {};
   });
 
-  it('installs + registers the Zana MCP when claude is present', async () => {
-    // claude present; nothing else installed yet.
+  it('installs a missing npm-global CLI and leaves already-present ones alone', async () => {
     cmdMap = {
-      'claude --version': { stdout: '1.2.3' },
-      // detection: mcp not registered, no zana plugin installed
-      'claude plugin list': { stdout: '  ❯ other@aisuite' },
-      // install steps succeed:
-      'npm install -g @zana-ai/mcp@latest': { stdout: 'added 1 package' },
-      'claude mcp get zana': { err: true }, // not yet registered → triggers add
-      'claude mcp add zana -- npx -y @zana-ai/mcp': { stdout: 'Added' },
-      'claude plugin marketplace list': { err: true }, // marketplace absent → triggers add
-      'claude plugin marketplace add grebmann1/zana': { stdout: 'Added marketplace' },
-      'claude plugin install zana@zana-marketplace': { stdout: 'ok' },
-      'claude plugin install zana-loop@zana-marketplace': { stdout: 'ok' }
+      'claude --version': { stdout: '2.1.260 (Claude Code)' },
+      'cursor-agent --version': { stdout: '2026.1.0' },
+      'pi --version': { stdout: '0.4.1' },
+      'codex --version': { stdout: 'codex-cli 0.136.0' },
+      'sf --version': { stdout: '@salesforce/cli/2.50.0' }
     };
     const { deps } = makeDeps();
     const doctor = createDoctor(deps);
     await doctor.check();
+    expect(phaseOf(doctor.snapshot(), 'opencode-cli')).toBe('missing');
+
+    cmdMap['npm install -g opencode-ai@latest'] = { stdout: 'added 1 package' };
+    cmdMap['opencode --version'] = { stdout: '1.2.3' };
     await doctor.install();
+
     const s = doctor.snapshot();
-    expect(phaseOf(s, 'zana-mcp')).toBe('installed');
-    expect(phaseOf(s, 'zana-plugins')).toBe('installed');
+    expect(phaseOf(s, 'opencode-cli')).toBe('installed');
+    expect(s.items.find((i) => i.id === 'opencode-cli')?.note).toBe('1.2.3');
+    expect(phaseOf(s, 'pi-cli')).toBe('present');
+    expect(s.busy).toBe(false);
   });
 
-  it('fails the MCP step gracefully when npm install errors', async () => {
-    cmdMap = {
-      'claude --version': { stdout: '1.2.3' },
-      'claude plugin list': { stdout: '  ❯ other@aisuite' },
-      'npm install -g @zana-ai/mcp@latest': { err: true }
-    };
+  it('fails an npm install step without throwing', async () => {
+    cmdMap = { ...ALL_PRESENT };
+    delete cmdMap['sf --version'];
     const { deps } = makeDeps();
     const doctor = createDoctor(deps);
     await doctor.check();
+    cmdMap['npm install -g @salesforce/cli@latest'] = { err: true, stderr: 'EACCES: permission denied' };
     await doctor.install();
-    expect(phaseOf(doctor.snapshot(), 'zana-mcp')).toBe('failed');
+    expect(phaseOf(doctor.snapshot(), 'sf-cli')).toBe('failed');
+    expect(doctor.snapshot().items.find((i) => i.id === 'sf-cli')?.note).toContain('permission denied');
+  });
+
+  it('installs the Cursor CLI via its official script', async () => {
+    cmdMap = { ...ALL_PRESENT };
+    delete cmdMap['cursor-agent --version'];
+    const { deps } = makeDeps();
+    const doctor = createDoctor(deps);
+    await doctor.check();
+    cmdMap['sh -c curl -fsSL https://cursor.com/install | bash'] = { stdout: 'installed' };
+    cmdMap['cursor-agent --version'] = { stdout: '2026.1.0' };
+    await doctor.install();
+    expect(phaseOf(doctor.snapshot(), 'cursor-cli')).toBe('installed');
   });
 
   it('dismiss() persists the flag', () => {

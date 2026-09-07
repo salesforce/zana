@@ -303,7 +303,8 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   };
 
   return (
-    <div className={isGlobal ? 'agents-board agents-board--global panel-body--full' : 'agents-board'}>
+    <div className={isGlobal ? 'agents-board agents-board--global panel-body--full aurora-host' : 'agents-board aurora-host'}>
+      <AuroraGrid />
       {showToolbar && (
         <div className="agents-board-toolbar">
           <AgentViewToggle />
@@ -421,8 +422,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           onInspectExecution={(projectId, executionId) => setSelectedExecution({ projectId, executionId })}
         />
       ) : fleet.length === 0 && executions.length === 0 ? (
-        <div className="agents-board-empty agents-board-empty--launch aurora-host">
-          <AuroraGrid />
+        <div className="agents-board-empty agents-board-empty--launch">
           <div className="agents-board-empty-copy">
             <Bot size={28} aria-hidden="true" />
             {isGlobal ? (

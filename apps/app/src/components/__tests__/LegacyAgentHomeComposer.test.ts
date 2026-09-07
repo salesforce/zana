@@ -19,6 +19,14 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('cliAgentModelOptions');
     expect(source).toContain('ensureThreadProviderModels');
     expect(source).toContain('prefetchThreadModelCatalog');
+    expect(source).toContain('setThreadModelCatalogHost');
+    expect(source).toContain('cliRemoteHostCatalogEnabled');
+    expect(source).toContain('cliAgentCatalogProviders');
+    expect(source).toContain('cliAgentFamilyIdsFromCatalog');
+    expect(source).toContain('preferHostModels');
+    expect(source).toContain('isRemoteWorkspaceProject');
+    expect(source).toContain('defaultHostId');
+    expect(source).toContain('useHosts');
     expect(source).toContain('pickOfferedComposerModel');
     expect(source).toContain('rememberComposerSelection');
     expect(source).toContain('resolveCliAgentFamily');
@@ -90,6 +98,11 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain("familyId === 'opencode' ? (");
     expect(source).toContain('value={roleTargetId}');
     expect(source).toContain('onChange={setRoleTargetId}');
+    expect(source).toContain('consumeComposerModeCycle');
+    expect(source).toContain('interceptKeyDown');
+    expect(source).toContain("kind: 'native'");
+    expect(source).toContain('options: roleOptions');
+    expect(source).toContain('onChange: setRoleTargetId');
   });
 
   it('defaults the harness like Modern via resolveCliAgentFamily (current → remembered → effectiveDefault)', () => {
@@ -119,8 +132,30 @@ describe('LegacyAgentHomeComposer', () => {
   it('replaces the isolation checkbox with a workspace picker for real local projects', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<EnvironmentPicker');
-    expect(source).toContain('project && !project.remote &&');
+    expect(source).toContain('project?.remote');
     expect(source).toContain('defaultWorkspaceChoice');
     expect(source).not.toContain('Isolate in a git worktree');
+  });
+
+  it('marks an SSH project as Remote host', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('agentCardRuntimeLabel');
+    expect(source).toContain('data-testid="composer-remote-host-mark"');
+    expect(source).toContain('remote: true');
+    expect(source).not.toContain('composer-remote-runtime-picker');
+    expect(source).not.toContain('thread-command-runtime-picker');
+    expect(source).not.toContain('cliRemoteToolsExperiment');
+    expect(source).not.toContain('remoteToolProxy');
+    expect(source).not.toContain('composerRemoteToolsMark');
+    expect(source).not.toContain('remote: project.remote');
+  });
+
+  it('scopes the model catalog to the project host only when the experimental flag is on', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('if (cliRemoteHostCatalogEnabled) {\n      void setThreadModelCatalogHost(executionHostId);\n      return;\n    }\n    void prefetchThreadModelCatalog();');
+    expect(source).toContain('[cliRemoteHostCatalogEnabled, executionHostId]');
+    expect(source).not.toContain('setThreadModelCatalogHost(undefined)');
+    expect(source).toContain('cliRemoteHostCatalogEnabled\n      ? cliAgentCatalogProviders(catalog.providers)');
+    expect(source).toContain('cliRemoteHostCatalogEnabled && isRemoteWorkspaceProject(project)');
   });
 });

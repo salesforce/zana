@@ -1,8 +1,16 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import { createPluginApi, importServerFactory, resolveCreateJiti, validatePluginRequestInput } from './plugin-api.js';
+import {
+  createPluginApi,
+  importServerFactory,
+  jitiRequireIds,
+  loadCreateJiti,
+  resolveCreateJiti,
+  validatePluginRequestInput
+} from './plugin-api.js';
 
 describe('plugin requestInput validation', () => {
   it('accepts a well-formed request and trims the title', () => {
@@ -279,10 +287,84 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       expect(archiveThread).toHaveBeenCalledWith({ pluginId: 'demo', threadId: 'thr-1' });
       expect(forkThread).toHaveBeenCalledWith({ pluginId: 'demo', threadId: 'thr-1' });
       expect(unarchiveThread).toHaveBeenCalledWith({ pluginId: 'demo', threadId: 'thr-1' });
+      await expect(handle.api.sdk.threads.fork({
+        sourceThreadId: 'thr-1',
+        sourceSeqEnd: 4,
+        visibility: 'hidden',
+        agentContextSeed: [{ type: 'text', text: 'seed', mentions: [], visibility: 'agent-only' }]
+      })).resolves.toEqual({ id: 'thr-2' });
+      expect(forkThread).toHaveBeenCalledWith({
+        pluginId: 'demo',
+        threadId: 'thr-1',
+        sourceSeqEnd: 4,
+        visibility: 'hidden',
+        agentContextSeed: [{ type: 'text', text: 'seed', mentions: [], visibility: 'agent-only' }]
+      });
       const bare = createPluginApi('bare', dir);
       await expect(bare.api.sdk.threads.get({ threadId: 'thr-1' })).rejects.toThrow(/not available/);
       await handle.dispose();
       await bare.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('wires sdk.threads.list and queuedMessages when callbacks are provided', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-sdk-list-'));
+    try {
+      const listThreads = vi.fn(async () => [{
+        id: 'thr-h',
+        projectId: 'p1',
+        hostId: 'h1',
+        environmentId: 'e1',
+        providerId: 'codex',
+        status: 'idle',
+        originKind: 'fork' as const,
+        originPluginId: 'demo',
+        visibility: 'hidden' as const,
+        archivedAt: null,
+        createdAt: 1,
+        parentThreadId: 'thr-1'
+      }]);
+      const listQueuedMessages = vi.fn(async () => [{ id: 'qm-1' }]);
+      const createQueuedMessage = vi.fn(async () => ({ id: 'qm-2' }));
+      const handle = createPluginApi('demo', dir, {
+        listThreads,
+        listQueuedMessages,
+        createQueuedMessage
+      });
+      await expect(handle.api.sdk.threads.list({
+        includeHidden: true,
+        originKind: 'fork',
+        originPluginId: 'demo',
+        archived: false,
+        limit: 100,
+        offset: 0
+      })).resolves.toHaveLength(1);
+      expect(listThreads).toHaveBeenCalledWith({
+        pluginId: 'demo',
+        includeHidden: true,
+        originKind: 'fork',
+        originPluginId: 'demo',
+        archived: false,
+        limit: 100,
+        offset: 0
+      });
+      await expect(handle.api.sdk.threads.queuedMessages.list({ threadId: 'thr-1' })).resolves.toEqual([
+        { id: 'qm-1' }
+      ]);
+      await expect(handle.api.sdk.threads.queuedMessages.create({
+        threadId: 'thr-1',
+        input: [{ type: 'text', text: 'hi', mentions: [] }],
+        senderThreadId: 'thr-h'
+      })).resolves.toEqual({ id: 'qm-2' });
+      expect(createQueuedMessage).toHaveBeenCalledWith({
+        pluginId: 'demo',
+        threadId: 'thr-1',
+        input: [{ type: 'text', text: 'hi', mentions: [] }],
+        senderThreadId: 'thr-h'
+      });
+      await handle.dispose();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -368,6 +450,19 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       database.prepare('INSERT INTO items (id, title) VALUES (?, ?)').run('1', 'Loop');
       expect(database.prepare('SELECT title FROM items WHERE id = ?').get('1')).toEqual({ title: 'Loop' });
       expect(handle.api.storage.database()).toBe(database);
+      database.migrate([
+        `CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT);
+         CREATE TRIGGER notes_insert AFTER INSERT ON notes BEGIN
+           UPDATE notes SET body = body || '!';
+         END;`
+      ]);
+      database.prepare('INSERT INTO notes (id, body) VALUES (?, ?)').run('1', 'hi');
+      expect(database.prepare('SELECT body FROM notes WHERE id = ?').get('1')).toEqual({ body: 'hi!' });
+      const counted = database.transaction(() => {
+        database.prepare('INSERT INTO items (id, title) VALUES (?, ?)').run('2', 'Two');
+        return database.prepare('SELECT COUNT(*) AS count FROM items').get() as { count: number };
+      });
+      expect(counted.count).toBe(2);
       await handle.dispose();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -395,6 +490,50 @@ describe('resolveCreateJiti', () => {
     const source = readFileSync(new URL('./plugin-api.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/const \{ createJiti \} = await import\(['"]jiti['"]\)/);
     expect(source).toContain('resolveCreateJiti');
+    expect(source).toContain('jitiRequireIds');
+    expect(source).toContain("join(cwd, 'apps', 'server', 'package.json')");
+  });
+
+  it('fails when neither import nor require lookup yields createJiti', async () => {
+    await expect(loadCreateJiti(async () => ({}), [])).rejects.toThrow(/unavailable/);
+  });
+
+  it('finds jiti when createRequire(import.meta.url) is an Electron out/main bundle', async () => {
+    const bundleUrl = pathToFileURL(join(tmpdir(), 'out', 'main', 'server-runtime.js')).href;
+    expect(jitiRequireIds('/repo', bundleUrl)).toEqual([
+      bundleUrl,
+      pathToFileURL('/repo/package.json').href,
+      pathToFileURL(join('/repo', 'apps', 'server', 'package.json')).href
+    ]);
+    const createJiti = await loadCreateJiti(async () => {
+      throw new Error('esm import missing in utility process');
+    }, jitiRequireIds(process.cwd(), bundleUrl));
+    expect(typeof createJiti).toBe('function');
+  });
+});
+
+describe('pty harness registration', () => {
+  it('accepts a CLI Agent family declaration', () => {
+    const handle = createPluginApi('harness-claude', '/tmp');
+    const registered = handle.api.agents.experimental_registerPtyHarness({
+      id: 'claude',
+      displayName: 'Claude Code',
+      profiles: [{ id: 'claude', label: 'Claude' }],
+      alwaysEnabled: true
+    });
+    expect(registered.id).toBe('claude');
+    expect(() => registered.unregister()).not.toThrow();
+  });
+
+  it('rejects a declaration without id or displayName', () => {
+    const handle = createPluginApi('harness-claude', '/tmp');
+    expect(() =>
+      handle.api.agents.experimental_registerPtyHarness({
+        id: '',
+        displayName: 'Claude Code',
+        profiles: []
+      })
+    ).toThrow(/id and displayName/);
   });
 });
 
@@ -409,6 +548,29 @@ describe('importServerFactory', () => {
     try {
       const factory = await importServerFactory(entry);
       expect(typeof factory).toBe('function');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('plugin services', () => {
+  it('provides an SDK to another plugin through a shared registry', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-services-'));
+    try {
+      const { createPluginServicesRegistry } = await import('@zana-ai/zcc-plugin-sdk/server');
+      const registry = createPluginServicesRegistry();
+      const alpha = createPluginApi('alpha', join(dir, 'alpha'), { services: registry });
+      const beta = createPluginApi('beta', join(dir, 'beta'), { services: registry });
+      alpha.api.services.provide({ ping: () => 'ok' });
+      expect(beta.api.services.has('alpha')).toBe(true);
+      expect(beta.api.services.has('missing')).toBe(false);
+      expect(beta.api.services.use<{ ping: () => string }>('alpha').ping()).toBe('ok');
+      await alpha.dispose();
+      expect(() => beta.api.services.use<{ ping: () => string }>('alpha').ping()).toThrow(
+        /unavailable/
+      );
+      await beta.dispose();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

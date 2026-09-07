@@ -1,6 +1,12 @@
 services:
   machine:
-    build: .
+    build:
+      context: .
+      args:
+        ZCC_INSTALL_OPENCODE: ${ZCC_INSTALL_OPENCODE:-0}
+        ZCC_INSTALL_CODEX: ${ZCC_INSTALL_CODEX:-0}
+        ZCC_INSTALL_PI: ${ZCC_INSTALL_PI:-0}
+        ZCC_INSTALL_CURSOR: ${ZCC_INSTALL_CURSOR:-0}
     image: zcc-remote-machine:local
     container_name: zcc-docker
     hostname: zcc-docker
@@ -11,6 +17,8 @@ services:
       HOST_ID: ${HOST_ID:-}
       ZCC_SERVER_URL: ${ZCC_SERVER_URL:-}
       SSH_AUTH_PUBKEYS_DIR: ${SSH_AUTH_PUBKEYS_DIR:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CURSOR_API_KEY: ${CURSOR_API_KEY:-}
     ports:
       - "${ZCC_DOCKER_SSH_PORT:-2222}:22"
     volumes:

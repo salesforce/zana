@@ -10,7 +10,12 @@ import { homedir, hostname } from 'node:os';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const PROTOCOL_VERSION = 21;
+const PROTOCOL_VERSION = 23;
+
+function joinServerUrl(serverUrl, path) {
+  const base = serverUrl.endsWith('/') ? serverUrl : `${serverUrl}/`;
+  return new URL(String(path).replace(/^\/+/, ''), base);
+}
 
 function readFlag(args, flag) {
   const index = args.indexOf(flag);
@@ -85,7 +90,7 @@ async function enroll(options) {
   if (!options.joinCode) {
     throw new Error('host enroll token is missing and auth.json is absent');
   }
-  const response = await fetch(new URL('/internal/hosts/enroll', `${options.serverUrl}/`), {
+  const response = await fetch(joinServerUrl(options.serverUrl, '/internal/hosts/enroll'), {
     method: 'POST',
     headers: {
       authorization: `Bearer ${options.joinCode}`,
@@ -114,7 +119,7 @@ async function enroll(options) {
 }
 
 function connectWs(options, auth, onOpen) {
-  const wsUrl = new URL('/internal/hosts/ws', options.serverUrl.replace(/^http/, 'ws'));
+  const wsUrl = joinServerUrl(options.serverUrl.replace(/^http/, 'ws'), '/internal/hosts/ws');
   wsUrl.searchParams.set('hostId', auth.hostId);
   wsUrl.searchParams.set('hostKey', auth.hostKey);
   const backoff = [250, 500, 1_000, 2_000, 5_000];

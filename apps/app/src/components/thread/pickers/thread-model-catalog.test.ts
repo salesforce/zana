@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
@@ -6,6 +6,7 @@ import {
   reloadThreadModelCatalog,
   reloadThreadProviderModels,
   resetThreadModelCatalog,
+  setThreadModelCatalogHost,
   type ThreadExecutionOptionsFetcher
 } from './thread-model-catalog.js';
 
@@ -251,5 +252,73 @@ describe('thread model catalog', () => {
     release();
     await first;
     expect(getThreadModelCatalog().byProvider.codex).toBeDefined();
+  });
+
+  it('refills after reload wipes an in-flight provider fetch', async () => {
+    let releaseClaude: () => void = () => undefined;
+    const claudeGate = new Promise<void>((resolve) => {
+      releaseClaude = resolve;
+    });
+    let claudeFetches = 0;
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      if (query?.providerId === 'claude-code') {
+        claudeFetches += 1;
+        if (claudeFetches === 1) await claudeGate;
+      }
+      return optionsBody(['claude-code'], query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+    const first = prefetchThreadModelCatalog();
+    await vi.waitFor(() => expect(claudeFetches).toBe(1));
+    const reloaded = reloadThreadModelCatalog();
+    expect(getThreadModelCatalog().byProvider['claude-code']).toBeUndefined();
+    releaseClaude();
+    await reloaded;
+    await vi.waitFor(() => {
+      expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+    });
+    expect(claudeFetches).toBeGreaterThanOrEqual(2);
+  });
+
+  it('refills when reload races prefetch settle', async () => {
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => (
+      optionsBody(['claude-code'], query?.providerId ?? 'roster')
+    );
+    resetThreadModelCatalog(fetcher);
+    const first = prefetchThreadModelCatalog();
+    queueMicrotask(() => {
+      void reloadThreadModelCatalog();
+    });
+    await first;
+    await vi.waitFor(() => {
+      expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+    });
+  });
+
+  it('passes hostId on every fetch and drops the old roster when the machine changes', async () => {
+    const calls: Array<{ providerId?: string; hostId?: string }> = [];
+    let roster = ['claude-code', 'acp-opencode'];
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      calls.push({ providerId: query?.providerId, hostId: query?.hostId });
+      return optionsBody(roster, query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+
+    await setThreadModelCatalogHost('sfwork');
+    expect(calls.some((call) => call.hostId === 'sfwork' && call.providerId === undefined)).toBe(true);
+    expect(calls.filter((call) => call.providerId).every((call) => call.hostId === 'sfwork')).toBe(true);
+    expect(getThreadModelCatalog().byProvider['acp-opencode']?.models[0]?.model).toBe('acp-opencode-model');
+
+    roster = ['claude-code'];
+    calls.length = 0;
+    await setThreadModelCatalogHost('other-host');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.hostId === 'other-host')).toBe(true);
+    expect(getThreadModelCatalog().byProvider['acp-opencode']).toBeUndefined();
+    expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+
+    calls.length = 0;
+    await setThreadModelCatalogHost('other-host');
+    expect(calls).toEqual([{ providerId: undefined, hostId: 'other-host' }]);
   });
 });

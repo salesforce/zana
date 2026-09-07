@@ -554,9 +554,9 @@ export const IPC = {
     consumeWhatsNew: 'updates:consumeWhatsNew'
   },
   /**
-   * First-run dependency doctor (src/main/dependency-doctor.ts): detect the
-   * companion CLIs / MCP / plugins / extensions and auto-install the ones we
-   * can. `onStatus` pushes the setup snapshot; `onProgress` streams per-step
+   * First-run dependency doctor: detect companion CLIs (Claude Code, Cursor,
+   * OpenCode, Pi, Codex, Salesforce) and auto-install the ones we can.
+   * `onStatus` pushes the setup snapshot; `onProgress` streams per-step
    * install log lines — mirrors the updates channel pair.
    */
   deps: {

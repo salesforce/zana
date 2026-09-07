@@ -15,8 +15,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-agent-process-utils": "workspace:*",
     "@zana-ai/zcc-plugin-sdk": "workspace:*",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "saxes": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

@@ -440,9 +440,10 @@ export async function readWorkspaceStatus(cwd: string, maxFiles = DEFAULT_MAX_FI
   };
 }
 
-function diffArgsFor(target: WorkspaceDiffTarget): string[] {
+function diffArgsFor(target: WorkspaceDiffTarget, mergeBaseRef: string | null): string[] {
   if (target.type === 'uncommitted') return ['diff', 'HEAD'];
   if (target.type === 'commit') return ['show', '--format=', target.sha];
+  if (target.type === 'all') return ['diff', mergeBaseRef ?? 'HEAD'];
   return ['diff', `${target.mergeBaseBranch}...HEAD`];
 }
 
@@ -459,7 +460,7 @@ export async function readWorkspaceDiff(
     const mb = await runGit(cwd, ['merge-base', target.mergeBaseBranch, 'HEAD'], { allowFail: true });
     mergeBaseRef = mb.code === 0 ? mb.stdout.trim() || null : null;
   }
-  const args = diffArgsFor(target);
+  const args = diffArgsFor(target, mergeBaseRef);
   const result = await runGit(cwd, args, {
     allowFail: true,
     maxBuffer: maxDiffBytes + 1,
@@ -468,8 +469,8 @@ export async function readWorkspaceDiff(
   const overflowed = Boolean(result.truncated) || Buffer.byteLength(result.stdout, 'utf8') > maxDiffBytes;
   const diff = overflowed ? truncateToMaxBytes(result.stdout, maxDiffBytes) : result.stdout;
   const truncated = overflowed;
-  const nameOnly = await runGit(cwd, [...diffArgsFor(target), '--name-only'], { allowFail: true });
-  const short = await runGit(cwd, [...diffArgsFor(target), '--shortstat'], { allowFail: true });
+  const nameOnly = await runGit(cwd, [...diffArgsFor(target, mergeBaseRef), '--name-only'], { allowFail: true });
+  const short = await runGit(cwd, [...diffArgsFor(target, mergeBaseRef), '--shortstat'], { allowFail: true });
   return {
     diff,
     truncated,

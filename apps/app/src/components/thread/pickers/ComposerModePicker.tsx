@@ -1,23 +1,14 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, Columns2, Flag } from 'lucide-react';
+import { Check, ChevronDown } from 'lucide-react';
 import { placePopoverMenu, useExclusivePopover } from '../../ui/PopoverPicklist.js';
+import { ComposerModeIcon } from './composer-mode-icon.js';
 import {
   COMPOSER_MODE_LABELS,
   type ComposerWorkMode
 } from './composer-mode.js';
 
 const MENU_MIN_WIDTH = 180;
-
-function ModeIcon({ mode }: { mode: ComposerWorkMode }): ReactNode {
-  if (mode === 'agent') {
-    return <span className="composer-mode-picker-infinity" aria-hidden="true">∞</span>;
-  }
-  if (mode === 'plan') {
-    return <Columns2 size={14} aria-hidden="true" />;
-  }
-  return <Flag size={14} aria-hidden="true" />;
-}
 
 export function ComposerModePicker({
   value,
@@ -77,7 +68,7 @@ export function ComposerModePicker({
       data-testid="composer-mode-picker-trigger"
       onClick={() => setOpen((current) => !current)}
     >
-      <ModeIcon mode={value} />
+      <ComposerModeIcon mode={value} />
       <span className="composer-mode-picker-label">{selectedLabel}</span>
       {disabled ? null : <ChevronDown size={14} aria-hidden="true" />}
     </button>
@@ -112,7 +103,7 @@ export function ComposerModePicker({
                 }}
               >
                 <span className="composer-mode-picker-row-label">
-                  <ModeIcon mode={mode} />
+                  <ComposerModeIcon mode={mode} />
                   {COMPOSER_MODE_LABELS[mode]}
                 </span>
                 {selected ? <Check size={14} aria-hidden="true" /> : null}

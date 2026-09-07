@@ -53,8 +53,21 @@ describe('expansion latch', () => {
       </ExpandableTimelineRow>
     );
     expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('lucide-chevron-down');
+    expect(html).not.toContain('lucide-chevron-right');
     expect(html).toContain('out');
     expect(html).not.toContain('<details');
+  });
+
+  it('points the work chevron right when the row is collapsed', () => {
+    const html = renderToStaticMarkup(
+      <ExpandableTimelineRow summary="Ran ls" expandable>
+        <pre>out</pre>
+      </ExpandableTimelineRow>
+    );
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('lucide-chevron-right');
+    expect(html).not.toContain('lucide-chevron-down');
   });
 });
 
@@ -130,5 +143,68 @@ describe('timeline detail scroll', () => {
     expect(renderToStaticMarkup(
       <TimelineDetailScroll size="base" contentKey="k">body</TimelineDetailScroll>
     )).toContain('is-base');
+  });
+
+  it('keeps pending command and tool rows collapsed', () => {
+    const pending: TimelineViewWorkRow = {
+      ...base,
+      id: 'c1',
+      kind: 'work',
+      workKind: 'command',
+      status: 'pending',
+      callId: 'c1',
+      command: 'ls',
+      cwd: null,
+      source: null,
+      output: 'running',
+      exitCode: null,
+      completedAt: null,
+      approvalStatus: null,
+      activityIntents: []
+    };
+    const html = renderToStaticMarkup(
+      <TimelineRows
+        rows={[pending]}
+        now={0}
+        expansion={expansion}
+      />
+    );
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('hidden');
+  });
+
+  it('keeps Running N tools bundle summaries collapsed until clicked', () => {
+    const child: TimelineViewWorkRow = {
+      ...base,
+      id: 'c1',
+      kind: 'work',
+      workKind: 'command',
+      status: 'pending',
+      callId: 'c1',
+      command: 'ls',
+      cwd: null,
+      source: null,
+      output: 'running',
+      exitCode: null,
+      completedAt: null,
+      approvalStatus: null,
+      activityIntents: []
+    };
+    const bundle: ThreadTimelineViewRow = {
+      ...base,
+      id: 'bundle',
+      kind: 'bundle-summary',
+      status: 'pending',
+      children: [child]
+    };
+    const html = renderToStaticMarkup(
+      <TimelineRows
+        rows={[bundle]}
+        now={0}
+        expansion={expansion}
+      />
+    );
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('hidden');
   });
 });

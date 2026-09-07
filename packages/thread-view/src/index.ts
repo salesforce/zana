@@ -24,7 +24,9 @@ export type { TimelineWorkRowGlyph } from "./timeline-work-row-glyph.js";
 export {
   hasTimelineExplorationIntent,
   primaryTimelineActivityIntent,
+  timelineRowActivityIntents,
 } from "./timeline-activity-intents.js";
+export type { TimelineExplorationWorkRow } from "./timeline-activity-intents.js";
 export {
   capitalize,
   durationToCompactString,
@@ -81,4 +83,5 @@ export type {
   TimelineViewWorkRow,
 } from "./timeline-view.js";
 export { compactThreadTimelineSummaryEvents } from "./summary-event-compaction.js";
+export { parseCompactionLifecycleEvent } from "./compaction-lifecycle.js";
 export type { ThreadEventWithMeta } from "./group-event-projection-turns.js";

@@ -23,15 +23,56 @@ export type CliAgentModelOption = { id: string; label: string };
  * Claude/Codex/Cursor/OpenCode keep their trusted PTY adapter catalogs.
  * Pi's adapter catalog is empty, so the CLI Agent picker uses the live
  * thread model list (`provider.list_models`) instead of "No models available".
+ * When `preferCatalog` is set (remote host catalog experiment), the live
+ * host list wins once it has loaded — including an empty list.
  */
 export function cliAgentModelOptions(input: {
   adapterModels: ReadonlyArray<{ id: string; label: string }>;
   catalogModels: ReadonlyArray<{ model: string; displayName: string }>;
+  preferCatalog?: boolean;
+  catalogReady?: boolean;
 }): CliAgentModelOption[] {
+  if (input.preferCatalog && (input.catalogReady || input.catalogModels.length > 0)) {
+    return input.catalogModels.map((row) => ({ id: row.model, label: row.displayName }));
+  }
   if (input.adapterModels.length > 0) {
     return input.adapterModels.map((row) => ({ id: row.id, label: row.label }));
   }
   return input.catalogModels.map((row) => ({ id: row.model, label: row.displayName }));
+}
+
+export function cliAgentMoreModelOptions(input: {
+  adapterModelCount: number;
+  catalogMoreModels: ReadonlyArray<{ model: string; displayName: string }>;
+  preferCatalog: boolean;
+}): Array<{ value: string; label: string }> {
+  if (!input.preferCatalog && input.adapterModelCount > 0) return [];
+  return input.catalogMoreModels.map((row) => ({
+    value: row.model,
+    label: row.displayName
+  }));
+}
+
+/** PTY-capable providers from the host execution-options roster. */
+export function cliAgentCatalogProviders<T extends { id: string; displayName: string }>(
+  catalogProviders: readonly T[]
+): Array<{ id: string; displayName: string; permissionModes: string[]; composerActions: string[] }> {
+  return catalogProviders.flatMap((row) =>
+    familyForThreadProviderId(row.id)
+      ? [{ id: row.id, displayName: row.displayName, permissionModes: [], composerActions: [] }]
+      : []
+  );
+}
+
+export function cliAgentFamilyIdsFromCatalog(
+  catalogProviders: readonly { id: string }[]
+): string[] {
+  const ids: string[] = [];
+  for (const row of catalogProviders) {
+    const family = familyForThreadProviderId(row.id);
+    if (family) ids.push(family);
+  }
+  return ids;
 }
 
 export function threadProviderIdForFamily(family: string): string | null {

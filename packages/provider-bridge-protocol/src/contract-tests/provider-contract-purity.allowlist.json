@@ -1,0 +1,13 @@
+{
+  "$comment": "Guardrail G2 (provider-contract-purity.test.ts). Every key on the provider-agnostic contract that still names a provider (codex, claude, pi, acp, cursor). ZCC KEEP: Claude Code execution-option keys stay until a provider-agnostic replacement lands; do not add new provider-named keys without a removal plan.",
+  "entries": [
+    {
+      "path": "runtimeThreadExecutionOptionsSchema.claudeCodeMockCliTraffic",
+      "removedBy": "ZCC KEEP — Claude Code mock-traffic option; replace with a provider-agnostic execution option before deleting."
+    },
+    {
+      "path": "runtimeThreadExecutionOptionsSchema.claudeCodePermissionMode",
+      "removedBy": "ZCC KEEP — Claude Code permission-mode option; BB replaced this with promptMode, ZCC still carries the Claude-specific field."
+    }
+  ]
+}

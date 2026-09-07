@@ -24,7 +24,10 @@ export function decorationText(decoration: TimelineTitleDecoration, now: number)
     }
     return parts.join(', ') || null;
   }
-  if (decoration.kind === 'diff-stats') return `+${decoration.added} −${decoration.removed}`;
+  if (decoration.kind === 'diff-stats') {
+    if (decoration.added === 0 && decoration.removed === 0) return null;
+    return `+${decoration.added} −${decoration.removed}`;
+  }
   return null;
 }
 
@@ -73,6 +76,7 @@ export function pastRowDimClassName(args: {
   if (row.kind === 'work' && (row.status === 'error' || row.status === 'interrupted' || row.status === 'pending')) {
     return false;
   }
+  if (row.kind === 'turn' && row.status === 'interrupted') return false;
   if (row.kind === 'system' && (row.status === 'error' || row.status === 'pending')) return false;
   return isPastWorkRow(row);
 }

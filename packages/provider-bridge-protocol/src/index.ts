@@ -20,3 +20,4 @@ export * from "./bridge-requests.js";
 export * from "./errors.js";
 export * from "./thread-event-grammar.js";
 export * from "./thread-delta.js";
+export * from "./provider-maintenance.js";

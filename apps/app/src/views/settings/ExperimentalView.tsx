@@ -41,6 +41,12 @@ export function ExperimentalView({
           checked={config.feedNoiseClassifierEnabled ?? false}
           onChange={(v) => onUpdate({ feedNoiseClassifierEnabled: v })}
         />
+        <CheckboxField
+          label="CLI Agent host catalog"
+          help="On a remote project, the CLI Agent picker asks that machine which CLIs and models are installed (same execution-options path Modern uses). Off ⇒ today’s local install list."
+          checked={config.cliRemoteHostCatalogEnabled ?? false}
+          onChange={(v) => onUpdate({ cliRemoteHostCatalogEnabled: v })}
+        />
       </Section>
 
       <Section

@@ -3,7 +3,10 @@ import {
   absolutePathMentions,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
+  cliAgentCatalogProviders,
+  cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
+  cliAgentMoreModelOptions,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
   resolveCliAgentFamily,
@@ -119,6 +122,68 @@ describe('cliAgentModelOptions', () => {
       { id: 'openai/gpt-5.2', label: 'GPT-5.2' },
       { id: 'anthropic/claude-opus-4-8', label: 'Opus 4.8' }
     ]);
+  });
+
+  it('prefers the host catalog once it is ready, including an empty list', () => {
+    expect(cliAgentModelOptions({
+      adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
+      catalogModels: [{ model: 'claude-sonnet-5', displayName: 'Sonnet 5' }],
+      preferCatalog: true,
+      catalogReady: true
+    })).toEqual([{ id: 'claude-sonnet-5', label: 'Sonnet 5' }]);
+    expect(cliAgentModelOptions({
+      adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
+      catalogModels: [],
+      preferCatalog: true,
+      catalogReady: true
+    })).toEqual([]);
+  });
+
+  it('keeps the adapter catalog as a placeholder until the host list loads', () => {
+    expect(cliAgentModelOptions({
+      adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
+      catalogModels: [],
+      preferCatalog: true,
+      catalogReady: false
+    })).toEqual([{ id: 'sonnet', label: 'Sonnet (latest)' }]);
+  });
+});
+
+describe('cliAgentMoreModelOptions', () => {
+  it('hides more-models when the adapter catalog is the source of truth', () => {
+    expect(cliAgentMoreModelOptions({
+      adapterModelCount: 2,
+      catalogMoreModels: [{ model: 'opus', displayName: 'Opus' }],
+      preferCatalog: false
+    })).toEqual([]);
+  });
+
+  it('surfaces host more-models when preferring the live catalog', () => {
+    expect(cliAgentMoreModelOptions({
+      adapterModelCount: 2,
+      catalogMoreModels: [{ model: 'opus', displayName: 'Opus' }],
+      preferCatalog: true
+    })).toEqual([{ value: 'opus', label: 'Opus' }]);
+  });
+});
+
+describe('cliAgentCatalogProviders', () => {
+  it('keeps only PTY-mapped host providers and drops thread-only ids', () => {
+    expect(cliAgentCatalogProviders([
+      { id: 'claude-code', displayName: 'Claude Code' },
+      { id: 'codex', displayName: 'Codex' },
+      { id: 'fake', displayName: 'Fake' },
+      { id: 'acp-opencode', displayName: 'OpenCode' }
+    ])).toEqual([
+      { id: 'claude-code', displayName: 'Claude Code', permissionModes: [], composerActions: [] },
+      { id: 'codex', displayName: 'Codex', permissionModes: [], composerActions: [] },
+      { id: 'acp-opencode', displayName: 'OpenCode', permissionModes: [], composerActions: [] }
+    ]);
+    expect(cliAgentFamilyIdsFromCatalog([
+      { id: 'claude-code' },
+      { id: 'fake' },
+      { id: 'pi' }
+    ])).toEqual(['claude', 'pi']);
   });
 });
 

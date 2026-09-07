@@ -1,8 +1,8 @@
 # Zana
 
 <p align="center">
-  <a href="https://zcc-7808c5bc8f3d.herokuapp.com/">
-    <img alt="Website and docs" src="https://img.shields.io/badge/Website-zcc--7808c5bc8f3d.herokuapp.com-2f81f7?style=for-the-badge">
+  <a href="https://zana-ide.com/">
+    <img alt="Website and docs" src="https://img.shields.io/badge/Website-zana--ide.com-2f81f7?style=for-the-badge">
   </a>
   <a href="https://github.com/salesforce/zana/releases/latest">
     <img alt="Download the latest Zana release" src="https://img.shields.io/badge/Download-Latest_Release-2ea44f?style=for-the-badge">
@@ -27,7 +27,7 @@ ways to operate the same workspace.
 > supported coding-agent CLI on your `PATH`.
 
 <p align="center">
-  <a href="https://zcc-7808c5bc8f3d.herokuapp.com/">
+  <a href="https://zana-ide.com/">
     <img alt="Zana Command Center product tour — New Chat, Agents board, and Thread" src="docs/assets/product-demo.gif" width="100%">
   </a>
 </p>
@@ -38,7 +38,7 @@ ways to operate the same workspace.
 
 Docs, download, plugin marketplace, and pairing live on the public site:
 
-**[https://zcc-7808c5bc8f3d.herokuapp.com/](https://zcc-7808c5bc8f3d.herokuapp.com/)**
+**[https://zana-ide.com/](https://zana-ide.com/)**
 
 ### Download the desktop app
 
@@ -175,7 +175,7 @@ environments it already uses.
 
 ## Further Reading
 
-- [Public website](https://zcc-7808c5bc8f3d.herokuapp.com/) — docs, download, marketplace.
+- [Public website](https://zana-ide.com/) — docs, download, marketplace.
 - [Getting started](docs/getting-started.md) for the first project-to-agent loop.
 - [Using Zana](docs/using-zana.md) for the day-to-day Inbox, Agents, Teams, and Scheduler workflows.
 - [Plugin authoring](docs/extensions-authoring.md) for `package.json` `zcc`, `definePluginApp`, and `ZccPluginApi`.

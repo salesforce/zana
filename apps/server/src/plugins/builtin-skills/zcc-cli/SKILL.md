@@ -196,6 +196,9 @@ zcc plugin list|dev|reload|logs|run …
 zcc marketplace ls|add|refresh|remove|install
 ```
 
+`plugin reload` and `plugin dev` use product HTTP (`ZCC_SERVER_URL`,
+`POST /api/v1/plugin-apps/:id/reload`) and do not need the control socket.
+
 Core command names always win over a plugin verb. `zcc <name>` and
 `zcc plugin run <id>` are equivalent for a contributed command.
 

@@ -13,9 +13,15 @@ import {
 import { sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../lib/suppress-post-drag-click.js';
-import { normalizeSidebarNavOrder, reorderSidebarNavItems, PROJECTS_SECTION_SORT_ID } from './sidebarNavOrder.js';
+import {
+  normalizeSidebarNavOrder,
+  reorderSidebarNavItems,
+  PROJECTS_SECTION_SORT_ID,
+  PROJECT_SESSIONS_SECTION_SORT_ID,
+  TRAILING_PROJECT_NAV_IDS
+} from './sidebarNavOrder.js';
 
-export { PROJECTS_SECTION_SORT_ID };
+export { PROJECTS_SECTION_SORT_ID, PROJECT_SESSIONS_SECTION_SORT_ID, TRAILING_PROJECT_NAV_IDS };
 /** @deprecated Use {@link PROJECTS_SECTION_SORT_ID}. */
 export const WORKSPACES_SECTION_SORT_ID = PROJECTS_SECTION_SORT_ID;
 export const GLOBAL_NAV_ORDER_KEY = 'zcc.sidebarNavOrder';
@@ -101,7 +107,8 @@ function readStoredNavOrder(key: string): unknown {
 export function useSortableSidebarNav(
   storageKey: string,
   availableIds: readonly string[],
-  pinnedIds: readonly string[]
+  pinnedIds: readonly string[],
+  trailingIds: readonly string[] = []
 ) {
   const [storedNavOrder, setStoredNavOrder] = useState(() => readStoredNavOrder(storageKey));
   const suppressNavClickRef = useRef(false);
@@ -123,10 +130,12 @@ export function useSortableSidebarNav(
     return () => window.removeEventListener('storage', onStorage);
   }, [storageKey]);
 
-  const orderedNavIds = normalizeSidebarNavOrder(storedNavOrder, availableIds, pinnedIds);
+  const orderedNavIds = normalizeSidebarNavOrder(storedNavOrder, availableIds, pinnedIds, trailingIds);
   const pinnedSet = new Set(pinnedIds);
+  const trailingSet = new Set(trailingIds);
   const pinnedNavIds = orderedNavIds.filter((id) => pinnedSet.has(id));
-  const sortableNavIds = orderedNavIds.filter((id) => !pinnedSet.has(id));
+  const sortableNavIds = orderedNavIds.filter((id) => !pinnedSet.has(id) && !trailingSet.has(id));
+  const trailingNavIds = orderedNavIds.filter((id) => trailingSet.has(id));
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     // pointerup is followed by a click on the source/destination <Link>.
@@ -141,7 +150,8 @@ export function useSortableSidebarNav(
       orderedNavIds,
       String(active.id),
       String(over.id),
-      pinnedIds
+      pinnedIds,
+      trailingIds
     );
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(storageKey, JSON.stringify(next));
@@ -169,6 +179,7 @@ export function useSortableSidebarNav(
   return {
     pinnedNavIds,
     sortableNavIds,
+    trailingNavIds,
     sensors,
     collisionDetection: navCollisionDetection,
     onDragStart,

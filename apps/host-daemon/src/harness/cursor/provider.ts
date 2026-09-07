@@ -37,8 +37,9 @@ import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.j
 import { BaseLaunchProvider } from '../base-provider.js';
 import type { HarnessModelTarget, ModelLevel } from "@zana-ai/zcc-domain/harness-adapter";
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
+import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 
-const CURSOR_EVIDENCE_VERSION = '2026.01.23';
+export const CURSOR_EVIDENCE_VERSION = '2026.01.23';
 const cursorEvidence = (id: string, observed: string) => ({
   id, versionRange: CURSOR_EVIDENCE_VERSION, scope: 'local' as const,
   probe: 'cursor-agent --version plus provider contract suite', observed, reviewedAt: '2026-08-04'
@@ -65,6 +66,7 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
+        { id: 'auto', label: 'Auto', provider: 'cursor', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
         { id: 'cursor-grok-4.6-high', label: 'Cursor Grok 4.6', provider: 'cursor', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
         { id: 'cursor-grok-4.5-high', label: 'Cursor Grok 4.5', provider: 'cursor', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
         { id: 'claude-opus-5-high', label: 'Opus 5 High', provider: 'anthropic', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
@@ -108,7 +110,7 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
   status: { mode: 'output-activity' },
   evidence: [
     cursorEvidence('cursor.facet.opening-prompt', 'CLI accepts opening prompt as spawn argument.'),
-    ...['cursor-grok-4.6-high', 'cursor-grok-4.5-high', 'claude-opus-5-high', 'gpt-5.6-sol-medium', 'claude-sonnet-5-high',
+    ...['auto', 'cursor-grok-4.6-high', 'cursor-grok-4.5-high', 'claude-opus-5-high', 'gpt-5.6-sol-medium', 'claude-sonnet-5-high',
       'gpt-5.6-terra-medium', 'claude-4.5-opus-high', 'claude-4.5-sonnet']
       .map((id) => cursorEvidence(id, 'Cursor model catalog and --model contribution verified.'))
   ]
@@ -125,10 +127,19 @@ export class CursorProvider extends BaseLaunchProvider {
 
   get adapter(): TrustedHarnessAdapter {
     if (!this.discoveredModels.length) return CURSOR_ADAPTER;
-    const models = this.discoveredModels;
+    const { models, evidence } = overlayDiscoveredModels(
+      this.discoveredModels,
+      CURSOR_ADAPTER.evidence,
+      CURSOR_EVIDENCE_VERSION,
+      (id, scope) => ({
+        ...cursorEvidence(id, 'Live cursor-agent --list-models catalog and --model contribution verified.'),
+        scope
+      })
+    );
     const defaultModel = models[0]?.id;
     return {
       ...CURSOR_ADAPTER,
+      evidence,
       descriptor: {
         ...CURSOR_ADAPTER.descriptor,
         targets: {
@@ -150,6 +161,10 @@ export class CursorProvider extends BaseLaunchProvider {
   }
 
   modelContribution(targetId: string, level?: ModelLevel) {
+    // ACP already refuses to forward Auto sentinels (`auto` / `default`) because
+    // cursor-agent rejects them. Same for CLI `--model`: omit and keep the
+    // agent's own pin rather than crash the TUI.
+    if (targetId === 'auto' || targetId === 'default') return {};
     return { args: ['--model', targetId] };
   }
 

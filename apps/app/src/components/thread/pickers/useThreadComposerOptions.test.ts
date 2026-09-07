@@ -4,11 +4,16 @@ import { readFileSync } from 'node:fs';
 describe('useThreadComposerOptions', () => {
   it('reads the session model catalog, reconciles hardness, and only falls back provider on a new thread', () => {
     const source = readFileSync(new URL('./useThreadComposerOptions.ts', import.meta.url), 'utf8');
-    expect(source).toContain('prefetchThreadModelCatalog');
+    expect(source).toContain('hostId?: string');
+    expect(source).toContain('void setThreadModelCatalogHost(input.hostId)');
+    expect(source).toContain('setThreadModelCatalogHost');
     expect(source).toContain('ensureThreadProviderModels');
+    expect(source).toContain('if (cached) return');
+    expect(source).toContain('[providerId, cached]');
+    expect(source).toContain('catalog.inflight.has(providerId)');
     expect(source).toContain('getThreadModelCatalog');
     expect(source).toContain('reconcileReasoningLevel');
-    expect(source).toContain('if (input.threadId || input.lockedProviderId) return');
+    expect(source).toContain('if (catalog.providers.length === 0) return');
     expect(source).toContain('rememberComposerSelection');
     expect(source).toContain('rememberedProviderId');
     expect(source).toContain('rememberedSelectionFor');
@@ -41,6 +46,9 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('selected: acpMode');
     expect(source).toContain('options: acpModeOptions');
     expect(source).toContain('if (next !== undefined && next !== acpMode) setAcpMode(next)');
+    expect(source).toContain('initialAcpMode');
+    expect(source).toContain('requestedValid');
+    expect(source).toContain('appliedRequestedAcpModeRef');
     expect(source).toContain('reloadThreadProviderModels(providerId)');
     expect(source).toContain('refreshAcpModeOptions');
   });

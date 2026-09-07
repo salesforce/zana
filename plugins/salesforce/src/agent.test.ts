@@ -72,8 +72,21 @@ describe('sf_agent parse and inspect', () => {
     expect(parseAgentInput({ action: 'lifecycle.activate' }).ok).toBe(false);
     expect(parseAgentInput({ action: 'compile', apiName: 'MyBot' }).ok).toBe(true);
     expect(parseAgentInput({ action: 'inspect' }).ok).toBe(true);
+    expect(parseAgentInput({ action: 'diagnose' }).ok).toBe(false);
+    expect(parseAgentInput({ action: 'diagnose', apiName: 'MyBot' })).toMatchObject({
+      ok: true,
+      plan: { query: 'diagnostics' }
+    });
+    expect(parseAgentInput({ action: 'diagnose', path: 'force-app/MyBot.agent', query: 'hover' }).ok).toBe(false);
+    expect(
+      parseAgentInput({ action: 'diagnose', path: 'force-app/MyBot.agent', query: 'hover', line: 1, column: 0 })
+    ).toMatchObject({ ok: true, plan: { query: 'hover', line: 1, column: 0 } });
+    expect(parseAgentInput({ action: 'diagnose', apiName: 'MyBot', query: 'nope' }).ok).toBe(false);
     expect(parseAgentInput({ action: 'lifecycle.list' }).ok).toBe(true);
-    expect(parseAgentInput({ action: 'preview.start', path: 'force-app/MyBot.agent' }).ok).toBe(true);
+    expect(parseAgentInput({ action: 'preview.start', path: 'force-app/MyBot.agent', live: true })).toMatchObject({
+      ok: true,
+      plan: { live: true }
+    });
     expect(parseAgentInput({ action: 'eval.run', specPath: 'evals/spec.json' }).ok).toBe(true);
     expect(parseAgentInput({ action: 'eval.run', aiEvaluationDefinitionName: 'My_Eval' }).ok).toBe(true);
     expect(parseAgentInput({ action: 'preview.start', apiName: 'Published', published: true })).toMatchObject({
@@ -95,7 +108,7 @@ describe('sf_agent parse and inspect', () => {
     expect(findAgentBundle(bundles)).toBeNull();
     expect(diagnoseAgentBundle(findAgentBundle(bundles, 'MyBot')!)).toEqual([]);
     expect(diagnoseAgentBundle(findAgentBundle(bundles, 'Empty')!)).toEqual(
-      expect.arrayContaining(['Missing config block.', 'Missing start_agent or orchestrator entry.', 'Agent Script file looks empty.'])
+      expect.arrayContaining(['Missing config block.', 'Missing start_agent or orchestrator entry.', 'Agentforce file looks empty.'])
     );
   });
 
@@ -216,7 +229,7 @@ describe('sf_agent compile probes and CLI parsing', () => {
       plan: { versionNumber: 3 }
     });
     expect(
-      previewArgs('start', {}, 'dev', { flag: 'authoring-bundle', apiName: 'MyBot' })
+      previewArgs('start', { live: false }, 'dev', { flag: 'authoring-bundle', apiName: 'MyBot' })
     ).toEqual([
       'agent',
       'preview',
@@ -228,7 +241,20 @@ describe('sf_agent compile probes and CLI parsing', () => {
       'MyBot',
       '--simulate-actions'
     ]);
-    expect(previewArgs('start', {}, 'dev', { flag: 'api-name', apiName: 'PublishedBot' })).toEqual([
+    expect(
+      previewArgs('start', { live: true }, 'dev', { flag: 'authoring-bundle', apiName: 'MyBot' })
+    ).toEqual([
+      'agent',
+      'preview',
+      'start',
+      '--json',
+      '--target-org',
+      'dev',
+      '--authoring-bundle',
+      'MyBot',
+      '--use-live-actions'
+    ]);
+    expect(previewArgs('start', { live: false }, 'dev', { flag: 'api-name', apiName: 'PublishedBot' })).toEqual([
       'agent',
       'preview',
       'start',
@@ -238,7 +264,7 @@ describe('sf_agent compile probes and CLI parsing', () => {
       '--api-name',
       'PublishedBot'
     ]);
-    expect(previewArgs('start', {}, 'dev', { flag: 'api-name', apiName: 'PublishedBot' })).not.toContain(
+    expect(previewArgs('start', { live: false }, 'dev', { flag: 'api-name', apiName: 'PublishedBot' })).not.toContain(
       '--simulate-actions'
     );
     expect(runEvalArgs('/proj/evals/spec.yaml', 'dev')).toEqual([

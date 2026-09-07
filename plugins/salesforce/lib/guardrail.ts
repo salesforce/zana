@@ -54,7 +54,12 @@ export class Guardrail {
 }
 
 export function reusesSession(kind: EnvelopeKind): boolean {
-  return kind !== 'agent.publish' && kind !== 'agent.activate';
+  return (
+    kind !== 'agent.publish' &&
+    kind !== 'agent.activate' &&
+    kind !== 'agent.preview.live' &&
+    kind !== 'org.write'
+  );
 }
 
 export function orgReadEnvelope(kind: OrgKind): EnvelopeKind | undefined {
@@ -75,6 +80,8 @@ export function envelopeTitle(kind: EnvelopeKind): string {
       return 'Confirm production org access';
     case 'org.unknown.read':
       return 'Confirm unknown org access';
+    case 'org.write':
+      return 'Confirm Salesforce write';
     case 'apex.anonymous':
       return 'Confirm anonymous Apex';
     case 'soql.unbounded':
@@ -82,9 +89,11 @@ export function envelopeTitle(kind: EnvelopeKind): string {
     case 'soql.export':
       return 'Confirm SOQL export';
     case 'agent.publish':
-      return 'Confirm Agent Script publish';
+      return 'Confirm Agentforce publish';
     case 'agent.activate':
-      return 'Confirm Agent Script activate';
+      return 'Confirm Agentforce activate';
+    case 'agent.preview.live':
+      return 'Confirm Agentforce live preview';
     default:
       return 'Confirm Salesforce action';
   }

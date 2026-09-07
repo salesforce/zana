@@ -1,6 +1,4 @@
-import {
-  type AvailableModel,
-} from "@zana-ai/zcc-plugin-sdk/provider-bridge";
+import { type AvailableModel } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { buildClaudeCodeModels } from "../model-list.js";
 import { translateMissingClaudeCliError } from "./missing-cli-error.js";
@@ -25,11 +23,6 @@ export async function listClaudeCodeBridgeModels(
   models: AvailableModel[];
   selectedOnlyModels: AvailableModel[];
 }> {
-  // Claude's initialization response is account-scoped and is the provider's
-  // authoritative list of runnable models. Keep BB's curated labels and
-  // reasoning policy, but only expose entries covered by a discovered value or
-  // its canonical resolved model id. Probe failures intentionally propagate so
-  // callers can distinguish temporary discovery failure from definite absence.
   let session: ReturnType<typeof query>;
   try {
     session = query({
@@ -48,4 +41,43 @@ export async function listClaudeCodeBridgeModels(
   } finally {
     session.close();
   }
+}
+
+interface ClaudeCodeBridgeModelListMemoOptions {
+  list?: () => ReturnType<typeof listClaudeCodeBridgeModels>;
+  now?: () => number;
+  ttlMs: number;
+}
+
+export function createClaudeCodeBridgeModelListMemo({
+  list = listClaudeCodeBridgeModels,
+  now = Date.now,
+  ttlMs,
+}: ClaudeCodeBridgeModelListMemoOptions): () => ReturnType<
+  typeof listClaudeCodeBridgeModels
+> {
+  type Catalog = Awaited<ReturnType<typeof listClaudeCodeBridgeModels>>;
+  let settled: { catalog: Catalog; expiresAt: number } | null = null;
+  let pending: Promise<Catalog> | null = null;
+  return () => {
+    if (settled !== null && settled.expiresAt > now()) {
+      return Promise.resolve(settled.catalog);
+    }
+    settled = null;
+    if (pending !== null) {
+      return pending;
+    }
+    const probe = list()
+      .then((catalog) => {
+        settled = { catalog, expiresAt: now() + ttlMs };
+        return catalog;
+      })
+      .finally(() => {
+        if (pending === probe) {
+          pending = null;
+        }
+      });
+    pending = probe;
+    return probe;
+  };
 }

@@ -1,0 +1,20 @@
+{
+  "name": "@zcc-ext/pdf-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Preview PDF files in the thread side panel with the built-in viewer.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "PDF preview",
+    "description": "Preview PDF files in the thread side panel with the built-in viewer.",
+    "branding": {
+      "icon": "FileText"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

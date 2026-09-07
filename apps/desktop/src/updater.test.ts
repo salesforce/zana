@@ -78,7 +78,10 @@ describe('friendlyUpdateError', () => {
   });
 });
 
-function makeUpdater(skipped?: string, opts?: { allowSimulation?: boolean }) {
+function makeUpdater(
+  skipped?: string,
+  opts?: { allowSimulation?: boolean; prepareQuitForUpdate?: () => void }
+) {
   const sent: Array<{ channel: string; args: unknown[] }> = [];
   let skippedVersion = skipped;
   const updater = createUpdater({
@@ -88,7 +91,8 @@ function makeUpdater(skipped?: string, opts?: { allowSimulation?: boolean }) {
     setSkippedVersion: (v) => {
       skippedVersion = v;
     },
-    allowSimulation: opts?.allowSimulation
+    allowSimulation: opts?.allowSimulation,
+    prepareQuitForUpdate: opts?.prepareQuitForUpdate
   });
   const statuses = () =>
     sent.filter((s) => s.channel === IPC.updates.onStatus).map((s) => s.args[0] as { kind: string; version?: string });
@@ -217,10 +221,12 @@ describe('createUpdater (notify-only)', () => {
   });
 
   it('download({installNow:true}) relaunches as soon as the artifact is staged', async () => {
-    const { updater } = makeUpdater();
+    const prepareQuitForUpdate = vi.fn();
+    const { updater } = makeUpdater(undefined, { prepareQuitForUpdate });
     await updater.downloadUpdate({ installNow: true });
     expect(stub.autoUpdater.downloadUpdate).toHaveBeenCalledOnce();
     stub.autoUpdater.emit('update-downloaded', { version: '1.2.3' });
+    expect(prepareQuitForUpdate).toHaveBeenCalledOnce();
     expect(stub.autoUpdater.quitAndInstall).toHaveBeenCalledOnce();
   });
 
@@ -242,11 +248,14 @@ describe('createUpdater (notify-only)', () => {
   });
 
   it('quitAndInstall is a no-op until an artifact is staged', () => {
-    const { updater } = makeUpdater();
+    const prepareQuitForUpdate = vi.fn();
+    const { updater } = makeUpdater(undefined, { prepareQuitForUpdate });
     updater.quitAndInstall(); // nothing downloaded yet
     expect(stub.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    expect(prepareQuitForUpdate).not.toHaveBeenCalled();
     stub.autoUpdater.emit('update-downloaded', { version: '1.2.3' });
     updater.quitAndInstall();
+    expect(prepareQuitForUpdate).toHaveBeenCalledOnce();
     expect(stub.autoUpdater.quitAndInstall).toHaveBeenCalledOnce();
   });
 
@@ -327,10 +336,12 @@ describe('updater.simulate (dev/QA affordance)', () => {
   });
 
   it('leaves nothing staged — a follow-on quitAndInstall stays a no-op', async () => {
-    const { updater } = makeUpdater(undefined, { allowSimulation: true });
+    const prepareQuitForUpdate = vi.fn();
+    const { updater } = makeUpdater(undefined, { allowSimulation: true, prepareQuitForUpdate });
     await updater.simulate('9.9.9');
     updater.quitAndInstall();
     expect(stub.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    expect(prepareQuitForUpdate).not.toHaveBeenCalled();
   });
 
   it('honors a skipped version (reports not-available, no fake flow)', async () => {

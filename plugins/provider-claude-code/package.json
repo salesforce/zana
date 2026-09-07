@@ -14,16 +14,17 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-plugin-sdk": "workspace:*",
     "@zana-ai/zcc-provider-bridge-protocol": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "react": "^19.0.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10",
-    "@zana-ai/zcc-domain": "workspace:*"
+    "vitest": "^4.1.10"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.197",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.245",
     "@zana-ai/zcc-plugin-sdk": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.3.6"

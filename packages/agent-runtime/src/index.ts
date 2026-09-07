@@ -1,8 +1,6 @@
 export { createAgentRuntime, AgentRuntimeRecoveryError } from "./runtime.js";
-export {
-  fingerprintAcpLaunchSpec,
-  bridgeLaunchProcessKey,
-} from "./acp-launch-spec-fingerprint.js";
+export { fingerprintAcpLaunchSpec } from "./acp-launch-spec-fingerprint.js";
+export { bridgeLaunchProcessKey } from "./bridge-launch-process-key.js";
 export {
   createProviderForId,
 } from "./provider-registry.js";
@@ -23,6 +21,7 @@ export type {
   AgentRuntimeSkillRoot,
   EnsureProviderArgs,
   ListModelsArgs,
+  ProviderHealthArgs,
   ReapedIdleProviderSession,
   ReapIdleProviderSessionsArgs,
   ReapIdleProviderSessionsResult,

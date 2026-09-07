@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
+import { joinServerUrl } from './server-url.js';
 
 export const SELF_UPDATE_INITIAL_RETRY_DELAY_MS = 5_000;
 export const SELF_UPDATE_MAX_RETRY_DELAY_MS = 5 * 60 * 1000;
@@ -38,7 +39,7 @@ export async function handleProtocolMismatch(options: {
     if (now - previous.attemptedAt < delay) return 'backoff';
   }
   const fetchFn = options.fetchFn ?? fetch;
-  const versionUrl = new URL('/install/version', options.serverUrl);
+  const versionUrl = joinServerUrl(options.serverUrl, '/install/version');
   const versionResponse = await fetchFn(versionUrl);
   if (!versionResponse.ok) return 'failed';
   const body = (await versionResponse.json()) as { protocolVersion?: number };
@@ -46,7 +47,7 @@ export async function handleProtocolMismatch(options: {
   if (typeof remote !== 'number' || remote <= HOST_RPC_PROTOCOL_VERSION) {
     return 'skipped';
   }
-  const tarballResponse = await fetchFn(new URL('/install/zcc-host.tgz', options.serverUrl));
+  const tarballResponse = await fetchFn(joinServerUrl(options.serverUrl, '/install/zcc-host.tgz'));
   if (!tarballResponse.ok) {
     persistAttempt(attemptFile, previous, now, remote);
     return 'failed';

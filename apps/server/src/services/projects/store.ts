@@ -273,11 +273,18 @@ const LEGACY_SCRATCH_DIR_NAME = 'cc-workspace';
 const LEGACY_DEFAULT_WORKSPACE_DISPLAY_NAME = 'Default Workspace';
 /** App-managed parent for isolated git worktrees. */
 export const WORKTREE_DIR_NAME = 'zcc-worktrees';
+/** Local working trees for SSH projects (`~/zcc-workspace/remotes/<tag>`). */
+export const REMOTES_DIR_NAME = 'remotes';
 
 /** Absolute path to the built-in scratch workspace (`~/zcc-workspace`). Shared
  *  by the Quick Agent anchor and the clone-root fallback so both agree. */
 export function scratchWorkspaceRoot(): string {
   return join(app.getPath('home'), SCRATCH_DIR_NAME);
+}
+
+/** Absolute path to the per-remote local folders (`~/zcc-workspace/remotes`). */
+export function remoteProjectsRoot(): string {
+  return join(scratchWorkspaceRoot(), REMOTES_DIR_NAME);
 }
 
 /** Absolute path to the app-managed isolated worktree root (`~/zcc-worktrees`). */
@@ -914,6 +921,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.feedNoiseClassifierEnabled === 'boolean') {
     normalized.feedNoiseClassifierEnabled = input.feedNoiseClassifierEnabled;
   }
+  if (typeof input.autoOpenThreadPlanPanel === 'boolean') {
+    normalized.autoOpenThreadPlanPanel = input.autoOpenThreadPlanPanel;
+  }
   if (typeof input.autoReportLinkEnabled === 'boolean') {
     normalized.autoReportLinkEnabled = input.autoReportLinkEnabled;
   }
@@ -965,6 +975,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.goalsEnabled === 'boolean') {
     normalized.goalsEnabled = input.goalsEnabled;
   }
+  if (typeof input.cliRemoteToolProxyEnabled === 'boolean') {
+    normalized.cliRemoteToolProxyEnabled = input.cliRemoteToolProxyEnabled;
+  }
+  if (typeof input.cliRemoteHostCatalogEnabled === 'boolean') {
+    normalized.cliRemoteHostCatalogEnabled = input.cliRemoteHostCatalogEnabled;
+  }
   if (typeof input.followUpsEnabled === 'boolean') {
     normalized.followUpsEnabled = input.followUpsEnabled;
   }
@@ -1015,6 +1031,13 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.steerActiveThreadOnEnter === 'boolean') {
     normalized.steerActiveThreadOnEnter = input.steerActiveThreadOnEnter;
+  }
+  if (
+    input.composerSendMode === 'auto'
+    || input.composerSendMode === 'steer'
+    || input.composerSendMode === 'queue-if-active'
+  ) {
+    normalized.composerSendMode = input.composerSendMode;
   }
   if (typeof input.showUnhandledProviderEvents === 'boolean') {
     normalized.showUnhandledProviderEvents = input.showUnhandledProviderEvents;
@@ -1142,9 +1165,73 @@ const configStore = createConfigStore(
   { normalizeConfig, projectConfigCompatibility, canonicalConfigForWrite, harnessEnabled }
 );
 
+function legacyRemotePlaceholderPath(id: string): string {
+  return join(dataDir, 'remote-projects', id);
+}
+
+function preferredRemoteLocalDir(project: Pick<Project, 'name' | 'tag' | 'remote'>): string {
+  const tag = project.tag?.trim() || slugifyTag(project.name || project.remote?.host || 'remote');
+  return join(remoteProjectsRoot(), tag);
+}
+
+function isLegacyRemotePlaceholder(project: Pick<Project, 'id' | 'path'>): boolean {
+  return project.path === legacyRemotePlaceholderPath(project.id);
+}
+
+function isAppOwnedRemoteLocalDir(project: Pick<Project, 'id' | 'path' | 'name' | 'tag' | 'remote'>): boolean {
+  return project.path === preferredRemoteLocalDir(project) || isLegacyRemotePlaceholder(project);
+}
+
+/** Mkdir (and migrate off `~/.zcc/remote-projects/<id>`) without throwing. */
+function ensureRemoteProjectLocalDirRecord(project: Project): Project {
+  if (!project.remote) return project;
+  try {
+    const anchor = scratchWorkspaceRoot();
+    mkdirSync(anchor, { recursive: true });
+    const preferred = preferredRemoteLocalDir(project);
+    const current = project.path;
+    const relocate = !current || isLegacyRemotePlaceholder(project);
+    const target = relocate ? preferred : current;
+    mkdirSync(remoteProjectsRoot(), { recursive: true });
+    if (relocate && current && current !== target && existsSync(current) && !existsSync(target)) {
+      renameSync(current, target);
+    } else if (!existsSync(target)) {
+      mkdirSync(target, { recursive: true });
+    }
+    if (target === preferred) trustDirInClaudeConfig(target);
+    if (current !== target) return { ...project, path: target };
+    return project;
+  } catch {
+    return project;
+  }
+}
+
 export const store = {
   listProjects(): Project[] {
-    return readProjectsFile().projects;
+    const projects = readProjectsFile().projects;
+    if (projects.some((project) => project.remote)) this.ensureScratchRoot();
+    let mutated = false;
+    const next = projects.map((project) => {
+      const healed = ensureRemoteProjectLocalDirRecord(project);
+      if (healed.path !== project.path) mutated = true;
+      return healed;
+    });
+    if (mutated) writeProjects(next);
+    return next;
+  },
+  /** Create or migrate the local working tree for an SSH project. Never throws. */
+  ensureRemoteProjectLocalDir(project: Project): Project {
+    if (!project.remote) return project;
+    this.ensureScratchRoot();
+    const healed = ensureRemoteProjectLocalDirRecord(project);
+    if (healed.path === project.path) return healed;
+    const projects = readProjectsFile().projects;
+    const idx = projects.findIndex((row) => row.id === project.id);
+    if (idx >= 0) {
+      projects[idx] = { ...projects[idx], path: healed.path };
+      writeProjects(projects);
+    }
+    return healed;
   },
   /**
    * One-time backfill: assign a palette color to every project that lacks one,
@@ -1168,10 +1255,10 @@ export const store = {
   },
   /**
    * Create a Project that points at a remote SSH host instead of a local
-   * folder. We still write a placeholder local path so existing
-   * path-touching call sites keep working — `~/.zcc/remote-projects/<id>`,
-   * created empty. Terminal spawns branch on `project.remote` and skip the
-   * local cwd entirely.
+   * folder. We still write a local working tree so plans, docs, and `.zcc`
+   * have somewhere to live — `~/zcc-workspace/remotes/<tag>`, created empty.
+   * Terminal spawns branch on `project.remote` (ssh -t) or CLI remote tools
+   * (local cwd, tools over SSH).
    */
   addRemoteProject(input: {
     host: string;
@@ -1202,7 +1289,8 @@ export const store = {
     const taken = new Set(projects.map((p) => p.tag).filter((t): t is string => !!t));
     const tag = pickTag(rawName, taken);
     const id = randomUUID();
-    const placeholder = join(dataDir, 'remote-projects', id);
+    this.ensureScratchRoot();
+    const placeholder = join(remoteProjectsRoot(), tag);
     const remote: ProjectRemote = { host };
     if (user) remote.user = user;
     if (remotePath) remote.remotePath = remotePath;
@@ -1223,6 +1311,7 @@ export const store = {
     projects.push(project);
     writeProjects(projects);
     if (!existsSync(placeholder)) mkdirSync(placeholder, { recursive: true });
+    trustDirInClaudeConfig(placeholder);
     return project;
   },
   addProject(path: string): Project {
@@ -1440,17 +1529,14 @@ export const store = {
         writeJson(projectSettingsFile, all);
       }
     }
-    // Clean up the remote-project placeholder dir we mkdir'd in addRemoteProject.
-    // We only nuke paths under our own data dir — never anything user-supplied.
-    if (removed?.remote) {
-      const placeholderRoot = join(dataDir, 'remote-projects');
-      const expected = join(placeholderRoot, id);
-      if (removed.path === expected && existsSync(expected)) {
-        try {
-          rmSync(expected, { recursive: true, force: true });
-        } catch {
-          /* best-effort cleanup */
-        }
+    // Clean up the app-owned local dir we mkdir'd for the remote project.
+    // Only nuke paths under ~/zcc-workspace/remotes or the legacy
+    // ~/.zcc/remote-projects/<id> — never a user-supplied folder.
+    if (removed?.remote && isAppOwnedRemoteLocalDir(removed) && existsSync(removed.path)) {
+      try {
+        rmSync(removed.path, { recursive: true, force: true });
+      } catch {
+        /* best-effort cleanup */
       }
     }
   },

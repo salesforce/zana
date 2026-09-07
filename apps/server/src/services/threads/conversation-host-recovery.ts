@@ -4,11 +4,12 @@ import {
   getEnvironment,
   listConversationThreadEventsWindow,
   listLiveConversationThreadsForHost,
-  updateConversationThreadStatus,
+  applyConversationThreadLifecycleEvent,
   type ConversationThreadEventRow,
   type ConversationThreadRow,
   type ZccDatabase
 } from '@zana-ai/zcc-db';
+import { settleDanglingBackgroundTasks } from './conversation-background-task-reconciliation.js';
 import {
   threadEventSchema,
   threadScope,
@@ -132,6 +133,7 @@ function emitRecoveredEvent(
 export interface InterruptLiveConversationThreadsForHostArgs {
   hostId: string;
   reason?: SystemThreadInterruptedReason;
+  threadIds?: readonly string[];
 }
 
 export function interruptLiveConversationThreadsForHost(
@@ -140,8 +142,14 @@ export function interruptLiveConversationThreadsForHost(
   args: InterruptLiveConversationThreadsForHostArgs
 ): ConversationThreadRow[] {
   const reason = args.reason ?? 'host-daemon-restarted';
-  const live = listLiveConversationThreadsForHost(db, args.hostId);
-  if (live.length === 0) return [];
+  const allowed = args.threadIds ? new Set(args.threadIds) : null;
+  const live = listLiveConversationThreadsForHost(db, args.hostId).filter((thread) => {
+    return allowed ? allowed.has(thread.id) : true;
+  });
+  if (live.length === 0) {
+    settleDanglingBackgroundTasks({ db, hub }, { hostId: args.hostId });
+    return [];
+  }
 
   const interrupted: ConversationThreadRow[] = [];
   const storedEvents: ConversationThreadEventRow[] = [];
@@ -176,8 +184,25 @@ export function interruptLiveConversationThreadsForHost(
         reason
       });
       if (stopped) storedEvents.push(stopped);
-      const next = updateConversationThreadStatus(db, thread.id, 'error')
-        ?? getConversationThread(db, thread.id);
+      if (reason === 'host-daemon-restarted') {
+        applyConversationThreadLifecycleEvent(db, {
+          threadId: thread.id,
+          event: { type: 'run.failed' }
+        });
+      } else {
+        const current = getConversationThread(db, thread.id) ?? thread;
+        if (current.status === 'active' || current.status === 'starting') {
+          applyConversationThreadLifecycleEvent(db, {
+            threadId: thread.id,
+            event: { type: 'stop.requested' }
+          });
+        }
+        applyConversationThreadLifecycleEvent(db, {
+          threadId: thread.id,
+          event: { type: 'stop.settled' }
+        });
+      }
+      const next = getConversationThread(db, thread.id);
       if (next) interrupted.push(next);
     }
   });
@@ -186,5 +211,55 @@ export function interruptLiveConversationThreadsForHost(
   for (const thread of interrupted) {
     hub.emit('threads:updated', threadListView(db, thread));
   }
+  settleDanglingBackgroundTasks({ db, hub }, { hostId: args.hostId });
   return interrupted;
 }
+
+/** After disconnect grace: active/starting become error; stopping settles idle. */
+export function healDisconnectedConversationThreadsForHost(
+  db: ZccDatabase,
+  hub: ProductHub,
+  hostId: string
+): ConversationThreadRow[] {
+  const live = listLiveConversationThreadsForHost(db, hostId);
+  const runningIds = live
+    .filter((thread) => thread.status === 'active' || thread.status === 'starting')
+    .map((thread) => thread.id);
+  const healed = runningIds.length > 0
+    ? interruptLiveConversationThreadsForHost(db, hub, {
+      hostId,
+      reason: 'host-daemon-restarted',
+      threadIds: runningIds
+    })
+    : [];
+  const settled: ConversationThreadRow[] = [];
+  for (const thread of live.filter((row) => row.status === 'stopping')) {
+    const storedEvents: ConversationThreadEventRow[] = [];
+    db.transaction(() => {
+      const openTurn = findOpenConversationTurn(db, thread.id);
+      if (openTurn) {
+        const completed = appendRecoveredEvent(db, thread.id, {
+          type: 'turn/completed',
+          threadId: thread.id,
+          scope: turnScope(openTurn.turnId),
+          providerThreadId: openTurn.providerThreadId,
+          status: 'interrupted'
+        });
+        if (completed) storedEvents.push(completed);
+      }
+      applyConversationThreadLifecycleEvent(db, {
+        threadId: thread.id,
+        event: { type: 'stop.settled' }
+      });
+    });
+    for (const stored of storedEvents) emitRecoveredEvent(hub, stored);
+    const next = getConversationThread(db, thread.id);
+    if (next) {
+      hub.emit('threads:updated', threadListView(db, next));
+      settled.push(next);
+    }
+  }
+  settleDanglingBackgroundTasks({ db, hub }, { hostId });
+  return [...healed, ...settled];
+}
+

@@ -54,6 +54,7 @@ import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/led
 import { finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
+import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
 import { createRestoreCapabilityStore } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/store';
@@ -590,13 +591,15 @@ function watchSkillsTarget(target: string): FSWatcher | null {
 
 function startSkillsWatchers() {
   const home = homedir();
+  const configHome = process.env.XDG_CONFIG_HOME?.trim() || join(home, '.config');
   const targets = [
     join(home, '.claude', 'skills'),
     join(home, '.claude', 'plugins'),
     join(home, '.claude', 'settings.json'),
     // ~/.claude.json is the canonical source for user-scope MCP servers;
     // without watching it, McpPanel goes stale after `claude mcp add`.
-    join(home, '.claude.json')
+    join(home, '.claude.json'),
+    join(configHome, 'opencode', 'skills')
   ];
   for (const target of targets) {
     const w = watchSkillsTarget(target);
@@ -702,21 +705,23 @@ function stopActiveProjectSkillsWatcher() {
 /**
  * The per-project skill directories to watch, across every agent tool. Kept in
  * sync with the `SKILL_PROVIDERS` registry's project-scope roots — Claude's
- * `.claude/skills` and Cursor's `.cursor/rules`. Listed here (rather than
- * imported from the providers) because a watcher only needs the well-known
- * relative dirs, not the discovery logic; if a new tool adds a project root,
- * add it here too so live updates light up.
+ * `.claude/skills`, Cursor's `.cursor/rules`, and OpenCode's `.opencode/skills`.
+ * Listed here (rather than imported from the providers) because a watcher only
+ * needs the well-known relative dirs, not the discovery logic; if a new tool
+ * adds a project root, add it here too so live updates light up.
  */
 const PROJECT_SKILL_WATCH_DIRS: readonly string[][] = [
   ['.claude', 'skills'],
-  ['.cursor', 'rules']
+  ['.cursor', 'rules'],
+  ['.opencode', 'skills']
 ];
 
 /**
  * Re-point the per-project skills watchers at the currently active project.
  * Called from the `projects.touch` IPC handler so that switching projects
  * (or selecting one for the first time) lights up live updates for files
- * dropped into `<project>/.claude/skills/` or `<project>/.cursor/rules/`.
+ * dropped into `<project>/.claude/skills/`, `<project>/.cursor/rules/`, or
+ * `<project>/.opencode/skills/`.
  */
 function setActiveProjectSkillsWatcher(
   projectPath: string | null,
@@ -1043,6 +1048,10 @@ function menubarPopoverEnabled(): boolean {
 // Created in whenReady (needs `app` ready); a no-op shim in dev. Module-level
 // so the IPC handlers can reach it.
 let updater: Updater | null = null;
+// Set once the user has confirmed a quit (or an update restart already
+// consented via "Restart now"). Shared with `before-quit` so an in-flight
+// auto-update cannot be cancelled by the live-sessions prompt.
+let quitConfirmed = false;
 let doctor: Doctor | null = null;
 /**
  * Pending "What's New" window, computed once at boot when the running version
@@ -3018,14 +3027,17 @@ export function resolveEffectiveLaunch(
   req: Pick<CreateTerminalRequest, 'cwd' | 'isolateScratch' | 'title' | 'worktreeInfo'>,
   project: Project
 ): EffectiveLaunch {
-  const projectRoot = project.remote ? project.path : realpathSync(project.path);
+  const rooted = project.remote
+    ? (store.ensureRemoteProjectLocalDir?.(project) ?? project)
+    : project;
+  const projectRoot = rooted.remote ? rooted.path : realpathSync(rooted.path);
   let cwd = projectRoot;
-  let trustedPath = project.path;
-  const scratch = req.isolateScratch && !req.cwd && project.quickAgent && !project.remote
+  let trustedPath = rooted.path;
+  const scratch = req.isolateScratch && !req.cwd && rooted.quickAgent && !rooted.remote
     ? { label: typeof req.isolateScratch === 'string' ? req.isolateScratch : req.title }
     : undefined;
   const requestedCwd = scratch ? undefined : req.cwd;
-  if (!project.remote && requestedCwd) {
+  if (!rooted.remote && requestedCwd) {
     try {
       const realCwd = realpathSync(requestedCwd);
       if (isWithin(realCwd, projectRoot)) {
@@ -3038,10 +3050,10 @@ export function resolveEffectiveLaunch(
   }
   if (
     req.worktreeInfo?.path &&
-    !project.remote &&
+    !rooted.remote &&
     !req.isolateScratch &&
     !req.cwd &&
-    !project.quickAgent
+    !rooted.quickAgent
   ) {
     try {
       const realWt = realpathSync(req.worktreeInfo.path);
@@ -3225,6 +3237,8 @@ export function createTerminalConfined(
     // tools that deliberately exercise this low-level helper in isolation.
     const projectMicroVmSettings = opts?.launchSnapshot?.projectSettings
       ?? store.getProjectSettings(req.projectId);
+    const launchConfig = opts?.launchSnapshot?.config ?? store.getConfig();
+    const useRemoteTools = usesCliRemoteToolProxy(project, req, launchConfig);
     const resolvedMicroVmImage =
       req.microVmImage ?? effectivePersona?.microVmImage ?? projectMicroVmSettings.microVmImage;
     const session = ptys.create({
@@ -3235,12 +3249,13 @@ export function createTerminalConfined(
       cwd,
       cols: req.cols,
       rows: req.rows,
-      config: opts?.launchSnapshot?.config ?? store.getConfig(),
+      config: launchConfig,
       projectSettings: projectMicroVmSettings,
       extraArgs,
       harnessRouting: req.harnessRouting,
       title: req.title,
-      remote: project.remote,
+      remote: useRemoteTools ? undefined : project.remote,
+      remoteToolProxy: useRemoteTools || undefined,
       cohort: req.cohort,
       headless: req.headless,
       // MAIN-only: autonomous team runs force --permission-mode acceptEdits +
@@ -3333,6 +3348,7 @@ async function launchAuthorizedTerminal(
   const personaSnapshot = personas.list();
   const projectSettings = await getAuthoritativeProjectSettings(req.projectId);
   const effectiveLaunch = resolveEffectiveLaunch(req, project);
+  const executionScope = launchExecutionScope(project, req, config);
   const userGaveTask = !!(req.prompt?.trim() || req.extraArgs?.length);
   const frameworkPersona = !req.personaId && req.frameworkIds?.length
     ? resolveFrameworkPersona(req.frameworkIds, !userGaveTask)
@@ -3352,7 +3368,7 @@ async function launchAuthorizedTerminal(
       personaId: req.personaId,
       teamId: req.cohort?.teamId,
       slotId: req.cohort?.slotId,
-      scope: project.remote ? 'remote' : 'local',
+      scope: executionScope,
       autonomous: spawnOpts?.autonomous === true,
       deadlineAt
     }),
@@ -3392,7 +3408,7 @@ async function launchAuthorizedTerminal(
     extraArgs: req.extraArgs,
     projectId: project.id,
     projectPath: effectiveLaunch.cwd,
-    scope: project.remote ? 'remote' : 'local',
+    scope: executionScope,
     mode: principal.kind === 'interactive-user' ? 'interactive' : 'unattended',
     idempotencyKey: plan.idempotencyKey,
     legacyPersonaFacetCompatibility
@@ -3449,7 +3465,7 @@ async function launchAuthorizedTerminal(
       slotId: req.cohort?.slotId,
       personaId: req.personaId,
       profileId: selection.profile,
-      scope: project.remote ? 'remote' as const : 'local' as const,
+      scope: executionScope,
       autonomous: spawnOpts?.autonomous === true,
       initialTaskDigest: launchDigest(preissuedInitialTask ?? req.prompt ?? '')
     };
@@ -3583,7 +3599,7 @@ async function launchAuthorizedTerminal(
         : undefined),
       projectSettings: currentSettings,
       harnessRouting: authorizedPlan.request.harnessRouting, extraArgs: authorizedPlan.request.extraArgs,
-      projectId: project.id, projectPath: authorizedPlan.resolved.effectiveLaunch.cwd, scope: currentProject.remote ? 'remote' : 'local',
+      projectId: project.id, projectPath: authorizedPlan.resolved.effectiveLaunch.cwd, scope: launchExecutionScope(currentProject, authorizedPlan.request, currentConfig),
       mode: principal.kind === 'interactive-user' ? 'interactive' : 'unattended',
       idempotencyKey: authorizedPlan.idempotencyKey,
       legacyPersonaFacetCompatibility
@@ -3629,12 +3645,13 @@ async function launchBackgroundTerminal(
   if (!project) throw new LaunchSpawnError('NOT_FOUND', 'project not found');
   const effectiveLaunch = resolveEffectiveLaunch(opts, project);
   const projectSettings = await getAuthoritativeProjectSettings(project.id);
+  const executionScope = launchExecutionScope(project, opts, opts.config);
   const plan = preflightLaunch(opts, {
     principal: () => principal,
     binding: () => ({
       consumerKind: opts.cohort ? 'team-slot' : 'terminal', personaId: opts.persona?.id,
       teamId: opts.cohort?.teamId, slotId: opts.cohort?.slotId,
-      scope: project.remote ? 'remote' : 'local', autonomous: opts.autonomous === true
+      scope: executionScope, autonomous: opts.autonomous === true
     }),
     resolve: () => ({
       project,
@@ -3661,7 +3678,7 @@ async function launchBackgroundTerminal(
     extraArgs: opts.extraArgs,
     projectId: project.id,
     projectPath: effectiveLaunch.cwd,
-    scope: project.remote ? 'remote' : 'local',
+    scope: executionScope,
     mode: opts.scheduled || opts.autonomous ? 'unattended' : 'headless',
     idempotencyKey: plan.idempotencyKey
   }, {
@@ -3717,7 +3734,7 @@ async function launchBackgroundTerminal(
         extraArgs: authorizedPlan.request.extraArgs,
         projectId: currentProject.id,
         projectPath: authorizedPlan.resolved.effectiveLaunch.cwd,
-        scope: currentProject.remote ? 'remote' : 'local',
+        scope: launchExecutionScope(currentProject, authorizedPlan.request, currentConfig),
         mode: authorizedPlan.request.scheduled || authorizedPlan.request.autonomous ? 'unattended' : 'headless',
         idempotencyKey: authorizedPlan.idempotencyKey
       }, {
@@ -4074,7 +4091,7 @@ export function authorizeTeamLaunch(
     const binding: LaunchAuthorizationBinding = {
       consumerKind: 'team-slot', teamId: team.id, slotId: expected.slotId, personaId: expected.personaId,
       profileId, initialTaskDigest: launchDigest(slots[index].initialTask),
-      scope: project.remote ? 'remote' : 'local',
+      scope: launchExecutionScope(project, {}, store.getConfig()),
       storeRevision: launchDigest({ team, personas: personaSnapshot }),
       projectIdentityDigest: launchDigest(project), autonomous, expiresAt, deadlineAt
     };
@@ -4258,7 +4275,7 @@ export async function launchTeam(
     slotId,
     authorizationBinding: launchDigest({
       consumerKind: 'team-slot', teamId: team.id, slotId, personaId,
-      projectId: targetProjectId, scope: project.remote ? 'remote' : 'local',
+      projectId: targetProjectId, scope: launchExecutionScope(project, {}, currentConfig),
       profile: profileFor(personaId), autonomous
     })
   }));
@@ -4313,7 +4330,7 @@ export async function launchTeam(
         || binding.slotId !== expected.slotId
         || binding.personaId !== expected.personaId
         || binding.profileId !== expectedProfile
-        || binding.scope !== (project.remote ? 'remote' : 'local')
+        || binding.scope !== launchExecutionScope(project, {}, currentConfig)
         || binding.autonomous !== autonomous
         || (structured.policy?.deadlineMs === undefined
           ? binding.deadlineAt !== undefined
@@ -4385,7 +4402,7 @@ export async function launchTeam(
       launchPrincipals.set(principal.id, principal);
       const binding: LaunchAuthorizationBinding = {
         consumerKind: 'team-slot', teamId: team.id, slotId, personaId, profileId,
-        initialTaskDigest: launchDigest(request.prompt ?? ''), scope: project.remote ? 'remote' : 'local',
+        initialTaskDigest: launchDigest(request.prompt ?? ''), scope: launchExecutionScope(project, request, currentConfig),
         storeRevision: launchDigest({ team, personas: personaSnapshot }),
          projectIdentityDigest: launchDigest(project), autonomous, expiresAt, deadlineAt: launchDeadlineAt
       };
@@ -4883,7 +4900,7 @@ function createWindow(projectId?: string, repairOnly = false) {
     minHeight: projectId || repairOnly ? 600 : restored.minHeight,
     title: 'Zana',
     icon: productIconImage(),
-    backgroundColor: '#0b0f15',
+    backgroundColor: '#181818',
     // E2E ONLY: never auto-show the window. Playwright drives the renderer over
     // CDP, so a hidden window still runs and is fully controllable, but a shown
     // one repeatedly steals macOS focus from the developer during a local run.
@@ -6845,7 +6862,12 @@ async function bootstrapNormal() {
     // `enableUpdateSimulation` config re-checked in the `updates:simulate` IPC
     // handler (Rule 1 — main authorizes, and the flag can toggle at runtime);
     // this just lets an armed IPC call through.
-    allowSimulation: true
+    allowSimulation: true,
+    // "Restart now" is already consent to kill live terminals — skip the
+    // before-quit prompt so the button cannot look like a no-op.
+    prepareQuitForUpdate: () => {
+      quitConfirmed = true;
+    }
   });
   updater.checkForUpdates({ manual: false }).catch((err) => logMainError('updater.checkForUpdates', err));
   updater.start();
@@ -6870,15 +6892,16 @@ async function bootstrapNormal() {
     logMainError('whats-new boot check', err);
   }
 
-  // First-run dependency doctor: detect the companion CLIs / MCP / plugins /
-  // extensions the installer normally sets up, and surface anything missing so
-  // the user can auto-install (or copy the manual command) from the in-app
-  // setup checklist. The renderer subscribes via IPC.deps.onStatus and decides
-  // whether to auto-open the checklist (only when something is missing AND the
-  // user hasn't dismissed it — gated on AppConfig.setupDismissed in the store
-  // init, mirroring the walkthrough). Best-effort — a failed check never blocks
-  // boot. The check runs once here; the periodic poll lives in the updater, not
-  // here, since dependency state only changes on explicit user action.
+  // First-run dependency doctor: detect companion CLIs (Claude Code, Cursor,
+  // OpenCode, Pi, Codex, Salesforce) and surface anything missing so the user
+  // can auto-install or copy the manual command from the in-app setup
+  // checklist. The renderer subscribes via IPC.deps.onStatus and decides
+  // whether to auto-open the checklist (only when a *required* CLI is missing
+  // AND the user hasn't dismissed it — gated on AppConfig.setupDismissed in
+  // the store init, mirroring the walkthrough). Best-effort — a failed check
+  // never blocks boot. The check runs once here; the periodic poll lives in
+  // the updater, not here, since dependency state only changes on explicit
+  // user action.
   doctor = createDoctor({
     safeSend,
     log: logMainError,
@@ -7079,11 +7102,6 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Set once the user has confirmed (or there was nothing to confirm) so the
-// teardown path runs exactly once and re-entrant before-quit events don't
-// re-prompt.
-let quitConfirmed = false;
-
 app.on('before-quit', (event) => {
   // Guard the user's running work: if any ptys are still alive, make quitting
   // a deliberate choice instead of silently killing in-flight agents and
@@ -7093,7 +7111,8 @@ app.on('before-quit', (event) => {
   // Auto-update interaction: a downloaded update installs on quit
   // (`autoInstallOnAppQuit`). Squirrel's quit hook runs *after* this handler, so
   // preventing the quit here (user clicks Cancel on the live-sessions prompt)
-  // also cancels the install — the update simply applies on the next real quit.
+  // also cancels the install. `prepareQuitForUpdate` sets `quitConfirmed` so
+  // "Restart now" skips this prompt — that button is the confirmation.
   if (!quitConfirmed) {
     const live = ptys.liveCount();
     // The guard is opt-out: a user who churns through many short-lived sessions

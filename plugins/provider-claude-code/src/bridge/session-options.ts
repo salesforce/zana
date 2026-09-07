@@ -22,11 +22,6 @@ export interface BuildSessionOptionsArgs {
   disallowedTools?: readonly string[];
   instructionMode: InstructionMode;
   model?: string;
-  /**
-   * Escalation changes per turn without replacing the session. Hook closures
-   * resolve the originating prompt or subagent at call time, falling back to
-   * the current turn when Claude provides no correlation metadata.
-   */
   getPermissionEscalation: (
     context: PermissionEscalationWorkContext,
   ) => PermissionEscalation | null;
@@ -35,6 +30,7 @@ export interface BuildSessionOptionsArgs {
   plugins?: Options["plugins"];
   reasoningLevel?: ReasoningLevel;
   workflowsEnabled: boolean;
+  chromeEnabled: boolean;
   memoryEnabled?: boolean;
 }
 
@@ -54,14 +50,17 @@ interface ResolveClaudeCodeExecutableArgs {
 }
 
 const READONLY_ALLOWED_TOOLS = new Set([
-  // Agent is a read/delegation tool here; child Bash calls still flow through
-  // this same readonly session hook policy before execution.
   "Agent",
   "Glob",
   "Grep",
   "LS",
   "Read",
   "TodoRead",
+  "TaskCreate",
+  "TaskGet",
+  "TaskUpdate",
+  "TaskList",
+  "TodoWrite",
 ]);
 const READONLY_BASH_TOOL_NAME = "Bash";
 const READONLY_ASK_REASON =
@@ -73,17 +72,44 @@ const SUMMARIZED_ADAPTIVE_THINKING = {
 const CLAUDE_CODE_EXECUTABLE_ENV = "BB_CLAUDE_CODE_EXECUTABLE";
 
 /**
- * BB's "ultracode" reasoning level is not an SDK effort: it decomposes into
- * effort "xhigh" plus the session-scoped `ultracode` settings flag (standing
- * dynamic-workflow orchestration). The SDK Settings flag tier is otherwise
- * unused by BB, so it is owned entirely here.
+ * Claude Code omits TaskCreate/TodoWrite on Opus 4.8+, Sonnet 5, Fable 5, and
+ * newer unless this is set. ZCC's durable plan chrome is fed by those tools.
  */
+export const CLAUDE_TODO_TOOLS_ENV_VAR = "CLAUDE_CODE_ENABLE_TODO_TOOLS";
+
+export const CLAUDE_PLAN_CHECKLIST_TOOLS = [
+  "TaskCreate",
+  "TaskGet",
+  "TaskUpdate",
+  "TaskList",
+  "TodoWrite",
+] as const;
+
+export function withClaudeTodoToolsEnv(
+  env: NodeJS.ProcessEnv,
+  explicitValue?: string,
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    [CLAUDE_TODO_TOOLS_ENV_VAR]: explicitValue ?? "1",
+  };
+}
+
+export function mergeClaudePlanChecklistAllowedTools(
+  allowedTools: readonly string[] | undefined,
+): string[] {
+  const merged = [...(allowedTools ?? [])];
+  for (const name of CLAUDE_PLAN_CHECKLIST_TOOLS) {
+    if (!merged.includes(name)) merged.push(name);
+  }
+  return merged;
+}
+
 export function toSdkEffort(
   reasoningLevel: ReasoningLevel,
-): ClaudeSdkReasoningEffort | undefined {
-  if (reasoningLevel === "none") return undefined;
+): ClaudeSdkReasoningEffort {
   if (reasoningLevel === "ultracode") return "xhigh";
-  // "ultra" is a Codex-only top tier; if it ever reaches Claude, floor to max.
+  if (reasoningLevel === "none") return "low";
   if (reasoningLevel === "ultra") return "max";
   return reasoningLevel;
 }
@@ -96,19 +122,23 @@ function buildFlagSettings(params: BuildSessionOptionsArgs): Settings {
   };
 }
 
+export function buildChromeExtraArgs(
+  chromeEnabled: boolean,
+): Options["extraArgs"] | undefined {
+  return chromeEnabled ? { chrome: null } : undefined;
+}
+
 export function buildMutableFlagSettings(args: {
   memoryEnabled: boolean;
   reasoningLevel: ReasoningLevel | undefined;
   workflowsEnabled: boolean;
 }): ClaudeMutableFlagSettings {
-  const effortLevel =
-    args.reasoningLevel !== undefined
-      ? toSdkEffort(args.reasoningLevel)
-      : undefined;
   return {
     autoMemoryEnabled: args.memoryEnabled,
     enableWorkflows: args.workflowsEnabled,
-    ...(effortLevel ? { effortLevel } : {}),
+    ...(args.reasoningLevel !== undefined
+      ? { effortLevel: toSdkEffort(args.reasoningLevel) }
+      : {}),
     ultracode: args.reasoningLevel === "ultracode",
   };
 }
@@ -190,9 +220,6 @@ function buildReadonlyHooks(
   };
 }
 
-// The bb workspace sandbox applies only to the accept-edits/auto session
-// modes. Plan keeps the Claude SDK's native tool gating without a sandbox,
-// matching pre-preset behavior.
 function usesWorkspaceSandbox(params: BuildSessionOptionsArgs): boolean {
   return (
     params.permissionScope === "workspace" &&
@@ -211,22 +238,9 @@ function buildWorkspaceWriteSandbox(
   const allowWrite = params.additionalWorkspaceWriteRoots ?? [];
   return {
     enabled: true,
-    // The SDK defaults this to true, which aborts the whole session when the
-    // host lacks sandbox dependencies (bubblewrap on Linux). Headless servers
-    // routinely lack them, and a missing sandbox should cost the session its
-    // auto-allow, not its ability to run: `autoAllowBashIfSandboxed` only
-    // auto-approves while the sandbox is actually active, so degrading falls
-    // back to bb's own `canUseTool` gating instead of running wide open.
     failIfUnavailable: false,
     autoAllowBashIfSandboxed: true,
-    // Sandbox settings are session-fixed while escalation changes per turn;
-    // the unsandboxed retry stays enabled and `canUseTool` auto-denies it on
-    // escalation-denied turns.
     allowUnsandboxedCommands: true,
-    // The bb CLI needs loopback to reach the local server, and
-    // escalation-denied turns have no unsandboxed-retry path around a block.
-    // macOS-only and coarse (all localhost ports, binding on all interfaces);
-    // the Linux sandbox ignores the flag.
     network: { allowLocalBinding: true },
     ...(allowWrite.length > 0
       ? { filesystem: { allowWrite: [...allowWrite] } }
@@ -234,8 +248,6 @@ function buildWorkspaceWriteSandbox(
   };
 }
 
-// X_OK alone also passes for searchable directories, so require a regular
-// file (following symlinks) before treating a candidate as the Claude CLI.
 function isExecutableFile(candidatePath: string): boolean {
   try {
     accessSync(candidatePath, constants.X_OK);
@@ -265,13 +277,7 @@ function resolveExecutableOnPath(
   return null;
 }
 
-// The login-shell PATH probe can miss user-level install directories (slow
-// shell startup, PATH exports the probe does not source), so common Claude
-// install locations are checked before falling back to the SDK's bundled
-// binary, which packaged bb builds do not ship.
 function wellKnownClaudeExecutablePaths(env: NodeJS.ProcessEnv): string[] {
-  // Under elevated privileges a user-writable binary must never be picked up
-  // implicitly; root operators can still set BB_CLAUDE_CODE_EXECUTABLE.
   if (process.getuid?.() === 0) {
     return [];
   }
@@ -303,8 +309,6 @@ export function resolveClaudeCodeExecutable(
     }
   }
 
-  // Bundled bridge files cannot rely on the SDK's package-relative CLI
-  // resolution, so pass the host's Claude CLI path explicitly when available.
   const executableOnPath = resolveExecutableOnPath({
     executableName: "claude",
     pathEnv: args.env.PATH,
@@ -344,9 +348,7 @@ export function buildSessionOptions(
     : [];
   const pathToClaudeCodeExecutable = resolveClaudeCodeExecutable({ env });
   const flagSettings = buildFlagSettings(params);
-  const effort = params.reasoningLevel
-    ? toSdkEffort(params.reasoningLevel)
-    : undefined;
+  const extraArgs = buildChromeExtraArgs(params.chromeEnabled);
 
   return {
     cwd: params.cwd,
@@ -354,9 +356,14 @@ export function buildSessionOptions(
     model,
     env,
     permissionMode: params.permissionMode,
-    ...(effort ? { effort } : {}),
-    ...(effort ? { thinking: SUMMARIZED_ADAPTIVE_THINKING } : {}),
+    ...(params.reasoningLevel
+      ? { effort: toSdkEffort(params.reasoningLevel) }
+      : {}),
+    ...(params.reasoningLevel
+      ? { thinking: SUMMARIZED_ADAPTIVE_THINKING }
+      : {}),
     settings: flagSettings,
+    ...(extraArgs ? { extraArgs } : {}),
     ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
     ...(params.plugins ? { plugins: params.plugins } : {}),
     ...(sandbox ? { sandbox } : {}),

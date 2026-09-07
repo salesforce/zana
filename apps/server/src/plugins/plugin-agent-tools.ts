@@ -49,10 +49,21 @@ export async function safePackPluginSession(
 }
 
 export function toDynamicTool(registration: PluginAgentToolRegistration): DynamicTool {
+  const presentation = registration.presentation;
+  const toolPresentation =
+    presentation?.label && presentation.icon
+      ? {
+          label: presentation.label,
+          icon: presentation.icon,
+          ...(presentation.suppress !== undefined ? { suppress: presentation.suppress } : {}),
+          ...(presentation.tint ? { tint: presentation.tint } : {})
+        }
+      : undefined;
   return {
     name: registration.name,
     description: registration.description,
-    inputSchema: registration.inputSchema ?? { type: 'object', properties: {} }
+    inputSchema: registration.inputSchema ?? { type: 'object', properties: {} },
+    ...(toolPresentation ? { presentation: toolPresentation } : {})
   };
 }
 

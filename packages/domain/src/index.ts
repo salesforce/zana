@@ -51,6 +51,15 @@ export {
   type PluginZccManifest
 } from './plugin-manifest.js';
 export {
+  PLUGIN_REQUIRES_MAX,
+  formatPluginRequireCycle,
+  parsePluginRequires,
+  sortPluginsByRequires,
+  type PluginRequireCycle,
+  type PluginRequireNode,
+  type PluginRequireOrder
+} from './plugin-requires.js';
+export {
   DEFAULT_GIT_REF,
   isCommitSha,
   parsePluginSource,

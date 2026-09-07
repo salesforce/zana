@@ -118,6 +118,8 @@ describe('hosts API', () => {
     const text = await script.text();
     expect(text).toContain('--join-code');
     expect(text).toContain('.zcc-machines');
+    expect(text).toContain('host daemon did not report connected');
+    expect(text).toContain('host-daemon.log');
     const version = await fetch(`${server!.url}install/version`).then((response) => response.json()) as {
       protocolVersion: number;
     };

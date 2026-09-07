@@ -82,9 +82,9 @@ type TrayItem = TrayAgent | TrayThread;
  * blocked scheduled run is exactly the kind of thing you want surfaced here.
  *
  * Scope: by default the tray spans ALL projects (the global Sidebar). Pass
- * `projectId` to confine it to one project — the focused-project rail
- * (ProjectScopedNav) uses this so a drilled-in user still sees "needs you"
- * agents for the project they're in, without the cross-project noise.
+ * `projectId` to confine it to one project. The focused-project rail lists
+ * sessions via ProjectSessionRail (the same nested rows as the global
+ * Projects tree), not this tray.
  */
 export function AgentTray({
   projectId,

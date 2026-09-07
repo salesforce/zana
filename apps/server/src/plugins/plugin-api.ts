@@ -29,6 +29,12 @@ import type {
   ZccPluginFactory
 } from '@zana-ai/zcc-plugin-sdk/server';
 import {
+  PLUGIN_MENTION_TRIGGERS,
+  enforcePluginCliOutputLimit,
+  isPluginHostEntryDefinition,
+  parsePluginAgentToolPresentation
+} from '@zana-ai/zcc-plugin-sdk/server';
+import {
   PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES,
   PLUGIN_INTERACTION_MAX_TITLE_LENGTH,
   PLUGIN_CLI_COMMAND_NAME_PATTERN,
@@ -36,15 +42,20 @@ import {
   type JsonValue
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
-import {
-  PLUGIN_MENTION_TRIGGERS,
-  enforcePluginCliOutputLimit,
-  isPluginHostEntryDefinition
-} from '@zana-ai/zcc-plugin-sdk/server';
 import { cronMatches, cronMinuteKey } from '@zana-ai/zcc-plugin-sdk';
+import {
+  bindPluginServices,
+  createPluginServicesRegistry,
+  type PluginServicesRegistry
+} from '@zana-ai/zcc-plugin-sdk/server';
 import { appendPluginLogLine } from './plugin-log.js';
+import {
+  mergeSecretSettings,
+  persistSecretSettings,
+  publicSettingsValues
+} from './plugin-secret-settings.js';
 
-export const HOST_ZCC_VERSION = '2.0.4';
+export const HOST_ZCC_VERSION = '2.0.6';
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
 export const FACTORY_TIMEOUT_MS = 10_000;
 
@@ -150,7 +161,13 @@ export function createPluginApi(
     }) => Promise<PluginInteractionResult>;
     interruptPluginInteractions?: (pluginId: string) => void;
     onNeedsConfiguration?: (message: string) => void;
-    spawnThread?: (args: { pluginId: string; projectId: string; prompt: string; providerId?: string }) => Promise<{ id: string }>;
+    spawnThread?: (args: {
+      pluginId: string;
+      projectId: string;
+      prompt: string;
+      providerId?: string;
+      parentThreadId?: string;
+    }) => Promise<{ id: string }>;
     getThread?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkThreadSummary | null>;
     listThreadEvents?: (args: {
       pluginId: string;
@@ -161,13 +178,37 @@ export function createPluginApi(
     }) => Promise<PluginSdkThreadEventRow[]>;
     sendThread?: (args: { pluginId: string; threadId: string; prompt: string }) => Promise<{ id: string }>;
     archiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
-    forkThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+    forkThread?: (args: {
+      pluginId: string;
+      threadId: string;
+      sourceSeqEnd?: number;
+      visibility?: 'visible' | 'hidden';
+      agentContextSeed?: unknown[];
+      title?: string;
+    }) => Promise<{ id: string }>;
+    listThreads?: (args: {
+      pluginId: string;
+      includeHidden?: boolean;
+      originKind?: 'fork';
+      originPluginId?: string;
+      archived?: boolean;
+      limit?: number;
+      offset?: number;
+    }) => Promise<PluginSdkThreadSummary[]>;
+    listQueuedMessages?: (args: { pluginId: string; threadId: string }) => Promise<Array<{ id: string }>>;
+    createQueuedMessage?: (args: {
+      pluginId: string;
+      threadId: string;
+      input: unknown[];
+      senderThreadId?: string;
+    }) => Promise<{ id: string }>;
     unarchiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
     pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
     listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
     hostEntryPath?: string | null;
     hostCall?: (method: string, input?: unknown, hostId?: string) => Promise<unknown>;
     dataDir?: string;
+    services?: PluginServicesRegistry;
   }
 ): PluginHandle {
   mkdirSync(kvDir, { recursive: true });
@@ -196,10 +237,21 @@ export function createPluginApi(
   const assertLive = (): void => {
     if (stale) throw new Error(`plugin context is stale: ${pluginId}`);
   };
+  const services = bindPluginServices(
+    pluginId,
+    options?.services ?? createPluginServicesRegistry(),
+    (hook) => {
+      disposeHooks.push(hook);
+    }
+  );
   const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
   const readKv = (): Record<string, unknown> => readJsonFile<Record<string, unknown>>(kvPath, {});
   const readSettings = (): Record<string, PluginSettingValue | undefined> =>
-    readJsonFile<Record<string, PluginSettingValue | undefined>>(settingsPath, {});
+    mergeSecretSettings(
+      kvDir,
+      settingDescriptors,
+      readJsonFile<Record<string, PluginSettingValue | undefined>>(settingsPath, {})
+    );
 
   const ensureHostEntry = async (): Promise<void> => {
     if (hostEntryLoaded) {
@@ -297,17 +349,18 @@ export function createPluginApi(
         };
         const db = new Database(dbPath);
         sqliteHandles.push(db);
+        const runBatch = Reflect.get(db, 'exec') as (source: string) => unknown;
+        const beginTxn = Reflect.get(db, 'transaction') as <T>(fn: () => T) => () => T;
         const runScript = (sql: string) => {
-          for (const statement of sql.split(';').map((part) => part.trim()).filter(Boolean)) {
-            db.prepare(statement).run();
-          }
+          runBatch.call(db, sql);
         };
         sharedDatabase = {
           runScript,
           prepare: (sql) => db.prepare(sql),
           migrate: (statements) => {
             for (const statement of statements) runScript(statement);
-          }
+          },
+          transaction: <T>(fn: () => T): T => beginTxn.call(db, fn)() as T
         };
         return sharedDatabase;
       }
@@ -426,9 +479,78 @@ export function createPluginApi(
           if (!options?.forkThread) {
             throw new Error('zcc.sdk is not available in this runtime');
           }
-          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          const record = (args ?? {}) as {
+            threadId?: string;
+            sourceThreadId?: string;
+            sourceSeqEnd?: number;
+            visibility?: 'visible' | 'hidden';
+            title?: string;
+            agentContextSeed?: unknown[];
+          };
+          const threadId = typeof record.sourceThreadId === 'string' && record.sourceThreadId.trim()
+            ? record.sourceThreadId.trim()
+            : typeof record.threadId === 'string' ? record.threadId.trim() : '';
           if (!threadId) throw new Error('threadId is required');
-          return options.forkThread({ pluginId, threadId });
+          const sourceSeqEnd = typeof record.sourceSeqEnd === 'number' && Number.isInteger(record.sourceSeqEnd) && record.sourceSeqEnd >= 0
+            ? record.sourceSeqEnd
+            : undefined;
+          const visibility = record.visibility === 'hidden' || record.visibility === 'visible'
+            ? record.visibility
+            : undefined;
+          const title = typeof record.title === 'string' && record.title.trim() ? record.title.trim() : undefined;
+          const agentContextSeed = Array.isArray(record.agentContextSeed) ? record.agentContextSeed : undefined;
+          return options.forkThread({
+            pluginId,
+            threadId,
+            ...(sourceSeqEnd !== undefined ? { sourceSeqEnd } : {}),
+            ...(visibility ? { visibility } : {}),
+            ...(agentContextSeed ? { agentContextSeed } : {}),
+            ...(title ? { title } : {})
+          });
+        },
+        list: async (args) => {
+          assertLive();
+          if (!options?.listThreads) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.listThreads({
+            pluginId,
+            includeHidden: args?.includeHidden === true,
+            originKind: args?.originKind === 'fork' ? 'fork' : undefined,
+            originPluginId: typeof args?.originPluginId === 'string' ? args.originPluginId : undefined,
+            archived: typeof args?.archived === 'boolean' ? args.archived : undefined,
+            limit: typeof args?.limit === 'number' ? args.limit : undefined,
+            offset: typeof args?.offset === 'number' ? args.offset : undefined
+          });
+        },
+        queuedMessages: {
+          list: async (args) => {
+            assertLive();
+            if (!options?.listQueuedMessages) {
+              throw new Error('zcc.sdk is not available in this runtime');
+            }
+            const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+            if (!threadId) throw new Error('threadId is required');
+            return options.listQueuedMessages({ pluginId, threadId });
+          },
+          create: async (args) => {
+            assertLive();
+            if (!options?.createQueuedMessage) {
+              throw new Error('zcc.sdk is not available in this runtime');
+            }
+            const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+            if (!threadId) throw new Error('threadId is required');
+            const input = Array.isArray(args?.input) ? args.input : [];
+            const senderThreadId = typeof args?.senderThreadId === 'string' && args.senderThreadId.trim()
+              ? args.senderThreadId.trim()
+              : undefined;
+            return options.createQueuedMessage({
+              pluginId,
+              threadId,
+              input,
+              ...(senderThreadId ? { senderThreadId } : {})
+            });
+          }
         },
         unarchive: async (args) => {
           assertLive();
@@ -552,13 +674,26 @@ export function createPluginApi(
         if (!registration?.name || typeof registration.execute !== 'function') {
           throw new Error('agents.registerTool requires name and execute');
         }
-        agentTools.push(registration);
+        const presentation = parsePluginAgentToolPresentation(registration.name, registration.presentation);
+        agentTools.push(presentation ? { ...registration, presentation } : registration);
       },
       experimental_registerProvider: (declaration) => {
         assertLive();
         const handle = registerThreadProvider(pluginId, declaration, options?.hostEntryPath);
         disposeHooks.push(() => handle.unregister());
         return handle;
+      },
+      experimental_registerPtyHarness: (declaration) => {
+        assertLive();
+        if (!declaration?.id?.trim() || !declaration?.displayName?.trim()) {
+          throw new Error('agents.experimental_registerPtyHarness requires id and displayName');
+        }
+        return {
+          id: declaration.id,
+          unregister() {
+            /* Host-daemon binds the family in-process; unregister is a no-op here. */
+          }
+        };
       },
       configure: (provider) => {
         assertLive();
@@ -611,6 +746,7 @@ export function createPluginApi(
         options?.onNeedsConfiguration?.(message);
       }
     },
+    services,
     onDispose: (hook) => {
       disposeHooks.push(hook);
     }
@@ -645,7 +781,8 @@ export function createPluginApi(
     },
     async setSettings(values) {
       const next = { ...readSettings(), ...values };
-      writeJsonFile(settingsPath, next);
+      await persistSecretSettings(kvDir, settingDescriptors, next);
+      writeJsonFile(settingsPath, publicSettingsValues(settingDescriptors, next));
       const projected: Record<string, PluginSettingValue | undefined> = {};
       for (const [key, descriptor] of Object.entries(settingDescriptors)) {
         projected[key] = next[key] ?? descriptor.default;
@@ -782,17 +919,31 @@ export function resolveCreateJiti(mod: unknown): CreateJitiFn {
   throw new Error('jiti createJiti is unavailable');
 }
 
-async function loadCreateJiti(): Promise<CreateJitiFn> {
+/** Require specifiers that can see `apps/server`'s jiti from Electron `out/main`. */
+export function jitiRequireIds(cwd = process.cwd(), metaUrl = import.meta.url): string[] {
+  return [
+    metaUrl,
+    pathToFileURL(join(cwd, 'package.json')).href,
+    pathToFileURL(join(cwd, 'apps', 'server', 'package.json')).href
+  ];
+}
+
+export async function loadCreateJiti(
+  importJiti: () => Promise<unknown> = () => import('jiti'),
+  requireIds: readonly string[] = jitiRequireIds()
+): Promise<CreateJitiFn> {
   const attempts: unknown[] = [];
   try {
-    attempts.push(await import('jiti'));
+    attempts.push(await importJiti());
   } catch {
     /* CJS utility-process bundles may not expose the ESM named export */
   }
-  try {
-    attempts.push(createRequire(import.meta.url)('jiti'));
-  } catch {
-    /* ignore — resolveCreateJiti reports a single error below */
+  for (const id of requireIds) {
+    try {
+      attempts.push(createRequire(id)('jiti'));
+    } catch {
+      /* try the next lookup root */
+    }
   }
   for (const attempt of attempts) {
     try {

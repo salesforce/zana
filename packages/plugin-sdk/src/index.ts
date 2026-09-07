@@ -51,6 +51,7 @@ export type {
   PluginCliOutputLimitError,
   PluginAgents,
   PluginAgentToolRegistration,
+  PluginAgentToolPresentation,
   PluginAgentToolContext,
   PluginEvents,
   PluginThreadEvent,
@@ -63,6 +64,8 @@ export type {
   PluginSdkThreadEventListArgs,
   PluginSdkThreadEventRow,
   PluginSdkThreadIdArgs,
+  PluginSdkThreadForkArgs,
+  PluginSdkThreadListArgs,
   PluginSdkThreadSendArgs,
   PluginSdkThreadSummary,
   PluginSdkThreads,
@@ -78,20 +81,49 @@ export type {
   PluginProviderDeclaration,
   PluginProviderHandle,
   PluginProviderCapabilities,
+  PluginProviderOptionsContext,
+  PluginProviderVisibility,
+  PluginPtyHarnessDeclaration,
+  PluginPtyHarnessProfile,
   PluginUi,
   PluginInteractionRequest,
   PluginInteractionResult,
   PluginInteractionCancelReason,
   PluginStatusApi,
-  PluginSettingsSnapshot
+  PluginSettingsSnapshot,
+  PluginServices,
+  PluginServicesRegistry,
+  PluginSettingDescriptors,
+  PluginSettingValue
 } from './server.js';
+
+export type { JsonValue } from './json-value.js';
+export { defineRpcContract } from './rpc-contract.js';
+export type {
+  PluginRpcError,
+  PluginRpcValidationIssue,
+  StandardSchemaV1,
+  StandardSchemaV1Issue,
+  StandardSchemaV1Result
+} from './rpc-contract.js';
+export type {
+  PluginProviderReasoningLevel,
+  PluginProviderStrings
+} from './backend-contract.js';
 
 export {
   PLUGIN_CLI_OUTPUT_MAX_BYTES,
   PLUGIN_MENTION_TRIGGERS,
+  PLUGIN_AGENT_STATUS_LABEL_MAX_CHARS,
   enforcePluginCliOutputLimit,
+  parsePluginAgentToolPresentation,
   experimental_defineHostEntry,
-  isPluginHostEntryDefinition
+  isPluginHostEntryDefinition,
+  PLUGIN_SERVICE_UNAVAILABLE,
+  PluginServiceUnavailableError,
+  bindPluginServices,
+  createLiveServiceProxy,
+  createPluginServicesRegistry
 } from './server.js';
 
 export type {
@@ -108,6 +140,9 @@ export type {
   PluginProjectTabRegistration,
   PluginProjectMenuActionRegistration,
   PluginProjectMenuActionContext,
+  PluginCreateProjectActionRegistration,
+  PluginCreateProjectActionContext,
+  PluginCreateProjectDialogProps,
   PluginSidebarFooterActionRegistration,
   PluginSidebarFooterActionContext,
   PluginPendingInteractionRegistration,

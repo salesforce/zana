@@ -190,6 +190,21 @@ describe('fixtures', () => {
     expect(markup).toContain('Library');
   });
 
+  it('opens the Add project menu with a plugin create-project row', () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        SurfaceMapContext.Provider,
+        { value: mapState({ activeId: 'experimental_createProjectAction' }) },
+        createElement(AppShellWireframe)
+      )
+    );
+    expect(markup).toContain('title="Add project"');
+    expect(markup).toContain('Add local folder');
+    expect(markup).toContain('Clone from Git');
+    expect(markup).toContain('Add remote project');
+    expect(markup).toContain('Salesforce DX project');
+  });
+
   it('opens the command palette on the palette slide', () => {
     const markup = renderToStaticMarkup(
       createElement(SurfaceMapContext.Provider, { value: mapState() }, createElement(PaletteWireframe))

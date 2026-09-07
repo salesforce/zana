@@ -4,11 +4,11 @@
  *
  * This mirrors the harness `LaunchProvider` split (`src/main/harness/
  * launch-provider.ts` + `registry.ts`, the `MAIN_MODULES` analogue): concrete
- * tool ids (`'claude-code'`, `'cursor'`) live ONLY in this file + the registry
- * (`registry.ts`). The generic orchestrator (`../skills.ts`) never names a
- * tool — it iterates `SKILL_PROVIDERS` and branches on the descriptor's
- * `layout.kind` / `toggle.kind`, so adding Windsurf/Codex/Gemini is one new
- * provider object + one registry entry, zero edits to core discovery.
+ * tool ids (`'claude-code'`, `'cursor'`, `'opencode'`) live ONLY in this file +
+ * the registry (`registry.ts`). The generic orchestrator (`../skills.ts`) never
+ * names a tool — it iterates `SKILL_PROVIDERS` and branches on the descriptor's
+ * `layout.kind` / `toggle.kind`, so adding a tool is one new provider object +
+ * one registry entry, zero edits to core discovery.
  *
  * Skill discovery is deliberately a SEPARATE registry from the harness
  * `LaunchProvider` (which owns spawn identity only): the two provider sets are
@@ -197,24 +197,32 @@ async function listFiles(parent: string, exts: string[]): Promise<string[]> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Claude Code provider — the historical behaviour, now behind the descriptor.
-// ---------------------------------------------------------------------------
-
-async function discoverClaudeUser(): Promise<DiscoveredUnit[]> {
+/** Walk `<parent>/<name>/SKILL.md` trees (Claude + OpenCode layout). */
+async function discoverSkillMdDirectories(
+  parent: string,
+  source: SkillSource
+): Promise<DiscoveredUnit[]> {
   const out: DiscoveredUnit[] = [];
-  for (const n of await listDirs(USER_SKILLS_DIR)) {
-    const dir = join(USER_SKILLS_DIR, n);
+  for (const n of await listDirs(parent)) {
+    const dir = join(parent, n);
     const parsed = await readManifest(join(dir, 'SKILL.md'));
     out.push({
       path: dir,
       shortName: parsed.name?.trim() || n,
       qualifiedName: n,
       parsed,
-      source: 'user'
+      source
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code provider — the historical behaviour, now behind the descriptor.
+// ---------------------------------------------------------------------------
+
+async function discoverClaudeUser(): Promise<DiscoveredUnit[]> {
+  return discoverSkillMdDirectories(USER_SKILLS_DIR, 'user');
 }
 
 /**
@@ -289,20 +297,7 @@ async function discoverClaudePlugins(): Promise<DiscoveredUnit[]> {
 }
 
 async function discoverClaudeProject(projectPath: string): Promise<DiscoveredUnit[]> {
-  const dir = join(projectPath, '.claude', 'skills');
-  const out: DiscoveredUnit[] = [];
-  for (const n of await listDirs(dir)) {
-    const skillDir = join(dir, n);
-    const parsed = await readManifest(join(skillDir, 'SKILL.md'));
-    out.push({
-      path: skillDir,
-      shortName: parsed.name?.trim() || n,
-      qualifiedName: n,
-      parsed,
-      source: 'project'
-    });
-  }
-  return out;
+  return discoverSkillMdDirectories(join(projectPath, '.claude', 'skills'), 'project');
 }
 
 export const claudeCodeSkillProvider: SkillProvider = {
@@ -366,5 +361,35 @@ export const cursorSkillProvider: SkillProvider = {
     // applied (by glob) — still surfaced, shown as effectively enabled.
     const enabled = unit.parsed.enabledInManifest !== false;
     return { supported: false, enabled, reason: 'Managed in the .mdc rule file' };
+  }
+};
+
+// ---------------------------------------------------------------------------
+// OpenCode provider — user skills under `~/.config/opencode/skills` (honors
+// `XDG_CONFIG_HOME`) and project skills under `.opencode/skills`. Same
+// `<name>/SKILL.md` layout as Claude. No plugin scope and no central toggle
+// file today, so rows are read-only (visibility-only).
+// ---------------------------------------------------------------------------
+
+function openCodeUserSkillsDir(): string {
+  const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  const configHome = xdg && xdg.length > 0 ? xdg : join(homedir(), '.config');
+  return join(configHome, 'opencode', 'skills');
+}
+
+export const openCodeSkillProvider: SkillProvider = {
+  id: 'opencode',
+  label: 'OpenCode',
+  icon: 'Terminal',
+  toggle: { kind: 'read-only', reason: 'Managed in the OpenCode skill folder' },
+  async discover(source, ctx) {
+    if (source === 'user') return discoverSkillMdDirectories(openCodeUserSkillsDir(), 'user');
+    if (source === 'project' && ctx.projectPath) {
+      return discoverSkillMdDirectories(join(ctx.projectPath, '.opencode', 'skills'), 'project');
+    }
+    return [];
+  },
+  toggleState() {
+    return { supported: false, enabled: true, reason: 'Managed in the OpenCode skill folder' };
   }
 };

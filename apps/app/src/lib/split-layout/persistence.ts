@@ -1,8 +1,20 @@
 import { MAX_PANES, countPanes, listPanes } from './ops.js';
+import { GLOBAL_SPLIT_SCOPE_KEY } from './scope.js';
 import type { LayoutNode, PaneContent, PaneNode, SplitLayout, SplitNode } from './types.js';
 
 export const SPLIT_LAYOUT_SCHEMA_VERSION = 1;
+export const SPLIT_LAYOUT_BAG_VERSION = 2;
 export const SPLIT_LAYOUT_STORAGE_KEY = 'zcc.splitLayout';
+
+export interface SplitScopeSlot {
+  layout: SplitLayout | null;
+  maximizedPaneId: string | null;
+}
+
+export interface SplitLayoutBag {
+  version: typeof SPLIT_LAYOUT_BAG_VERSION;
+  scopes: Record<string, SplitScopeSlot>;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -15,7 +27,9 @@ function isNonEmptyString(value: unknown): value is string {
 function parsePaneContent(value: unknown): PaneContent | null {
   if (!isRecord(value) || typeof value.kind !== 'string') return null;
   if (value.kind === 'home') return { kind: 'home' };
+  if (value.kind === 'inbox') return { kind: 'inbox' };
   if (value.kind === 'agents') return { kind: 'agents' };
+  if (value.kind === 'empty') return { kind: 'empty' };
   if (value.kind === 'scheduler') {
     const projectId = value.projectId;
     if (projectId === undefined || projectId === null) return { kind: 'scheduler' };
@@ -68,6 +82,10 @@ function parsePaneContent(value: unknown): PaneContent | null {
       panelPath: value.panelPath,
       subPath: value.subPath
     };
+  }
+  if (value.kind === 'project-view') {
+    if (!isNonEmptyString(value.projectId) || !isNonEmptyString(value.mode)) return null;
+    return { kind: 'project-view', projectId: value.projectId, mode: value.mode };
   }
   return null;
 }
@@ -128,5 +146,66 @@ export function deserializeSplitLayout(storedValue: string | null): SplitLayout 
     return parseSplitLayout(parsed.layout);
   } catch {
     return null;
+  }
+}
+
+function parseScopeSlot(value: unknown): SplitScopeSlot {
+  if (!isRecord(value)) return { layout: null, maximizedPaneId: null };
+  const layout = value.layout == null ? null : parseSplitLayout(value.layout);
+  const maximizedPaneId =
+    typeof value.maximizedPaneId === 'string' && value.maximizedPaneId.length > 0
+      ? value.maximizedPaneId
+      : null;
+  return {
+    layout,
+    maximizedPaneId: layout === null ? null : maximizedPaneId
+  };
+}
+
+function emptyBag(): SplitLayoutBag {
+  return { version: SPLIT_LAYOUT_BAG_VERSION, scopes: {} };
+}
+
+export function serializeSplitLayoutBag(bag: SplitLayoutBag): string {
+  return JSON.stringify({
+    version: SPLIT_LAYOUT_BAG_VERSION,
+    scopes: bag.scopes
+  });
+}
+
+export function deserializeSplitLayoutBag(
+  storedValue: string | null,
+  fallbackMaximizedPaneId: string | null = null
+): SplitLayoutBag {
+  if (storedValue === null || storedValue === '') return emptyBag();
+  try {
+    const parsed: unknown = JSON.parse(storedValue);
+    if (!isRecord(parsed)) return emptyBag();
+    if (parsed.version === SPLIT_LAYOUT_BAG_VERSION) {
+      const scopes: Record<string, SplitScopeSlot> = {};
+      if (isRecord(parsed.scopes)) {
+        for (const [key, slot] of Object.entries(parsed.scopes)) {
+          if (!isNonEmptyString(key)) continue;
+          scopes[key] = parseScopeSlot(slot);
+        }
+      }
+      return { version: SPLIT_LAYOUT_BAG_VERSION, scopes };
+    }
+    if (parsed.version === SPLIT_LAYOUT_SCHEMA_VERSION) {
+      const layout = parseSplitLayout(parsed.layout);
+      if (layout === null) return emptyBag();
+      return {
+        version: SPLIT_LAYOUT_BAG_VERSION,
+        scopes: {
+          [GLOBAL_SPLIT_SCOPE_KEY]: {
+            layout,
+            maximizedPaneId: fallbackMaximizedPaneId
+          }
+        }
+      };
+    }
+    return emptyBag();
+  } catch {
+    return emptyBag();
   }
 }

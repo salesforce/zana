@@ -18,6 +18,27 @@ RUN apt-get update \
   && mkdir -p /run/sshd \
   && ssh-keygen -A
 
+# Optional: live agent CLIs inside this box. Never bake API keys into the
+# image — pass OPENAI_API_KEY / CURSOR_API_KEY at runtime (compose / docker run -e).
+ARG ZCC_INSTALL_OPENCODE=0
+ARG ZCC_INSTALL_CODEX=0
+ARG ZCC_INSTALL_PI=0
+ARG ZCC_INSTALL_CURSOR=0
+RUN pkgs="" \
+  && if [ "$ZCC_INSTALL_OPENCODE" = "1" ]; then pkgs="$pkgs opencode-ai"; fi \
+  && if [ "$ZCC_INSTALL_CODEX" = "1" ]; then pkgs="$pkgs @openai/codex @agentclientprotocol/codex-acp"; fi \
+  && if [ "$ZCC_INSTALL_PI" = "1" ]; then pkgs="$pkgs @earendil-works/pi-coding-agent"; fi \
+  && if [ -n "$pkgs" ]; then npm install -g $pkgs; fi \
+  && if [ "$ZCC_INSTALL_CURSOR" = "1" ]; then \
+    curl -fsSL https://cursor.com/install | bash \
+    && agent_bin=$(readlink -f /root/.local/bin/cursor-agent) \
+    && mkdir -p /usr/local/lib/cursor-agent \
+    && cp -a "$(dirname "$agent_bin")/." /usr/local/lib/cursor-agent/ \
+    && chmod -R a+rX /usr/local/lib/cursor-agent \
+    && find /usr/local/lib/cursor-agent -type f -exec chmod a+x {} + \
+    && ln -sfn /usr/local/lib/cursor-agent/cursor-agent /usr/local/bin/cursor-agent; \
+  fi
+
 # Official image already has uid 1000 (`node`); rename so SSH and bind mounts match.
 RUN usermod -l zcc node \
   && groupmod -n zcc node \

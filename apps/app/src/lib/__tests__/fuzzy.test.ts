@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fuzzyScore } from '../fuzzy.js';
+import { fuzzyMatchPaths, fuzzyScore } from '../fuzzy.js';
 
 describe('fuzzyScore', () => {
   it('returns a zero-score empty match for an empty query', () => {
@@ -37,11 +37,18 @@ describe('fuzzyScore', () => {
     expect(camel).toBeGreaterThan(plain);
   });
 
-  it('rewards a match at the start of the basename over a leading-dir match', () => {
-    // Each string has exactly one 'p' so the scorer can't pick an earlier one.
-    const base = fuzzyScore('src/lib/parse.ts', 'p')!.score;     // 'p' starts basename
-    const nonBase = fuzzyScore('parse/lib/x.ts', 'p')!.score;     // 'p' starts a leading dir
-    expect(base).toBeGreaterThan(nonBase);
+  it('matches path queries with fuzzyMatchPaths', () => {
+    const rows = fuzzyMatchPaths({
+      items: [{ path: 'src/lib/parse.ts' }, { path: 'parse/lib/x.ts' }],
+      query: 'parse',
+      getPath: (item) => item.path,
+      limit: 2
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.item.path).sort()).toEqual([
+      'parse/lib/x.ts',
+      'src/lib/parse.ts'
+    ]);
   });
 
   it('applies a small length penalty so shorter equal matches win', () => {

@@ -5,12 +5,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getConversationThread, getHost } from '@zana-ai/zcc-db';
 import { handleHostInternalHttp } from './host-internal.js';
 import type { ProductHttpContext } from './product-context.js';
+import { openThreadFilePreview } from '../services/threads/preview-file.js';
 
 vi.mock('@zana-ai/zcc-db', () => ({
   getConversationThread: vi.fn(),
   getHost: vi.fn(),
   upsertHost: vi.fn()
 }));
+
+vi.mock('../services/threads/preview-file.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/threads/preview-file.js')>();
+  return {
+    ...actual,
+    previewFileDepsFromContext: () => ({ tagged: 'deps' }),
+    openThreadFilePreview: vi.fn()
+  };
+});
 
 vi.mock('./host-hub.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./host-hub.js')>();
@@ -76,6 +86,7 @@ const thread = {
 afterEach(() => {
   vi.mocked(getConversationThread).mockReset();
   vi.mocked(getHost).mockReset();
+  vi.mocked(openThreadFilePreview).mockReset();
 });
 
 describe('host internal plugin tool-call', () => {
@@ -159,6 +170,84 @@ describe('host internal plugin tool-call', () => {
       ctx
     );
     expect(foreign.status).toBe(403);
+  });
+
+  it('opens a host preview_file without a plugin service and ignores a forged threadId', async () => {
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getConversationThread).mockReturnValue(thread as never);
+    vi.mocked(openThreadFilePreview).mockReturnValue({
+      delivered: 1,
+      path: 'src/a.ts',
+      source: 'workspace',
+      threadId: thread.id,
+      projectId: thread.projectId
+    });
+    const invokeAgentTool = vi.fn();
+    const captured = captureResponse();
+    const handled = await handleHostInternalHttp(
+      request({
+        sessionId: 'inst-1',
+        threadId: thread.id,
+        providerThreadId: 'prov-1',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        tool: 'preview_file',
+        arguments: { path: 'src/a.ts', threadId: 'other-thread' }
+      }),
+      captured.response,
+      {
+        config: { getConfig: () => ({}) },
+        db: {},
+        plugins: { invokeAgentTool }
+      } as unknown as ProductHttpContext
+    );
+    expect(handled).toBe(true);
+    expect(captured.status).toBe(200);
+    expect(captured.body).toMatchObject({ success: true });
+    expect(invokeAgentTool).not.toHaveBeenCalled();
+    expect(openThreadFilePreview).toHaveBeenCalledWith(
+      { tagged: 'deps' },
+      expect.objectContaining({
+        threadId: thread.id,
+        projectId: thread.projectId,
+        path: 'src/a.ts'
+      })
+    );
+  });
+
+  it('answers inbox_push from the owning thread and does not dispatch to plugins', async () => {
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getConversationThread).mockReturnValue(thread as never);
+    const append = vi.fn(async () => ({ id: 'inb-1', ts: 1, projectId: thread.projectId }));
+    const invokeAgentTool = vi.fn();
+    const captured = captureResponse();
+    await handleHostInternalHttp(
+      request({
+        sessionId: 'inst-1',
+        threadId: thread.id,
+        providerThreadId: 'prov-1',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        tool: 'inbox_push',
+        arguments: { comments: 'shipped', projectId: 'forged' }
+      }),
+      captured.response,
+      {
+        config: { getConfig: () => ({}) },
+        db: {},
+        toProjects: () => [{ id: thread.projectId, name: 'Demo', path: '/tmp/demo' }],
+        inbox: { append },
+        plugins: { invokeAgentTool }
+      } as unknown as ProductHttpContext
+    );
+    expect(captured.status).toBe(200);
+    expect(captured.body).toMatchObject({ success: true });
+    expect(invokeAgentTool).not.toHaveBeenCalled();
+    expect(append).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: thread.projectId,
+      sessionId: thread.id,
+      comments: 'shipped'
+    }));
   });
 
   it('returns an unsuccessful tool result when no plugin service is wired', async () => {

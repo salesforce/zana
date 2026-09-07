@@ -3,22 +3,24 @@ import { readFileSync } from 'node:fs';
 
 const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
 
-describe('ProjectView launcher host', () => {
-  it('mounts the project launcher as a modal for every project view', () => {
+describe('ProjectView terminal park', () => {
+  it('keeps a hidden park anchor and leaves project modes to the split workspace', () => {
     const source = readFileSync(new URL('./ProjectView.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('{launcherOpen && project && workspaceShown && (');
-    expect(source).toContain("route.nav === 'projects' && !!route.focusedProjectId");
-    expect(source).not.toContain('launcherOpen && project && !isAgents');
-    expect(source).toContain('<AgentLauncher');
-    expect(source).not.toContain('presentation=');
-    expect(source).toContain('route.isNewThread');
-    expect(source).toContain('route.isThreadView');
+    const pane = readFileSync(new URL('./ProjectModePane.tsx', import.meta.url), 'utf8');
+    const area = readFileSync(new URL('../thread-detail/SplitThreadArea.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('PROJECTS_TERMINAL_ANCHOR_ID');
+    expect(source).toContain("style={{ display: 'none' }}");
+    expect(source).not.toContain('<AgentLauncher');
     expect(source).not.toContain('<NewThreadView');
     expect(source).not.toContain('<ThreadDetail');
-    expect(source).toContain('mode === \'agents\' && !!project && !isNewThread && !isThreadView');
-    expect(source).toContain('{!isThreadView && !isAgents && (');
-    expect(source).not.toContain('explorer-topbar-label">Agents');
+    expect(source).not.toContain('<AgentsBoard');
+    expect(pane).toContain('<AgentsBoard scope={{ kind: \'project\', project }} />');
+    expect(pane).toContain("viewMode === 'agents'");
+    expect(pane).not.toContain('explorer-topbar-label">Agents');
+    expect(area).toContain("content.kind === 'project-view'");
+    expect(area).toContain('<ProjectModePane');
     expect(css).toContain('.project-body > .thread-detail-view');
+    expect(css).toContain('.split-workspace .project-mode-pane');
   });
 });
 

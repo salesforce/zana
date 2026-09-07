@@ -18,6 +18,10 @@ import { bridgeExecutionOptionsSchema } from "./execution-options.js";
 export const BRIDGE_REQUEST_METHODS = {
   initialize: "initialize",
   modelList: "model/list",
+  providerHealth: "provider/health",
+  providerUsage: "provider/usage",
+  providerInstallationStatus: "provider/installation/status",
+  providerInstallationRun: "provider/installation/run",
   threadStart: "thread/start",
   threadResume: "thread/resume",
   threadFork: "thread/fork",

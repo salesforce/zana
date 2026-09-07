@@ -25,7 +25,9 @@ export function handleInstallHttp(
     return false;
   }
 
-  const publicUrl = resolvePublicAppUrl();
+  const publicUrl = resolvePublicAppUrl({
+    configUrl: ctx.config.getConfig().publicAppUrl
+  });
   if (!isAllowedHostInternalHost(requestHostHeader(request), publicUrl)) {
     response.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'host is not allowed' }));
     return true;

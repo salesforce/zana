@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -25,6 +25,21 @@ export function resolveHostId(dataDir: string, provided?: string): string {
   return provided ?? randomUUID();
 }
 
+function replaceHostIdFile(path: string, hostId: string): void {
+  const tmp = `${path}.${randomUUID()}.tmp`;
+  writeFileSync(tmp, `${hostId}\n`, { encoding: 'utf8', mode: 0o600 });
+  try {
+    renameSync(tmp, path);
+  } catch (error) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* tmp is best-effort cleanup */
+    }
+    throw error;
+  }
+}
+
 /** Call only after enroll succeeds. Writing first strands a failed enroll. */
 export function persistHostId(dataDir: string, hostId: string): void {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -37,9 +52,9 @@ export function persistHostId(dataDir: string, hostId: string): void {
   }
   const raced = readPersistedHostId(dataDir);
   if (!raced) throw new Error(`Failed to initialize host id at ${path}`);
-  if (raced !== hostId) {
-    throw new Error(`Persisted host id ${raced} does not match resolved host id ${hostId}`);
-  }
+  if (raced === hostId) return;
+  // Re-join mints a new host id; leftover host.id from a previous enroll is stale.
+  replaceHostIdFile(path, hostId);
 }
 
 export function detectHostName(): string {

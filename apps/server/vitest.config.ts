@@ -7,6 +7,7 @@ export default defineConfig({
     __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify('')
   },
   resolve: {
+
     // Array form so host-daemon subpaths resolve via regex. A bare string alias
     // for '@zana-ai/zcc-host-daemon' prefix-matches subpaths too, rewriting
     // '.../harness/x' onto '.../src/index.ts/harness/x' (ENOTDIR). The subpath

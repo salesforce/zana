@@ -21,8 +21,9 @@ export type ThreadModelCatalogSnapshot = {
 };
 
 type ExecutionOptionsBody = Awaited<ReturnType<typeof product.threads.executionOptions>>;
+export type ThreadExecutionOptionsQuery = { providerId?: string; hostId?: string };
 export type ThreadExecutionOptionsFetcher = (
-  query?: { providerId?: string }
+  query?: ThreadExecutionOptionsQuery
 ) => Promise<ExecutionOptionsBody>;
 
 const listeners = new Set<() => void>();
@@ -36,6 +37,7 @@ let providers: ThreadComposerProviderOption[] = [];
 let byProvider: Record<string, ThreadModelCatalogEntry> = {};
 let inflight = new Set<string>();
 let catalogEpoch = 0;
+let catalogHostId: string | undefined;
 let snapshot: ThreadModelCatalogSnapshot = freezeSnapshot();
 
 function freezeSnapshot(): ThreadModelCatalogSnapshot {
@@ -96,6 +98,14 @@ function applyRoster(rows: ThreadComposerProviderOption[]): void {
   providers = rows;
 }
 
+function optionsQuery(providerId?: string): ThreadExecutionOptionsQuery | undefined {
+  if (!providerId && !catalogHostId) return undefined;
+  return {
+    ...(providerId ? { providerId } : {}),
+    ...(catalogHostId ? { hostId: catalogHostId } : {})
+  };
+}
+
 function loadProvider(providerId: string): Promise<void> {
   const existing = loads.get(providerId);
   if (existing) return existing;
@@ -104,7 +114,7 @@ function loadProvider(providerId: string): Promise<void> {
     inflight = new Set(inflight).add(providerId);
     emit();
     try {
-      const body = await fetchOptions({ providerId });
+      const body = await fetchOptions(optionsQuery(providerId));
       if (epoch !== catalogEpoch) return;
       applyRoster(mapProviders(body.providers));
       byProvider = { ...byProvider, [providerId]: entryFor(providerId, body) };
@@ -130,7 +140,7 @@ function loadProvider(providerId: string): Promise<void> {
 async function runPrefetch(): Promise<void> {
   let roster: ThreadComposerProviderOption[] = [];
   try {
-    const body = await fetchOptions();
+    const body = await fetchOptions(optionsQuery());
     roster = mapProviders(body.providers);
     applyRoster(roster);
     emit();
@@ -166,6 +176,7 @@ export function prefetchThreadModelCatalog(): Promise<void> {
     } while (prefetchDirty);
   })().finally(() => {
     prefetchInflight = null;
+    if (prefetchDirty) return prefetchThreadModelCatalog();
   });
   return prefetchInflight;
 }
@@ -180,6 +191,14 @@ export function reloadThreadModelCatalog(): Promise<void> {
   emit();
   prefetchDirty = true;
   return prefetchThreadModelCatalog();
+}
+
+/** Scope the catalog to the machine that will spawn the thread. Reloads when it changes. */
+export function setThreadModelCatalogHost(hostId: string | undefined): Promise<void> {
+  const next = hostId?.trim() || undefined;
+  if (next === catalogHostId) return prefetchThreadModelCatalog();
+  catalogHostId = next;
+  return reloadThreadModelCatalog();
 }
 
 export function ensureThreadProviderModels(providerId: string): Promise<void> {
@@ -206,6 +225,7 @@ export function resetThreadModelCatalog(fetcher?: ThreadExecutionOptionsFetcher 
   fetchOptions = fetcher ?? ((query) => product.threads.executionOptions(query));
   prefetchInflight = null;
   prefetchDirty = false;
+  catalogHostId = undefined;
   catalogEpoch += 1;
   loads.clear();
   offeredSignature = '';

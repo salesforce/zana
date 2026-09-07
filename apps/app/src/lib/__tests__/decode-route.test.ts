@@ -43,6 +43,7 @@ describe('decodeRoutePath', () => {
     ['/projects/p1/schedules/new', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'scheduler', isProjectFocused: true, isNewSchedule: true }],
     ['/projects/p1/schedules/sched-1', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'scheduler', isProjectFocused: true, scheduleId: 'sched-1' }],
     ['/projects/p1/terminals', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'terminals', isProjectFocused: true }],
+    ['/projects/p1/salesforce%3Aagent-script', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'salesforce:agent-script', isProjectFocused: true }],
     ['/projects/p1/settings', { nav: 'settings', settingsTab: 'project', focusedProjectId: 'p1', isProjectSettings: true }],
     ['/plugins/docs/panel', { nav: 'docs', pluginPanelPath: 'panel', pluginSubPath: '' }],
     ['/plugins/docs/panel/sub', { nav: 'docs', pluginPanelPath: 'panel', pluginSubPath: 'sub' }]

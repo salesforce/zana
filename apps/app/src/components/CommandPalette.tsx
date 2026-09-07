@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { ChevronRight, FileText, Folder, Globe, Slash, CornerDownLeft } from 'lucide-react';
 import { useData, useScheduler, usePersonas, useUi, visibleTerminals } from '../store.js';
 import type { LaunchProfileId, WalkedFile, SlashCommand, SshHostEntry, Project, Persona } from '@zana-ai/zcc-domain/product';
-import { fuzzyScore } from '../lib/fuzzy.js';
+import { fuzzyMatchPaths, fuzzyScore } from '../lib/fuzzy.js';
 import { projectDefaultProfile } from '../lib/launchProfile.js';
 import { isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { useMergedModules } from '../modules/index.js';
@@ -448,13 +448,12 @@ export function CommandPalette({ onClose }: Props) {
       }
       return out;
     }
-    const out: Array<FileRow & { score: number }> = [];
-    for (const file of files) {
-      const r = fuzzyScore(file.rel, fileQuery);
-      if (r) out.push({ file, matchIdx: r.matchIdx, score: r.score });
-    }
-    out.sort((a, b) => b.score - a.score);
-    return out.slice(0, FILE_MAX_RESULTS).map(({ file, matchIdx }) => ({ file, matchIdx }));
+    return fuzzyMatchPaths({
+      items: files,
+      query: fileQuery,
+      getPath: (file) => file.rel,
+      limit: FILE_MAX_RESULTS
+    }).map((match) => ({ file: match.item, matchIdx: match.positions }));
   }, [fileMode, files, fileQuery, selectedProject, recentFilesMap]);
 
   // --- launch targets (# mode) ----------------------------------------------

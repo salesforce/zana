@@ -4,7 +4,7 @@ export default function plugin(zcc) {
     if (!threadId) throw new Error("threadId is required");
     return zcc.ui.requestInput({
       threadId,
-      rendererId: "secret",
+      rendererId: "secret-request",
       title: "Secret",
       payload: { label: typeof args?.label === "string" ? args.label : "Secret" }
     });

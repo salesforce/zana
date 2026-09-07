@@ -26,10 +26,13 @@ export function imageContentTypeFromPath(path: string): string | null {
 }
 
 export function imagePreviewSrc(file: HostImageFile): string | null {
+  const content = file.content?.trim() ?? '';
+  if (content.startsWith('data:image/')) return content;
   if (!file.contentType || !IMAGE_CONTENT_TYPES.has(file.contentType)) return null;
   if (file.encoding === 'base64') {
-    if (!file.content) return null;
-    return `data:${file.contentType};base64,${file.content}`;
+    if (!content) return null;
+    if (content.startsWith('data:')) return content;
+    return `data:${file.contentType};base64,${content}`;
   }
   if (file.contentType === 'image/svg+xml') {
     return `data:image/svg+xml,${encodeURIComponent(file.content)}`;

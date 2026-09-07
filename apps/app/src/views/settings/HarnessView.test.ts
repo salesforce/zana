@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import {
@@ -64,5 +65,15 @@ describe('summarizeHarnessHealth', () => {
 
   it('returns checking when the probe has not finished', () => {
     expect(summarizeHarnessHealth([], {} as AppConfig).message).toBe('Checking…');
+  });
+});
+
+describe('Install status login check copy', () => {
+  it('says Check verifies sign-in for Cursor, Codex, Pi, and OpenCode', () => {
+    const source = readFileSync(new URL('./HarnessView.tsx', import.meta.url), 'utf8');
+    expect(source).toContain(
+      'whether Cursor, Codex, Pi, and OpenCode are signed in'
+    );
+    expect(source).toContain('login={harnessLoginStatus(h.family, modelCatalog, h.installed)}');
   });
 });

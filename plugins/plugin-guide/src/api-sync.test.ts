@@ -8,6 +8,7 @@ const SLOT_SURFACE_IDS = [
   'homepageSection',
   'projectTab',
   'experimental_projectMenuAction',
+  'experimental_createProjectAction',
   'sidebarFooterAction',
   'pendingInteraction',
   'threadPanelAction',

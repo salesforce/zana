@@ -1,6 +1,7 @@
 import {
   composerProjectLabel,
   composerProjectOptions,
+  isRemoteWorkspaceProject,
   scratchWorkspaceProject,
   type ComposerProject
 } from './composer-project-default.js';
@@ -16,16 +17,36 @@ export type ComposerProjectPickerRow = {
   label: string;
   sticky?: boolean;
   action?: 'new-project' | 'no-project';
+  remote?: boolean;
+  description?: string;
 };
+
+/** Muted second line + search haystack for SSH-backed and host-bound projects. */
+export function composerProjectRemoteDescription(
+  project: Pick<ComposerProject, 'remote' | 'hostId'> | undefined
+): string | undefined {
+  const remote = project?.remote;
+  const host = remote?.host?.trim();
+  if (remote && host) {
+    const user = remote.user?.trim();
+    return `Remote · ${user ? `${user}@${host}` : host}`;
+  }
+  if (project?.hostId) return 'Remote machine';
+  return undefined;
+}
 
 export function composerProjectPickerRows(
   projects: readonly ComposerProject[]
 ): ComposerProjectPickerRow[] {
   return [
-    ...composerProjectOptions(projects).map((row) => ({
-      value: row.id,
-      label: composerProjectLabel(row)
-    })),
+    ...composerProjectOptions(projects).map((row) => {
+      const description = composerProjectRemoteDescription(row);
+      return {
+        value: row.id,
+        label: composerProjectLabel(row),
+        ...(isRemoteWorkspaceProject(row) ? { remote: true as const, ...(description ? { description } : {}) } : {})
+      };
+    }),
     {
       value: COMPOSER_NEW_PROJECT_VALUE,
       label: COMPOSER_NEW_PROJECT_LABEL,

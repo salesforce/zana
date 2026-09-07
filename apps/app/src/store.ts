@@ -49,6 +49,7 @@ import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
 import { product } from './lib/product-client.js';
+import { subscribeProductEvent } from './lib/product-ws.js';
 import { prefetchThreadModelCatalog, reloadThreadModelCatalog } from './components/thread/pickers/thread-model-catalog.js';
 import { decodeRoutePath } from './lib/decode-route.js';
 import {
@@ -62,6 +63,17 @@ import {
   getSchedulerRoutePath,
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
+import {
+  EMPTY_HOST_INSTALL_DRAWER,
+  reduceHostInstallAppend,
+  reduceHostInstallEvent,
+  reduceHostInstallFinish,
+  reduceHostInstallOpen,
+  type HostInstallDrawerState,
+  type HostInstallFinish,
+  type HostInstallKind
+} from './lib/host-install-drawer.js';
+import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 import {
   findProjectIdForSession,
   hasMissingSetup,
@@ -92,6 +104,10 @@ import {
   useUpdates,
   useWhatsNew
 } from './stores/live.js';
+import {
+  resolvedComposerSendMode,
+  type ComposerSendMode
+} from './lib/thread-composer-preferences.js';
 
 /**
  * localStorage key for the sidebar-collapsed preference. A per-project window
@@ -452,6 +468,13 @@ interface UiState {
   notificationsDrawerOpen: boolean;
   toggleNotificationsDrawer: () => void;
   setNotificationsDrawerOpen: (open: boolean) => void;
+  /** Right-edge install log drawer — live NDJSON from host-daemon Install/Fix. */
+  hostInstallDrawer: HostInstallDrawerState;
+  openHostInstallDrawer: (input: { kind: HostInstallKind; target: string }) => void;
+  appendHostInstallLogs: (lines: string[]) => void;
+  applyHostInstallEvent: (event: HostBootstrapEvent) => void;
+  finishHostInstallDrawer: (outcome: HostInstallFinish) => void;
+  setHostInstallDrawerOpen: (open: boolean) => void;
   // explorer: file path open in viewer per project
   explorerFile: Record<string, string | undefined>;
   // explorer: pending goto request per project (consumed by ExplorerView)
@@ -742,16 +765,21 @@ function mirroredConfigFlags(config: AppConfig) {
     terminalWheelArrowsEnabled: config.terminalWheelArrowsEnabled ?? true,
     heartbeatEnabled: config.heartbeatEnabled ?? false,
     goalsEnabled: config.goalsEnabled ?? false,
+    cliRemoteToolProxyEnabled: config.cliRemoteToolProxyEnabled ?? false,
+    cliRemoteHostCatalogEnabled: config.cliRemoteHostCatalogEnabled ?? false,
     followUpsEnabled: config.followUpsEnabled ?? false,
     idleAttentionSensitivity: config.idleAttentionSensitivity ?? 'medium',
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
     includeScheduledAgentsInAgentView: config.includeScheduledAgentsInAgentView ?? true,
     voiceInputEnabled: config.voiceInputEnabled ?? false,
+    steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false,
+    composerSendMode: resolvedComposerSendMode(config),
     autoCloseIdleEnabled: config.autoCloseIdleEnabled ?? false,
     overseerMode: config.overseerMode ?? 'off',
     catchUpSummaryEnabled: config.catchUpSummaryEnabled ?? false,
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
+    autoOpenThreadPlanPanel: config.autoOpenThreadPlanPanel ?? false,
     structuredQuestionsEnabled: config.structuredQuestionsEnabled ?? true,
     reviewerApprovalMode: config.reviewerApprovalMode ?? 'ask',
     worktreeIsolationDefault: config.worktreeIsolationDefault ?? false,
@@ -763,7 +791,7 @@ function mirroredConfigFlags(config: AppConfig) {
     microVmEnabled: config.microVmEnabled ?? false,
     teamJobLaunchEnabled: config.teamJobLaunchEnabled ?? false,
     openerHiddenTargets: config.openerHiddenTargets ?? [],
-    steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false
+    lastProjectId: config.lastProjectId ?? null,
   };
 }
 
@@ -951,6 +979,23 @@ export const useUi = create<UiState>((set, get) => ({
     }
     set({ notificationsDrawerOpen: open });
   },
+  hostInstallDrawer: EMPTY_HOST_INSTALL_DRAWER,
+  openHostInstallDrawer: (input) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallOpen(s.hostInstallDrawer, input),
+    notificationsDrawerOpen: false
+  })),
+  appendHostInstallLogs: (lines) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallAppend(s.hostInstallDrawer, lines)
+  })),
+  applyHostInstallEvent: (event) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallEvent(s.hostInstallDrawer, event)
+  })),
+  finishHostInstallDrawer: (outcome) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallFinish(s.hostInstallDrawer, outcome)
+  })),
+  setHostInstallDrawerOpen: (open) => set((s) => ({
+    hostInstallDrawer: { ...s.hostInstallDrawer, open }
+  })),
   sidebarCollapsed:
     typeof localStorage !== 'undefined' &&
     localStorage.getItem(sidebarCollapsedKey()) === '1',
@@ -1407,6 +1452,14 @@ interface DataState {
   /** Mirror of AppConfig.goalsEnabled — gates the experimental Goals project tab.
    *  Hydrated on init, kept live by the Settings toggle. Default off. */
   goalsEnabled: boolean;
+  /** Mirror of AppConfig.cliRemoteToolProxyEnabled — unlocks the CLI Agent
+   *  Remote host vs Local agent · remote tools picker on SSH projects.
+   *  Hydrated on init, kept live by the Settings toggle. Default off. */
+  cliRemoteToolProxyEnabled: boolean;
+  /** Mirror of AppConfig.cliRemoteHostCatalogEnabled — CLI Agent asks the
+   *  execution host which CLIs/models are installed (Modern execution-options).
+   *  Hydrated on init, kept live by the Settings toggle. Default off. */
+  cliRemoteHostCatalogEnabled: boolean;
   /** Mirror of AppConfig.followUpsEnabled — gates the experimental Follow-ups
    *  project tab. Hydrated on init, kept live by the Settings toggle. Default off. */
   followUpsEnabled: boolean;
@@ -1429,6 +1482,9 @@ interface DataState {
   voiceInputEnabled: boolean;
   /** Mirror of AppConfig.steerActiveThreadOnEnter — Enter steers a running thread. */
   steerActiveThreadOnEnter: boolean;
+  /** Mirror of AppConfig.composerSendMode — Auto | Steer | Queue picker. */
+  composerSendMode: ComposerSendMode;
+  setComposerSendMode: (mode: ComposerSendMode) => Promise<void>;
   /** Mirror of AppConfig.autoCloseIdleEnabled — the master switch for closing
    *  idle agents on a timer. Backs the sidebar one-click toggle (near Agents)
    *  and the Settings toggle. Hydrated on init, kept live by both. Default off. */
@@ -1454,6 +1510,10 @@ interface DataState {
    *  Settings toggle. Default off; when off, no classify call runs and every
    *  report stays inline. */
   feedNoiseClassifierEnabled: boolean;
+  /** Mirror of AppConfig.autoOpenThreadPlanPanel — experimental. When on, Plan
+   *  mode (native ACP Plan, /plan, or a durable plan) opens the thread side
+   *  panel on the Plan pin. Default off. Approvals still open the panel. */
+  autoOpenThreadPlanPanel: boolean;
   /** Mirror of AppConfig.suggestionsEnabled — gates the Suggested Actions launcher
    *  rail entry + view (EXPERIMENTAL). Hydrated on init, kept live by the Settings
    *  toggle. Default off; when off the "Suggestions" nav entry is absent. */
@@ -1481,6 +1541,9 @@ interface DataState {
   /** Last external-editor verification snapshot (Settings → Editor). Empty until
    *  `refreshEditorStatus` runs. */
   editorStatus: EditorVerifyResult[];
+  /** Mirror of AppConfig.lastProjectId — seeds New Chat when the sidebar has
+   *  no current selection (e.g. after adding a remote, then opening Home). */
+  lastProjectId: string | null;
   /** Re-probe every external editor's `<shim> --version` and cache the result. */
   refreshEditorStatus: () => Promise<void>;
   /** Mirror of AppConfig.openerHiddenTargets — opener-bar targets the user hid.
@@ -1505,10 +1568,13 @@ interface DataState {
   setTerminalWheelArrowsEnabled: (on: boolean) => void;
   setHeartbeatEnabled: (on: boolean) => void;
   setGoalsEnabled: (on: boolean) => void;
+  setCliRemoteToolProxyEnabled: (on: boolean) => void;
+  setCliRemoteHostCatalogEnabled: (on: boolean) => void;
   setFollowUpsEnabled: (on: boolean) => void;
   setCatchUpSummaryEnabled: (on: boolean) => void;
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
+  setAutoOpenThreadPlanPanel: (on: boolean) => void;
   setSuggestionsEnabled: (on: boolean) => void;
   setStructuredQuestionsEnabled: (on: boolean) => void;
   setHarnessCursorEnabled: (on: boolean) => void;
@@ -1626,6 +1692,12 @@ interface DataState {
       /** Receives a launch failure for callers needing retained inline feedback
        *  in addition to the global error toast. */
       onError?: (message: string) => void;
+      /**
+       * Renderer INTENT: local CLI + SSH remote tools. Main honors only when
+       * Experimental `cliRemoteToolProxyEnabled` is on and the store project
+       * has `remote` (Rule 1). Never send host credentials.
+       */
+      remoteToolProxy?: boolean;
     }
   ) => Promise<TerminalSession | null>;
   /**
@@ -1758,14 +1830,14 @@ export function agentViewTerminals(
 }
 
 /**
- * Live sessions for a project's inline rail expansion: listed (non-scheduler)
- * sessions whose pty hasn't exited. Exited/dismissed agents drop out of the
- * rail automatically so it stays a view of what's actually running — the full
- * history (including exited tombstones) still lives in the project's drill-in
- * focus view. Feeds the Projects rail's per-project session tree.
+ * Live sessions for a project's inline rail expansion, including scheduler
+ * jobs while they are running. The project rollup includes those jobs, so the
+ * matching row must remain visible instead of leaving an unexplained status
+ * dot. Exited/dismissed agents drop out automatically; scheduler history still
+ * stays out of the project's drill-in focus view.
  */
-export function liveTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
-  return listedTerminals(list).filter((t) => t.status !== 'exited');
+export function projectRailTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
+  return (list ?? []).filter((t) => t.status !== 'exited');
 }
 
 /**
@@ -1817,18 +1889,22 @@ export const useData = create<DataState>((set, get) => ({
   terminalWheelArrowsEnabled: true,
   heartbeatEnabled: false,
   goalsEnabled: false,
+  cliRemoteToolProxyEnabled: false,
+  cliRemoteHostCatalogEnabled: false,
   followUpsEnabled: false,
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
   includeScheduledAgentsInAgentView: true,
   voiceInputEnabled: false,
   steerActiveThreadOnEnter: false,
+  composerSendMode: 'auto',
   autoCloseIdleEnabled: false,
   overseerMode: 'off',
   reviewerApprovalMode: 'ask',
   catchUpSummaryEnabled: false,
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
+  autoOpenThreadPlanPanel: false,
   suggestionsEnabled: false,
   structuredQuestionsEnabled: true,
   defaultHarness: null,
@@ -1839,6 +1915,7 @@ export const useData = create<DataState>((set, get) => ({
   harnessOpenCodeEnabled: false,
   harnessStatus: [],
   editorStatus: [],
+  lastProjectId: null,
   openerHiddenTargets: [],
   microVmEnabled: false,
   teamJobLaunchEnabled: false,
@@ -1869,6 +1946,14 @@ export const useData = create<DataState>((set, get) => ({
     set({ goalsEnabled: on });
   },
 
+  setCliRemoteToolProxyEnabled(on) {
+    set({ cliRemoteToolProxyEnabled: on });
+  },
+
+  setCliRemoteHostCatalogEnabled(on) {
+    set({ cliRemoteHostCatalogEnabled: on });
+  },
+
   setFollowUpsEnabled(on) {
     set({ followUpsEnabled: on });
   },
@@ -1879,6 +1964,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setFeedNoiseClassifierEnabled(on) {
     set({ feedNoiseClassifierEnabled: on });
+  },
+
+  setAutoOpenThreadPlanPanel(on) {
+    set({ autoOpenThreadPlanPanel: on });
   },
 
   setSuggestionsEnabled(on) {
@@ -1968,6 +2057,21 @@ export const useData = create<DataState>((set, get) => ({
 
   setVoiceInputEnabled(on) {
     set({ voiceInputEnabled: on });
+  },
+
+  async setComposerSendMode(mode) {
+    const prev = get().composerSendMode;
+    const prevSteer = get().steerActiveThreadOnEnter;
+    set({ composerSendMode: mode, steerActiveThreadOnEnter: mode === 'steer' });
+    try {
+      await product.config.set({
+        composerSendMode: mode,
+        steerActiveThreadOnEnter: mode === 'steer'
+      });
+    } catch (err) {
+      pushErrorToast(errorMessage(err, 'Failed to save send mode'));
+      set({ composerSendMode: prev, steerActiveThreadOnEnter: prevSteer });
+    }
   },
 
   async setAutoCloseIdleEnabled(on) {
@@ -2206,6 +2310,18 @@ export const useData = create<DataState>((set, get) => ({
     product.inbox.onAppended((entry) => {
       if (scopedProjectId && entry.projectId !== scopedProjectId) return;
       useInbox.getState().prepend(entry);
+      if (
+        entry.notify === 'loud'
+        && typeof document !== 'undefined'
+        && document.visibilityState !== 'visible'
+        && typeof Notification !== 'undefined'
+      ) {
+        try {
+          new Notification(entry.subject ?? 'Zana', { body: entry.comments ?? 'Needs your attention' });
+        } catch {
+          /* OS notify is best-effort */
+        }
+      }
     });
     product.inbox.onRemoved((id) => {
       useInbox.getState().removeLocal(id);
@@ -2379,6 +2495,16 @@ export const useData = create<DataState>((set, get) => ({
     }
     product.scheduler.onChanged((tasks) => {
       useScheduler.setState({ tasks });
+    });
+    subscribeProductEvent<{ action?: string; id?: string; enabled?: boolean }>('scheduler:command', (payload) => {
+      if (!payload?.id) return;
+      if (payload.action === 'run-now') {
+        void product.scheduler.runNow(payload.id);
+        return;
+      }
+      if (payload.action === 'set-enabled' && typeof payload.enabled === 'boolean') {
+        void product.scheduler.setEnabled(payload.id, payload.enabled);
+      }
     });
 
     // Goals: one-shot list + push subscription, mirroring the scheduler. Main
@@ -2916,7 +3042,8 @@ export const useData = create<DataState>((set, get) => ({
         microVmMemoryMib: opts?.microVmMemoryMib,
         resumeSessionId: opts?.resumeSessionId,
         cohort: opts?.cohort,
-        headless: opts?.headless
+        headless: opts?.headless,
+        remoteToolProxy: opts?.remoteToolProxy
       });
       if (!result.ok) {
         opts?.onError?.(result.message);

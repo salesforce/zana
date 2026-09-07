@@ -47,7 +47,8 @@ vi.mock('../mcp-config.js', () => ({
 vi.mock('../tmux.js', () => ({
   isTmuxAvailable: () => false,
   buildLocalTmuxCommand: (_id: string, command: string, args: string[]) => ({ command, args }),
-  wrapRemoteTmux: (_id: string, quoted: string) => quoted
+  wrapRemoteTmux: (_id: string, quoted: string) => quoted,
+  tmuxSessionName: (sessionId: string) => `cc-${sessionId}`
 }));
 
 // Model-alias resolution reads the developer's real ~/.claude/settings.json

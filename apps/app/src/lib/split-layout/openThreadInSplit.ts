@@ -1,5 +1,12 @@
 import { decideThreadDrop } from '../split-drag/zones.js';
-import { countPanes, findPaneByContent, MAX_PANES, replacePaneContent, setFocus, splitPane } from './ops.js';
+import {
+  countPanes,
+  findPaneByContent,
+  MAX_PANES,
+  replacePaneContent,
+  setFocus,
+  splitPane
+} from './ops.js';
 import { createSinglePaneLayout, paneContentForPathname, paneContentRoute } from './splitThreadNavigation.js';
 import { useSplitWorkspace } from './store.js';
 import type { PaneContent } from './types.js';

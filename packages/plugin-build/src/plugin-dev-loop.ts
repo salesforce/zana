@@ -31,6 +31,8 @@ export interface PluginDevLoopDeps {
 export interface PluginDevLoop {
   handleChange: (relativePath: string) => void;
   settled: () => Promise<void>;
+  /** Cancel debounce and run the pending cycle now. Used by `plugin dev --once`. */
+  flushNow: () => Promise<void>;
   dispose: () => void;
 }
 
@@ -96,6 +98,14 @@ export function createPluginDevLoop(deps: PluginDevLoopDeps): PluginDevLoop {
       timer = setTimeout(flush, debounceMs);
     },
     settled() {
+      return queueTail;
+    },
+    flushNow() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      flush();
       return queueTail;
     },
     dispose() {

@@ -15,14 +15,71 @@ describe('createFakePluginHost', () => {
     expect(await settings.get()).toEqual({ token: 'secret' });
     expect(() => harness.setSettings({ token: true as never })).toThrow(/expected string/);
     await expect(harness.callRpc('echo', { a: 1 })).resolves.toEqual({ a: 1 });
+    expect(zcc.storage.database().transaction(() => 3)).toBe(3);
     expect(await zcc.storage.kv.get('k')).toEqual({ n: 1 });
     expect(harness.published).toEqual([{ event: 'tick', payload: { ok: true } }]);
+  });
+
+  it('records provider and pty-harness registrations', () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
+    const provider = zcc.agents.experimental_registerProvider({
+      id: 'pi',
+      displayName: 'Pi',
+      capabilities: {
+        supportsServiceTier: false,
+        fork: 'checkpoint',
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['full']
+      }
+    });
+    const pty = zcc.agents.experimental_registerPtyHarness({
+      id: 'claude',
+      displayName: 'Claude Code',
+      profiles: [{ id: 'claude', label: 'Claude' }]
+    });
+    expect(harness.providers[0]?.id).toBe('pi');
+    expect(harness.ptyHarnesses[0]?.id).toBe('claude');
+    provider.unregister();
+    pty.unregister();
+    expect(harness.providers).toEqual([]);
+    expect(harness.ptyHarnesses).toEqual([]);
+  });
+
+  it('runs a registered CLI command', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
+    zcc.cli.register({
+      name: 'notes',
+      summary: 'Notes CLI',
+      async run(argv) {
+        return { exitCode: 0, stdout: argv.join(' ') };
+      }
+    });
+    await expect(harness.runCli(['list'])).resolves.toEqual({
+      exitCode: 0,
+      stdout: 'list',
+      stderr: ''
+    });
   });
 
   it('poisons the api after dispose', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'gone' });
     await harness.dispose();
     expect(() => zcc.rpc.method('x', () => null)).toThrow(PluginContextStaleError);
+  });
+
+  it('shares a services registry across fake hosts and unregisters on dispose', async () => {
+    const { createPluginServicesRegistry } = await import('../plugin-services.js');
+    const registry = createPluginServicesRegistry();
+    const alpha = createFakePluginHost({ pluginId: 'alpha', services: registry });
+    const beta = createFakePluginHost({ pluginId: 'beta', services: registry });
+    alpha.zcc.services.provide({ ping: () => 'alpha' });
+    expect(beta.zcc.services.has('alpha')).toBe(true);
+    expect(beta.zcc.services.use<{ ping: () => string }>('alpha').ping()).toBe('alpha');
+    await alpha.harness.dispose();
+    expect(() => beta.zcc.services.use<{ ping: () => string }>('alpha').ping()).toThrow(
+      /unavailable/
+    );
   });
 });
 
@@ -69,5 +126,38 @@ describe('createFakePluginHost sdk stubs', () => {
     await expect(wired.zcc.sdk.threads.archive({ threadId: 't1' })).resolves.toEqual({ id: 't1' });
     await expect(wired.zcc.sdk.threads.fork({ threadId: 't1' })).resolves.toEqual({ id: 'fork:t1' });
     await expect(wired.zcc.sdk.threads.unarchive({ threadId: 't1' })).resolves.toEqual({ id: 't1' });
+  });
+
+  it('lists hidden forks and queued messages when callbacks are wired', async () => {
+    const wired = createFakePluginHost({
+      pluginId: 'wired',
+      forkThread: async (args) => ({ id: `fork:${args.threadId}` }),
+      listThreads: async () => [{
+        id: 'thr-h',
+        projectId: 'p1',
+        hostId: 'h1',
+        environmentId: 'e1',
+        providerId: 'codex',
+        status: 'idle',
+        originKind: 'fork',
+        originPluginId: 'wired',
+        visibility: 'hidden',
+        archivedAt: null,
+        createdAt: 1,
+        parentThreadId: 't1'
+      }],
+      listQueuedMessages: async () => [{ id: 'qm-1' }],
+      createQueuedMessage: async () => ({ id: 'qm-2' })
+    });
+    await expect(wired.zcc.sdk.threads.fork({ sourceThreadId: 't1', visibility: 'hidden' })).resolves.toEqual({
+      id: 'fork:t1'
+    });
+    await expect(wired.zcc.sdk.threads.list({ includeHidden: true })).resolves.toHaveLength(1);
+    await expect(wired.zcc.sdk.threads.queuedMessages.list({ threadId: 't1' })).resolves.toEqual([{ id: 'qm-1' }]);
+    await expect(wired.zcc.sdk.threads.queuedMessages.create({
+      threadId: 't1',
+      input: [],
+      senderThreadId: 'thr-h'
+    })).resolves.toEqual({ id: 'qm-2' });
   });
 });

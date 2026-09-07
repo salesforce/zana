@@ -131,6 +131,20 @@ describe('Salesforce REST transport', () => {
     expect(response.text).toBe('DEBUG|line');
   });
 
+  it('forwards an AbortSignal to fetch', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+      expect(init?.signal).toBeTruthy();
+      expect(init?.signal?.aborted).toBe(false);
+      controller.abort();
+      expect(init?.signal?.aborted).toBe(true);
+      return { status: 200, text: async () => '{}' };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await salesforceRestRequest(org(), { method: 'GET', path: '/query', signal: controller.signal });
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
   it('posts JSON bodies on mutating REST calls', async () => {
     const fetchMock = vi.fn(async (_input: string | URL, init?: RequestInit) => {
       expect(init?.method).toBe('POST');

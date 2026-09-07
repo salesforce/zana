@@ -180,7 +180,6 @@ function ScheduleDetailView({
     <ThreadSecondaryPanel
       state={panel.state}
       showDiffPin={false}
-      showPlanPin={false}
       onSelectInfo={() => panel.selectPin('info')}
       onSelectDiff={() => panel.selectPin('diff')}
       onNewTab={panel.openNewTab}

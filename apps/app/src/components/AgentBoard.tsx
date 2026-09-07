@@ -841,7 +841,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     const subtitle = agentCardRuntimeLabel({
       profile: t.profile,
       personaName: persona?.name,
-      remote: Boolean(c.projectRemote)
+      remote: Boolean(c.projectRemote),
+      remoteToolProxy: Boolean(t.remoteToolProxy)
     });
     // Idle-triage badge: only in the idle lane, only when the add-on classified
     // this idle spell to something actionable (awaiting-reply / done / paused).
@@ -1105,7 +1106,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     const project = projects.find((row) => row.id === item.projectId);
     const runtime = threadCardRuntimeLabel(
       item.thread,
-      Boolean(project?.remote && (!project.hostId || item.thread.hostId !== project.hostId))
+      Boolean(project?.remote && (!project.hostId || item.thread.hostId !== project.hostId)),
+      Boolean(project?.remote && project.hostId && item.thread.hostId === project.hostId)
     );
     const showProjectChip = threadCardShowsProject(Boolean(showProject), grouped);
     return (

@@ -280,8 +280,15 @@ describe('target-resolution main authorization', () => {
     }).targetId).toBe('gpt-4o');
   });
 
-  it('rejects persona role targets outside adapter-owned scope', () => {
-    expect(() => resolveRoleTarget(opencode, {
+  it('allows static and dynamic OpenCode roles on remote launches at resolve time', () => {
+    expect(resolveRoleTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'build' } } },
+      scope: 'remote'
+    })).toMatchObject({ targetId: 'build', contribution: { args: ['--agent', 'build'] } });
+    expect(resolveRoleTarget(opencode, {
       config: config(),
       profile: 'opencode',
       extraArgs: [],
@@ -292,7 +299,11 @@ describe('target-resolution main authorization', () => {
         harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'custom-agent' } } }
       },
       scope: 'remote'
-    })).toThrow('role target is unavailable for remote launches');
+    })).toMatchObject({
+      source: 'Persona',
+      targetId: 'custom-agent',
+      contribution: { args: ['--agent', 'custom-agent'] }
+    });
   });
 
   it('applies adapter-scoped role target from a neutral Persona after harness selection', () => {

@@ -126,6 +126,18 @@ describe('CodexProvider', () => {
     expect(p.resolveLaunch('codex', CONFIG, false)).toEqual({ command: 'codex', args: [] });
   });
 
+  it('overlays live model/list ids with evidence for preflight', () => {
+    const live = new CodexProvider();
+    live.setDiscoveredModels([
+      { id: 'gpt-5.5', label: 'GPT-5.5', scope: ['local'] }
+    ]);
+    expect(live.adapter.descriptor.targets?.models.map((model) => model.id)).toEqual(['gpt-5.5']);
+    expect(live.adapter.descriptor.targets?.models[0]?.evidenceVersion).toBe('0.140.0');
+    expect(live.adapter.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'gpt-5.5', scope: 'local', versionRange: '0.140.0' })
+    ]));
+  });
+
   it('resolveLaunch: codex-resume uses the resume SUBCOMMAND (not a flag)', () => {
     expect(p.resolveLaunch('codex-resume', CONFIG, false)).toEqual({
       command: 'codex',

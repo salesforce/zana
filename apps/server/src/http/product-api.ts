@@ -28,6 +28,7 @@ import {
 import {
   archiveConversation,
   cancelConversationPlan,
+  flushHeldConversationSends,
   forkConversation,
   resumeConversation,
   sendConversationTurn,
@@ -35,7 +36,19 @@ import {
   unarchiveConversation,
   type ThreadSendMode
 } from '../services/threads/conversation-lifecycle.js';
+import { compactConversation } from '../services/threads/conversation-compact.js';
 import { closeConversationWithFollowup } from '../services/threads/thread-close-followup.js';
+import { conversationPromptHistory } from '../services/threads/conversation-prompt-history.js';
+import { conversationNextTurnView } from '../services/threads/conversation-next-turn.js';
+import { dropDeferredConversationMessage } from '../services/threads/conversation-deferred-messages.js';
+import { archiveAllConversationChildren, conversationChildSummary } from '../services/threads/conversation-child-ops.js';
+import { resolveConversationMentions, searchConversationThreads } from '../services/threads/conversation-search.js';
+import {
+  addUserPlanTask,
+  getDurableThreadPlanView,
+  updateUserPlanMarkdown,
+  updateUserPlanTask
+} from '../services/threads/conversation-plan.js';
 import {
   conversationOutline,
   conversationTimeline,
@@ -71,11 +84,12 @@ import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSche
 import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
-import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
+import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify, harnessVerifyBundle } from './harness-via-rpc.js';
+import { mergeHealthIntoExtraInstalled, probeInstalledProviderHealth } from '../services/threads/provider-health-probe.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
 import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
-import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, updateConversationThreadTitle } from '@zana-ai/zcc-db';
+import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, pinConversationThread, reorderPinnedConversationThread, unpinConversationThread, updateConversationThreadTitle } from '@zana-ai/zcc-db';
 import { handleHostsApi } from './hosts-api.js';
 import { isThreadLiveInProject } from '../services/agents/thread-liveness.js';
 import type { MarketplaceCatalogRow } from '../plugins/marketplace-store.js';
@@ -801,7 +815,9 @@ export async function handleProductHttp(
           pluginId: provider.pluginId,
           permissionModes: provider.capabilities.permissionModes,
           reasoningLevels: provider.capabilities.reasoningLevels ?? [],
-          composerActions: provider.composerActions ?? []
+          composerActions: provider.composerActions ?? [],
+          supportsManualCompaction: Boolean(provider.capabilities.supportsManualCompaction),
+          fork: provider.capabilities.fork
         }))
       });
       return true;
@@ -813,6 +829,20 @@ export async function handleProductHttp(
         ? listConversationThreadsByProject(ctx.db, projectId)
         : listVisibleConversationThreads(ctx.db);
       sendJson(response, 200, { threads: conversationThreadViews(ctx, threads) });
+      return true;
+    }
+
+    if (path === '/api/v1/threads/search' && method === 'GET') {
+      const q = requestUrl.searchParams.get('q') ?? requestUrl.searchParams.get('query') ?? '';
+      const projectId = requestUrl.searchParams.get('projectId');
+      sendJson(response, 200, searchConversationThreads(ctx, q, projectId));
+      return true;
+    }
+
+    if (path === '/api/v1/threads/resolve-mentions' && method === 'GET') {
+      const q = requestUrl.searchParams.get('q') ?? requestUrl.searchParams.get('query') ?? '';
+      const projectId = requestUrl.searchParams.get('projectId');
+      sendJson(response, 200, resolveConversationMentions(ctx, q, projectId));
       return true;
     }
 
@@ -1080,6 +1110,103 @@ export async function handleProductHttp(
       return true;
     }
 
+    const threadCompact = routeParams(path, '/api/v1/threads/:id/compact');
+    if (threadCompact && method === 'POST') {
+      try {
+        sendJson(response, 200, await compactConversation(ctx, threadCompact.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadPromptHistory = routeParams(path, '/api/v1/threads/:id/prompt-history');
+    if (threadPromptHistory && method === 'GET') {
+      try {
+        sendJson(response, 200, conversationPromptHistory(ctx, threadPromptHistory.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadChildSummary = routeParams(path, '/api/v1/threads/:id/child-summary');
+    if (threadChildSummary && method === 'GET') {
+      try {
+        sendJson(response, 200, conversationChildSummary(ctx, threadChildSummary.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadArchiveAll = routeParams(path, '/api/v1/threads/:id/archive-all');
+    if (threadArchiveAll && method === 'POST') {
+      try {
+        const confirm = requestUrl.searchParams.get('confirm') === '1'
+          || requestUrl.searchParams.get('confirm') === 'true';
+        sendJson(response, 200, archiveAllConversationChildren(ctx, threadArchiveAll.id, confirm));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadPin = routeParams(path, '/api/v1/threads/:id/pin');
+    if (threadPin && method === 'POST') {
+      const thread = pinConversationThread(ctx.db, threadPin.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      const view = conversationThreadView(ctx, thread);
+      ctx.hub.emit('threads:updated', view);
+      sendJson(response, 200, { thread: view });
+      return true;
+    }
+
+    const threadUnpin = routeParams(path, '/api/v1/threads/:id/unpin');
+    if (threadUnpin && method === 'POST') {
+      const thread = unpinConversationThread(ctx.db, threadUnpin.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      const view = conversationThreadView(ctx, thread);
+      ctx.hub.emit('threads:updated', view);
+      sendJson(response, 200, { thread: view });
+      return true;
+    }
+
+    const threadPinOrder = routeParams(path, '/api/v1/threads/:id/pin-order');
+    if (threadPinOrder && method === 'PATCH') {
+      const body = (await readJsonBody(request)) as { beforeId?: unknown };
+      const beforeId = typeof body.beforeId === 'string' ? body.beforeId : null;
+      const thread = reorderPinnedConversationThread(ctx.db, threadPinOrder.id, beforeId);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      sendJson(response, 200, { threads: conversationThreadViews(ctx, listVisibleConversationThreads(ctx.db)) });
+      return true;
+    }
+
     const threadPlanCancel = routeParams(path, '/api/v1/threads/:id/plan/cancel');
     if (threadPlanCancel && method === 'POST') {
       try {
@@ -1091,6 +1218,128 @@ export async function handleProductHttp(
         }
         sendHostFailure(response, error);
       }
+      return true;
+    }
+
+    const threadPlanTask = routeParams(path, '/api/v1/threads/:id/plan/tasks/:taskId');
+    if (threadPlanTask && method === 'PATCH') {
+      try {
+        const body = (await readJsonBody(request)) as {
+          text?: unknown;
+          status?: unknown;
+          sortOrder?: unknown;
+        };
+        const plan = updateUserPlanTask(ctx, threadPlanTask.id, threadPlanTask.taskId, {
+          text: typeof body.text === 'string' ? body.text : undefined,
+          status: body.status === 'pending' || body.status === 'in_progress' || body.status === 'blocked'
+            || body.status === 'completed' || body.status === 'cancelled'
+            ? body.status
+            : undefined,
+          sortOrder: typeof body.sortOrder === 'number' ? body.sortOrder : undefined
+        });
+        sendJson(response, 200, { ok: true, plan });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadPlanTasks = routeParams(path, '/api/v1/threads/:id/plan/tasks');
+    if (threadPlanTasks && method === 'POST') {
+      try {
+        const body = (await readJsonBody(request)) as { text?: unknown };
+        const text = typeof body.text === 'string' ? body.text.trim() : '';
+        if (!text) {
+          sendJson(response, 400, { error: 'invalid_request', message: 'text is required' });
+          return true;
+        }
+        sendJson(response, 201, { ok: true, plan: addUserPlanTask(ctx, threadPlanTasks.id, text) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadPlan = routeParams(path, '/api/v1/threads/:id/plan');
+    if (threadPlan && method === 'GET') {
+      const plan = getDurableThreadPlanView(ctx.db, threadPlan.id);
+      if (!plan) {
+        sendJson(response, 404, { error: 'unknown-plan', message: 'thread has no plan' });
+        return true;
+      }
+      sendJson(response, 200, { ok: true, plan });
+      return true;
+    }
+    if (threadPlan && method === 'PATCH') {
+      try {
+        const body = (await readJsonBody(request)) as { markdown?: unknown };
+        if (typeof body.markdown !== 'string') {
+          sendJson(response, 400, { error: 'invalid_request', message: 'markdown is required' });
+          return true;
+        }
+        sendJson(response, 200, { ok: true, plan: updateUserPlanMarkdown(ctx, threadPlan.id, body.markdown) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const nextTurnFlush = routeParams(path, '/api/v1/threads/:id/next-turn/flush');
+    if (nextTurnFlush && method === 'POST') {
+      try {
+        const body = (await readJsonBody(request)) as { force?: unknown };
+        await flushHeldConversationSends(ctx, nextTurnFlush.id, { force: body.force !== false });
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const nextTurnItem = routeParams(path, '/api/v1/threads/:id/next-turn/:itemId');
+    if (nextTurnItem && method === 'DELETE') {
+      try {
+        dropDeferredConversationMessage(ctx, nextTurnItem.id, nextTurnItem.itemId);
+        const thread = getConversationThread(ctx.db, nextTurnItem.id);
+        if (thread) ctx.hub.emit('threads:updated', conversationThreadView(ctx, thread));
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const nextTurnList = routeParams(path, '/api/v1/threads/:id/next-turn');
+    if (nextTurnList && method === 'GET') {
+      const thread = getConversationThread(ctx.db, nextTurnList.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      sendJson(response, 200, {
+        ok: true,
+        ...conversationNextTurnView(ctx, thread.id)
+      });
       return true;
     }
 
@@ -1135,14 +1384,22 @@ export async function handleProductHttp(
     }
     if (queuedList && method === 'POST') {
       try {
-        const body = (await readJsonBody(request)) as { input?: unknown; text?: unknown; model?: unknown };
+        const body = (await readJsonBody(request)) as {
+          input?: unknown;
+          text?: unknown;
+          model?: unknown;
+          senderThreadId?: unknown;
+        };
         const input = Array.isArray(body.input)
           ? body.input
           : typeof body.text === 'string'
             ? [{ type: 'text', text: body.text, mentions: [] }]
             : [];
         const message = await createQueuedMessage(ctx.dataDir, queuedList.id, input as never, {
-          model: typeof body.model === 'string' ? body.model : undefined
+          model: typeof body.model === 'string' ? body.model : undefined,
+          senderThreadId: typeof body.senderThreadId === 'string' && body.senderThreadId.trim()
+            ? body.senderThreadId.trim()
+            : undefined
         });
         sendJson(response, 201, message);
       } catch (error) {
@@ -2312,10 +2569,21 @@ export async function handleProductHttp(
       const providerId = requestUrl.searchParams.get('providerId') ?? undefined;
       const requestedHostId = requestUrl.searchParams.get('hostId') ?? undefined;
       let availability: Awaited<ReturnType<typeof harnessVerify>> = [];
+      let extraInstalled: Record<string, boolean> = {};
       try {
-        availability = await harnessVerify(ctx.hostHub, requestedHostId);
+        const bundle = await harnessVerifyBundle(ctx.hostHub, requestedHostId);
+        availability = bundle.availability;
+        extraInstalled = mergeHealthIntoExtraInstalled(
+          bundle.extraInstalled,
+          await probeInstalledProviderHealth({
+            hub: ctx.hostHub,
+            hostId: requestedHostId,
+            artifacts: ctx.pluginHostArtifacts
+          })
+        );
       } catch {
         availability = [];
+        extraInstalled = {};
       }
       let listed: ProviderListModelsResult | null = null;
       let listError: ThreadModelLoadErrorCode | null = null;
@@ -2340,7 +2608,7 @@ export async function handleProductHttp(
           listError = classifyModelListError(error);
         }
       }
-      sendJson(response, 200, buildThreadExecutionOptions({ providerId, availability, listed, listError }));
+      sendJson(response, 200, buildThreadExecutionOptions({ providerId, availability, extraInstalled, listed, listError }));
       return true;
     }
 

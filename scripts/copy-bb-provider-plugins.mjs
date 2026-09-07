@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 /**
- * Copy BB provider plugins + plugin-sdk provider-bridge facade.
+ * Copy BB provider-claude-code and provider-codex only.
+ * Does not overwrite ZCC-adapted provider-acp / provider-pi, and does not
+ * replace packages/plugin-sdk/src/provider-bridge.ts unless
+ * ZCC_COPY_BB_PROVIDER_BRIDGE=1.
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -60,16 +63,19 @@ if (!existsSync(BB)) {
 
 const bridgeSrc = join(BB, 'packages/plugin-sdk/src/provider-bridge.ts');
 const bridgeDest = join(ROOT, 'packages/plugin-sdk/src/provider-bridge.ts');
-writeFileSync(bridgeDest, rebrand(readFileSync(bridgeSrc, 'utf8')));
+if (process.env.ZCC_COPY_BB_PROVIDER_BRIDGE === '1') {
+  writeFileSync(bridgeDest, rebrand(readFileSync(bridgeSrc, 'utf8')));
+}
 
 const plugins = [
   'provider-claude-code',
-  'provider-codex',
-  'provider-pi',
-  'provider-acp'
+  'provider-codex'
 ];
 
+const SKIP_EXISTING = new Set(['provider-acp', 'provider-pi']);
+
 for (const name of plugins) {
+  if (SKIP_EXISTING.has(name)) continue;
   const dest = join(ROOT, 'plugins', name);
   rmSync(dest, { recursive: true, force: true });
   copyTree(join(BB, 'plugins', name), dest);
@@ -108,4 +114,4 @@ for (const name of plugins) {
   writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 }
 
-console.log('copied provider plugins and plugin-sdk provider-bridge');
+console.log('copied Claude Code and Codex provider plugins');

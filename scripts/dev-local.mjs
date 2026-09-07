@@ -60,6 +60,46 @@ function readExistingEnrollToken(dataDir) {
   }
 }
 
+function firstNonCommentLine(text) {
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    return trimmed;
+  }
+  return undefined;
+}
+
+function readRepoPublicAppUrl() {
+  try {
+    return firstNonCommentLine(readFileSync(join(repoRoot, 'public-app-url'), 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+function readDotenvKey(key) {
+  try {
+    const text = readFileSync(join(repoRoot, '.env'), 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const idx = trimmed.indexOf('=');
+      if (idx < 1 || trimmed.slice(0, idx).trim() !== key) continue;
+      let value = trimmed.slice(idx + 1).trim();
+      if (
+        (value.startsWith("'") && value.endsWith("'"))
+        || (value.startsWith('"') && value.endsWith('"'))
+      ) {
+        value = value.slice(1, -1);
+      }
+      return value || undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 /**
  * Isolated `~/.zcc-dev` is the default so `pnpm dev` can sit beside the
  * installed app. `--packaged` / `pnpm dev:prod` / `ZCC_DEV_TARGET=packaged`
@@ -103,6 +143,16 @@ export function prepareLocalDevEnv(processEnv = process.env, options = {}) {
   };
   if (!processEnv.ZCC_EXTENSIONS_DIR) {
     env.ZCC_EXTENSIONS_DIR = join(dataDir, 'extensions');
+  }
+  if (!processEnv.ZCC_APP_URL) {
+    const fromDotenv = readDotenvKey('ZCC_APP_URL');
+    const fromFile = readRepoPublicAppUrl();
+    const publicAppUrl = fromDotenv || fromFile;
+    if (publicAppUrl) env.ZCC_APP_URL = publicAppUrl.replace(/\/$/, '');
+  }
+  if (!processEnv.ZCC_RELAY_TOKEN) {
+    const relayToken = readDotenvKey('ZCC_RELAY_TOKEN');
+    if (relayToken) env.ZCC_RELAY_TOKEN = relayToken;
   }
 
   return {

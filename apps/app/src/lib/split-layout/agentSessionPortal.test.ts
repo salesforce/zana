@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentSessionAnchorId, pickAgentSessionPortalTarget } from './agentSessionPortal.js';
+import { agentSessionAnchorId, pickAgentSessionPortalTarget, pickProjectTerminalsPortalTarget, projectTerminalsAnchorId } from './agentSessionPortal.js';
 import { createSinglePaneLayout, threadPaneContent } from './splitThreadNavigation.js';
 import { splitPane } from './ops.js';
 
@@ -36,5 +36,48 @@ describe('pickAgentSessionPortalTarget', () => {
       projectId: 'p1',
       sessionId: 's1'
     });
+  });
+});
+
+describe('pickProjectTerminalsPortalTarget', () => {
+  it('builds a stable DOM id for the terminals pane anchor', () => {
+    expect(projectTerminalsAnchorId('pane-3')).toBe('cc-terminal-anchor-project-view-pane-3');
+  });
+
+  it('uses the route when layout is empty', () => {
+    expect(
+      pickProjectTerminalsPortalTarget(null, {
+        kind: 'project-view',
+        projectId: 'p1',
+        mode: 'terminals'
+      })
+    ).toEqual({ paneId: 'pane-1', projectId: 'p1' });
+    expect(
+      pickProjectTerminalsPortalTarget(null, {
+        kind: 'project-view',
+        projectId: 'p1',
+        mode: 'explorer'
+      })
+    ).toBeNull();
+  });
+
+  it('keeps the terminals pane when explorer is focused beside it', () => {
+    const seeded = createSinglePaneLayout({
+      kind: 'project-view',
+      projectId: 'p1',
+      mode: 'terminals'
+    });
+    const two = splitPane(seeded, 'pane-1', 'right', {
+      kind: 'project-view',
+      projectId: 'p1',
+      mode: 'explorer'
+    });
+    expect(
+      pickProjectTerminalsPortalTarget(two, {
+        kind: 'project-view',
+        projectId: 'p1',
+        mode: 'explorer'
+      })
+    ).toEqual({ paneId: 'pane-1', projectId: 'p1' });
   });
 });

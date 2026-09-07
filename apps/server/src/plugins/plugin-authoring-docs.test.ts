@@ -23,6 +23,8 @@ import type {
   PluginProjectTabRegistration,
   PluginProjectMenuActionContext,
   PluginProjectMenuActionRegistration,
+  PluginCreateProjectActionContext,
+  PluginCreateProjectActionRegistration,
   PluginProviderIconRegistration,
   PluginCommandPaletteActionContext,
   PluginCommandPaletteActionRegistration,
@@ -63,6 +65,7 @@ const ZCC_PLUGIN_API_KEYS = [
   'status',
   'sdk',
   'host',
+  'services',
   'onDispose'
 ] as const satisfies readonly (keyof ZccPluginApi)[];
 
@@ -97,7 +100,14 @@ type MissingThreadEvent = Exclude<PluginThreadEvent['name'], (typeof THREAD_EVEN
 const _assertAllThreadEventsListed: MissingThreadEvent extends never ? true : never = true;
 void _assertAllThreadEventsListed;
 
-const THREAD_EVENT_FIELDS = ['name', 'threadId', 'projectId'] as const satisfies readonly (keyof PluginThreadEvent)[];
+const THREAD_EVENT_FIELDS = [
+  'name',
+  'threadId',
+  'projectId',
+  'thread',
+  'lastAssistantText',
+  'error'
+] as const satisfies readonly (keyof PluginThreadEvent)[];
 
 type MissingThreadEventField = Exclude<
   keyof PluginThreadEvent,
@@ -125,6 +135,7 @@ type SlotPropsByName = {
   experimental_timelineRenderer: PluginTimelineRendererProps;
   commandPaletteAction: PluginCommandPaletteActionContext;
   experimental_projectMenuAction: PluginProjectMenuActionContext;
+  experimental_createProjectAction: PluginCreateProjectActionContext;
   experimental_providerIcon: { className?: string };
 };
 
@@ -260,6 +271,14 @@ const PROJECT_MENU_ACTION_REGISTRATION_FIELDS = [
   'run'
 ] as const satisfies readonly (keyof Omit<PluginProjectMenuActionRegistration, 'generation' | 'pluginId'>)[];
 
+const CREATE_PROJECT_ACTION_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'icon',
+  'component',
+  'run'
+] as const satisfies readonly (keyof Omit<PluginCreateProjectActionRegistration, 'generation' | 'pluginId'>)[];
+
 const COMMAND_PALETTE_ACTION_REGISTRATION_FIELDS = [
   'id',
   'title',
@@ -297,8 +316,9 @@ const FRONTEND_SLOT_PROP_FIELDS = {
   experimental_agentCardAction: ['sessionId', 'projectId'],
   experimental_agentsBoardAction: ['projectId'],
   experimental_timelineRenderer: ['row', 'payload', 'presentation', 'thread', 'Original'],
-  commandPaletteAction: ['threadId', 'projectId', 'openPanel', 'toPluginPanel'],
-  experimental_projectMenuAction: ['projectId'],
+  commandPaletteAction: ['threadId', 'projectId', 'openPanel', 'toPluginPanel', 'toProject'],
+  experimental_projectMenuAction: ['projectId', 'toProject'],
+  experimental_createProjectAction: ['pickDirectory', 'addProject', 'cloneRoot', 'toProject', 'openDialog'],
   experimental_providerIcon: ['className']
 } as const satisfies {
   [S in keyof SlotPropsByName]: readonly (keyof SlotPropsByName[S])[];
@@ -340,7 +360,6 @@ describe('zcc-plugin-authoring skill', () => {
       expect(skill, `${event} is not documented`).toContain(`"${event}"`);
     }
     for (const field of THREAD_EVENT_FIELDS) {
-      if (field === 'name') continue;
       expect(skill, `thread event field "${field}" is not documented`).toContain(field);
     }
   });
@@ -394,6 +413,9 @@ describe('zcc-plugin-authoring skill', () => {
     for (const field of PROJECT_MENU_ACTION_REGISTRATION_FIELDS) {
       expect(skill, `experimental_projectMenuAction registration field "${field}" is not documented`).toContain(field);
     }
+    for (const field of CREATE_PROJECT_ACTION_REGISTRATION_FIELDS) {
+      expect(skill, `experimental_createProjectAction registration field "${field}" is not documented`).toContain(field);
+    }
     for (const field of COMMAND_PALETTE_ACTION_REGISTRATION_FIELDS) {
       expect(skill, `commandPaletteAction registration field "${field}" is not documented`).toContain(field);
     }
@@ -414,6 +436,8 @@ describe('zcc-plugin-authoring skill', () => {
   it('documents the authoring loop commands', () => {
     expect(skill).toContain('zcc plugin new');
     expect(skill).toContain('zcc plugin install');
+    expect(skill).toContain('zcc plugin reload');
+    expect(skill).toContain('zcc plugin build');
     expect(skill).toContain('zcc plugin dev');
     expect(skill).toContain('zcc plugin types');
     expect(skill).toContain('zcc plugin logs');
@@ -423,5 +447,18 @@ describe('zcc-plugin-authoring skill', () => {
     expect(skill).toContain('contributeSkills');
     expect(skill).toContain('plugin-commands');
     expect(skill).toContain('Plugin Guide');
+  });
+
+  it('required create path is new + install without a following plugin dev', () => {
+    const bash = skill.match(/```bash\n([\s\S]*?)```/)?.[1] ?? '';
+    expect(bash).toContain('zcc plugin new');
+    expect(bash).toContain('zcc plugin install .');
+    expect(bash).not.toMatch(/zcc plugin install \.\s*\nzcc plugin dev/);
+  });
+
+  it('documents Testing a plugin with renderSlot and loadPluginApp', () => {
+    expect(skill).toContain('## Testing a plugin');
+    expect(skill).toContain('renderSlot');
+    expect(skill).toContain('loadPluginApp');
   });
 });

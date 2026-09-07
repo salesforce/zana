@@ -15,13 +15,14 @@
   },
   "devDependencies": {
     "@zana-ai/zcc-agent-process-utils": "workspace:*",
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-plugin-sdk": "workspace:*",
     "@zana-ai/zcc-provider-bridge-protocol": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "react": "^19.0.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10",
-    "@zana-ai/zcc-domain": "workspace:*"
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@zana-ai/zcc-plugin-sdk": "workspace:*",

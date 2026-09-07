@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { providerFor } from '../registry.js';
+import { CursorProvider } from '../cursor/provider.js';
 import { evaluateFacetEvidence, evaluateTargetEvidence } from '../routing-evidence.js';
 
 describe('structured routing evidence', () => {
@@ -42,6 +43,18 @@ describe('structured routing evidence', () => {
     });
     expect(evaluateTargetEvidence(claude, model, 'remote', '2.1.220')).toMatchObject({
       classification: 'available', evidence: { id: model.id, scope: 'remote' }
+    });
+  });
+
+  it('accepts a live Cursor --list-models overlay that lacked evidence on the raw row', () => {
+    const cursor = new CursorProvider();
+    cursor.setDiscoveredModels([
+      { id: 'auto', label: 'Auto', scope: ['local'] },
+      { id: 'cursor-grok-4.6-medium', label: 'Cursor Grok 4.6', scope: ['local'] }
+    ]);
+    const model = cursor.adapter.descriptor.targets!.models.find(({ id }) => id === 'auto')!;
+    expect(evaluateTargetEvidence(cursor, model, 'local', '2026.01.23')).toMatchObject({
+      classification: 'available', evidence: { id: 'auto', scope: 'local' }
     });
   });
 });

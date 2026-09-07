@@ -17,6 +17,8 @@ const thread = {
   providerThreadId: 'prov-1',
   parentThreadId: null,
   archivedAt: null,
+  pinnedAt: null,
+  pinOrder: null,
   createdAt: 1,
   updatedAt: 1
 };

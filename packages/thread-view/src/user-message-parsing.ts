@@ -112,6 +112,7 @@ export function shouldRenderClientRequestedInput(
     case "starting":
     case "error":
     case "idle":
+    case "pending":
     case "active":
     case "stopping":
       return true;
@@ -130,6 +131,7 @@ export function shouldPreservePendingMessages(
       return true;
     case "error":
     case "idle":
+    case "pending":
     case "stopping":
       return false;
     default:

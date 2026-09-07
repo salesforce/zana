@@ -1,4 +1,4 @@
-import type { BridgeErrorData } from "../errors.js";
+import type { BridgeErrorData, ProviderRecoveryHint } from "../errors.js";
 
 export type BridgeJsonRpcId = string | number;
 
@@ -24,6 +24,26 @@ export type BridgeSendError = (
   message: string,
   data?: BridgeErrorData,
 ) => void;
+
+export class BridgeRecoveryError extends Error {
+  readonly code: number;
+  readonly recovery: ProviderRecoveryHint;
+
+  constructor(args: {
+    code: number;
+    message: string;
+    recovery: ProviderRecoveryHint;
+    cause?: unknown;
+  }) {
+    super(
+      args.message,
+      args.cause === undefined ? undefined : { cause: args.cause },
+    );
+    this.name = "BridgeRecoveryError";
+    this.code = args.code;
+    this.recovery = args.recovery;
+  }
+}
 
 export function createBridgeIo<TMessage>({
   write = (line) => process.stdout.write(line),
@@ -77,6 +97,12 @@ export function runBridgeRequest<
   sendError: BridgeSendError;
 }): void {
   void args.handleRequest(args.request).catch((error: unknown) => {
+    if (error instanceof BridgeRecoveryError) {
+      args.sendError(args.request.id, error.code, error.message, {
+        recovery: error.recovery,
+      });
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     args.sendError(args.request.id, -32000, message);
   });

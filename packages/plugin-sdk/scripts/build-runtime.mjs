@@ -36,9 +36,34 @@ const entries = [
     external: []
   },
   {
-    source: 'src/testing/app.ts',
+    source: 'src/testing/app-entry.ts',
     output: 'dist/testing/app.js',
-    external: ['react', 'react/*']
+    external: ['react', 'react/*', '@testing-library/react', '@testing-library/react/*']
+  },
+  {
+    source: 'src/host.ts',
+    output: 'dist/host.js',
+    external: ['zod', 'zod/*']
+  },
+  {
+    source: 'src/ai-services.ts',
+    output: 'dist/ai-services.js',
+    external: ['zod', 'zod/*']
+  },
+  {
+    source: 'src/provider-bridge-acp.ts',
+    output: 'dist/provider-bridge-acp.js',
+    external: ['zod', 'zod/*', '@zana-ai/zcc-provider-bridge-acp', '@zana-ai/zcc-provider-bridge-acp/*']
+  },
+  {
+    source: 'src/internal/host-policy.ts',
+    output: 'dist/internal/host-policy.js',
+    external: ['zod', 'zod/*']
+  },
+  {
+    source: 'src/testing/host.ts',
+    output: 'dist/testing/host.js',
+    external: []
   }
 ];
 

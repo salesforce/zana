@@ -110,8 +110,14 @@ export function usePaneSecondaryPanelRegistration(
     if (!host) return;
     if (model) host.publish(model);
     else host.clear();
-    return () => host.clear();
+    // No cleanup here: a new `model` object every ThreadDetail render would
+    // clear+republish the host in one layout flush and hit React #185 when
+    // the Agents list swaps the open thread.
   }, [host, model]);
+  useLayoutEffect(() => {
+    if (!host) return;
+    return () => host.clear();
+  }, [host]);
 }
 
 export function usePaneContextValue(args: {

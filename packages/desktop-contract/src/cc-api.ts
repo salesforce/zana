@@ -335,8 +335,8 @@ export interface CcApi {
     ): Promise<Host>;
     retryUpdate(id: string): Promise<{ ok: true }>;
     remove(id: string): Promise<{ ok: true }>;
-    bootstrap(projectId: string): Promise<HostBootstrapEvent[]>;
-    repair(id: string): Promise<HostBootstrapEvent[]>;
+    bootstrap(projectId: string, onEvent?: (event: HostBootstrapEvent) => void): Promise<HostBootstrapEvent[]>;
+    repair(id: string, onEvent?: (event: HostBootstrapEvent) => void): Promise<HostBootstrapEvent[]>;
     updateSshIdentity(
       id: string,
       patch: { host: string; user?: string; proxyJump?: string }
@@ -497,6 +497,18 @@ export interface CcApi {
     ): Promise<{ ok: boolean }>;
     stop(threadId: string): Promise<{ ok: boolean }>;
     cancelPlan(threadId: string): Promise<{ ok: boolean }>;
+    plan(threadId: string): Promise<{ ok: boolean; plan?: unknown }>;
+    updatePlan(threadId: string, markdown: string): Promise<{ ok: boolean; plan?: unknown }>;
+    addPlanTask(threadId: string, text: string): Promise<{ ok: boolean; plan?: unknown }>;
+    flushNextTurn(threadId: string, force?: boolean): Promise<{ ok: boolean }>;
+    deleteNextTurn(threadId: string, itemId: string): Promise<{ ok: boolean }>;
+    nextTurn(threadId: string): Promise<{ ok?: boolean; items?: unknown[] }>;
+    compact(threadId: string): Promise<{ ok: boolean }>;
+    promptHistory(threadId: string): Promise<{ entries?: Array<{ input?: unknown }> }>;
+    pin(threadId: string): Promise<{ thread: Record<string, unknown> }>;
+    unpin(threadId: string): Promise<{ thread: Record<string, unknown> }>;
+    search(query: string, projectId?: string): Promise<{ threads: unknown[] }>;
+    childSummary(threadId: string): Promise<{ total: number; live: number }>;
     resume(threadId: string): Promise<{ ok: boolean }>;
     timeline(threadId: string, query?: {
       segmentLimit?: number;
@@ -511,6 +523,9 @@ export interface CcApi {
       status: string;
       goal?: unknown;
       pendingTodos?: unknown;
+      durablePlan?: unknown;
+      executionMode?: unknown;
+      nextTurn?: unknown;
       activeThinking?: unknown;
       activePromptMode?: unknown;
       activeWorkflows?: unknown;
@@ -584,7 +599,7 @@ export interface CcApi {
     }): Promise<{ delivered: number }>;
     onOpen(cb: (payload: unknown) => void): () => void;
     events(threadId: string): Promise<{ events: unknown[] }>;
-    executionOptions(query?: { providerId?: string }): Promise<{
+    executionOptions(query?: { providerId?: string; hostId?: string }): Promise<{
       providers: Array<{
         id: string;
         displayName: string;
@@ -1869,10 +1884,11 @@ export interface CcApi {
     consumeWhatsNew(): Promise<WhatsNewEvent | null>;
   };
   /**
-   * First-run dependency doctor. `check` re-runs detection; `install` triggers
-   * the auto-installable steps (no-op for `manual`/`bundled` items); `dismiss`
-   * persists `AppConfig.setupDismissed`. `onStatus`/`onProgress` push the live
-   * setup snapshot + per-step install log; both return an unsubscribe fn.
+   * First-run dependency doctor. `check` re-runs detection; `install` runs
+   * auto-installable companion CLIs (npm / official install scripts; Claude
+   * Code stays manual); `dismiss` persists `AppConfig.setupDismissed`.
+   * `onStatus`/`onProgress` push the live setup snapshot + per-step install
+   * log; both return an unsubscribe fn.
    */
   deps: {
     get(): Promise<SetupStatus>;

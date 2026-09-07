@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Moon, X } from 'lucide-react';
 import type { AgentCard } from './AgentBoard.js';
 
@@ -40,6 +41,9 @@ interface Props {
  * inbox and left running, so the choice is replaced by an explanation. Mirrors
  * the structure/markup of {@link AddRemoteProjectDialog} (backdrop + modal +
  * footer) so it inherits the app's modal styling.
+ *
+ * Portaled to `document.body` so the Agents board's stacking context
+ * (`.aurora-host { isolation: isolate }`) cannot trap the backdrop.
  */
 export function CloseIdleAgentsDialog({
   agents,
@@ -85,7 +89,7 @@ export function CloseIdleAgentsDialog({
     </strong>
   );
 
-  return (
+  const node = (
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
@@ -182,4 +186,6 @@ export function CloseIdleAgentsDialog({
       </div>
     </div>
   );
+  if (typeof document === 'undefined') return node;
+  return createPortal(node, document.body);
 }
