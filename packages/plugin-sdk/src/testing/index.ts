@@ -33,6 +33,7 @@ export interface FakePluginHarness {
   schedules: Array<{ name: string; cron: string; job: () => void | Promise<void> }>;
   extraSkillRoots: string[];
   extraInstructions: string[];
+  extraInstructionProviders: Array<(ctx: { threadId: string; projectId: string }) => string | null>;
   providers: import('../server.js').PluginProviderDeclaration[];
   ptyHarnesses: import('../server.js').PluginPtyHarnessDeclaration[];
   registrations: {
@@ -138,6 +139,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   const schedules: Array<{ name: string; cron: string; job: () => void | Promise<void> }> = [];
   const extraSkillRoots: string[] = [];
   const extraInstructions: string[] = [];
+  const extraInstructionProviders: FakePluginHarness['extraInstructionProviders'] = [];
   const providers: FakePluginHarness['providers'] = [];
   const ptyHarnesses: FakePluginHarness['ptyHarnesses'] = [];
   const mentionProviders: FakePluginHarness['mentionProviders'] = [];
@@ -396,9 +398,16 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     agents: {
-      contributeInstructions(text) {
+      contributeInstructions(textOrProvider) {
+        if (typeof textOrProvider === 'function') {
+          if (extraInstructionProviders.length > 0) {
+            throw new Error('contributeInstructions is already registered');
+          }
+          extraInstructionProviders.push(textOrProvider);
+          return;
+        }
         extraInstructions.length = 0;
-        const trimmed = typeof text === 'string' ? text.trim() : '';
+        const trimmed = typeof textOrProvider === 'string' ? textOrProvider.trim() : '';
         if (trimmed) extraInstructions.push(trimmed);
       },
       contributeSkills(rootPaths) {
@@ -464,6 +473,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     schedules,
     extraSkillRoots,
     extraInstructions,
+    extraInstructionProviders,
     providers,
     ptyHarnesses,
     get registrations() {

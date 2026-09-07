@@ -3,7 +3,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   Copy,
-  ExternalLink,
   FileText,
   History,
   Play,
@@ -21,20 +20,15 @@ import {
   formatRelative,
   pickLiveRun
 } from './schedulerUtils.js';
-import { openScheduledLive, openScheduledLiveInSplit } from './openScheduledLive.js';
 
 export function ScheduleInfoPanel({
   task,
   onDuplicate,
-  onAskDelete,
-  navigate,
-  currentPathname
+  onAskDelete
 }: {
   task: ScheduledTask | null;
   onDuplicate?: () => void;
   onAskDelete?: () => void;
-  navigate: (route: string, options?: { replace?: boolean }) => void;
-  currentPathname: string;
 }) {
   const terminals = useData((s) => s.terminals);
   const pushToast = useUi((s) => s.pushToast);
@@ -127,24 +121,6 @@ export function ScheduleInfoPanel({
             <span className={`scheduler-pill ${isWorking ? 'scheduler-pill--running' : 'scheduler-pill--done'}`}>
               {isWorking ? 'running' : 'done'}
             </span>
-            <button
-              type="button"
-              className="scheduler-icon-btn"
-              title={isFinishedOpen ? 'Peek session' : 'Peek running terminal'}
-              aria-label={isFinishedOpen ? 'Peek session' : 'Peek running terminal'}
-              onClick={() => openScheduledLive(task.projectId, liveSessionId)}
-            >
-              <ExternalLink size={14} />
-            </button>
-            <button
-              type="button"
-              className="settings-btn"
-              onClick={() =>
-                openScheduledLiveInSplit(task.projectId, liveSessionId, navigate, currentPathname)
-              }
-            >
-              Open live in split
-            </button>
             <button
               type="button"
               className="scheduler-icon-btn scheduler-icon-btn--danger"

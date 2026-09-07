@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Puzzle, Trash2 } from 'lucide-react';
 import { product } from '../lib/product-client.js';
@@ -230,6 +231,10 @@ interface AgentCardMenuProps {
  * The card right-click menu. Reuses the TabBar context-menu styling so it
  * matches the rest of the app; stopPropagation on mousedown keeps the global
  * close-on-mousedown from firing before a button's onClick.
+ *
+ * Portaled to `document.body` so the Agents kanban's `.aurora-host` (container
+ * queries + a more-specific `position: relative` on direct children) cannot
+ * steal `position: fixed` and shove the menu outside the window.
  */
 export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuProps) {
   const { card } = menu;
@@ -251,7 +256,7 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
   const pluginSlots = useSyncExternalStore(subscribePluginSlots, listAgentCardActions, listAgentCardActions);
   const pluginCtx = { sessionId: card.session.id, projectId: card.projectId };
   const pluginActions = availableAgentCardActions(pluginSlots, pluginCtx);
-  return (
+  const node = (
     <div
       className="tab-context-menu"
       style={{ top: menu.y, left: menu.x }}
@@ -362,6 +367,7 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
       </button>
     </div>
   );
+  return typeof document === 'undefined' ? node : createPortal(node, document.body);
 }
 
 /** Hover-revealed one-click delete. Closes the PTY with no confirm, matching thread archive. */

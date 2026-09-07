@@ -86,6 +86,46 @@ describe('PluginHubIncludes', () => {
     expect(screen.queryByText('Sidebar panels (1)')).toBeNull();
   });
 
+  it('labels unlisted navPanels separately from sidebar and hub pages', () => {
+    interpretPluginApp(
+      'hello',
+      definePluginApp((app) => {
+        app.slots.navPanel({
+          id: 'orgs',
+          title: 'Hello',
+          icon: 'Cloud',
+          placement: 'unlisted',
+          component: () => null
+        });
+        app.slots.sidebarFooterAction({
+          id: 'orgs',
+          title: 'Hello',
+          icon: 'Cloud',
+          run: () => undefined
+        });
+      })
+    );
+    const plugin: PluginAppEntry = {
+      id: 'hello',
+      name: 'Hello',
+      description: '',
+      icon: 'Cloud',
+      enabled: true,
+      provenance: 'direct',
+      status: 'running',
+      appUrl: null
+    };
+    render(
+      <MemoryRouter>
+        <PluginHubIncludes plugin={plugin} />
+      </MemoryRouter>
+    );
+    expect(screen.getByText('Unlisted pages (1)')).toBeTruthy();
+    expect(screen.getByText('Sidebar footer actions (1)')).toBeTruthy();
+    expect(screen.queryByText('Sidebar panels (1)')).toBeNull();
+    expect(screen.queryByText('Plugins hub pages (1)')).toBeNull();
+  });
+
   it('lists Agents board slot contributions', () => {
     interpretPluginApp(
       'hello',
@@ -99,6 +139,10 @@ describe('PluginHubIncludes', () => {
           id: 'board',
           title: 'Board',
           run: () => undefined
+        });
+        app.slots.projectStatusbarItem({
+          id: 'org',
+          label: 'prod'
         });
       })
     );
@@ -119,6 +163,42 @@ describe('PluginHubIncludes', () => {
     );
     expect(screen.getByText('Agent card actions (1)')).toBeTruthy();
     expect(screen.getByText('Agents board actions (1)')).toBeTruthy();
+    expect(screen.getByText('Project statusbar (1)')).toBeTruthy();
+  });
+
+  it('lists create-project and settings section contributions', () => {
+    interpretPluginApp(
+      'hello',
+      definePluginApp((app) => {
+        app.slots.settingsSection({
+          id: 'orgs',
+          title: 'Connected orgs',
+          component: () => null
+        });
+        app.slots.experimental_createProjectAction({
+          id: 'dx-project',
+          title: 'Salesforce DX project',
+          run: () => undefined
+        });
+      })
+    );
+    const plugin: PluginAppEntry = {
+      id: 'hello',
+      name: 'Hello',
+      description: '',
+      icon: 'Puzzle',
+      enabled: true,
+      provenance: 'direct',
+      status: 'running',
+      appUrl: null
+    };
+    render(
+      <MemoryRouter>
+        <PluginHubIncludes plugin={plugin} />
+      </MemoryRouter>
+    );
+    expect(screen.getByText('Create project (1)')).toBeTruthy();
+    expect(screen.getByText('Settings sections (1)')).toBeTruthy();
   });
 
   it('lists side-panel tabs', () => {

@@ -23,6 +23,7 @@ import {
   harnessLoginStatus,
   type HarnessLoginStatus
 } from '../../components/thread/pickers/harness-login.js';
+import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
 
 const USE_HARNESS_DEFAULT = { id: '', label: 'Use harness default' } as const;
 const CODEX_UI = providerUiSchema('codex');
@@ -957,6 +958,7 @@ export function HarnessView({
         <div className="opener-list" data-testid="harness-legacy-list">
           {settingsRows}
         </div>
+        <RemoteMachineDefaultsList />
       </div>
     </div>
     </>

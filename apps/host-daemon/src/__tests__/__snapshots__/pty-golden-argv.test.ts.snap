@@ -2457,6 +2457,106 @@ exports[`golden argv — local create() matrix > opencode-resume · projectSetti
 }
 `;
 
+exports[`golden argv — local create() matrix > opencode-yolo · persona · interactive 1`] = `
+{
+  "args": [
+    "--auto",
+  ],
+  "command": "opencode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > opencode-yolo · persona · scheduled 1`] = `
+{
+  "args": [
+    "opencode",
+    "--auto",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > opencode-yolo · persona+projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--auto",
+  ],
+  "command": "opencode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > opencode-yolo · persona+projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "opencode",
+    "--auto",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > opencode-yolo · plain · interactive 1`] = `
+{
+  "args": [
+    "--auto",
+  ],
+  "command": "opencode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > opencode-yolo · plain · scheduled 1`] = `
+{
+  "args": [
+    "opencode",
+    "--auto",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > opencode-yolo · projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--auto",
+  ],
+  "command": "opencode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > opencode-yolo · projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "opencode",
+    "--auto",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
 exports[`golden argv — local create() matrix > pi · persona · interactive 1`] = `
 {
   "args": [],
@@ -3481,6 +3581,70 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode-resum
     "-t",
     "sfwork@devbox",
     "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--continue'\\''\\'\\'''\\'''\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote opencode-yolo · persona 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote opencode-yolo · persona+projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote opencode-yolo · plain 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote opencode-yolo · projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;

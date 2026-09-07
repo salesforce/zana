@@ -109,7 +109,6 @@ describe('composer host status', () => {
     expect(composerHostsForProject([primary, remoteHost, host({ id: 'h-other', name: 'Other' })], project))
       .toEqual([remoteHost]);
     expect(composerRemoteHostBadge({ project, host: remoteHost })).toEqual({
-      path: '/src',
       status: 'offline'
     });
     expect(hostPickerLabel(remoteHost, project)).toBe('Remote machine');
@@ -131,7 +130,6 @@ describe('composer host status', () => {
     expect(action).toEqual({ kind: 'ready' });
     expect(shouldBlockComposerSend(action, project)).toBe(false);
     expect(composerRemoteHostBadge({ project, host: online })).toEqual({
-      path: '/src',
       status: 'online'
     });
   });

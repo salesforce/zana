@@ -7,6 +7,7 @@ import {
   getEnvironment,
   getPrimaryHost,
   listConversationThreadEvents,
+  listHosts,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
   setConversationProviderThreadId,
@@ -43,14 +44,20 @@ import {
   boundRemoteHostId,
   isRemoteToolProxyActive,
   remoteWorkspacePath,
+  resolveHarnessWorkspacePath,
   REMOTE_HOST_DAEMON_REQUIRED,
   REMOTE_HOST_DAEMON_REQUIRED_MESSAGE,
   threadLaunchRemote
 } from './remote-tool-proxy.js';
 import { resolveSpawnChoiceForHost } from './spawn-choice-for-host.js';
+import { toRemoteStartPathHost } from '../hosts/host-public.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
 import { hostPromptInputFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
+import {
+  withResolvedPathMentionContext,
+  workspacePathMentionReaders
+} from '../../plugins/path-mentions.js';
 import { latestProviderCheckpoint } from './conversation-edit-message.js';
 import { conversationThreadView } from './conversation-thread-view.js';
 import {
@@ -256,7 +263,15 @@ async function startConversationOnHost(
       ...(checkpoint ? { providerCheckpointId: checkpoint } : {}),
       ...sessionTooling,
       ...(args.remoteToolProxy ? {
-        remote: threadLaunchRemote(args.project),
+        remote: threadLaunchRemote(
+          args.project,
+          remoteWorkspacePath(
+            args.project,
+            args.remoteToolProxy,
+            ctx.config.getConfig().remoteDefaultPath,
+            listHosts(ctx.db).map(toRemoteStartPathHost)
+          )
+        ),
         remoteToolProxy: true
       } : {})
     },
@@ -291,10 +306,11 @@ export async function createConversationFromRequest(
   if (!input.providerId) {
     throw new ThreadCreateError(400, 'invalid-provider', 'providerId is required');
   }
-  const resolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
-  const textPrompt = flattenThreadInput(resolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);
+  const pluginResolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
+  const textPrompt = flattenThreadInput(pluginResolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);
   const promptSource = textPrompt.length > 0 ? textPrompt : input.input.map((part) => part.trim()).filter((part) => part.length > 0);
-  const prompt = hostPromptInputFromInput(
+  let resolvedPromptInput = pluginResolvedPromptInput;
+  let prompt = hostPromptInputFromInput(
     resolvedPromptInput,
     promptSource,
     (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
@@ -309,9 +325,9 @@ export async function createConversationFromRequest(
     throw new ThreadCreateError(409, REMOTE_HOST_DAEMON_REQUIRED, REMOTE_HOST_DAEMON_REQUIRED_MESSAGE);
   }
   const remoteToolProxy = isRemoteToolProxyActive(project, boundRemote ?? input.hostId);
-  const workspacePath = remoteWorkspacePath(project, remoteToolProxy);
   const primary = getPrimaryHost(ctx.db);
   let hostId: string;
+  let workspacePath: string;
   try {
     if (boundRemote) {
       hostId = ctx.hostHub.resolveHostId(boundRemote);
@@ -324,10 +340,33 @@ export async function createConversationFromRequest(
       hostId = ctx.hostHub.resolveHostId(input.hostId ?? project.hostId);
     }
     ctx.hostHub.ensureHostSessionReady(hostId);
+    workspacePath = await resolveHarnessWorkspacePath({
+      project,
+      remoteToolProxy,
+      remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
+      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      probeHostHome: async () => {
+        const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
+          hostId,
+          command: { type: 'host.browse_directory' }
+        });
+        return listing.directory;
+      }
+    });
   } catch (error) {
     if (error instanceof ThreadCreateError) throw error;
     throw mapHostError(error);
   }
+
+  resolvedPromptInput = await withResolvedPathMentionContext(
+    resolvedPromptInput,
+    workspacePathMentionReaders(ctx, hostId, workspacePath)
+  );
+  prompt = hostPromptInputFromInput(
+    resolvedPromptInput,
+    promptSource,
+    (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
+  );
 
   let choice: SpawnEnvironmentChoice = input.environment ?? { kind: 'unmanaged' };
   if (project.remote && choice.kind !== 'unmanaged') {

@@ -439,7 +439,9 @@ export interface PluginAgentConfigureResult {
 }
 
 export interface PluginAgents {
-  contributeInstructions(text: string): void;
+  contributeInstructions(
+    textOrProvider: string | ((ctx: { threadId: string; projectId: string }) => string | null)
+  ): void;
   contributeSkills(rootPaths: string[]): void;
   registerTool(registration: PluginAgentToolRegistration): void;
   experimental_registerProvider(declaration: PluginProviderDeclaration): PluginProviderHandle;

@@ -13,7 +13,7 @@ describe('trusted harness adapter contract', () => {
         expect(profile.posture).toBeTruthy();
       }
     }
-    expect(seen.size).toBe(14);
+    expect(seen.size).toBe(15);
   });
 
   it('keeps shell terminal-only and every agent-default adapter profile-backed', () => {

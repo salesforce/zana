@@ -1,21 +1,19 @@
 /**
  * Verifies the scheduler's "open a running session" affordance end-to-end:
  * a fired schedule spawns a HEADLESS background pty (hidden from the tab strip);
- * clicking the Overview row's open button must peek it in the agent-inspector
- * modal without yanking the user onto a project terminal tab.
+ * clicking the Overview row's open button must open the live agent page without
+ * yanking the session into a project terminal tab.
  *
  * Both the "Running now" and "Finished · session open" rows call the identical
- * onOpenTerminal → openScheduledLive → openAgentModal path, so a live `shell`
- * fire (stays alive, never stamps finishedAt) exercises the shared mechanism.
- * We drive schedule creation + fire via the real window.cc IPC, then click the
- * real DOM button and assert the inspector modal is on screen.
+ * onOpenTerminal → openScheduledLive path, so a live `shell` fire (stays alive,
+ * never stamps finishedAt) exercises the shared mechanism.
  */
 import { test, expect } from './fixtures/app.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-test('scheduler: clicking "open" on a running scheduled session peeks the inspector modal', async ({
+test('scheduler: clicking "open" on a running scheduled session opens the agent page', async ({
   app,
 }) => {
   const { window } = app;
@@ -117,11 +115,10 @@ test('scheduler: clicking "open" on a running scheduled session peeks the inspec
   await expect(openBtn).toBeVisible({ timeout: 15_000 });
   await openBtn.click();
 
-  // Peek stays on Scheduler: the inspector modal hosts the live session, and
-  // the headless pty is NOT promoted into the tab strip.
-  const agentModal = window.locator('[data-testid="agent-terminal-modal"]');
-  await expect(agentModal).toBeVisible({ timeout: 15_000 });
-  await expect(agentModal.getByTestId('agent-modal-header')).toBeVisible();
+  // Open live replaces the catalogue with the agent session page. The
+  // headless pty is NOT promoted into the tab strip.
+  await expect(window.locator('[data-testid="agent-session-view"]')).toBeVisible({ timeout: 15_000 });
+  await expect(window.locator('[data-testid="agent-terminal-modal"]')).toHaveCount(0);
   await expect(
     window.locator('.tabbar .tab').filter({ hasText: 'E2E open-me' })
   ).toHaveCount(0);

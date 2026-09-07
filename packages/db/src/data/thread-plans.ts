@@ -409,7 +409,7 @@ export function updateThreadPlanTask(
 
 export function listThreadPlanReferences(db: ZccDatabase, planId: string): ThreadPlanReferenceRow[] {
   return (db.sqlite.prepare(
-    `SELECT * FROM thread_plan_references WHERE plan_id = ? ORDER BY created_at ASC, id ASC`
+    `SELECT * FROM thread_plan_references WHERE plan_id = ? ORDER BY created_at ASC, rowid ASC`
   ).all(planId) as Array<{
     id: string;
     plan_id: string;

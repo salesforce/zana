@@ -30,6 +30,12 @@ describe('PluginComposerChrome create-plugin action', () => {
     expect(html).toContain('Create plugin');
   });
 
+  it('keeps Create plugin on the CLI Agent composer scope', () => {
+    const html = render({ kind: 'cli-agent', projectId: 'proj-1' });
+    expect(html).toContain('data-testid="composer-create-plugin"');
+    expect(html).toContain('Create plugin');
+  });
+
   it('hides the action on an existing thread', () => {
     const html = render({ kind: 'thread', threadId: 't1' });
     expect(html).not.toContain('composer-create-plugin');

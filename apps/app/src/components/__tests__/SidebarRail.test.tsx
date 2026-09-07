@@ -164,6 +164,8 @@ describe('SidebarRail', () => {
     expect(source).toContain('sidebar-utility-bar');
     expect(source).toContain('openBugReport');
     expect(source).toContain('Report a bug');
+    expect(source).toContain('toPluginPanel');
+    expect(source).toContain('hrefForPluginNavPanel');
     expect(source).toContain('<DndContext');
     expect(source).toContain('onNavigate');
     expect(source).toContain('splitContent');

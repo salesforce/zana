@@ -55,6 +55,7 @@ import { envelopeTitle, Guardrail } from './guardrail.js';
 import { diagnoseLwc, findLwcComponent, inspectLwc, parseLwcInput, resolveJestBin, scanLwcComponents } from './lwc.js';
 import { createNodeDeps } from './node-deps.js';
 import { formatOrgRoster, orgRosterInstructions } from './org-list.js';
+import { orgLoginArgs, parseOrgLoginInput, SF_ORG_LOGIN_TIMEOUT_MS } from './org-login.js';
 import { applyLimit, parseSoqlInput, previewRecords } from './soql.js';
 import { SoqlExplorer } from './soql-explorer.js';
 import {
@@ -84,7 +85,7 @@ const SETTINGS = {
     type: 'string' as const,
     label: 'Default org alias',
     description:
-      'Salesforce CLI alias used by SOQL, Apex, LWC, and Agentforce. Pick from CLI-connected orgs on the Salesforce tab. Blank falls back to SF_TARGET_ORG, then the CLI default.'
+      'Salesforce CLI alias used by SOQL, Apex, LWC, and Agentforce. Pick from CLI-connected orgs in these settings or on the Salesforce tab. Blank falls back to SF_TARGET_ORG, then the CLI default.'
   },
   [SETTING_API_VERSION]: {
     type: 'string' as const,
@@ -149,7 +150,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   const applyStatus = async () => {
     const snapshot = await readSettings();
     if (!snapshot.defaultOrg) {
-      zcc.status.needsConfiguration('Pick a CLI-connected org on the Salesforce tab, or set a default org alias, then run zcc sf doctor.');
+      zcc.status.needsConfiguration('Pick a CLI-connected org under Plugins → Salesforce, or set a default org alias, then run zcc sf doctor.');
     }
   };
 
@@ -200,6 +201,42 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     };
   });
   zcc.rpc.method('orgs', async () => {
+    try {
+      const orgs = await sdk.listOrgs();
+      const selectedAlias = await sdk.resolveAlias();
+      return { ok: true, orgs, selectedAlias };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = error instanceof ConnectionError ? error.code : 'orgs_failed';
+      return { ok: false, error: message, code, orgs: [], selectedAlias: null };
+    }
+  });
+  zcc.rpc.method('orgs.login', async (args) => {
+    const parsed = parseOrgLoginInput(args);
+    if (!parsed.ok) return { ok: false, code: parsed.code, error: parsed.error, orgs: [], selectedAlias: null };
+    const result = await deps.execSf(orgLoginArgs(parsed), { timeoutMs: SF_ORG_LOGIN_TIMEOUT_MS });
+    if (result.code === 127) {
+      return {
+        ok: false,
+        code: 'cli_missing',
+        error: result.stderr.trim() || result.stdout.trim() || 'Salesforce CLI missing. Install sf, then retry.',
+        orgs: [],
+        selectedAlias: null
+      };
+    }
+    if (result.code !== 0) {
+      return {
+        ok: false,
+        code: 'login_failed',
+        error:
+          result.stderr.trim() ||
+          result.stdout.trim() ||
+          'Salesforce CLI web login did not finish. Complete sign-in in the browser, then retry.',
+        orgs: [],
+        selectedAlias: null
+      };
+    }
+    connections.invalidate();
     try {
       const orgs = await sdk.listOrgs();
       const selectedAlias = await sdk.resolveAlias();

@@ -16,6 +16,8 @@ import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
 import type { FsMutateResult, OpenTarget, ProjectRemote, SearchOptions } from '@zana-ai/zcc-domain/product';
+import { refreshRemoteStartPathHosts, stampedProjectRemote } from '../remote-workspace.js';
+import { productServerUrl } from '../window/renderer-url.js';
 
 export function registerFsIpc(): void {
   
@@ -176,7 +178,8 @@ export function registerFsIpc(): void {
   // isn't a known remote project so callers get a clean rejection.
   const remoteFor = (projectId: string): ProjectRemote | null => {
     const project = store.listProjects().find((p) => p.id === projectId);
-    return project?.remote ?? null;
+    if (!project?.remote) return null;
+    return stampedProjectRemote(project, store.getConfig().remoteDefaultPath) ?? project.remote;
   };
   // projectId → resolved remote root. Cleared lazily only by app restart; a
   // remote project's start path is immutable for its lifetime, so caching the
@@ -185,6 +188,7 @@ export function registerFsIpc(): void {
   const resolveRemoteRoot = async (projectId: string): Promise<string | null> => {
     const cached = remoteRootCache.get(projectId);
     if (cached) return cached;
+    await refreshRemoteStartPathHosts(productServerUrl());
     const remote = remoteFor(projectId);
     if (!remote) return null;
     const res = await fsRemoteRoot(remote, store.getConfig().remoteDefaultPath);
@@ -195,6 +199,7 @@ export function registerFsIpc(): void {
   ctx.safeHandle(
     IPC.fs.remoteRoot,
     async (projectId: string) => {
+      await refreshRemoteStartPathHosts(productServerUrl());
       const remote = remoteFor(projectId);
       if (!remote) return { ok: false, message: 'Not a remote project' };
       const res = await fsRemoteRoot(remote, store.getConfig().remoteDefaultPath);

@@ -48,10 +48,11 @@ import { UsagePanel } from '@/views/settings/UsageView';
  * sections beneath. Ordered most-used → most-specialised. `project` is not in
  * this list — Project settings is its own trailing group in the picker.
  */
-export type SettingsGroup = 'config' | 'agents' | 'catalogues' | 'labs' | 'app';
+export type SettingsGroup = 'config' | 'remote' | 'agents' | 'catalogues' | 'labs' | 'app';
 
 export const SETTINGS_GROUPS: Array<{ id: SettingsGroup; label: string }> = [
   { id: 'config', label: 'Configuration' },
+  { id: 'remote', label: 'Remote' },
   { id: 'agents', label: 'Agents & Automation' },
   { id: 'catalogues', label: 'Catalogues' },
   { id: 'labs', label: 'Labs' },
@@ -75,9 +76,9 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare, desc: 'Appearance, shell & tmux', group: 'config' },
   { id: 'harness', label: 'Code Harness', icon: Bot, desc: 'Verify & enable Claude Code, Cursor, Codex & PI', group: 'config' },
   { id: 'editor', label: 'Editor', icon: SquareArrowOutUpRight, desc: 'Open-in-editor & terminal buttons', group: 'config' },
-  { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Remote SSH defaults', group: 'config' },
-  { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'config' },
   { id: 'prompts', label: 'Prompts', icon: Sparkles, desc: 'LLM micro-call prompts', group: 'config' },
+  { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'remote' },
+  { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Unpaired SSH fallback', group: 'remote' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
   { id: 'personas', label: 'Personas', icon: Drama, desc: 'Reusable launch profiles', group: 'agents' },
   { id: 'squads', label: 'Squads', icon: Users, desc: 'Reusable multi-agent teams', group: 'agents' },

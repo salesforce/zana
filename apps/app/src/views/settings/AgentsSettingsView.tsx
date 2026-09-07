@@ -3,6 +3,7 @@ import { AUTO_CLOSE_IDLE_DEFAULTS, HEARTBEAT_DEFAULTS, SESSION_MEMORY_DEFAULTS }
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { OverseerRecentPane } from '@/components/settings/OverseerRecentPane';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
 
 export function AgentsSettingsView({
   config,
@@ -152,7 +153,7 @@ export function AgentsSettingsView({
       >
         <CheckboxField
           label="Include scheduled agents in Agent View"
-          help="Show your schedules and their live runs on the Agents board, list, and flow. Armed jobs sit in a Scheduled column; while a run is working it uses Working, and finished runs use Done. On by default. A live run always remains visible under its project in the sidebar so the project status dot has a matching row."
+          help="Show waiting scheduled agents and armed jobs in a Scheduled column on the Agents board, list, and flow. A scheduled run that is working or blocked still appears in Working even when this is off; finished runs use Done only while this is on. On by default. Scheduled runs never appear under a project in the sidebar — use Agent View or the Scheduler panel."
           checked={config.includeScheduledAgentsInAgentView ?? true}
           onChange={(v) => onUpdate({ includeScheduledAgentsInAgentView: v })}
         />
@@ -443,6 +444,7 @@ export function AgentsSettingsView({
           />
         </Field>
       </Section>
+      <RemoteMachineDefaultsList />
 
       {/* Overseer — the auto-mode-OFF fallback auto-approval cascade. The
           sub-settings (LLM tier, deny patterns) only show once it's armed. */}

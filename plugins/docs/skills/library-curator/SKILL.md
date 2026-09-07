@@ -64,6 +64,18 @@ repository's source-controlled documentation.
 - Link to source-controlled documentation rather than copying large repository
   documents into the Library unless the library document adds durable analysis.
 
+## Link documents in chat
+
+When the user should reopen a library or workspace Markdown/HTML document
+beside the thread, emit this leaf on its own line (not in a code fence):
+
+```md
+::doc{path="findings/auth.md" title="Auth findings"}
+```
+
+`path` is workspace-relative. Include a short `title` when known. The card
+opens the file in the thread side panel (Docs file opener for `.md` / `.mdx`).
+
 ## Inbox reports
 
 Use `inbox_search` to retrieve historical reports. A report is an activity

@@ -65,6 +65,39 @@ export interface FakeAgentBinary {
 }
 
 /**
+ * Hold-forever stub for Cursor/Codex/Pi/OpenCode CLI Agent launches.
+ * Answers `--version` immediately with a calver at/above every family's reviewed
+ * floor (Cursor 2026.01.23, OpenCode 1.18.0, Codex 0.140.0, Pi 0.52.12).
+ * OpenCode Edits injects `--agent build --auto`; launch-time preflight
+ * (`discoverRoleTargets`) must see `build` as a directly-launchable primary or
+ * the spawn is blocked (`role target unavailable`). Answer `agent list` /
+ * `debug agent` the same way the catalog fixture does, then hold.
+ * Other catalog probes (`--list-models`, `app-server`, `acp`) exit 0 so
+ * `refreshCatalog` / ACP `list_models` do not hang, then `cat`.
+ * Do not use {@link makeFakeOpenCodeBinary} here — that fixture exits 64 on spawn.
+ */
+export function makeFakeGenericHoldBinary(version = '2026.09.02'): FakeAgentBinary {
+  return makeFakeAgentBinary({
+    profile: 'generic',
+    script: [
+      `if [ "$1" = "--version" ]; then echo "${version}"; exit 0; fi`,
+      'if [ "$1" = "agent" ] && [ "$2" = "list" ]; then',
+      '  echo "build (primary)"',
+      '  echo "plan (primary)"',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "debug" ] && [ "$2" = "agent" ]; then',
+      '  echo "{\\"name\\":\\"$3\\",\\"permission\\":{\\"read\\":true},\\"tools\\":{\\"bash\\":true}}"',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "--list-models" ] || [ "$1" = "app-server" ] || [ "$1" = "agent" ] || [ "$1" = "acp" ]; then exit 0; fi',
+      'echo "generic agent running"',
+      'cat'
+    ].join('\n')
+  });
+}
+
+/**
  * Deterministic OpenCode catalog for Electron tests. Exercises `agent list` and
  * `debug agent` without reading a developer's OpenCode configuration.
  */
@@ -143,7 +176,10 @@ function presetBody(opts: FakeAgentOptions): string {
   const idle = opts.idleTitle ?? 'ready';
   const code = opts.exitCode ?? 0;
 
-  const versionIntercept = 'if [ "$1" = "--version" ]; then echo "fake-agent-1.0.0"; exit 0; fi\n';
+  // Report a Claude version at the reviewed evidence floor so model-target
+  // preflight (Haiku, etc.) does not block e2e launches as "CLI version below
+  // reviewed floor (installed 1.0.0, requires >= 2.1.209)".
+  const versionIntercept = 'if [ "$1" = "--version" ]; then echo "2.1.209 (Claude Code)"; exit 0; fi\n';
 
   switch (seq) {
     case 'working-hold':

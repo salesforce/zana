@@ -1,5 +1,6 @@
 import { Fragment, useSyncExternalStore, type ComponentType } from 'react';
 import { MarkdownContent } from '../components/MarkdownContent.js';
+import { openWorkspaceFileForThread } from '../components/thread/secondary-panel/useThreadOpenFileSignal.js';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 import { listMessageDirectives, subscribePluginSlots } from './plugin-slots.js';
 import {
@@ -12,13 +13,15 @@ export function PluginMarkdownDirectives({
   threadId,
   projectId,
   messageId,
-  threadMentions = false
+  threadMentions = false,
+  openWorkspaceFile
 }: {
   text: string;
   threadId?: string;
   projectId?: string | null;
   messageId: string;
   threadMentions?: boolean;
+  openWorkspaceFile?: ((path: string) => boolean) | null;
 }) {
   const registrations = useSyncExternalStore(
     subscribePluginSlots,
@@ -86,6 +89,11 @@ export function PluginMarkdownDirectives({
           };
           openWorkspaceFile: ((path: string) => boolean) | null;
         }>;
+        const opener = openWorkspaceFile === undefined
+          ? (threadId
+            ? (path: string) => openWorkspaceFileForThread(threadId, path)
+            : null)
+          : openWorkspaceFile;
         return (
           <PluginSlotBoundary
             key={`dir-${index}:${registration.generation}`}
@@ -102,7 +110,7 @@ export function PluginMarkdownDirectives({
                 turnId: null,
                 projectId: projectId ?? null
               }}
-              openWorkspaceFile={null}
+              openWorkspaceFile={opener}
             />
           </PluginSlotBoundary>
         );

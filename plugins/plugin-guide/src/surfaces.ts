@@ -23,7 +23,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
     id: 'app-shell',
     title: 'App shell',
     fixtureKind: 'spatial',
-    blurb: 'Global sidebar, Projects header, project rail, and project topbar.',
+    blurb: 'Global sidebar, Projects header, and rail footer.',
     surfaces: [
       {
         id: 'navPanel',
@@ -32,22 +32,11 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         bullets: [
           'Default `placement: "sidebar"` registers a rail row at `/plugins/<id>/<path>`.',
           '`placement: "extensions"` lists the page in the Plugins hub instead.',
+          '`placement: "unlisted"` is a full `/plugins/<id>/<path>` page with no rail row and no hub listing — open it from a footer or palette action via `toPluginPanel`.',
           'Optional header and sidebar accessory.'
         ],
         apiSymbols: ['PluginAppSlots.navPanel', 'PluginNavPanelRegistration'],
         firstParty: ['Tasks', 'Automations', 'PR Monitor']
-      },
-      {
-        id: 'projectTab',
-        title: 'Project tab',
-        summary: 'A tab on the project-scoped workspace rail, beside Agents and Explorer.',
-        bullets: [
-          'Receives `pluginId` and `projectId`.',
-          'The workspace topbar labels the tab; fill the slot, not the list pane.',
-          '`global: false` hides the global sidebar entry.'
-        ],
-        apiSymbols: ['PluginAppSlots.projectTab', 'PluginProjectTabRegistration'],
-        firstParty: ['Docs', 'Salesforce']
       },
       {
         id: 'experimental_projectMenuAction',
@@ -74,9 +63,60 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         id: 'sidebarFooterAction',
         title: 'Sidebar footer',
         summary: 'An action in the rail utility dock.',
-        bullets: ['`run` receives `openSettings()`.'],
+        bullets: [
+          '`run` receives `openSettings()` and `toPluginPanel(path)`.',
+          '`openSettings()` opens this plugin’s Plugins hub detail.',
+          '`toPluginPanel` opens a `navPanel`, including `placement: "unlisted"` pages.'
+        ],
         apiSymbols: ['PluginAppSlots.sidebarFooterAction', 'PluginSidebarFooterActionRegistration'],
-        firstParty: ['Connect']
+        firstParty: ['Connect', 'Salesforce']
+      }
+    ]
+  },
+  {
+    id: 'project-shell',
+    title: 'Project shell',
+    fixtureKind: 'spatial',
+    blurb: 'Project rail, workspace topbar, Agents board, and statusbar.',
+    surfaces: [
+      {
+        id: 'projectTab',
+        title: 'Project tab',
+        summary: 'A tab on the project-scoped workspace rail, beside Agents and Explorer.',
+        bullets: [
+          'Receives `pluginId` and `projectId`.',
+          'The workspace topbar labels the tab; fill the slot, not the list pane.',
+          '`global: false` hides the global sidebar entry.'
+        ],
+        apiSymbols: ['PluginAppSlots.projectTab', 'PluginProjectTabRegistration'],
+        firstParty: ['Docs', 'Salesforce']
+      },
+      {
+        id: 'experimental_agentsBoardAction',
+        title: 'Agents board action',
+        summary: 'A toolbar control on the Agents board.',
+        apiSymbols: ['PluginAppSlots.experimental_agentsBoardAction'],
+        bullets: ['`projectId` is `null` on the cross-project Agents nav.'],
+        experimental: true
+      },
+      {
+        id: 'experimental_agentCardAction',
+        title: 'Agent card action',
+        summary: 'A right-click item on an Agents board card.',
+        apiSymbols: ['PluginAppSlots.experimental_agentCardAction'],
+        bullets: ['Optional `isAvailable` gate receives `sessionId` and `projectId`.'],
+        experimental: true
+      },
+      {
+        id: 'projectStatusbarItem',
+        title: 'Project statusbar',
+        summary: 'A compact chip on the project workspace footer, beside path and git.',
+        bullets: [
+          '`align` is `"left"` (after git) or `"right"` (default, before terminal meta). Optional `order` sorts within an alignment.',
+          'Static chips use `label` plus optional `icon` / `tooltip` / `run`. Live chips use `item`.',
+          '`run` receives `projectId`, `toProject`, `toPluginPanel`, `openDialog`, and `openMenu`. Call `openDialog()` to mount `component` in a host modal; `openMenu([{ id, label, run }])` opens a popup.'
+        ],
+        apiSymbols: ['PluginAppSlots.projectStatusbarItem', 'PluginProjectStatusbarItemRegistration']
       }
     ]
   },
@@ -112,8 +152,12 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
       {
         id: 'composer',
         title: 'Composer chrome',
-        summary: 'Actions, banners, plus-menu items, and rich-text effects.',
-        bullets: ['Scope to `thread`, `new-thread`, `queued-message`, or `side-chat`.'],
+        summary: 'Actions, banners, plus-menu items, meta chips, advanced fields, and rich-text effects.',
+        bullets: [
+          'Scope to `thread`, `new-thread`, `cli-agent`, `queued-message`, or `side-chat`.',
+          '`meta` lands in the composer chip row; `advanced` lands in Customize launch.',
+          '`useComposer().experimental_setLaunchPatch` overlays spawn extraArgs / profile / routing.'
+        ],
         apiSymbols: ['PluginAppComposer.customize', 'ComposerCustomization'],
         firstParty: ['Workflows', 'Salesforce']
       }
@@ -160,22 +204,6 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         summary: 'Replace the Agents list pane.',
         apiSymbols: ['PluginAppSlots.experimental_threadList'],
         bullets: ['Exclusive — last registered wins Appearance pin.'],
-        experimental: true
-      },
-      {
-        id: 'experimental_agentCardAction',
-        title: 'Agent card action',
-        summary: 'A right-click item on an Agents board card.',
-        apiSymbols: ['PluginAppSlots.experimental_agentCardAction'],
-        bullets: ['Optional `isAvailable` gate receives `sessionId` and `projectId`.'],
-        experimental: true
-      },
-      {
-        id: 'experimental_agentsBoardAction',
-        title: 'Agents board action',
-        summary: 'A toolbar control on the Agents board.',
-        apiSymbols: ['PluginAppSlots.experimental_agentsBoardAction'],
-        bullets: ['`projectId` is `null` on the cross-project Agents nav.'],
         experimental: true
       },
       {

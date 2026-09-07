@@ -10,7 +10,7 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import { parseEvery, formatInterval } from '@zana-ai/zcc-domain/parse-every';
 import { isValidCron, nextCronRuns } from '@zana-ai/zcc-domain/parse-cron';
-import { useData, useUi, useScheduleGroups } from '../../store.js';
+import { useData, useUi, useScheduleGroups, upsertSchedulerTask } from '../../store.js';
 import { ImprovePromptButton } from '../ImprovePromptButton.js';
 import { PopoverPicklist } from '../ui/PopoverPicklist.js';
 import { PROFILE_LABEL, INBOX_LEVELS, scopeLabel, sourceLabel } from './schedulerUtils.js';
@@ -173,6 +173,7 @@ export function ScheduleEditor({
           setError(result.message);
           return;
         }
+        upsertSchedulerTask(result.value);
         onSaved?.(result.value.id);
       } else {
         const isGlobalTask = !task!.source || task!.source === 'global';
@@ -219,6 +220,11 @@ export function ScheduleEditor({
               : 'New schedule'
           : 'Edit schedule'
       }
+      onKeyDown={(event) => {
+        if (!(event.metaKey || event.ctrlKey) || event.key !== 'Enter') return;
+        event.preventDefault();
+        if (canSave && !saving) void save();
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         void save();

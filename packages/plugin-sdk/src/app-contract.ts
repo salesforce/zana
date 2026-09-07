@@ -15,15 +15,30 @@ export interface PluginNavPanelProps {
   subPath: string;
 }
 
+export const PLUGIN_NAV_PANEL_PLACEMENTS = ['sidebar', 'extensions', 'unlisted'] as const;
+export type PluginNavPanelPlacement = (typeof PLUGIN_NAV_PANEL_PLACEMENTS)[number];
+
+/** True when the panel is a global rail row (`sidebar`, or omitted). */
+export function navPanelListsInSidebar(placement?: PluginNavPanelPlacement): boolean {
+  return placement !== 'extensions' && placement !== 'unlisted';
+}
+
+/** True when the panel is listed under Plugins instead of the rail. */
+export function navPanelListsInExtensionsHub(placement?: PluginNavPanelPlacement): boolean {
+  return placement === 'extensions';
+}
+
 export interface PluginNavPanelRegistration extends PluginSlotBase {
   title: string;
   icon: string;
   path?: string;
   /**
    * `sidebar` (default) is a global rail row. `extensions` lists the page
-   * under Plugins instead of on the main sidebar.
+   * under Plugins instead of on the main sidebar. `unlisted` is a full
+   * `/plugins/<id>/<path>` page with no rail row and no hub listing — open it
+   * from `sidebarFooterAction` / `commandPaletteAction` via `toPluginPanel`.
    */
-  placement?: 'sidebar' | 'extensions';
+  placement?: PluginNavPanelPlacement;
   component: ComponentType<PluginNavPanelProps>;
   experimental_sidebarAccessory?: ComponentType;
   headerContent?: ComponentType<PluginNavPanelProps>;
@@ -93,12 +108,64 @@ export interface PluginCreateProjectActionRegistration extends PluginSlotBase {
 
 export interface PluginSidebarFooterActionContext {
   openSettings(): void;
+  /**
+   * Navigate to one of this plugin's `navPanel` routes. Returns true when a
+   * router consumed the navigation.
+   */
+  toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }): boolean;
 }
 
 export interface PluginSidebarFooterActionRegistration extends PluginSlotBase {
   title: string;
   icon: string;
   run: (context: PluginSidebarFooterActionContext) => void | Promise<void>;
+}
+
+export const PLUGIN_PROJECT_STATUSBAR_ALIGNS = ['left', 'right'] as const;
+export type PluginProjectStatusbarAlign = (typeof PLUGIN_PROJECT_STATUSBAR_ALIGNS)[number];
+
+export interface PluginProjectStatusbarMenuItem {
+  id: string;
+  label: string;
+  icon?: string;
+  disabled?: boolean;
+  run(): void | Promise<void>;
+}
+
+export interface PluginProjectStatusbarItemContext {
+  projectId: string;
+  toProject(projectId: string, options?: ZccNavigateToProjectOptions): boolean;
+  toPluginPanel(path?: string, options?: { subPath?: string; replace?: boolean }): boolean;
+  openDialog(options?: { title?: string; params?: JsonValue }): boolean;
+  openMenu(items: readonly PluginProjectStatusbarMenuItem[]): boolean;
+}
+
+export interface PluginProjectStatusbarItemProps extends PluginProjectStatusbarItemContext {
+  pluginId: string;
+}
+
+export interface PluginProjectStatusbarDialogProps {
+  pluginId: string;
+  projectId: string;
+  params: JsonValue | null;
+  close(): void;
+  toProject(projectId: string, options?: ZccNavigateToProjectOptions): boolean;
+  toPluginPanel(path?: string, options?: { subPath?: string; replace?: boolean }): boolean;
+}
+
+export interface PluginProjectStatusbarItemRegistration extends PluginSlotBase {
+  /** `left` sits after path/git; `right` (default) sits before terminal meta. */
+  align?: PluginProjectStatusbarAlign;
+  order?: number;
+  tooltip?: string;
+  icon?: string;
+  /** Host-rendered label. Required unless `item` supplies live chrome. */
+  label?: string;
+  /** Live chip; when set, the host does not auto-call `run`. */
+  item?: ComponentType<PluginProjectStatusbarItemProps>;
+  /** Modal body mounted by `openDialog`. */
+  component?: ComponentType<PluginProjectStatusbarDialogProps>;
+  run?: (ctx: PluginProjectStatusbarItemContext) => void | Promise<void>;
 }
 
 export interface PluginPendingInteractionView {
@@ -221,6 +288,8 @@ export interface PluginFileOpenerProps {
   pluginId: string;
   path: string;
   source: PluginFileOpenerSource;
+  /** 1-based line to reveal when the host opened this preview with --line / preview_file. */
+  lineNumber?: number | null;
   experimental_Original: ComponentType;
 }
 
@@ -365,7 +434,15 @@ export interface PluginProviderIconRegistration {
   icon: ComponentType<{ className?: string }>;
 }
 
-export type PluginComposerScopeKind = 'thread' | 'queued-message' | 'side-chat' | 'new-thread';
+export const PLUGIN_COMPOSER_SCOPE_KINDS = [
+  'thread',
+  'queued-message',
+  'side-chat',
+  'new-thread',
+  'cli-agent'
+] as const;
+
+export type PluginComposerScopeKind = (typeof PLUGIN_COMPOSER_SCOPE_KINDS)[number];
 
 export type PluginComposerScope =
   | { kind: 'thread'; threadId: string }
@@ -377,13 +454,38 @@ export type PluginComposerScope =
       tabId: string;
       childThreadId: string | null;
     }
-  | { kind: 'new-thread'; projectId: string | null };
+  | { kind: 'new-thread'; projectId: string | null }
+  | { kind: 'cli-agent'; projectId: string | null };
 
 export interface ComposerView {
   scope: PluginComposerScope;
   layout: 'expanded' | 'compact' | 'zen';
   draft: { text: string; isEmpty: boolean; attachmentCount: number };
   run: { isRunning: boolean; isSubmitting: boolean };
+  /** Selected CLI harness family (`claude`, `codex`, …) when the composer is CLI Agent. */
+  familyId?: string;
+  /** Selected thread/CLI provider id (`claude-code`, `codex`, …). */
+  providerId?: string;
+}
+
+/**
+ * Advisory spawn overlay a composer customization may attach. The host merges
+ * patches at send time; main still authorizes cwd/profile and sanitizes args.
+ */
+export interface PluginComposerLaunchPatch {
+  extraArgs?: string[];
+  profileId?: string;
+  harnessRouting?: {
+    schemaVersion: 1;
+    byAdapter: Record<
+      string,
+      {
+        roleTargetId?: string;
+        modelTargetId?: string;
+        executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
+      }
+    >;
+  };
 }
 
 export interface ComposerPlusMenuItem {
@@ -418,6 +520,10 @@ export interface ComposerCustomization {
   banners?: readonly { id: string; chrome?: 'card' | 'bare'; component: ComponentType }[];
   plusMenu?: readonly ComposerPlusMenuItem[];
   richText?: ComposerRichTextSpec;
+  /** Chips in the composer meta row (project / environment / permission). */
+  meta?: readonly { id: string; component: ComponentType }[];
+  /** Fields inside the host-owned Customize launch disclosure. */
+  advanced?: readonly { id: string; component: ComponentType }[];
 }
 
 export interface PluginComposerTextEffect {
@@ -441,6 +547,11 @@ export interface PluginComposerApi {
   addQuote(text: string): void;
   insertMention(mention: PluginComposerMention): void;
   focus(): void;
+  /**
+   * Overlay spawn options for this plugin. Pass `null` to clear. The host
+   * merges every plugin's patch at send; main still authorizes.
+   */
+  experimental_setLaunchPatch(patch: PluginComposerLaunchPatch | null): void;
 }
 
 export interface PluginComposerThreadRowStatus {
@@ -489,6 +600,9 @@ export interface PluginAppSlots {
     registration: Omit<PluginCreateProjectActionRegistration, 'generation' | 'pluginId'>
   ): void;
   sidebarFooterAction(registration: Omit<PluginSidebarFooterActionRegistration, 'generation' | 'pluginId'>): void;
+  projectStatusbarItem(
+    registration: Omit<PluginProjectStatusbarItemRegistration, 'generation' | 'pluginId'>
+  ): void;
   pendingInteraction(registration: Omit<PluginPendingInteractionRegistration, 'generation' | 'pluginId'>): void;
   threadPanelAction(registration: Omit<PluginThreadPanelActionRegistration, 'generation' | 'pluginId'>): void;
   experimental_newThreadPanelAction(
@@ -539,6 +653,7 @@ export interface PluginRegistrationSet {
   projectMenuActions: PluginProjectMenuActionRegistration[];
   createProjectActions: PluginCreateProjectActionRegistration[];
   sidebarFooterActions: PluginSidebarFooterActionRegistration[];
+  projectStatusbarItems: PluginProjectStatusbarItemRegistration[];
   pendingInteractions: PluginPendingInteractionRegistration[];
   threadPanelActions: PluginThreadPanelActionRegistration[];
   newThreadPanelActions: PluginNewThreadPanelActionRegistration[];
@@ -656,6 +771,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     projectMenuActions: [],
     createProjectActions: [],
     sidebarFooterActions: [],
+    projectStatusbarItems: [],
     pendingInteractions: [],
     threadPanelActions: [],
     newThreadPanelActions: [],
@@ -760,6 +876,7 @@ export function collectPluginApp(
     composerCustomization: new Set<string>(),
     pendingInteraction: new Set<string>(),
     sidebarFooterAction: new Set<string>(),
+    projectStatusbarItem: new Set<string>(),
     threadList: new Set<string>(),
     threadHeaderAction: new Set<string>(),
     fileOpener: new Set<string>(),
@@ -821,8 +938,11 @@ export function collectPluginApp(
         ) {
           throw new Error(`${kind}: "experimental_sidebarAccessory" must be a React component function when set`);
         }
-        if (registration.placement !== undefined && registration.placement !== 'sidebar' && registration.placement !== 'extensions') {
-          throw new Error(`${kind}: "placement" must be "sidebar" or "extensions"`);
+        if (
+          registration.placement !== undefined &&
+          !PLUGIN_NAV_PANEL_PLACEMENTS.includes(registration.placement)
+        ) {
+          throw new Error(`${kind}: "placement" must be "sidebar", "extensions", or "unlisted"`);
         }
         set.navPanels.push(
           stamp({
@@ -902,6 +1022,50 @@ export function collectPluginApp(
             title: requireNonEmptyString(kind, 'title', registration.title),
             icon: requireNonEmptyString(kind, 'icon', registration.icon),
             run: registration.run
+          })
+        );
+      },
+      projectStatusbarItem: (registration) => {
+        const kind = 'slots.projectStatusbarItem';
+        const id = requireSlotId(kind, registration.id);
+        requireUniqueId(kind, seen.projectStatusbarItem, id);
+        const align = registration.align ?? 'right';
+        if (align !== 'left' && align !== 'right') {
+          throw new Error(`${kind}: "align" must be "left" or "right"`);
+        }
+        if (registration.item !== undefined) {
+          requireComponent(kind, 'item', registration.item);
+        }
+        if (registration.component !== undefined) {
+          requireComponent(kind, 'component', registration.component);
+        }
+        if (registration.run !== undefined && typeof registration.run !== 'function') {
+          throw new Error(`${kind}: "run" must be a function when set`);
+        }
+        const label = requireOptionalString(kind, 'label', registration.label);
+        if (!registration.item && (label === undefined || label.length === 0)) {
+          throw new Error(`${kind}: "label" is required unless "item" is set`);
+        }
+        if (
+          registration.order !== undefined &&
+          (typeof registration.order !== 'number' || !Number.isFinite(registration.order))
+        ) {
+          throw new Error(`${kind}: "order" must be a finite number when set`);
+        }
+        const tooltip = requireOptionalString(kind, 'tooltip', registration.tooltip);
+        set.projectStatusbarItems.push(
+          stamp({
+            id,
+            align,
+            ...(registration.order !== undefined ? { order: registration.order } : {}),
+            ...(tooltip !== undefined ? { tooltip } : {}),
+            ...(registration.icon !== undefined
+              ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
+              : {}),
+            ...(label !== undefined && label.length > 0 ? { label } : {}),
+            ...(registration.item !== undefined ? { item: registration.item } : {}),
+            ...(registration.component !== undefined ? { component: registration.component } : {}),
+            ...(registration.run !== undefined ? { run: registration.run } : {})
           })
         );
       },
@@ -1139,14 +1303,25 @@ export function collectPluginApp(
         );
       }
     },
-    composer: {
-      customize: (registration) => {
-        const kind = 'composer.customize';
-        const id = requireSlotId(kind, registration.id);
-        requireUniqueId(kind, seen.composerCustomization, id);
-        set.composerCustomizations.push(stamp({ ...registration, id }));
-      }
-    },
+      composer: {
+        customize: (registration) => {
+          const kind = 'composer.customize';
+          const id = requireSlotId(kind, registration.id);
+          requireUniqueId(kind, seen.composerCustomization, id);
+          const scopes = registration.scopes;
+          if (scopes !== undefined) {
+            if (!Array.isArray(scopes) || scopes.length === 0) {
+              throw new Error(`${kind}: "scopes" must be a non-empty array when set`);
+            }
+            for (const scope of scopes) {
+              if (!PLUGIN_COMPOSER_SCOPE_KINDS.includes(scope as PluginComposerScopeKind)) {
+                throw new Error(`${kind}: invalid scope kind ${JSON.stringify(scope)}`);
+              }
+            }
+          }
+          set.composerCustomizations.push(stamp({ ...registration, id }));
+        }
+      },
     contentScripts: {
       register: (registration) => {
         const kind = 'contentScripts.register';

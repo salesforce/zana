@@ -75,6 +75,7 @@ export interface PluginHandle {
   api: ZccPluginApi;
   extraSkillRoots: string[];
   extraInstructions: string[];
+  extraInstructionProviders: Array<(ctx: { threadId: string; projectId: string }) => string | null>;
   agentConfigurers: Array<
     (
       ctx: PluginAgentConfigureContext
@@ -217,6 +218,7 @@ export function createPluginApi(
   const disposeHooks: Array<() => void | Promise<void>> = [];
   const extraSkillRoots: string[] = [];
   const extraInstructions: string[] = [];
+  const extraInstructionProviders: PluginHandle['extraInstructionProviders'] = [];
   const agentConfigurers: PluginHandle['agentConfigurers'] = [];
   const mentionProviders: PluginHandle['mentionProviders'] = [];
   const hostMethods = new Map<string, (input: unknown) => unknown | Promise<unknown>>();
@@ -661,9 +663,16 @@ export function createPluginApi(
       },
     },
     agents: {
-      contributeInstructions: (text) => {
+      contributeInstructions: (textOrProvider) => {
+        if (typeof textOrProvider === 'function') {
+          if (extraInstructionProviders.length > 0) {
+            throw new Error('contributeInstructions is already registered');
+          }
+          extraInstructionProviders.push(textOrProvider);
+          return;
+        }
         extraInstructions.length = 0;
-        const trimmed = typeof text === 'string' ? text.trim() : '';
+        const trimmed = typeof textOrProvider === 'string' ? textOrProvider.trim() : '';
         if (trimmed) extraInstructions.push(trimmed);
       },
       contributeSkills: (rootPaths) => {
@@ -755,6 +764,7 @@ export function createPluginApi(
     api,
     extraSkillRoots,
     extraInstructions,
+    extraInstructionProviders,
     agentConfigurers,
     mentionProviders,
     cli: cliRecord,

@@ -1577,8 +1577,8 @@ export const store = {
     // Remote start-path override. Only meaningful for a remote project; ignored
     // for local ones. sanitizeRemoteField enforces the same length / control-char
     // guard as add-time (it feeds an ssh `cd` prefix in buildRemoteCmd). An empty
-    // string clears the override so the project falls back to the global
-    // remoteDefaultPath, then the remote $HOME.
+    // string clears the override so the project falls back to the matching
+    // Machine default, then the global remoteDefaultPath, then the remote $HOME.
     if (remotePathPatch !== undefined && next.remote) {
       const cleaned = sanitizeRemoteField(remotePathPatch, 'remotePath');
       const remote = { ...next.remote };

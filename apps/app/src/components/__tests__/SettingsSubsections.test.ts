@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { SETTINGS_SECTIONS, SETTINGS_SUBSECTIONS } from '@/views/settings/SettingsView';
+import { SETTINGS_GROUPS, SETTINGS_SECTIONS, SETTINGS_SUBSECTIONS } from '@/views/settings/SettingsView';
 
 describe('Settings subsection navigation', () => {
   it('lists Install status, then Modern and CLI Agent', () => {
@@ -60,10 +60,21 @@ describe('Settings subsection navigation', () => {
     ]);
   });
 
-  it('lists Connectivity as its own Settings section, next to Machines', () => {
-    const ids = SETTINGS_SECTIONS.map((section) => section.id);
-    expect(ids).toContain('connectivity');
-    expect(ids.indexOf('connectivity')).toBeLessThan(ids.indexOf('machines'));
+  it('groups Machines and Connectivity under Remote', () => {
+    expect(SETTINGS_GROUPS.map((group) => group.id)).toEqual([
+      'config',
+      'remote',
+      'agents',
+      'catalogues',
+      'labs',
+      'app'
+    ]);
+    const machines = SETTINGS_SECTIONS.find((section) => section.id === 'machines');
+    const connectivity = SETTINGS_SECTIONS.find((section) => section.id === 'connectivity');
+    expect(machines?.group).toBe('remote');
+    expect(connectivity?.group).toBe('remote');
+    const remoteIds = SETTINGS_SECTIONS.filter((section) => section.group === 'remote').map((section) => section.id);
+    expect(remoteIds).toEqual(['machines', 'connectivity']);
     expect(SETTINGS_SUBSECTIONS.connectivity).toEqual([
       { id: 'connectivity-remote', label: 'Remote SSH' }
     ]);

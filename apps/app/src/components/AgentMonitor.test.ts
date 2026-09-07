@@ -63,5 +63,7 @@ describe('AgentMonitor thread selection', () => {
     const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
     expect(source).toContain('visibleAgentLanes(includeScheduled)');
     expect(source).toContain('includeScheduledAgentsInAgentView');
+    expect(source).toContain('openScheduleFromAgents');
+    expect(source).not.toContain('revealSchedule(item.task.id)');
   });
 });

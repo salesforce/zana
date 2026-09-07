@@ -22,6 +22,7 @@ export {
   renameHost,
   updateHostPermissionCeiling,
   updateHostSshIdentity,
+  updateHostDefaultWorkspacePath,
   findHostBySsh,
   markHostProtocolRejected,
   destroyHost,
@@ -172,3 +173,8 @@ export {
   type ThreadPlanTaskRow,
   type ThreadPlanTaskStatus
 } from './data/thread-plans.js';
+export {
+  getThreadTabs,
+  replaceThreadTabs,
+  type ThreadTabsRow
+} from './data/thread-tabs.js';

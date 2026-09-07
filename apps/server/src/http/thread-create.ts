@@ -10,6 +10,7 @@ import {
   getEnvironment,
   getPrimaryHost,
   getThread,
+  listHosts,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
   updateThreadStatus,
@@ -37,11 +38,13 @@ import {
   boundRemoteHostId,
   isRemoteToolProxyActive,
   remoteWorkspacePath,
+  resolveHarnessWorkspacePath,
   REMOTE_HOST_DAEMON_REQUIRED,
   REMOTE_HOST_DAEMON_REQUIRED_MESSAGE,
   threadLaunchRemote
 } from '../services/threads/remote-tool-proxy.js';
 import { resolveSpawnChoiceForHost } from '../services/threads/spawn-choice-for-host.js';
+import { toRemoteStartPathHost } from '../services/hosts/host-public.js';
 import { listJsonFiles } from './disk-json.js';
 import { join } from 'node:path';
 
@@ -227,9 +230,9 @@ export async function createThreadFromRequest(
     throw new ThreadCreateError(409, REMOTE_HOST_DAEMON_REQUIRED, REMOTE_HOST_DAEMON_REQUIRED_MESSAGE);
   }
   const remoteToolProxy = isRemoteToolProxyActive(project, boundRemote ?? input.hostId);
-  const workspacePath = remoteWorkspacePath(project, remoteToolProxy);
   const primary = getPrimaryHost(ctx.db);
   let hostId: string;
+  let workspacePath: string;
   try {
     if (boundRemote) {
       hostId = ctx.hostHub.resolveHostId(boundRemote);
@@ -242,6 +245,19 @@ export async function createThreadFromRequest(
       hostId = ctx.hostHub.resolveHostId(input.hostId);
     }
     ctx.hostHub.ensureHostSessionReady(hostId);
+    workspacePath = await resolveHarnessWorkspacePath({
+      project,
+      remoteToolProxy,
+      remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
+      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      probeHostHome: async () => {
+        const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
+          hostId,
+          command: { type: 'host.browse_directory' }
+        });
+        return listing.directory;
+      }
+    });
   } catch (error) {
     if (error instanceof ThreadCreateError) throw error;
     throw mapHostError(error);
@@ -443,7 +459,15 @@ async function startThreadOnHost(
       microVmMemoryMib: args.input.microVmMemoryMib,
       ...(remoteToolProxy
         ? {
-            remote: threadLaunchRemote(args.project),
+            remote: threadLaunchRemote(
+              args.project,
+              remoteWorkspacePath(
+                args.project,
+                remoteToolProxy,
+                ctx.config.getConfig().remoteDefaultPath,
+                listHosts(ctx.db).map(toRemoteStartPathHost)
+              )
+            ),
             remoteToolProxy: true
           }
         : {}),

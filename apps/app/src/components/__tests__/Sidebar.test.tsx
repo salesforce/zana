@@ -35,7 +35,7 @@ const h = vi.hoisted(() => {
       icon: string;
       generation: number;
       component: () => null;
-      placement?: 'sidebar' | 'extensions';
+      placement?: 'sidebar' | 'extensions' | 'unlisted';
     }>
   };
 });
@@ -66,7 +66,7 @@ vi.mock('../../plugins/plugin-slots', () => ({
   },
   listSidebarFooterActions: () => [],
   listNavPanels: () => h.navPanels,
-  listSidebarNavPanels: () => h.navPanels.filter((panel) => panel.placement !== 'extensions')
+  listSidebarNavPanels: () => h.navPanels.filter((panel) => panel.placement !== 'extensions' && panel.placement !== 'unlisted')
 }));
 
 import { Sidebar } from '../Sidebar.js';
@@ -251,6 +251,28 @@ describe('Sidebar structure and compact accessibility', () => {
 
     h.navPanels = [];
     h.modules = [];
+  });
+
+  it('keeps unlisted plugin pages off the global rail', () => {
+    h.state.sidebarCollapsed = false;
+    h.navPanels = [
+      {
+        pluginId: 'salesforce',
+        path: 'orgs',
+        id: 'orgs',
+        title: 'Salesforce',
+        icon: 'Cloud',
+        placement: 'unlisted',
+        generation: 1,
+        component: () => null
+      }
+    ];
+
+    const markup = renderSidebar();
+    expect(markup).not.toContain('data-testid="nav-salesforce/orgs"');
+    expect(markup).not.toContain('>Salesforce<');
+
+    h.navPanels = [];
   });
 
   it('keeps failed, settings-only, and project-only plugin modules off the rail', () => {

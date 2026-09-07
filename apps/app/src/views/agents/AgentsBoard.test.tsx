@@ -67,8 +67,10 @@ describe('AgentsBoard', () => {
     expect(board).toContain('<AgentMonitor cards={visibleFleet}');
     expect(board).toContain('projectRemote: Boolean(project.remote)');
     expect(board).toContain('schedulesForAgentView');
-    expect(board).toContain('revealSchedule(item.task.id)');
+    expect(board).toContain('openScheduleFromAgents');
     expect(board).toContain('item.kind === \'schedule\'');
+    expect(board).toContain('getAgentSessionRoutePath(item.card.session.id, item.projectId)');
+    expect(board).toContain('item.card.session.scheduled');
   });
 });
 
@@ -139,5 +141,12 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(css).toContain(
       '.agents-board-empty--launch {\n  overflow: auto;\n  gap: 20px;\n  justify-content: center;\n  padding: 48px 24px 56px;\n  background: transparent;'
     );
+  });
+
+  it('paints lane accents as an inset top stripe, not a recolored header divider', () => {
+    expect(css).toContain('.zcc-kanban-col.lane-blocked { box-shadow: inset 0 2px 0 var(--danger); }');
+    expect(css).toContain('.zcc-kanban-col.lane-working { box-shadow: inset 0 2px 0 var(--accent-gold); }');
+    expect(css).not.toContain('.zcc-kanban-col.lane-blocked .zcc-kanban-col-header { border-bottom-color:');
+    expect(css).not.toContain('.zcc-kanban-col.lane-working .zcc-kanban-col-header { border-bottom-color:');
   });
 });

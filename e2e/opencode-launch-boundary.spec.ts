@@ -71,20 +71,30 @@ async function selectRole(window: Page, modal: Locator, value: string, timeout =
   const trigger = modal.locator('[data-testid="native-role-picker-trigger"]');
   await expect(trigger).toBeVisible({ timeout });
   await trigger.click();
-  await expect(window.locator('[data-testid="native-role-picker-menu"]')).toBeVisible();
-  await window.locator(`[data-testid="native-role-${value}"]`).click();
+  const menu = window.getByRole('listbox', { name: 'Native role' });
+  await expect(menu).toBeVisible();
+  const label = `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+  await menu.getByRole('option', { name: label, exact: true }).click();
 }
 
+const fixtureOpenCode = join(fixtureBin, 'opencode');
+
 async function enableOpenCode(window: Page) {
-  await window.evaluate(() => window.cc.config.set({
-    harnessOpenCodeEnabled: true,
-    defaultHarness: 'opencode',
-    opencodeBinary: undefined
-  }));
+  await window.evaluate(async (binary) => {
+    await window.cc.config.set({
+      harnessOpenCodeEnabled: true,
+      defaultHarness: 'opencode',
+      opencodeBinary: binary
+    });
+  }, fixtureOpenCode);
   await window.getByRole('link', { name: 'Settings' }).click();
   await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
   const openCodeSettings = window.locator('#settings-anchor-harness-opencode');
-  await expect(openCodeSettings.locator('.opener-row-status')).toHaveClass(/opener-row-status--ok/);
+  // Status rows render a version chip and a login chip. The PATH fixture
+  // answers `--version` as `opencode 1.18.10` — wait for that, not a real CLI.
+  const ok = openCodeSettings.locator('.opener-row-status--ok').first();
+  await expect(ok).toBeVisible({ timeout: 20_000 });
+  await expect(ok).toHaveAttribute('title', /1\.18\.10/, { timeout: 20_000 });
 }
 
 test('launches a directly-launchable OpenCode role validated by preflight discovery', async ({ app }) => {

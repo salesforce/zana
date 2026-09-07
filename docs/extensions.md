@@ -26,6 +26,15 @@ compatibility surface and is not a competing Settings destination.
 - Quickstart: [`extensions-quickstart.md`](./extensions-quickstart.md)
 - SDK: [`extensions-sdk-reference.md`](./extensions-sdk-reference.md)
 
+## Plugin Guide
+
+Open **Plugin Guide** from the **Plugins** hub. It auto-installs on first
+launch. The guide is an annotated wireframe map of every surface a plugin can
+own — sidebar, project tab, composer, thread chrome, settings, skills, CLI, and
+more — with Copy for agent text and links into installed plugin pages. Use it
+while authoring; the matching APIs are in the
+[SDK reference](./extensions-sdk-reference.md).
+
 ## First-party plugins
 
 Ids live in `apps/server/src/plugins/builtin-registry.ts`. Core must not hardcode
@@ -42,6 +51,7 @@ them elsewhere.
 | `provider-acp` | ACP thread provider (Cursor and OpenCode) |
 | `custom-instructions` | Project custom instructions |
 | `ask-user-question` | Agent questions that surface in the Inbox |
+| `plugin-guide` | Plugin Guide — annotated SDK surface map under Plugins |
 
 **Official store plugins** (`autoInstall: false` — install from Plugins → Browse
 or `zcc plugin install <name>`):
@@ -63,8 +73,9 @@ or `zcc plugin install <name>`):
 | `secrets` | Host secrets |
 | `connect` | Host connect |
 
-Packages that live under repo `plugins/` today include `docs` and `salesforce`;
-other official plugins may ship from the catalog without a tree copy.
+Packages that live under repo `plugins/` today include `docs`, `plugin-guide`,
+and `salesforce`; other official plugins may ship from the catalog without a
+tree copy.
 
 ## CLI
 

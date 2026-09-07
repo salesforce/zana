@@ -8,8 +8,6 @@ import type { ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product
 const setEnabled = vi.fn();
 const runNow = vi.fn();
 const close = vi.fn();
-const openScheduledLive = vi.fn();
-const openScheduledLiveInSplit = vi.fn();
 const pushToast = vi.fn();
 
 const terminals: Record<string, TerminalSession[]> = {};
@@ -31,11 +29,6 @@ vi.mock('../../store.js', () => ({
     (selector: (s: { pushToast: typeof pushToast }) => unknown) => selector({ pushToast }),
     { getState: () => ({ pushToast }) }
   )
-}));
-
-vi.mock('./openScheduledLive.js', () => ({
-  openScheduledLive: (...args: unknown[]) => openScheduledLive(...args),
-  openScheduledLiveInSplit: (...args: unknown[]) => openScheduledLiveInSplit(...args)
 }));
 
 import { ScheduleInfoPanel } from './ScheduleInfoPanel.js';
@@ -60,20 +53,12 @@ describe('ScheduleInfoPanel', () => {
     setEnabled.mockReset();
     runNow.mockReset();
     close.mockReset();
-    openScheduledLive.mockReset();
-    openScheduledLiveInSplit.mockReset();
     pushToast.mockReset();
     for (const key of Object.keys(terminals)) delete terminals[key];
   });
 
   it('asks the user to save before showing run history', () => {
-    render(
-      <ScheduleInfoPanel
-        task={null}
-        navigate={() => undefined}
-        currentPathname="/schedules/new"
-      />
-    );
+    render(<ScheduleInfoPanel task={null} />);
     expect(screen.getByTestId('schedule-info-panel').textContent).toContain(
       'Save this schedule to start recording runs.'
     );
@@ -106,8 +91,6 @@ describe('ScheduleInfoPanel', () => {
         task={task}
         onDuplicate={onDuplicate}
         onAskDelete={onAskDelete}
-        navigate={() => undefined}
-        currentPathname="/schedules/sched-1"
       />
     );
     expect(screen.getByText('On')).toBeTruthy();
@@ -122,9 +105,8 @@ describe('ScheduleInfoPanel', () => {
     expect(onAskDelete).toHaveBeenCalled();
   });
 
-  it('opens a live session in split from the info panel', () => {
+  it('shows a running pill without peek or live-split controls', () => {
     terminals.p1 = [{ id: 'sess-1', status: 'running' } as TerminalSession];
-    const navigate = vi.fn();
     const task = {
       ...baseTask,
       status: {
@@ -132,22 +114,11 @@ describe('ScheduleInfoPanel', () => {
         runs: [{ at: '2026-01-01T00:00:00Z', result: 'success', sessionId: 'sess-1' }]
       }
     } as ScheduledTask;
-    render(
-      <ScheduleInfoPanel
-        task={task}
-        navigate={navigate}
-        currentPathname="/schedules/sched-1"
-      />
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Open live in split' }));
-    expect(openScheduledLiveInSplit).toHaveBeenCalledWith(
-      'p1',
-      'sess-1',
-      navigate,
-      '/schedules/sched-1'
-    );
-    fireEvent.click(screen.getByLabelText('Peek running terminal'));
-    expect(openScheduledLive).toHaveBeenCalledWith('p1', 'sess-1');
+    render(<ScheduleInfoPanel task={task} />);
+    expect(screen.getByText('running')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open live in split' })).toBeNull();
+    expect(screen.queryByLabelText('Peek running terminal')).toBeNull();
+    expect(screen.getByLabelText('Stop running terminal')).toBeTruthy();
   });
 
   it('hides mutating actions for external claude-loop schedules', () => {
@@ -160,8 +131,6 @@ describe('ScheduleInfoPanel', () => {
         task={task}
         onDuplicate={() => undefined}
         onAskDelete={() => undefined}
-        navigate={() => undefined}
-        currentPathname="/schedules/sched-1"
       />
     );
     expect(screen.queryByRole('button', { name: /Run now/ })).toBeNull();
@@ -178,24 +147,12 @@ describe('ScheduleInfoPanel', () => {
         runs: [{ at: '2026-01-01T00:00:00Z', result: 'success', sessionId: 'sess-1' }]
       }
     } as ScheduledTask;
-    const { rerender } = render(
-      <ScheduleInfoPanel
-        task={task}
-        navigate={() => undefined}
-        currentPathname="/schedules/sched-1"
-      />
-    );
+    const { rerender } = render(<ScheduleInfoPanel task={task} />);
     fireEvent.click(screen.getByLabelText('Stop running terminal'));
     await vi.waitFor(() => expect(close).toHaveBeenCalledWith('sess-1'));
     expect(pushToast).toHaveBeenCalledWith('Stopped "Morning digest"', 'info');
 
-    rerender(
-      <ScheduleInfoPanel
-        task={task}
-        navigate={() => undefined}
-        currentPathname="/schedules/sched-1"
-      />
-    );
+    rerender(<ScheduleInfoPanel task={task} />);
     fireEvent.click(screen.getByLabelText('Stop running terminal'));
     await vi.waitFor(() =>
       expect(pushToast).toHaveBeenCalledWith('Failed to stop "Morning digest"', 'error')
@@ -205,13 +162,7 @@ describe('ScheduleInfoPanel', () => {
   it('toasts when run-now or pause fail', async () => {
     runNow.mockResolvedValue({ ok: false, message: 'busy' });
     setEnabled.mockResolvedValue({ ok: false, message: 'denied' });
-    render(
-      <ScheduleInfoPanel
-        task={{ ...baseTask, enabled: false } as ScheduledTask}
-        navigate={() => undefined}
-        currentPathname="/schedules/sched-1"
-      />
-    );
+    render(<ScheduleInfoPanel task={{ ...baseTask, enabled: false } as ScheduledTask} />);
     expect(screen.getByText('Paused')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
     await vi.waitFor(() => expect(pushToast).toHaveBeenCalledWith('Run failed: busy', 'error'));

@@ -5,8 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { OrgPicker } from './OrgPicker.js';
+import { SalesforceOrgsPanel } from './SalesforceOrgsPanel.js';
 import { SalesforceProjectTab } from './SalesforceProjectTab.js';
+import app from '../../app.tsx';
 
 const orgs = [
   {
@@ -120,10 +123,49 @@ describe('OrgPicker and Salesforce project tab', () => {
     expect(onSelect).toHaveBeenCalledWith('prod');
   });
 
+  it('lists CLI orgs from the plugin settings section', async () => {
+    const Section = collectTestPluginApp(app, 'salesforce').settingsSections[0]?.component;
+    expect(Section).toBeTruthy();
+    const el = await mount(createElement(Section!, { pluginId: 'salesforce' }));
+    expect(el.querySelector('[data-testid="salesforce-org-list"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="salesforce-org:prod"]')).toBeTruthy();
+    expect(el.textContent).toContain('CLI-connected orgs');
+    expect(el.querySelector('[data-testid="salesforce-connect-orgs"]')).toBeTruthy();
+  });
+
+  it('starts CLI web login from Connect more orgs', async () => {
+    rpc.mockImplementation(async (_pluginId: string, method: string) => {
+      if (method === 'orgs') return { ok: true, orgs, selectedAlias: 'dev' };
+      if (method === 'orgs.login') return { ok: true, orgs, selectedAlias: 'dev' };
+      return { ok: false, error: `unexpected ${method}` };
+    });
+    const el = await mount(createElement(OrgPicker, { pluginId: 'salesforce' }));
+    await act(async () => {
+      (el.querySelector('[data-testid="salesforce-connect-orgs"]') as HTMLButtonElement).click();
+    });
+    const form = el.querySelector('[data-testid="salesforce-org-login"]') as HTMLFormElement;
+    expect(form).toBeTruthy();
+    await act(async () => {
+      (form.querySelector('button[type="submit"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'orgs.login', { instance: 'production', alias: undefined });
+  });
+
   it('renders CLI orgs on the Salesforce project tab', async () => {
     const el = await mount(createElement(SalesforceProjectTab, { pluginId: 'salesforce', projectId: 'proj-1' }));
     expect(el.textContent).toContain('CLI-connected orgs');
     expect(el.querySelector('[data-testid="salesforce-org:prod"]')).toBeTruthy();
     expect(el.textContent).toContain('Open SOQL');
+  });
+
+  it('renders the unlisted Salesforce orgs panel', async () => {
+    const el = await mount(createElement(SalesforceOrgsPanel, { pluginId: 'salesforce', subPath: '' }));
+    expect(el.querySelector('[data-testid="salesforce-orgs-panel"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="salesforce-org-list"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="salesforce-connect-orgs"]')).toBeTruthy();
   });
 });

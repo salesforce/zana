@@ -24,6 +24,7 @@ import {
   type PluginContentScriptDisposer,
   type PluginContentScriptRegistration,
   type PluginComposerApi,
+  type PluginComposerLaunchPatch,
   type PluginComposerMention,
   type PluginComposerScope,
   type PluginComposerTextEffect,
@@ -170,6 +171,8 @@ export interface ComposerLog {
    * draft — enough to assert what a picker scheduled and that it tidied up.
    */
   submits: Array<{ sendAt: number }>;
+  /** Latest `experimental_setLaunchPatch` payloads, including `null` clears. */
+  launchPatches: Array<PluginComposerLaunchPatch | null>;
 }
 
 interface TestComposerStore {
@@ -1507,6 +1510,7 @@ export function renderSlot<
     mentions: [],
     focusCount: 0,
     submits: [],
+    launchPatches: [],
   };
   const composerOwnership = { active: true };
   const composer: TestComposerStore = {
@@ -1575,6 +1579,10 @@ export function renderSlot<
         }
         composerLog.submits.push({ sendAt });
         commitComposerText("");
+      },
+      experimental_setLaunchPatch(patch) {
+        if (!composerOwnership.active) return;
+        composerLog.launchPatches.push(patch);
       },
     },
   };

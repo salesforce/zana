@@ -176,11 +176,10 @@ export function shouldShowHostPicker(
 }
 
 export type ComposerRemoteHostBadge = {
-  path: string | null;
-  status: 'online' | 'offline' | null;
+  status: 'online' | 'offline';
 };
 
-/** Path + connection status for an SSH remote. The project picker already names the host. */
+/** Connection status for an SSH remote. The project picker already names the host. */
 export function composerRemoteHostBadge(input: {
   project?: Project;
   host?: Host | null;
@@ -188,12 +187,8 @@ export function composerRemoteHostBadge(input: {
   const project = input.project;
   if (!project?.remote || !project.hostId) return null;
   if (input.host && input.host.id !== project.hostId) return null;
-  const path = project.remote.remotePath?.trim() || null;
-  const status = input.host
-    ? (input.host.status === 'connected' ? 'online' : 'offline')
-    : null;
-  if (!path && !status) return null;
-  return { path, status };
+  if (!input.host) return null;
+  return { status: input.host.status === 'connected' ? 'online' : 'offline' };
 }
 
 export function bootstrapOutcome(

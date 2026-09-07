@@ -66,10 +66,11 @@ export async function preflightTerminalExecution(
       reason: error instanceof Error ? error.message : String(error)
     };
   }
-  const combinationError = provider.validateRoutingCombination?.({
-    roleTargetId: preflight.role.targetId,
-    executionOrigin: preflight.execution.origin
-  });
+    const combinationError = provider.validateRoutingCombination?.({
+      roleTargetId: preflight.role.targetId,
+      executionOrigin: preflight.execution.origin,
+      executionTargetId: preflight.execution.targetId
+    });
   if (combinationError) return { decision: 'blocked', reason: combinationError };
   let installedVersion: string | undefined;
   if (preflight.requested) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentDirectoryFacts, shouldShowTranscriptInsights } from '../AgentDetailPanel.js';
+import { agentDirectoryDisplayPath, agentDirectoryFacts, shouldShowTranscriptInsights } from '../AgentDetailPanel.js';
 
 describe('agentDirectoryFacts', () => {
   it('shows original project and checkout paths for a worktree session', () => {
@@ -16,6 +16,14 @@ describe('agentDirectoryFacts', () => {
     expect(agentDirectoryFacts({ cwd: '/src/proj' }, '/src/proj')).toEqual([
       { label: 'Directory', path: '/src/proj' }
     ]);
+  });
+});
+
+describe('agentDirectoryDisplayPath', () => {
+  it('replaces an empty or placeholder cwd with the resolved remote path', () => {
+    expect(agentDirectoryDisplayPath('.', '/home/sfwork')).toBe('/home/sfwork');
+    expect(agentDirectoryDisplayPath('', null)).toBe('$HOME');
+    expect(agentDirectoryDisplayPath('/opt/workspace/core', '/home/sfwork')).toBe('/opt/workspace/core');
   });
 });
 
@@ -45,6 +53,7 @@ describe('AgentDetailPanel source', () => {
     const source = readFileSync(new URL('../AgentDetailPanel.tsx', import.meta.url), 'utf8');
     expect(source).toContain('collapsible?: boolean');
     expect(source).toContain("variant: 'monitor' | 'modal' | 'embedded'");
+    expect(source).toContain("import { formatDuration } from './AgentBoard.js'");
     expect(source).toContain('if (collapsible && collapsed)');
     expect(source).toContain('{collapsible ? (');
   });

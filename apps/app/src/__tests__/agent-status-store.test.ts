@@ -86,6 +86,28 @@ describe('useAgentStatus — cursor-replay staleness guard', () => {
     expect(useAgentStatus.getState().byId['s1']).toBe('idle');
   });
 
+  it('does not let a scheduled session paint the project status rollup', () => {
+    useData.setState({
+      terminals: {
+        p1: [
+          {
+            id: 'sched',
+            projectId: 'p1',
+            profile: 'claude',
+            cwd: '/proj',
+            status: 'running',
+            scheduled: true
+          } as any,
+          { id: 'cli', projectId: 'p1', profile: 'claude', cwd: '/proj', status: 'running' } as any
+        ]
+      }
+    });
+    useAgentStatus.getState().apply('sched', 'p1', 'working', 1);
+    expect(useAgentStatus.getState().rollup['p1']).toBe('unknown');
+    useAgentStatus.getState().apply('cli', 'p1', 'idle', 2);
+    expect(useAgentStatus.getState().rollup['p1']).toBe('idle');
+  });
+
   it('drops per-session marks for every session in a cleared project', () => {
     useData.setState({
       terminals: {

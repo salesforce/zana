@@ -13,12 +13,13 @@ import {
   destroyHost,
   getHost,
   renameHost,
+  updateHostDefaultWorkspacePath,
   updateHostPermissionCeiling,
   updateHostSshIdentity
 } from '@zana-ai/zcc-db';
 import { readJsonBody, sendJson, sendNdjson, beginNdjson } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
-import { listPublicHosts, parseHostRename, toPublicHost } from '../services/hosts/host-public.js';
+import { listPublicHosts, parseHostUpdate, toPublicHost } from '../services/hosts/host-public.js';
 import { relaunchLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 import { HostUnavailableError } from './host-hub.js';
 import { bootstrapHostForProject, parseSshIdentity, repairHost } from '../services/hosts/host-bootstrap.js';
@@ -442,15 +443,33 @@ export async function handleHostsApi(
       sendJson(response, 400, { error: 'invalid JSON' });
       return true;
     }
-    const name = parseHostRename(body);
-    if (!name) {
+    const patch = parseHostUpdate(body);
+    if (!patch) {
       sendJson(response, 400, { error: 'invalid host update' });
       return true;
     }
-    const updated = renameHost(ctx.db, one.id, name);
+    let updated = requireHost(ctx, one.id);
     if (!updated || updated.destroyedAt) {
       sendJson(response, 404, { error: 'host not found' });
       return true;
+    }
+    if (patch.defaultWorkspacePath !== undefined && updated.isPrimary) {
+      sendJson(response, 400, { error: 'primary host has no SSH workspace default' });
+      return true;
+    }
+    if (patch.name) {
+      updated = renameHost(ctx.db, one.id, patch.name);
+      if (!updated || updated.destroyedAt) {
+        sendJson(response, 404, { error: 'host not found' });
+        return true;
+      }
+    }
+    if (patch.defaultWorkspacePath !== undefined) {
+      updated = updateHostDefaultWorkspacePath(ctx.db, one.id, patch.defaultWorkspacePath);
+      if (!updated || updated.destroyedAt) {
+        sendJson(response, 404, { error: 'host not found' });
+        return true;
+      }
     }
     emitHostsChanged(ctx);
     sendJson(response, 200, toPublicHost(updated, connectedSet(ctx)));

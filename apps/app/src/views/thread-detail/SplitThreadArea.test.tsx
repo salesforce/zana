@@ -140,7 +140,7 @@ describe('SplitThreadArea scheduler panes', () => {
     expect(screen.getByTestId('inbox-view')).toBeTruthy();
   });
 
-  it('renders the schedule workbench for kind schedule', () => {
+  it('renders the schedule page for kind schedule', () => {
     render(
       <MemoryRouter>
         <SplitThreadArea
@@ -148,6 +148,7 @@ describe('SplitThreadArea scheduler panes', () => {
         />
       </MemoryRouter>
     );
+    expect(screen.queryByTestId('scheduler-view')).toBeNull();
     expect(screen.getByTestId('schedule-detail-page').getAttribute('data-schedule')).toBe('sched-1');
   });
 
@@ -157,6 +158,7 @@ describe('SplitThreadArea scheduler panes', () => {
         <SplitThreadArea routeContent={{ kind: 'new-schedule', projectId: 'p1' }} />
       </MemoryRouter>
     );
+    expect(screen.queryByTestId('scheduler-view')).toBeNull();
     expect(screen.getByTestId('schedule-detail-page').getAttribute('data-schedule')).toBe('new');
     expect(screen.getByTestId('schedule-detail-page').getAttribute('data-project')).toBe('p1');
   });

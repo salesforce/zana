@@ -95,14 +95,22 @@ describe('salesforce plugin contract', () => {
 
   it('registers settings, Salesforce tab, Agentforce side panels, guardrail, composer banner, and file opener', () => {
     const set = collectTestPluginApp(app, 'salesforce');
-    expect(set.settingsSections).toEqual([]);
+    expect(set.settingsSections).toMatchObject([
+      { id: 'orgs', title: 'Connected orgs', component: expect.any(Function) }
+    ]);
     expect(set.projectTabs.map((tab) => tab.id)).toEqual(['salesforce', 'soql']);
     expect(set.projectTabs[1]).toMatchObject({ label: 'SOQL', icon: 'Database', global: false });
     expect(set.threadPanelActions.map((row) => row.id)).toEqual(['playground', 'preview']);
     expect(set.threadPanelActions[0]).toMatchObject({ title: 'Playground', layout: 'flush' });
     expect(set.threadPanelActions[1]).toMatchObject({ title: 'Preview', layout: 'flush' });
     expect(set.newThreadPanelActions).toEqual([]);
-    expect(set.navPanels).toEqual([]);
+    expect(set.navPanels).toMatchObject([
+      { id: 'orgs', title: 'Salesforce', icon: 'Cloud', placement: 'unlisted' }
+    ]);
+    expect(set.sidebarFooterActions).toMatchObject([{ id: 'orgs', title: 'Salesforce', icon: 'Cloud' }]);
+    const footerToPanel = vi.fn();
+    set.sidebarFooterActions[0]?.run({ openSettings: vi.fn(), toPluginPanel: footerToPanel });
+    expect(footerToPanel).toHaveBeenCalledWith('orgs');
     expect(set.projectMenuActions[0]).toMatchObject({
       id: 'open-soql',
       title: 'SOQL',
@@ -124,11 +132,15 @@ describe('salesforce plugin contract', () => {
     expect(palette?.isAvailable?.(paletteCtx)).toBe(true);
     palette?.run(paletteCtx);
     expect(paletteCtx.toProject).toHaveBeenCalledWith('proj-1', { tabId: 'soql' });
+    const openOrgs = set.commandPaletteActions.find((row) => row.id === 'open-orgs');
+    openOrgs?.run(paletteCtx);
+    expect(paletteCtx.toPluginPanel).toHaveBeenCalledWith('orgs');
     expect(set.pendingInteractions[0]?.id).toBe('salesforce-guardrail');
     expect(set.composerCustomizations[0]?.id).toBe('salesforce-banner');
     expect(set.fileOpeners[0]?.extensions).toEqual(['agent', 'afscript']);
     expect(set.fileOpeners[0]?.title).toBe('Agentforce Playground');
     expect(set.commandPaletteActions.map((row) => row.id)).toEqual([
+      'open-orgs',
       'open-playground',
       'open-preview',
       'open-soql'
@@ -236,6 +248,80 @@ describe('salesforce plugin behavior', () => {
     await expect(harness.callRpc('project.generate', { name: 'foo/bar', outputDir: '/tmp/ws' })).resolves.toMatchObject({
       ok: false,
       code: 'invalid_input'
+    });
+  });
+
+  it('starts Salesforce CLI web login and refreshes the org roster', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const seen: string[][] = [];
+    await createSalesforcePlugin(zcc, {
+      ...mockDeps(),
+      execSf: async (args, opts) => {
+        seen.push(args);
+        if (args[0] === 'org' && args[1] === 'login') {
+          expect(opts?.timeoutMs).toBeGreaterThan(30_000);
+          expect(args).toEqual([
+            'org',
+            'login',
+            'web',
+            '--instance-url',
+            'https://test.salesforce.com',
+            '--alias',
+            'qa'
+          ]);
+          return { code: 0, stdout: '', stderr: '' };
+        }
+        if (args[0] === 'org' && args[1] === 'list') {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              result: { sandboxes: [{ alias: 'qa', username: 'qa@example.com', isSandbox: true }] }
+            }),
+            stderr: ''
+          };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected ${args.join(' ')}` };
+      }
+    });
+    await expect(harness.callRpc('orgs.login', { instance: 'sandbox', alias: 'qa' })).resolves.toMatchObject({
+      ok: true,
+      selectedAlias: 'qa',
+      orgs: [expect.objectContaining({ alias: 'qa' })]
+    });
+    expect(seen.some((args) => args[0] === 'org' && args[1] === 'login')).toBe(true);
+    await expect(harness.callRpc('orgs.login', { instance: 'other' })).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid_input'
+    });
+  });
+
+  it('surfaces a missing Salesforce CLI when connecting an org', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zcc, {
+      ...mockDeps(),
+      execSf: async (args) => {
+        if (args[0] === 'org' && args[1] === 'login') return { code: 127, stdout: '', stderr: 'sf: not found' };
+        return { code: 1, stdout: '', stderr: `unexpected ${args.join(' ')}` };
+      }
+    });
+    await expect(harness.callRpc('orgs.login', { instance: 'production' })).resolves.toMatchObject({
+      ok: false,
+      code: 'cli_missing'
+    });
+  });
+
+  it('surfaces a failed Salesforce CLI web login', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zcc, {
+      ...mockDeps(),
+      execSf: async (args) => {
+        if (args[0] === 'org' && args[1] === 'login') return { code: 1, stdout: '', stderr: 'login cancelled' };
+        return { code: 1, stdout: '', stderr: `unexpected ${args.join(' ')}` };
+      }
+    });
+    await expect(harness.callRpc('orgs.login', {})).resolves.toMatchObject({
+      ok: false,
+      code: 'login_failed'
     });
   });
 

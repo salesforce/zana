@@ -7,7 +7,9 @@ import {
 } from '../lib/route-paths.js';
 import type {
   PluginCreateProjectActionContext,
-  PluginProjectMenuActionContext
+  PluginProjectMenuActionContext,
+  PluginProjectStatusbarItemContext,
+  PluginProjectStatusbarMenuItem
 } from '@zana-ai/zcc-plugin-sdk';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 import { listNavPanels, listProjectTabs, projectTabView } from './plugin-slots.js';
@@ -66,6 +68,37 @@ export function createProjectActionContext(
       deps.navigate(hrefForPluginProjectTab(pluginId, id, options?.tabId));
     },
     openDialog: deps.openDialog
+  };
+}
+
+export function projectStatusbarItemContext(
+  pluginId: string,
+  deps: {
+    projectId: string;
+    navigate: (to: string, options?: { replace?: boolean }) => void;
+    openDialog(options?: { title?: string; params?: JsonValue }): boolean;
+    openMenu(items: readonly PluginProjectStatusbarMenuItem[]): boolean;
+  }
+): PluginProjectStatusbarItemContext {
+  return {
+    projectId: deps.projectId,
+    toProject(id, options) {
+      deps.navigate(hrefForPluginProjectTab(pluginId, id, options?.tabId));
+      return true;
+    },
+    toPluginPanel(path, options) {
+      const resolved =
+        path ??
+        listNavPanels().find((row) => row.pluginId === pluginId)?.path ??
+        listNavPanels().find((row) => row.pluginId === pluginId)?.id;
+      if (!resolved) return false;
+      deps.navigate(hrefForPluginNavPanel(pluginId, resolved, options?.subPath), {
+        replace: options?.replace
+      });
+      return true;
+    },
+    openDialog: deps.openDialog,
+    openMenu: deps.openMenu
   };
 }
 

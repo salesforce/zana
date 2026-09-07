@@ -244,7 +244,11 @@ export interface LaunchProvider {
   dynamicRoleEvidenceTarget?(target: import('@zana-ai/zcc-domain/harness-adapter').HarnessRoleTarget, installedVersion: string): import('@zana-ai/zcc-domain/harness-adapter').HarnessRoleTarget;
 
   /** Reject adapter-native combinations that cannot be represented safely. */
-  validateRoutingCombination?(input: { roleTargetId?: string; executionOrigin: string }): string | undefined;
+  validateRoutingCombination?(input: {
+    roleTargetId?: string;
+    executionOrigin: string;
+    executionTargetId?: string;
+  }): string | undefined;
 
   /** Emit an adapter-owned native contribution for a stable execution target ID. */
   executionContribution?(targetId: string): import('./adapter-contract.js').HarnessNativeContribution;

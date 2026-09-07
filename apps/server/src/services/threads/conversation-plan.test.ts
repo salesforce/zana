@@ -8,6 +8,7 @@ import {
   createEnvironment,
   listThreadPlanRevisions,
   openDatabase,
+  updateConversationThreadTitle,
   updateThreadPlanTask,
   upsertHost,
   type ZccDatabase
@@ -115,6 +116,7 @@ describe('durable thread plan', () => {
       status: 'blocked',
       blockedReason: 'interrupted'
     });
+    expect(view.status).toBe('active');
   });
 
   it('writes approved markdown into .zcc/plans', () => {
@@ -311,5 +313,80 @@ describe('durable thread plan', () => {
       'pong:completed'
     ]);
     expect(view.progress).toEqual({ completed: 2, total: 2 });
+  });
+
+  it('promotes plan status from draft to active to completed', () => {
+    const { thread } = setup();
+    snapshotApprovedPlan(db!, { threadId: thread.id, markdown: '# Ship it', source: 'approval' });
+    expect(getDurableThreadPlanView(db!, thread.id)!.status).toBe('draft');
+    importProviderPlanSteps(db!, {
+      threadId: thread.id,
+      steps: [{ step: 'Write tests', status: 'in_progress' }]
+    });
+    expect(getDurableThreadPlanView(db!, thread.id)!.status).toBe('active');
+    importProviderPlanSteps(db!, {
+      threadId: thread.id,
+      steps: [{ step: 'Write tests', status: 'completed' }]
+    });
+    expect(getDurableThreadPlanView(db!, thread.id)!.status).toBe('completed');
+  });
+
+  it('names referenced agents with role and assigned todo count', () => {
+    const { thread } = setup();
+    updateConversationThreadTitle(db!, thread.id, 'Pipe prefix in instructions');
+    importProviderPlanSteps(db!, {
+      threadId: thread.id,
+      steps: [
+        { step: 'Detect paste', status: 'completed' },
+        { step: 'Write tests', status: 'pending' },
+        { step: 'Ship', status: 'pending' }
+      ]
+    });
+    const view = getDurableThreadPlanView(db!, thread.id)!;
+    expect(view.referencedBy).toEqual([
+      {
+        threadId: thread.id,
+        taskId: null,
+        title: 'Pipe prefix in instructions',
+        role: 'Author',
+        todosAssigned: 3
+      }
+    ]);
+  });
+
+  it('labels a child thread as Agent with owned todo count', () => {
+    const { thread } = setup();
+    updateConversationThreadTitle(db!, thread.id, 'Author thread');
+    const child = createConversationThread(db!, {
+      projectId: 'proj-1',
+      hostId: thread.hostId,
+      environmentId: thread.environmentId!,
+      providerId: 'claude-code',
+      status: 'active',
+      parentThreadId: thread.id,
+      title: 'Helper'
+    });
+    importProviderPlanSteps(db!, {
+      threadId: child.id,
+      owningThreadId: child.id,
+      steps: [{ step: 'Write tests', status: 'in_progress' }]
+    });
+    const view = getDurableThreadPlanView(db!, thread.id)!;
+    expect(view.referencedBy).toEqual([
+      {
+        threadId: thread.id,
+        taskId: null,
+        title: 'Author thread',
+        role: 'Author',
+        todosAssigned: 0
+      },
+      {
+        threadId: child.id,
+        taskId: null,
+        title: 'Helper',
+        role: 'Agent',
+        todosAssigned: 1
+      }
+    ]);
   });
 });

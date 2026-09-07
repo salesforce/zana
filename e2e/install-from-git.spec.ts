@@ -14,7 +14,7 @@
 import { test, expect } from './fixtures/app.js';
 import { MarketplacePage } from './fixtures/marketplace.js';
 import { startGitDaemon, type GitDaemon } from './fixtures/git-daemon.js';
-import { HELLO_SAMPLE_FILES } from './fixtures/sample-extensions.js';
+import { HELLO_SAMPLE_FILES, ZCC_PLUGIN_SAMPLE_FILES } from './fixtures/sample-extensions.js';
 import { join } from 'node:path';
 
 /** A minimal renderer-only extension with NO permissions (installs consent-free). */
@@ -182,5 +182,38 @@ test.describe('install from git — live app flow', () => {
 
     list = await market.ipc<Entry[]>('list');
     expect(list.find((e) => e.id === 'git-noperm')?.manifest?.version).toBe('1.1.0');
+  });
+
+  test('Install from repo of a package.json zcc plugin lands in PluginService, not disk extensions', async ({
+    app,
+    home,
+  }) => {
+    daemon = await startGitDaemon(join(home, '.git-daemon-zcc'), [
+      { repoName: 'zcc-hello', files: ZCC_PLUGIN_SAMPLE_FILES },
+    ]);
+    const url = daemon.urlFor('zcc-hello');
+    const market = new MarketplacePage(app.window);
+    const win = app.window;
+
+    const installed = await market.ipc<{ ok: boolean; value?: { id: string }; message?: string }>(
+      'install',
+      { kind: 'git', url }
+    );
+    expect(installed.ok, installed.message ?? 'zcc git install failed').toBe(true);
+    expect(installed.value?.id).toBe('git-hello');
+
+    const leftover = await market.ipc<Array<{ id: string }>>('list');
+    expect(leftover.find((e) => e.id === 'git-hello')).toBeUndefined();
+
+    const plugins = (await win.evaluate(() => window.cc.pluginApps.list())) as Array<{
+      id: string;
+      name: string;
+      enabled: boolean;
+    }>;
+    expect(plugins.find((p) => p.id === 'git-hello')).toMatchObject({
+      id: 'git-hello',
+      name: 'git-hello',
+      enabled: true
+    });
   });
 });

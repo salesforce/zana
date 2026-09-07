@@ -35,6 +35,8 @@ import {
   updateConversationThreadStatus,
   updateConversationThreadTitle,
   upsertHost,
+  updateHostDefaultWorkspacePath,
+  getHost,
   type ZccDatabase
 } from './index.js';
 import { migrate, SCHEMA_STATEMENTS_V1 } from './migrate.js';
@@ -575,5 +577,16 @@ describe('packages/db', () => {
       environment_id: 'env-new'
     });
     sqlite.close();
+  });
+
+  it('stores a per-machine default workspace path', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'pony', hostKeyHash: 'h'.repeat(64) });
+    expect(host.defaultWorkspacePath).toBeNull();
+    const updated = updateHostDefaultWorkspacePath(db, host.id, '/opt/workspace/core');
+    expect(updated?.defaultWorkspacePath).toBe('/opt/workspace/core');
+    expect(getHost(db, host.id)?.defaultWorkspacePath).toBe('/opt/workspace/core');
+    expect(updateHostDefaultWorkspacePath(db, host.id, null)?.defaultWorkspacePath).toBeNull();
   });
 });

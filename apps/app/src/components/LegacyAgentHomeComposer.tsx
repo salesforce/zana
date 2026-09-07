@@ -36,22 +36,38 @@ import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
 import { consumeComposerModeCycle } from './thread/pickers/composer-mode.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
+import { PluginComposerAdvanced, PluginComposerMeta } from '../plugins/PluginComposerSlots.js';
+import {
+  getMergedLaunchPatch,
+  subscribeLaunchPatches
+} from '../plugins/plugin-composer-api.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
-import { composerProvidersFromCatalog } from './thread/pickers/fallback-models.js';
+import { composerProvidersFromCatalog, fallbackProviderOption } from './thread/pickers/fallback-models.js';
+import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
+import { PopoverPicklist } from './ui/PopoverPicklist.js';
+import { TextArgsField } from './settings/FormFields.js';
 import {
   absolutePathMentions,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
+  applyLaunchPatch,
   cliAgentCatalogProviders,
   cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
   cliAgentMoreModelOptions,
+  cliLaunchFromPermissionMode,
+  cliPermissionModesFor,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
+  readCliExtraArgs,
   resolveCliAgentFamily,
+  resolveCliLaunchProfile,
   rewritePromptPaths,
-  threadProviderIdForFamily
+  threadProviderIdForFamily,
+  unrestrictedProfileId,
+  withExecutionState,
+  writeCliExtraArgs
 } from './legacy-agent-home.js';
 import {
   pickOfferedComposerModel,
@@ -131,6 +147,15 @@ export function LegacyAgentHomeComposer({
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePickerValue>(() => defaultWorkspaceChoice(false));
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [extraArgs, setExtraArgs] = useState<string[]>([]);
+  const [personaId, setPersonaId] = useState('');
+  const [permissionMode, setPermissionMode] = useState('accept-edits');
+  const launchPatch = useSyncExternalStore(
+    subscribeLaunchPatches,
+    getMergedLaunchPatch,
+    getMergedLaunchPatch
+  );
   const ensureScratchRef = useRef(false);
   const selectionGeneration = useRef(0);
   const descriptorGeneration = useRef(0);
@@ -145,6 +170,11 @@ export function LegacyAgentHomeComposer({
   const hosts = useHosts();
   const executionHostId = defaultHostId(hosts, project);
   const selectedHarness = harnesses.find((descriptor) => descriptor.id === familyId);
+  const unrestrictedId = unrestrictedProfileId(selectedHarness?.profiles);
+
+  useEffect(() => {
+    setExtraArgs(readCliExtraArgs(familyId));
+  }, [familyId]);
   const cliRuntimeProfile = automaticProfile
     ?? selectedHarness?.defaultProfileId
     ?? (familyId ? PROFILE_BY_FAMILY[familyId] : 'claude');
@@ -155,6 +185,19 @@ export function LegacyAgentHomeComposer({
   );
   const selectedProviderId = (familyId && threadProviderIdForFamily(familyId)) || '';
   const catalogEntry = selectedProviderId ? catalog.byProvider[selectedProviderId] : undefined;
+  const catalogPermissionModes = useMemo(() => {
+    const fromCatalog = catalog.providers.find((row) => row.id === selectedProviderId)?.permissionModes;
+    if (fromCatalog && fromCatalog.length > 0) return fromCatalog;
+    return selectedProviderId ? fallbackProviderOption(selectedProviderId).permissionModes : [];
+  }, [catalog.providers, selectedProviderId]);
+  const permissionModeIds = useMemo(
+    () => cliPermissionModesFor({
+      catalogModes: catalogPermissionModes,
+      hasUnrestrictedProfile: Boolean(unrestrictedId)
+    }),
+    [catalogPermissionModes, unrestrictedId]
+  );
+  const permissionOptions = permissionModeOptionsFor(permissionModeIds);
   const preferHostModels = cliRemoteHostCatalogEnabled && isRemoteWorkspaceProject(project);
   const models = cliAgentModelOptions({
     adapterModels: selectedHarness?.targets?.models ?? EMPTY_MODELS,
@@ -239,6 +282,12 @@ export function LegacyAgentHomeComposer({
       setRoleTargetId(catalogEntry.acpMode.currentValue);
     }
   }, [familyId, catalogEntry?.acpMode, roleTargetId]);
+
+  useEffect(() => {
+    if (permissionModeIds.length > 0 && !permissionModeIds.includes(permissionMode)) {
+      setPermissionMode(permissionModeIds[0]!);
+    }
+  }, [permissionMode, permissionModeIds]);
 
   useEffect(() => {
     const generation = ++descriptorGeneration.current;
@@ -463,16 +512,40 @@ export function LegacyAgentHomeComposer({
         : validModelId
           ? { modelTargetId: validModelId }
           : {};
-      const harnessRouting: HarnessModelRoutingV1 | undefined = Object.keys(adapterEntry).length
+      const coreRouting: HarnessModelRoutingV1 | undefined = Object.keys(adapterEntry).length
         ? { schemaVersion: 1, byAdapter: { [familyId]: adapterEntry } }
         : undefined;
+      const permLaunch = permissionModeIds.includes(permissionMode)
+        ? cliLaunchFromPermissionMode({
+            mode: permissionMode,
+            unrestrictedProfileId: unrestrictedId
+          })
+        : {};
+      // OpenCode treats a native `--agent` role as the execution policy. Sending
+      // Edits (`accept-edits`) alongside a role fails preflight with "require
+      // one compatible role policy". Same XOR as role-vs-model above.
+      const withState = permLaunch.executionState && !validRoleId
+        ? withExecutionState(coreRouting, familyId, permLaunch.executionState)
+        : coreRouting;
+      const merged = applyLaunchPatch({
+        baseProfile: resolveCliLaunchProfile({
+          baseProfile: profile,
+          patchProfileId: permLaunch.profileId
+        }),
+        extraArgs,
+        harnessRouting: withState,
+        patch: launchPatch
+      });
 
-      const session = await createTerminal(project.id, profile, 80, 24, {
+      const session = await createTerminal(project.id, merged.profile, 80, 24, {
         ...args,
-        harnessRouting,
+        extraArgs: merged.extraArgs,
+        harnessRouting: merged.harnessRouting,
+        personaId: personaId || undefined,
         profileSource: selectionProvenance === 'automatic' ? 'seeded-default' : 'explicit',
         workspace: project.quickAgent ? { kind: 'personal' } : workspace,
-        isolateScratch: project.quickAgent ? args.title || true : undefined
+        isolateScratch: project.quickAgent ? args.title || true : undefined,
+        onError: setError
       });
       if (!session) return;
       field.clear();
@@ -501,9 +574,14 @@ export function LegacyAgentHomeComposer({
       ? cliAgentCatalogProviders(catalog.providers)
       : harnesses.flatMap((descriptor) => {
         const providerId = threadProviderIdForFamily(descriptor.id);
-        return providerId
-          ? [{ id: providerId, displayName: descriptor.label, permissionModes: [], composerActions: [] }]
-          : [];
+        if (!providerId) return [];
+        const fallback = fallbackProviderOption(providerId);
+        return [{
+          id: providerId,
+          displayName: descriptor.label,
+          permissionModes: fallback.permissionModes,
+          composerActions: fallback.composerActions
+        }];
       }),
     false,
     'claude-code'
@@ -511,10 +589,12 @@ export function LegacyAgentHomeComposer({
 
   return (
     <PluginComposerChrome
-      scope={{ kind: 'new-thread', projectId: projectId || null }}
+      scope={{ kind: 'cli-agent', projectId: projectId || null }}
       text={field.text}
       setText={field.setText}
       focus={field.focus}
+      familyId={familyId || undefined}
+      providerId={selectedProviderId || undefined}
     >
     <div
       className={`thread-command-composer${expanded ? ' is-expanded' : ''}${field.dropOver ? ' is-drop-over' : ''}${launching ? ' is-sending' : ''}`}
@@ -690,6 +770,71 @@ export function LegacyAgentHomeComposer({
             />
           ) : null}
         </div>
+        <div className="thread-command-composer-meta-end">
+          {permissionOptions.length > 1 && (
+            <PopoverPicklist
+              value={permissionMode}
+              options={permissionOptions.map((row) => ({
+                value: row.value,
+                label: row.label,
+                compactLabel: row.compactLabel,
+                description: row.description,
+                ...(row.tone ? { tone: row.tone } : {})
+              }))}
+              onChange={setPermissionMode}
+              ariaLabel="Permission mode"
+              searchable={false}
+              minWidth={280}
+            />
+          )}
+          <PluginComposerMeta scope={{ kind: 'cli-agent', projectId: projectId || null }} />
+        </div>
+      </div>
+      <div className="launch-advanced-wrap">
+        <button
+          type="button"
+          className="launch-advanced-toggle"
+          aria-expanded={advancedOpen}
+          data-testid="legacy-agent-customize-launch"
+          onClick={() => setAdvancedOpen((open) => !open)}
+        >
+          Customize launch
+          {(extraArgs.length > 0 || personaId) ? (
+            <span className="launch-advanced-badge">
+              {(extraArgs.length > 0 ? 1 : 0) + (personaId ? 1 : 0)}
+            </span>
+          ) : null}
+        </button>
+        {advancedOpen ? (
+          <div className="launch-advanced launch-advanced-card" data-testid="legacy-agent-advanced">
+            <div className="launch-extra-args">
+              <TextArgsField
+                label="Extra args"
+                help="Passed to the CLI after project and persona args. Later flags win when the same option appears twice."
+                values={extraArgs}
+                placeholder="--plugin-dir /path/to/plugin"
+                onChange={(values) => {
+                  setExtraArgs(values);
+                  writeCliExtraArgs(familyId, values);
+                }}
+              />
+            </div>
+            <div className="launch-row">
+              <span className="launch-row-label">Persona</span>
+              <PopoverPicklist
+                value={personaId}
+                ariaLabel="Persona"
+                searchable={false}
+                onChange={setPersonaId}
+                options={[
+                  { value: '', label: 'None' },
+                  ...personas.map((persona) => ({ value: persona.id, label: persona.name }))
+                ]}
+              />
+            </div>
+            <PluginComposerAdvanced scope={{ kind: 'cli-agent', projectId: projectId || null }} />
+          </div>
+        ) : null}
       </div>
     </div>
     </PluginComposerChrome>

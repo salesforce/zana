@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -130,7 +131,8 @@ export function MachineCard({
   onRemove,
   onReconnect,
   onRelaunch,
-  onInstall
+  onInstall,
+  onWorkspacePathChange
 }: {
   host: Host;
   projectCount: number;
@@ -153,12 +155,17 @@ export function MachineCard({
   onReconnect: () => void;
   onRelaunch?: () => void;
   onInstall: (provider: ProviderCliKey, actionKind: ProviderCliInstallActionKind) => void;
+  onWorkspacePathChange?: (path: string) => void;
 }) {
   const connection = machineConnectionCopy(host, now);
   const HostIcon = host.isPrimary ? Laptop : Monitor;
   const projectLabel = `${projectCount} ${projectCount === 1 ? 'project' : 'projects'}`;
   const showReconnect = machineCanReconnect(host);
   const showRelaunch = machineCanRelaunchLocal(host);
+  const [workspacePath, setWorkspacePath] = useState(host.defaultWorkspacePath ?? '');
+  useEffect(() => {
+    setWorkspacePath(host.defaultWorkspacePath ?? '');
+  }, [host.defaultWorkspacePath]);
 
   return (
     <li className={`machine-card${host.status === 'connected' ? ' machine-card--online' : ''}`}>
@@ -264,6 +271,26 @@ export function MachineCard({
           )}
         </div>
       </div>
+      {host.isPrimary ? null : (
+        <div className="settings-field settings-field--mono machine-card-workspace">
+          <label>
+            <span className="settings-label">Default workspace path</span>
+            <input
+              type="text"
+              placeholder="/path/to/workspaces"
+              value={workspacePath}
+              onChange={(event) => setWorkspacePath(event.target.value)}
+              onBlur={() => onWorkspacePathChange?.(workspacePath.trim())}
+              aria-label={`Default workspace path for ${host.name}`}
+              data-testid={`machine-workspace-${host.id}`}
+            />
+          </label>
+          <p className="settings-help">
+            Start path for SSH projects on this machine that do not set their own.
+            Leave blank to fall through to Connectivity’s global default, then the remote home directory.
+          </p>
+        </div>
+      )}
       {host.status === 'connected' ? (
         <>
           <MachineCliInventory

@@ -15,6 +15,7 @@ vi.mock('../../../lib/product-client.js', () => ({
 }));
 
 import {
+  FilePreviewLineList,
   ThreadFilePreviewChrome,
   ThreadFilePreviewTab,
   ThreadFilePreviewView
@@ -40,6 +41,25 @@ describe('ThreadFilePreviewTab', () => {
     expect(html).toContain('zcc-skeleton');
     expect(html).toContain('thread-file-preview-chrome');
     expect(html).not.toContain('data-testid="thread-file-preview"');
+  });
+
+  it('highlights a 1-based preview line when lineNumber is set', () => {
+    const html = renderToStaticMarkup(
+      <ThreadFilePreviewView
+        path="src/a.ts"
+        content={'const a = 1\nconst b = 2\nconst c = 3'}
+        error={null}
+        lineNumber={2}
+      />
+    );
+    expect(html).toContain('thread-file-preview-lines');
+    expect(html).toContain('data-preview-line="2"');
+    expect(html).toContain('is-highlighted');
+    expect(html).toContain('data-testid="thread-file-preview-focus-line"');
+    expect(html).not.toContain('inbox-doc-pre');
+    expect(renderToStaticMarkup(
+      <FilePreviewLineList content={'a\nb'} lineNumber={1} />
+    )).toContain('data-preview-line="1"');
   });
 
   it('renders text, image, and error preview states', () => {
@@ -98,5 +118,58 @@ describe('ThreadFilePreviewTab', () => {
     expect(html).toContain('Host preview');
     expect(html).toContain('thread-file-preview-copy');
     expect(html).toContain('aria-label="Copy path"');
+  });
+
+  it('overlays a live plan document with Building chrome and todos', () => {
+    const html = renderToStaticMarkup(
+      <ThreadFilePreviewTab
+        threadId="t1"
+        path="/tmp/.zcc/plans/ship.plan.md"
+        livePlan={{
+          markdown: '# Ship it',
+          filePath: '/tmp/.zcc/plans/ship.plan.md',
+          status: 'active',
+          revision: 1,
+          progress: { completed: 1, total: 2 },
+          processing: { text: 'Write tests', owningThreadId: 't1', startedAt: 1, latestActivity: null },
+          tasks: [
+            { id: '1', text: 'Write tests', status: 'in_progress', owningThreadId: 't1', blockedReason: null },
+            { id: '2', text: 'Ship', status: 'pending', owningThreadId: null, blockedReason: null }
+          ],
+          referencedBy: [{
+            threadId: 't1',
+            taskId: '1',
+            title: 'Ship the feature',
+            role: 'Author',
+            todosAssigned: 2
+          }]
+        }}
+      />
+    );
+    expect(html).toContain('data-testid="thread-live-plan-preview"');
+    expect(html).toContain('thread-file-preview-chrome');
+    expect(html).toContain('ship.plan.md');
+    expect(html).toContain('data-testid="thread-plan-status"');
+    expect(html).toContain('Building');
+    expect(html).toContain('data-testid="thread-plan-panel"');
+    expect(html).toContain('data-testid="thread-plan-todos"');
+    expect(html).toContain('Write tests');
+    expect(html).toContain('Referenced by 1 Agent');
+    expect(html).toContain('Ship the feature · Author · 2 todos assigned');
+    expect(html).not.toContain('aria-label="Loading file"');
+  });
+
+  it('renders a Building badge in file chrome when provided', () => {
+    const html = renderToStaticMarkup(
+      <ThreadFilePreviewChrome
+        path=".zcc/plans/ship.plan.md"
+        matches={[]}
+        selectedKey="host"
+        statusBadge="building"
+        onSelect={() => undefined}
+      />
+    );
+    expect(html).toContain('data-testid="thread-plan-status"');
+    expect(html).toContain('Building');
   });
 });

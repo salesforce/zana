@@ -331,6 +331,95 @@ describe('installFromGit', () => {
   });
 });
 
+function zccPackageJson(id: string): string {
+  return JSON.stringify({
+    name: `zcc-plugin-${id}`,
+    version: '0.1.0',
+    engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+    zcc: {
+      name: id,
+      description: `${id} plugin`,
+      branding: { icon: 'Puzzle' },
+      server: './server.ts'
+    }
+  });
+}
+
+describe('locateManifestDir', () => {
+  let cloneRoot: string;
+
+  beforeEach(async () => {
+    cloneRoot = await mkdtemp(join(tmpdir(), 'cc-locate-manifest-'));
+  });
+  afterEach(async () => {
+    await rm(cloneRoot, { recursive: true, force: true });
+  });
+
+  it('finds a package.json zcc plugin at the repo root', async () => {
+    const { locateManifestDir } = await importInstaller();
+    await writeFile(join(cloneRoot, 'package.json'), zccPackageJson('hello'));
+    const res = await locateManifestDir(cloneRoot);
+    expect(res).toEqual({ ok: true, value: cloneRoot });
+  });
+
+  it('finds leftover extension.json at the repo root', async () => {
+    const { locateManifestDir } = await importInstaller();
+    await writeFile(join(cloneRoot, 'extension.json'), JSON.stringify(goodManifest('legacy')));
+    const res = await locateManifestDir(cloneRoot);
+    expect(res).toEqual({ ok: true, value: cloneRoot });
+  });
+
+  it('finds a zcc plugin one level down when the root has none', async () => {
+    const { locateManifestDir } = await importInstaller();
+    const nested = join(cloneRoot, 'pkg');
+    await mkdir(nested, { recursive: true });
+    await writeFile(join(nested, 'package.json'), zccPackageJson('nested'));
+    await writeFile(join(cloneRoot, 'README.md'), 'no manifest');
+    const res = await locateManifestDir(cloneRoot);
+    expect(res).toEqual({ ok: true, value: nested });
+  });
+
+  it('honors an explicit subdir that contains a zcc plugin', async () => {
+    const { locateManifestDir } = await importInstaller();
+    const nested = join(cloneRoot, 'packages', 'tool');
+    await mkdir(nested, { recursive: true });
+    await writeFile(join(nested, 'package.json'), zccPackageJson('tool'));
+    const res = await locateManifestDir(cloneRoot, 'packages/tool');
+    expect(res).toEqual({ ok: true, value: nested });
+  });
+
+  it('treats a dir with both manifests as a single (zcc) hit, not ambiguous', async () => {
+    const { locateManifestDir, dirHasInstallableManifest } = await importInstaller();
+    await writeFile(join(cloneRoot, 'package.json'), zccPackageJson('both'));
+    await writeFile(join(cloneRoot, 'extension.json'), JSON.stringify(goodManifest('both')));
+    expect(dirHasInstallableManifest(cloneRoot)).toBe(true);
+    const res = await locateManifestDir(cloneRoot);
+    expect(res).toEqual({ ok: true, value: cloneRoot });
+  });
+
+  it('fails AMBIGUOUS_MANIFEST when two child dirs each have a manifest', async () => {
+    const { locateManifestDir } = await importInstaller();
+    await mkdir(join(cloneRoot, 'a'), { recursive: true });
+    await mkdir(join(cloneRoot, 'b'), { recursive: true });
+    await writeFile(join(cloneRoot, 'a', 'package.json'), zccPackageJson('a'));
+    await writeFile(join(cloneRoot, 'b', 'extension.json'), JSON.stringify(goodManifest('b')));
+    const res = await locateManifestDir(cloneRoot);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe('AMBIGUOUS_MANIFEST');
+  });
+
+  it('fails MANIFEST_NOT_FOUND when neither format is present', async () => {
+    const { locateManifestDir } = await importInstaller();
+    await writeFile(join(cloneRoot, 'package.json'), JSON.stringify({ name: 'not-a-plugin' }));
+    const res = await locateManifestDir(cloneRoot);
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.code).toBe('MANIFEST_NOT_FOUND');
+      expect(res.message).toMatch(/package\.json with a zcc block or extension\.json/);
+    }
+  });
+});
+
 describe('stripCreds', () => {
   it('removes user:token from an https url without lowercasing the path', async () => {
     const { stripCreds } = await importInstaller();

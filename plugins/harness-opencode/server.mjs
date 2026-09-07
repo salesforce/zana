@@ -6,7 +6,8 @@ export default function plugin(zcc) {
     icon: './icons/opencode.svg',
     profiles: [
       { id: 'opencode', label: 'OpenCode' },
-      { id: 'opencode-resume', label: 'OpenCode (resume)' }
+      { id: 'opencode-resume', label: 'OpenCode (resume)' },
+      { id: 'opencode-yolo', label: 'OpenCode (unrestricted)' }
     ],
     enableConfigKey: 'harnessOpenCodeEnabled',
   });

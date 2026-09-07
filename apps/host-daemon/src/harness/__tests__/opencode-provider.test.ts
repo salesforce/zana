@@ -368,10 +368,12 @@ describe('registry.providerFor — opencode family', () => {
   it('routes opencode profiles to the OpenCodeProvider', () => {
     expect(providerFor('opencode')).toBeInstanceOf(OpenCodeProvider);
     expect(providerFor('opencode-resume')).toBeInstanceOf(OpenCodeProvider);
+    expect(providerFor('opencode-yolo')).toBeInstanceOf(OpenCodeProvider);
   });
 
   it('reuses ONE instance per family (built once, Rule 3)', () => {
     expect(providerFor('opencode')).toBe(providerFor('opencode-resume'));
+    expect(providerFor('opencode')).toBe(providerFor('opencode-yolo'));
   });
 
   it('has a stable provider id', () => {
@@ -404,6 +406,13 @@ describe('OpenCodeProvider', () => {
     expect(p.resolveLaunch('opencode-resume', CONFIG, false, 'ses_abc123')).toEqual({
       command: 'opencode',
       args: ['--session', 'ses_abc123']
+    });
+  });
+
+  it('resolveLaunch: opencode-yolo passes --auto (auto-approve)', () => {
+    expect(p.resolveLaunch('opencode-yolo', CONFIG, false)).toEqual({
+      command: 'opencode',
+      args: ['--auto']
     });
   });
 
@@ -519,6 +528,7 @@ describe('OpenCodeProvider', () => {
   it('baseArgsPinSession true only for opencode-resume', () => {
     expect(p.baseArgsPinSession('opencode-resume')).toBe(true);
     expect(p.baseArgsPinSession('opencode')).toBe(false);
+    expect(p.baseArgsPinSession('opencode-yolo')).toBe(false);
   });
 
   it('capabilities: agent + promptArgv, no launcher-injected flags', () => {
@@ -619,6 +629,27 @@ describe('OpenCodeProvider', () => {
   it('title maps each profile', () => {
     expect(p.title('opencode')).toBe('opencode');
     expect(p.title('opencode-resume')).toBe('opencode --continue');
+    expect(p.title('opencode-yolo')).toBe('opencode --auto');
+  });
+
+  it('validateRoutingCombination allows a native role with yolo --auto, not with execution state', () => {
+    expect(p.validateRoutingCombination({
+      roleTargetId: 'build',
+      executionOrigin: 'explicit-native'
+    })).toBeUndefined();
+    expect(p.validateRoutingCombination({
+      roleTargetId: 'build',
+      executionOrigin: 'inherited-native-default'
+    })).toBeUndefined();
+    expect(p.validateRoutingCombination({
+      roleTargetId: 'build',
+      executionOrigin: 'portable-mapped'
+    })).toBe('OpenCode native role and execution state require one compatible role policy; clear one selection');
+    expect(p.validateRoutingCombination({
+      roleTargetId: 'build',
+      executionOrigin: 'explicit-native',
+      executionTargetId: 'opencode.execution.plan'
+    })).toBe('OpenCode native role and execution state require one compatible role policy; clear one selection');
   });
 
   describe('detectBlockedPrompt (LAS-07 — the non-OSC "needs-you" signal)', () => {
