@@ -200,6 +200,11 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
     readonly host: {
       experimental_call(method: string, input?: unknown): Promise<unknown>;
     };
+    readonly services: {
+      provide(implementation: object): void;
+      use<T extends object>(pluginId: string): T;
+      has(pluginId: string): boolean;
+    };
     onDispose(hook: () => void | Promise<void>): void;
   }
 }
