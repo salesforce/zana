@@ -184,6 +184,12 @@ describe('normalizeConfig — auto-close-idle flags', () => {
 });
 
 describe('harness settings containers', () => {
+  it('accepts only boolean native agent discovery settings', () => {
+    expect(normalizeConfig({ nativeAgentDiscoveryEnabled: true }).nativeAgentDiscoveryEnabled).toBe(true);
+    expect(normalizeConfig({ nativeAgentDiscoveryEnabled: false }).nativeAgentDiscoveryEnabled).toBe(false);
+    expect(normalizeConfig({ nativeAgentDiscoveryEnabled: 'yes' as never }).nativeAgentDiscoveryEnabled).toBeUndefined();
+  });
+
   it('accepts only registered agent harnesses as global defaults', () => {
     expect(normalizeConfig({ defaultHarness: 'codex' }).defaultHarness).toBe('codex');
     // @ts-expect-error intentional bad input

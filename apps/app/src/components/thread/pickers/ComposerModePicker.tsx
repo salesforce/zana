@@ -1,30 +1,30 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, RefreshCw } from 'lucide-react';
 import { placePopoverMenu, useExclusivePopover } from '../../ui/PopoverPicklist.js';
+import type { ComposerModeEntry } from '@zana-ai/zcc-domain/thread-runtime';
 import { ComposerModeIcon } from './composer-mode-icon.js';
-import {
-  COMPOSER_MODE_LABELS,
-  type ComposerWorkMode
-} from './composer-mode.js';
 
 const MENU_MIN_WIDTH = 180;
 
 export function ComposerModePicker({
   value,
-  modes,
+  entries,
   onChange,
+  onRefresh,
   disabled
 }: {
-  value: ComposerWorkMode;
-  modes: readonly ComposerWorkMode[];
-  onChange: (value: ComposerWorkMode) => void;
+  value: string;
+  entries: readonly ComposerModeEntry[];
+  onChange: (value: string) => void;
+  onRefresh?: () => void;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useExclusivePopover();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const selectedLabel = COMPOSER_MODE_LABELS[value];
+  const selected = entries.find((entry) => entry.id === value) ?? entries[0];
+  const selectedLabel = selected?.label ?? 'Agent';
 
   useEffect(() => {
     if (!open || !triggerRef.current || !menuRef.current) return;
@@ -41,7 +41,7 @@ export function ComposerModePicker({
       menu.style.top = `${position.top}px`;
       menu.style.bottom = 'auto';
     }
-  }, [open, modes.length]);
+  }, [open, entries.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -68,7 +68,7 @@ export function ComposerModePicker({
       data-testid="composer-mode-picker-trigger"
       onClick={() => setOpen((current) => !current)}
     >
-      <ComposerModeIcon mode={value} />
+      <ComposerModeIcon mode={selected?.kind === 'plan' ? 'plan' : 'agent'} />
       <span className="composer-mode-picker-label">{selectedLabel}</span>
       {disabled ? null : <ChevronDown size={14} aria-hidden="true" />}
     </button>
@@ -87,29 +87,40 @@ export function ComposerModePicker({
           aria-label="Composer mode"
           data-testid="composer-mode-picker-menu"
         >
-          {modes.map((mode) => {
-            const selected = mode === value;
+          {entries.map((entry) => {
+            const selected = entry.id === value;
             return (
               <button
-                key={mode}
+                key={entry.id}
                 type="button"
                 role="option"
                 aria-selected={selected}
                 className={`model-reasoning-picker-row${selected ? ' is-selected' : ''}`}
-                data-testid={`composer-mode-${mode}`}
+                data-testid={`composer-mode-${entry.id}`}
                 onClick={() => {
-                  onChange(mode);
+                  onChange(entry.id);
                   setOpen(false);
                 }}
               >
                 <span className="composer-mode-picker-row-label">
-                  <ComposerModeIcon mode={mode} />
-                  {COMPOSER_MODE_LABELS[mode]}
+                  <ComposerModeIcon mode={entry.kind === 'plan' ? 'plan' : 'agent'} />
+                  {entry.label}
                 </span>
                 {selected ? <Check size={14} aria-hidden="true" /> : null}
               </button>
             );
           })}
+          {onRefresh ? <button
+            type="button"
+            className="model-reasoning-picker-row"
+            data-testid="composer-mode-refresh"
+            onClick={onRefresh}
+          >
+            <span className="reasoning-effort-picker-row-label">
+              <RefreshCw size={14} aria-hidden="true" />
+              Refresh roles
+            </span>
+          </button> : null}
         </div>,
         document.body
       )}

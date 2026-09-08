@@ -662,6 +662,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.harnessOpenCodeEnabled === 'boolean') {
     normalized.harnessOpenCodeEnabled = input.harnessOpenCodeEnabled;
   }
+  if (typeof input.nativeAgentDiscoveryEnabled === 'boolean') {
+    normalized.nativeAgentDiscoveryEnabled = input.nativeAgentDiscoveryEnabled;
+  }
   if (typeof input.microVmEnabled === 'boolean') {
     normalized.microVmEnabled = input.microVmEnabled;
   }

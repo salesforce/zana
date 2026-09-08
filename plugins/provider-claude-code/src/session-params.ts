@@ -215,11 +215,7 @@ export function stripLeadingPlanCommandText(text: string): string {
 
 function stripClaudePlanCommandMentions(args: {
   input: readonly PromptInput[];
-  claudeCodePermissionMode: "plan" | undefined;
 }): PromptInput[] {
-  if (args.claudeCodePermissionMode !== "plan") {
-    return [...args.input];
-  }
   const withoutMentions = removeCommandMentionsFromPromptInput(args.input, {
     trigger: "/",
     name: "plan",
@@ -269,7 +265,6 @@ export function buildClaudeTurnParams(
       : {}),
     input: stripClaudePlanCommandMentions({
       input: args.input,
-      claudeCodePermissionMode: providerOptions.claudeCodePermissionMode,
     }),
     ...(args.options.model ? { model: args.options.model } : {}),
     ...(args.options.reasoningLevel

@@ -26,6 +26,8 @@ describe('ComposerSettingsView', () => {
     expect(html.indexOf('aria-label="CLI Agent"')).toBeLessThan(html.indexOf('aria-label="Modern"'));
     expect(html).toContain('Default launch mode');
     expect(html).toContain('Reload slash commands');
+    expect(html).toContain('Discover additional native agents');
+    expect(html).toContain('compatible coding harnesses');
     expect(html).toContain('settings-anchor-composer');
   });
 

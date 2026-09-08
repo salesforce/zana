@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ComposerModePicker } from './ComposerModePicker.js';
+import { composerModeEntries } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   applyComposerModePrefix,
   applyComposerWorkMode,
@@ -223,8 +224,9 @@ describe('ComposerModePicker', () => {
     const html = renderToStaticMarkup(
       <ComposerModePicker
         value="plan"
-        modes={['agent', 'plan']}
+        entries={composerModeEntries({ acpModeOptions: [], composerActions: ['plan'] })}
         onChange={() => undefined}
+        onRefresh={() => undefined}
       />
     );
     expect(html).toContain('data-testid="composer-mode-picker-trigger"');
@@ -238,13 +240,25 @@ describe('ComposerModePicker', () => {
     const html = renderToStaticMarkup(
       <ComposerModePicker
         value="agent"
-        modes={['agent']}
+        entries={composerModeEntries({ acpModeOptions: [] })}
         onChange={() => undefined}
+        onRefresh={() => undefined}
       />
     );
     expect(html).toContain('data-testid="composer-mode-picker-trigger"');
     expect(html).not.toContain('CLI Agent');
     expect(html).not.toContain('Legacy Agent');
     expect(html).not.toContain('composer-mode-legacy');
+  });
+
+  it('does not render Refresh roles unless the composer enables discovery', () => {
+    const html = renderToStaticMarkup(
+      <ComposerModePicker
+        value="agent"
+        entries={composerModeEntries({ acpModeOptions: [] })}
+        onChange={() => undefined}
+      />
+    );
+    expect(html).not.toContain('Refresh roles');
   });
 });

@@ -1672,6 +1672,11 @@ export interface AppConfig {
    */
   harnessOpenCodeEnabled?: boolean;
   /**
+   * Allow compatible harnesses to discover project-specific native agents.
+   * Default OFF: only built-in semantic roles remain available in composers.
+   */
+  nativeAgentDiscoveryEnabled?: boolean;
+  /**
    * Default PI provider (`pi --provider <name>`) for new PI tabs — PI is
    * multi-provider (anthropic / openai / google / …). Free text: PI accepts any
    * of its ~40 provider ids. Blank/absent ⇒ emit no `--provider`, letting PI use

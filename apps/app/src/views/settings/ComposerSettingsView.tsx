@@ -170,6 +170,14 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
             onChange={setOpenLinksInAppBrowser}
           />
         ) : null}
+        <CheckboxField
+          label="Discover additional native agents"
+          help="Let compatible coding harnesses discover project-specific native agents. Enables extra roles and Refresh roles where supported."
+          checked={config.nativeAgentDiscoveryEnabled ?? false}
+          onChange={(nativeAgentDiscoveryEnabled) => {
+            void onUpdate({ nativeAgentDiscoveryEnabled });
+          }}
+        />
         <SettingsActionRow
           label="Reload slash commands"
           help="Refresh the / menu from installed plugin skills. On desktop this also re-deploys bundled skills and project MCP configs."

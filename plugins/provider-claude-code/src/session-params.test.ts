@@ -487,7 +487,7 @@ describe("buildClaudeTurnParams", () => {
     ]);
   });
 
-  it("leaves a leading /plan prefix alone when plan mode was not packed", () => {
+  it("strips a leading /plan prefix even when plan mode was not packed", () => {
     const params = buildClaudeTurnParams({
       threadId: "thread-1",
       providerThreadId: "provider-1",
@@ -501,7 +501,7 @@ describe("buildClaudeTurnParams", () => {
     });
 
     expect(params.input).toEqual([
-      { type: "text", text: "/plan inspect", mentions: [] },
+      { type: "text", text: "inspect", mentions: [] },
     ]);
     expect(params).not.toHaveProperty("claudeCodePermissionMode");
   });

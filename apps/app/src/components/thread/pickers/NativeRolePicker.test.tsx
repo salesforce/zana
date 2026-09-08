@@ -34,4 +34,5 @@ describe('NativeRolePicker', () => {
     );
     expect(html).toBe('');
   });
+
 });

@@ -7,11 +7,13 @@ import {
 export {
   classifyExecutionMode,
   classifyExecutionModeOption,
+  composerModeEntries,
   composerWorkModeFromNativeMode,
   isPlanExecutionMode,
   nativeModeForComposerWorkMode,
   portableWorkIntent,
   type ClassifiedExecutionMode,
+  type ComposerModeEntry,
   type ExecutionModeKind,
   type PortableWorkIntent,
   type PortableWorkMode
