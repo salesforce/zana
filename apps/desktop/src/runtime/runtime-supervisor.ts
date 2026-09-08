@@ -465,6 +465,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     }
     if (parsed.data.type === 'plugin-apps-changed') {
       for (const listener of pluginAppsListeners) listener(parsed.data.apps);
+      return;
     }
   });
   return {

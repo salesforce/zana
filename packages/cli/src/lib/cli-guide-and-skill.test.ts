@@ -22,7 +22,8 @@ const HELP_GROUPS = [
   'environment',
   'plugin',
   'marketplace',
-  'status'
+  'status',
+  'team'
 ] as const;
 
 describe('cli / guide / skill keep-in-sync', () => {

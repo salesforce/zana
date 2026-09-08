@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
-import type { AppConfig, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { AppConfig, ProductTeamOps, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   getConversationThread,
   openDatabase,
@@ -63,6 +63,12 @@ export interface ProductHttpContext {
   plugins?: PluginService;
   pluginHostArtifacts: PluginHostArtifactRegistry;
   pairingRelay?: import('./pairing-relay-controller.js').PairingRelayHandle;
+  /**
+   * Optional host-injected Team verbs. Product HTTP validates bounded wire
+   * shape; Electron main authorizes team/project/persona and mutations.
+   * Absent means 502 host_disconnected.
+   */
+  teamOps?: ProductTeamOps;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void;

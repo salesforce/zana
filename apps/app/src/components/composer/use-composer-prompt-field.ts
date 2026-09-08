@@ -125,6 +125,7 @@ export function useComposerPromptField({
   const attachImagesRef = useRef<(files: File[]) => boolean>(() => false);
   const restoreFocusAfterSubmitRef = useRef(false);
   const [dropOver, setDropOver] = useState(false);
+  const [, setEditorRevision] = useState(0);
   const dropOverRef = useRef(false);
   dropOverRef.current = dropOver;
   const [images, setImages] = useState<ComposerImageAttachment[]>([]);
@@ -284,7 +285,10 @@ export function useComposerPromptField({
         return false;
       }
     },
-    onUpdate: ({ editor: next }) => syncTrigger(next),
+    onUpdate: ({ editor: next }) => {
+      syncTrigger(next);
+      setEditorRevision((current) => current + 1);
+    },
     onSelectionUpdate: ({ editor: next }) => syncTrigger(next)
   }, [ariaLabel, markdownInPrompt, placeholder, testId]);
 

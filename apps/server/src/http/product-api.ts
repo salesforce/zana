@@ -15,6 +15,14 @@ import type {
 import { browserRequestProblem, headerValue } from './browser-request-guard.js';
 import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
 import { applyTrustedOriginCors, readJsonBody, sendBytes, sendJson } from './json.js';
+import {
+  TEAM_GOAL_MAX_CHARS,
+  TEAM_ID_MAX_CHARS,
+  TEAM_REPLY_MAX_CHARS,
+  TEAM_TITLE_MAX_CHARS,
+  type ProductTeamCaller,
+  type ProductTeamLaunchInput
+} from '@zana-ai/zcc-domain/product';
 import type { ProductHttpContext, ProductTerminalRecord } from './product-context.js';
 import { ThreadCreateError } from './thread-create.js';
 import { terminalOutputSlice } from './terminal-output-buffer.js';
@@ -587,6 +595,139 @@ export async function handleProductHttp(
 
     if (path === '/api/v1/teams' && method === 'GET') {
       sendJson(response, 200, { teams: listJsonFiles(join(ctx.dataDir, 'teams')) });
+      return true;
+    }
+
+    if (path === '/api/v1/teams/launch' && method === 'POST') {
+      const body = (await readJsonBody(request)) as Partial<ProductTeamLaunchInput>;
+      const teamId = typeof body?.teamId === 'string' ? body.teamId.trim() : '';
+      const projectId = typeof body?.projectId === 'string' ? body.projectId.trim() : '';
+      const goal = typeof body?.goal === 'string' ? body.goal.trim() : '';
+      const mode = body?.mode === 'freeform' || body?.mode === 'structured' ? body.mode : '';
+      const title = typeof body?.title === 'string' ? body.title.trim() : undefined;
+      const summary = typeof body?.summary === 'string' ? body.summary.trim() : undefined;
+      if (
+        !teamId || teamId.length > TEAM_ID_MAX_CHARS || !projectId || projectId.length > TEAM_ID_MAX_CHARS ||
+        !goal || goal.length > TEAM_GOAL_MAX_CHARS || !mode || (title?.length ?? 0) > TEAM_TITLE_MAX_CHARS ||
+        (summary?.length ?? 0) > TEAM_GOAL_MAX_CHARS
+      ) {
+        sendJson(response, 400, {
+          ok: false,
+          code: 'INVALID',
+          message: 'teamId, projectId, goal, and mode (structured|freeform) are required'
+        });
+        return true;
+      }
+      if (!ctx.teamOps) {
+        sendJson(response, 502, {
+          ok: false,
+          code: 'host_disconnected',
+          message: 'Host is not connected'
+        });
+        return true;
+      }
+      try {
+        const result = await ctx.teamOps.launch({
+          teamId,
+          projectId,
+          goal,
+          mode,
+          ...(title ? { title } : {}),
+          ...(summary ? { summary } : {})
+        }, teamCaller(request));
+        sendTeamOpResult(response, result, 201);
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const executionById = routeParams(path, '/api/v1/executions/:id');
+    if (executionById && method === 'GET') {
+      if (!ctx.teamOps) {
+        sendJson(response, 502, {
+          ok: false,
+          code: 'host_disconnected',
+          message: 'Host is not connected'
+        });
+        return true;
+      }
+      try {
+        const result = await ctx.teamOps.status(executionById.id, teamCaller(request));
+        sendTeamOpResult(response, result, 200);
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const executionAnswer = routeParams(path, '/api/v1/executions/:id/answer');
+    if (executionAnswer && method === 'POST') {
+      const body = (await readJsonBody(request)) as {
+        message?: unknown;
+        blockerId?: unknown;
+        expectedStateVersion?: unknown;
+      };
+      const message = typeof body?.message === 'string' ? body.message.trim() : '';
+      const blockerId = typeof body?.blockerId === 'string' ? body.blockerId.trim() : undefined;
+      const expectedStateVersion = body?.expectedStateVersion;
+      if (
+        !message || message.length > TEAM_REPLY_MAX_CHARS || (blockerId?.length ?? 0) > TEAM_ID_MAX_CHARS ||
+        (expectedStateVersion !== undefined && (!Number.isInteger(expectedStateVersion) || (expectedStateVersion as number) < 0))
+      ) {
+        sendJson(response, 400, { ok: false, code: 'INVALID', message: 'message is required' });
+        return true;
+      }
+      if (!ctx.teamOps) {
+        sendJson(response, 502, {
+          ok: false,
+          code: 'host_disconnected',
+          message: 'Host is not connected'
+        });
+        return true;
+      }
+      try {
+        const result = await ctx.teamOps.answer({
+          id: executionAnswer.id,
+          message,
+          ...(blockerId ? { blockerId } : {}),
+          ...(typeof expectedStateVersion === 'number' ? { expectedStateVersion } : {})
+        }, teamCaller(request));
+        sendTeamOpResult(response, result, 200);
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const executionStop = routeParams(path, '/api/v1/executions/:id/stop');
+    if (executionStop && method === 'POST') {
+      const body = (await readJsonBody(request)) as { expectedStateVersion?: unknown };
+      if (
+        body?.expectedStateVersion !== undefined &&
+        (!Number.isInteger(body.expectedStateVersion) || (body.expectedStateVersion as number) < 0)
+      ) {
+        sendJson(response, 400, { ok: false, code: 'INVALID', message: 'expectedStateVersion must be a nonnegative integer' });
+        return true;
+      }
+      if (!ctx.teamOps) {
+        sendJson(response, 502, {
+          ok: false,
+          code: 'host_disconnected',
+          message: 'Host is not connected'
+        });
+        return true;
+      }
+      try {
+        const result = await ctx.teamOps.stop(
+          executionStop.id,
+          typeof body?.expectedStateVersion === 'number' ? body.expectedStateVersion : undefined,
+          teamCaller(request)
+        );
+        sendTeamOpResult(response, result, 200);
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
       return true;
     }
 
@@ -2737,6 +2878,38 @@ export async function handleProductHttp(
     });
     return true;
   }
+}
+
+function sendTeamOpResult(
+  response: ServerResponse,
+  result: { ok: true; value: unknown } | { ok: false; code: string; message: string },
+  okStatus: number
+): void {
+  if (result.ok) {
+    sendJson(response, okStatus, { ok: true, value: result.value });
+    return;
+  }
+  const status =
+    result.code === 'DISABLED' || result.code === 'CONFLICT' || result.code === 'TERMINAL' ? 409
+      : result.code === 'NOT_FOUND' || result.code === 'unknown-session' ? 404
+        : result.code === 'INVALID' || result.code === 'NO_ORCHESTRATOR' || result.code === 'INVALID_CAPABILITY' ? 400
+          : result.code === 'DENIED' ? 409
+            : result.code === 'UNAVAILABLE' || result.code === 'host_disconnected' ? 502
+              : 400;
+  sendJson(response, status, { ok: false, code: result.code, message: result.message });
+}
+
+function teamCaller(request: IncomingMessage): ProductTeamCaller | undefined {
+  const callerSessionId = boundedHeader(request, 'x-zcc-caller-session-id', TEAM_ID_MAX_CHARS);
+  const callerCredential = boundedHeader(request, 'x-zcc-caller-credential', TEAM_ID_MAX_CHARS);
+  return callerSessionId || callerCredential ? { callerSessionId, callerCredential } : undefined;
+}
+
+function boundedHeader(request: IncomingMessage, name: string, maxChars: number): string | undefined {
+  const value = request.headers[name];
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  // Presence always keeps caller on non-operator path, even when malformed.
+  return value.length <= maxChars ? value : '__invalid_caller__';
 }
 
 function sendHostFailure(response: ServerResponse, error: unknown): void {

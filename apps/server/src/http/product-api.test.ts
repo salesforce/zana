@@ -459,6 +459,203 @@ describe('product HTTP', () => {
     await expect(badInput.json()).resolves.toMatchObject({ ok: false, code: 'invalid-input' });
   });
 
+  it('launches and controls teams through injected host closures', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-team-'));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+
+    const launch = vi.fn(async (input: { teamId: string; projectId: string; goal: string; mode: string }) => {
+      if (input.mode === 'structured' && input.teamId === 'off') {
+        return { ok: false as const, code: 'DISABLED', message: 'Team jobs are disabled' };
+      }
+      if (input.teamId === 'missing') {
+        return { ok: false as const, code: 'NOT_FOUND', message: 'team not found' };
+      }
+      return input.mode === 'structured'
+        ? { ok: true as const, value: { kind: 'job' as const, id: 'ex-1', state: 'RUNNING' } }
+        : { ok: true as const, value: { kind: 'run' as const, id: 'run-1', state: 'running' } };
+    });
+    const status = vi.fn(async (id: string) => {
+      if (id === 'missing') return { ok: false as const, code: 'NOT_FOUND', message: 'not found' };
+      return { ok: true as const, value: { kind: 'job' as const, id, state: 'RUNNING', stateVersion: 2 } };
+    });
+    const answer = vi.fn(async () => ({
+      ok: true as const,
+      value: { kind: 'job' as const, id: 'ex-1', state: 'RUNNING', stateVersion: 3 }
+    }));
+    const stop = vi.fn(async () => ({
+      ok: true as const,
+      value: { kind: 'job' as const, id: 'ex-1', state: 'STOPPED', stateVersion: 4 }
+    }));
+    server.ctx.teamOps = { launch, status, answer, stop };
+
+    const missingFields = await fetch(`${server.url}api/v1/teams/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ teamId: 't1' })
+    });
+    expect(missingFields.status).toBe(400);
+    await expect(missingFields.json()).resolves.toMatchObject({ ok: false, code: 'INVALID' });
+
+    const disabled = await fetch(`${server.url}api/v1/teams/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        teamId: 'off',
+        projectId: 'p1',
+        goal: 'ship it',
+        mode: 'structured'
+      })
+    });
+    expect(disabled.status).toBe(409);
+    await expect(disabled.json()).resolves.toMatchObject({ ok: false, code: 'DISABLED' });
+
+    const unknown = await fetch(`${server.url}api/v1/teams/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        teamId: 'missing',
+        projectId: 'p1',
+        goal: 'ship it',
+        mode: 'structured'
+      })
+    });
+    expect(unknown.status).toBe(404);
+
+    const started = await fetch(`${server.url}api/v1/teams/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        teamId: 't1',
+        projectId: 'p1',
+        goal: 'ship it',
+        mode: 'structured',
+        title: 'Ship'
+      })
+    });
+    expect(started.status).toBe(201);
+    await expect(started.json()).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'job', id: 'ex-1', state: 'RUNNING' }
+    });
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        teamId: 't1',
+        projectId: 'p1',
+        goal: 'ship it',
+        mode: 'structured',
+        title: 'Ship'
+      }),
+      undefined
+    );
+
+    const shown = await fetch(`${server.url}api/v1/executions/ex-1`);
+    expect(shown.status).toBe(200);
+    await expect(shown.json()).resolves.toMatchObject({
+      ok: true,
+      value: { id: 'ex-1', state: 'RUNNING' }
+    });
+
+    const missingStatus = await fetch(`${server.url}api/v1/executions/missing`);
+    expect(missingStatus.status).toBe(404);
+
+    const answered = await fetch(`${server.url}api/v1/executions/ex-1/answer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: 'yes' })
+    });
+    expect(answered.status).toBe(200);
+    expect(answer).toHaveBeenCalledWith(
+      { id: 'ex-1', message: 'yes' },
+      undefined
+    );
+
+    const badAnswer = await fetch(`${server.url}api/v1/executions/ex-1/answer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    expect(badAnswer.status).toBe(400);
+
+    const stopped = await fetch(`${server.url}api/v1/executions/ex-1/stop`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(stopped.status).toBe(200);
+    expect(stop).toHaveBeenCalledWith('ex-1', undefined, undefined);
+
+    const oversized = await fetch(`${server.url}api/v1/teams/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ teamId: 't1', projectId: 'p1', goal: 'x'.repeat(4_001), mode: 'structured' })
+    });
+    expect(oversized.status).toBe(400);
+
+    const invalidVersion = await fetch(`${server.url}api/v1/executions/ex-1/stop`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedStateVersion: -1 })
+    });
+    expect(invalidVersion.status).toBe(400);
+  });
+
+  it('forwards caller attestation and maps execution conflicts to 409', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-team-caller-'));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1 }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const launch = vi.fn(async () => ({ ok: false as const, code: 'CONFLICT', message: 'stale version' }));
+    server.ctx.teamOps = {
+      launch,
+      status: vi.fn(),
+      answer: vi.fn(),
+      stop: vi.fn()
+    };
+
+    const response = await fetch(`${server.url}api/v1/teams/launch`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-zcc-caller-session-id': 'session-1',
+        'x-zcc-caller-credential': 'credential-1'
+      },
+      body: JSON.stringify({ teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'structured' })
+    });
+
+    expect(response.status).toBe(409);
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({ teamId: 't1' }),
+      { callerSessionId: 'session-1', callerCredential: 'credential-1' }
+    );
+  });
+
+  it('returns 502 when team ops are not injected', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-team-off-'));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1 }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const launch = await fetch(`${server.url}api/v1/teams/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        teamId: 't1',
+        projectId: 'p1',
+        goal: 'ship it',
+        mode: 'structured'
+      })
+    });
+    expect(launch.status).toBe(502);
+    await expect(launch.json()).resolves.toMatchObject({ ok: false, code: 'host_disconnected' });
+  });
+
   it('returns 410 for PTY I/O on the Thread API', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-output-'));
     server = await startTestProductServer({

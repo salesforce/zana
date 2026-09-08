@@ -156,7 +156,7 @@
   "scripts": {
     "build": "node scripts/build-runtime.mjs",
     "prepack": "node scripts/build-runtime.mjs",
-    "test": "vitest run --config ../../vitest.config.ts src/testing/index.test.ts src/testing/app-render.test.tsx src/app.test.ts src/provider-bridge.test.ts src/pack.test.ts src/plugin-services.test.ts",
+    "test": "vitest run --config ../../vitest.config.ts src/testing/index.test.ts src/testing/app-render.test.tsx src/app.test.ts src/provider-bridge.test.ts src/pack.test.ts src/plugin-services.test.ts src/server.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "peerDependencies": {

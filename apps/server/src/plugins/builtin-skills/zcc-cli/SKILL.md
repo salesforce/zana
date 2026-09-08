@@ -178,7 +178,12 @@ zcc schedule enable|disable <id>
 zcc personas ls
 zcc agent ls
 zcc team ls
+zcc team launch --team <id> --project <id> --goal "..." [--mode structured|freeform] [--wait]
+zcc team status|wait|answer|stop <id>
 ```
+
+Team launch, answer, and stop require native operator confirmation in Electron
+main. Agent-class callers can inspect status but cannot mutate team execution.
 
 Inbox mutations for agents are MCP (`inbox_push` / `inbox_search`) via the
 `zcc-inbox` skill, not this CLI. Schedule fire/toggle for agents is also MCP

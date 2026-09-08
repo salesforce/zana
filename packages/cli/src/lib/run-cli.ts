@@ -178,8 +178,14 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
       return await statusDashboardHttp(jsonOutput, httpDeps);
     } else if (command === 'agent' && subcommand === 'ls') {
       return await live(dataDir, 'agent.list', {}, jsonOutput);
-    } else if (command === 'team' && subcommand === 'ls') {
-      return await live(dataDir, 'team.list', {}, jsonOutput);
+    } else if (command === 'team') {
+      const { runTeamCommand } = await import('./commands/team.js');
+      const product = await runTeamCommand(subcommand, rest, jsonOutput, httpDeps);
+      if (product) return product;
+      if (subcommand === 'ls' || subcommand === 'list' || !subcommand) {
+        return await live(dataDir, 'team.list', {}, jsonOutput);
+      }
+      return errResult(`unknown team command '${subcommand ?? ''}'. Try ls, launch, status, wait, answer, stop.`, 2);
     } else if (command === 'agent' && subcommand === 'send') {
       const { runTellAlias } = await import('./commands/thread.js');
       return await runTellAlias(rest[0], rest.slice(1).join(' '), jsonOutput, httpDeps);
@@ -286,6 +292,9 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   skill list|show|files|cli-skills-status|install-cli-skills
   settings show|general|experiment|appearance
   terminal list|create|show|output|wait|send|close
+  team launch --team <id> --project <id> --goal "..." [--mode structured|freeform]
+       [--title] [--summary] [--wait] [--json]
+  team status|wait|answer|stop <id>
   environment status|diff|diff-files|pull-request <id>
   run <project> <prompt>   Deprecated alias of thread spawn
   agent send <id> <msg>    Deprecated alias of thread tell
@@ -303,7 +312,7 @@ LIVE CONTROL PLANE (app must be running):
   plugin ls|install|enable|disable|remove|search|outdated|update|run|logs
   marketplace ls|add|refresh|remove|install
   agent ls                 List live agents + their state
-  team ls                  List the team catalogue
+  team ls                  List the team catalogue (control plane)
   term reply <sessionId> <message>
   term close-summary <projectId> <sessionId...>
   schedule run-now|enable|disable <id>

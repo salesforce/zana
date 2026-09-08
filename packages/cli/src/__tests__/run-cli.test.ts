@@ -469,8 +469,10 @@ describe('cc CLI', () => {
     const live = help.stdout.slice(help.stdout.indexOf('LIVE CONTROL PLANE'));
     expect(product).toContain('plugin reload');
     expect(product).toContain('plugin dev');
+    expect(product).toContain('team launch');
     expect(live).not.toMatch(/plugin reload/);
     expect(live).not.toMatch(/plugin dev/);
+    expect(live).toContain('team ls');
   });
 
   it('reports APP_NOT_RUNNING when the product API is unreachable', async () => {

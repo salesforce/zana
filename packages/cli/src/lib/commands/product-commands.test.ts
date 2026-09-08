@@ -359,4 +359,179 @@ describe('product API command groups', () => {
     expect((await runCli(['node', 'zcc', 'thread', 'open', 'thr-1', '--line', '3'], { fetchImpl })).exitCode).toBe(2);
     expect((await runCli(['node', 'zcc', 'thread', 'open', 'thr-1', '--file', 'a.ts', '--source', 'other'], { fetchImpl })).exitCode).toBe(2);
   });
+
+  it('launches, waits, answers, and stops a team job', async () => {
+    let body: unknown;
+    let answerBody: unknown;
+    let state = 'RUNNING';
+    const fetchImpl = router({
+      'POST /api/v1/teams/launch': (_url, init) => {
+        body = JSON.parse(String(init?.body));
+        return jsonResponse(201, { ok: true, value: { kind: 'job', id: 'ex-1', state: 'RUNNING' } });
+      },
+      'GET /api/v1/executions/ex-1': () => ({ ok: true, value: { kind: 'job', id: 'ex-1', state } }),
+      'POST /api/v1/executions/ex-1/answer': (_url, init) => {
+        answerBody = JSON.parse(String(init?.body));
+        return { ok: true, value: { id: 'ex-1', state: 'RUNNING' } };
+      },
+      'POST /api/v1/executions/ex-1/stop': { ok: true, value: { id: 'ex-1', state: 'STOPPED' } }
+    });
+    const launched = await runCli(
+      ['node', 'zcc', 'team', 'launch', '--team', 't1', '--project', 'p1', '--goal', 'ship it', '--json'],
+      { fetchImpl }
+    );
+    expect(launched.exitCode).toBe(0);
+    expect(JSON.parse(launched.stdout).id).toBe('ex-1');
+    expect(body).toMatchObject({
+      teamId: 't1',
+      projectId: 'p1',
+      goal: 'ship it',
+      mode: 'structured'
+    });
+
+    const shown = await runCli(['node', 'zcc', 'team', 'status', 'ex-1'], { fetchImpl });
+    expect(shown.stdout).toContain('ex-1');
+
+    let now = 0;
+    const waited = runCli(['node', 'zcc', 'team', 'wait', 'ex-1', '--timeout', '2s'], {
+      fetchImpl,
+      nowMs: () => now,
+      sleep: async () => {
+        state = 'COMPLETED';
+        now += 500;
+      }
+    });
+    expect((await waited).exitCode).toBe(0);
+
+    now = 0;
+    state = 'RUNNING';
+    const timedOut = await runCli(['node', 'zcc', 'team', 'wait', 'ex-1', '--timeout', '1s'], {
+      fetchImpl,
+      nowMs: () => now,
+      sleep: async () => {
+        now += 500;
+      }
+    });
+    expect(timedOut.exitCode).toBe(124);
+
+    expect((await runCli(['node', 'zcc', 'team', 'answer', 'ex-1', '--text', 'yes', '--blocker', 'block-1'], { fetchImpl })).exitCode).toBe(0);
+    expect(answerBody).toEqual({ message: 'yes', blockerId: 'block-1' });
+    expect((await runCli(['node', 'zcc', 'team', 'stop', 'ex-1'], { fetchImpl })).stdout).toContain('stopped');
+    expect((await runCli(['node', 'zcc', 'team', 'launch'], { fetchImpl })).exitCode).toBe(2);
+    expect((await runCli(['node', 'zcc', 'team', 'launch', '--team', 't1', '--project', 'p1', '--goal', 'x', '--mode', 'nope'], { fetchImpl })).exitCode).toBe(2);
+  });
+
+  it('reads a goal from @file', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-team-goal-'));
+    const file = join(dir, 'goal.txt');
+    writeFileSync(file, 'do the thing\n');
+    let body: { goal?: string } = {};
+    const fetchImpl = router({
+      'POST /api/v1/teams/launch': (_url, init) => {
+        body = JSON.parse(String(init?.body));
+        return jsonResponse(201, { ok: true, value: { kind: 'run', id: 'run-1', state: 'running' } });
+      }
+    });
+    const launched = await runCli(
+      ['node', 'zcc', 'team', 'launch', '--team', 't1', '--project', 'p1', '--goal', `@${file}`, '--mode', 'freeform'],
+      { fetchImpl }
+    );
+    expect(launched.exitCode).toBe(0);
+    expect(body.goal).toBe('do the thing');
+
+    writeFileSync(file, 'x'.repeat(4_001));
+    const oversized = await runCli(
+      ['node', 'zcc', 'team', 'launch', '--team', 't1', '--project', 'p1', '--goal', `@${file}`],
+      { fetchImpl }
+    );
+    expect(oversized.exitCode).toBe(2);
+    expect(oversized.stderr).toContain('exceeds 4000 bytes');
+  });
+
+  it('waits for a terminal team launch and sends optional launch fields', async () => {
+    let body: unknown;
+    let state = 'RUNNING';
+    let now = 0;
+    const fetchImpl = router({
+      'POST /api/v1/teams/launch': (_url, init) => {
+        body = JSON.parse(String(init?.body));
+        return jsonResponse(201, { ok: true, value: { kind: 'run', id: 'run-1', state } });
+      },
+      'GET /api/v1/executions/run-1': () => ({ ok: true, value: { kind: 'run', id: 'run-1', state } })
+    });
+    const launched = await runCli(
+      [
+        'node', 'zcc', 'team', 'launch', '--team', 't1', '--project', 'p1', '--goal', 'ship it',
+        '--title', 'Release', '--summary', 'Verify release', '--wait', '--timeout', '2s'
+      ],
+      {
+        fetchImpl,
+        nowMs: () => now,
+        sleep: async () => {
+          state = 'COMPLETED';
+          now += 500;
+        }
+      }
+    );
+    expect(launched.exitCode).toBe(0);
+    expect(launched.stdout).toContain('COMPLETED');
+    expect(body).toEqual({
+      teamId: 't1',
+      projectId: 'p1',
+      goal: 'ship it',
+      mode: 'structured',
+      title: 'Release',
+      summary: 'Verify release'
+    });
+  });
+
+  it('rejects excessive waits and surfaces status failures immediately', async () => {
+    expect((await runCli(['node', 'zcc', 'team', 'wait', 'ex-1', '--timeout', '25h'])).exitCode).toBe(2);
+
+    let requests = 0;
+    let sleeps = 0;
+    const failed = await runCli(['node', 'zcc', 'team', 'wait', 'ex-1', '--timeout', '2s'], {
+      fetchImpl: router({
+        'GET /api/v1/executions/ex-1': () => {
+          requests += 1;
+          return jsonResponse(500, { code: 'INTERNAL', message: 'status failed' });
+        }
+      }),
+      nowMs: () => 0,
+      sleep: async () => {
+        sleeps += 1;
+      }
+    });
+    expect(failed.exitCode).toBe(1);
+    expect(failed.stderr).toContain('status failed');
+    expect(requests).toBe(1);
+    expect(sleeps).toBe(0);
+  });
+
+  it('forwards caller attestation from an app-spawned CLI environment', async () => {
+    const previousId = process.env.ZCC_SESSION_ID;
+    const previousToken = process.env.ZCC_SESSION_TOKEN;
+    let headers: Headers | undefined;
+    process.env.ZCC_SESSION_ID = 'session-1';
+    process.env.ZCC_SESSION_TOKEN = 'credential-1';
+    try {
+      const result = await runCli(['node', 'zcc', 'team', 'status', 'ex-1'], {
+        fetchImpl: async (_input, init) => {
+          headers = new Headers(init?.headers);
+          return jsonResponse(200, { ok: true, value: { kind: 'job', id: 'ex-1', state: 'RUNNING' } });
+        }
+      });
+      expect(result.exitCode).toBe(0);
+    } finally {
+      if (previousId === undefined) delete process.env.ZCC_SESSION_ID;
+      else process.env.ZCC_SESSION_ID = previousId;
+      if (previousToken === undefined) delete process.env.ZCC_SESSION_TOKEN;
+      else process.env.ZCC_SESSION_TOKEN = previousToken;
+    }
+    expect(headers?.get('x-zcc-caller-session-id')).toBe('session-1');
+    expect(headers?.get('x-zcc-caller-credential')).toBe('credential-1');
+  });
 });

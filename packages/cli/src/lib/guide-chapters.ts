@@ -111,8 +111,11 @@ Writing a plugin? Use the zcc-plugin-authoring skill.
   zcc schedule ls
   zcc schedule run-now <id>
   zcc schedule enable|disable <id>
+  zcc team launch --team <id> --project <id> --goal "..." [--mode structured|freeform] [--wait]
+  zcc team status|wait|answer|stop <id>
+  zcc team ls
 
-Prefer these CLI verbs over writing JSON into ~/.zcc/schedules. The zcc-center skill is a file-format appendix only.
+  Prefer these CLI verbs over writing JSON into ~/.zcc/schedules. The zcc-center skill is a file-format appendix only.
 `
   },
   {
