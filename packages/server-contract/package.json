@@ -19,7 +19,7 @@
     "@zana-ai/zcc-domain": "workspace:*",
     "@zana-ai/zcc-host-daemon-contract": "workspace:*",
     "@zana-ai/zcc-hono-typed-routes": "workspace:*",
-    "hono": "^4.7.0",
+    "hono": "^4.13.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {
