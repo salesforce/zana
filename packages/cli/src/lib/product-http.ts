@@ -37,11 +37,15 @@ export async function productRequest<T>(
     if (value !== undefined && value !== '') url.searchParams.set(key, value);
   }
   const fetchImpl = opts?.deps?.fetchImpl ?? fetch;
+  const headers: Record<string, string> = {};
+  if (opts?.body !== undefined) headers['content-type'] = 'application/json';
+  if (process.env.ZCC_SESSION_ID) headers['x-zcc-caller-session-id'] = process.env.ZCC_SESSION_ID;
+  if (process.env.ZCC_SESSION_TOKEN) headers['x-zcc-caller-credential'] = process.env.ZCC_SESSION_TOKEN;
   let response: Response;
   try {
     response = await fetchImpl(url, {
       method,
-      headers: opts?.body === undefined ? undefined : { 'content-type': 'application/json' },
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
       body: opts?.body === undefined ? undefined : JSON.stringify(opts.body)
     });
   } catch (error) {

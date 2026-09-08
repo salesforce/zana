@@ -4888,7 +4888,7 @@ function createMainTeamProductOps() {
     stopAutonomousRun,
     listAutonomousRuns: () => autonomousRuns.list(),
     getExecution: (executionId) => executionStore.get(executionId),
-    snapshot: (owner, projectId, executionId) => squadExecutionService.snapshot(owner, projectId, executionId),
+    status: (owner, projectId, executionId) => squadExecutionService.status(owner, projectId, executionId),
     stopJob: (owner, projectId, executionId, expectedStateVersion) =>
       squadExecutionService.stop(owner, projectId, executionId, expectedStateVersion),
     respondToBlocker: (owner, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message) =>

@@ -42,18 +42,22 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { chmodSync, mkdirSync, rmSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { dirname } from 'node:path';
-import type {
+import {
   Result,
   TerminalSession,
   AgentState,
   ScheduledTask,
   PersonaSummary,
-  TeamSummary
+  ProductTeamOps,
+  TeamSummary,
+  TEAM_GOAL_MAX_CHARS,
+  TEAM_ID_MAX_CHARS,
+  TEAM_REPLY_MAX_CHARS,
+  TEAM_TITLE_MAX_CHARS
 } from '@zana-ai/zcc-domain/product';
 import type { CreateTerminalRequest } from '@zana-ai/zcc-domain/product';
 import { parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
-import type { ProductTeamOps } from '@zana-ai/zcc-server/http/product-context';
 
 /** Caps a single request line so a malformed/hostile client can't balloon memory. */
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -444,10 +448,7 @@ export async function dispatchOp(
   // The 256KB line cap bounds memory, but a quarter-MB shoved at a prompt or
   // into a pty write is a nuisance/escape vector; keep these well under it.
   const MAX_PROMPT = 32_000;
-  const MAX_REPLY = 16_000;
-  const MAX_TEAM_ID = 256;
-  const MAX_TEAM_GOAL = 4_000;
-  const MAX_TEAM_TITLE = 256;
+  const MAX_REPLY = TEAM_REPLY_MAX_CHARS;
   if (caller.class === 'orchestrator' && caller.sessionId && (
     op === 'term.create' || op === 'term.close' || op === 'term.close-summary'
   )) {
@@ -608,10 +609,10 @@ export async function dispatchOp(
       const mode = args.mode === 'structured' || args.mode === 'freeform' ? args.mode : undefined;
       const title = str(args.title);
       const summary = str(args.summary);
-      if (!teamId || teamId.length > MAX_TEAM_ID || !projectId || projectId.length > MAX_TEAM_ID || !goal || !mode) {
+      if (!teamId || teamId.length > TEAM_ID_MAX_CHARS || !projectId || projectId.length > TEAM_ID_MAX_CHARS || !goal || !mode) {
         return { ok: false, code: 'BAD_ARGS', message: 'teamId, projectId, goal, and mode are required' };
       }
-      if (goal.length > MAX_TEAM_GOAL || (title?.length ?? 0) > MAX_TEAM_TITLE || (summary?.length ?? 0) > MAX_TEAM_GOAL) {
+      if (goal.length > TEAM_GOAL_MAX_CHARS || (title?.length ?? 0) > TEAM_TITLE_MAX_CHARS || (summary?.length ?? 0) > TEAM_GOAL_MAX_CHARS) {
         return { ok: false, code: 'BAD_ARGS', message: 'Team launch input exceeds size limits' };
       }
       if (!deps.teamOps) return { ok: false, code: 'host_disconnected', message: 'Host is not connected' };
@@ -619,7 +620,7 @@ export async function dispatchOp(
     }
     case 'team.status': {
       const id = str(args.id);
-      if (!id || id.length > MAX_TEAM_ID) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+      if (!id || id.length > TEAM_ID_MAX_CHARS) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
       if (!deps.teamOps) return { ok: false, code: 'host_disconnected', message: 'Host is not connected' };
       return deps.teamOps.status(id);
     }
@@ -628,7 +629,7 @@ export async function dispatchOp(
       const message = str(args.message);
       const blockerId = str(args.blockerId);
       const expectedStateVersion = args.expectedStateVersion;
-      if (!id || id.length > MAX_TEAM_ID || !message || message.length > MAX_REPLY || (blockerId?.length ?? 0) > MAX_TEAM_ID) {
+      if (!id || id.length > TEAM_ID_MAX_CHARS || !message || message.length > MAX_REPLY || (blockerId?.length ?? 0) > TEAM_ID_MAX_CHARS) {
         return { ok: false, code: 'BAD_ARGS', message: 'valid id and message required' };
       }
       if (expectedStateVersion !== undefined && (!Number.isInteger(expectedStateVersion) || (expectedStateVersion as number) < 0)) {
@@ -645,7 +646,7 @@ export async function dispatchOp(
     case 'team.stop': {
       const id = str(args.id);
       const expectedStateVersion = args.expectedStateVersion;
-      if (!id || id.length > MAX_TEAM_ID) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+      if (!id || id.length > TEAM_ID_MAX_CHARS) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
       if (expectedStateVersion !== undefined && (!Number.isInteger(expectedStateVersion) || (expectedStateVersion as number) < 0)) {
         return { ok: false, code: 'BAD_ARGS', message: 'expectedStateVersion must be a nonnegative integer' };
       }

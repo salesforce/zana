@@ -42,14 +42,23 @@ describe('createTeamOpsViaControl', () => {
   it('forwards all Team verbs over the authenticated control socket', async () => {
     const { dataDir, seen } = await boot();
     const ops = createTeamOpsViaControl(dataDir);
-    await ops.launch({ teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'structured' });
+    await ops.launch(
+      { teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'structured' },
+      { callerSessionId: 'session-1', callerCredential: 'credential-1' }
+    );
     await ops.status('ex-1');
     await ops.answer({ id: 'ex-1', message: 'yes', expectedStateVersion: 2 });
     await ops.stop('ex-1', 3);
     expect(seen.map((request) => request.op)).toEqual([
       'team.launch', 'team.status', 'team.answer', 'team.stop'
     ]);
-    expect(seen[0]).toMatchObject({ token: 'secret', nonce: 'boot', args: { goal: 'ship' } });
+    expect(seen[0]).toMatchObject({
+      token: 'secret',
+      nonce: 'boot',
+      callerSessionId: 'session-1',
+      callerCredential: 'credential-1',
+      args: { goal: 'ship' }
+    });
   });
 
   it('fails closed when Electron main is unavailable', async () => {

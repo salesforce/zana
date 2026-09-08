@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { TEAM_GOAL_MAX_CHARS } from '@zana-ai/zcc-domain/product';
 import { errResult, type CliResult } from '../cli-result.js';
 import { flagValue, hasFlag, stripFlags } from '../flag-parse.js';
 import {
@@ -28,30 +29,43 @@ interface TeamStatusValue {
   blockers?: Array<{ id?: string; question?: string; resolved?: boolean }>;
 }
 
+const MAX_WAIT_MS = 24 * 60 * 60 * 1_000;
+
 function parseDuration(raw: string): number | undefined {
   const match = /^(\d+)(ms|s|m|h)?$/.exec(raw.trim());
   if (!match) return undefined;
   const n = Number(match[1]);
-  if (!Number.isFinite(n) || n <= 0) return undefined;
+  if (!Number.isSafeInteger(n) || n <= 0) return undefined;
   const unit = match[2] ?? 's';
-  if (unit === 'ms') return n;
-  if (unit === 's') return n * 1000;
-  if (unit === 'm') return n * 60_000;
-  return n * 3_600_000;
+  const multiplier = unit === 'ms' ? 1 : unit === 's' ? 1_000 : unit === 'm' ? 60_000 : 3_600_000;
+  const milliseconds = n * multiplier;
+  return Number.isSafeInteger(milliseconds) && milliseconds <= MAX_WAIT_MS ? milliseconds : undefined;
 }
 
-function resolveGoal(raw: string | undefined): { ok: true; goal: string } | { ok: false; result: CliResult } {
+async function resolveGoal(raw: string | undefined): Promise<{ ok: true; goal: string } | { ok: false; result: CliResult }> {
   if (!raw) return { ok: false, result: errResult('team launch requires --goal', 2) };
   if (raw.startsWith('@')) {
     const file = raw.slice(1);
     if (!file) return { ok: false, result: errResult('--goal @file requires a path', 2) };
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      const goal = readFileSync(resolve(file), 'utf8').trim();
+      handle = await open(resolve(file), 'r');
+      const buffer = Buffer.alloc(TEAM_GOAL_MAX_CHARS + 1);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      if (bytesRead > TEAM_GOAL_MAX_CHARS) {
+        return { ok: false, result: errResult(`goal file '${file}' exceeds ${TEAM_GOAL_MAX_CHARS} bytes`, 2) };
+      }
+      const goal = buffer.subarray(0, bytesRead).toString('utf8').trim();
       if (!goal) return { ok: false, result: errResult(`goal file '${file}' is empty`, 2) };
+      if (goal.length > TEAM_GOAL_MAX_CHARS) {
+        return { ok: false, result: errResult(`goal file '${file}' exceeds ${TEAM_GOAL_MAX_CHARS} characters`, 2) };
+      }
       return { ok: true, goal };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       return { ok: false, result: errResult(`cannot read goal file '${file}': ${detail}`, 2) };
+    } finally {
+      await handle?.close();
     }
   }
   return { ok: true, goal: raw };
@@ -80,9 +94,7 @@ async function waitForId(
       { deps }
     );
     if (!shown.ok) {
-      if (shown.result.exitCode === 3) return shown.result;
-      await sleepMs(500, deps);
-      continue;
+      return shown.result;
     }
     const row = shown.data.value ?? (shown.data as TeamStatusValue);
     if (isTerminal(row.state)) {
@@ -118,7 +130,7 @@ export async function runTeamCommand(
     if (modeRaw !== 'structured' && modeRaw !== 'freeform') {
       return errResult("--mode must be 'structured' or 'freeform'", 2);
     }
-    const resolved = resolveGoal(goalRaw);
+    const resolved = await resolveGoal(goalRaw);
     if (!resolved.ok) return resolved.result;
     const timeoutRaw = flagValue(rest, '--timeout') ?? '5m';
     const timeoutMs = parseDuration(timeoutRaw);

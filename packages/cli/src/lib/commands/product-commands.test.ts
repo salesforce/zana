@@ -441,6 +441,14 @@ describe('product API command groups', () => {
     );
     expect(launched.exitCode).toBe(0);
     expect(body.goal).toBe('do the thing');
+
+    writeFileSync(file, 'x'.repeat(4_001));
+    const oversized = await runCli(
+      ['node', 'zcc', 'team', 'launch', '--team', 't1', '--project', 'p1', '--goal', `@${file}`],
+      { fetchImpl }
+    );
+    expect(oversized.exitCode).toBe(2);
+    expect(oversized.stderr).toContain('exceeds 4000 bytes');
   });
 
   it('waits for a terminal team launch and sends optional launch fields', async () => {
@@ -478,5 +486,52 @@ describe('product API command groups', () => {
       title: 'Release',
       summary: 'Verify release'
     });
+  });
+
+  it('rejects excessive waits and surfaces status failures immediately', async () => {
+    expect((await runCli(['node', 'zcc', 'team', 'wait', 'ex-1', '--timeout', '25h'])).exitCode).toBe(2);
+
+    let requests = 0;
+    let sleeps = 0;
+    const failed = await runCli(['node', 'zcc', 'team', 'wait', 'ex-1', '--timeout', '2s'], {
+      fetchImpl: router({
+        'GET /api/v1/executions/ex-1': () => {
+          requests += 1;
+          return jsonResponse(500, { code: 'INTERNAL', message: 'status failed' });
+        }
+      }),
+      nowMs: () => 0,
+      sleep: async () => {
+        sleeps += 1;
+      }
+    });
+    expect(failed.exitCode).toBe(1);
+    expect(failed.stderr).toContain('status failed');
+    expect(requests).toBe(1);
+    expect(sleeps).toBe(0);
+  });
+
+  it('forwards caller attestation from an app-spawned CLI environment', async () => {
+    const previousId = process.env.ZCC_SESSION_ID;
+    const previousToken = process.env.ZCC_SESSION_TOKEN;
+    let headers: Headers | undefined;
+    process.env.ZCC_SESSION_ID = 'session-1';
+    process.env.ZCC_SESSION_TOKEN = 'credential-1';
+    try {
+      const result = await runCli(['node', 'zcc', 'team', 'status', 'ex-1'], {
+        fetchImpl: async (_input, init) => {
+          headers = new Headers(init?.headers);
+          return jsonResponse(200, { ok: true, value: { kind: 'job', id: 'ex-1', state: 'RUNNING' } });
+        }
+      });
+      expect(result.exitCode).toBe(0);
+    } finally {
+      if (previousId === undefined) delete process.env.ZCC_SESSION_ID;
+      else process.env.ZCC_SESSION_ID = previousId;
+      if (previousToken === undefined) delete process.env.ZCC_SESSION_TOKEN;
+      else process.env.ZCC_SESSION_TOKEN = previousToken;
+    }
+    expect(headers?.get('x-zcc-caller-session-id')).toBe('session-1');
+    expect(headers?.get('x-zcc-caller-credential')).toBe('credential-1');
   });
 });

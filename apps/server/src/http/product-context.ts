@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
-import type { AppConfig, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { AppConfig, ProductTeamOps, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   getConversationThread,
   openDatabase,
@@ -72,47 +72,6 @@ export interface ProductHttpContext {
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void;
-}
-
-export type TeamLaunchMode = 'structured' | 'freeform';
-
-export interface ProductTeamLaunchInput {
-  teamId: string;
-  projectId: string;
-  goal: string;
-  mode: TeamLaunchMode;
-  title?: string;
-  summary?: string;
-}
-
-export interface ProductTeamLaunchResult {
-  kind: 'job' | 'run';
-  id: string;
-  state?: string;
-}
-
-export interface ProductTeamStatus {
-  kind: 'job' | 'run';
-  id: string;
-  projectId?: string;
-  teamId?: string;
-  state: string;
-  stateVersion?: number;
-  goal?: string;
-  summary?: string;
-  blockers?: Array<{ id: string; question?: string; resolved?: boolean }>;
-}
-
-export interface ProductTeamOps {
-  launch(input: ProductTeamLaunchInput): Promise<{ ok: true; value: ProductTeamLaunchResult } | { ok: false; code: string; message: string }>;
-  status(id: string): Promise<{ ok: true; value: ProductTeamStatus } | { ok: false; code: string; message: string }>;
-  answer(input: {
-    id: string;
-    message: string;
-    blockerId?: string;
-    expectedStateVersion?: number;
-  }): Promise<{ ok: true; value: ProductTeamStatus } | { ok: false; code: string; message: string }>;
-  stop(id: string, expectedStateVersion?: number): Promise<{ ok: true; value: ProductTeamStatus | true } | { ok: false; code: string; message: string }>;
 }
 
 export interface CreateProductHttpContextOptions {

@@ -5335,6 +5335,57 @@ export interface TeamJobLaunchResult {
   state: ExecutionBoardProjection['state'];
 }
 
+export const TEAM_ID_MAX_CHARS = 256;
+export const TEAM_GOAL_MAX_CHARS = 4_000;
+export const TEAM_TITLE_MAX_CHARS = 256;
+export const TEAM_REPLY_MAX_CHARS = 16_000;
+
+export type TeamLaunchMode = 'structured' | 'freeform';
+
+export interface ProductTeamLaunchInput {
+  teamId: string;
+  projectId: string;
+  goal: string;
+  mode: TeamLaunchMode;
+  title?: string;
+  summary?: string;
+}
+
+export interface ProductTeamLaunchResult {
+  kind: 'job' | 'run';
+  id: string;
+  state?: string;
+}
+
+export interface ProductTeamStatus {
+  kind: 'job' | 'run';
+  id: string;
+  projectId?: string;
+  teamId?: string;
+  state: string;
+  stateVersion?: number;
+  goal?: string;
+  summary?: string;
+  blockers?: Array<{ id: string; question?: string; resolved?: boolean }>;
+}
+
+export interface ProductTeamCaller {
+  callerSessionId?: string;
+  callerCredential?: string;
+}
+
+export interface ProductTeamOps {
+  launch(input: ProductTeamLaunchInput, caller?: ProductTeamCaller): Promise<Result<ProductTeamLaunchResult>>;
+  status(id: string, caller?: ProductTeamCaller): Promise<Result<ProductTeamStatus>>;
+  answer(input: {
+    id: string;
+    message: string;
+    blockerId?: string;
+    expectedStateVersion?: number;
+  }, caller?: ProductTeamCaller): Promise<Result<ProductTeamStatus>>;
+  stop(id: string, expectedStateVersion?: number, caller?: ProductTeamCaller): Promise<Result<ProductTeamStatus | true>>;
+}
+
 export interface ExecutionBoardSnapshot {
   execution: ExecutionBoardProjection;
   events: Array<{

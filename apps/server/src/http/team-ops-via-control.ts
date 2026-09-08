@@ -1,7 +1,11 @@
 import { connect } from 'node:net';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ProductTeamOps } from './product-context.js';
+import type {
+  ProductTeamCaller,
+  ProductTeamLaunchInput,
+  ProductTeamOps
+} from '@zana-ai/zcc-domain/product';
 
 const CONTROL_TIMEOUT_MS = 20_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
@@ -12,9 +16,9 @@ interface ControlToken {
   socket: string;
 }
 
-function readControlToken(dataDir: string): ControlToken | null {
+async function readControlToken(dataDir: string): Promise<ControlToken | null> {
   try {
-    const value = JSON.parse(readFileSync(join(dataDir, 'control.token'), 'utf8')) as Partial<ControlToken>;
+    const value = JSON.parse(await readFile(join(dataDir, 'control.token'), 'utf8')) as Partial<ControlToken>;
     return typeof value.token === 'string' && typeof value.nonce === 'string' && typeof value.socket === 'string'
       ? { token: value.token, nonce: value.nonce, socket: value.socket }
       : null;
@@ -27,13 +31,15 @@ function disconnected(message = 'Host is not connected') {
   return { ok: false as const, code: 'host_disconnected', message };
 }
 
-function callControl(dataDir: string, op: string, args: Record<string, unknown>): Promise<unknown> {
+async function callControl(
+  dataDir: string,
+  op: string,
+  args: Record<string, unknown>,
+  caller?: ProductTeamCaller
+): Promise<unknown> {
+  const token = await readControlToken(dataDir);
+  if (!token) return disconnected();
   return new Promise((resolve) => {
-    const token = readControlToken(dataDir);
-    if (!token || !existsSync(token.socket)) {
-      resolve(disconnected());
-      return;
-    }
     const socket = connect(token.socket);
     const chunks: Buffer[] = [];
     let total = 0;
@@ -47,7 +53,14 @@ function callControl(dataDir: string, op: string, args: Record<string, unknown>)
     };
     const timer = setTimeout(() => done(disconnected('Team operation timed out')), CONTROL_TIMEOUT_MS);
     socket.on('connect', () => {
-      socket.write(JSON.stringify({ token: token.token, nonce: token.nonce, op, args }) + '\n');
+      socket.write(JSON.stringify({
+        token: token.token,
+        nonce: token.nonce,
+        op,
+        args,
+        ...(caller?.callerSessionId ? { callerSessionId: caller.callerSessionId } : {}),
+        ...(caller?.callerCredential ? { callerCredential: caller.callerCredential } : {})
+      }) + '\n');
     });
     socket.on('data', (chunk: Buffer) => {
       total += chunk.length;
@@ -79,12 +92,16 @@ function callControl(dataDir: string, op: string, args: Record<string, unknown>)
 
 export function createTeamOpsViaControl(dataDir: string): ProductTeamOps {
   return {
-    launch: (input) => callControl(dataDir, 'team.launch', input as unknown as Record<string, unknown>) as ReturnType<ProductTeamOps['launch']>,
-    status: (id) => callControl(dataDir, 'team.status', { id }) as ReturnType<ProductTeamOps['status']>,
-    answer: (input) => callControl(dataDir, 'team.answer', input as unknown as Record<string, unknown>) as ReturnType<ProductTeamOps['answer']>,
-    stop: (id, expectedStateVersion) => callControl(dataDir, 'team.stop', {
+    launch: (input, caller) => callControl(dataDir, 'team.launch', launchArgs(input), caller) as ReturnType<ProductTeamOps['launch']>,
+    status: (id, caller) => callControl(dataDir, 'team.status', { id }, caller) as ReturnType<ProductTeamOps['status']>,
+    answer: (input, caller) => callControl(dataDir, 'team.answer', { ...input }, caller) as ReturnType<ProductTeamOps['answer']>,
+    stop: (id, expectedStateVersion, caller) => callControl(dataDir, 'team.stop', {
       id,
       ...(expectedStateVersion !== undefined ? { expectedStateVersion } : {})
-    }) as ReturnType<ProductTeamOps['stop']>
+    }, caller) as ReturnType<ProductTeamOps['stop']>
   };
+}
+
+function launchArgs(input: ProductTeamLaunchInput): Record<string, unknown> {
+  return { ...input };
 }

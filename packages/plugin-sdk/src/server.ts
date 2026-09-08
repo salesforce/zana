@@ -329,9 +329,8 @@ export interface PluginAgentToolRegistration {
 export function enforcePluginCliOutputLimit(result: PluginCliResult): PluginCliExecutionResult {
   const stdout = result.stdout ?? '';
   const stderr = result.stderr ?? '';
-  const encoder = new TextEncoder();
-  const stdoutBytes = encoder.encode(stdout).byteLength;
-  const stderrBytes = encoder.encode(stderr).byteLength;
+  const stdoutBytes = utf8ByteLength(stdout);
+  const stderrBytes = utf8ByteLength(stderr);
   const totalBytes = stdoutBytes + stderrBytes;
   if (totalBytes <= PLUGIN_CLI_OUTPUT_MAX_BYTES) {
     return { exitCode: result.exitCode, stdout, stderr };
@@ -349,6 +348,23 @@ export function enforcePluginCliOutputLimit(result: PluginCliResult): PluginCliE
       totalBytes
     }
   };
+}
+
+function utf8ByteLength(value: string): number {
+  const encoder = new TextEncoder();
+  const chunkChars = 16 * 1024;
+  let bytes = 0;
+  for (let start = 0; start < value.length;) {
+    let end = Math.min(start + chunkChars, value.length);
+    if (end < value.length && isHighSurrogate(value.charCodeAt(end - 1))) end -= 1;
+    bytes += encoder.encode(value.slice(start, end)).byteLength;
+    start = end;
+  }
+  return bytes;
+}
+
+function isHighSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
 }
 
 export interface PluginBackground {

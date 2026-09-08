@@ -21,4 +21,15 @@ describe('enforcePluginCliOutputLimit', () => {
       stderr: ''
     });
   });
+
+  it('counts a surrogate pair split at an internal chunk boundary once', () => {
+    const stdout = `${'x'.repeat((16 * 1024) - 1)}😀`;
+    const stderr = 'y'.repeat(PLUGIN_CLI_OUTPUT_MAX_BYTES);
+    const result = enforcePluginCliOutputLimit({ exitCode: 0, stdout, stderr });
+
+    expect(result.error).toMatchObject({
+      stdoutBytes: new TextEncoder().encode(stdout).byteLength,
+      stderrBytes: PLUGIN_CLI_OUTPUT_MAX_BYTES
+    });
+  });
 });

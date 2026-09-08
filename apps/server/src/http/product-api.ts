@@ -15,7 +15,15 @@ import type {
 import { browserRequestProblem, headerValue } from './browser-request-guard.js';
 import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
 import { applyTrustedOriginCors, readJsonBody, sendBytes, sendJson } from './json.js';
-import type { ProductHttpContext, ProductTeamLaunchInput, ProductTerminalRecord } from './product-context.js';
+import {
+  TEAM_GOAL_MAX_CHARS,
+  TEAM_ID_MAX_CHARS,
+  TEAM_REPLY_MAX_CHARS,
+  TEAM_TITLE_MAX_CHARS,
+  type ProductTeamCaller,
+  type ProductTeamLaunchInput
+} from '@zana-ai/zcc-domain/product';
+import type { ProductHttpContext, ProductTerminalRecord } from './product-context.js';
 import { ThreadCreateError } from './thread-create.js';
 import { terminalOutputSlice } from './terminal-output-buffer.js';
 import {
@@ -599,9 +607,9 @@ export async function handleProductHttp(
       const title = typeof body?.title === 'string' ? body.title.trim() : undefined;
       const summary = typeof body?.summary === 'string' ? body.summary.trim() : undefined;
       if (
-        !teamId || teamId.length > 256 || !projectId || projectId.length > 256 ||
-        !goal || goal.length > 4_000 || !mode || (title?.length ?? 0) > 256 ||
-        (summary?.length ?? 0) > 4_000
+        !teamId || teamId.length > TEAM_ID_MAX_CHARS || !projectId || projectId.length > TEAM_ID_MAX_CHARS ||
+        !goal || goal.length > TEAM_GOAL_MAX_CHARS || !mode || (title?.length ?? 0) > TEAM_TITLE_MAX_CHARS ||
+        (summary?.length ?? 0) > TEAM_GOAL_MAX_CHARS
       ) {
         sendJson(response, 400, {
           ok: false,
@@ -626,7 +634,7 @@ export async function handleProductHttp(
           mode,
           ...(title ? { title } : {}),
           ...(summary ? { summary } : {})
-        });
+        }, teamCaller(request));
         sendTeamOpResult(response, result, 201);
       } catch (error) {
         sendHostFailure(response, error);
@@ -645,7 +653,7 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        const result = await ctx.teamOps.status(executionById.id);
+        const result = await ctx.teamOps.status(executionById.id, teamCaller(request));
         sendTeamOpResult(response, result, 200);
       } catch (error) {
         sendHostFailure(response, error);
@@ -664,7 +672,7 @@ export async function handleProductHttp(
       const blockerId = typeof body?.blockerId === 'string' ? body.blockerId.trim() : undefined;
       const expectedStateVersion = body?.expectedStateVersion;
       if (
-        !message || message.length > 16_000 || (blockerId?.length ?? 0) > 256 ||
+        !message || message.length > TEAM_REPLY_MAX_CHARS || (blockerId?.length ?? 0) > TEAM_ID_MAX_CHARS ||
         (expectedStateVersion !== undefined && (!Number.isInteger(expectedStateVersion) || (expectedStateVersion as number) < 0))
       ) {
         sendJson(response, 400, { ok: false, code: 'INVALID', message: 'message is required' });
@@ -684,7 +692,7 @@ export async function handleProductHttp(
           message,
           ...(blockerId ? { blockerId } : {}),
           ...(typeof expectedStateVersion === 'number' ? { expectedStateVersion } : {})
-        });
+        }, teamCaller(request));
         sendTeamOpResult(response, result, 200);
       } catch (error) {
         sendHostFailure(response, error);
@@ -713,7 +721,8 @@ export async function handleProductHttp(
       try {
         const result = await ctx.teamOps.stop(
           executionStop.id,
-          typeof body?.expectedStateVersion === 'number' ? body.expectedStateVersion : undefined
+          typeof body?.expectedStateVersion === 'number' ? body.expectedStateVersion : undefined,
+          teamCaller(request)
         );
         sendTeamOpResult(response, result, 200);
       } catch (error) {
@@ -2881,13 +2890,26 @@ function sendTeamOpResult(
     return;
   }
   const status =
-    result.code === 'DISABLED' ? 409
+    result.code === 'DISABLED' || result.code === 'CONFLICT' || result.code === 'TERMINAL' ? 409
       : result.code === 'NOT_FOUND' || result.code === 'unknown-session' ? 404
         : result.code === 'INVALID' || result.code === 'NO_ORCHESTRATOR' || result.code === 'INVALID_CAPABILITY' ? 400
           : result.code === 'DENIED' ? 409
             : result.code === 'UNAVAILABLE' || result.code === 'host_disconnected' ? 502
               : 400;
   sendJson(response, status, { ok: false, code: result.code, message: result.message });
+}
+
+function teamCaller(request: IncomingMessage): ProductTeamCaller | undefined {
+  const callerSessionId = boundedHeader(request, 'x-zcc-caller-session-id', TEAM_ID_MAX_CHARS);
+  const callerCredential = boundedHeader(request, 'x-zcc-caller-credential', TEAM_ID_MAX_CHARS);
+  return callerSessionId || callerCredential ? { callerSessionId, callerCredential } : undefined;
+}
+
+function boundedHeader(request: IncomingMessage, name: string, maxChars: number): string | undefined {
+  const value = request.headers[name];
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  // Presence always keeps caller on non-operator path, even when malformed.
+  return value.length <= maxChars ? value : '__invalid_caller__';
 }
 
 function sendHostFailure(response: ServerResponse, error: unknown): void {

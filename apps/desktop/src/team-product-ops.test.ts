@@ -38,7 +38,7 @@ describe('createTeamProductOps', () => {
       stopAutonomousRun: vi.fn(),
       listAutonomousRuns: () => [],
       getExecution: async () => undefined,
-      snapshot: async () => undefined,
+      status: async () => undefined,
       stopJob: vi.fn(),
       respondToBlocker: vi.fn()
     });
@@ -61,7 +61,7 @@ describe('createTeamProductOps', () => {
         runId: 'run-1', teamId: 't1', projectId: 'p1', goal: 'g', state: 'running'
       }],
       getExecution: async (id) => id === 'ex-1' ? record : undefined,
-      snapshot: async () => ({ execution: record }),
+      status: async () => record,
       stopJob: vi.fn(),
       respondToBlocker
     });
@@ -88,12 +88,34 @@ describe('createTeamProductOps', () => {
         runId: 'run-1', teamId: 't1', projectId: 'p1', goal: 'g', state: 'stopped'
       }],
       getExecution: async (id) => id === 'ex-1' ? record : undefined,
-      snapshot: async () => ({ execution: record }),
+      status: async () => record,
       stopJob,
       respondToBlocker: vi.fn()
     });
     await expect(ops.stop('ex-1')).resolves.toMatchObject({ ok: true, value: { kind: 'job', state: 'STOPPED' } });
     await expect(ops.stop('run-1')).resolves.toMatchObject({ ok: true });
     expect(stopAutonomousRun).toHaveBeenCalledWith('run-1');
+  });
+
+  it('returns reconciled status and distinguishes a missing open blocker', async () => {
+    const record = job({ blockers: [] });
+    const status = vi.fn(async () => job({ state: 'STOPPED', blockers: [] }));
+    const ops = createTeamProductOps({
+      startTeamJobFromUi: vi.fn(),
+      launchAutonomousTeam: vi.fn(),
+      stopAutonomousRun: vi.fn(),
+      listAutonomousRuns: () => [],
+      getExecution: async () => record,
+      status,
+      stopJob: vi.fn(),
+      respondToBlocker: vi.fn()
+    });
+
+    await expect(ops.status('ex-1')).resolves.toMatchObject({ ok: true, value: { state: 'STOPPED' } });
+    expect(status).toHaveBeenCalledWith('interactive:local', 'p1', 'ex-1');
+    await expect(ops.answer({ id: 'ex-1', message: 'yes' })).resolves.toMatchObject({
+      ok: false,
+      message: 'no open blocker to answer'
+    });
   });
 });

@@ -541,13 +541,16 @@ describe('product HTTP', () => {
       ok: true,
       value: { kind: 'job', id: 'ex-1', state: 'RUNNING' }
     });
-    expect(launch).toHaveBeenCalledWith(expect.objectContaining({
-      teamId: 't1',
-      projectId: 'p1',
-      goal: 'ship it',
-      mode: 'structured',
-      title: 'Ship'
-    }));
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        teamId: 't1',
+        projectId: 'p1',
+        goal: 'ship it',
+        mode: 'structured',
+        title: 'Ship'
+      }),
+      undefined
+    );
 
     const shown = await fetch(`${server.url}api/v1/executions/ex-1`);
     expect(shown.status).toBe(200);
@@ -565,6 +568,10 @@ describe('product HTTP', () => {
       body: JSON.stringify({ message: 'yes' })
     });
     expect(answered.status).toBe(200);
+    expect(answer).toHaveBeenCalledWith(
+      { id: 'ex-1', message: 'yes' },
+      undefined
+    );
 
     const badAnswer = await fetch(`${server.url}api/v1/executions/ex-1/answer`, {
       method: 'POST',
@@ -579,7 +586,7 @@ describe('product HTTP', () => {
       body: '{}'
     });
     expect(stopped.status).toBe(200);
-    expect(stop).toHaveBeenCalledWith('ex-1', undefined);
+    expect(stop).toHaveBeenCalledWith('ex-1', undefined, undefined);
 
     const oversized = await fetch(`${server.url}api/v1/teams/launch`, {
       method: 'POST',
@@ -594,6 +601,38 @@ describe('product HTTP', () => {
       body: JSON.stringify({ expectedStateVersion: -1 })
     });
     expect(invalidVersion.status).toBe(400);
+  });
+
+  it('forwards caller attestation and maps execution conflicts to 409', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-team-caller-'));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1 }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const launch = vi.fn(async () => ({ ok: false as const, code: 'CONFLICT', message: 'stale version' }));
+    server.ctx.teamOps = {
+      launch,
+      status: vi.fn(),
+      answer: vi.fn(),
+      stop: vi.fn()
+    };
+
+    const response = await fetch(`${server.url}api/v1/teams/launch`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-zcc-caller-session-id': 'session-1',
+        'x-zcc-caller-credential': 'credential-1'
+      },
+      body: JSON.stringify({ teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'structured' })
+    });
+
+    expect(response.status).toBe(409);
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({ teamId: 't1' }),
+      { callerSessionId: 'session-1', callerCredential: 'credential-1' }
+    );
   });
 
   it('returns 502 when team ops are not injected', async () => {

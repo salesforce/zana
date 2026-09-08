@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import type { Result, TeamJobLaunchInput } from '@zana-ai/zcc-domain/product';
 import type {
   ProductTeamLaunchInput,
-  ProductTeamLaunchResult,
   ProductTeamOps,
-  ProductTeamStatus
-} from '@zana-ai/zcc-server/http/product-context';
-import { executionBoardProjection } from '@zana-ai/zcc-server/services/execution/projection';
+  ProductTeamStatus,
+  Result,
+  TeamJobLaunchInput
+} from '@zana-ai/zcc-domain/product';
+import {
+  executionBoardProjection
+} from '@zana-ai/zcc-server/services/execution/projection';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 
 export interface TeamProductOpDeps {
@@ -22,7 +24,7 @@ export interface TeamProductOpDeps {
     summary?: string;
   }>;
   getExecution(executionId: string): Promise<ExecutionRecord | undefined>;
-  snapshot(owner: string, projectId: string, executionId: string): Promise<{ execution: ExecutionRecord } | undefined>;
+  status(owner: string, projectId: string, executionId: string): Promise<ExecutionRecord | undefined>;
   stopJob(owner: string, projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionRecord>>;
   respondToBlocker(
     owner: string,
@@ -106,9 +108,9 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
       const found = await find(id);
       if (!found) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
       if (found.kind === 'run') return { ok: true, value: runStatus(found.run) };
-      const snapshot = await deps.snapshot(found.execution.callerPrincipalId, found.execution.projectId, found.execution.id);
-      if (!snapshot) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
-      return { ok: true, value: jobStatus(snapshot.execution) };
+      const current = await deps.status(found.execution.callerPrincipalId, found.execution.projectId, found.execution.id);
+      if (!current) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
+      return { ok: true, value: jobStatus(current) };
     },
 
     async answer(input) {
@@ -124,6 +126,7 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
       const open = (found.execution.blockers ?? []).filter((blocker) => !blocker.resolved);
       const blockerId = input.blockerId ?? (open.length === 1 ? open[0]!.id : '');
       if (!blockerId) {
+        if (open.length === 0) return { ok: false, code: 'INVALID', message: 'no open blocker to answer' };
         return { ok: false, code: 'INVALID', message: 'blockerId is required when multiple blockers are open' };
       }
       const expected = input.expectedStateVersion ?? found.execution.stateVersion;
@@ -161,16 +164,5 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
         ? { ok: true, value: jobStatus(result.value) }
         : { ok: false, code: result.code, message: result.message };
     }
-  };
-}
-
-export function teamOpsResult(value: unknown): { ok: true; value: ProductTeamLaunchResult | ProductTeamStatus | true } | { ok: false; code: string; message: string } {
-  if (!value || typeof value !== 'object') return { ok: false, code: 'INVALID', message: 'invalid team op result' };
-  const record = value as { ok?: unknown; code?: unknown; message?: unknown; value?: unknown };
-  if (record.ok === true) return { ok: true, value: record.value as ProductTeamLaunchResult | ProductTeamStatus | true };
-  return {
-    ok: false,
-    code: typeof record.code === 'string' ? record.code : 'INVALID',
-    message: typeof record.message === 'string' ? record.message : 'team op failed'
   };
 }
