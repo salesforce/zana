@@ -4,6 +4,11 @@ const { loadConfiguredPiServices, firstRuntime, secondRuntime } = vi.hoisted(
   () => {
     const firstRuntime = { getModel: vi.fn() };
     const secondRuntime = { getModel: vi.fn() };
+    const settingsManager = {
+      getEnabledModels: vi.fn(() => undefined),
+      getDefaultProvider: vi.fn(() => undefined),
+      getDefaultModel: vi.fn(() => undefined),
+    };
     return {
       firstRuntime,
       loadConfiguredPiServices: vi.fn(
@@ -13,12 +18,16 @@ const { loadConfiguredPiServices, firstRuntime, secondRuntime } = vi.hoisted(
           cwd: string;
         }): Promise<{
           configErrors: string[];
-          services: { modelRuntime: { getModel: unknown } };
+          services: {
+            modelRuntime: { getModel: unknown };
+            settingsManager: typeof settingsManager;
+          };
         }> => ({
           configErrors: [],
           services: {
             modelRuntime:
               cwd === "/tmp/project-one" ? firstRuntime : secondRuntime,
+            settingsManager,
           },
         }),
       ),
@@ -67,7 +76,11 @@ describe("Pi bridge model runtime", () => {
       .mockImplementation(() => true);
     loadConfiguredPiServices.mockResolvedValueOnce({
       configErrors: ['Failed to load Pi extension "broken.ts": boom'],
-      services: { modelRuntime: firstRuntime },
+      services: { modelRuntime: firstRuntime, settingsManager: {
+        getEnabledModels: () => undefined,
+        getDefaultProvider: () => undefined,
+        getDefaultModel: () => undefined,
+      } },
     });
 
     await expect(getPiModelRuntime("/tmp/project-one")).resolves.toBe(
@@ -87,7 +100,11 @@ describe("Pi bridge model runtime", () => {
       .mockImplementation(() => true);
     loadConfiguredPiServices.mockResolvedValueOnce({
       configErrors: ['Failed to load Pi extension "broken.ts": boom'],
-      services: { modelRuntime: secondRuntime },
+      services: { modelRuntime: secondRuntime, settingsManager: {
+        getEnabledModels: () => undefined,
+        getDefaultProvider: () => undefined,
+        getDefaultModel: () => undefined,
+      } },
     });
 
     await expect(getPiModelRuntime("/tmp/project-one")).resolves.toBe(

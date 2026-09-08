@@ -16,8 +16,6 @@ export const THREAD_WORKING_PHRASES = [
   'Setting the next play'
 ] as const;
 
-export const THREAD_WORKING_PHRASE_INTERVAL_MS = 3500;
-
 export function threadWorkingPhraseIndex(tick: number): number {
   const count = THREAD_WORKING_PHRASES.length;
   return ((tick % count) + count) % count;
@@ -27,12 +25,58 @@ export function threadWorkingPhrase(tick: number): string {
   return THREAD_WORKING_PHRASES[threadWorkingPhraseIndex(tick)]!;
 }
 
+/** Advance the roster when the busy indicator hides; hold the tick otherwise. */
+export function nextWorkingPhraseTick(tick: number, wasActive: boolean, isActive: boolean): number {
+  return wasActive && !isActive ? tick + 1 : tick;
+}
+
 export function threadWorkingIndicatorLabel(thinking: boolean, phrase: string): string {
   return thinking ? 'Thinking…' : `${phrase}…`;
 }
 
+export function isRunningThreadRuntimeDisplayStatus(status: string): boolean {
+  switch (status) {
+    case 'active':
+    case 'host-reconnecting':
+    case 'provisioning':
+    case 'starting':
+    case 'stopping':
+      return true;
+    default:
+      return false;
+  }
+}
+
 export function isBusyThreadStatus(status: string): boolean {
-  return status === 'starting' || status === 'active' || status === 'stopping';
+  return isRunningThreadRuntimeDisplayStatus(status);
+}
+
+/** BB showOngoingIndicator: leftover thinking does not keep a dead turn live. */
+export function showOngoingThreadWork(
+  status: string,
+  waitingOnUser = false
+): boolean {
+  if (waitingOnUser) return false;
+  if (status === 'stopping') return false;
+  return isRunningThreadRuntimeDisplayStatus(status);
+}
+
+const USER_WAIT_WORK_KINDS = new Set(['question', 'approval']);
+
+/** True when a visible work row is still running — tools already say that. */
+export function timelineHasRunningWork(rows: readonly TimelineRow[] | null | undefined): boolean {
+  if (!rows?.length) return false;
+  for (const row of rows) {
+    if (row.kind === 'turn') {
+      if (timelineHasRunningWork(row.children)) return true;
+      continue;
+    }
+    if (row.kind !== 'work') continue;
+    if (USER_WAIT_WORK_KINDS.has(row.workKind)) continue;
+    if (row.status === 'pending') return true;
+    if (row.workKind === 'delegation' && timelineHasRunningWork(row.childRows)) return true;
+  }
+  return false;
 }
 
 /** True when the latest timeline row is a retry/reconnect still in flight. */
@@ -68,10 +112,15 @@ export function shouldShowThreadStop(
 }
 
 /** Map a conversation-thread status onto the agent-board lanes. */
-export function threadStatusToAgentState(status: string, waitingOnUser = false): AgentState {
+export function threadStatusToAgentState(
+  status: string,
+  waitingOnUser = false,
+  activity?: { activeBackgroundCommandCount?: number } | null
+): AgentState {
   if (status === 'error') return 'idle';
   if (waitingOnUser) return 'blocked';
   if (isBusyThreadStatus(status)) return 'working';
+  if ((activity?.activeBackgroundCommandCount ?? 0) > 0) return 'working';
   return 'idle';
 }
 
@@ -94,6 +143,8 @@ export function threadStatusLabel(
   const trimmed = status.trim();
   if (!trimmed) return '';
   if (trimmed === 'error') return 'Error';
+  if (trimmed === 'host-reconnecting') return 'Waiting for reconnection';
+  if (trimmed === 'waiting-for-host') return 'Waiting for host';
   if (waitingOnUser) return 'Needs you';
   if (isBusyThreadStatus(trimmed)) return thinking ? 'Thinking' : workingPhrase;
   if (trimmed === 'idle') return 'Idle';
@@ -131,6 +182,18 @@ export function visiblePendingTodos(
   return todos;
 }
 
+/**
+ * Composer checklist is a mid-turn fallback. Once durable plan tasks exist,
+ * PlanExecutionCard (timeline) and ThreadPlanPanel own the list.
+ */
+export function composerVisibleTodos(
+  todos: ThreadTimelinePendingTodos | null | undefined,
+  durableTaskCount: number
+): ThreadTimelinePendingTodos | null {
+  if (durableTaskCount > 0) return null;
+  return visiblePendingTodos(todos);
+}
+
 export function workRowBody(row: {
   workKind?: string;
   output?: string;
@@ -153,7 +216,9 @@ export function workRowBody(row: {
       return typeof row.output === 'string' ? row.output : '';
     case 'file-change': {
       const stats = row.change?.diffStats;
-      const tally = stats ? `+${stats.added} −${stats.removed}` : '';
+      const tally = stats && (stats.added > 0 || stats.removed > 0)
+        ? `+${stats.added} −${stats.removed}`
+        : '';
       return [row.change?.path, tally, row.change?.diff].filter(Boolean).join('\n');
     }
     case 'web-search':

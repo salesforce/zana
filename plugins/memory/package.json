@@ -3,18 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Durable notes the agent should remember across threads.",
+  "description": "Durable global and project memories injected into agents.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
   "zcc": {
     "name": "Memory",
-    "description": "Durable notes the agent should remember across threads.",
+    "description": "Durable global and project memories the agent can search and update.",
     "branding": {
       "icon": "Brain"
     },
     "server": "./server.mjs",
-    "app": "./app.js"
+    "app": "./app.js",
+    "skills": ["skills"]
   }
 }

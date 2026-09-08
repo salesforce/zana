@@ -20,6 +20,8 @@ const thread: ConversationThreadRow = {
   providerThreadId: null,
   parentThreadId: null,
   archivedAt: null,
+  pinnedAt: null,
+  pinOrder: null,
   createdAt: 1,
   updatedAt: 1
 };
@@ -98,5 +100,12 @@ describe('recoverConversationProviderThreadId', () => {
       thread.id,
       { limit: PROVIDER_IDENTITY_SCAN_CAP }
     );
+  });
+
+  it('does not treat inherited fork history as this thread\'s provider session', () => {
+    const forked = { ...thread, originKind: 'fork' as const, parentThreadId: 'source' };
+    expect(recoverConversationProviderThreadId({} as never, forked)).toBe(forked);
+    expect(listConversationThreadEventsWindow).not.toHaveBeenCalled();
+    expect(setConversationProviderThreadId).not.toHaveBeenCalled();
   });
 });

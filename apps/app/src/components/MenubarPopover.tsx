@@ -30,7 +30,8 @@ const STATE_DOT_CLASS: Record<AgentState, string> = {
   working: 'agent-working',
   done: 'agent-done',
   idle: 'agent-idle',
-  unknown: 'agent-idle'
+  unknown: 'agent-idle',
+  waiting: 'agent-waiting'
 };
 
 const EMPTY: MenubarSnapshot = {
@@ -236,8 +237,8 @@ function Row({
           </button>
           <button
             className="mbp-icon-btn mbp-open"
-            title="Open in workspace"
-            aria-label="Open in workspace"
+            title="Open in project"
+            aria-label="Open in project"
             onClick={() => product.menubar.focusSession(agent.sessionId, agent.projectId)}
           >
             <ArrowRight size={14} />
@@ -306,6 +307,7 @@ function useSubtitle(agent: MenubarAgent): string {
   if (agent.state === 'blocked') return 'needs you';
   if (agent.state === 'done') return 'done · session open';
   if (agent.state === 'working') return `working · ${formatElapsed(Date.now() - agent.createdAt)}`;
+  if (agent.state === 'waiting') return 'waiting for model';
   return agent.state;
 }
 

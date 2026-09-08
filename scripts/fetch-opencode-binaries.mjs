@@ -21,6 +21,7 @@
  *
  * Output: vendor/opencode/<arch>/opencode (executable), consumed by
  * electron-builder.yml's extraResources entry (vendor/opencode -> opencode).
+ * afterPack then deletes the unused arch so each artifact ships one binary.
  */
 import { createWriteStream, existsSync, mkdirSync, chmodSync, rmSync, renameSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';

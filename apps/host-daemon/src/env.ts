@@ -111,9 +111,10 @@ export function resolveZccCliBinDir(): string | undefined {
  *
  * Ladder mirrors {@link resolveZccCliBinDir} exactly:
  *   1. `OPENCODE_BIN_DIR` override (only when the dir it names exists),
- *   2. packaged: `resourcesPath/opencode/<arch>` (electron-builder copies the
- *      per-arch `opencode-darwin-{arm64,x64}` npm package's `bin/` there —
- *      see `electron-builder.yml`'s `extraResources`),
+ *   2. packaged: `resourcesPath/opencode/<arch>` (electron-builder copies
+ *      `vendor/opencode` via extraResources, then afterPack keeps only the
+ *      current arch — see `electron-builder.yml` and
+ *      `scripts/after-pack-trim-opencode.mjs`),
  *   3. dev: repo-relative `vendor/opencode/<arch>` — the same tree
  *      `npm run fetch:opencode` stages ahead of `electron-builder` for a
  *      packaged build (see `scripts/fetch-opencode-binaries.mjs`); running

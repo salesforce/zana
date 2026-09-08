@@ -663,6 +663,15 @@ function handleMessage(message: JsonRecord): void {
     const params = getParams(message);
     const threadId = getString(params.threadId, "unknown");
     const thread = getThreadState(threadId);
+    const clientRequestId = getString(params.clientRequestId);
+    const turnId = thread?.activeTurn?.turnId || getString(params.expectedTurnId);
+    if (clientRequestId && turnId) {
+      sendDeltas(threadId, [{
+        kind: "input.accepted",
+        clientRequestId,
+        providerTurnId: turnId
+      }]);
+    }
     if (thread?.activeTurn) {
       emitUserMessage(threadId, thread.activeTurn.turnId, params.input);
     }

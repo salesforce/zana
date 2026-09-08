@@ -6,7 +6,6 @@ import {
   AgentStatusTracker,
   SUBAGENT_CHILD_CAP
 } from './agent-status.js';
-import { HARNESS_MONITOR_FACTS_VERSION } from '@zana-ai/zcc-host-daemon/harness-monitor-facts';
 
 describe('classifyOscTitle', () => {
   it('maps a leading braille spinner glyph to working', () => {
@@ -77,19 +76,6 @@ describe('extractLastOscTitle', () => {
 });
 
 describe('AgentStatusTracker (debounced emits)', () => {
-  it('accepts normalized monitor facts without a harness helper process', () => {
-    const tracker = new AgentStatusTracker();
-    const result = tracker.reportFact({
-      version: HARNESS_MONITOR_FACTS_VERSION,
-      sessionId: 's1',
-      profile: 'opencode',
-      source: 'test',
-      observedAt: Date.now(),
-      capability: 'supported',
-      kind: 'blocked'
-    });
-    expect(result).toMatchObject({ state: 'blocked', reason: 'blocked' });
-  });
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
@@ -186,6 +172,41 @@ describe('AgentStatusTracker (debounced emits)', () => {
     tracker.observeData('s1', '\x1b]2;✳ Same task\x07'); // re-emitted each idle frame
     tracker.observeData('s1', '\x1b]2;✳ New task\x07');
     expect(titles).toEqual(['Same task', 'New task']);
+  });
+
+  it('classifies via the 2-arg (sessionId, chunk) signature', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.observeData('s1', '\x1b]2;⠹ Working…\x07');
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['working']);
+    expect(tracker.get('s1')).toBe('working');
+  });
+
+  it('classifies via the legacy 3-arg (sessionId, profile, chunk) signature, ignoring the profile string', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    // A profile string in position 2 must NOT itself be classified — only the
+    // real chunk (position 3) drives the OSC state transition.
+    tracker.observeData('s1', 'claude-code', '\x1b]2;⠹ Working…\x07');
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['working']);
+    expect(tracker.get('s1')).toBe('working');
+  });
+
+  it('reports the same idle-title event regardless of 2-arg vs 3-arg call shape', () => {
+    const tracker = new AgentStatusTracker();
+    const titles: Array<[string, string]> = [];
+    tracker.on('title', (id, title) => titles.push([id, title]));
+
+    tracker.observeData('s1', 'shell', '\x1b]2;✳ Fix the login bug\x07');
+    expect(titles).toEqual([['s1', 'Fix the login bug']]);
   });
 
   it('ignores data chunks with no agent signal', () => {

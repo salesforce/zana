@@ -11,8 +11,10 @@ import {
   threadStatusTone,
   threadWorkingIndicatorLabel,
   timelineHasInFlightRetry,
+  timelineHasRunningWork,
   timelineRowsAwaitUser,
   visiblePendingTodos,
+  composerVisibleTodos,
   workRowBody
 } from './thread-timeline-model.js';
 
@@ -31,6 +33,8 @@ describe('thread timeline model', () => {
   it('treats starting/active/stopping as busy', () => {
     expect(isBusyThreadStatus('active')).toBe(true);
     expect(isBusyThreadStatus('idle')).toBe(false);
+    expect(isBusyThreadStatus('host-reconnecting')).toBe(true);
+    expect(isBusyThreadStatus('waiting-for-host')).toBe(false);
   });
 
   it('shows Stop only while a thread round is in flight', () => {
@@ -107,6 +111,93 @@ describe('thread timeline model', () => {
     }])).toBe(false);
   });
 
+  it('detects running tools without treating user waits as work', () => {
+    const pendingTool: TimelineRow = {
+      ...base,
+      id: 'tool-1',
+      kind: 'work',
+      workKind: 'tool',
+      status: 'pending',
+      callId: 'call-1',
+      toolName: 'Read',
+      toolArgs: null,
+      output: '',
+      completedAt: null,
+      approvalStatus: null,
+      activityIntents: []
+    };
+    expect(timelineHasRunningWork(null)).toBe(false);
+    expect(timelineHasRunningWork([])).toBe(false);
+    expect(timelineHasRunningWork([pendingTool])).toBe(true);
+    expect(timelineHasRunningWork([{ ...pendingTool, status: 'completed' }])).toBe(false);
+    expect(timelineHasRunningWork([{
+      ...base,
+      id: 'u1',
+      kind: 'conversation',
+      role: 'user',
+      text: 'Hello',
+      attachments: null,
+      initiator: 'user',
+      senderThreadId: null,
+      systemMessageKind: 'unlabeled',
+      systemMessageSubject: null,
+      turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+      mentions: []
+    }])).toBe(false);
+    expect(timelineHasRunningWork([{
+      ...base,
+      id: 'turn-1',
+      kind: 'turn',
+      turnId: 'turn-1',
+      status: 'pending',
+      summaryCount: 1,
+      completedAt: null,
+      children: [pendingTool]
+    }])).toBe(true);
+    expect(timelineHasRunningWork([{
+      ...base,
+      id: 'q1',
+      kind: 'work',
+      workKind: 'question',
+      status: 'pending',
+      interactionId: 'pi_1',
+      lifecycle: 'pending',
+      questions: [{
+        id: 'q',
+        prompt: 'Continue?',
+        multiSelect: false,
+        allowFreeText: true
+      }],
+      answers: null,
+      statusReason: null
+    }])).toBe(false);
+    expect(timelineHasRunningWork([{
+      ...base,
+      id: 'a1',
+      kind: 'work',
+      workKind: 'approval',
+      status: 'pending',
+      interactionId: 'pi',
+      approvalKind: 'file-edit',
+      lifecycle: 'waiting',
+      target: { itemId: 'i', toolName: null }
+    }])).toBe(false);
+    expect(timelineHasRunningWork([{
+      ...base,
+      id: 'd1',
+      kind: 'work',
+      workKind: 'delegation',
+      status: 'completed',
+      callId: 'd-1',
+      toolName: 'Task',
+      subagentType: null,
+      description: null,
+      output: '',
+      completedAt: 2,
+      childRows: [pendingTool]
+    }])).toBe(true);
+  });
+
   it('maps conversation status onto agent lanes', () => {
     expect(threadStatusToAgentState('starting')).toBe('working');
     expect(threadStatusToAgentState('active')).toBe('working');
@@ -115,6 +206,9 @@ describe('thread timeline model', () => {
     expect(threadStatusToAgentState('error')).toBe('idle');
     expect(threadStatusToAgentState('error', true)).toBe('idle');
     expect(threadStatusToAgentState('active', true)).toBe('blocked');
+    expect(threadStatusToAgentState('idle', false, { activeBackgroundCommandCount: 1 })).toBe('working');
+    expect(threadStatusToAgentState('idle', true, { activeBackgroundCommandCount: 1 })).toBe('blocked');
+    expect(threadStatusToAgentState('error', false, { activeBackgroundCommandCount: 1 })).toBe('idle');
   });
 
   it('keeps an error tone distinct from Needs you', () => {
@@ -204,6 +298,21 @@ describe('thread timeline model', () => {
     })?.items).toHaveLength(2);
   });
 
+  it('hides the composer todo card once durable plan tasks exist', () => {
+    const live = {
+      sourceSeq: 1,
+      updatedAt: 1,
+      items: [{ id: '1', text: 'open', status: 'pending' as const }]
+    };
+    expect(composerVisibleTodos(live, 0)?.items).toHaveLength(1);
+    expect(composerVisibleTodos(live, 3)).toBeNull();
+    expect(composerVisibleTodos({
+      sourceSeq: 1,
+      updatedAt: 1,
+      items: [{ id: '1', text: 'done', status: 'completed' }]
+    }, 0)).toBeNull();
+  });
+
   it('formats command and file-change bodies', () => {
     expect(workRowBody({ workKind: 'command', output: 'hello' })).toBe('hello');
     expect(workRowBody({ workKind: 'tool', output: 'ok' })).toBe('ok');
@@ -255,6 +364,7 @@ describe('ThreadTimeline', () => {
     );
     expect(html).toContain('thread-detail-timeline thread-scrollbar');
     expect(html).toContain('data-testid="thread-user-text"');
+    expect(html).toContain('thread-timeline-current-turn');
     expect(html).toContain('thread-timeline-item is-user');
     expect(html).toContain('Read README.md');
     expect(html).toContain('data-testid="thread-assistant-text"');
@@ -262,7 +372,7 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('<strong>world</strong>');
   });
 
-  it('renders pending command titles and thinking without todos', () => {
+  it('renders pending command titles without a redundant thinking phrase', () => {
     const rows: TimelineRow[] = [{
       ...base,
       id: 'c1',
@@ -289,8 +399,7 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('data-testid="thread-work-row"');
     expect(html).toContain('ls -la');
     expect(html).toContain('README.md');
-    expect(html).toContain('data-testid="thread-thinking"');
-    expect(html).toContain('Thinking…');
+    expect(html).not.toContain('data-testid="thread-thinking"');
     expect(html).not.toContain('data-testid="thread-todos"');
   });
 
@@ -361,7 +470,11 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('README.md');
     expect(html).toContain('+1 −0');
     expect(html).toContain('data-testid="thread-system-row"');
-    expect(html).toContain('Reconnected — host online');
+    expect(html).toContain('thread-timeline-system-title');
+    expect(html).toContain('Reconnected');
+    expect(html).toContain('thread-timeline-system-detail');
+    expect(html).toContain('host online');
+    expect(html).not.toContain('Reconnected — host online');
     expect(html).not.toContain('data-testid="thread-todos"');
     expect(html).not.toContain('data-testid="thread-thinking"');
   });
@@ -440,7 +553,18 @@ describe('ThreadTimeline', () => {
       />
     );
     expect(html).toContain('data-testid="thread-work-row"');
-    expect(html).toContain(workingCopy);
+    expect(html).not.toContain(workingCopy);
+    expect(html).not.toContain('data-testid="thread-thinking"');
+    expect(html).toContain('is-shimmer">Running</span><span class="is-em is-truncate">2 commands');
+    const errorHtml = renderToStaticMarkup(
+      <ThreadTimeline
+        rows={[command('c-a', 'ls'), command('c-b', 'pwd')]}
+        status="error"
+        thinking={null}
+      />
+    );
+    expect(errorHtml).not.toContain('is-shimmer">Running</span><span class="is-em is-truncate">2 commands');
+    expect(errorHtml).toContain('2 commands');
     expect(renderToStaticMarkup(
       <ThreadTimeline
         rows={[command('c-a', 'ls'), command('c-b', 'pwd')]}

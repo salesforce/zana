@@ -231,7 +231,11 @@ function subscribeHostEvent<E extends keyof HostEvents>(
       });
     case 'session:agentStatus':
       return product.terminals.onAgentStatus((sessionId, state) => {
-        fire({ sessionId, state });
+        // The SDK's public HostEvents union predates the internal `'waiting'`
+        // AgentState (agent at rest awaiting model/delivery). It reads "at rest
+        // alongside idle" everywhere in the renderer, so collapse it to `'idle'`
+        // rather than widen the stable extension contract.
+        fire({ sessionId, state: state === 'waiting' ? 'idle' : state });
       });
     case 'session:exit':
       return product.terminals.onExit((sessionId, code) => {
@@ -519,7 +523,7 @@ export function createModuleHost(
       const ui = useUi.getState();
       ui.enterProjectFocus(projectId);
       ui.selectTab(projectId, session.id);
-      ui.setWorkspaceMode(projectId, 'terminals');
+      ui.setProjectView(projectId, 'terminals');
       return { id: session.id };
     },
     replyToSession: async (sessionId: string, text: string) => {

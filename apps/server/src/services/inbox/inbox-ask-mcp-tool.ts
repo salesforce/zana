@@ -127,6 +127,7 @@ export interface RegisterInboxAskOpts {
   projectLabel?: string;
   /** Originating session — required (the answer is injected back into it). */
   sessionId: string;
+  isExecutionBound?: boolean;
   /** True when the originating session is a scheduled (background) run. */
   scheduled?: boolean;
   /**
@@ -161,6 +162,9 @@ export function registerInboxAskTool(server: McpServer, opts: RegisterInboxAskOp
     { description: INBOX_ASK_DESCRIPTION, inputSchema: inboxAskInputSchema },
     async ({ subject, intent, question, options, allowOther, multiSelect, questions, preamble }) => {
       try {
+        if (opts.isExecutionBound) {
+          throw new Error('generic inbox_ask is disabled in execution-bound sessions; please use the execution.work.block capability to request human decisions.');
+        }
         const multiMode = Array.isArray(questions) && questions.length > 0;
         // Validate the required shape up front (the shared builder is tolerant —
         // it returns {} on empty — but for inbox_ask a question is mandatory).

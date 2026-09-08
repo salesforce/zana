@@ -1,21 +1,21 @@
 # Using Zana on multiple machines
 
-There are two separate ways to use another computer with Zana Command Center:
+There are two separate ways to use another computer with Zana:
 
 - **Enrolled machines** run a host daemon. The other box outbound-connects to
   this app. Add a folder on that machine from **Settings → Machines** (or the
   host picker when adding a local project). Threads then execute there.
-- **SSH remotes** are a workspace on a host from `~/.ssh/config`. New threads
-  default to **This machine**: the coding agent runs here and file/shell tools
-  (`remote_read`, `remote_write`, `remote_edit`, `remote_glob`, `remote_grep`,
-  `remote_exec`) run on the box over SSH. Composer shows **Local agent · remote
-  tools**. Optionally install a host daemon on that box (**Add remote**
-  checkbox, on by default, or composer **Install**). After it connects, pick
-  **This machine** (SSH tools) or **Remote machine** (threads execute on the
-  enrolled daemon). This machine's host daemon must be connected (it owns
-  `~/.ssh`).
+- **SSH remotes** are a project folder on a host from `~/.ssh/config`. Threads run
+  on a host daemon installed on that box (**Add remote** or composer
+  **Install**). Composer Send waits until the daemon is bound and online.
+  The env chip shows `user@host · path · Online`. This machine's host daemon
+  must be connected (it owns `~/.ssh` for the install).
 
 Copy-paste join remains for boxes you cannot SSH to from this machine.
+
+Zana does **not** ship BB Connect, a separate tunnel product, or a mobile
+bridge. Pairing another computer always goes through this app's enrolled host
+daemon and the existing website relay.
 
 ---
 
@@ -27,17 +27,20 @@ the public Heroku origin and relay token (inlined at `electron-vite build` from
 `ZCC_APP_URL` and `ZCC_RELAY_TOKEN`). This laptop dials
 `wss://<origin>/_zcc/relay` — Heroku never inbound-connects to the laptop.
 
-Precedence: runtime env, then the values baked into that build. Settings and
-the repo `public-app-url` file are not used. Do not commit the token; set the
-same `ZCC_RELAY_TOKEN` on Heroku and in the release/CI environment (GitHub
-secrets `ZCC_APP_URL` / `ZCC_RELAY_TOKEN`, or export them before a local
-`pnpm run release:mac` package). The public dual-arch build is produced by
-pushing a `vx.y.z` tag.
+Precedence: runtime env, then the values baked into that build, then
+**Settings → Machines → Public app URL**, then the repo `public-app-url`
+file. `pnpm dev` seeds `ZCC_APP_URL` from that file when the env is unset.
+Do not commit the token; set the same `ZCC_RELAY_TOKEN` on Heroku and in
+the release/CI environment (GitHub secrets `ZCC_APP_URL` / `ZCC_RELAY_TOKEN`,
+or put them in gitignored `.env` for local `pnpm dev`). The public dual-arch
+build is produced by pushing a `vx.y.z` tag.
 
 The token authenticates a laptop to open a session. Isolation between laptops
 is the session URL (`/t/<sessionId>`), not a personal key. Join/enroll through
-that id expires after **5 minutes**; already connected host websockets keep
-working until this app quits.
+that id stays open while this laptop’s relay is connected. The join hint
+renews in the background so Install / Fix never hit a closed window. Host
+websockets keep working until this app quits. If the laptop tunnel drops,
+join/enroll return `relay_offline` until Zana reconnects.
 
 Join commands use `https://<origin>/t/<sessionId>` so remotes route to the
 right laptop.
@@ -81,7 +84,7 @@ curl -fL ${publicAppUrl}/install.sh | sh -s -- \
    **15 minutes** and can be redeemed once. The Machines list turns the new row
    online when the daemon's websocket is open.
 
-If the machine is an SSH workspace (for example `limited-pony`) and you have
+If the machine is an SSH host (for example `limited-pony`) and you have
 not set a public app URL, Add machine copies a **laptop-side** command instead:
 
 ```bash
@@ -90,7 +93,7 @@ ssh -o ExitOnForwardFailure=yes -R 18782:127.0.0.1:<zcc-port> limited-pony \
 ```
 
 Paste that in a terminal **on this computer**. It reverse-tunnels product HTTP
-to the workspace and runs the installer there. Leave the SSH session open so
+to the remote host and runs the installer there. Leave the SSH session open so
 the daemon can keep that tunnel. The installer looks for **Node 22+** on PATH,
 then nix / nvm / fnm / volta (a Node 20 PATH entry is skipped). Override with
 `ZCC_NODE=/path/to/node`.
@@ -120,17 +123,15 @@ stored an SSH alias for that host, Fix restarts the LaunchAgent or systemd user
 unit and reinstalls if restart does not reconnect. If no SSH alias is stored,
 Fix asks you to pick a host from `~/.ssh/config`, then retries.
 
-Fix needs a public origin (baked into the official app, or `ZCC_APP_URL`), not
-loopback. This machine's host daemon must be connected — it owns `~/.ssh` and
-performs the SSH. If SSH cannot run, copy the Settings → Add machine join command.
+Fix needs a public origin (baked into the official app, `ZCC_APP_URL`,
+Settings, or the repo `public-app-url` file), not loopback. This machine's
+host daemon must be connected — it owns `~/.ssh` and performs the SSH. If SSH
+cannot run, copy the Settings → Add machine join command.
 
-**Add remote project** registers the SSH workspace and, by default, installs a
-host daemon over SSH. Uncheck the install box (or skip after a failed install)
-to keep using this machine with SSH tools. Composer **Install** stays available
-until a daemon is bound. After install, pick **This machine** or **Remote
-machine**. Send is blocked only when **Remote machine** is selected and that
-daemon is offline. **This machine** keeps working as long as this machine's
-daemon is connected.
+**Add remote project** registers the SSH project and installs a host daemon
+over SSH. Composer **Install** stays available until a daemon is bound. Send
+is blocked until that daemon is online. If SSH cannot complete the install,
+retry from the composer or copy the reverse-tunnel command.
 
 ---
 
@@ -208,5 +209,5 @@ then reload the service.
 ## Where to go next
 
 - **[Getting started](./getting-started.md)** — first project and first agent.
-- **[Using Zana Command Center](./using-zana.md)** — Inbox, Agents, and the
+- **[Using Zana](./using-zana.md)** — Inbox, Agents, and the
   day-to-day surfaces.

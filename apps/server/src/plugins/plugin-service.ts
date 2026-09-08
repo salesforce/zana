@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { fileURLToPath } from 'node:url';
 import { marketplaceInstallSpec, type MarketplaceEntry } from './marketplace.js';
 import {
@@ -19,9 +19,11 @@ import {
 } from './marketplace-source.js';
 import {
   compareVersions,
+  formatPluginRequireCycle,
   isPluginId,
   parsePluginSource,
   readPluginManifest,
+  sortPluginsByRequires,
   satisfiesRange,
   type ParsedPluginSource,
   type PluginMcpServerContribution,
@@ -51,6 +53,7 @@ import { discoverPluginSkillNames } from './plugin-skills.js';
 import {
   BUILTIN_PLUGINS,
   OFFICIAL_PLUGINS,
+  RECLAIM_UNINSTALLED_AUTOINSTALL_IDS,
   bundledPluginByName,
   isRetiredFirstPartyPluginId
 } from './builtin-registry.js';
@@ -90,6 +93,7 @@ import {
 } from './plugin-agent-tools.js';
 import { startPluginUpdateSweep } from './plugin-updates.js';
 import { buildPluginApp, buildPluginServer, createPluginDevLoop } from '@zana-ai/zcc-plugin-build';
+import { createPluginServicesRegistry } from '@zana-ai/zcc-plugin-sdk/server';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -258,7 +262,13 @@ export interface PluginServiceOptions {
     signal?: AbortSignal;
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginInteractionResult>;
   interruptPluginInteractions?: (pluginId: string) => void;
-  spawnThread?: (args: { pluginId: string; projectId: string; prompt: string; providerId?: string }) => Promise<{ id: string }>;
+  spawnThread?: (args: {
+    pluginId: string;
+    projectId: string;
+    prompt: string;
+    providerId?: string;
+    parentThreadId?: string;
+  }) => Promise<{ id: string }>;
   getThread?: (args: { pluginId: string; threadId: string }) => Promise<
     import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSummary | null
   >;
@@ -271,7 +281,30 @@ export interface PluginServiceOptions {
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadEventRow[]>;
   sendThread?: (args: { pluginId: string; threadId: string; prompt: string }) => Promise<{ id: string }>;
   archiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
-  forkThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+  forkThread?: (args: {
+    pluginId: string;
+    threadId: string;
+    sourceSeqEnd?: number;
+    visibility?: 'visible' | 'hidden';
+    agentContextSeed?: unknown[];
+    title?: string;
+  }) => Promise<{ id: string }>;
+  listThreads?: (args: {
+    pluginId: string;
+    includeHidden?: boolean;
+    originKind?: 'fork';
+    originPluginId?: string;
+    archived?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSummary[]>;
+  listQueuedMessages?: (args: { pluginId: string; threadId: string }) => Promise<Array<{ id: string }>>;
+  createQueuedMessage?: (args: {
+    pluginId: string;
+    threadId: string;
+    input: unknown[];
+    senderThreadId?: string;
+  }) => Promise<{ id: string }>;
   unarchiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
   pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
   listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
@@ -282,6 +315,12 @@ export interface PluginServiceOptions {
    * on change. Gated by ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD at attach.
    */
   watchBuiltinPluginSources?: boolean;
+  /**
+   * Host-contributed agent tool source (not a plugin) — surfaced ahead of
+   * plugin tools in `agentToolSources()`. Used for the Modern team-launch
+   * forwarder, whose tools reach Electron-main's loopback MCP route.
+   */
+  hostAgentToolSource?: PluginAgentToolSource;
 }
 
 interface LivePlugin {
@@ -333,6 +372,24 @@ export function loadManifestFromDir(rootDir: string): PluginManifest {
   throw new Error(`no package.json zcc block or extension.json in ${rootDir}`);
 }
 
+/**
+ * Leftover MainModule dirs (`extension.json`, no `package.json` `zcc` block).
+ * A real plugin — including a path install of an official plugin for
+ * `zcc plugin dev` — has the `zcc` block and must not be treated as leftover.
+ */
+export function isLegacyExtensionJsonPluginRoot(rootDir: string): boolean {
+  const pkgPath = join(rootDir, 'package.json');
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = readJson(pkgPath) as { zcc?: unknown };
+      if (pkg.zcc) return false;
+    } catch {
+      /* unreadable package.json is not a zcc plugin */
+    }
+  }
+  return existsSync(join(rootDir, 'extension.json'));
+}
+
 function assertEngines(manifest: PluginManifest, hostVersion: string, sdkVersion: string): void {
   if (manifest.engines.zcc && !satisfiesRange(hostVersion, manifest.engines.zcc)) {
     throw new Error(`plugin requires zcc ${manifest.engines.zcc} (host ${hostVersion})`);
@@ -374,6 +431,54 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   mkdirSync(kvRoot, { recursive: true });
   let updateSweep: { stop(): void } | null = null;
   const builtinWatchers: Array<{ close(): void }> = [];
+  const servicesRegistry = createPluginServicesRegistry();
+
+  function requiresOf(row: InstalledPluginRow): string[] {
+    try {
+      return loadManifestFromDir(row.rootDir).requires;
+    } catch {
+      return [];
+    }
+  }
+
+  function firstMissingRequiredPlugin(row: InstalledPluginRow): string | null {
+    for (const id of requiresOf(row)) {
+      const required = live.get(id);
+      if (!required?.handle || !required.row.enabled) return id;
+    }
+    return null;
+  }
+
+  function isMissingPluginDetail(detail: string | null | undefined): boolean {
+    return typeof detail === 'string' && detail.startsWith('needs plugin:');
+  }
+
+  async function applyMissingRequiredPluginStatus(): Promise<void> {
+    for (const [id, current] of live) {
+      if (!current.row.enabled || !current.handle) continue;
+      if (current.row.status === 'degraded') continue;
+      const missing = firstMissingRequiredPlugin(current.row);
+      const missingDetail = missing ? `needs plugin: ${missing}` : null;
+      const existingMissing = isMissingPluginDetail(current.row.statusDetail);
+      if (missing) {
+        if (current.row.status !== 'running' && !existingMissing) continue;
+        if (current.row.status === 'needs-configuration' && current.row.statusDetail === missingDetail) {
+          continue;
+        }
+        const next = {
+          ...current.row,
+          status: 'needs-configuration' as const,
+          statusDetail: missingDetail
+        };
+        live.set(id, { ...current, row: next });
+        await store.upsert(next);
+      } else if (existingMissing) {
+        const next = { ...current.row, status: 'running' as const, statusDetail: null };
+        live.set(id, { ...current, row: next });
+        await store.upsert(next);
+      }
+    }
+  }
 
   function agentContributions(): PluginAgentContribution[] {
     return store.list().map((row) => {
@@ -498,15 +603,19 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   }
 
   function agentToolSources(): PluginAgentToolSource[] {
-    return [...live.entries()]
+    const pluginSources = [...live.entries()]
       .filter(([, current]) => current.handle)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([pluginId, current]) => ({
         pluginId,
         tools: current.handle!.agentTools,
         configurers: current.handle!.agentConfigurers,
-        extraInstructions: current.handle!.extraInstructions
+        extraInstructions: current.handle!.extraInstructions,
+        extraInstructionProviders: current.handle!.extraInstructionProviders
       }));
+    // Host source first so its tool names win the dedupe in
+    // resolvePluginSessionTools over any collision from a plugin.
+    return opts.hostAgentToolSource ? [opts.hostAgentToolSource, ...pluginSources] : pluginSources;
   }
 
   async function configuredInstructions(): Promise<Array<{ pluginId: string; text: string }>> {
@@ -554,6 +663,27 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
   }
 
+  /**
+   * Source plugins declare `zcc.app` as `.tsx`. The renderer cannot import
+   * TypeScript, so a one-shot `buildPluginApp` writes the `.js` sibling when
+   * it's missing. Failure is best-effort: the plugin still loads (server via
+   * jiti); the panel stays absent until `zcc plugin dev` or a later reload.
+   */
+  async function ensureCompiledApp(row: InstalledPluginRow): Promise<void> {
+    const declared = row.appEntry;
+    if (!declared || !/\.tsx?$/.test(declared)) return;
+    const compiledRel = declared.replace(/\.tsx?$/, '.js');
+    if (existsSync(join(row.rootDir, compiledRel))) return;
+    try {
+      await buildPluginApp(row.rootDir, hostVersion, { minify: false, sourcemap: true });
+    } catch (error) {
+      console.warn(
+        `[plugins] one-shot app build failed for ${row.id}:`,
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
   function appUrlFor(row: InstalledPluginRow): string | null {
     if (!row.appEntry) return null;
     try {
@@ -591,6 +721,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const disabled = { ...row, status: 'disabled' as const };
       live.set(row.id, { row: disabled, handle: null, rpc: new Map() });
       await store.upsert(disabled);
+      await applyMissingRequiredPluginStatus();
       return;
     }
     if (!existsSync(row.rootDir)) {
@@ -610,6 +741,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await store.upsert(degraded);
       return;
     }
+    await ensureCompiledApp(row);
     const files = listFiles(row.rootDir);
     if (containsNativeAddon(row.rootDir, files)) {
       await disposeOne(row.id);
@@ -664,6 +796,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       sendThread: opts.sendThread,
       archiveThread: opts.archiveThread,
       forkThread: opts.forkThread,
+      listThreads: opts.listThreads,
+      listQueuedMessages: opts.listQueuedMessages,
+      createQueuedMessage: opts.createQueuedMessage,
       unarchiveThread: opts.unarchiveThread,
       pushInbox: opts.pushInbox,
       listProjects: opts.listProjects,
@@ -671,6 +806,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       onNeedsConfiguration: (message) => {
         configurationMessage = message;
       },
+      services: servicesRegistry,
       hostEntryPath: (() => {
         try {
           const manifest = loadManifestFromDir(row.rootDir);
@@ -716,6 +852,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (previous && previous.handle && previous.handle !== handle) {
         await previous.handle.dispose();
       }
+      await applyMissingRequiredPluginStatus();
     } catch (error) {
       await handle.dispose();
       const detail = error instanceof Error ? error.message : String(error);
@@ -1021,11 +1158,47 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await disposeOne(id);
       const row = await store.remove(id);
       await uninstalled.add(id);
-      if (row && row.sourceKind !== 'path' && row.rootDir.startsWith(join(opts.dataDir, 'plugins'))) {
+      if (row && row.rootDir.startsWith(join(opts.dataDir, 'plugins') + sep)) {
         rmSync(row.rootDir, { recursive: true, force: true });
       }
       removeInstalledPluginCopy(opts.dataDir, id);
       removeLeftoverSidecar(opts.dataDir, id);
+    }
+  }
+
+  /**
+   * Official (and builtin) catalog ids used to be leftover `extension.json`
+   * MainModules. Those rows occupy the id, so Browse thinks the plugin is
+   * already installed and the UI calls RPCs the MainModule never registered.
+   * Replace that occupier with the bundled plugin on reconcile. Do not touch
+   * a real `package.json` `zcc` path install (`zcc plugin dev`) and do not
+   * auto-install an official plugin the user never had.
+   */
+  async function reclaimBundledIdsFromLegacyOccupiers(): Promise<void> {
+    for (const def of [...BUILTIN_PLUGINS, ...OFFICIAL_PLUGINS]) {
+      const row = store.get(def.pluginId);
+      if (!row) continue;
+      if (uninstalled.has(def.pluginId)) continue;
+      if (isLocalSidecar(opts.dataDir, def.pluginId)) continue;
+      let bundledDir: string | null = null;
+      try {
+        bundledDir = resolveBundledDir(opts.bundledRoot, def.name);
+      } catch {
+        continue;
+      }
+      if (resolve(row.rootDir) === resolve(bundledDir)) continue;
+      if (!isLegacyExtensionJsonPluginRoot(row.rootDir)) continue;
+      try {
+        await installParsed({ kind: 'builtin', name: def.name }, row.enabled);
+        console.info(
+          `[plugins] replaced leftover extension.json occupier ${def.pluginId} with builtin:${def.name}`
+        );
+      } catch (error) {
+        console.error(
+          `[plugins] failed to replace leftover ${def.pluginId} with builtin:${def.name}:`,
+          error instanceof Error ? error.message : error
+        );
+      }
     }
   }
 
@@ -1119,6 +1292,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const next = { ...row, enabled: false, status: 'disabled' as const, updatedAt: now() };
       await store.upsert(next);
       live.set(id, { row: next, handle: null, rpc: new Map() });
+      await applyMissingRequiredPluginStatus();
       await emitCapabilities();
       await emitAppsChanged();
       await syncCliSkill();
@@ -1129,10 +1303,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await disposeOne(id);
       const row = await store.remove(id);
       await uninstalled.add(id);
-      if (row && row.sourceKind !== 'path' && row.rootDir.startsWith(join(opts.dataDir, 'plugins'))) {
+      if (row && row.rootDir.startsWith(join(opts.dataDir, 'plugins') + sep)) {
         rmSync(row.rootDir, { recursive: true, force: true });
       }
       removeLeftoverSidecar(opts.dataDir, id);
+      await applyMissingRequiredPluginStatus();
       await emitCapabilities();
       await emitAppsChanged();
       await syncCliSkill();
@@ -1152,14 +1327,26 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return updated;
     },
     async reconcileBuiltins() {
+      for (const id of RECLAIM_UNINSTALLED_AUTOINSTALL_IDS) {
+        if (uninstalled.hasReclaimed(id)) continue;
+        if (uninstalled.has(id)) await uninstalled.forget(id);
+        await uninstalled.markReclaimed(id);
+      }
       for (const row of store.list()) {
         if (row.sourceKind !== 'builtin') continue;
+        if (isRetiredFirstPartyPluginId(row.id)) continue;
         const name = row.source.startsWith('builtin:') ? row.source.slice('builtin:'.length) : row.id;
-        const expected = resolveBundledDir(opts.bundledRoot, name);
+        let expected: string;
+        try {
+          expected = resolveBundledDir(opts.bundledRoot, name);
+        } catch {
+          continue;
+        }
         if (existsSync(expected) && resolve(row.rootDir) !== resolve(expected)) {
           await store.upsert({ ...row, rootDir: expected, updatedAt: now() });
         }
       }
+      await reclaimBundledIdsFromLegacyOccupiers();
       const installed: InstalledPluginRow[] = [];
       for (const def of BUILTIN_PLUGINS) {
         if (!def.autoInstall) continue;
@@ -1180,9 +1367,20 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await retireRetiredFirstPartyPlugins();
       await this.reconcileBuiltins();
       await seedOfficialMarketplace();
-      for (const row of store.list()) {
-        if (!live.has(row.id)) await loadOne(row);
+      const pending = store.list().filter((row) => !live.has(row.id));
+      const { ordered, cycles } = sortPluginsByRequires(
+        pending.map((row) => ({ id: row.id, requires: requiresOf(row), row }))
+      );
+      for (const cycle of cycles) {
+        const detail = `plugin requires cycle: ${formatPluginRequireCycle(cycle.cycle)}`;
+        const degraded = { ...cycle.plugin.row, status: 'degraded' as const, statusDetail: detail };
+        live.set(cycle.plugin.id, { row: degraded, handle: null, rpc: new Map() });
+        await store.upsert(degraded);
       }
+      for (const node of ordered) {
+        if (!live.has(node.id)) await loadOne(node.row);
+      }
+      await applyMissingRequiredPluginStatus();
       await emitCapabilities();
       await emitAppsChanged();
       await syncCliSkill();
@@ -1420,11 +1618,7 @@ export function defaultBundledRoot(): string {
 }
 
 export function defaultPluginDataDir(): string {
-  return (
-    process.env.ZCC_DATA_DIR?.trim() ||
-    process.env.ZCC_CENTER_DIR?.trim() ||
-    join(homedir(), '.zcc')
-  );
+  return resolveZccDataDir();
 }
 
 /**
@@ -1538,5 +1732,10 @@ export async function installBundledPlugin(
   }
 }
 
-export { BUILTIN_PLUGINS, OFFICIAL_PLUGINS, bundledPluginByName } from './builtin-registry.js';
+export {
+  BUNDLED_PLUGINS,
+  BUILTIN_PLUGINS,
+  OFFICIAL_PLUGINS,
+  bundledPluginByName
+} from './builtin-registry.js';
 export type { InstalledPluginRow } from './plugin-store.js';

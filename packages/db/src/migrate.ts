@@ -140,6 +140,97 @@ const MIGRATE_V8 = [
      ON deferred_thread_messages(thread_id, created_at, id)`
 ];
 
+const MIGRATE_V9 = [
+  `ALTER TABLE deferred_thread_messages ADD COLUMN status TEXT NOT NULL DEFAULT 'queued'`,
+  `ALTER TABLE deferred_thread_messages ADD COLUMN paused INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE deferred_thread_messages ADD COLUMN send_after INTEGER`,
+  `ALTER TABLE deferred_thread_messages ADD COLUMN failure_reason TEXT`,
+  `ALTER TABLE deferred_thread_messages ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0`,
+  `UPDATE deferred_thread_messages SET updated_at = created_at WHERE updated_at = 0`,
+  `CREATE INDEX deferred_thread_messages_due_idx
+     ON deferred_thread_messages(status, paused, send_after, created_at, id)`
+];
+
+const MIGRATE_V10 = [
+  `CREATE TABLE thread_execution_state (
+        thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+        requested_mode TEXT,
+        effective_mode TEXT,
+        updated_at INTEGER NOT NULL
+      )`,
+  `CREATE TABLE thread_plans (
+        id TEXT PRIMARY KEY,
+        root_thread_id TEXT NOT NULL UNIQUE REFERENCES threads(id) ON DELETE CASCADE,
+        status TEXT NOT NULL CHECK (status IN ('draft', 'active', 'completed')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+  `CREATE TABLE thread_plan_revisions (
+        id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL REFERENCES thread_plans(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL,
+        markdown TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE (plan_id, sequence)
+      )`,
+  `CREATE INDEX thread_plan_revisions_plan_seq_idx ON thread_plan_revisions(plan_id, sequence)`,
+  `CREATE TABLE thread_plan_tasks (
+        id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL REFERENCES thread_plans(id) ON DELETE CASCADE,
+        text TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'blocked', 'completed', 'cancelled')),
+        sort_order INTEGER NOT NULL,
+        owner_kind TEXT NOT NULL CHECK (owner_kind IN ('user', 'provider')),
+        provider_key TEXT,
+        started_at INTEGER,
+        owning_thread_id TEXT,
+        latest_activity TEXT,
+        blocked_reason TEXT,
+        user_edited INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+  `CREATE INDEX thread_plan_tasks_plan_order_idx ON thread_plan_tasks(plan_id, sort_order, id)`,
+  `CREATE TABLE thread_plan_references (
+        id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL REFERENCES thread_plans(id) ON DELETE CASCADE,
+        task_id TEXT,
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        UNIQUE (plan_id, thread_id, task_id)
+      )`
+];
+
+const MIGRATE_V11 = [
+  `ALTER TABLE threads ADD COLUMN pinned_at INTEGER`,
+  `ALTER TABLE threads ADD COLUMN pin_order INTEGER`,
+  `CREATE INDEX threads_pinned_idx ON threads(pinned_at, pin_order, updated_at)`,
+  `ALTER TABLE deferred_thread_messages ADD COLUMN group_boundary_id TEXT`
+];
+
+const MIGRATE_V12 = [
+  `ALTER TABLE threads ADD COLUMN origin_plugin_id TEXT`,
+  `CREATE INDEX threads_origin_plugin_idx ON threads(origin_plugin_id, visibility, archived_at)`
+];
+
+const MIGRATE_V13 = [
+  `ALTER TABLE thread_plans ADD COLUMN file_path TEXT`
+];
+
+const MIGRATE_V14 = [
+  `ALTER TABLE hosts ADD COLUMN default_workspace_path TEXT`
+];
+
+const MIGRATE_V15 = [
+  `CREATE TABLE thread_tabs (
+        thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL DEFAULT 0,
+        tabs_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`
+];
+
 const MIGRATE_V5 = [
   `CREATE TABLE pending_interactions (
         id TEXT PRIMARY KEY,
@@ -239,6 +330,13 @@ export function migrate(database: SqliteDatabase): void {
   if (!applied.has(6)) applyVersion(database, 6, MIGRATE_V6);
   if (!applied.has(7)) applyVersion(database, 7, MIGRATE_V7);
   if (!applied.has(8)) applyVersion(database, 8, MIGRATE_V8);
+  if (!applied.has(9)) applyVersion(database, 9, MIGRATE_V9);
+  if (!applied.has(10)) applyVersion(database, 10, MIGRATE_V10);
+  if (!applied.has(11)) applyVersion(database, 11, MIGRATE_V11);
+  if (!applied.has(12)) applyVersion(database, 12, MIGRATE_V12);
+  if (!applied.has(13)) applyVersion(database, 13, MIGRATE_V13);
+  if (!applied.has(14)) applyVersion(database, 14, MIGRATE_V14);
+  if (!applied.has(15)) applyVersion(database, 15, MIGRATE_V15);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

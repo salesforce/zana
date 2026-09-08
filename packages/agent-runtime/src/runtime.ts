@@ -23,6 +23,7 @@ import type {
 import {
   BRIDGE_JSON_RPC_ERRORS,
   ThreadEventGrammar,
+  providerHealthResultSchema,
 } from "@zana-ai/zcc-provider-bridge-protocol";
 import {
   JsonRpcResponseError,
@@ -77,10 +78,8 @@ import {
   resolveThreadIdentityResult,
   threadIdentityResultSchema,
 } from "./thread-identity.js";
-import {
-  fingerprintAcpLaunchSpec,
-  bridgeLaunchProcessKey,
-} from "./acp-launch-spec-fingerprint.js";
+import { fingerprintAcpLaunchSpec } from "./acp-launch-spec-fingerprint.js";
+import { bridgeLaunchProcessKey } from "./bridge-launch-process-key.js";
 
 interface ReconfigureThreadIfNeededArgs {
   options: AgentRuntimeExecutionOptions;
@@ -1752,6 +1751,9 @@ function createAgentRuntimeInternal(
                 threadId,
                 cwd: options.workspacePath,
                 sourceProviderThreadId: fork.sourceProviderThreadId,
+                ...(fork.sourceProviderCheckpointId !== undefined
+                  ? { sourceProviderCheckpointId: fork.sourceProviderCheckpointId }
+                  : {}),
                 options: providerExecutionContext,
                 dynamicTools,
                 disallowedTools,
@@ -2568,6 +2570,34 @@ function createAgentRuntimeInternal(
         resultSchema: ignoredJsonRpcResultSchema,
       });
       return proc.adapter.parseModelListResult(result);
+    },
+
+    async providerHealth({ providerId, acpLaunchSpec, bridgeLaunch, cwd }) {
+      await runtime.ensureProvider({
+        providerId,
+        ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
+        ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
+      });
+      const proc = requireProviderProcess({
+        processKey: resolveProviderProcessKey({
+          ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
+          ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
+          providerId,
+        }),
+        providerId,
+      });
+      const plan = proc.adapter.buildCommandPlan({
+        type: "provider/health",
+        ...(cwd !== undefined ? { cwd } : {}),
+      });
+      if (plan.kind === "noop") {
+        return { supported: false as const };
+      }
+      return await sendCommand({
+        proc,
+        message: plan,
+        resultSchema: providerHealthResultSchema,
+      });
     },
 
     listRunningProviders() {

@@ -3,6 +3,7 @@ import { AUTO_CLOSE_IDLE_DEFAULTS, HEARTBEAT_DEFAULTS, SESSION_MEMORY_DEFAULTS }
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { OverseerRecentPane } from '@/components/settings/OverseerRecentPane';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
 
 export function AgentsSettingsView({
   config,
@@ -54,28 +55,10 @@ export function AgentsSettingsView({
       >
         <CheckboxField
           label="Idle-agent triage"
-          help="When an agent goes idle, classify why — waiting on you, done, or paused — and badge it on the Agents board. Uses the idle-triage prompt through the selected monitor HTTP provider. Off by default: it spends tokens."
+          help="When an agent goes idle, classify why — waiting on you, done, or paused — and badge it on the Agents board. Uses the idle-triage prompt (edit under Prompts). Off by default: it spends tokens, one claude call per idle spell."
           checked={config.idleTriageEnabled ?? false}
           onChange={(v) => onUpdate({ idleTriageEnabled: v })}
         />
-        <Field
-          label="Monitor semantic provider"
-          help="Used only for idle triage and catch-up summaries. Select OpenAI or Gemini after configuring its key under Prompts. Without one, monitoring stays deterministic and semantic results are unavailable."
-        >
-          <PopoverPicklist
-            value={config.monitorSemanticProvider ?? ''}
-            ariaLabel="Monitor semantic provider"
-            searchable={false}
-            onChange={(monitorSemanticProvider) =>
-              onUpdate({ monitorSemanticProvider: monitorSemanticProvider || undefined })
-            }
-            options={[
-              { value: '', label: 'No provider (semantic work unavailable)' },
-              { value: 'openai', label: 'OpenAI' },
-              { value: 'gemini', label: 'Gemini' }
-            ]}
-          />
-        </Field>
         {config.idleTriageEnabled && (
           <>
             <Field
@@ -152,7 +135,7 @@ export function AgentsSettingsView({
       >
         <CheckboxField
           label="Include scheduled agents in Agent View"
-          help="Show your schedules and their live runs on the Agents board, list, and flow. Armed jobs sit in a Scheduled column; while a run is working it uses Working, and finished runs use Done. On by default. Turn off to keep scheduled jobs on the Scheduler panel and in the inbox only."
+          help="Show waiting scheduled agents and armed jobs in a Scheduled column on the Agents board, list, and flow. A scheduled run that is working or blocked still appears in Working even when this is off; finished runs use Done only while this is on. On by default. Scheduled runs never appear under a project in the sidebar — use Agent View or the Scheduler panel."
           checked={config.includeScheduledAgentsInAgentView ?? true}
           onChange={(v) => onUpdate({ includeScheduledAgentsInAgentView: v })}
         />
@@ -259,8 +242,8 @@ export function AgentsSettingsView({
           </>
         )}
         <Field
-          label="Autonomous run timeout (minutes, 0 = no timeout)"
-          help="How long an autonomous squad can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
+          label="Team timeout (minutes, 0 = no timeout)"
+          help="How long Autonomous Team runs and Team jobs can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
         >
           <input
             type="number"
@@ -443,6 +426,7 @@ export function AgentsSettingsView({
           />
         </Field>
       </Section>
+      <RemoteMachineDefaultsList />
 
       {/* Overseer — the auto-mode-OFF fallback auto-approval cascade. The
           sub-settings (LLM tier, deny patterns) only show once it's armed. */}

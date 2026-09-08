@@ -19,6 +19,7 @@ import {
   FILE_LIST_LIMIT_MAX,
   FILE_LIST_QUERY_MAX_LENGTH,
   pendingInteractionResolutionSchema,
+  promptInputSchema,
   reasoningLevelSchema
 } from '@zana-ai/zcc-domain/thread-runtime';
 import {
@@ -41,8 +42,15 @@ import { HOST_ARTIFACT_MAX_BYTES } from '@zana-ai/zcc-host-daemon-contract';
  * 18: HostBridgeLaunch is digest+byteLength (no laptop artifactPath/dataDir);
  * remotes fetch packed dist/host.js from GET /internal/plugins/:id/host/:digest.
  * 19: host FS discovery (list_paths, read_path, file_metadata, pick_folder).
+ * 20: optional terminal.start command (login shell -lc).
+ * 21: project-authorized native harness agent descriptor discovery.
+ * 22: optional providerCheckpointId on thread.start/resume; permissionEscalation
+ * and expectedTurnId on turn.submit. Additive: provider.health (older daemons
+ * answer unknown_command; listing falls back to provider.status).
+ * 23: thread.start / turn.submit input is PromptInput[] so command mentions
+ * and attachments survive the host hop (BB-aligned).
  */
-export const HOST_RPC_PROTOCOL_VERSION = 19;
+export const HOST_RPC_PROTOCOL_VERSION = 23;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -53,7 +61,9 @@ const RelPathSchema = z.string().min(1).max(1024);
 
 export const HostRpcCommandTypeSchema = z.enum([
   'provider.status',
+  'provider.agent_descriptors',
   'provider.list_models',
+  'provider.health',
   'environment.provision',
   'environment.provision.cancel',
   'environment.destroy',
@@ -102,6 +112,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'project.clone',
   'project.clone_default_path',
   'codex.voice.transcribe',
+  'codex.inference.complete',
   'interactive.resolve',
   'provider.cli_status',
   'provider.cli_install',
@@ -121,6 +132,13 @@ export type WorkspaceContext = z.infer<typeof workspaceContextSchema>;
 
 export const ProviderStatusCommandSchema = z.object({
   type: z.literal('provider.status')
+}).strict();
+
+export const ProviderAgentDescriptorsCommandSchema = z.object({
+  type: z.literal('provider.agent_descriptors'),
+  cwd: PathSchema,
+  profile: z.string().min(1).max(128),
+  refresh: z.boolean()
 }).strict();
 
 const unmanagedCheckoutSchema = z.discriminatedUnion('kind', [
@@ -238,13 +256,21 @@ export const ProviderListModelsCommandSchema = z.object({
 }).strict();
 export type ProviderListModelsCommand = z.infer<typeof ProviderListModelsCommandSchema>;
 
+export const ProviderHealthCommandSchema = z.object({
+  type: z.literal('provider.health'),
+  providerId: z.string().min(1),
+  bridgeLaunch: HostBridgeLaunchSchema,
+  cwd: PathSchema.optional()
+}).strict();
+export type ProviderHealthCommand = z.infer<typeof ProviderHealthCommandSchema>;
+
 export const ThreadStartCommandSchema = z.object({
   type: z.literal('thread.start'),
   threadId: UuidSchema,
   environmentId: UuidSchema,
   projectId: z.string().min(1),
   providerId: z.string().min(1),
-  input: z.array(z.string()).default([]),
+  input: z.array(promptInputSchema).default([]),
   cwd: PathSchema.optional(),
   title: z.string().max(200).optional(),
   extraArgs: z.array(z.string().max(4000)).max(64).optional(),
@@ -276,12 +302,16 @@ export const ThreadStartCommandSchema = z.object({
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
+  acpMode: z.string().min(1).max(200).optional(),
+  claudeCodePermissionMode: z.literal('plan').optional(),
+  providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
   providerThreadId: z.string().min(1).optional(),
   /** Correlates turn/input/accepted with the server's client/turn/requested. */
   clientRequestId: clientTurnRequestIdSchema.optional(),
   /** Plugin-registered ACP tools attached via bb-bridge for this session. */
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
-  instructions: z.string().max(100_000).optional()
+  instructions: z.string().max(100_000).optional(),
+  providerCheckpointId: z.string().min(1).max(200).optional()
 }).strict();
 
 export const ThreadResizeCommandSchema = z.object({
@@ -317,8 +347,12 @@ export const ThreadResumeFieldsSchema = z.object({
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
+  acpMode: z.string().min(1).max(200).optional(),
+  claudeCodePermissionMode: z.literal('plan').optional(),
+  providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
-  instructions: z.string().max(100_000).optional()
+  instructions: z.string().max(100_000).optional(),
+  providerCheckpointId: z.string().min(1).max(200).optional()
 }).strict();
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
 
@@ -326,12 +360,17 @@ export const TurnSubmitCommandSchema = z.object({
   type: z.literal('turn.submit'),
   threadId: UuidSchema,
   environmentId: UuidSchema,
-  input: z.array(z.string().min(1)).min(1),
+  input: z.array(promptInputSchema).min(1),
   mode: z.enum(['start', 'auto', 'steer', 'queue-if-active', 'steer-if-active']).optional(),
   resume: ThreadResumeFieldsSchema.optional(),
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
-  clientRequestId: clientTurnRequestIdSchema.optional()
+  acpMode: z.string().min(1).max(200).optional(),
+  claudeCodePermissionMode: z.literal('plan').optional(),
+  providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
+  clientRequestId: clientTurnRequestIdSchema.optional(),
+  permissionEscalation: z.enum(['ask', 'deny']).optional(),
+  expectedTurnId: z.string().min(1).max(200).optional()
 }).strict();
 
 export const ThreadResumeCommandSchema = ThreadResumeFieldsSchema.extend({
@@ -402,7 +441,8 @@ export const TerminalStartCommandSchema = z.object({
   root: PathSchema,
   cwd: PathSchema.optional(),
   cols: z.number().int().min(20).max(300).optional(),
-  rows: z.number().int().min(8).max(100).optional()
+  rows: z.number().int().min(8).max(100).optional(),
+  command: z.string().max(10_000).optional()
 }).strict();
 
 export const TerminalInputCommandSchema = z.object({
@@ -604,6 +644,16 @@ export const CodexVoiceTranscribeCommandSchema = z.object({
 }).strict();
 export type CodexVoiceTranscribeCommand = z.infer<typeof CodexVoiceTranscribeCommandSchema>;
 
+export const CodexInferenceCompleteCommandSchema = z.object({
+  type: z.literal('codex.inference.complete'),
+  model: z.string().min(1).max(120),
+  reasoningEffort: z.literal('none'),
+  prompt: z.string().min(1),
+  outputSchema: z.record(z.string(), z.unknown()),
+  timeoutMs: z.number().int().positive().max(120_000)
+}).strict();
+export type CodexInferenceCompleteCommand = z.infer<typeof CodexInferenceCompleteCommandSchema>;
+
 export const InteractiveResolveCommandSchema = z.object({
   type: z.literal('interactive.resolve'),
   threadId: UuidSchema,
@@ -674,7 +724,9 @@ export type PeerDaemonInstallCommand = z.infer<typeof PeerDaemonInstallCommandSc
 
 export const HostRpcCommandSchema = z.union([
   ProviderStatusCommandSchema,
+  ProviderAgentDescriptorsCommandSchema,
   ProviderListModelsCommandSchema,
+  ProviderHealthCommandSchema,
   EnvironmentProvisionCommandSchema,
   EnvironmentProvisionCancelCommandSchema,
   EnvironmentDestroyCommandSchema,
@@ -723,6 +775,7 @@ export const HostRpcCommandSchema = z.union([
   ProjectCloneCommandSchema,
   ProjectCloneDefaultPathCommandSchema,
   CodexVoiceTranscribeCommandSchema,
+  CodexInferenceCompleteCommandSchema,
   InteractiveResolveCommandSchema,
   ProviderCliStatusCommandSchema,
   ProviderCliInstallCommandSchema,
@@ -749,15 +802,60 @@ const ProviderStatusEntrySchema = z.object({
 }).strict();
 
 export const ProviderStatusResultSchema = z.object({
-  providers: z.array(ProviderStatusEntrySchema)
+  providers: z.array(ProviderStatusEntrySchema),
+  extraInstalledAgents: z.array(z.object({
+    providerId: z.string().min(1),
+    installed: z.boolean()
+  }).strict()).optional()
 }).strict();
 export type ProviderStatusResult = z.infer<typeof ProviderStatusResultSchema>;
 
+export const ProviderAgentDescriptorsResultSchema = z.union([
+  z.object({
+    status: z.literal('success'),
+    descriptors: z.array(z.object({
+      id: z.string().min(1).max(256),
+      label: z.string().min(1).max(256),
+      directLaunchAllowed: z.boolean(),
+      mode: z.enum(['primary', 'subagent', 'all']).optional(),
+      hidden: z.boolean().optional()
+    }).passthrough())
+  }).strict(),
+  z.object({
+    status: z.literal('failure'),
+    reason: z.string().min(1).max(128).optional(),
+    agentId: z.string().min(1).max(256).optional()
+  }).strict()
+]);
+export type ProviderAgentDescriptorsResult = z.infer<typeof ProviderAgentDescriptorsResultSchema>;
+
 export const ProviderListModelsResultSchema = z.object({
   models: z.array(availableModelSchema),
-  selectedOnlyModels: z.array(availableModelSchema)
+  selectedOnlyModels: z.array(availableModelSchema),
+  acpMode: z.object({
+    currentValue: z.string().optional(),
+    options: z.array(z.object({ value: z.string(), name: z.string().optional() }))
+  }).optional()
 }).strict();
 export type ProviderListModelsResult = z.infer<typeof ProviderListModelsResultSchema>;
+
+export const ProviderHealthResultSchema = z.discriminatedUnion('supported', [
+  z.object({ supported: z.literal(false) }).passthrough(),
+  z.object({
+    supported: z.literal(true),
+    health: z.object({
+      status: z.enum([
+        'ready',
+        'not_installed',
+        'unauthenticated',
+        'expired',
+        'unsupported_version',
+        'unknown'
+      ])
+    }).passthrough()
+  }).passthrough()
+]);
+export type ProviderHealthResult = z.infer<typeof ProviderHealthResultSchema>;
 
 export const EnvironmentProvisionResultSchema = discoveredWorkspacePropertiesSchema.extend({
   environmentId: UuidSchema,
@@ -1039,6 +1137,12 @@ export const CodexVoiceTranscribeResultSchema = z.object({
 }).strict();
 export type CodexVoiceTranscribeResult = z.infer<typeof CodexVoiceTranscribeResultSchema>;
 
+export const CodexInferenceCompleteResultSchema = z.object({
+  model: z.string().min(1),
+  value: z.record(z.string(), z.unknown())
+}).strict();
+export type CodexInferenceCompleteResult = z.infer<typeof CodexInferenceCompleteResultSchema>;
+
 export const InteractiveResolveResultSchema = z.object({
   interactionId: z.string().min(1),
   delivered: z.literal(true)
@@ -1073,7 +1177,8 @@ export type HostGlobalSkillsStatusResult = z.infer<typeof HostGlobalSkillsStatus
 
 export const PeerDaemonStatusResultSchema = z.object({
   state: z.enum(['connected', 'disconnected', 'not_installed']),
-  message: z.string().min(1).optional()
+  message: z.string().min(1).optional(),
+  hostId: UuidSchema.optional()
 }).strict();
 export type PeerDaemonStatusResult = z.infer<typeof PeerDaemonStatusResultSchema>;
 
@@ -1099,7 +1204,9 @@ export type {
 
 export const HostRpcResultSchemaByType = {
   'provider.status': ProviderStatusResultSchema,
+  'provider.agent_descriptors': ProviderAgentDescriptorsResultSchema,
   'provider.list_models': ProviderListModelsResultSchema,
+  'provider.health': ProviderHealthResultSchema,
   'environment.provision': EnvironmentProvisionResultSchema,
   'environment.provision.cancel': EnvironmentProvisionCancelResultSchema,
   'environment.destroy': EnvironmentDestroyResultSchema,
@@ -1148,6 +1255,7 @@ export const HostRpcResultSchemaByType = {
   'project.clone': ProjectCloneResultSchema,
   'project.clone_default_path': ProjectCloneDefaultPathResultSchema,
   'codex.voice.transcribe': CodexVoiceTranscribeResultSchema,
+  'codex.inference.complete': CodexInferenceCompleteResultSchema,
   'interactive.resolve': InteractiveResolveResultSchema,
   'provider.cli_status': ProviderCliStatusResultSchema,
   'provider.cli_install': ProviderCliInstallResultSchema,

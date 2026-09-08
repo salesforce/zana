@@ -18,7 +18,9 @@ import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/per
 import { atomicDurableWrite } from '../harness-routing/storage.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
 
-const userPersonasDir = () => join(app.getPath('home'), '.zcc', 'personas');
+import { electronZccDataDir } from '../../electron-data-dir.js';
+
+const userPersonasDir = () => join(electronZccDataDir(), 'personas');
 const projectPersonasDir = (project: Project) =>
   join(project.path, '.zcc', 'personas');
 

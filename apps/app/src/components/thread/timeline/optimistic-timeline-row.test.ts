@@ -25,6 +25,35 @@ describe('optimistic timeline rows', () => {
     expect(mergeOptimisticTimelineRows([], optimistic)).toEqual([optimistic]);
   });
 
+  it('keeps an image-only optimistic row until the server attachments land', () => {
+    const optimistic = buildOptimisticUserTimelineRow({
+      threadId: 't1',
+      text: '',
+      now: 1,
+      localImagePaths: ['shot-1.png']
+    });
+    expect(optimistic.attachments?.localImagePaths).toEqual(['shot-1.png']);
+    const textOnly = {
+      ...optimistic,
+      id: 'server-empty',
+      attachments: null
+    };
+    expect(mergeOptimisticTimelineRows([textOnly], optimistic)).toEqual([textOnly, optimistic]);
+    const withImage = {
+      ...optimistic,
+      id: 'server-img',
+      attachments: {
+        webImages: 0,
+        localImages: 1,
+        localFiles: 0,
+        imageUrls: [],
+        localImagePaths: ['shot-1.png'],
+        localFilePaths: []
+      }
+    };
+    expect(mergeOptimisticTimelineRows([withImage], optimistic)).toEqual([withImage]);
+  });
+
   it('injects Stop requested until a real interruption row lands', () => {
     const pending = mergePendingStopRow([], { threadId: 't1', isStopping: true, stoppingAnchorAt: 10 });
     expect(pending[0]).toMatchObject({ title: 'Stop requested', operationKind: 'thread-interrupted' });
@@ -62,6 +91,9 @@ describe('thread search', () => {
 describe('timeline window', () => {
   it('retains terminal expansion ids with a cap and windows long lists', () => {
     expect(retainTerminalExpansionIds(['a'], ['b', 'c'], 2)).toEqual(['b', 'c']);
+    const previous = ['a'];
+    expect(retainTerminalExpansionIds(previous, ['a'])).toBe(previous);
+    expect(retainTerminalExpansionIds(['a', 'b'], ['c'], 2)).toEqual(['b', 'c']);
     const rows = Array.from({ length: 5 }, (_, index) => ({ id: `r${index}` }));
     expect(windowTimelineRows(rows, 3).hiddenCount).toBe(2);
     expect(windowTimelineRows(rows, 3, { keepId: 'r0' }).visible[0]?.id).toBe('r0');

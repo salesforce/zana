@@ -11,6 +11,7 @@ import type {
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
 import { buildLaunchArgs } from './AgentLauncher.js';
+import { agentCardRuntimeLabel } from './fleet-item.js';
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
 import {
   CommandComposer,
@@ -25,28 +26,64 @@ import { posixQuote } from '../lib/quote.js';
 import { attachmentName } from '../lib/attachments.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
-import { composerProjectOptions, resolveComposerProjectId } from './composer-project-default.js';
+import {
+  composerProjectOptions,
+  isRemoteWorkspaceProject,
+  resolveComposerProjectId,
+  type ComposerProjectSelectionProps
+} from './composer-project-default.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
+import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
+import { consumeComposerModeCycle } from './thread/pickers/composer-mode.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
+import { PluginComposerAdvanced, PluginComposerMeta } from '../plugins/PluginComposerSlots.js';
+import {
+  getMergedLaunchPatch,
+  subscribeLaunchPatches
+} from '../plugins/plugin-composer-api.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
-import { composerProvidersFromCatalog } from './thread/pickers/fallback-models.js';
+import { composerProvidersFromCatalog, fallbackProviderOption } from './thread/pickers/fallback-models.js';
+import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
+import { PopoverPicklist } from './ui/PopoverPicklist.js';
+import { TextArgsField } from './settings/FormFields.js';
 import {
   absolutePathMentions,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
+  applyLaunchPatch,
+  cliAgentCatalogProviders,
+  cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
+  cliAgentMoreModelOptions,
+  cliLaunchFromPermissionMode,
+  cliPermissionModesFor,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
+  readCliExtraArgs,
+  resolveCliAgentFamily,
+  resolveCliLaunchProfile,
   rewritePromptPaths,
-  threadProviderIdForFamily
+  threadProviderIdForFamily,
+  unrestrictedProfileId,
+  withExecutionState,
+  writeCliExtraArgs
 } from './legacy-agent-home.js';
+import {
+  pickOfferedComposerModel,
+  rememberComposerSelection,
+  rememberedProviderId,
+  rememberedSelectionFor
+} from './thread/pickers/composer-selection-preference.js';
 import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
   prefetchThreadModelCatalog,
+  reloadThreadProviderModels,
+  setThreadModelCatalogHost,
   subscribeThreadModelCatalog
 } from './thread/pickers/thread-model-catalog.js';
+import { defaultHostId, useHosts } from '../hooks/useHosts.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
 
@@ -56,6 +93,8 @@ const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
  */
 export function LegacyAgentHomeComposer({
   project: pinnedProject,
+  composerProjectId,
+  onComposerProjectIdChange,
   initialText,
   onLaunched,
   onClose
@@ -64,7 +103,7 @@ export function LegacyAgentHomeComposer({
   initialText?: string;
   onLaunched?: (session: TerminalSession, projectId: string) => void;
   onClose?: () => void;
-}) {
+} & ComposerProjectSelectionProps) {
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
   const createTerminal = useData((s) => s.createTerminal);
@@ -75,9 +114,22 @@ export function LegacyAgentHomeComposer({
   const harnessCodexEnabled = useData((s) => s.harnessCodexEnabled);
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
+  const cliRemoteHostCatalogEnabled = useData((s) => s.cliRemoteHostCatalogEnabled);
   const selectTab = useUi((s) => s.selectTab);
   const pushToast = useUi((s) => s.pushToast);
-  const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
+  const selectedProjectId = useUi((s) => s.selectedProjectId);
+  const lastProjectId = useData((s) => s.lastProjectId);
+  const [internalProjectId, setInternalProjectId] = useState(
+    pinnedProject?.id ?? composerProjectId ?? ''
+  );
+  const projectId = pinnedProject?.id
+    ?? (onComposerProjectIdChange ? (composerProjectId || internalProjectId) : internalProjectId);
+  const setProjectId = (nextProjectId: string | ((current: string) => string)) => {
+    const resolved = typeof nextProjectId === 'function' ? nextProjectId(projectId) : nextProjectId;
+    if (!onComposerProjectIdChange) setInternalProjectId(resolved);
+    onComposerProjectIdChange?.(resolved);
+  };
+  const preferredProjectId = selectedProjectId ?? lastProjectId;
   const [familyId, setFamilyId] = useState<HarnessFamily | ''>('');
   const [automaticProfile, setAutomaticProfile] = useState<LaunchProfileId | null>(null);
   const [selectionState, setSelectionState] = useState<'loading' | 'resolved' | 'unavailable'>('loading');
@@ -85,19 +137,47 @@ export function LegacyAgentHomeComposer({
   const [selectionMessage, setSelectionMessage] = useState<string | null>(null);
   const [selectionProvenance, setSelectionProvenance] = useState<'automatic' | 'explicit'>('automatic');
   const [modelId, setModelId] = useState('');
+  // OpenCode native-role selection (`--agent <role>`). Roles come from the SAME
+  // ACP session-mode list the Modern composer uses (`catalogEntry.acpMode`), so
+  // both surfaces show an identical, plain-named list. Non-opencode harnesses
+  // have no role axis.
+  const [roleTargetId, setRoleTargetId] = useState<string | undefined>(undefined);
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePickerValue>(() => defaultWorkspaceChoice(false));
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [extraArgs, setExtraArgs] = useState<string[]>([]);
+  const [personaId, setPersonaId] = useState('');
+  const [permissionMode, setPermissionMode] = useState('accept-edits');
+  const launchPatch = useSyncExternalStore(
+    subscribeLaunchPatches,
+    getMergedLaunchPatch,
+    getMergedLaunchPatch
+  );
   const ensureScratchRef = useRef(false);
   const selectionGeneration = useRef(0);
   const descriptorGeneration = useRef(0);
   const launchRef = useRef<() => void>(() => undefined);
   const launchProjects = useMemo(() => composerProjectOptions(projects), [projects]);
   const harnesses = useMemo(() => availableAgentHarnesses(descriptors), [descriptors]);
+  const harnessesRef = useRef(harnesses);
+  const familyIdRef = useRef(familyId);
+  harnessesRef.current = harnesses;
+  familyIdRef.current = familyId;
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
+  const hosts = useHosts();
+  const executionHostId = defaultHostId(hosts, project);
   const selectedHarness = harnesses.find((descriptor) => descriptor.id === familyId);
+  const unrestrictedId = unrestrictedProfileId(selectedHarness?.profiles);
+
+  useEffect(() => {
+    setExtraArgs(readCliExtraArgs(familyId));
+  }, [familyId]);
+  const cliRuntimeProfile = automaticProfile
+    ?? selectedHarness?.defaultProfileId
+    ?? (familyId ? PROFILE_BY_FAMILY[familyId] : 'claude');
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
     getThreadModelCatalog,
@@ -105,21 +185,48 @@ export function LegacyAgentHomeComposer({
   );
   const selectedProviderId = (familyId && threadProviderIdForFamily(familyId)) || '';
   const catalogEntry = selectedProviderId ? catalog.byProvider[selectedProviderId] : undefined;
+  const catalogPermissionModes = useMemo(() => {
+    const fromCatalog = catalog.providers.find((row) => row.id === selectedProviderId)?.permissionModes;
+    if (fromCatalog && fromCatalog.length > 0) return fromCatalog;
+    return selectedProviderId ? fallbackProviderOption(selectedProviderId).permissionModes : [];
+  }, [catalog.providers, selectedProviderId]);
+  const permissionModeIds = useMemo(
+    () => cliPermissionModesFor({
+      catalogModes: catalogPermissionModes,
+      hasUnrestrictedProfile: Boolean(unrestrictedId)
+    }),
+    [catalogPermissionModes, unrestrictedId]
+  );
+  const permissionOptions = permissionModeOptionsFor(permissionModeIds);
+  const preferHostModels = cliRemoteHostCatalogEnabled && isRemoteWorkspaceProject(project);
   const models = cliAgentModelOptions({
     adapterModels: selectedHarness?.targets?.models ?? EMPTY_MODELS,
-    catalogModels: catalogEntry?.models ?? []
+    catalogModels: catalogEntry?.models ?? [],
+    preferCatalog: preferHostModels,
+    catalogReady: Boolean(catalogEntry)
   });
-  const moreModelOptions = (selectedHarness?.targets?.models?.length ?? 0) > 0
-    ? []
-    : (catalogEntry?.selectedOnlyModels ?? []).map((row) => ({
-      value: row.model,
-      label: row.displayName
-    }));
+  const moreModelOptions = cliAgentMoreModelOptions({
+    adapterModelCount: selectedHarness?.targets?.models?.length ?? 0,
+    catalogMoreModels: catalogEntry?.selectedOnlyModels ?? [],
+    preferCatalog: preferHostModels
+  });
   const catalogModelsLoading = Boolean(
     selectedProviderId
-    && (selectedHarness?.targets?.models?.length ?? 0) === 0
+    && (preferHostModels || (selectedHarness?.targets?.models?.length ?? 0) === 0)
     && (catalog.inflight.has(selectedProviderId) || !catalogEntry)
   );
+  const offeredModelIds = useMemo(() => {
+    const ids = models.map((model) => model.id);
+    if (!preferHostModels && (selectedHarness?.targets?.models?.length ?? 0) > 0) return ids;
+    for (const row of catalogEntry?.selectedOnlyModels ?? []) {
+      if (!ids.includes(row.model)) ids.push(row.model);
+    }
+    return ids;
+  }, [catalogEntry?.selectedOnlyModels, models, preferHostModels, selectedHarness?.targets?.models]);
+  // OpenCode native roles = the ACP session-mode list (identical to Modern).
+  const roleOptions = familyId === 'opencode'
+    ? catalogEntry?.acpMode?.options ?? []
+    : [];
 
   const field = useComposerPromptField({
     placeholder: 'Describe the task… Leave empty to open an interactive session',
@@ -134,25 +241,62 @@ export function LegacyAgentHomeComposer({
     onSubmit: () => {
       launchRef.current();
     },
+    interceptKeyDown: (event) => consumeComposerModeCycle(event, {
+      kind: 'native',
+      options: roleOptions,
+      current: roleTargetId,
+      onChange: setRoleTargetId
+    }),
     onError: setError
   });
   const voice = useVoiceInput({ onTranscript: field.insertText });
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 
   useEffect(() => {
+    if (cliRemoteHostCatalogEnabled) {
+      void setThreadModelCatalogHost(executionHostId);
+      return;
+    }
     void prefetchThreadModelCatalog();
-  }, []);
+  }, [cliRemoteHostCatalogEnabled, executionHostId]);
 
   useEffect(() => {
     if (selectedProviderId) void ensureThreadProviderModels(selectedProviderId);
   }, [selectedProviderId]);
 
+  // Keep the role pick coherent with the ACP mode list (same discipline as the
+  // Modern composer): seed from `acpMode.currentValue` when unset, and drop a
+  // selection the freshly-loaded list no longer offers.
+  useEffect(() => {
+    if (familyId !== 'opencode') {
+      if (roleTargetId) setRoleTargetId(undefined);
+      return;
+    }
+    const options = catalogEntry?.acpMode?.options;
+    if (!options) return;
+    if (roleTargetId && !options.some((option) => option.value === roleTargetId)) {
+      setRoleTargetId(catalogEntry?.acpMode?.currentValue);
+      return;
+    }
+    if (!roleTargetId && catalogEntry?.acpMode?.currentValue) {
+      setRoleTargetId(catalogEntry.acpMode.currentValue);
+    }
+  }, [familyId, catalogEntry?.acpMode, roleTargetId]);
+
+  useEffect(() => {
+    if (permissionModeIds.length > 0 && !permissionModeIds.includes(permissionMode)) {
+      setPermissionMode(permissionModeIds[0]!);
+    }
+  }, [permissionMode, permissionModeIds]);
+
   useEffect(() => {
     const generation = ++descriptorGeneration.current;
     void product.harness.descriptors().then((next) => {
-      if (generation === descriptorGeneration.current) setDescriptors(next);
+      if (generation !== descriptorGeneration.current) return;
+      setDescriptors(next);
     }).catch(() => {
-      if (generation === descriptorGeneration.current) setDescriptors([]);
+      if (generation !== descriptorGeneration.current) return;
+      setDescriptors([]);
     });
   }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled]);
 
@@ -161,7 +305,7 @@ export function LegacyAgentHomeComposer({
       setProjectId(pinnedProject.id);
       return;
     }
-    const nextId = resolveComposerProjectId(projects, projectId);
+    const nextId = resolveComposerProjectId(projects, projectId, undefined, preferredProjectId);
     if (nextId && nextId !== projectId) {
       setProjectId(nextId);
       return;
@@ -179,7 +323,7 @@ export function LegacyAgentHomeComposer({
     return () => {
       cancelled = true;
     };
-  }, [loadProjects, pinnedProject, projectId, projects]);
+  }, [loadProjects, pinnedProject, preferredProjectId, projectId, projects]);
 
   useEffect(() => {
     if (!project) return;
@@ -190,38 +334,108 @@ export function LegacyAgentHomeComposer({
     );
   }, [project?.id, project?.quickAgent, project?.remote, worktreeIsolationDefault]);
 
+  // Resolve a concrete model like the Modern composer instead of resting on
+  // "Select model": keep a still-valid pick, otherwise adopt the remembered or
+  // default model for the provider. Clears only when no models are offered.
   useEffect(() => {
-    if (selectionState !== 'resolved' || (modelId && models.some((model) => model.id === modelId))) return;
-    setModelId('');
-  }, [modelId, models, selectionState]);
+    if (selectionState !== 'resolved' || catalogModelsLoading) return;
+    const next = pickOfferedComposerModel({
+      rememberedModel: selectedProviderId ? rememberedSelectionFor(selectedProviderId)?.model : undefined,
+      currentModel: modelId,
+      offeredModels: offeredModelIds
+    });
+    if (next !== modelId) setModelId(next);
+    if (next && selectedProviderId) {
+      rememberComposerSelection({ providerId: selectedProviderId, model: next });
+    }
+  }, [catalogModelsLoading, modelId, offeredModelIds, selectedProviderId, selectionState]);
 
+  // Default the harness like the Modern composer: keep the current pick, else
+  // the last-used (remembered) family, else the project's effective default —
+  // all filtered to installed harnesses via resolveCliAgentFamily.
   useEffect(() => {
     if (!projectId) return;
     const generation = ++selectionGeneration.current;
-    setSelectionProvenance('automatic');
-    setSelectionState('loading');
-    setResolvedProjectId(null);
-    setSelectionMessage(null);
-    setFamilyId('');
-    setAutomaticProfile(null);
-    void product.harness.effectiveDefault(projectId).then((result: EffectiveHarnessDefaultResult) => {
-      if (generation !== selectionGeneration.current) return;
-      if (result.ok) {
-        setFamilyId(result.family);
-        setAutomaticProfile(result.profile);
+    const availableFamilyIds: string[] = cliRemoteHostCatalogEnabled
+      ? (catalog.providers.length > 0 ? cliAgentFamilyIdsFromCatalog(catalog.providers) : [])
+      : harnesses.map((row) => row.id);
+    const rememberedFamily = familyForThreadProviderId(rememberedProviderId() ?? '');
+    const currentFamilyId = familyIdRef.current;
+    const kept = resolveCliAgentFamily({
+      currentFamilyId,
+      availableFamilyIds,
+      rememberedFamilyId: rememberedFamily,
+      effectiveDefaultFamilyId: null
+    });
+    if (kept && (availableFamilyIds.length === 0 || availableFamilyIds.includes(kept))) {
+      if (kept !== currentFamilyId) {
+        setFamilyId(kept as HarnessFamily);
+        if (kept === rememberedFamily) {
+          setSelectionProvenance('explicit');
+          setAutomaticProfile(null);
+          const providerId = threadProviderIdForFamily(kept);
+          const restored = providerId ? rememberedSelectionFor(providerId)?.model ?? '' : '';
+          if (restored) setModelId(restored);
+        }
+      }
+      if (availableFamilyIds.length > 0) {
         setSelectionState('resolved');
         setResolvedProjectId(projectId);
-      } else {
-        setSelectionState('unavailable');
-        setSelectionMessage(result.message);
+        setSelectionMessage(null);
+        return;
       }
+    }
+
+    if (!currentFamilyId && !kept) setSelectionState('loading');
+    void product.harness.effectiveDefault(projectId).then((result: EffectiveHarnessDefaultResult) => {
+      if (generation !== selectionGeneration.current) return;
+      const liveIds = cliRemoteHostCatalogEnabled
+        ? (catalog.providers.length > 0 ? cliAgentFamilyIdsFromCatalog(catalog.providers) : [])
+        : harnessesRef.current.map((row) => row.id);
+      const currentFamily = familyIdRef.current;
+      const remembered = familyForThreadProviderId(rememberedProviderId() ?? '');
+      const nextFamily = resolveCliAgentFamily({
+        currentFamilyId: currentFamily,
+        availableFamilyIds: liveIds,
+        rememberedFamilyId: remembered,
+        effectiveDefaultFamilyId: result.ok ? result.family : null
+      });
+      if (!nextFamily) {
+        setSelectionState('unavailable');
+        setSelectionMessage(result.ok ? 'Default harness unavailable' : result.message);
+        return;
+      }
+      if (nextFamily !== currentFamily) {
+        setFamilyId(nextFamily as HarnessFamily);
+        if (nextFamily === remembered) {
+          setSelectionProvenance('explicit');
+          setAutomaticProfile(null);
+          const providerId = threadProviderIdForFamily(nextFamily);
+          const restored = providerId ? rememberedSelectionFor(providerId)?.model ?? '' : '';
+          if (restored) setModelId(restored);
+        } else {
+          setSelectionProvenance('automatic');
+          setAutomaticProfile(result.ok ? result.profile : null);
+        }
+      } else if (result.ok && nextFamily === result.family) {
+        setAutomaticProfile((current) => current ?? result.profile);
+      }
+      setSelectionState('resolved');
+      setResolvedProjectId(projectId);
+      setSelectionMessage(null);
     }).catch(() => {
       if (generation !== selectionGeneration.current) return;
+      if (familyIdRef.current) {
+        setSelectionState('resolved');
+        setResolvedProjectId(projectId);
+        return;
+      }
       setSelectionState('unavailable');
       setSelectionMessage('Default harness unavailable');
     });
   }, [
     projectId,
+    harnesses,
     project?.launchDefault,
     project?.defaultAgents,
     project?.defaultPersonas,
@@ -230,7 +444,9 @@ export function LegacyAgentHomeComposer({
     harnessCursorEnabled,
     harnessCodexEnabled,
     harnessPiEnabled,
-    harnessOpenCodeEnabled
+    harnessOpenCodeEnabled,
+    cliRemoteHostCatalogEnabled,
+    catalog.providers
   ]);
 
   const canLaunch = Boolean(
@@ -238,13 +454,16 @@ export function LegacyAgentHomeComposer({
     && familyId
     && selectionState === 'resolved'
     && resolvedProjectId === projectId
-    && (selectionProvenance !== 'explicit' || selectedHarness)
+    && (selectionProvenance !== 'explicit'
+      || selectedHarness
+      || (cliRemoteHostCatalogEnabled && Boolean(PROFILE_BY_FAMILY[familyId])))
     && !launching
   );
 
   const launch = async () => {
     if (!project || !familyId || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId) return;
-    if (selectionProvenance === 'explicit' && !selectedHarness) return;
+    if (selectionProvenance === 'explicit' && !selectedHarness
+      && !(cliRemoteHostCatalogEnabled && PROFILE_BY_FAMILY[familyId])) return;
     if (field.typeaheadOpen) return;
     const profile = selectionProvenance === 'automatic'
       ? automaticProfile
@@ -276,17 +495,57 @@ export function LegacyAgentHomeComposer({
         launchedPrompt,
         selectedHarness?.label ?? familyId
       );
-      const validModelId = models.some((model) => model.id === modelId) ? modelId : '';
-      const harnessRouting: HarnessModelRoutingV1 | undefined = validModelId
-        ? { schemaVersion: 1, byAdapter: { [familyId]: { modelTargetId: modelId } } }
+      const validModelId = offeredModelIds.includes(modelId) ? modelId : '';
+      const validRoleId = familyId === 'opencode'
+        && roleTargetId
+        && roleOptions.some((role) => role.value === roleTargetId)
+        ? roleTargetId
+        : '';
+      // A picked OpenCode native agent pins its OWN model. Forcing a catalog
+      // `--model` alongside `--agent <role>` overrides that pin and dies with
+      // ProviderModelNotFoundError on any install whose provider inventory
+      // differs from the static `aisuite/*` snapshot (e.g. an `llmgw`-backed
+      // setup) — the exit-64 dead-session bug. So a native role and a forced
+      // model are mutually exclusive here: the role wins and carries no model.
+      const adapterEntry = validRoleId
+        ? { roleTargetId: validRoleId }
+        : validModelId
+          ? { modelTargetId: validModelId }
+          : {};
+      const coreRouting: HarnessModelRoutingV1 | undefined = Object.keys(adapterEntry).length
+        ? { schemaVersion: 1, byAdapter: { [familyId]: adapterEntry } }
         : undefined;
+      const permLaunch = permissionModeIds.includes(permissionMode)
+        ? cliLaunchFromPermissionMode({
+            mode: permissionMode,
+            unrestrictedProfileId: unrestrictedId
+          })
+        : {};
+      // OpenCode treats a native `--agent` role as the execution policy. Sending
+      // Edits (`accept-edits`) alongside a role fails preflight with "require
+      // one compatible role policy". Same XOR as role-vs-model above.
+      const withState = permLaunch.executionState && !validRoleId
+        ? withExecutionState(coreRouting, familyId, permLaunch.executionState)
+        : coreRouting;
+      const merged = applyLaunchPatch({
+        baseProfile: resolveCliLaunchProfile({
+          baseProfile: profile,
+          patchProfileId: permLaunch.profileId
+        }),
+        extraArgs,
+        harnessRouting: withState,
+        patch: launchPatch
+      });
 
-      const session = await createTerminal(project.id, profile, 80, 24, {
+      const session = await createTerminal(project.id, merged.profile, 80, 24, {
         ...args,
-        harnessRouting,
+        extraArgs: merged.extraArgs,
+        harnessRouting: merged.harnessRouting,
+        personaId: personaId || undefined,
         profileSource: selectionProvenance === 'automatic' ? 'seeded-default' : 'explicit',
         workspace: project.quickAgent ? { kind: 'personal' } : workspace,
-        isolateScratch: project.quickAgent ? args.title || true : undefined
+        isolateScratch: project.quickAgent ? args.title || true : undefined,
+        onError: setError
       });
       if (!session) return;
       field.clear();
@@ -311,22 +570,31 @@ export function LegacyAgentHomeComposer({
   };
 
   const harnessProviderOptions = composerProvidersFromCatalog(
-    harnesses.flatMap((descriptor) => {
-      const providerId = threadProviderIdForFamily(descriptor.id);
-      return providerId
-        ? [{ id: providerId, displayName: descriptor.label, permissionModes: [], composerActions: [] }]
-        : [];
-    }),
+    cliRemoteHostCatalogEnabled
+      ? cliAgentCatalogProviders(catalog.providers)
+      : harnesses.flatMap((descriptor) => {
+        const providerId = threadProviderIdForFamily(descriptor.id);
+        if (!providerId) return [];
+        const fallback = fallbackProviderOption(providerId);
+        return [{
+          id: providerId,
+          displayName: descriptor.label,
+          permissionModes: fallback.permissionModes,
+          composerActions: fallback.composerActions
+        }];
+      }),
     false,
     'claude-code'
   ).map((row) => ({ value: row.id, label: row.displayName }));
 
   return (
     <PluginComposerChrome
-      scope={{ kind: 'new-thread', projectId: projectId || null }}
+      scope={{ kind: 'cli-agent', projectId: projectId || null }}
       text={field.text}
       setText={field.setText}
       focus={field.focus}
+      familyId={familyId || undefined}
+      providerId={selectedProviderId || undefined}
     >
     <div
       className={`thread-command-composer${expanded ? ' is-expanded' : ''}${field.dropOver ? ' is-drop-over' : ''}${launching ? ' is-sending' : ''}`}
@@ -382,7 +650,12 @@ export function LegacyAgentHomeComposer({
                     selectionGeneration.current += 1;
                     setFamilyId(nextFamilyId);
                     setAutomaticProfile(null);
-                    setModelId('');
+                    const restored = rememberedSelectionFor(nextProviderId)?.model ?? '';
+                    setModelId(restored);
+                    if (restored) {
+                      rememberComposerSelection({ providerId: nextProviderId, model: restored });
+                    }
+                    setRoleTargetId(undefined);
                     setSelectionProvenance('explicit');
                     setSelectionState('resolved');
                     setResolvedProjectId(projectId);
@@ -393,13 +666,28 @@ export function LegacyAgentHomeComposer({
                   moreModelOptions={moreModelOptions}
                   modelIsLoading={selectionState === 'loading' || catalogModelsLoading}
                   modelLoadError={
-                    (selectedHarness?.targets?.models?.length ?? 0) > 0
-                      ? null
-                      : catalogEntry?.modelLoadError ?? null
+                    preferHostModels || (selectedHarness?.targets?.models?.length ?? 0) === 0
+                      ? catalogEntry?.modelLoadError ?? null
+                      : null
                   }
-                  onModelChange={setModelId}
+                  onModelChange={(value) => {
+                    setModelId(value);
+                    if (selectedProviderId && value) {
+                      rememberComposerSelection({ providerId: selectedProviderId, model: value });
+                    }
+                  }}
                   disabled={harnessProviderOptions.length === 0}
                 />
+                {familyId === 'opencode' ? (
+                  <NativeRolePicker
+                    value={roleTargetId}
+                    options={roleOptions.map((role) => ({ value: role.value, name: role.name }))}
+                    onChange={setRoleTargetId}
+                    onRefresh={() => {
+                      if (selectedProviderId) void reloadThreadProviderModels(selectedProviderId);
+                    }}
+                  />
+                ) : null}
               </div>
               <div className="thread-command-footer-end">
                 <ComposerIconButton
@@ -459,19 +747,20 @@ export function LegacyAgentHomeComposer({
               projects={projects}
               value={projectId}
               onChange={(nextProjectId) => {
-                selectionGeneration.current += 1;
-                setResolvedProjectId(null);
-                setSelectionState('loading');
-                setFamilyId('');
-                setAutomaticProfile(null);
-                setModelId('');
                 setProjectId(nextProjectId);
               }}
               disabled={Boolean(pinnedProject)}
-              title={pinnedProject ? 'Workspace is locked to this project' : undefined}
+              title={pinnedProject ? 'Locked to this project' : undefined}
             />
           </div>
-          {project && !project.remote && (
+          {project?.remote ? (
+            <span className="thread-command-chip" data-testid="composer-remote-host-mark">
+              {agentCardRuntimeLabel({
+                profile: cliRuntimeProfile,
+                remote: true
+              })}
+            </span>
+          ) : project ? (
             <EnvironmentPicker
               projectId={project.id}
               value={workspace}
@@ -479,9 +768,74 @@ export function LegacyAgentHomeComposer({
               allowPersonal={Boolean(project.quickAgent)}
               disabled={launching}
             />
+          ) : null}
+          <button
+            type="button"
+            className="launch-advanced-toggle"
+            aria-expanded={advancedOpen}
+            data-testid="legacy-agent-customize-launch"
+            onClick={() => setAdvancedOpen((open) => !open)}
+          >
+            Customize launch
+            {(extraArgs.length > 0 || personaId) ? (
+              <span className="launch-advanced-badge">
+                {(extraArgs.length > 0 ? 1 : 0) + (personaId ? 1 : 0)}
+              </span>
+            ) : null}
+          </button>
+        </div>
+        <div className="thread-command-composer-meta-end">
+          {permissionOptions.length > 1 && (
+            <PopoverPicklist
+              value={permissionMode}
+              options={permissionOptions.map((row) => ({
+                value: row.value,
+                label: row.label,
+                compactLabel: row.compactLabel,
+                description: row.description,
+                ...(row.tone ? { tone: row.tone } : {})
+              }))}
+              onChange={setPermissionMode}
+              ariaLabel="Permission mode"
+              searchable={false}
+              minWidth={280}
+            />
           )}
+          <PluginComposerMeta scope={{ kind: 'cli-agent', projectId: projectId || null }} />
         </div>
       </div>
+      {advancedOpen ? (
+        <div className="launch-advanced-wrap">
+          <div className="launch-advanced launch-advanced-card" data-testid="legacy-agent-advanced">
+            <div className="launch-extra-args">
+              <TextArgsField
+                label="Extra args"
+                help="Passed to the CLI after project and persona args. Later flags win when the same option appears twice."
+                values={extraArgs}
+                placeholder="--plugin-dir /path/to/plugin"
+                onChange={(values) => {
+                  setExtraArgs(values);
+                  writeCliExtraArgs(familyId, values);
+                }}
+              />
+            </div>
+            <div className="launch-row">
+              <span className="launch-row-label">Persona</span>
+              <PopoverPicklist
+                value={personaId}
+                ariaLabel="Persona"
+                searchable={false}
+                onChange={setPersonaId}
+                options={[
+                  { value: '', label: 'None' },
+                  ...personas.map((persona) => ({ value: persona.id, label: persona.name }))
+                ]}
+              />
+            </div>
+            <PluginComposerAdvanced scope={{ kind: 'cli-agent', projectId: projectId || null }} />
+          </div>
+        </div>
+      ) : null}
     </div>
     </PluginComposerChrome>
   );

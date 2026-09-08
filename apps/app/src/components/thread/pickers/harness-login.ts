@@ -10,12 +10,16 @@ export type HarnessLoginStatus = {
 
 const LOGIN_BY_FAMILY: Partial<Record<HarnessFamily, { providerId: string; loginCommand: string }>> = {
   cursor: { providerId: 'acp-cursor', loginCommand: 'cursor-agent login' },
-  codex: { providerId: 'codex', loginCommand: 'codex login' }
+  codex: { providerId: 'codex', loginCommand: 'codex login' },
+  pi: { providerId: 'pi', loginCommand: 'pi' },
+  opencode: { providerId: 'acp-opencode', loginCommand: 'opencode auth login' }
 };
 
 export function loginCommandForProvider(providerId: string): string | null {
   if (providerId === 'acp-cursor' || providerId === 'cursor') return 'cursor-agent login';
   if (providerId === 'codex') return 'codex login';
+  if (providerId === 'pi') return 'pi';
+  if (providerId === 'acp-opencode' || providerId === 'opencode') return 'opencode auth login';
   return null;
 }
 
@@ -23,6 +27,12 @@ export function emptyModelsHint(providerId: string, modelLoadError: string | nul
   if (modelLoadError === 'auth_required') {
     const command = loginCommandForProvider(providerId);
     return command ? `Sign in with ${command}` : 'Sign in to load models';
+  }
+  // Pi has no static fallback catalog. An empty list after a successful
+  // `model/list` means no provider credentials in ~/.pi (or env keys the
+  // GUI app can see) — same signal as health `unauthenticated`.
+  if (providerId === 'pi' && !modelLoadError) {
+    return 'Sign in with pi';
   }
   return 'No models available';
 }
@@ -43,6 +53,16 @@ export function harnessLoginStatus(
   }
   if (entry.modelLoadError) {
     return { state: 'unverified', loginCommand: login.loginCommand };
+  }
+  if (entry.models.length === 0) {
+    // Pi's empty catalog is "no credentials". OpenCode has no credential probe,
+    // so an empty/timeout-free list is unverified rather than signed in.
+    if (family === 'pi') {
+      return { state: 'sign_in_required', loginCommand: login.loginCommand };
+    }
+    if (family === 'opencode') {
+      return { state: 'unverified', loginCommand: login.loginCommand };
+    }
   }
   return { state: 'signed_in', loginCommand: login.loginCommand };
 }

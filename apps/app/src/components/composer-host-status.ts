@@ -12,6 +12,25 @@ export type HostBootstrapOutcome =
   | { ok: true; hostId: string }
   | { ok: false; code: string; message: string; pairingCommand?: string };
 
+export const PAIRING_DOOR_ERROR =
+  'Could not reach the pairing door. Retry, or copy the SSH command.';
+
+export const DAEMON_UNRESPONSIVE_ERROR =
+  'The host daemon started but never connected back. Retry, or copy the SSH command.';
+
+export function composerBootstrapErrorMessage(outcome: {
+  code: string;
+  message: string;
+}): string {
+  if (outcome.code === 'join_expired' || outcome.code === 'relay_offline') {
+    return PAIRING_DOOR_ERROR;
+  }
+  if (outcome.code === 'daemon_unresponsive') {
+    return DAEMON_UNRESPONSIVE_ERROR;
+  }
+  return outcome.message;
+}
+
 /** First DNS label, keeping IPv4/IPv6 intact so FQDNs fit a compact chip. */
 export function shortHostName(name: string): string {
   const trimmed = name.trim();
@@ -47,13 +66,15 @@ export function composerHostActionChipLabel(action: ComposerHostAction): string 
     return action.hostId ? 'Set URL' : null;
   }
   if (action.kind === 'blocked') return 'Unavailable';
-  return action.label;
+  if (action.kind === 'install') return 'Install host daemon';
+  return 'Fix connection';
 }
 
-/** SSH remotes only offer this machine and, after install, the bound daemon. */
+/** SSH remotes only offer the bound daemon (never this machine). */
 export function composerHostsForProject(hosts: Host[], project?: Project): Host[] {
   if (!project?.remote) return hosts;
-  return hosts.filter((host) => host.isPrimary || host.id === project.hostId);
+  if (!project.hostId) return [];
+  return hosts.filter((host) => host.id === project.hostId);
 }
 
 /** True when a local project is aimed at a machine that does not own its folder. */
@@ -102,10 +123,7 @@ export function resolveComposerHostAction(input: {
   const selected = input.selectedHostId
     ? input.hosts.find((host) => host.id === input.selectedHostId)
     : undefined;
-  const executionHost = selected ?? (input.project?.remote ? primary : boundHost);
-  if (input.project?.remote && executionHost?.isPrimary) {
-    return { kind: 'ready' };
-  }
+  const executionHost = input.project?.remote ? boundHost : (selected ?? boundHost);
   if (executionHost && executionHost.status !== 'connected' && !executionHost.isPrimary) {
     return {
       kind: 'fix',
@@ -140,14 +158,9 @@ export function resolveComposerHostAction(input: {
 
 export function shouldBlockComposerSend(
   action: ComposerHostAction,
-  project?: Project
+  _project?: Project
 ): boolean {
-  if (action.kind === 'blocked') {
-    if (action.needsPublicUrl && project?.remote && !project.hostId) return false;
-    return true;
-  }
-  if (action.kind === 'install') return false;
-  return action.kind === 'fix';
+  return action.kind !== 'ready';
 }
 
 export function shouldShowHostPicker(
@@ -162,14 +175,20 @@ export function shouldShowHostPicker(
   return connected.length > 1;
 }
 
-/** Composer mark when this machine runs the harness and tools go over SSH. */
-export function composerRemoteToolsMark(
-  project: Project | undefined,
-  selectedHostId?: string
-): string | null {
-  if (!project?.remote) return null;
-  if (project.hostId && selectedHostId === project.hostId) return null;
-  return 'Local agent · remote tools';
+export type ComposerRemoteHostBadge = {
+  status: 'online' | 'offline';
+};
+
+/** Connection status for an SSH remote. The project picker already names the host. */
+export function composerRemoteHostBadge(input: {
+  project?: Project;
+  host?: Host | null;
+}): ComposerRemoteHostBadge | null {
+  const project = input.project;
+  if (!project?.remote || !project.hostId) return null;
+  if (input.host && input.host.id !== project.hostId) return null;
+  if (!input.host) return null;
+  return { status: input.host.status === 'connected' ? 'online' : 'offline' };
 }
 
 export function bootstrapOutcome(

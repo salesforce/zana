@@ -19,7 +19,10 @@ const { uiState, dataState } = vi.hoisted(() => ({
     closeAgentModal: vi.fn(),
     closeThreadModal: vi.fn(),
     setNav: vi.fn(),
-    exitProjectFocus: vi.fn()
+    exitProjectFocus: vi.fn(),
+    selectedProjectId: 'p1' as string | undefined,
+    selectedTabId: {} as Record<string, string>,
+    setResumeOpen: vi.fn()
   },
   dataState: { projects: [], terminals: {} as Record<string, unknown[]> }
 }));
@@ -130,5 +133,18 @@ describe('shortcuts: round-trip and dashboard chords', () => {
     uiState.nav = 'scheduler';
     kb.press('j', { meta: true });
     expect(uiState.setNav).toHaveBeenCalledWith('home');
+  });
+
+  it('⌘N opens New Chat', () => {
+    const { preventDefault } = kb.press('n', { meta: true });
+    expect(uiState.setNav).toHaveBeenCalledWith('home');
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it('⌘R does not open the Claude resume picker', () => {
+    uiState.setResumeOpen.mockClear();
+    const { preventDefault } = kb.press('r', { meta: true });
+    expect(uiState.setResumeOpen).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 });

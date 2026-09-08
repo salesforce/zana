@@ -16,8 +16,8 @@ function firstPartyPluginId(displayName: string): string | null {
     Secrets: 'secrets',
     'Custom instructions': 'custom-instructions',
     'Keep-awake': 'keep-awake',
-    'Claude Code': 'provider-claude-code',
-    Codex: 'provider-codex',
+    'Claude Code': 'provider-acp',
+    Codex: 'provider-acp',
     Pi: 'provider-pi'
   };
   return map[displayName] ?? null;

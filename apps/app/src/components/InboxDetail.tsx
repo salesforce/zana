@@ -27,6 +27,7 @@ import { renderReportHtml, type ReportDoc } from '../lib/renderReportHtml.js';
 import { inboxPrimaryTitle, inboxShortTitle, inboxContextLine } from '../lib/inboxPresentation.js';
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
 import { resolveAnswerSurface } from '../lib/answerSurface.js';
+import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../lib/launchProfile.js';
 import type {
   InboxDoc,
@@ -830,10 +831,18 @@ function ReplyBox({
   const submit = async () => {
     if (busy || !text.trim()) return;
     setSending(true);
-    const ok = dead
-      ? await onAnswerDeadSession!(text)
-      : await replyToInboxEntry(entry.id, sessionId!, text);
-    setSending(false);
+    let ok = false;
+    try {
+      if (entry.executionId && entry.blockerId) {
+        ok = await respondToInboxBlocker(entry, text);
+      } else {
+        ok = dead
+          ? await onAnswerDeadSession!(text)
+          : await replyToInboxEntry(entry.id, sessionId!, text);
+      }
+    } finally {
+      setSending(false);
+    }
     if (ok) {
       setText('');
       setReopened(false);

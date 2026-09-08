@@ -58,7 +58,7 @@ describe('palette demo', () => {
 describe('ProductMap click-away', () => {
   it('opens a card from a marker and dismisses it on pointerdown outside the dialog', () => {
     const host = mount(createElement(ProductMap));
-    const marker = host.querySelector('a[href="#surface-projectTab"]');
+    const marker = host.querySelector('a[href="#surface-navPanel"]');
     act(() => {
       marker?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });

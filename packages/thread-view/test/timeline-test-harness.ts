@@ -15,6 +15,7 @@ import type {
   ThreadEventRow,
   ThreadEventRowOfType,
   ThreadEventUserContent,
+  ThreadEventItemPresentation,
   SystemThreadInterruptedReason,
   ThreadEventWarningCategory,
   ThreadTurnInitiator,
@@ -35,6 +36,7 @@ import { EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT } from "../src/accepted-client-re
 import { flattenEventProjectionMessagesDeep } from "../src/event-projection-flatten.js";
 import { buildEventProjection } from "../src/build-event-projection.js";
 import type { ThreadEventWithMeta } from "../src/build-event-projection.js";
+import type { ThreadTimelinePendingTodos } from "@zana-ai/zcc-domain/thread-runtime";
 
 export interface RenderTimelineFixtureArgs {
   events: ThreadEventRow[];
@@ -54,6 +56,7 @@ export interface RenderedTimelineFixture {
   rows: TimelineRow[];
   text: string;
   turnRows: Extract<TimelineRow, { kind: "turn" }>[];
+  pendingTodos: ThreadTimelinePendingTodos | null;
 }
 
 export interface TimelineEventFactoryDefaults {
@@ -142,6 +145,35 @@ interface ToolCallCompletedArgs extends ProviderTurnEventOptions {
 }
 
 type ToolCallStartedArgs = ToolCallCompletedArgs;
+
+interface DelegationEventArgs extends ProviderTurnEventOptions {
+  itemId?: string;
+  childRef: string;
+  label: string;
+  background?: boolean;
+  summary?: string;
+  presentation?: ThreadEventItemPresentation;
+  status?: "pending" | "completed" | "failed" | "interrupted";
+}
+
+interface PlanStepsEventArgs extends ProviderTurnEventOptions {
+  itemId?: string;
+  steps: Array<{
+    step: string;
+    status?: "pending" | "active" | "completed" | "failed";
+  }>;
+  explanation?: string;
+  presentation?: ThreadEventItemPresentation;
+  status?: "pending" | "completed" | "failed" | "interrupted";
+}
+
+interface ExtensionEventArgs extends ProviderTurnEventOptions {
+  itemId?: string;
+  kind: `${string}/${string}`;
+  payload: JsonValue;
+  presentation: ThreadEventItemPresentation;
+  status?: "pending" | "completed" | "failed" | "interrupted";
+}
 
 interface CommandCompletedArgs extends ProviderTurnEventOptions {
   aggregatedOutput?: string;
@@ -348,6 +380,24 @@ export interface TimelineEventFactory {
   toolCallStarted(
     args: ToolCallStartedArgs,
   ): ThreadEventRowOfType<"item/started">;
+  delegationStarted(
+    args: DelegationEventArgs,
+  ): ThreadEventRowOfType<"item/started">;
+  delegationCompleted(
+    args: DelegationEventArgs,
+  ): ThreadEventRowOfType<"item/completed">;
+  planStepsStarted(
+    args: PlanStepsEventArgs,
+  ): ThreadEventRowOfType<"item/started">;
+  planStepsCompleted(
+    args: PlanStepsEventArgs,
+  ): ThreadEventRowOfType<"item/completed">;
+  extensionStarted(
+    args: ExtensionEventArgs,
+  ): ThreadEventRowOfType<"item/started">;
+  extensionCompleted(
+    args: ExtensionEventArgs,
+  ): ThreadEventRowOfType<"item/completed">;
   threadCompacted(
     args?: ProviderTurnEventOptions,
   ): ThreadEventRowOfType<"thread/compacted">;
@@ -922,6 +972,130 @@ export function createTimelineEventFactory(
         },
       };
     },
+    delegationStarted(args) {
+      const base = nextProviderTurnScopedRowBase("delegation-started", args);
+      return {
+        ...base,
+        type: "item/started",
+        data: {
+          ...providerFields(args),
+          item: {
+            type: "delegation",
+            id: args.itemId ?? `delegation-${base.seq}`,
+            childRef: args.childRef,
+            label: args.label,
+            status: args.status ?? "pending",
+            background: args.background ?? false,
+            ...(args.summary === undefined ? {} : { summary: args.summary }),
+            ...(args.presentation === undefined
+              ? {}
+              : { presentation: args.presentation }),
+          },
+        },
+      };
+    },
+    delegationCompleted(args) {
+      const base = nextProviderTurnScopedRowBase("delegation-completed", args);
+      return {
+        ...base,
+        type: "item/completed",
+        data: {
+          ...providerFields(args),
+          item: {
+            type: "delegation",
+            id: args.itemId ?? `delegation-${base.seq}`,
+            childRef: args.childRef,
+            label: args.label,
+            status: args.status ?? "completed",
+            background: args.background ?? false,
+            ...(args.summary === undefined ? {} : { summary: args.summary }),
+            ...(args.presentation === undefined
+              ? {}
+              : { presentation: args.presentation }),
+          },
+        },
+      };
+    },
+    planStepsStarted(args) {
+      const base = nextProviderTurnScopedRowBase("plan-steps-started", args);
+      return {
+        ...base,
+        type: "item/started",
+        data: {
+          ...providerFields(args),
+          item: {
+            type: "planSteps",
+            id: args.itemId ?? `plan-steps-${base.seq}`,
+            steps: args.steps,
+            ...(args.explanation === undefined
+              ? {}
+              : { explanation: args.explanation }),
+            status: args.status ?? "pending",
+            ...(args.presentation === undefined
+              ? {}
+              : { presentation: args.presentation }),
+          },
+        },
+      };
+    },
+    planStepsCompleted(args) {
+      const base = nextProviderTurnScopedRowBase("plan-steps-completed", args);
+      return {
+        ...base,
+        type: "item/completed",
+        data: {
+          ...providerFields(args),
+          item: {
+            type: "planSteps",
+            id: args.itemId ?? `plan-steps-${base.seq}`,
+            steps: args.steps,
+            ...(args.explanation === undefined
+              ? {}
+              : { explanation: args.explanation }),
+            status: args.status ?? "completed",
+            ...(args.presentation === undefined
+              ? {}
+              : { presentation: args.presentation }),
+          },
+        },
+      };
+    },
+    extensionStarted(args) {
+      const base = nextProviderTurnScopedRowBase("extension-started", args);
+      return {
+        ...base,
+        type: "item/started",
+        data: {
+          ...providerFields(args),
+          item: {
+            type: "extension",
+            id: args.itemId ?? `extension-${base.seq}`,
+            kind: args.kind,
+            payload: args.payload,
+            status: args.status ?? "pending",
+            presentation: args.presentation,
+          },
+        },
+      };
+    },
+    extensionCompleted(args) {
+      const base = nextProviderTurnScopedRowBase("extension-completed", args);
+      return {
+        ...base,
+        type: "item/completed",
+        data: {
+          ...providerFields(args),
+          item: {
+            type: "extension",
+            id: args.itemId ?? `extension-${base.seq}`,
+            kind: args.kind,
+            payload: args.payload,
+            status: args.status ?? "completed",
+            presentation: args.presentation,
+          },
+        },
+      };
+    },
     threadCompacted(args = {}) {
       const base = nextProviderTurnScopedRowBase("thread-compacted", args);
       return {
@@ -1160,6 +1334,7 @@ export function renderTimelineFixture(
     rows,
     text,
     turnRows,
+    pendingTodos: timeline.pendingTodos,
   };
 }
 

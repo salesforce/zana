@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Salesforce DX inner loop for ZCC: org identity, SOQL/Apex/LWC/Agent Script editor and family tools, and fail-closed mutation confirms.",
+    "description": "Salesforce DX inner loop for ZCC: org identity, SOQL Explorer, Apex/LWC/Agentforce editor and family tools, and fail-closed mutation confirms.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
@@ -15,17 +15,24 @@
   },
   "zcc": {
     "name": "Salesforce",
-    "description": "Org identity, doctor, Agent Script editor, and API-native SOQL/Apex/LWC/Agent Script tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
+    "description": "Org identity, doctor, Agentforce Playground and Preview, and API-native SOQL/Apex/LWC/Agentforce tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
     "branding": {
       "icon": "Cloud"
     },
     "server": "./server.ts",
     "app": "./app.js",
-    "skills": ["skills"]
+    "skills": [
+      "skills"
+    ]
+  },
+  "exports": {
+    "./sdk": "./lib/sdk-contract.ts"
   },
   "dependencies": {
     "@sf-agentscript/agentforce": "2.10.38",
+    "@sf-agentscript/lsp": "2.6.33",
     "@sf-agentscript/monaco": "2.4.39",
+    "@sf-agentscript/parser": "4.0.19",
     "@xyflow/react": "^12.10.0",
     "monaco-editor": "^0.54.0"
   },

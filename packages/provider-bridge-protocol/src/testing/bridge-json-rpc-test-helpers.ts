@@ -24,11 +24,13 @@ export interface BridgeJsonRpcOutputMessage {
 
 export interface CapturedBridgeJsonRpcOutput {
   messages: BridgeJsonRpcOutputMessage[];
+  takeMessages(): BridgeJsonRpcOutputMessage[];
   restore(): void;
 }
 
 export interface BridgeJsonRpcTestHarness {
   messages: BridgeJsonRpcOutputMessage[];
+  takeMessages(): BridgeJsonRpcOutputMessage[];
   flushWork(): Promise<void>;
   hasResponse(id: BridgeJsonRpcId): boolean;
   restore(): void;
@@ -103,8 +105,14 @@ export function captureBridgeJsonRpcOutput(): CapturedBridgeJsonRpcOutput {
     }
     return true;
   });
+  let drained = 0;
   return {
     messages,
+    takeMessages() {
+      const fresh = messages.slice(drained);
+      drained = messages.length;
+      return fresh;
+    },
     restore() {
       writeSpy.mockRestore();
     },
@@ -157,6 +165,7 @@ export function createBridgeJsonRpcTestHarness(
   const output = captureBridgeJsonRpcOutput();
   return {
     messages: output.messages,
+    takeMessages: output.takeMessages,
     flushWork: flushBridgeJsonRpcWork,
     hasResponse(id: BridgeJsonRpcId): boolean {
       return bridgeJsonRpcResponseExists({ id, output });

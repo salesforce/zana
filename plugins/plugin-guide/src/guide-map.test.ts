@@ -22,6 +22,7 @@ import {
   ComposerWireframe,
   HomeWireframe,
   PaletteWireframe,
+  ProjectShellWireframe,
   SurfaceMapContext,
   type SurfaceMapState
 } from './wireframes.js';
@@ -160,9 +161,10 @@ describe('ProductMap chrome', () => {
   it('renders named slide pills and scale-together plus reflow strategies', () => {
     const markup = renderToStaticMarkup(createElement(ProductMap));
     expect(markup).toContain('App shell');
+    expect(markup).toContain('Project shell');
     expect(markup).toContain('Command palette');
     expect(markup).not.toContain('plugin-guide-dots');
-    expect(markup.match(/data-guide-responsive-strategy="scale-together"/g)?.length).toBe(6);
+    expect(markup.match(/data-guide-responsive-strategy="scale-together"/g)?.length).toBe(7);
     expect(markup).toContain('--guide-chip-scale');
     const platform = renderToStaticMarkup(createElement(ProductMap, { initialSlideId: 'headless' }));
     expect(platform).toContain('data-guide-responsive-strategy="reflow"');
@@ -172,22 +174,77 @@ describe('ProductMap chrome', () => {
 });
 
 describe('fixtures', () => {
-  it('renders the workspace shell: Workspaces header, project rail, and topbar', () => {
+  it('renders the app shell: Projects header, add/organize menus, and footer', () => {
     const markup = renderToStaticMarkup(
       createElement(SurfaceMapContext.Provider, { value: mapState() }, createElement(AppShellWireframe))
     );
-    expect(markup).toContain('Workspaces');
-    expect(markup).toContain('title="Organize workspaces"');
-    expect(markup).toContain('title="Workspace menu"');
+    expect(markup).toContain('Projects');
+    expect(markup).toContain('title="Organize projects"');
+    expect(markup).toContain('title="Project menu"');
     expect(markup).toContain('title="Add project"');
-    expect(markup).toContain('plugin-guide-workspace');
-    expect(markup).toContain('plugin-guide-ws-topbar');
-    expect(markup).toContain('plugin-guide-ws-rail-head');
     expect(markup).toContain('plugin-guide-fx-footer-plug');
     expect(markup).toContain('title="Settings"');
     expect(markup).toContain('title="Report a bug"');
+    expect(markup).not.toContain('plugin-guide-ws-topbar');
+    expect(markup).not.toContain('plugin-guide-ws-statusbar');
+    expect(markup).not.toContain('Library');
+  });
+
+  it('renders the project shell: project rail, topbar, Agents board, and statusbar', () => {
+    const markup = renderToStaticMarkup(
+      createElement(SurfaceMapContext.Provider, { value: mapState() }, createElement(ProjectShellWireframe))
+    );
+    expect(markup).toContain('plugin-guide-workspace');
+    expect(markup).toContain('plugin-guide-ws-topbar');
+    expect(markup).toContain('plugin-guide-ws-statusbar');
+    expect(markup).toContain('plugin-guide-ws-rail-head');
     expect(markup).toContain('Explorer');
     expect(markup).toContain('Library');
+    expect(markup).toContain('title="Agents board action"');
+    expect(markup).toContain('title="Agent card action"');
+  });
+
+  it('opens the Add project menu with a plugin create-project row', () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        SurfaceMapContext.Provider,
+        { value: mapState({ activeId: 'experimental_createProjectAction' }) },
+        createElement(AppShellWireframe)
+      )
+    );
+    expect(markup).toContain('title="Add project"');
+    expect(markup).toContain('Add local folder');
+    expect(markup).toContain('Clone from Git');
+    expect(markup).toContain('Add remote project');
+    expect(markup).toContain('Salesforce DX project');
+  });
+
+  it('opens a project statusbar popup with plugin actions', () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        SurfaceMapContext.Provider,
+        { value: mapState({ activeId: 'projectStatusbarItem' }) },
+        createElement(ProjectShellWireframe)
+      )
+    );
+    expect(markup).toContain('plugin-guide-ws-statusbar');
+    expect(markup).toContain('plugin-guide-ws-statusbar-menu');
+    expect(markup).toContain('Production');
+    expect(markup).toContain('Open SOQL');
+    expect(markup).toContain('Switch org');
+  });
+
+  it('opens an agent card overflow with a plugin action', () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        SurfaceMapContext.Provider,
+        { value: mapState({ activeId: 'experimental_agentCardAction' }) },
+        createElement(ProjectShellWireframe)
+      )
+    );
+    expect(markup).toContain('title="Agent card action"');
+    expect(markup).toContain('Restart');
+    expect(markup).toContain('Your action');
   });
 
   it('opens the command palette on the palette slide', () => {
@@ -238,12 +295,12 @@ describe('SurfaceCard', () => {
         surface,
         number: 1,
         onDismiss: () => undefined,
-        navigation: { previous: null, next: SURFACES_BY_ID.get('projectTab')!, onOpen: () => undefined }
+        navigation: { previous: null, next: SURFACES_BY_ID.get('experimental_projectMenuAction')!, onOpen: () => undefined }
       })
     );
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('No previous annotation');
-    expect(markup).toContain('Next annotation: Project tab');
+    expect(markup).toContain('Next annotation: Project menu');
     expect(markup).toContain('Copy for agent');
     expect(markup).not.toContain('PluginAppSlots.navPanel');
   });

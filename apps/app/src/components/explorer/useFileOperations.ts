@@ -11,7 +11,7 @@ interface UseFileOperationsProps {
 }
 
 export function useFileOperations({ viewRoot, isRemote, projectId, pushToast }: UseFileOperationsProps) {
-  const sendPathToTerminal = useCallback(async (path: string, getActiveTabId: () => string | undefined, setWorkspaceMode: (projectId: string, mode: 'terminals') => void) => {
+  const sendPathToTerminal = useCallback(async (path: string, getActiveTabId: () => string | undefined, setProjectView: (projectId: string, mode: 'terminals') => void) => {
     const activeTabId = getActiveTabId();
     if (!activeTabId) {
       pushToast('No active terminal in this project', 'error');
@@ -33,7 +33,7 @@ export function useFileOperations({ viewRoot, isRemote, projectId, pushToast }: 
       pushToast(err instanceof Error ? err.message : 'Failed to write to terminal', 'error');
       return;
     }
-    setWorkspaceMode(projectId, 'terminals');
+    setProjectView(projectId, 'terminals');
   }, [viewRoot, projectId, pushToast]);
 
   const copyPath = useCallback(async (path: string) => {

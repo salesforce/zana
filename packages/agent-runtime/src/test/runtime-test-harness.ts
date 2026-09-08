@@ -259,6 +259,7 @@ export function createWarningEventAdapter(scriptPath: string): ProviderAdapter {
         case "thread/name/set":
         case "thread/archive":
         case "thread/unarchive":
+        case "provider/health":
           return unsupportedRuntimeTestCommand(command);
       }
     },
@@ -368,6 +369,7 @@ export function createStartedEventAdapter(scriptPath: string): ProviderAdapter {
         case "thread/name/set":
         case "thread/archive":
         case "thread/unarchive":
+        case "provider/health":
           return unsupportedRuntimeTestCommand(command);
       }
     },

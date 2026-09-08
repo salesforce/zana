@@ -6,10 +6,8 @@ import {
   getConversationThread,
   getEnvironment,
   getPrimaryHost,
-  hasPendingInteractionForThread,
-  maxConversationEventSequenceByThreadIds,
-  nextConversationEventSequence,
-  updateConversationThreadStatus,
+  listConversationThreadEvents,
+  listHosts,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
   setConversationProviderThreadId,
@@ -23,11 +21,12 @@ import {
   type SpawnEnvironmentChoice
 } from '@zana-ai/zcc-domain';
 import type { Project } from '@zana-ai/zcc-domain/product';
-import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ReasoningLevel, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { clampPermissionModeToHost } from '../hosts/permission-ceiling.js';
 import type { EnvironmentProvisionCommand, EnvironmentProvisionResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { AmbiguousHostError, HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
+import { applyLoggedConversationLifecycleEvent } from './conversation-lifecycle-outcome.js';
 import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
 import { unmanagedAttachRefusal } from './workspace-path-claims.js';
 import { resolveManagedTargetPath } from './worktree-paths.js';
@@ -40,16 +39,39 @@ import {
 } from './thread-provider-catalog.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
+import { startLiveTurnCommand } from './conversation-live-turn.js';
 import {
+  boundRemoteHostId,
   isRemoteToolProxyActive,
   remoteWorkspacePath,
+  resolveHarnessWorkspacePath,
+  REMOTE_HOST_DAEMON_REQUIRED,
+  REMOTE_HOST_DAEMON_REQUIRED_MESSAGE,
   threadLaunchRemote
 } from './remote-tool-proxy.js';
 import { resolveSpawnChoiceForHost } from './spawn-choice-for-host.js';
-import { safePackPluginSession } from '../../plugins/plugin-agent-tools.js';
-import { hostPromptFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
+import { toRemoteStartPathHost } from '../hosts/host-public.js';
+import { packConversationSessionTooling } from './conversation-session-tools.js';
+import { hostPromptInputFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
-import { loadThreadReads, peekThreadReadSeq } from './thread-reads.js';
+import {
+  withResolvedPathMentionContext,
+  workspacePathMentionReaders
+} from '../../plugins/path-mentions.js';
+import { latestProviderCheckpoint } from './conversation-edit-message.js';
+import { conversationThreadView } from './conversation-thread-view.js';
+import {
+  requestedExecutionModeFromTurn,
+  claudeCodePermissionModeForTurn
+} from './conversation-execution-mode.js';
+import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
+import { recordThreadExecutionMode } from './conversation-plan.js';
+
+export {
+  conversationThreadView,
+  conversationThreadViews,
+  type ConversationThreadView
+} from './conversation-thread-view.js';
 
 export interface CreateConversationInput {
   projectId: string;
@@ -65,6 +87,8 @@ export interface CreateConversationInput {
   permissionMode?: 'accept-edits' | 'auto' | 'full';
   model?: string;
   reasoningLevel?: ReasoningLevel;
+  acpMode?: string;
+  parentThreadId?: string;
 }
 
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -167,7 +191,7 @@ async function startConversationOnHost(
     project: Project;
     thread: ConversationThreadRow;
     prompt: string[];
-    hostPrompt: string[];
+    hostPrompt: PromptInput[];
     environmentId: string;
     input: CreateConversationInput;
     remoteToolProxy: boolean;
@@ -178,8 +202,27 @@ async function startConversationOnHost(
   if (!getThreadProvider(providerId)) {
     throw new ThreadCreateError(400, 'invalid-provider', `unknown thread provider: ${args.input.providerId}`);
   }
-  const requestedMode = args.input.permissionMode ?? permissionModeForLaunchProfile(args.input.providerId);
-  const permissionMode = clampPermissionModeToHost(ctx.db, args.hostId, requestedMode) ?? requestedMode;
+  const requestedMode = requestedExecutionModeFromTurn({
+    acpMode: args.input.acpMode,
+    input: args.hostPrompt
+  });
+  const claudeCodePermissionMode = claudeCodePermissionModeForTurn(providerId, requestedMode);
+  recordThreadExecutionMode(ctx.db, {
+    threadId: args.thread.id,
+    requestedMode,
+    effectiveMode: requestedMode
+  });
+  const requestedPermissionMode = args.input.permissionMode ?? permissionModeForLaunchProfile(args.input.providerId);
+  const permissionMode = clampPermissionModeToHost(ctx.db, args.hostId, requestedPermissionMode) ?? requestedPermissionMode;
+  const providerOptions = derivedProviderOptionsForCommand({
+    providerId,
+    threadId: args.thread.id,
+    projectId: args.project.id,
+    model: args.input.model,
+    permissionMode,
+    promptMode: requestedMode === 'plan' ? 'plan' : undefined,
+    plugins: ctx.plugins
+  });
   const clientRequestId = appendClientTurnRequested(ctx, {
     threadId: args.thread.id,
     prompt: args.prompt,
@@ -187,14 +230,17 @@ async function startConversationOnHost(
     kind: 'thread-start',
     permissionMode,
     model: args.input.model,
-    reasoningLevel: args.input.reasoningLevel
+    reasoningLevel: args.input.reasoningLevel,
+    acpMode: args.input.acpMode
   });
-  const sessionTooling = await safePackPluginSession(
-    ctx.plugins
-      ? () => ctx.plugins!.sessionTools({ threadId: args.thread.id, projectId: args.project.id })
-      : undefined
-  );
-  const started = await ctx.hostHub.callHostOnlineRpc<ThreadStartResult>({
+  const sessionTooling = await packConversationSessionTooling(ctx, {
+    threadId: args.thread.id,
+    projectId: args.project.id
+  });
+  const checkpoint = getThreadProvider(providerId)?.capabilities.fork === 'checkpoint'
+    ? latestProviderCheckpoint(listConversationThreadEvents(ctx.db, args.thread.id))?.checkpoint
+    : undefined;
+  startLiveTurnCommand(ctx, {
     hostId: args.hostId,
     command: {
       type: 'thread.start',
@@ -211,73 +257,44 @@ async function startConversationOnHost(
       permissionMode,
       ...(args.input.model ? { model: args.input.model } : {}),
       ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {}),
+      ...(args.input.acpMode ? { acpMode: args.input.acpMode } : {}),
+      ...(claudeCodePermissionMode ? { claudeCodePermissionMode } : {}),
+      ...(providerOptions ? { providerOptions } : {}),
       ...(clientRequestId ? { clientRequestId } : {}),
+      ...(checkpoint ? { providerCheckpointId: checkpoint } : {}),
       ...sessionTooling,
       ...(args.remoteToolProxy ? {
-        remote: threadLaunchRemote(args.project),
+        remote: threadLaunchRemote(
+          args.project,
+          remoteWorkspacePath(
+            args.project,
+            args.remoteToolProxy,
+            ctx.config.getConfig().remoteDefaultPath,
+            listHosts(ctx.db).map(toRemoteStartPathHost)
+          )
+        ),
         remoteToolProxy: true
       } : {})
+    },
+    onSuccess: (result) => {
+      const started = result as ThreadStartResult;
+      if (started?.providerThreadId) {
+        setConversationProviderThreadId(ctx.db, args.thread.id, started.providerThreadId);
+      }
+    },
+    onError: (error) => {
+      void import('./conversation-turn-settlement.js')
+        .then(({ settleLiveTurnCommandFailure }) => {
+          settleLiveTurnCommandFailure(ctx, {
+            thread: args.thread,
+            commandType: 'thread.start',
+            clientRequestId,
+            error
+          });
+        })
+        .catch(() => undefined);
     }
   });
-  if (started.providerThreadId) {
-    setConversationProviderThreadId(ctx.db, args.thread.id, started.providerThreadId);
-  }
-}
-
-export interface ConversationThreadView {
-  id: string;
-  projectId: string;
-  hostId: string;
-  environmentId: string | null;
-  providerId: string;
-  status: ConversationThreadRow['status'];
-  originKind: ConversationThreadRow['originKind'];
-  visibility: ConversationThreadRow['visibility'];
-  title: string | null;
-  providerThreadId: string | null;
-  parentThreadId: string | null;
-  archivedAt: number | null;
-  createdAt: number;
-  updatedAt: number;
-  cwd: string | null;
-  branchName: string | null;
-  isWorktree: boolean;
-  hasPendingInteraction: boolean;
-  lastReadSeq: number | null;
-  maxSeq: number;
-}
-
-export function conversationThreadView(
-  ctx: ProductHttpContext,
-  thread: ConversationThreadRow,
-  extras?: { lastReadSeq?: number | null; maxSeq?: number }
-): ConversationThreadView {
-  const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
-  const lastReadSeq = extras && 'lastReadSeq' in extras
-    ? extras.lastReadSeq ?? null
-    : peekThreadReadSeq(ctx.dataDir, thread.id);
-  const maxSeq = extras?.maxSeq ?? Math.max(0, nextConversationEventSequence(ctx.db, thread.id) - 1);
-  return {
-    ...thread,
-    cwd: environment?.path ?? null,
-    branchName: environment?.branchName ?? null,
-    isWorktree: environment?.isWorktree ?? false,
-    hasPendingInteraction: hasPendingInteractionForThread(ctx.db, thread.id),
-    lastReadSeq,
-    maxSeq
-  };
-}
-
-export function conversationThreadViews(
-  ctx: ProductHttpContext,
-  threads: readonly ConversationThreadRow[]
-): ConversationThreadView[] {
-  const maxById = maxConversationEventSequenceByThreadIds(ctx.db, threads.map((thread) => thread.id));
-  const reads = loadThreadReads(ctx.dataDir);
-  return threads.map((thread) => conversationThreadView(ctx, thread, {
-    lastReadSeq: Object.prototype.hasOwnProperty.call(reads, thread.id) ? reads[thread.id]! : null,
-    maxSeq: maxById[thread.id] ?? 0
-  }));
 }
 
 export async function createConversationFromRequest(
@@ -290,10 +307,11 @@ export async function createConversationFromRequest(
   if (!input.providerId) {
     throw new ThreadCreateError(400, 'invalid-provider', 'providerId is required');
   }
-  const resolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
-  const textPrompt = flattenThreadInput(resolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);
+  const pluginResolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
+  const textPrompt = flattenThreadInput(pluginResolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);
   const promptSource = textPrompt.length > 0 ? textPrompt : input.input.map((part) => part.trim()).filter((part) => part.length > 0);
-  const prompt = hostPromptFromInput(
+  let resolvedPromptInput = pluginResolvedPromptInput;
+  let prompt = hostPromptInputFromInput(
     resolvedPromptInput,
     promptSource,
     (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
@@ -303,12 +321,18 @@ export async function createConversationFromRequest(
   }
 
   const project = requireProject(ctx, input.projectId);
-  const remoteToolProxy = isRemoteToolProxyActive(project, input.hostId);
-  const workspacePath = remoteWorkspacePath(project, remoteToolProxy);
+  const boundRemote = boundRemoteHostId(project);
+  if (boundRemote === null) {
+    throw new ThreadCreateError(409, REMOTE_HOST_DAEMON_REQUIRED, REMOTE_HOST_DAEMON_REQUIRED_MESSAGE);
+  }
+  const remoteToolProxy = isRemoteToolProxyActive(project, boundRemote ?? input.hostId);
   const primary = getPrimaryHost(ctx.db);
   let hostId: string;
+  let workspacePath: string;
   try {
-    if (remoteToolProxy) {
+    if (boundRemote) {
+      hostId = ctx.hostHub.resolveHostId(boundRemote);
+    } else if (remoteToolProxy) {
       if (!primary) {
         throw new ThreadCreateError(503, 'host-unavailable', 'This machine’s host daemon is not connected.');
       }
@@ -317,10 +341,33 @@ export async function createConversationFromRequest(
       hostId = ctx.hostHub.resolveHostId(input.hostId ?? project.hostId);
     }
     ctx.hostHub.ensureHostSessionReady(hostId);
+    workspacePath = await resolveHarnessWorkspacePath({
+      project,
+      remoteToolProxy,
+      remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
+      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      probeHostHome: async () => {
+        const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
+          hostId,
+          command: { type: 'host.browse_directory' }
+        });
+        return listing.directory;
+      }
+    });
   } catch (error) {
     if (error instanceof ThreadCreateError) throw error;
     throw mapHostError(error);
   }
+
+  resolvedPromptInput = await withResolvedPathMentionContext(
+    resolvedPromptInput,
+    workspacePathMentionReaders(ctx, hostId, workspacePath)
+  );
+  prompt = hostPromptInputFromInput(
+    resolvedPromptInput,
+    promptSource,
+    (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
+  );
 
   let choice: SpawnEnvironmentChoice = input.environment ?? { kind: 'unmanaged' };
   if (project.remote && choice.kind !== 'unmanaged') {
@@ -383,7 +430,8 @@ export async function createConversationFromRequest(
       environmentId: existing.id,
       providerId,
       title: threadTitle(input, textPrompt),
-      status: 'starting'
+      status: 'starting',
+      parentThreadId: input.parentThreadId ?? null
     });
     emitPluginThreadEvent(ctx, {
       name: 'thread.created',
@@ -412,7 +460,12 @@ export async function createConversationFromRequest(
       await startConversationOnHost(ctx, {
         hostId, project, thread, prompt: textPrompt, hostPrompt: prompt, environmentId: existing.id, input: { ...input, promptInput: resolvedPromptInput }, remoteToolProxy, dropCwd
       });
-      const running = updateConversationThreadStatus(ctx.db, thread.id, 'active') ?? thread;
+      const running = applyLoggedConversationLifecycleEvent(ctx, {
+        threadId: thread.id,
+        event: { type: 'run.started' }
+      }).applied
+        ? (getConversationThread(ctx.db, thread.id) ?? thread)
+        : thread;
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
       requestAutoThreadTitle(ctx, input, running.id, textPrompt);
       emitPluginThreadEvent(ctx, {
@@ -465,7 +518,8 @@ export async function createConversationFromRequest(
         environmentId: environment.id,
         providerId,
         title: threadTitle(input, textPrompt),
-        status: 'starting'
+        status: 'starting',
+        parentThreadId: input.parentThreadId ?? null
       });
       emitPluginThreadEvent(ctx, {
         name: 'thread.created',
@@ -488,7 +542,8 @@ export async function createConversationFromRequest(
       environmentId: existing.id,
       providerId,
       title: threadTitle(input, textPrompt),
-      status: 'starting'
+      status: 'starting',
+      parentThreadId: input.parentThreadId ?? null
     });
     emitPluginThreadEvent(ctx, {
       name: 'thread.created',
@@ -526,7 +581,12 @@ export async function createConversationFromRequest(
       remoteToolProxy,
       dropCwd
     });
-    const running = updateConversationThreadStatus(ctx.db, created.thread.id, 'active') ?? created.thread;
+    const running = applyLoggedConversationLifecycleEvent(ctx, {
+      threadId: created.thread.id,
+      event: { type: 'run.started' }
+    }).applied
+      ? (getConversationThread(ctx.db, created.thread.id) ?? created.thread)
+      : created.thread;
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
     requestAutoThreadTitle(ctx, input, running.id, textPrompt);
     emitPluginThreadEvent(ctx, {
@@ -544,7 +604,11 @@ export async function createConversationFromRequest(
 }
 
 function failConversationStart(ctx: ProductHttpContext, thread: ConversationThreadRow): void {
-  const failed = updateConversationThreadStatus(ctx.db, thread.id, 'error') ?? {
+  const outcome = applyLoggedConversationLifecycleEvent(ctx, {
+    threadId: thread.id,
+    event: { type: 'run.failed' }
+  });
+  const failed = outcome.applied ? outcome.thread : {
     ...thread,
     status: 'error' as const
   };

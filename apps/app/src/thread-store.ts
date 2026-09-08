@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { product } from './lib/product-client.js';
+import type { ThreadActivityState } from '@zana-ai/zcc-domain/thread-runtime';
 
 export interface ThreadListItem {
   id: string;
@@ -19,6 +20,10 @@ export interface ThreadListItem {
   lastReadSeq?: number | null;
   maxSeq?: number;
   updatedAt?: number;
+  pinnedAt?: number | null;
+  pinOrder?: number | null;
+  activity?: ThreadActivityState;
+  runtime?: { displayStatus: string; hostReconnectGraceExpiresAt: number | null };
 }
 
 interface ThreadStore {

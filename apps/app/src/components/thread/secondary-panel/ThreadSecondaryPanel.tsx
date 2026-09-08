@@ -81,18 +81,6 @@ export function ThreadSecondaryPanel({
           >
             <Info size={15} />
           </button>
-          {showPlanPin ? (
-            <button
-              type="button"
-              className="thread-secondary-pin"
-              aria-label="Show plan"
-              aria-pressed={pin === 'plan'}
-              data-testid="thread-plan-pin"
-              onClick={() => onSelectPlan?.()}
-            >
-              <ListTodo size={15} />
-            </button>
-          ) : null}
           {showDiffPin ? (
             <button
               type="button"
@@ -103,6 +91,18 @@ export function ThreadSecondaryPanel({
               onClick={onSelectDiff}
             >
               <GitCompare size={15} />
+            </button>
+          ) : null}
+          {showPlanPin ? (
+            <button
+              type="button"
+              className="thread-secondary-pin"
+              aria-label="Show plan"
+              aria-pressed={pin === 'plan'}
+              data-testid="thread-plan-pin"
+              onClick={() => onSelectPlan?.()}
+            >
+              <ListTodo size={15} />
             </button>
           ) : null}
           {state.tabs.map((tab) => (

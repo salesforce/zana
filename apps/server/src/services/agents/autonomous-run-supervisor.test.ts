@@ -292,28 +292,72 @@ describe('AutonomousRunSupervisor', () => {
     expect(closeSession).toHaveBeenCalled();
   });
 
-  it('nudge delivery ALSO resets the timeout (activity signal)', () => {
-    // A nudge successfully delivered means the agent is still responding to
-    // idle state → the run is making progress, so timeout should reset.
+  it('successful nudge delivery resets the run timeout', () => {
+    // A delivered nudge means the agent is still responding — treat it the same
+    // as any other activity signal so a nudge landing near the timeout boundary
+    // isn't raced by a premature timeout before the resulting state transition
+    // is observed.
     const { deps, clock, reply } = makeDeps();
     const svc = new AutonomousRunSupervisor(deps);
 
     svc.start({ ...START, limits: { maxRounds: 5, timeoutMs: 100_000 } });
-    const initialSetCount = clock.setTimer.mock.calls.length; // 1 (initial timeout)
+    const initialClearCount = clock.clearTimer.mock.calls.length;
 
     // Agent goes idle → nudge timer armed
     svc.observe('w1', 'idle');
     clock.fireNext(); // fire the nudge timer
 
-    // Nudge delivered → timeout should have been reset
+    // Nudge delivered → the run timeout WAS cleared and re-armed.
     expect(reply).toHaveBeenCalledTimes(1);
-    expect(clock.clearTimer).toHaveBeenCalled(); // timeout was cleared
-    expect(clock.setTimer.mock.calls.length).toBeGreaterThan(initialSetCount + 1);
-    // At least: initial timeout + nudge timer + NEW timeout after reset
+    expect(clock.clearTimer.mock.calls.length).toBeGreaterThan(initialClearCount);
 
     const run = svc.list()[0];
     expect(run.state).toBe('running');
     expect(run.rounds).toBe(1);
+  });
+
+  it('a nudge delivered right at the timeout boundary is not raced by a premature timeout', () => {
+    // Regression: previously a successful nudge did not reset the timeout, so a
+    // nudge firing just before the wall-clock deadline could be immediately
+    // followed by the (stale) timeout tearing the run down before the agent's
+    // resulting state transition was ever observed.
+    const { deps, clock, closeSession } = makeDeps();
+    const svc = new AutonomousRunSupervisor(deps);
+
+    svc.start({ ...START, limits: { maxRounds: 0, timeoutMs: 60_000 } });
+    svc.observe('w1', 'idle'); // arms the nudge timer
+
+    clock.fireNext(); // nudge fires and is delivered → timeout reset
+
+    // The stale/original timeout timer must no longer be pending — only the
+    // freshly-armed one (plus the next nudge re-arm) should remain.
+    const run = svc.list()[0];
+    expect(run.state).toBe('running');
+    expect(run.stopReason).toBeUndefined();
+    expect(closeSession).not.toHaveBeenCalled();
+  });
+
+  it("'nudge' event carries every eligible session id for a multi-session run", () => {
+    const { deps, clock } = makeDeps();
+    const svc = new AutonomousRunSupervisor(deps);
+    const nudgeListener = vi.fn();
+    svc.on('nudge', nudgeListener);
+
+    svc.start(START);
+    svc.observe('w1', 'idle');
+    svc.observe('w2', 'idle');
+    clock.fireNext(); // single round-timer fire nudges both at-rest sessions
+
+    expect(nudgeListener).toHaveBeenCalledTimes(1);
+    const [runId, sessionIds, rounds] = nudgeListener.mock.calls[0] as unknown as [
+      string,
+      string[],
+      number
+    ];
+    expect(runId).toBe('r1');
+    expect(sessionIds).toEqual(expect.arrayContaining(['w1', 'w2']));
+    expect(sessionIds).toHaveLength(2);
+    expect(rounds).toBe(1);
   });
 
   it('REGRESSION GUARD: fixed 30min/45min timeout cannot silently return', () => {

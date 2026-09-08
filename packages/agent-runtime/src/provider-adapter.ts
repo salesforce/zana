@@ -80,6 +80,7 @@ export type ProviderExecutionContext = {
   instructions?: string;
   envVars?: Record<string, string>;
   skillRoots?: readonly AgentRuntimeSkillRoot[];
+  providerOptions?: Record<string, unknown>;
 } & RuntimePermissionPolicy;
 
 export type AdapterCommand =
@@ -89,6 +90,7 @@ export type AdapterCommand =
       skillRoots: readonly AgentRuntimeSkillRoot[];
     }
   | { type: "model/list"; cwd?: string }
+  | { type: "provider/health"; cwd?: string }
   | {
       type: "thread/start";
       threadId: string;
@@ -272,6 +274,7 @@ export interface ProviderAdapter {
   parseModelListResult(result: unknown): {
     models: AvailableModel[];
     selectedOnlyModels: AvailableModel[];
+    acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
   };
   translateEvent(
     event: ProviderRuntimeEvent,

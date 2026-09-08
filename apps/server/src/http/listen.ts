@@ -1,13 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { startProductServer } from './product-server.js';
 import { attachProductPluginService } from './product-plugins.js';
 import { DEFAULT_DEV_APP_PORT, serverPortFromEnv } from './ports.js';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
+import { standaloneModernTeamLaunchSource } from '../services/agents/modern-team-launch-config.js';
 
 const port = serverPortFromEnv();
-const dataDir = process.env.ZCC_DATA_DIR ?? join(homedir(), '.zcc');
+const dataDir = resolveZccDataDir();
 const appUrl = process.env.ZCC_DESKTOP_APP_URL ?? process.env.ELECTRON_RENDERER_URL;
 const devAppPortRaw = process.env.ZCC_DEV_APP_PORT;
 const devAppPort = devAppPortRaw && /^\d+$/.test(devAppPortRaw)
@@ -31,7 +32,13 @@ const host = await startProductServer({
     appUrl
   }
 });
-await attachProductPluginService(host.ctx);
+await attachProductPluginService(host.ctx, {
+  hostAgentToolSource: standaloneModernTeamLaunchSource(
+    dataDir,
+    () => host.ctx.config.getConfig(),
+    process.env.ZCC_E2E_HOME ? join(process.env.ZCC_E2E_HOME, 'electron-user-data') : undefined
+  )
+});
 
 process.stdout.write(`zcc-server listening on ${host.url}\n`);
 

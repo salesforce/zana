@@ -17,7 +17,7 @@ import { SavedDetail } from '@/components/SavedDetail';
  * (Delete) only fire for the tab actually on screen.
  *
  * Feed / Reports tab, detail column:
- *   • nothing selected → the Inbox OVERVIEW (AI summary + Questions / Reports /
+ *   • nothing selected → the Inbox OVERVIEW (AI summary + Reports /
  *     Ideas / Goals rollups) as the landing page. The AI summary used to live
  *     atop the narrow list column; it moved here so the list is a pure feed.
  *   • an entry selected → that entry's `InboxDetail` preview.

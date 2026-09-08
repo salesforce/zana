@@ -49,6 +49,7 @@ import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
 import { product } from './lib/product-client.js';
+import { subscribeProductEvent } from './lib/product-ws.js';
 import { prefetchThreadModelCatalog, reloadThreadModelCatalog } from './components/thread/pickers/thread-model-catalog.js';
 import { decodeRoutePath } from './lib/decode-route.js';
 import {
@@ -57,10 +58,22 @@ import {
   getNavRoutePath,
   getPluginDetailRoutePath,
   getProjectSettingsRoutePath,
-  getProjectWorkspaceRoutePath,
+  getProjectModeRoutePath,
+  getScheduleRoutePath,
   getSchedulerRoutePath,
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
+import {
+  EMPTY_HOST_INSTALL_DRAWER,
+  reduceHostInstallAppend,
+  reduceHostInstallEvent,
+  reduceHostInstallFinish,
+  reduceHostInstallOpen,
+  type HostInstallDrawerState,
+  type HostInstallFinish,
+  type HostInstallKind
+} from './lib/host-install-drawer.js';
+import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 import {
   findProjectIdForSession,
   hasMissingSetup,
@@ -91,6 +104,10 @@ import {
   useUpdates,
   useWhatsNew
 } from './stores/live.js';
+import {
+  resolvedComposerSendMode,
+  type ComposerSendMode
+} from './lib/thread-composer-preferences.js';
 
 /**
  * localStorage key for the sidebar-collapsed preference. A per-project window
@@ -153,6 +170,8 @@ export type NavId = CoreNavId | (string & {});
  */
 export type SettingsTab =
   | 'global'
+  | 'composer'
+  | 'keyboard'
   | 'terminal'
   | 'agents'
   | 'harness'
@@ -270,7 +289,7 @@ export interface PendingLaunch {
   parkedAt: string;
 }
 
-export type WorkspaceMode =
+export type CoreProjectView =
   | 'agents'
   | 'terminals'
   | 'explorer'
@@ -282,7 +301,7 @@ export type WorkspaceMode =
   | 'feed';
 
 /**
- * The active per-project view. Either a core {@link WorkspaceMode} OR an
+ * The active per-project view. Either a core {@link CoreProjectView} OR an
  * extension module id, when the project's active tab is an
  * extension-contributed project tab (see the SDK `ProjectTabContribution`). An
  * extension id is an opaque string; core never enumerates them, so this widens
@@ -290,11 +309,11 @@ export type WorkspaceMode =
  * (many) call sites that set a core mode. Consumers that only understand core
  * modes must tolerate an unknown string (treat it as "not my mode").
  */
-export type ProjectView = WorkspaceMode | (string & {});
+export type ProjectView = CoreProjectView | (string & {});
 
-/** Core workspace modes that round-trip to AppConfig. An extension-id project
- *  view also persists — see {@link persistWorkspaceModes}. */
-export const PERSISTED_CORE_MODES: readonly WorkspaceMode[] = [
+/** Core project views that round-trip to AppConfig. An extension-id project
+ *  view also persists — see {@link persistProjectViews}. */
+export const PERSISTED_CORE_MODES: readonly CoreProjectView[] = [
   'agents',
   'terminals',
   'explorer',
@@ -429,10 +448,10 @@ interface UiState {
   settleHostDialog: (id: string, answer: unknown) => void;
   // unread tabs (received output while not active)
   unread: Record<string, boolean>;
-  // workspace mode per project (default: terminals). A value may be a core
-  // WorkspaceMode or an extension module id (an extension-contributed project
+  // per-project view (default: agents). A value may be a core
+  // CoreProjectView or an extension module id (an extension-contributed project
   // tab) — see ProjectView.
-  workspaceMode: Record<string, ProjectView>;
+  projectView: Record<string, ProjectView>;
   // Agents board layout — kanban lanes vs. a grouped vertical list. One global
   // preference shared by the cross-project and per-project boards (persisted to
   // AppConfig.agentsBoardView). Default 'board'.
@@ -451,6 +470,13 @@ interface UiState {
   notificationsDrawerOpen: boolean;
   toggleNotificationsDrawer: () => void;
   setNotificationsDrawerOpen: (open: boolean) => void;
+  /** Right-edge install log drawer — live NDJSON from host-daemon Install/Fix. */
+  hostInstallDrawer: HostInstallDrawerState;
+  openHostInstallDrawer: (input: { kind: HostInstallKind; target: string }) => void;
+  appendHostInstallLogs: (lines: string[]) => void;
+  applyHostInstallEvent: (event: HostBootstrapEvent) => void;
+  finishHostInstallDrawer: (outcome: HostInstallFinish) => void;
+  setHostInstallDrawerOpen: (open: boolean) => void;
   // explorer: file path open in viewer per project
   explorerFile: Record<string, string | undefined>;
   // explorer: pending goto request per project (consumed by ExplorerView)
@@ -645,8 +671,8 @@ interface UiState {
   dismissToast: (id: string) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
-  setWorkspaceMode: (projectId: string, mode: ProjectView) => void;
-  toggleWorkspaceMode: (projectId: string) => void;
+  setProjectView: (projectId: string, mode: ProjectView) => void;
+  toggleProjectView: (projectId: string) => void;
   setExplorerFile: (projectId: string, path: string | undefined) => void;
   requestExplorerGoto: (projectId: string, line: number, column: number) => void;
 }
@@ -741,16 +767,21 @@ function mirroredConfigFlags(config: AppConfig) {
     terminalWheelArrowsEnabled: config.terminalWheelArrowsEnabled ?? true,
     heartbeatEnabled: config.heartbeatEnabled ?? false,
     goalsEnabled: config.goalsEnabled ?? false,
+    cliRemoteToolProxyEnabled: config.cliRemoteToolProxyEnabled ?? false,
+    cliRemoteHostCatalogEnabled: config.cliRemoteHostCatalogEnabled ?? false,
     followUpsEnabled: config.followUpsEnabled ?? false,
     idleAttentionSensitivity: config.idleAttentionSensitivity ?? 'medium',
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
     includeScheduledAgentsInAgentView: config.includeScheduledAgentsInAgentView ?? true,
     voiceInputEnabled: config.voiceInputEnabled ?? false,
+    steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false,
+    composerSendMode: resolvedComposerSendMode(config),
     autoCloseIdleEnabled: config.autoCloseIdleEnabled ?? false,
     overseerMode: config.overseerMode ?? 'off',
     catchUpSummaryEnabled: config.catchUpSummaryEnabled ?? false,
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
+    autoOpenThreadPlanPanel: config.autoOpenThreadPlanPanel ?? false,
     structuredQuestionsEnabled: config.structuredQuestionsEnabled ?? true,
     reviewerApprovalMode: config.reviewerApprovalMode ?? 'ask',
     worktreeIsolationDefault: config.worktreeIsolationDefault ?? false,
@@ -760,8 +791,12 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessPiEnabled: config.harnessPiEnabled ?? false,
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
+    teamJobLaunchEnabled: config.teamJobLaunchEnabled === true,
+    composerShowCliAgent: config.composerShowCliAgent !== false,
+    composerShowModern: config.composerShowModern !== false,
+    composerShowAutonomousTeam: config.composerShowAutonomousTeam !== false,
     openerHiddenTargets: config.openerHiddenTargets ?? [],
-    steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false
+    lastProjectId: config.lastProjectId ?? null,
   };
 }
 
@@ -779,13 +814,13 @@ function readCollapsedSections(): Record<string, boolean> {
   }
 }
 
-// Debounced write of workspaceMode -> AppConfig.workspaceModes.
+// Debounced write of projectView -> AppConfig.projectViews.
 let persistTimer: number | null = null;
-function persistWorkspaceModes() {
+function persistProjectViews() {
   if (persistTimer !== null) window.clearTimeout(persistTimer);
   persistTimer = window.setTimeout(() => {
     persistTimer = null;
-    const map = useUi.getState().workspaceMode;
+    const map = useUi.getState().projectView;
     // Every mode round-trips, INCLUDING an extension-id project view (an
     // extension-contributed project tab): the value is an opaque string, and an
     // id whose extension is gone on next launch is tolerated at render time
@@ -794,7 +829,7 @@ function persistWorkspaceModes() {
     for (const [k, v] of Object.entries(map)) {
       if (v) persisted[k] = v;
     }
-    product.config.set({ workspaceModes: persisted }).catch(() => {});
+    product.config.set({ projectViews: persisted }).catch(() => {});
   }, 200);
 }
 
@@ -849,13 +884,13 @@ function applyDestination(
       extensionsTab: decoded.extensionsTab,
       settingsExtensionId: decoded.settingsExtensionId,
       focusedProjectId: decoded.focusedProjectId ?? (keepFocus ? s.focusedProjectId : null),
-      workspaceMode:
-        decoded.focusedProjectId && decoded.workspaceMode
+      projectView:
+        decoded.focusedProjectId && decoded.projectMode
           ? {
-              ...s.workspaceMode,
-              [decoded.focusedProjectId]: decoded.workspaceMode as ProjectView
+              ...s.projectView,
+              [decoded.focusedProjectId]: decoded.projectMode as ProjectView
             }
-          : s.workspaceMode,
+          : s.projectView,
       ...extra
     };
   });
@@ -897,7 +932,7 @@ export const useUi = create<UiState>((set, get) => ({
   pendingLaunches: [],
   hostDialogs: [],
   unread: {},
-  workspaceMode: {},
+  projectView: {},
   agentsBoardView: 'board',
   explorerFile: {},
   explorerGoto: {},
@@ -949,6 +984,23 @@ export const useUi = create<UiState>((set, get) => ({
     }
     set({ notificationsDrawerOpen: open });
   },
+  hostInstallDrawer: EMPTY_HOST_INSTALL_DRAWER,
+  openHostInstallDrawer: (input) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallOpen(s.hostInstallDrawer, input),
+    notificationsDrawerOpen: false
+  })),
+  appendHostInstallLogs: (lines) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallAppend(s.hostInstallDrawer, lines)
+  })),
+  applyHostInstallEvent: (event) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallEvent(s.hostInstallDrawer, event)
+  })),
+  finishHostInstallDrawer: (outcome) => set((s) => ({
+    hostInstallDrawer: reduceHostInstallFinish(s.hostInstallDrawer, outcome)
+  })),
+  setHostInstallDrawerOpen: (open) => set((s) => ({
+    hostInstallDrawer: { ...s.hostInstallDrawer, open }
+  })),
   sidebarCollapsed:
     typeof localStorage !== 'undefined' &&
     localStorage.getItem(sidebarCollapsedKey()) === '1',
@@ -1048,7 +1100,7 @@ export const useUi = create<UiState>((set, get) => ({
     set({ focusedProjectId: id, nav: 'projects' });
     // Keep selection in sync with focus so the workspace tracks the column.
     get().selectProject(id);
-    get().setWorkspaceMode(id, 'agents');
+    get().setProjectView(id, 'agents');
     product.config.set({ focusedProjectId: id }).catch(() => {});
   },
   exitProjectFocus: () => {
@@ -1078,8 +1130,13 @@ export const useUi = create<UiState>((set, get) => ({
   closeAgentModal: () => set({ agentModal: null }),
   openThreadModal: (threadId) => set({ threadModal: { threadId }, agentModal: null }),
   closeThreadModal: () => set({ threadModal: null }),
-  selectMonitorAgent: (sessionId, projectId) => set({ agentMonitor: { sessionId, projectId } }),
-  clearMonitorAgent: () => set({ agentMonitor: null }),
+  selectMonitorAgent: (sessionId, projectId) =>
+    set((s) => (
+      s.agentMonitor?.sessionId === sessionId && s.agentMonitor.projectId === projectId
+        ? s
+        : { agentMonitor: { sessionId, projectId } }
+    )),
+  clearMonitorAgent: () => set((s) => (s.agentMonitor === null ? s : { agentMonitor: null })),
   selectThreadPanelTerminal: (sessionId, projectId) => set({ threadPanelTerminal: { sessionId, projectId } }),
   clearThreadPanelTerminal: () => set({ threadPanelTerminal: null }),
   setSettingsTab: (settingsTab) =>
@@ -1101,20 +1158,13 @@ export const useUi = create<UiState>((set, get) => ({
   selectGroup: (groupId) => set({ schedulerTab: 'group', selectedGroupId: groupId }),
   revealSchedule: (taskId) => {
     const task = useScheduler.getState().tasks.find((t) => t.id === taskId);
-    // applyDestination('/scheduler') forces schedulerTab back to 'overview' via
-    // setNav, so set the scope tab AFTER it. A project-scoped task also needs
-    // its project selected so the project scope renders the right list.
-    applyDestination(set, getSchedulerRoutePath(), { revealScheduleId: taskId });
-    if (task?.source && task.source !== 'global') {
-      get().selectProject((task.source as { projectId: string }).projectId);
-      set({ schedulerTab: 'project' });
-    } else if (task?.group && useScheduleGroups.getState().groups.some((g) => g.id === task.group)) {
-      // Global + resolvable group → land on that group's tab; otherwise the
-      // task lives in the Ungrouped (global) bucket.
-      set({ schedulerTab: 'group', selectedGroupId: task.group });
-    } else {
-      set({ schedulerTab: 'global' });
+    if (!task) {
+      applyDestination(set, getSchedulerRoutePath(), { revealScheduleId: taskId });
+      return;
     }
+    const projectId =
+      task.source && task.source !== 'global' ? task.source.projectId : null;
+    applyDestination(set, getScheduleRoutePath(task.id, projectId));
   },
   clearRevealSchedule: () => set({ revealScheduleId: null }),
   revealLibraryDoc: (projectId, docId) => {
@@ -1123,7 +1173,7 @@ export const useUi = create<UiState>((set, get) => ({
     get().enterProjectFocus(projectId);
     // `'library'` is the pre-plugin persisted alias; Workspace remaps it onto
     // the Docs plugin's project tab without naming that plugin's id here.
-    get().setWorkspaceMode(projectId, 'library');
+    get().setProjectView(projectId, 'library');
     set({ revealLibraryDocId: docId });
   },
   clearRevealLibraryDoc: () => set({ revealLibraryDocId: null }),
@@ -1231,14 +1281,14 @@ export const useUi = create<UiState>((set, get) => ({
       delete next[sessionId];
       return { unread: next };
     }),
-  setWorkspaceMode: (projectId, mode) => {
+  setProjectView: (projectId, mode) => {
     set((s) => ({
       nav: 'projects',
       focusedProjectId: s.focusedProjectId ?? projectId,
-      workspaceMode: { ...s.workspaceMode, [projectId]: mode }
+      projectView: { ...s.projectView, [projectId]: mode }
     }));
-    persistWorkspaceModes();
-    applyDestination(set, getProjectWorkspaceRoutePath(projectId, mode), {
+    persistProjectViews();
+    applyDestination(set, getProjectModeRoutePath(projectId, mode), {
       nav: 'projects',
       focusedProjectId: projectId
     });
@@ -1247,9 +1297,9 @@ export const useUi = create<UiState>((set, get) => ({
     set({ agentsBoardView: view });
     persistAgentsBoardView(view);
   },
-  toggleWorkspaceMode: (projectId) => {
-    const cur = get().workspaceMode[projectId] ?? 'terminals';
-    get().setWorkspaceMode(projectId, cur === 'terminals' ? 'explorer' : 'terminals');
+  toggleProjectView: (projectId) => {
+    const cur = get().projectView[projectId] ?? 'terminals';
+    get().setProjectView(projectId, cur === 'terminals' ? 'explorer' : 'terminals');
   },
   setExplorerFile: (projectId, path) =>
     set((s) => {
@@ -1407,6 +1457,14 @@ interface DataState {
   /** Mirror of AppConfig.goalsEnabled — gates the experimental Goals project tab.
    *  Hydrated on init, kept live by the Settings toggle. Default off. */
   goalsEnabled: boolean;
+  /** Mirror of AppConfig.cliRemoteToolProxyEnabled — unlocks the CLI Agent
+   *  Remote host vs Local agent · remote tools picker on SSH projects.
+   *  Hydrated on init, kept live by the Settings toggle. Default off. */
+  cliRemoteToolProxyEnabled: boolean;
+  /** Mirror of AppConfig.cliRemoteHostCatalogEnabled — CLI Agent asks the
+   *  execution host which CLIs/models are installed (Modern execution-options).
+   *  Hydrated on init, kept live by the Settings toggle. Default off. */
+  cliRemoteHostCatalogEnabled: boolean;
   /** Mirror of AppConfig.followUpsEnabled — gates the experimental Follow-ups
    *  project tab. Hydrated on init, kept live by the Settings toggle. Default off. */
   followUpsEnabled: boolean;
@@ -1419,15 +1477,19 @@ interface DataState {
    *  AgentsListPane also promotes triaged idle agents into its "Needs you" group
    *  (the board already does). Default off. */
   agentListNeedsYouFromTriage: boolean;
-  /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, scheduler
-   *  jobs appear on the Agents board Scheduled column (plus live runs in
-   *  Working/Done). Default on. */
+  /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, waiting
+   *  scheduler jobs appear in the Agents board Scheduled column (plus finished
+   *  runs in Done). Working/blocked scheduled runs stay in Working even when
+   *  off. Backs the board-toolbar toggle and the Settings checkbox. Default on. */
   includeScheduledAgentsInAgentView: boolean;
   /** Mirror of AppConfig.voiceInputEnabled — gates the mic button in the prompt
    *  composer. Hydrated on init, kept live by the Settings toggle. Default off. */
   voiceInputEnabled: boolean;
   /** Mirror of AppConfig.steerActiveThreadOnEnter — Enter steers a running thread. */
   steerActiveThreadOnEnter: boolean;
+  /** Mirror of AppConfig.composerSendMode — Auto | Steer | Queue picker. */
+  composerSendMode: ComposerSendMode;
+  setComposerSendMode: (mode: ComposerSendMode) => Promise<void>;
   /** Mirror of AppConfig.autoCloseIdleEnabled — the master switch for closing
    *  idle agents on a timer. Backs the sidebar one-click toggle (near Agents)
    *  and the Settings toggle. Hydrated on init, kept live by both. Default off. */
@@ -1453,6 +1515,10 @@ interface DataState {
    *  Settings toggle. Default off; when off, no classify call runs and every
    *  report stays inline. */
   feedNoiseClassifierEnabled: boolean;
+  /** Mirror of AppConfig.autoOpenThreadPlanPanel — experimental. When on, Plan
+   *  mode (native ACP Plan, /plan, or a durable plan) opens the thread side
+   *  panel on the Plan pin. Default off. Approvals still open the panel. */
+  autoOpenThreadPlanPanel: boolean;
   /** Mirror of AppConfig.suggestionsEnabled — gates the Suggested Actions launcher
    *  rail entry + view (EXPERIMENTAL). Hydrated on init, kept live by the Settings
    *  toggle. Default off; when off the "Suggestions" nav entry is absent. */
@@ -1480,6 +1546,9 @@ interface DataState {
   /** Last external-editor verification snapshot (Settings → Editor). Empty until
    *  `refreshEditorStatus` runs. */
   editorStatus: EditorVerifyResult[];
+  /** Mirror of AppConfig.lastProjectId — seeds New Chat when the sidebar has
+   *  no current selection (e.g. after adding a remote, then opening Home). */
+  lastProjectId: string | null;
   /** Re-probe every external editor's `<shim> --version` and cache the result. */
   refreshEditorStatus: () => Promise<void>;
   /** Mirror of AppConfig.openerHiddenTargets — opener-bar targets the user hid.
@@ -1489,6 +1558,18 @@ interface DataState {
   setOpenerHiddenTargets: (targets: OpenTarget[]) => void;
   /** Mirror of AppConfig.microVmEnabled — gates the microVM env in launch UI. */
   microVmEnabled: boolean;
+  /** Mirror of AppConfig.teamJobLaunchEnabled — gates durable Team job launch. */
+  teamJobLaunchEnabled: boolean;
+  setTeamJobLaunchEnabled: (on: boolean) => void;
+  /** Mirror of AppConfig.composerShowCliAgent — CLI Agent in the launch switcher. */
+  composerShowCliAgent: boolean;
+  setComposerShowCliAgent: (on: boolean) => void;
+  /** Mirror of AppConfig.composerShowModern — Modern in the launch switcher. */
+  composerShowModern: boolean;
+  setComposerShowModern: (on: boolean) => void;
+  /** Mirror of AppConfig.composerShowAutonomousTeam — Autonomous Team in the switcher. */
+  composerShowAutonomousTeam: boolean;
+  setComposerShowAutonomousTeam: (on: boolean) => void;
   /** Mirror of AppConfig.worktreeIsolationDefault — the default workspace
    *  picker selection (new worktree vs this checkout), not a hidden mode.
    *  A per-project ProjectSettings.worktreeIsolation overrides it. */
@@ -1502,10 +1583,13 @@ interface DataState {
   setTerminalWheelArrowsEnabled: (on: boolean) => void;
   setHeartbeatEnabled: (on: boolean) => void;
   setGoalsEnabled: (on: boolean) => void;
+  setCliRemoteToolProxyEnabled: (on: boolean) => void;
+  setCliRemoteHostCatalogEnabled: (on: boolean) => void;
   setFollowUpsEnabled: (on: boolean) => void;
   setCatchUpSummaryEnabled: (on: boolean) => void;
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
+  setAutoOpenThreadPlanPanel: (on: boolean) => void;
   setSuggestionsEnabled: (on: boolean) => void;
   setStructuredQuestionsEnabled: (on: boolean) => void;
   setHarnessCursorEnabled: (on: boolean) => void;
@@ -1516,7 +1600,8 @@ interface DataState {
   setWorktreeIsolationDefault: (on: boolean) => void;
   setIdleAttentionSensitivity: (level: 'high' | 'medium' | 'low') => void;
   setAgentListNeedsYouFromTriage: (on: boolean) => void;
-  setIncludeScheduledAgentsInAgentView: (on: boolean) => void;
+  /** Flip Scheduled-column visibility and persist it (board toolbar toggle). */
+  setIncludeScheduledAgentsInAgentView: (on: boolean) => Promise<void>;
   setVoiceInputEnabled: (on: boolean) => void;
   /** Flip the auto-close-idle master switch and persist it (sidebar toggle). */
   setAutoCloseIdleEnabled: (on: boolean) => Promise<void>;
@@ -1622,6 +1707,12 @@ interface DataState {
       /** Receives a launch failure for callers needing retained inline feedback
        *  in addition to the global error toast. */
       onError?: (message: string) => void;
+      /**
+       * Renderer INTENT: local CLI + SSH remote tools. Main honors only when
+       * Experimental `cliRemoteToolProxyEnabled` is on and the store project
+       * has `remote` (Rule 1). Never send host credentials.
+       */
+      remoteToolProxy?: boolean;
     }
   ) => Promise<TerminalSession | null>;
   /**
@@ -1633,6 +1724,8 @@ interface DataState {
    * tab's X button, ⌘⇧W, middle-click, and the sidebar row X.
    */
   closeTerminal: (sessionId: string, projectId: string) => Promise<void>;
+  /** Remove terminal cards owned by a Job after its single dismiss action succeeds. */
+  dismissTerminals: (sessionIds: readonly string[]) => void;
   /**
    * Bulk-close the given at-rest agents in a project (the Agents board's Close
    * action and the modal's "Close with follow-up" item). When `summarize` is
@@ -1739,26 +1832,43 @@ export function listedTerminals(list: TerminalSession[] | undefined): TerminalSe
 }
 
 /**
- * Sessions for the Agents board / list / flow. Same as {@link listedTerminals}
- * unless `includeScheduled` is on, in which case scheduler-spawned jobs are
- * kept. Project rails and focus buckets keep using {@link listedTerminals}.
+ * A scheduled job that is actively working or blocked — it belongs in Working,
+ * not the Scheduled column. Waiting (`idle`/`unknown`) and exited scheduled
+ * jobs are not active.
  */
-export function agentViewTerminals(
-  list: TerminalSession[] | undefined,
-  includeScheduled: boolean
-): TerminalSession[] {
-  if (includeScheduled) return list ?? [];
-  return listedTerminals(list);
+function isActiveScheduledRun(
+  session: Pick<TerminalSession, 'scheduled' | 'status'>,
+  state: AgentState | undefined
+): boolean {
+  if (!session.scheduled || session.status === 'exited') return false;
+  return state === 'working' || state === 'blocked';
 }
 
 /**
- * Live sessions for a project's inline rail expansion: listed (non-scheduler)
- * sessions whose pty hasn't exited. Exited/dismissed agents drop out of the
- * rail automatically so it stays a view of what's actually running — the full
- * history (including exited tombstones) still lives in the project's drill-in
- * focus view. Feeds the Projects rail's per-project session tree.
+ * Sessions for the Agents board / list / flow. When `includeScheduled` is on,
+ * every scheduler-spawned job is kept (waiting ones sit in the Scheduled
+ * column). When off, waiting and exited scheduled jobs are dropped, but a
+ * scheduled run that is working or blocked stays visible in Working. The
+ * Projects sidebar (global + per-project) never lists scheduled jobs — that
+ * tree uses {@link projectRailTerminals} / {@link listedTerminals}.
  */
-export function liveTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
+export function agentViewTerminals(
+  list: TerminalSession[] | undefined,
+  includeScheduled: boolean,
+  stateById: Readonly<Record<string, AgentState>> = {}
+): TerminalSession[] {
+  const sessions = list ?? [];
+  if (includeScheduled) return sessions;
+  return sessions.filter((t) => !t.scheduled || isActiveScheduledRun(t, stateById[t.id]));
+}
+
+/**
+ * Live sessions for a project's inline rail expansion (global Workspaces tree
+ * and the focused-project session rail). Scheduler jobs stay off this tree —
+ * they belong on the Agents board / list when that setting is on, and in the
+ * Scheduler panel. Exited/dismissed agents drop out automatically.
+ */
+export function projectRailTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
   return listedTerminals(list).filter((t) => t.status !== 'exited');
 }
 
@@ -1811,18 +1921,22 @@ export const useData = create<DataState>((set, get) => ({
   terminalWheelArrowsEnabled: true,
   heartbeatEnabled: false,
   goalsEnabled: false,
+  cliRemoteToolProxyEnabled: false,
+  cliRemoteHostCatalogEnabled: false,
   followUpsEnabled: false,
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
   includeScheduledAgentsInAgentView: true,
   voiceInputEnabled: false,
   steerActiveThreadOnEnter: false,
+  composerSendMode: 'auto',
   autoCloseIdleEnabled: false,
   overseerMode: 'off',
   reviewerApprovalMode: 'ask',
   catchUpSummaryEnabled: false,
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
+  autoOpenThreadPlanPanel: false,
   suggestionsEnabled: false,
   structuredQuestionsEnabled: true,
   defaultHarness: null,
@@ -1833,8 +1947,13 @@ export const useData = create<DataState>((set, get) => ({
   harnessOpenCodeEnabled: false,
   harnessStatus: [],
   editorStatus: [],
+  lastProjectId: null,
   openerHiddenTargets: [],
   microVmEnabled: false,
+  teamJobLaunchEnabled: false,
+  composerShowCliAgent: true,
+  composerShowModern: true,
+  composerShowAutonomousTeam: true,
   worktreeIsolationDefault: false,
 
   setFontSize(n) {
@@ -1862,6 +1981,14 @@ export const useData = create<DataState>((set, get) => ({
     set({ goalsEnabled: on });
   },
 
+  setCliRemoteToolProxyEnabled(on) {
+    set({ cliRemoteToolProxyEnabled: on });
+  },
+
+  setCliRemoteHostCatalogEnabled(on) {
+    set({ cliRemoteHostCatalogEnabled: on });
+  },
+
   setFollowUpsEnabled(on) {
     set({ followUpsEnabled: on });
   },
@@ -1872,6 +1999,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setFeedNoiseClassifierEnabled(on) {
     set({ feedNoiseClassifierEnabled: on });
+  },
+
+  setAutoOpenThreadPlanPanel(on) {
+    set({ autoOpenThreadPlanPanel: on });
   },
 
   setSuggestionsEnabled(on) {
@@ -1929,6 +2060,22 @@ export const useData = create<DataState>((set, get) => ({
     set({ microVmEnabled: on });
   },
 
+  setTeamJobLaunchEnabled(on) {
+    set({ teamJobLaunchEnabled: on });
+  },
+
+  setComposerShowCliAgent(on) {
+    set({ composerShowCliAgent: on });
+  },
+
+  setComposerShowModern(on) {
+    set({ composerShowModern: on });
+  },
+
+  setComposerShowAutonomousTeam(on) {
+    set({ composerShowAutonomousTeam: on });
+  },
+
   setWorktreeIsolationDefault(on) {
     set({ worktreeIsolationDefault: on });
   },
@@ -1945,12 +2092,37 @@ export const useData = create<DataState>((set, get) => ({
     set({ agentListNeedsYouFromTriage: on });
   },
 
-  setIncludeScheduledAgentsInAgentView(on) {
+  async setIncludeScheduledAgentsInAgentView(on) {
+    // Optimistic flip, persist, roll back on failure. The board toolbar owns
+    // this round-trip (same shape as the sidebar automation toggles); Settings
+    // still writes AppConfig itself and hydrates via config.onChanged.
+    const prev = get().includeScheduledAgentsInAgentView;
     set({ includeScheduledAgentsInAgentView: on });
+    try {
+      await product.config.set({ includeScheduledAgentsInAgentView: on });
+    } catch (err) {
+      pushErrorToast(errorMessage(err, 'Failed to toggle Scheduled column'));
+      set({ includeScheduledAgentsInAgentView: prev });
+    }
   },
 
   setVoiceInputEnabled(on) {
     set({ voiceInputEnabled: on });
+  },
+
+  async setComposerSendMode(mode) {
+    const prev = get().composerSendMode;
+    const prevSteer = get().steerActiveThreadOnEnter;
+    set({ composerSendMode: mode, steerActiveThreadOnEnter: mode === 'steer' });
+    try {
+      await product.config.set({
+        composerSendMode: mode,
+        steerActiveThreadOnEnter: mode === 'steer'
+      });
+    } catch (err) {
+      pushErrorToast(errorMessage(err, 'Failed to save send mode'));
+      set({ composerSendMode: prev, steerActiveThreadOnEnter: prevSteer });
+    }
   },
 
   async setAutoCloseIdleEnabled(on) {
@@ -2054,8 +2226,9 @@ export const useData = create<DataState>((set, get) => ({
           applySidebarWidth(next.sidebarWidth);
         }
       });
-      if (config.workspaceModes) {
-        useUi.setState({ workspaceMode: config.workspaceModes });
+      const views = config.projectViews ?? config.workspaceModes;
+      if (views) {
+        useUi.setState({ projectView: views });
       }
       if (
         config.agentsBoardView === 'board' ||
@@ -2188,6 +2361,18 @@ export const useData = create<DataState>((set, get) => ({
     product.inbox.onAppended((entry) => {
       if (scopedProjectId && entry.projectId !== scopedProjectId) return;
       useInbox.getState().prepend(entry);
+      if (
+        entry.notify === 'loud'
+        && typeof document !== 'undefined'
+        && document.visibilityState !== 'visible'
+        && typeof Notification !== 'undefined'
+      ) {
+        try {
+          new Notification(entry.subject ?? 'Zana', { body: entry.comments ?? 'Needs your attention' });
+        } catch {
+          /* OS notify is best-effort */
+        }
+      }
     });
     product.inbox.onRemoved((id) => {
       useInbox.getState().removeLocal(id);
@@ -2361,6 +2546,16 @@ export const useData = create<DataState>((set, get) => ({
     }
     product.scheduler.onChanged((tasks) => {
       useScheduler.setState({ tasks });
+    });
+    subscribeProductEvent<{ action?: string; id?: string; enabled?: boolean }>('scheduler:command', (payload) => {
+      if (!payload?.id) return;
+      if (payload.action === 'run-now') {
+        void product.scheduler.runNow(payload.id);
+        return;
+      }
+      if (payload.action === 'set-enabled' && typeof payload.enabled === 'boolean') {
+        void product.scheduler.setEnabled(payload.id, payload.enabled);
+      }
     });
 
     // Goals: one-shot list + push subscription, mirroring the scheduler. Main
@@ -2859,7 +3054,7 @@ export const useData = create<DataState>((set, get) => ({
           (patch as Record<string, unknown>)[key as string] = next;
         }
       };
-      drop('workspaceMode');
+      drop('projectView');
       drop('splitLayout');
       drop('splitTabIds');
       drop('selectedTabId');
@@ -2871,7 +3066,7 @@ export const useData = create<DataState>((set, get) => ({
       drop('explorerTreeMode');
       return patch;
     });
-    persistWorkspaceModes();
+    persistProjectViews();
   },
 
   async createTerminal(projectId, profile, cols, rows, opts) {
@@ -2898,7 +3093,8 @@ export const useData = create<DataState>((set, get) => ({
         microVmMemoryMib: opts?.microVmMemoryMib,
         resumeSessionId: opts?.resumeSessionId,
         cohort: opts?.cohort,
-        headless: opts?.headless
+        headless: opts?.headless,
+        remoteToolProxy: opts?.remoteToolProxy
       });
       if (!result.ok) {
         opts?.onError?.(result.message);
@@ -3024,6 +3220,40 @@ export const useData = create<DataState>((set, get) => ({
       const targetIdx = Math.min(closingIdx, next.length - 1);
       const target = targetIdx >= 0 ? next[targetIdx]?.id : undefined;
       ui.selectTab(projectId, target);
+    }
+  },
+
+  dismissTerminals(sessionIds) {
+    const ids = new Set(sessionIds);
+    if (ids.size === 0) return;
+    // Capture each session's owning project BEFORE the `set` below removes it
+    // from `terminals` — `findProjectIdForSession` reads the live store, so
+    // calling it after the mutation always returns null (see store.ts history).
+    const projectIdBySession = new Map<string, string>();
+    for (const [projectId, sessions] of Object.entries(get().terminals)) {
+      for (const session of sessions) {
+        if (ids.has(session.id)) projectIdBySession.set(session.id, projectId);
+      }
+    }
+    set((s) => ({
+      terminals: Object.fromEntries(Object.entries(s.terminals).map(([projectId, sessions]) => [
+        projectId,
+        sessions.filter((session) => !ids.has(session.id))
+      ])),
+      detachedStack: Object.fromEntries(Object.entries(s.detachedStack).map(([projectId, sessionIds]) => [
+        projectId,
+        sessionIds.filter((sessionId) => !ids.has(sessionId))
+      ]))
+    }));
+    for (const sessionId of ids) {
+      useUi.getState().clearUnread(sessionId);
+      const projectId = projectIdBySession.get(sessionId) ?? null;
+      if (projectId) useAgentStatus.getState().clear(sessionId, projectId);
+      useIdleTriage.getState().clear(sessionId);
+      useOverseerActivity.getState().clear(sessionId);
+      useSubagents.getState().clear(sessionId);
+      useSubagentChildren.getState().clear(sessionId);
+      useCatchUpSummary.getState().clear(sessionId);
     }
   },
 
@@ -3498,8 +3728,9 @@ export const useData = create<DataState>((set, get) => ({
     if (!projectId) return;
     const tab = (get().terminals[projectId] ?? []).find((t) => t.id === sessionId);
     if (!tab) return;
-    // Manual rename always wins (titleLocked), and skip a no-op title.
-    if (tab.titleLocked || tab.title === next) return;
+    // Job/Team cohort labels are main-owned execution identity. Like a manual
+    // rename, they must not be overwritten by a harness OSC/LLM title.
+    if (tab.titleLocked || tab.cohort?.role === 'worker' || tab.title === next) return;
     // Precedence: manual > LLM > first-OSC (once) > default.
     //  - An OSC idle-title is a ONE-SHOT fallback: it names a still-unnamed tab
     //    once, then stops. Once the tab has been OSC-named (autoTitledByOsc) or

@@ -51,6 +51,7 @@ export type {
   PluginCliOutputLimitError,
   PluginAgents,
   PluginAgentToolRegistration,
+  PluginAgentToolPresentation,
   PluginAgentToolContext,
   PluginEvents,
   PluginThreadEvent,
@@ -63,6 +64,8 @@ export type {
   PluginSdkThreadEventListArgs,
   PluginSdkThreadEventRow,
   PluginSdkThreadIdArgs,
+  PluginSdkThreadForkArgs,
+  PluginSdkThreadListArgs,
   PluginSdkThreadSendArgs,
   PluginSdkThreadSummary,
   PluginSdkThreads,
@@ -78,20 +81,49 @@ export type {
   PluginProviderDeclaration,
   PluginProviderHandle,
   PluginProviderCapabilities,
+  PluginProviderOptionsContext,
+  PluginProviderVisibility,
+  PluginPtyHarnessDeclaration,
+  PluginPtyHarnessProfile,
   PluginUi,
   PluginInteractionRequest,
   PluginInteractionResult,
   PluginInteractionCancelReason,
   PluginStatusApi,
-  PluginSettingsSnapshot
+  PluginSettingsSnapshot,
+  PluginServices,
+  PluginServicesRegistry,
+  PluginSettingDescriptors,
+  PluginSettingValue
 } from './server.js';
+
+export type { JsonValue } from './json-value.js';
+export { defineRpcContract } from './rpc-contract.js';
+export type {
+  PluginRpcError,
+  PluginRpcValidationIssue,
+  StandardSchemaV1,
+  StandardSchemaV1Issue,
+  StandardSchemaV1Result
+} from './rpc-contract.js';
+export type {
+  PluginProviderReasoningLevel,
+  PluginProviderStrings
+} from './backend-contract.js';
 
 export {
   PLUGIN_CLI_OUTPUT_MAX_BYTES,
   PLUGIN_MENTION_TRIGGERS,
+  PLUGIN_AGENT_STATUS_LABEL_MAX_CHARS,
   enforcePluginCliOutputLimit,
+  parsePluginAgentToolPresentation,
   experimental_defineHostEntry,
-  isPluginHostEntryDefinition
+  isPluginHostEntryDefinition,
+  PLUGIN_SERVICE_UNAVAILABLE,
+  PluginServiceUnavailableError,
+  bindPluginServices,
+  createLiveServiceProxy,
+  createPluginServicesRegistry
 } from './server.js';
 
 export type {
@@ -102,18 +134,29 @@ export type {
   PluginAppSetup,
   PluginAppSlots,
   PluginRegistrationSet,
+  PluginNavPanelPlacement,
   PluginNavPanelRegistration,
   PluginSettingsSectionRegistration,
   PluginHomepageSectionRegistration,
   PluginProjectTabRegistration,
   PluginProjectMenuActionRegistration,
   PluginProjectMenuActionContext,
+  PluginCreateProjectActionRegistration,
+  PluginCreateProjectActionContext,
+  PluginCreateProjectDialogProps,
   PluginSidebarFooterActionRegistration,
   PluginSidebarFooterActionContext,
+  PluginProjectStatusbarAlign,
+  PluginProjectStatusbarDialogProps,
+  PluginProjectStatusbarItemContext,
+  PluginProjectStatusbarItemProps,
+  PluginProjectStatusbarItemRegistration,
+  PluginProjectStatusbarMenuItem,
   PluginPendingInteractionRegistration,
   PluginPendingInteractionProps,
   PluginPendingInteractionView,
   PluginThreadPanelActionRegistration,
+  PluginThreadPanelScope,
   PluginNewThreadPanelActionRegistration,
   PluginThreadListRegistration,
   PluginThreadHeaderActionRegistration,
@@ -131,6 +174,10 @@ export type {
   PluginProviderIconRegistration,
   PluginContentScriptRegistration,
   ComposerCustomization,
+  PluginComposerApi,
+  PluginComposerLaunchPatch,
+  PluginComposerScope,
+  PluginComposerScopeKind,
   PluginSdkApp,
   PluginSlotBase
 } from './app-contract.js';
@@ -158,7 +205,18 @@ export {
   experimental_NewThreadComposer
 } from './app.js';
 export type { PluginHostBridge } from './app.js';
-export { collectPluginApp, emptyRegistrationSet } from './app-contract.js';
+export {
+  collectPluginApp,
+  DEFAULT_PLUGIN_THREAD_PANEL_SCOPES,
+  emptyRegistrationSet,
+  navPanelListsInExtensionsHub,
+  navPanelListsInSidebar,
+  PLUGIN_COMPOSER_SCOPE_KINDS,
+  PLUGIN_NAV_PANEL_PLACEMENTS,
+  PLUGIN_PROJECT_STATUSBAR_ALIGNS,
+  PLUGIN_THREAD_PANEL_SCOPES,
+  threadPanelActionMatchesScope
+} from './app-contract.js';
 export { cronMatches, cronMinuteKey } from './cron.js';
 
 export { shimLegacyExtensionManifest, type LegacyExtensionJson } from './legacy-shim.js';

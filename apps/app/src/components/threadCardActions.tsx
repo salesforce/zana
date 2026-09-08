@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Archive } from 'lucide-react';
 import { product } from '../lib/product-client.js';
@@ -161,6 +162,10 @@ interface ThreadCardMenuProps {
 /**
  * Thread right-click menu. Reuses the TabBar context-menu styling; stopPropagation
  * on mousedown keeps the global close-on-mousedown from firing before a click.
+ *
+ * Portaled to `document.body` so the Agents kanban's `.aurora-host` (container
+ * queries + a more-specific `position: relative` on direct children) cannot
+ * steal `position: fixed` and shove the menu outside the window.
  */
 export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
   const navigate = useNavigate();
@@ -168,7 +173,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
   const route = useRouteState();
   const { thread } = menu;
   const canStop = shouldShowThreadStop(thread.id, thread.status);
-  const projectId = route.isProjectWorkspace ? route.focusedProjectId : null;
+  const projectId = route.isProjectFocused ? route.focusedProjectId : null;
 
   const run = (action: ThreadMenuAction) => {
     setMenu(null);
@@ -185,7 +190,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
     });
   };
 
-  return (
+  const node = (
     <div
       className="tab-context-menu"
       data-testid="thread-context-menu"
@@ -236,6 +241,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
       </button>
     </div>
   );
+  return typeof document === 'undefined' ? node : createPortal(node, document.body);
 }
 
 /** Hover-revealed one-click archive. Same lifecycle as the menu, without a confirm dialog. */
@@ -243,7 +249,7 @@ export function ThreadArchiveQuickAction({ thread }: { thread: ThreadListItem })
   const navigate = useNavigate();
   const location = useLocation();
   const route = useRouteState();
-  const projectId = route.isProjectWorkspace ? route.focusedProjectId : null;
+  const projectId = route.isProjectFocused ? route.focusedProjectId : null;
   return (
     <button
       type="button"

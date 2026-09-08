@@ -81,10 +81,56 @@ describe('ThreadListEntry', () => {
     expect(source).toContain('onContextMenu={onContextMenu}');
   });
 
-  it('uses the thread harness icon instead of a chat bubble', () => {
+  it('uses distinct names for the list badge and split minimap', () => {
     const source = readFileSync(new URL('../ThreadListEntry.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('ProviderIcon');
-    expect(source).toContain('thread.providerId');
-    expect(source).not.toContain('MessageSquare');
+    expect(source).toContain('const listIndicator = resolveThreadListIndicator');
+    expect(source).toContain('const splitIndicator = usePaneContentSplitIndicator');
+    expect(source).toContain('data-testid="thread-list-indicator"');
+    expect(source).toContain('splitIndicator.miniMap');
+  });
+
+  it('shows a plan-mode list badge', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadListEntry
+          thread={{
+            ...thread,
+            status: 'idle',
+            activity: {
+              activePlanModeCount: 1,
+              activeWorkflowCount: 0,
+              activeBackgroundCommandCount: 0,
+              activeBackgroundAgentCount: 0,
+              activeGoalCount: 0
+            }
+          }}
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="thread-list-indicator"');
+    expect(html).toContain('data-kind="plan-mode"');
+  });
+
+  it('shows a background-command list badge while a leftover job is running', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadListEntry
+          thread={{
+            ...thread,
+            status: 'idle',
+            activity: {
+              activePlanModeCount: 0,
+              activeWorkflowCount: 0,
+              activeBackgroundCommandCount: 1,
+              activeBackgroundAgentCount: 0,
+              activeGoalCount: 0
+            }
+          }}
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="thread-list-indicator"');
+    expect(html).toContain('data-kind="background-command"');
+    expect(html).toContain('Background command running');
   });
 });

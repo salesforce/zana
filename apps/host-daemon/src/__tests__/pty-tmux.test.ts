@@ -238,8 +238,8 @@ describe('pty tmux wrapping (remote)', () => {
     expect(args.indexOf('-t')).toBeGreaterThan(args.indexOf('ServerAliveInterval=30'));
   });
 
-  it('does NOT wrap a remote session when scope is unset (default)', () => {
-    ptys.create({
+  it('wraps a remote session when scope is unset (default matches Settings "all")', () => {
+    const session = ptys.create({
       projectId: 'p1',
       profile: 'shell',
       config: cfg(),
@@ -247,7 +247,8 @@ describe('pty tmux wrapping (remote)', () => {
       ...dims
     });
     expect(spawned[0].command).toBe('ssh');
-    expect((spawned[0].args.at(-1) as string).startsWith('tmux ')).toBe(false);
+    const remoteCmd = spawned[0].args.at(-1) as string;
+    expect(remoteCmd).toContain(`new -A -s cc-${session.id} `);
   });
 
   it('does NOT wrap a remote session when scope is "off"', () => {
@@ -266,7 +267,7 @@ describe('pty tmux wrapping (remote)', () => {
     ptys.create({
       projectId: 'p1',
       profile: 'shell',
-      config: cfg({ remoteDefaultPath: '/opt/workspace/core-public' }),
+      config: cfg({ tmuxScope: 'off', remoteDefaultPath: '/opt/workspace/core-public' }),
       remote: { host: 'devbox' }, // no per-project path
       ...dims
     });
@@ -279,7 +280,7 @@ describe('pty tmux wrapping (remote)', () => {
     const session = ptys.create({
       projectId: 'p1',
       profile: 'shell',
-      config: cfg({ remoteDefaultPath: '/opt/workspace/core-public' }),
+      config: cfg({ tmuxScope: 'off', remoteDefaultPath: '/opt/workspace/core-public' }),
       remote: { host: 'devbox', remotePath: '/work/p1' },
       ...dims
     });
@@ -461,7 +462,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
     const session = ptys.create({
       projectId: 'proj-remote',
       profile: 'claude',
-      config: cfg(),
+      config: cfg({ tmuxScope: 'off' }),
       remote: { host: 'devbox', user: 'svc', remotePath: '/work/p1' },
       ...dims
     });
@@ -516,7 +517,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
     const session = ptys.create({
       projectId: 'proj-remote',
       profile: 'claude',
-      config: cfg({ remoteMcpEnabled: true }),
+      config: cfg({ tmuxScope: 'off', remoteMcpEnabled: true }),
       remote: { host: 'devbox', user: 'svc', remotePath: '/work/p1' },
       ...dims
     });
@@ -597,7 +598,7 @@ describe('remote session-id / resume parity', () => {
     const session = ptys.create({
       projectId: 'p1',
       profile: 'claude',
-      config: cfg(),
+      config: cfg({ tmuxScope: 'off' }),
       remote: { host: 'devbox', remotePath: '/work/p1' },
       ...dims
     });
@@ -629,7 +630,7 @@ describe('remote session-id / resume parity', () => {
     const session = ptys.create({
       projectId: 'p1',
       profile: 'claude',
-      config: cfg(),
+      config: cfg({ tmuxScope: 'off' }),
       extraArgs: ['--resume', pinned],
       remote: { host: 'devbox', remotePath: '/work/p1' },
       ...dims

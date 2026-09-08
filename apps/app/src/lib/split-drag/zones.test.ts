@@ -77,6 +77,20 @@ describe('decideThreadDrop', () => {
     });
   });
 
+  it('labels a center drop on an empty pane as open here', () => {
+    expect(
+      decideThreadDrop({
+        zone: 'center',
+        threadAlreadyOpen: false,
+        atMaxPanes: false,
+        emptyTarget: true
+      })
+    ).toEqual({
+      zone: 'center',
+      label: 'Open here'
+    });
+  });
+
   it('coerces edges to center-replace at the pane cap', () => {
     expect(decideThreadDrop({ zone: 'top', threadAlreadyOpen: false, atMaxPanes: true })).toEqual({
       zone: 'center',

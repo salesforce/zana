@@ -51,6 +51,15 @@ export {
   type PluginZccManifest
 } from './plugin-manifest.js';
 export {
+  PLUGIN_REQUIRES_MAX,
+  formatPluginRequireCycle,
+  parsePluginRequires,
+  sortPluginsByRequires,
+  type PluginRequireCycle,
+  type PluginRequireNode,
+  type PluginRequireOrder
+} from './plugin-requires.js';
+export {
   DEFAULT_GIT_REF,
   isCommitSha,
   parsePluginSource,
@@ -87,6 +96,7 @@ export type * from './skills.js';
 export type * from './mcp.js';
 export type * from './updates.js';
 export * from './about-credits.js';
+export * from './crash-report.js';
 export * from './parse-cron.js';
 export * from './parse-every.js';
 export * from './schedule-spec.js';
@@ -102,3 +112,4 @@ export * from './git-checkout.js';
 export * from './workspace-diff.js';
 export * from './environment.js';
 export * from './machine-pairing.js';
+export * from './remote-start-path.js';

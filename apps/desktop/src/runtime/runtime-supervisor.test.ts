@@ -30,6 +30,9 @@ describe('runtime supervisor', () => {
       message: 'This session does not run a packaged host daemon'
     });
     await expect(runtime.listProjects()).resolves.toEqual([]);
+    // No packaged server-runtime child here ⇒ the ACP thread-liveness probe
+    // safe-defaults false (never rejects), so no loopback launch can pass on it.
+    await expect(runtime.isThreadLive('thread-1', 'project-1')).resolves.toBe(false);
     await expect(fetch(runtime.rendererUrl).then((response) => response.text())).resolves.toContain('runtime');
     await expect(fetch(`${runtime.hostUrl}/health`).then((response) => response.json())).resolves.toEqual({ ok: true });
   });

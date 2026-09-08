@@ -22,11 +22,12 @@ The agent loads the plugin-authoring skill and runs:
 zcc plugin new hello --app
 cd zcc-plugin-hello
 zcc plugin install .
-zcc plugin dev
 \`\`\`
 
-Edits to \`server.ts\` reload from source. App changes remount live. Use
-\`zcc plugin list\` and \`zcc plugin logs <id> -f\` to verify.
+After install the plugin is live. Unit-test with vitest (no app). Backend
+edits: \`zcc plugin reload <id>\`. UI watch: optional \`zcc plugin dev\`. Compile:
+\`zcc plugin build\` (no app). Use \`zcc plugin list\` and \`zcc plugin logs <id> -f\`
+to verify.
 
 ## 3. Install from source (not create)
 
@@ -110,7 +111,7 @@ handful of shortcuts that matter most day to day.
 - **⌘P** — command palette / project switcher.
 - **⌘⇧1…9** — jump straight to project 1–9; **⌘⇧]/[** to step through them.
 - **⌘I** — toggle the Inbox. **⌘J** — toggle the Scheduler. **⌘,** — Settings.
-- **⌘O** — toggle the workspaces Overview.
+- **⌘O** — show all agents (exits project focus).
 
 ## Tabs & terminals
 
@@ -122,8 +123,9 @@ handful of shortcuts that matter most day to day.
 
 ## Full list
 
-Press **⌘?** any time (or open it from this Guides card) for the complete
-reference, including Explorer and tab-context-menu actions.
+Press **⌘?** any time (or **Settings → Shortcuts**, or this Guides card) for the complete
+reference, including Explorer and tab-context-menu actions. You can remap New Chat
+and a few other chords on that Settings page.
 `,
   walkthrough: `
 The first-run walkthrough is a four-step tour of the core loop: starting a

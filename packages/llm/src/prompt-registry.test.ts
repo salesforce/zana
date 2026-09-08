@@ -3,6 +3,8 @@ import { mkdirSync, rmSync, writeFileSync, existsSync, readdirSync, readFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PromptRegistry } from './prompt-registry.js';
+import { fillTemplate } from './llm-service.js';
+import { redactTranscript } from './redact-transcript.js';
 import type { LlmPromptEntry } from '@zana-ai/zcc-domain/llm';
 
 describe('PromptRegistry', () => {
@@ -43,11 +45,11 @@ describe('PromptRegistry', () => {
     expect(entry?.timeoutMs).toBe(30_000);
   });
 
-  it('ships monitor prompts with HTTP defaults, never claude-cli', () => {
+  it('ships idle-triage and catch-up-summary on claude-cli', () => {
     for (const id of ['builtin:idle-triage', 'builtin:catch-up-summary']) {
       const entry = registry.get(id);
       expect(entry?.source).toBe('builtin');
-      expect(['openai', 'gemini']).toContain(entry?.provider);
+      expect(entry?.provider).toBe('claude-cli');
     }
   });
 
@@ -187,5 +189,64 @@ describe('PromptRegistry', () => {
     expect(result.ok).toBe(true);
     expect(result.path).toBe(userDir);
     expect(revealPath).toHaveBeenCalledWith(userDir);
+  });
+
+  // SECURITY: idle-triage and catch-up-summary run on `claude-cli` (a coding
+  // harness) and feed it RAW agent-transcript prose. The dispatch site
+  // (`host.ts`) redacts transcript vars with `redactTranscript` before they are
+  // interpolated into the prompt, so a credential the observed agent printed can
+  // never reach the harness verbatim. Prove the BUILT prompt string (template +
+  // redacted var, exactly as `LlmService.run` assembles it) omits the raw secret.
+  describe('monitor-prompt transcript redaction', () => {
+    const SECRETS = [
+      'Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345',
+      'api_key=super-secret-value-1234',
+      'https://x.invalid/cb?token=abc123456789def',
+      'AKIA1234567890ABCDEF',
+      'ghp_abcdefghijklmnopqrstuvwxyz123456',
+      'password: hunter2-should-never-leak'
+    ];
+    const rawSubstrings = [
+      'abcdefghijklmnopqrstuvwxyz012345',
+      'super-secret-value-1234',
+      'abc123456789def',
+      'AKIA1234567890ABCDEF',
+      'ghp_abcdefghijklmnopqrstuvwxyz123456',
+      'hunter2-should-never-leak'
+    ];
+
+    it('idle-triage built prompt drops raw transcript secrets', () => {
+      const entry = registry.get('builtin:idle-triage')!;
+      const transcript = `The agent ran: ${SECRETS.join(' and ')}`;
+      // Mirrors host.ts: redact the transcript var, then fill the template.
+      const built = fillTemplate(entry.userTemplate, { lastTurn: redactTranscript(transcript) });
+      for (const raw of rawSubstrings) expect(built).not.toContain(raw);
+      expect(built).toContain('[redacted]');
+    });
+
+    it('catch-up-summary built prompt drops raw transcript secrets', () => {
+      const entry = registry.get('builtin:catch-up-summary')!;
+      const digest = `Assistant said: ${SECRETS.join('; ')}`;
+      const built = fillTemplate(entry.userTemplate, {
+        digest: redactTranscript(digest),
+        trigger: 'idle'
+      });
+      for (const raw of rawSubstrings) expect(built).not.toContain(raw);
+      expect(built).toContain('[redacted]');
+    });
+
+    it('redacts a PEM private key block and secret-bearing URL values', () => {
+      const pem =
+        '-----BEGIN RSA PRIVATE KEY-----\nMIIEmostdefinitelysecret\n-----END RSA PRIVATE KEY-----';
+      expect(redactTranscript(pem)).not.toContain('MIIEmostdefinitelysecret');
+      const url = redactTranscript('see https://h.invalid/x?token=deadbeefcafe1234');
+      expect(url).not.toContain('deadbeefcafe1234');
+      expect(url).toContain('[redacted]');
+    });
+
+    it('leaves secret-free prose untouched', () => {
+      const clean = 'Refactored the login redirect and added two unit tests.';
+      expect(redactTranscript(clean)).toBe(clean);
+    });
   });
 });

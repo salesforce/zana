@@ -7,7 +7,12 @@ import { describe, expect, it } from 'vitest';
 import { createCommandRuntime, dispatchHostCommand } from './command-dispatch.js';
 import { HostCommandError } from './host-command-error.js';
 import { handleHostRpcRequest } from './command-router.js';
+import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
+
+function prompt(...chunks: string[]): PromptInput[] {
+  return chunks.map((text) => ({ type: 'text' as const, text, mentions: [] }));
+}
 
 const installedClaude = {
   providers: [{
@@ -36,7 +41,7 @@ describe('host command dispatch', () => {
 
   it('starts a thread after unmanaged provision when the provider CLI is present', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-thread-proj-'));
-    const startedWork: Array<{ cwd: string; input: string[]; providerId: string }> = [];
+    const startedWork: Array<{ cwd: string; input: PromptInput[]; providerId: string }> = [];
     const resizedWork: Array<{ threadId: string; cols: number; rows: number }> = [];
     const writtenWork: Array<{ threadId: string; data: string }> = [];
     const runtime = createCommandRuntime({
@@ -68,12 +73,12 @@ describe('host command dispatch', () => {
       environmentId,
       projectId: 'proj-1',
       providerId: 'claude',
-      input: ['hello']
+      input: prompt('hello')
     }) as { started: boolean };
     expect(started.started).toBe(true);
     expect(startedWork).toEqual([{
       cwd: provisioned.path,
-      input: ['hello'],
+      input: prompt('hello'),
       providerId: 'claude'
     }]);
     const resized = await dispatchHostCommand(runtime, {
@@ -104,7 +109,7 @@ describe('host command dispatch', () => {
 
   it('starts a shell thread with an empty prompt', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-thread-shell-'));
-    const startedWork: Array<{ providerId: string; input: string[] }> = [];
+    const startedWork: Array<{ providerId: string; input: PromptInput[] }> = [];
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,
       startWork: async (input) => {
@@ -151,7 +156,7 @@ describe('host command dispatch', () => {
       environmentId,
       projectId: 'proj-1',
       providerId: 'claude',
-      input: ['/plan inspect'],
+      input: prompt('/plan inspect'),
       clientRequestId: 'creq_23456789ab'
     })).resolves.toMatchObject({ started: true });
     expect(startedWork).toEqual([{ clientRequestId: 'creq_23456789ab' }]);
@@ -217,7 +222,7 @@ describe('host command dispatch', () => {
       environmentId,
       projectId: 'proj-1',
       providerId: 'claude',
-      input: ['hello'],
+      input: prompt('hello'),
       cwd: project,
       remote: { host: 'box.example', user: 'me', remotePath: '/src' },
       remoteToolProxy: true
@@ -410,7 +415,7 @@ describe('host command dispatch', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'claude',
-      input: ['hello']
+      input: prompt('hello')
     });
     await expect(dispatchHostCommand(runtime, {
       type: 'thread.rewind.prepare',
@@ -635,14 +640,24 @@ describe('host command dispatch', () => {
   it('lazily resumes a missing thread runtime before turn.submit', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-lazy-resume-'));
     const resumed: Array<{ threadId: string; providerThreadId: string }> = [];
-    const submitted: Array<{ input: string[]; clientRequestId?: string }> = [];
+    const submitted: Array<{
+      input: PromptInput[];
+      clientRequestId?: string;
+      permissionMode?: string;
+      permissionEscalation?: string;
+    }> = [];
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,
       resumeWork: async (input) => {
         resumed.push({ threadId: input.threadId, providerThreadId: input.providerThreadId });
       },
       submitTurn: async (input) => {
-        submitted.push({ input: input.input, clientRequestId: input.clientRequestId });
+        submitted.push({
+          input: input.input,
+          clientRequestId: input.clientRequestId,
+          permissionMode: input.permissionMode,
+          permissionEscalation: input.permissionEscalation
+        });
       }
     });
     const environmentId = randomUUID();
@@ -657,24 +672,31 @@ describe('host command dispatch', () => {
       type: 'turn.submit',
       threadId,
       environmentId,
-      input: ['hello again']
+      input: prompt('hello again')
     })).rejects.toMatchObject({ code: 'unknown_thread' });
     expect(resumed).toEqual([]);
     await expect(dispatchHostCommand(runtime, {
       type: 'turn.submit',
       threadId,
       environmentId,
-      input: ['hello again'],
+      input: prompt('hello again'),
       clientRequestId: 'creq_23456789ab',
+      permissionEscalation: 'ask',
       resume: {
         projectId: 'proj-1',
         providerId: 'claude',
         providerThreadId: 'prov-1',
-        cwd: project
+        cwd: project,
+        permissionMode: 'accept-edits'
       }
     })).resolves.toMatchObject({ accepted: true });
     expect(resumed).toEqual([{ threadId, providerThreadId: 'prov-1' }]);
-    expect(submitted).toEqual([{ input: ['hello again'], clientRequestId: 'creq_23456789ab' }]);
+    expect(submitted).toEqual([{
+      input: prompt('hello again'),
+      clientRequestId: 'creq_23456789ab',
+      permissionMode: 'accept-edits',
+      permissionEscalation: 'ask'
+    }]);
     expect(runtime.threads.has(threadId)).toBe(true);
   });
 
@@ -710,7 +732,7 @@ describe('host command dispatch', () => {
       environmentId,
       projectId: 'proj-1',
       providerId: 'claude',
-      input: ['hello'],
+      input: prompt('hello'),
       dynamicTools,
       instructions: 'Use sf_soql.'
     });
@@ -735,12 +757,12 @@ describe('host command dispatch', () => {
 
   it('starts and drives a confined terminal session', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-term-'));
-    const started: Array<{ cwd: string; cols: number; rows: number }> = [];
+    const started: Array<{ cwd: string; cols: number; rows: number; command?: string }> = [];
     const written: string[] = [];
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,
       startTerminal: async (input) => {
-        started.push({ cwd: input.cwd, cols: input.cols, rows: input.rows });
+        started.push({ cwd: input.cwd, cols: input.cols, rows: input.rows, command: input.command });
         return { pid: 9 };
       },
       writeTerminal: async (input) => {
@@ -754,9 +776,10 @@ describe('host command dispatch', () => {
       root: project,
       cwd: project,
       cols: 100,
-      rows: 30
+      rows: 30,
+      command: 'npm run dev'
     })).resolves.toMatchObject({ started: true, pid: 9 });
-    expect(started).toEqual([{ cwd: realpathSync(project), cols: 100, rows: 30 }]);
+    expect(started).toEqual([{ cwd: realpathSync(project), cols: 100, rows: 30, command: 'npm run dev' }]);
     await expect(dispatchHostCommand(runtime, {
       type: 'terminal.input',
       sessionId,
@@ -812,6 +835,58 @@ describe('host command dispatch', () => {
       }
     });
     expect(listed).toMatchObject({ models: [{ displayName: 'Live Model' }] });
+  });
+
+  it('reports provider health through the injected runtime', async () => {
+    const seen: Array<{ providerId: string }> = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      providerHealth: async ({ providerId }) => {
+        seen.push({ providerId });
+        return {
+          supported: true,
+          health: { status: 'not_installed' }
+        };
+      }
+    });
+    const health = await dispatchHostCommand(runtime, {
+      type: 'provider.health',
+      providerId: 'acp-opencode',
+      bridgeLaunch: {
+        pluginId: 'provider-acp',
+        source: { kind: 'daemon-bundled', id: 'acp-opencode' },
+        capabilities: {
+          supportsServiceTier: true,
+          permissionModes: ['full'],
+          supportsThreadArchive: false,
+          supportsThreadRename: false,
+          fork: 'tip'
+        }
+      }
+    });
+    expect(seen).toEqual([{ providerId: 'acp-opencode' }]);
+    expect(health).toEqual({ supported: true, health: { status: 'not_installed' } });
+  });
+
+  it('rejects provider.health when the host has no health runtime', async () => {
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude
+    });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'provider.health',
+      providerId: 'acp-opencode',
+      bridgeLaunch: {
+        pluginId: 'provider-acp',
+        source: { kind: 'daemon-bundled', id: 'acp-opencode' },
+        capabilities: {
+          supportsServiceTier: true,
+          permissionModes: ['full'],
+          supportsThreadArchive: false,
+          supportsThreadRename: false,
+          fork: 'tip'
+        }
+      }
+    })).rejects.toMatchObject({ code: 'unsupported' });
   });
 
   it('dispatches peer_daemon.status through injectable SSH', async () => {

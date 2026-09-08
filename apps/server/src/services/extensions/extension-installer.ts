@@ -23,8 +23,9 @@
  * dir resolution, `existsSync` guards, atomic writes, skip-on-equal.
  */
 
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { fileURLToPath } from 'node:url';
 import { existsSync, lstatSync } from 'node:fs';
 import { readFile, readdir, cp, mkdir, rm, rename, writeFile, realpath, stat } from 'node:fs/promises';
@@ -34,6 +35,7 @@ import type { Result } from '@zana-ai/zcc-domain/product';
 import { decodeArchive, ARCHIVE_MAX_BYTES } from './extension-registry.js';
 import { isWithin, resolveContained, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import { cloneProject, type CloneOptions, type CloneResult } from '../projects/git-clone.js';
+import { isZccPluginWorkingDir } from './local-extension.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -43,7 +45,7 @@ type LogFn = (context: string, err?: unknown) => void;
 
 /** Runtime install root the discovery scanner reads. Honors the test override. */
 function installRoot(): string {
-  return process.env.ZCC_EXTENSIONS_DIR ?? join(homedir(), '.zcc', 'extensions');
+  return process.env.ZCC_EXTENSIONS_DIR ?? join(resolveZccDataDir(), 'extensions');
 }
 
 /**
@@ -229,16 +231,39 @@ export async function installFromBundled(
   return installFromDir(srcDir, opts);
 }
 
+const replacingDirs = new Map<string, Promise<void>>();
+
+/**
+ * Serialize replacements for one destination. Parallel hot-reload events can
+ * otherwise both remove the old directory before either rename completes.
+ */
+async function serializeDirReplace(destDir: string, work: () => Promise<void>): Promise<void> {
+  const previous = replacingDirs.get(destDir) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(work);
+  replacingDirs.set(destDir, next);
+  try {
+    await next;
+  } finally {
+    if (replacingDirs.get(destDir) === next) replacingDirs.delete(destDir);
+  }
+}
+
 /** Atomic-ish dir replace: copy into a temp sibling, then swap into place. */
 async function replaceDir(srcDir: string, destDir: string): Promise<void> {
-  const parent = dirname(destDir);
-  await mkdir(parent, { recursive: true });
-  const tmp = `${destDir}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
-  await cp(srcDir, tmp, { recursive: true });
-  // rename onto an existing dir fails on some platforms — clear it first. The
-  // window between rm and rename is tiny and boot-only (no concurrent reader).
-  if (existsSync(destDir)) await rm(destDir, { recursive: true, force: true });
-  await rename(tmp, destDir);
+  await serializeDirReplace(destDir, async () => {
+    const parent = dirname(destDir);
+    await mkdir(parent, { recursive: true });
+    const tmp = `${destDir}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
+    try {
+      await cp(srcDir, tmp, { recursive: true });
+      // rename onto an existing dir fails on some platforms, so replacements
+      // are serialized through this remove-and-rename window.
+      if (existsSync(destDir)) await rm(destDir, { recursive: true, force: true });
+      await rename(tmp, destDir);
+    } finally {
+      await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 }
 
 /**
@@ -439,7 +464,7 @@ export interface GitInstallResult {
 export interface InstallFromGitOpts {
   /** Optional branch/tag/SHA. Validated by `safeRef` inside `cloneProject`. */
   ref?: string;
-  /** Optional path INSIDE the repo where `extension.json` lives. Advisory —
+  /** Optional path INSIDE the repo where the plugin manifest lives. Advisory —
    *  realpath-confined against the clone root before use (Rule 2). */
   subdir?: string;
   /** Progress lines from the underlying `git clone`. */
@@ -469,10 +494,22 @@ export function stripCreds(url: string): string {
   }
 }
 
+const MANIFEST_HINT = 'package.json with a zcc block or extension.json';
+
 /**
- * Locate the directory containing `extension.json` within a freshly-cloned repo.
- * Fail-closed + bounded (Rule 5 — never recurses past one level, so a repo's
- * `node_modules` can't be scanned):
+ * True when `dir` is an installable plugin root: a modern `package.json` `zcc`
+ * plugin, or a leftover `extension.json` disk extension. A dir with both is a
+ * zcc plugin (`isZccPluginWorkingDir` wins at the install branch).
+ */
+export function dirHasInstallableManifest(dir: string): boolean {
+  return isZccPluginWorkingDir(dir) || existsSync(join(dir, MANIFEST_NAME));
+}
+
+/**
+ * Locate the directory containing a plugin manifest within a freshly-cloned repo.
+ * Accepts `package.json` with a `zcc` block (current plugins) or leftover
+ * `extension.json`. Fail-closed + bounded (Rule 5 — never recurses past one
+ * level, so a repo's `node_modules` can't be scanned):
  *   1. explicit `subdir` → realpath-confined against `cloneRoot` (Rule 2);
  *      escape → BAD_SUBDIR, no manifest there → MANIFEST_NOT_FOUND.
  *   2. manifest at the repo root → cloneRoot.
@@ -484,7 +521,7 @@ export async function locateManifestDir(
   cloneRoot: string,
   subdir?: string
 ): Promise<Result<string>> {
-  const hasManifest = (dir: string): boolean => existsSync(join(dir, MANIFEST_NAME));
+  const hasManifest = dirHasInstallableManifest;
 
   if (subdir && subdir.trim()) {
     const contained = resolveContained(cloneRoot, subdir.trim());
@@ -501,7 +538,7 @@ export async function locateManifestDir(
       return { ok: false, code: 'MANIFEST_NOT_FOUND', message: `Subfolder not found: ${subdir}` };
     }
     if (!hasManifest(contained)) {
-      return { ok: false, code: 'MANIFEST_NOT_FOUND', message: `No ${MANIFEST_NAME} in ${subdir}` };
+      return { ok: false, code: 'MANIFEST_NOT_FOUND', message: `No ${MANIFEST_HINT} in ${subdir}` };
     }
     return { ok: true, value: contained };
   }
@@ -520,7 +557,7 @@ export async function locateManifestDir(
   const withManifest = entries.filter((name) => hasManifest(join(cloneRoot, name)));
   if (withManifest.length === 1) return { ok: true, value: join(cloneRoot, withManifest[0]) };
   if (withManifest.length === 0) {
-    return { ok: false, code: 'MANIFEST_NOT_FOUND', message: `No ${MANIFEST_NAME} in the repository` };
+    return { ok: false, code: 'MANIFEST_NOT_FOUND', message: `No ${MANIFEST_HINT} in the repository` };
   }
   return {
     ok: false,

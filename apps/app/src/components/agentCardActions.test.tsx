@@ -24,6 +24,10 @@ vi.mock('../store.js', () => ({
 import {
   AgentDeleteQuickAction,
   canCloseWithFollowup,
+  cliAgentDeleteConfirm,
+  cliAgentRemoveLabel,
+  cliAgentRestartConfirm,
+  cliAgentRestartLiveTitle,
   closeAgentWithFollowup
 } from './agentCardActions.js';
 
@@ -63,6 +67,15 @@ describe('AgentDeleteQuickAction', () => {
 });
 
 describe('plugin agent card menu', () => {
+  it('portals the right-click menu to document.body', () => {
+    const source = readFileSync(new URL('./agentCardActions.tsx', import.meta.url), 'utf8');
+    const start = source.indexOf('export function AgentCardMenu');
+    const end = source.indexOf('export function AgentDeleteQuickAction');
+    const body = source.slice(start, end);
+    expect(body).toContain('createPortal(node, document.body)');
+    expect(body).toContain("typeof document === 'undefined'");
+  });
+
   it('runs experimental_agentCardAction from the overflow menu', () => {
     const source = readFileSync(new URL('./agentCardActions.tsx', import.meta.url), 'utf8');
     expect(source).toContain('listAgentCardActions');
@@ -76,6 +89,38 @@ describe('plugin agent card menu', () => {
     expect(source).toContain('actions.closeWithFollowup(card)');
     expect(source).toContain('Close with follow-up');
     expect(source).toContain('closeIdleAgents(projectId, [session.id], true)');
+    expect(source).toContain('Open in split');
+    expect(source).toContain('openAgentSessionInSplit');
+    expect(source).toContain('cliAgentRemoveLabel(exited)');
+    expect(source).toContain('cliAgentRestartLiveTitle()');
+    expect(source).not.toContain('Kill and');
+  });
+});
+
+describe('cliAgentRemoveLabel', () => {
+  it('uses Delete for live agents and Dismiss for exited', () => {
+    expect(cliAgentRemoveLabel(false)).toBe('Delete');
+    expect(cliAgentRemoveLabel(true)).toBe('Dismiss');
+  });
+});
+
+describe('cliAgentDeleteConfirm', () => {
+  it('asks to delete without using Stop wording', () => {
+    expect(cliAgentDeleteConfirm('Review')).toBe(
+      'Delete “Review”? The process will be terminated.'
+    );
+    expect(cliAgentDeleteConfirm('Review')).not.toMatch(/Stop/);
+  });
+});
+
+describe('cliAgentRestart copy', () => {
+  it('mentions stopping the process without Kill', () => {
+    expect(cliAgentRestartLiveTitle()).toBe(
+      'Stop the process and relaunch this session with the same profile and args'
+    );
+    expect(cliAgentRestartConfirm('Hello')).toBe('Stop the process and relaunch "Hello"?');
+    expect(cliAgentRestartLiveTitle()).not.toMatch(/Kill/i);
+    expect(cliAgentRestartConfirm('Hello')).not.toMatch(/Kill/i);
   });
 });
 
@@ -113,7 +158,8 @@ describe('closeAgentWithFollowup', () => {
 describe('CLI agent rail delete wiring', () => {
   it('shows a delete bin on workspace-rail CLI agents instead of a status dot', () => {
     const projects = readFileSync(new URL('./listpane/ProjectsList.tsx', import.meta.url), 'utf8');
-    expect(projects).toContain('<AgentDeleteQuickAction session={session} projectId={projectId} />');
+    const rows = readFileSync(new URL('./listpane/project-session-rail-rows.tsx', import.meta.url), 'utf8');
+    expect(rows).toContain('<AgentDeleteQuickAction session={session} projectId={projectId} />');
     expect(projects).not.toContain('agentActions.remove(sessionToCard(t, p))');
     expect(projects).not.toContain('AgentStatusDot');
   });

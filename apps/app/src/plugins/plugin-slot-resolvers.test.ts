@@ -39,6 +39,8 @@ describe('plugin slot resolvers', () => {
   it('matches composer scopes and treats an empty list as all scopes', () => {
     expect(composerCustomizationApplies({ id: 'a', pluginId: 'p', generation: 1, scopes: ['thread'] }, 'thread')).toBe(true);
     expect(composerCustomizationApplies({ id: 'a', pluginId: 'p', generation: 1, scopes: ['thread'] }, 'new-thread')).toBe(false);
+    expect(composerCustomizationApplies({ id: 'a', pluginId: 'p', generation: 1, scopes: ['cli-agent'] }, 'cli-agent')).toBe(true);
+    expect(composerCustomizationApplies({ id: 'a', pluginId: 'p', generation: 1, scopes: ['cli-agent'] }, 'new-thread')).toBe(false);
     expect(composerCustomizationApplies({ id: 'a', pluginId: 'p', generation: 1 }, 'new-thread')).toBe(true);
   });
 

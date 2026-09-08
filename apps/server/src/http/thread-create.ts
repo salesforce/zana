@@ -10,6 +10,7 @@ import {
   getEnvironment,
   getPrimaryHost,
   getThread,
+  listHosts,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
   updateThreadStatus,
@@ -33,8 +34,17 @@ import type { ProductHttpContext } from './product-context.js';
 import { unmanagedAttachRefusal } from '../services/threads/workspace-path-claims.js';
 import { resolveManagedTargetPath } from '../services/threads/worktree-paths.js';
 import { resolvePersonalTargetPathOnHost } from '../services/threads/host-personal-path.js';
-import { isRemoteToolProxyActive, remoteWorkspacePath, threadLaunchRemote } from '../services/threads/remote-tool-proxy.js';
+import {
+  boundRemoteHostId,
+  isRemoteToolProxyActive,
+  remoteWorkspacePath,
+  resolveHarnessWorkspacePath,
+  REMOTE_HOST_DAEMON_REQUIRED,
+  REMOTE_HOST_DAEMON_REQUIRED_MESSAGE,
+  threadLaunchRemote
+} from '../services/threads/remote-tool-proxy.js';
 import { resolveSpawnChoiceForHost } from '../services/threads/spawn-choice-for-host.js';
+import { toRemoteStartPathHost } from '../services/hosts/host-public.js';
 import { listJsonFiles } from './disk-json.js';
 import { join } from 'node:path';
 
@@ -215,12 +225,18 @@ export async function createThreadFromRequest(
   const prompt = input.input.map((part) => part.trim()).filter((part) => part.length > 0);
 
   const project = requireProject(ctx, input.projectId);
-  const remoteToolProxy = isRemoteToolProxyActive(project, input.hostId);
-  const workspacePath = remoteWorkspacePath(project, remoteToolProxy);
+  const boundRemote = boundRemoteHostId(project);
+  if (boundRemote === null) {
+    throw new ThreadCreateError(409, REMOTE_HOST_DAEMON_REQUIRED, REMOTE_HOST_DAEMON_REQUIRED_MESSAGE);
+  }
+  const remoteToolProxy = isRemoteToolProxyActive(project, boundRemote ?? input.hostId);
   const primary = getPrimaryHost(ctx.db);
   let hostId: string;
+  let workspacePath: string;
   try {
-    if (remoteToolProxy) {
+    if (boundRemote) {
+      hostId = ctx.hostHub.resolveHostId(boundRemote);
+    } else if (remoteToolProxy) {
       if (!primary) {
         throw new ThreadCreateError(503, 'host-unavailable', 'This machine’s host daemon is not connected.');
       }
@@ -229,6 +245,19 @@ export async function createThreadFromRequest(
       hostId = ctx.hostHub.resolveHostId(input.hostId);
     }
     ctx.hostHub.ensureHostSessionReady(hostId);
+    workspacePath = await resolveHarnessWorkspacePath({
+      project,
+      remoteToolProxy,
+      remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
+      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      probeHostHome: async () => {
+        const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
+          hostId,
+          command: { type: 'host.browse_directory' }
+        });
+        return listing.directory;
+      }
+    });
   } catch (error) {
     if (error instanceof ThreadCreateError) throw error;
     throw mapHostError(error);
@@ -406,7 +435,10 @@ async function startThreadOnHost(
       environmentId: args.environmentId,
       projectId: args.project.id,
       providerId: args.input.providerId,
-      input: args.prompt,
+      input: args.prompt
+        .map((text) => text.trim())
+        .filter((text) => text.length > 0)
+        .map((text) => ({ type: 'text' as const, text, mentions: [] })),
       cwd: args.dropCwd || (args.project.remote && !remoteToolProxy)
         ? undefined
         : args.input.cwd,
@@ -427,7 +459,15 @@ async function startThreadOnHost(
       microVmMemoryMib: args.input.microVmMemoryMib,
       ...(remoteToolProxy
         ? {
-            remote: threadLaunchRemote(args.project),
+            remote: threadLaunchRemote(
+              args.project,
+              remoteWorkspacePath(
+                args.project,
+                remoteToolProxy,
+                ctx.config.getConfig().remoteDefaultPath,
+                listHosts(ctx.db).map(toRemoteStartPathHost)
+              )
+            ),
             remoteToolProxy: true
           }
         : {}),

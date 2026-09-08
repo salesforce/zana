@@ -15,6 +15,8 @@ import {
   Laptop,
   Network,
   Inbox,
+  Keyboard,
+  PenLine,
   type LucideIcon
 } from 'lucide-react';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
@@ -32,6 +34,8 @@ import { AboutTab } from '@/views/settings/AboutView';
 import { MachinesTab } from '@/views/settings/MachinesSettingsView';
 import { ConnectivityTab } from '@/views/settings/ConnectivityView';
 import { InboxSettingsTab } from '@/views/settings/InboxSettingsView';
+import { KeyboardSettingsSection } from '@/views/settings/KeyboardSettingsSection';
+import { ComposerSettingsView } from '@/views/settings/ComposerSettingsView';
 import { ProjectTab } from '@/views/settings/ProjectSettingsView';
 import { PersonasPanel } from '@/views/settings/PersonasView';
 import { SquadsPanel } from '@/views/settings/SquadsView';
@@ -48,10 +52,11 @@ import { UsagePanel } from '@/views/settings/UsageView';
  * sections beneath. Ordered most-used → most-specialised. `project` is not in
  * this list — Project settings is its own trailing group in the picker.
  */
-export type SettingsGroup = 'config' | 'agents' | 'catalogues' | 'labs' | 'app';
+export type SettingsGroup = 'config' | 'remote' | 'agents' | 'catalogues' | 'labs' | 'app';
 
 export const SETTINGS_GROUPS: Array<{ id: SettingsGroup; label: string }> = [
   { id: 'config', label: 'Configuration' },
+  { id: 'remote', label: 'Remote' },
   { id: 'agents', label: 'Agents & Automation' },
   { id: 'catalogues', label: 'Catalogues' },
   { id: 'labs', label: 'Labs' },
@@ -71,13 +76,15 @@ export const SETTINGS_SECTIONS: Array<{
   projectScoped?: boolean;
 }> = [
   { id: 'global', label: 'Global', icon: Settings2, desc: 'App-wide defaults', group: 'config' },
+  { id: 'composer', label: 'Composer', icon: PenLine, desc: 'Launch surfaces, send mode, and prompt box', group: 'config' },
+  { id: 'keyboard', label: 'Shortcuts', icon: Keyboard, desc: 'Remap chords and view all shortcuts', group: 'config' },
   { id: 'inbox', label: 'Inbox', icon: Inbox, desc: 'Guidance, tool trust, and PDF export', group: 'config' },
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare, desc: 'Appearance, shell & tmux', group: 'config' },
   { id: 'harness', label: 'Code Harness', icon: Bot, desc: 'Verify & enable Claude Code, Cursor, Codex & PI', group: 'config' },
   { id: 'editor', label: 'Editor', icon: SquareArrowOutUpRight, desc: 'Open-in-editor & terminal buttons', group: 'config' },
-  { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Remote SSH defaults', group: 'config' },
-  { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'config' },
   { id: 'prompts', label: 'Prompts', icon: Sparkles, desc: 'LLM micro-call prompts', group: 'config' },
+  { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'remote' },
+  { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Unpaired SSH fallback', group: 'remote' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
   { id: 'personas', label: 'Personas', icon: Drama, desc: 'Reusable launch profiles', group: 'agents' },
   { id: 'squads', label: 'Squads', icon: Users, desc: 'Reusable multi-agent teams', group: 'agents' },
@@ -109,9 +116,15 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   ],
   global: [
     { id: 'appearance', label: 'Appearance' },
-    { id: 'threads', label: 'Composer' },
     { id: 'cli-skills', label: 'CLI skills' },
     { id: 'debug', label: 'Debug' }
+  ],
+  composer: [
+    { id: 'launch-surfaces', label: 'Launch surfaces' },
+    { id: 'composer', label: 'Composer' }
+  ],
+  keyboard: [
+    { id: 'keyboard', label: 'Shortcuts' }
   ],
   terminal: [
     { id: 'terminal-appearance', label: 'Appearance' },
@@ -244,6 +257,12 @@ export function SettingsView() {
       if (typeof patch.goalsEnabled === 'boolean') {
         useData.getState().setGoalsEnabled(patch.goalsEnabled);
       }
+      if (typeof patch.cliRemoteToolProxyEnabled === 'boolean') {
+        useData.getState().setCliRemoteToolProxyEnabled(patch.cliRemoteToolProxyEnabled);
+      }
+      if (typeof patch.cliRemoteHostCatalogEnabled === 'boolean') {
+        useData.getState().setCliRemoteHostCatalogEnabled(patch.cliRemoteHostCatalogEnabled);
+      }
       if (typeof patch.followUpsEnabled === 'boolean') {
         useData.getState().setFollowUpsEnabled(patch.followUpsEnabled);
       }
@@ -265,9 +284,6 @@ export function SettingsView() {
       if (typeof patch.agentListNeedsYouFromTriage === 'boolean') {
         useData.getState().setAgentListNeedsYouFromTriage(patch.agentListNeedsYouFromTriage);
       }
-      if (typeof patch.includeScheduledAgentsInAgentView === 'boolean') {
-        useData.getState().setIncludeScheduledAgentsInAgentView(patch.includeScheduledAgentsInAgentView);
-      }
       if (typeof patch.voiceInputEnabled === 'boolean') {
         useData.getState().setVoiceInputEnabled(patch.voiceInputEnabled);
       }
@@ -285,6 +301,18 @@ export function SettingsView() {
       }
       if (typeof patch.microVmEnabled === 'boolean') {
         useData.getState().setMicroVmEnabled(patch.microVmEnabled);
+      }
+      if (typeof patch.teamJobLaunchEnabled === 'boolean') {
+        useData.getState().setTeamJobLaunchEnabled(patch.teamJobLaunchEnabled);
+      }
+      if (typeof patch.composerShowCliAgent === 'boolean') {
+        useData.getState().setComposerShowCliAgent(patch.composerShowCliAgent);
+      }
+      if (typeof patch.composerShowModern === 'boolean') {
+        useData.getState().setComposerShowModern(patch.composerShowModern);
+      }
+      if (typeof patch.composerShowAutonomousTeam === 'boolean') {
+        useData.getState().setComposerShowAutonomousTeam(patch.composerShowAutonomousTeam);
       }
       if (Array.isArray(patch.openerHiddenTargets)) {
         useData.getState().setOpenerHiddenTargets(patch.openerHiddenTargets);
@@ -328,6 +356,13 @@ export function SettingsView() {
             onConfigDraft={setConfig}
             onUpdate={update}
           />
+        ) : tab === 'composer' ? (
+          <ComposerSettingsView
+            config={config}
+            onUpdate={update}
+          />
+        ) : tab === 'keyboard' ? (
+          <KeyboardSettingsSection />
         ) : tab === 'terminal' ? (
           <TerminalTab config={config} onConfigDraft={setConfig} onUpdate={update} />
         ) : tab === 'agents' ? (

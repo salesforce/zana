@@ -18,6 +18,10 @@ import { bridgeExecutionOptionsSchema } from "./execution-options.js";
 export const BRIDGE_REQUEST_METHODS = {
   initialize: "initialize",
   modelList: "model/list",
+  providerHealth: "provider/health",
+  providerUsage: "provider/usage",
+  providerInstallationStatus: "provider/installation/status",
+  providerInstallationRun: "provider/installation/run",
   threadStart: "thread/start",
   threadResume: "thread/resume",
   threadFork: "thread/fork",
@@ -190,6 +194,10 @@ export const modelListResultSchema = z
   .object({
     models: z.array(availableModelSchema),
     selectedOnlyModels: z.array(availableModelSchema).default([]),
+    acpMode: z.object({
+      currentValue: z.string().optional(),
+      options: z.array(z.object({ value: z.string(), name: z.string().optional() })),
+    }).optional(),
   })
   .passthrough();
 

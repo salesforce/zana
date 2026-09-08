@@ -247,6 +247,7 @@ interface StartThreadArgs extends AgentLaunchArgs {
   reasoningLevel?: ReasoningLevel;
   serviceTier?: "default" | "fast";
   additionalWorkspaceWriteRoots?: string[];
+  acpMode?: string;
 }
 
 async function startThread(args?: StartThreadArgs): Promise<{
@@ -281,6 +282,7 @@ async function startThread(args?: StartThreadArgs): Promise<{
               additionalWorkspaceWriteRoots: args.additionalWorkspaceWriteRoots,
             }
           : {}),
+        ...(args?.acpMode ? { acpMode: args.acpMode } : {}),
       },
     }),
     ...(args?.dynamicTools ? { dynamicTools: args.dynamicTools } : {}),
@@ -560,6 +562,24 @@ describe("acp bridge", () => {
     expect(
       selectedOnly[0]?.supportedReasoningEfforts.map((e) => e.reasoningEffort),
     ).toEqual(["low", "medium", "high"]);
+  });
+
+  it("reports OpenCode health from the launch command instead of a Cursor-only noop", async () => {
+    const healthId = sendRequest("provider/health", {
+      providerId: "acp-opencode",
+      providerOptions: {
+        acpLaunchSpec: {
+          displayName: "OpenCode",
+          command: process.execPath,
+          args: ["acp"],
+          env: {},
+        },
+      },
+    });
+    expect((await waitForResponse(healthId)).result).toMatchObject({
+      supported: true,
+      health: { status: "ready" },
+    });
   });
 
   it("answers a minimal model/list (no params) with the synthetic default", async () => {
@@ -1235,6 +1255,35 @@ describe("acp bridge", () => {
     expect(agentMessageTexts()).toContain("selected-model:fake/strong");
   });
 
+  it("applies advertised ACP mode at construction and updates it before the next turn", async () => {
+    const { providerThreadId } = await startThread({
+      envVars: { FAKE_ACP_MODE_CONFIG: "1" },
+      acpMode: "plan",
+    });
+    sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-selected-mode", mentions: [] }],
+      options: executionOptions({
+        providerOptions: { acpMode: "build" },
+      }),
+    });
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("selected-mode:build");
+  });
+
+  it("does not send an unadvertised ACP mode", async () => {
+    const { providerThreadId } = await startThread({
+      envVars: { FAKE_ACP_MODE_CONFIG: "1" },
+      acpMode: "missing",
+    });
+    sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-selected-mode", mentions: [] }],
+    });
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("selected-mode:build");
+  });
+
   it("falls back to session/set_model when the model config option errors", async () => {
     const { providerThreadId } = await startThread({
       envVars: {
@@ -1463,7 +1512,11 @@ describe("acp bridge", () => {
     }
     const [mcpServerConfig] = JSON.parse(
       configText.slice(configPrefix.length),
-    ) as { env: { name: string; value: string }[] }[];
+    ) as { args: string[]; env: { name: string; value: string }[] }[];
+    expect(mcpServerConfig?.args.at(-2)).toBe(
+      fileURLToPath(new URL("./bridge.ts", import.meta.url)),
+    );
+    expect(mcpServerConfig?.args.at(-1)).toBe("--mcp-stdio");
     expect(
       mcpServerConfig?.env.find(({ name }) => name === "ELECTRON_RUN_AS_NODE")
         ?.value,
@@ -1546,6 +1599,23 @@ describe("acp bridge", () => {
     expect(agentMessageTexts()).toContain("auth-method:cached_token");
   });
 
+  it("authenticates Codex-style api-key when OPENAI_API_KEY is available", async () => {
+    const { providerThreadId } = await startThread({
+      envVars: {
+        FAKE_ACP_AUTH_METHODS: "cached_token,api-key",
+        OPENAI_API_KEY: "sk-test-key",
+      },
+    });
+
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-auth-method", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("auth-method:api-key");
+  });
+
   it("prefers xAI API-key auth when XAI_API_KEY is available", async () => {
     const { providerThreadId } = await startThread({
       envVars: {
@@ -1584,6 +1654,7 @@ describe("acp bridge", () => {
   });
 
   it("passes dynamic tools to ACP sessions as an MCP server", async () => {
+    expect(ACP_BRIDGE_MCP_SERVER_NAME).toBe("zcc");
     const { providerThreadId } = await startThread({
       dynamicTools: [
         {
@@ -1607,6 +1678,71 @@ describe("acp bridge", () => {
     expect(agentMessageTexts()).toContain(
       `mcp-servers:${ACP_BRIDGE_MCP_SERVER_NAME}`,
     );
+  });
+
+  it("uses session-scoped HTTP MCP when the ACP agent advertises it", async () => {
+    const { providerThreadId } = await startThread({
+      dynamicTools: [
+        {
+          name: "execution_start",
+          description: "Start durable execution.",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+      envVars: { FAKE_ACP_HTTP_MCP: "1" },
+    });
+
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-mcp-server-config", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    const configPrefix = "mcp-server-config:";
+    const configText = agentMessageTexts().find((text) => text.startsWith(configPrefix));
+    if (!configText) throw new Error("Fake ACP agent did not report MCP server config");
+    const [server] = JSON.parse(configText.slice(configPrefix.length)) as Array<{
+      headers: { name: string; value: string }[];
+      name: string;
+      type: string;
+      url: string;
+    }>;
+    expect(server).toMatchObject({
+      name: ACP_BRIDGE_MCP_SERVER_NAME,
+      type: "http",
+    });
+    expect(server?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/thread-/);
+    // The HTTP MCP transport must carry the per-bridge bearer token — a thread
+    // id alone is a routing key, not a secret.
+    expect(server.headers).toEqual([
+      { name: "Authorization", value: expect.stringMatching(/^Bearer \S+$/) },
+    ]);
+    const authHeaders = Object.fromEntries(server.headers.map((h) => [h.name, h.value]));
+
+    // A request WITHOUT the bearer token is rejected before it can drive tools.
+    const unauthorized = await fetch(server!.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-03-26" } }),
+    });
+    expect(unauthorized.status).toBe(401);
+
+    const initialize = await fetch(server!.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...authHeaders },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26" } }),
+    });
+    const initializeBody = await initialize.json();
+    expect(initialize.status, JSON.stringify(initializeBody)).toBe(200);
+    expect(initializeBody).toMatchObject({
+      result: { capabilities: { tools: {} }, protocolVersion: "2025-03-26" },
+    });
+    const listed = await fetch(server!.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...authHeaders },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+    });
+    expect(await listed.json()).toMatchObject({ result: { tools: [{ name: "execution_start" }] } });
   });
 
   it("forwards ACP dynamic tool calls through the runtime tool-call contract", async () => {
@@ -1695,10 +1831,99 @@ describe("acp bridge", () => {
 
     await expect(bridgeCall).resolves.toEqual({
       content: "environment directory updated",
+      contentBlocks: [
+        { type: "text", text: "environment directory updated" },
+      ],
+      images: [],
       isError: false,
       ok: true,
     });
   });
+
+  it("binds a forwarded dynamic tool to the agent's generic MCP announcement", async () => {
+    const { bbThreadId, providerThreadId } = await startThread({
+      dynamicTools: [
+        {
+          name: "execution_start",
+          description: "Start a durable execution.",
+          inputSchema: { type: "object" },
+        },
+        {
+          name: "ask_user_question",
+          description: "Ask the user a question.",
+          inputSchema: { type: "object" },
+        },
+      ],
+      envVars: { FAKE_ACP_HTTP_MCP: "1" },
+    });
+
+    const configPrefix = "mcp-server-config:";
+    const configTurnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-mcp-server-config", mentions: [] }],
+    });
+    await waitForResponse(configTurnId);
+    await waitForTurnCompleted();
+    const configText = await waitFor(
+      () => agentMessageTexts().find((text) => text.startsWith(configPrefix)),
+      "MCP server config",
+    );
+    const [mcpServerConfig] = JSON.parse(configText.slice(configPrefix.length)) as Array<{ url: string; headers: { name: string; value: string }[] }>;
+    const authHeaders = Object.fromEntries(mcpServerConfig.headers.map((h) => [h.name, h.value]));
+
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "announce-mcp-tool", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    await waitFor(
+      () => threadEventsOfType("item/started").find((event) =>
+        (event.item as { type?: string; tool?: string } | undefined)?.type === "toolCall" &&
+        (event.item as { tool?: string } | undefined)?.tool === "other"),
+      "generic MCP tool announcement",
+    );
+
+    const bridgeCall = fetch(mcpServerConfig.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...authHeaders },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "execution-start-call",
+        method: "tools/call",
+        params: { name: "execution_start", arguments: { launchRequestId: "launch-1" } },
+      }),
+    }).then((response) => response.json());
+    const forwarded = await waitFor(
+      () => output.messages.find((message) =>
+        message.method === "item/tool/call" && message.id !== undefined),
+      "forwarded execution tool call",
+    );
+    handleLine(JSON.stringify({
+      jsonrpc: "2.0",
+      id: forwarded.id,
+      result: { success: true, contentItems: [{ type: "inputText", text: "started" }] },
+    }));
+    await expect(bridgeCall).resolves.toMatchObject({
+      result: { content: [{ text: "started", type: "text" }] },
+    });
+
+    const stopId = sendRequest("thread/stop", {
+      threadId: bbThreadId,
+      providerThreadId,
+      intent: "interrupt",
+      activeTurnId: null,
+    });
+    await waitForResponse(stopId);
+    const completed = await waitFor(
+      () => threadEventsOfType("item/completed").find((event) =>
+        (event.item as { type?: string; tool?: string } | undefined)?.type === "toolCall" &&
+        (event.item as { tool?: string } | undefined)?.tool === "execution_start"),
+      "bound execution tool completion",
+    );
+    expect(completed.item).toMatchObject({
+      server: "bb",
+      tool: "execution_start",
+    });
+    startedProviderThreadIds.pop();
+  }, 10_000);
 
   // Canonical sessions carry no skill roots in their options; the roots the
   // runtime configures once per process must reach the session instructions of
@@ -1926,6 +2151,52 @@ describe("acp bridge", () => {
     } finally {
       rmSync(outsideDir, { recursive: true, force: true });
     }
+  });
+
+  it("allows plan-mode client fs writes under .zcc/plans", async () => {
+    const targetPath = join(workspaceDir, ".zcc", "plans", "ship.plan.md");
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+      acpMode: "plan",
+      envVars: { FAKE_ACP_WRITE_PATH: targetPath },
+    });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "write-file", mentions: [] }],
+      options: executionOptions({
+        permissionMode: "accept-edits",
+        permissionEscalation: "ask",
+        providerOptions: { acpMode: "plan" },
+      }),
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("write:ok");
+    expect(readFileSync(targetPath, "utf8")).toBe("hello from agent\n");
+  });
+
+  it("denies plan-mode client fs writes outside .zcc/plans", async () => {
+    const targetPath = join(workspaceDir, "src", "foo.ts");
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+      acpMode: "plan",
+      envVars: { FAKE_ACP_WRITE_PATH: targetPath },
+    });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "write-file", mentions: [] }],
+      options: executionOptions({
+        permissionMode: "accept-edits",
+        permissionEscalation: "ask",
+        providerOptions: { acpMode: "plan" },
+      }),
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("write:denied");
+    expect(existsSync(targetPath)).toBe(false);
   });
 
   // The canonical wire has no core field for the daemon's extra write roots;

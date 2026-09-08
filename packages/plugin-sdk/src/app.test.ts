@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { definePluginApp, isPluginAppDefinition } from './app.js';
-import { collectPluginApp } from './app-contract.js';
+import {
+  collectPluginApp,
+  PLUGIN_COMPOSER_SCOPE_KINDS,
+  threadPanelActionMatchesScope
+} from './app-contract.js';
 import { shimLegacyExtensionManifest } from './legacy-shim.js';
 
 describe('definePluginApp', () => {
@@ -83,9 +87,76 @@ describe('definePluginApp', () => {
     expect(set.providerIcons).toHaveLength(1);
     expect(set.providerIcons[0]?.providerId).toBe('claude-code');
     expect(set.threadPanelActions[0]?.id).toBe('board');
+    expect(set.threadPanelActions[0]?.scopes).toBeUndefined();
+    expect(
+      collectPluginApp(
+        'tasks',
+        1,
+        definePluginApp((app) => {
+          app.slots.threadPanelAction({
+            id: 'live',
+            title: 'Live',
+            component: () => null,
+            scopes: ['thread', 'agent-session']
+          });
+        })
+      ).threadPanelActions[0]?.scopes
+    ).toEqual(['thread', 'agent-session']);
+    expect(() =>
+      collectPluginApp(
+        'tasks',
+        1,
+        definePluginApp((app) => {
+          app.slots.threadPanelAction({
+            id: 'bad',
+            title: 'Bad',
+            component: () => null,
+            scopes: ['sidebar'] as never
+          });
+        })
+      )
+    ).toThrow(/"scopes" must be a non-empty array/);
     expect(set.messageDirectives[0]?.id).toBe('task');
     expect(set.composerCustomizations[0]?.id).toBe('retry');
     expect(set.contentScripts[0]?.id).toBe('boot');
+  });
+
+  it('collects composer meta/advanced and accepts the cli-agent scope', () => {
+    const def = definePluginApp((app) => {
+      app.composer.customize({
+        id: 'yolo',
+        scopes: ['cli-agent'],
+        meta: [{ id: 'yolo-chip', component: () => null }],
+        advanced: [{ id: 'extra', component: () => null }]
+      });
+    });
+    const set = collectPluginApp('harness-claude', 1, def);
+    expect(set.composerCustomizations[0]?.scopes).toEqual(['cli-agent']);
+    expect(set.composerCustomizations[0]?.meta?.[0]?.id).toBe('yolo-chip');
+    expect(set.composerCustomizations[0]?.advanced?.[0]?.id).toBe('extra');
+    expect(PLUGIN_COMPOSER_SCOPE_KINDS).toContain('cli-agent');
+  });
+
+  it('rejects an unknown composer scope', () => {
+    expect(() =>
+      collectPluginApp(
+        'bad',
+        1,
+        definePluginApp((app) => {
+          app.composer.customize({
+            id: 'bad-scope',
+            scopes: ['sidebar'] as never
+          });
+        })
+      )
+    ).toThrow(/invalid scope kind/);
+  });
+
+  it('defaults threadPanelAction scopes to thread-only', () => {
+    expect(threadPanelActionMatchesScope({}, 'thread')).toBe(true);
+    expect(threadPanelActionMatchesScope({}, 'agent-session')).toBe(false);
+    expect(threadPanelActionMatchesScope({ scopes: ['agent-session'] }, 'thread')).toBe(false);
+    expect(threadPanelActionMatchesScope({ scopes: ['thread', 'agent-session'] }, 'agent-session')).toBe(true);
   });
 
   it('collects commandPaletteAction and rejects a missing run', () => {
@@ -111,6 +182,127 @@ describe('definePluginApp', () => {
         })
       )
     ).toThrow(/"run" must be a function/);
+  });
+
+  it('collects experimental_createProjectAction and rejects a missing run', () => {
+    const def = definePluginApp((app) => {
+      app.slots.experimental_createProjectAction({
+        id: 'dx-project',
+        title: 'Salesforce DX project',
+        icon: 'Cloud',
+        component: () => null,
+        run: (ctx) => {
+          ctx.openDialog();
+        }
+      });
+    });
+    const set = collectPluginApp('salesforce', 1, def);
+    expect(set.createProjectActions).toHaveLength(1);
+    expect(set.createProjectActions[0]).toMatchObject({
+      id: 'dx-project',
+      title: 'Salesforce DX project',
+      icon: 'Cloud',
+      pluginId: 'salesforce'
+    });
+    expect(typeof set.createProjectActions[0]?.component).toBe('function');
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.experimental_createProjectAction({
+            id: 'dx-project',
+            title: 'Broken'
+          } as never);
+        })
+      )
+    ).toThrow(/"run" must be a function/);
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.experimental_createProjectAction({
+            id: 'dx-project',
+            title: 'Broken',
+            component: 'not-a-component' as never,
+            run: () => undefined
+          });
+        })
+      )
+    ).toThrow(/"component" must be a React component function/);
+  });
+
+  it('collects projectStatusbarItem and rejects invalid registrations', () => {
+    const def = definePluginApp((app) => {
+      app.slots.projectStatusbarItem({
+        id: 'orgs',
+        align: 'right',
+        order: 10,
+        icon: 'Cloud',
+        label: 'prod',
+        tooltip: 'Current org',
+        component: () => null,
+        run: (ctx) => {
+          ctx.openMenu([]);
+        }
+      });
+      app.slots.projectStatusbarItem({
+        id: 'live',
+        align: 'left',
+        item: () => null
+      });
+    });
+    const set = collectPluginApp('salesforce', 1, def);
+    expect(set.projectStatusbarItems).toHaveLength(2);
+    expect(set.projectStatusbarItems[0]).toMatchObject({
+      id: 'orgs',
+      align: 'right',
+      order: 10,
+      icon: 'Cloud',
+      label: 'prod',
+      tooltip: 'Current org',
+      pluginId: 'salesforce'
+    });
+    expect(set.projectStatusbarItems[1]).toMatchObject({ id: 'live', align: 'left' });
+    expect(typeof set.projectStatusbarItems[1]?.item).toBe('function');
+    expect(
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.projectStatusbarItem({ id: 'plain', label: 'ok' });
+        })
+      ).projectStatusbarItems[0]?.align
+    ).toBe('right');
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.projectStatusbarItem({ id: 'missing' } as never);
+        })
+      )
+    ).toThrow(/"label" is required unless "item" is set/);
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.projectStatusbarItem({ id: 'bad-align', label: 'x', align: 'center' as never });
+        })
+      )
+    ).toThrow(/"align" must be "left" or "right"/);
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.projectStatusbarItem({ id: 'a', label: 'A' });
+          app.slots.projectStatusbarItem({ id: 'a', label: 'B' });
+        })
+      )
+    ).toThrow(/duplicate id/);
   });
 
   it('defaults navPanel path to id and rejects duplicate slot ids', () => {
@@ -144,6 +336,47 @@ describe('definePluginApp', () => {
         })
       )
     ).toThrow(/duplicate id/);
+  });
+
+  it('collects unlisted navPanels and footer toPluginPanel registrations', () => {
+    const def = definePluginApp((app) => {
+      app.slots.navPanel({
+        id: 'orgs',
+        title: 'Salesforce',
+        icon: 'Cloud',
+        placement: 'unlisted',
+        component: () => null
+      });
+      app.slots.sidebarFooterAction({
+        id: 'orgs',
+        title: 'Salesforce',
+        icon: 'Cloud',
+        run: ({ toPluginPanel }) => {
+          toPluginPanel('orgs');
+        }
+      });
+    });
+    const set = collectPluginApp('salesforce', 1, def);
+    expect(set.navPanels[0]?.placement).toBe('unlisted');
+    expect(set.sidebarFooterActions[0]?.title).toBe('Salesforce');
+  });
+
+  it('rejects unknown navPanel placement', () => {
+    expect(() =>
+      collectPluginApp(
+        'salesforce',
+        1,
+        definePluginApp((app) => {
+          app.slots.navPanel({
+            id: 'orgs',
+            title: 'Salesforce',
+            icon: 'Cloud',
+            placement: 'hidden' as 'sidebar',
+            component: () => null
+          });
+        })
+      )
+    ).toThrow(/unlisted/);
   });
 });
 

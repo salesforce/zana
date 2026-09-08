@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ThreadSecondaryPanel } from './ThreadSecondaryPanel.js';
 import { emptySecondaryPanelState, openNewTab, openSecondaryPanel, selectPinnedView } from './threadSecondaryPanelState.js';
 
+
 const noop = () => undefined;
 
 describe('ThreadSecondaryPanel chrome', () => {
@@ -32,11 +33,34 @@ describe('ThreadSecondaryPanel chrome', () => {
     expect(html).toContain('aria-pressed="true"');
   });
 
+  it('renders the Plan pin when asked', () => {
+    const html = renderToStaticMarkup(
+      <ThreadSecondaryPanel
+        state={selectPinnedView(emptySecondaryPanelState(), 'plan')}
+        showPlanPin
+        onSelectInfo={noop}
+        onSelectDiff={noop}
+        onSelectPlan={noop}
+        onNewTab={noop}
+        onCloseTab={noop}
+        onActivateTab={noop}
+        onToggleMaximized={noop}
+        onHide={noop}
+        onResize={noop}
+      >
+        <div>body</div>
+      </ThreadSecondaryPanel>
+    );
+    expect(html).toContain('data-testid="thread-plan-pin"');
+    expect(html).toContain('aria-label="Show plan"');
+    expect(html).toContain('aria-pressed="true"');
+  });
+
   it('renders a footer slot for inspector actions', () => {
     const html = renderToStaticMarkup(
       <ThreadSecondaryPanel
         state={openSecondaryPanel(emptySecondaryPanelState())}
-        footer={<button type="button">Close Session</button>}
+        footer={<button type="button">Delete</button>}
         onSelectInfo={noop}
         onSelectDiff={noop}
         onNewTab={noop}
@@ -50,7 +74,7 @@ describe('ThreadSecondaryPanel chrome', () => {
       </ThreadSecondaryPanel>
     );
     expect(html).toContain('data-testid="thread-secondary-footer"');
-    expect(html).toContain('Close Session');
+    expect(html).toContain('Delete');
   });
 
   it('renders closable New Tab pills', () => {
@@ -91,28 +115,5 @@ describe('ThreadSecondaryPanel chrome', () => {
     );
     expect(html).toContain('Restore conversation');
     expect(html).toContain('is-maximized');
-  });
-
-  it('renders the Plan pin when plan chrome is available', () => {
-    const html = renderToStaticMarkup(
-      <ThreadSecondaryPanel
-        state={selectPinnedView(emptySecondaryPanelState(), 'plan')}
-        showPlanPin
-        onSelectInfo={noop}
-        onSelectDiff={noop}
-        onSelectPlan={noop}
-        onNewTab={noop}
-        onCloseTab={noop}
-        onActivateTab={noop}
-        onToggleMaximized={noop}
-        onHide={noop}
-        onResize={noop}
-      >
-        body
-      </ThreadSecondaryPanel>
-    );
-    expect(html).toContain('data-testid="thread-plan-pin"');
-    expect(html).toContain('aria-label="Show plan"');
-    expect(html).toContain('aria-pressed="true"');
   });
 });

@@ -286,6 +286,10 @@ export async function buildPluginHost(
       format: 'esm',
       platform: 'node',
       target: 'node22',
+      // CI / a clean tree has no packages/plugin-sdk/dist. The SDK exports
+      // `source` → src/*.ts; without this condition esbuild follows
+      // `import` → dist/*.js and `build-plugin-hosts` fails the release.
+      conditions: ['source'],
       sourcemap: true,
       banner: { js: NODE_ESM_REQUIRE_BANNER },
       logLevel: 'error',

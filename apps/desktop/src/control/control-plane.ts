@@ -242,6 +242,30 @@ const AGENT_ALLOWED_OPS = new Set<string>([
 ]);
 
 /**
+ * Plugin/marketplace control ops. Token-authenticated CLI callers (operator or
+ * agent) may run these without the native confirmation dialog: the authoring
+ * loop (`zcc plugin install` / `reload` / `dev`) would otherwise prompt on
+ * every rebuild. The token file still gates who can reach the socket.
+ */
+const PLUGIN_CONTROL_OPS = new Set<string>([
+  'plugin.install',
+  'plugin.enable',
+  'plugin.disable',
+  'plugin.remove',
+  'plugin.reload',
+  'plugin.logs',
+  'plugin.search',
+  'plugin.outdated',
+  'plugin.update',
+  'plugin.contributions',
+  'plugin.cli',
+  'marketplace.list',
+  'marketplace.add',
+  'marketplace.refresh',
+  'marketplace.remove'
+]);
+
+/**
  * Ops an ORCHESTRATOR-class caller may invoke — the agent read surface PLUS the
  * project-targeted open/clean-up ops it needs to drive a fleet: spawn an agent
  * into a project (`term.create`), close one (`term.close`), and
@@ -264,6 +288,7 @@ const ORCHESTRATOR_ALLOWED_OPS = new Set<string>([
 /** Every op the control plane understands. */
 const KNOWN_OPS = new Set<string>([
   ...AGENT_ALLOWED_OPS,
+  ...PLUGIN_CONTROL_OPS,
   'term.create',
   'term.close',
   'term.close-summary',
@@ -271,22 +296,7 @@ const KNOWN_OPS = new Set<string>([
   'agent.send',
   'session.status',
   'sched.runNow',
-  'sched.setEnabled',
-  'plugin.install',
-  'plugin.enable',
-  'plugin.disable',
-  'plugin.remove',
-  'plugin.reload',
-  'plugin.logs',
-  'plugin.search',
-  'plugin.outdated',
-  'plugin.update',
-  'plugin.contributions',
-  'plugin.cli',
-  'marketplace.list',
-  'marketplace.add',
-  'marketplace.refresh',
-  'marketplace.remove'
+  'sched.setEnabled'
 ]);
 
 /**
@@ -330,6 +340,7 @@ export function classifyCaller(
 /** True when an op is refused for the given non-operator caller class. */
 function isOpRefusedFor(caller: CallerClass, op: string): boolean {
   if (caller === 'operator') return false;
+  if (PLUGIN_CONTROL_OPS.has(op)) return false;
   if (caller === 'orchestrator') return !ORCHESTRATOR_ALLOWED_OPS.has(op);
   return !AGENT_ALLOWED_OPS.has(op);
 }
@@ -857,6 +868,7 @@ async function handleConnection(
       if (
         authd.caller === 'operator' &&
         !AGENT_ALLOWED_OPS.has(authd.op) &&
+        !PLUGIN_CONTROL_OPS.has(authd.op) &&
         !(await deps.confirmOperatorMutation?.(authd.op, authd.args))
       ) {
         finish({ ok: false, code: 'CANCELLED', message: 'operator confirmation was not granted' });

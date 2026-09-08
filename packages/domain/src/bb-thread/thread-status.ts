@@ -1,6 +1,11 @@
 import { z } from "zod";
 
+/**
+ * `pending` is the pre-execution status: the thread row exists but no message
+ * has ever cleared a dispatch attempt.
+ */
 export const threadStatusValues = [
+  "pending",
   "idle",
   "starting",
   "active",

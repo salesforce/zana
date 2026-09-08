@@ -25,6 +25,7 @@ export const VALID_PROFILES = [
   'pi-resume',
   'opencode',
   'opencode-resume',
+  'opencode-yolo',
   'shell'
 ] as const satisfies readonly LaunchProfileId[];
 
@@ -73,6 +74,8 @@ export function profileLabel(p: LaunchProfileId): string {
       return 'OpenCode';
     case 'opencode-resume':
       return 'OpenCode Resume';
+    case 'opencode-yolo':
+      return 'OpenCode YOLO';
     case 'shell':
       return 'Shell';
     default:
@@ -105,7 +108,7 @@ export function isPiProfile(p: LaunchProfileId): boolean {
 
 /** True for the OpenCode-family profiles (`opencode` CLI — npm `opencode-ai`). */
 export function isOpenCodeProfile(p: LaunchProfileId): boolean {
-  return p === 'opencode' || p === 'opencode-resume';
+  return p === 'opencode' || p === 'opencode-resume' || p === 'opencode-yolo';
 }
 
 /**

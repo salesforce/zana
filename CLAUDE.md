@@ -25,8 +25,23 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
 
 - **Choose a layout per feature; do not expose the choice as a user preference.** A new panel is either a centered reading/configuration surface or a full-width workbench. Make that decision from the feature's task and information density, encode it in the panel's layout classes, and do not add a global "Centered / Full width" control to Settings.
 - **Keep catalogues distinct by ownership.** ZCC-installed extensions are presented as **Plugins** in the ZCC Plugins hub. Claude Code's `~/.claude/plugins` catalogue is an implementation-specific compatibility surface and must not appear as a competing Settings destination unless a user explicitly asks for it.
+- **Sidebar folders are Projects, not Workspaces.** User-facing copy (website, docs, Plugin Guide, in-app guides) says **Project**. Keep API identifiers (`placement: "workspace"`, `--source workspace`, `personal-workspaces/` on disk) — do not rename those tokens in product prose.
 
 ## Coupling notes (don't regress these)
+
+- **"Run the Job Team E2E tests" → `pnpm run test:e2e:jobteam`.** The Job Team
+  feature has THREE owner-launch surfaces (Job Team UI, CLI Agent owner, Modern
+  ACP owner); each has a deterministic always-on spec that drives the same 4-unit
+  fake DAG to `COMPLETED` with no model spend
+  (`e2e/job-team-launch-ui.spec.ts`, `e2e/cli-agent-job-team-run.spec.ts`,
+  `e2e/modern-owner-job-team-run.spec.ts`). All three titles contain "Job Team".
+  The Modern spec exercises the real `/internal/hosts/tool-call` → forwarder →
+  loopback `execution.start` chain (the path that broke live while unit tests
+  passed). The `test:e2e:jobteam` script builds, flips the better-sqlite3 ABI to
+  Electron, runs the three, and restores the Node ABI. Full run instructions are
+  in `docs/job-team-e2e.md`. Run the deterministic three on any owner-launch
+  change. (A real-model end-to-end check exists outside this tree, owned by the
+  integration — core stays unaware of it by design.)
 
 - **Child-process integrations must be verified at the real Electron production
   boundary, not only through mocks, shell commands, or Node/Vitest.** Electron's
@@ -43,12 +58,54 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
   on unit tests or shell reproduction. Mock tests remain useful for malformed
   output and failure paths, but they do not establish production-boundary behavior.
   OpenCode agent discovery is the current regression example:
-  `apps/host-daemon/src/harness/opencode-provider.ts` uses bounded temp-file capture, and any
-  change to its discovery, filtering, IPC, or launcher selection MUST run
-  `npm run build && ZCC_LIVE_OPENCODE=1 npx playwright test
+  `apps/host-daemon/src/harness/opencode/provider.ts` uses bounded temp-file
+  capture (`opencode agent list` + `opencode debug agent`). Its LIVE consumer is
+  now LAUNCH-TIME preflight, NOT the picker: `discoverRoleTargets`, called from
+  `preflightStructuredRouting` in
+  `apps/server/src/services/launch/execution-routing.ts`, validates the picked
+  `--agent` role and BLOCKS the spawn (`role target unavailable`, surfaced as a
+  `Structured execution unavailable: …` error toast) when the role is not a
+  directly-launchable (non-subagent, non-hidden) agent. The CLI Agent picker no
+  longer runs discovery — it sources native roles from the SAME ACP session-mode
+  list the Modern composer uses (`catalogEntry.acpMode`, from the `acp-opencode`
+  `session/new` `mode` configOption), so both surfaces show an identical,
+  plain-named list. A picked mode that maps to a subagent (surfaced as a mode but
+  not directly launchable) is therefore offered in the picker yet rejected at
+  preflight — deliberate. **A picked native role and a forced catalog `--model`
+  are MUTUALLY EXCLUSIVE — the role wins, carrying NO model.** An OpenCode agent
+  pins its OWN model; forcing a catalog model alongside `--agent <role>` overrides
+  that pin and dies with `ProviderModelNotFoundError` (a dead session / exit 64) on
+  any install whose provider inventory differs from the shipped static snapshot
+  (e.g. an `llmgw`-backed setup with a stale `aisuite/*` catalog). This is enforced
+  at TWO layers, because a forced model reaches argv from more than the composer:
+  (1) the composer (`LegacyAgentHomeComposer` `launch()`) builds `adapterEntry` as
+  role-XOR-model, so a PER-TAB model isn't co-sent; and (2) the AUTHORITATIVE gate
+  is at argv assembly — a resolved native role suppresses the injected `--model`
+  from ANY source (per-tab / persona / project / **global** `harnessRouting`), via
+  the `provider.nativeRolePinsModel` capability flag (`BaseLaunchProvider` default
+  `false`; `OpenCodeProvider` `true`, Rule-6-clean — no provider literal in core).
+  `pty.ts create()` gates both `modelTarget.contribution` splices on
+  `suppressModelForRole = roleTarget.targetId && provider.nativeRolePinsModel`; the
+  remote paths (`base-provider.ts simpleRemoteExec`, `OpenCodeProvider.buildRemoteCommand`)
+  gate identically. The composer fix alone was INSUFFICIENT — the observed exit-64
+  came from GLOBAL routing (`~/.zcc/config.json harnessRouting.byAdapter.opencode.modelTargetId`),
+  which the composer can't clear. The launch-boundary fixture
+  (`e2e/fixtures/bin/opencode`) reproduces the failure: its bare TUI exits 64 when
+  `--model` rides with `--agent` (any model id) OR on a bare `aisuite/*` `--model`,
+  so the positive `reviewer` launch passing PROVES the model was dropped. The
+  OpenCode model catalog (`opencode/provider.ts targets`) is a release-maintained
+  snapshot of `opencode models`; it DRIFTS (the gateway renamed `aisuite/*` →
+  `llmgw/*` with a `-1M` gpt suffix). Suppression protects role launches from that
+  drift; the NO-role path still needs a correct catalog. Any change to discovery,
+  filtering, IPC, launcher, or the model catalog MUST run BOTH: (1) the deterministic
+  launch-boundary spec `npm run
+  build && npx playwright test e2e/opencode-launch-boundary.spec.ts` — proves
+  preflight `discoverRoleTargets` resolves a directly-launchable role (spawns) and
+  rejects a subagent role (`role target unavailable` toast) at the real Electron
+  boundary; and (2) `ZCC_LIVE_OPENCODE=1 npx playwright test
   e2e/opencode-agent-picker.spec.ts -g 'actual project agents'` against this actual
-  project and HOME config. That test proves the picker enables, visible primary
-  agents are selectable, and hidden agents/subagents remain absent.
+  project + HOME config — proves the live ACP mode list reaches the picker with
+  plain names.
 
 - **Feed category registry — every inbox event type declares its feed impact
   in ONE place, and reports/ideas are pinned SIGNAL.** The Inbox feed splits
@@ -394,8 +451,9 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
 - **Release artifacts are published to the configured public GitHub release feed.**
   The auto-updater reads that feed anonymously. When cutting a release, push a
   `vx.y.z` tag so `.github/workflows/release.yml` builds Apple Silicon + Intel
-  and publishes both feeds. Local `pnpm run release:mac` packages the host arch
-  only (`--publish never`) and must not upload.
+  and creates a **draft** release on `salesforce/zana`. A human then publishes
+  that draft. Local `pnpm run release:mac` packages the host arch only
+  (`--publish never`) and must not upload.
 
 - **The local-spawn argv/env assembly lives in `PtyManager.create()` and
   dispatches through the per-profile `LaunchProvider`; `@zana-ai/zcc-spawn-plan` is now the
@@ -458,5 +516,15 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
   `packages/domain/src/launch-provider.guard.test.ts` still forbids a re-rolled
   `isClaudeProfile` triplet — so keep the two `-suffix` claude profile literals on
   SEPARATE lines in provider code (a one-line pair trips the dedup guard).
+
+- **Plugin Guide surfaces have one roster.** `plugins/plugin-guide/src/surfaces.ts`
+  `SURFACE_GROUPS` is the annotated map in the app. The public website mounts the
+  same `ProductMap` from `website/lib/plugin-guide/` (generated by
+  `website/scripts/sync-plugin-guide.mjs`, rendered on `/extensions`) and
+  lists the same groups in `docs/extensions-sdk-reference.md` (synced to
+  `/docs/extensions-sdk-reference/`). Guard: `plugins/plugin-guide/src/api-sync.test.ts`.
+  Adding a slot means a Plugin Guide card, an SDK-reference heading/bullet, and
+  a sync of the map sources — not only the SDK type. Do not hand-edit
+  `website/lib/plugin-guide/`.
 
 Plugins are full-trust in-process after install and never receive host-daemon tokens.

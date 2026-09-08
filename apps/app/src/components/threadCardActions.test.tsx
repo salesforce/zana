@@ -194,6 +194,15 @@ describe('runThreadMenuAction', () => {
 });
 
 describe('ThreadCardMenu', () => {
+  it('portals the right-click menu to document.body', () => {
+    const source = readFileSync(new URL('./threadCardActions.tsx', import.meta.url), 'utf8');
+    const start = source.indexOf('export function ThreadCardMenu');
+    const end = source.indexOf('export function ThreadArchiveQuickAction');
+    const body = source.slice(start, end);
+    expect(body).toContain('createPortal(node, document.body)');
+    expect(body).toContain("typeof document === 'undefined'");
+  });
+
   it('offers Stop only while the thread is busy', () => {
     const idle = renderToStaticMarkup(
       <MemoryRouter>
@@ -248,7 +257,8 @@ describe('thread context-menu wiring', () => {
     const projects = readFileSync(new URL('./listpane/ProjectsList.tsx', import.meta.url), 'utf8');
     expect(projects).toContain('onContextMenu={(e) => openThreadMenu(e, thread, setThreadMenu)}');
     expect(projects).toContain('<ThreadCardMenu menu={threadMenu}');
-    expect(projects).toContain('<ThreadArchiveQuickAction thread={thread} />');
+    const rows = readFileSync(new URL('./listpane/project-session-rail-rows.tsx', import.meta.url), 'utf8');
+    expect(rows).toContain('<ThreadArchiveQuickAction thread={thread} />');
 
     const tray = readFileSync(new URL('./AgentTray.tsx', import.meta.url), 'utf8');
     expect(tray).toContain('openThreadMenu(e, thread, setThreadMenu)');

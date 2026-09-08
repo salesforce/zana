@@ -3,6 +3,7 @@ import { FolderOpen, X } from 'lucide-react';
 import { HostMachinePicker } from './HostMachinePicker.js';
 import { defaultHostId, useHosts } from '../hooks/useHosts.js';
 import { product } from '../lib/product-client.js';
+import { Modal } from './Modal.js';
 
 interface AddLocalProjectDialogProps {
   onClose: () => void;
@@ -38,15 +39,10 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
     inputRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape' && !submitting) onClose();
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, submitting]);
-
   const canSubmit = path.trim().length > 0 && !submitting;
+  const requestClose = () => {
+    if (!submitting) onClose();
+  };
 
   const loadDirectory = async (nextPath?: string) => {
     if (!selectedHost) return;
@@ -92,21 +88,30 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
   };
 
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !submitting) onClose();
-      }}
-    >
-      <div className="modal local-project-modal" role="dialog" aria-modal="true" aria-label="Add local project">
+    <Modal
+      title="Add local project"
+      onClose={requestClose}
+      closeOnBackdrop={!submitting}
+      className="local-project-modal"
+      header={
         <div className="modal-header">
           <h3>Add local project</h3>
           <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={submitting}>
             <X size={14} />
           </button>
         </div>
-
-        <div className="modal-body">
+      }
+      footer={
+        <>
+          <button className="btn" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={!canSubmit} onClick={() => void submit()}>
+            {submitting ? 'Adding…' : 'Add project'}
+          </button>
+        </>
+      }
+    >
           <div className="modal-hint">
             Pick a folder, or type/paste an absolute path (e.g. from a terminal).
           </div>
@@ -165,17 +170,6 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
           )}
 
           {error && <div className="modal-error">{error}</div>}
-        </div>
-
-        <div className="modal-footer">
-          <button className="btn" onClick={onClose} disabled={submitting}>
-            Cancel
-          </button>
-          <button className="btn primary" disabled={!canSubmit} onClick={() => void submit()}>
-            {submitting ? 'Adding…' : 'Add project'}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

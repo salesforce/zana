@@ -86,20 +86,27 @@ describe('install-from-git install-seam guard', () => {
     expect(git).not.toMatch(/'checkout'[^)]*'--'[^)]*ref/);
   });
 
-  it('the live-install path is the IPC wiring installFromGit → markGit(fail-closed) → runDiskSync', () => {
+  it('the live leftover-git path is IPC clone → installFromDir → markGit(fail-closed); zcc plugins use installPlugin', () => {
     // Positive assertion: the extensions IPC handler (the trusted orchestrator)
-    // crosses the seam and records provenance fail-closed on the INITIAL install
-    // before the shared install tail runs.
+    // dual-routes after clone+locate. Leftover `extension.json` still crosses
+    // installFromDir and records provenance fail-closed on the INITIAL install
+    // before the shared install tail runs. Modern `package.json` `zcc` plugins
+    // persist and load via PluginService — they must NOT markGit (that's the
+    // leftover disk-extension provenance file).
     const index = readFileSync(join(mainRoot, '../../../../desktop/src/ipc/extensions.ts'), 'utf8');
     expect(index).toMatch(/installFromGit\(/);
     expect(index).toMatch(/markGit\(/);
-    // A markGit failure on the FIRST install must abort (WRITE_FAILED) AND roll the
-    // just-installed bytes back out (uninstallExtension) — never leave a git
-    // extension with no origin badge (the consent warning depends on it). The
-    // rollback logic sits between markGit and the WRITE_FAILED return, so the
-    // window spans it. (The UPDATE path is deliberately best-effort — the id is
-    // already tracked from the first install, so a failed sha refresh only leaves
-    // stale metadata, not an un-provenanced extension — and is asserted separately.)
+    expect(index).toMatch(/isZccPluginWorkingDir/);
+    expect(index).toMatch(/isZccPluginWorkingDir[\s\S]{0,1200}installPlugin\(/);
+    expect(index).toMatch(/source\.kind === 'git'[\s\S]*?installFromDir\(/);
+    // A markGit failure on the FIRST leftover install must abort (WRITE_FAILED)
+    // AND roll the just-installed bytes back out (uninstallExtension) — never
+    // leave a git extension with no origin badge (the consent warning depends
+    // on it). The rollback logic sits between markGit and the WRITE_FAILED
+    // return, so the window spans it. (The UPDATE path is deliberately
+    // best-effort — the id is already tracked from the first install, so a
+    // failed sha refresh only leaves stale metadata, not an un-provenanced
+    // extension — and is asserted separately.)
     expect(index).toMatch(/markGit[\s\S]{0,700}uninstallExtension[\s\S]{0,200}WRITE_FAILED/);
     // The update path refreshes provenance best-effort (no WRITE_FAILED abort): it
     // logs and still reconciles so the running child never lags the on-disk bytes.

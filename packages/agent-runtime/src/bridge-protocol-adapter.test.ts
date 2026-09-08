@@ -158,6 +158,17 @@ describe("thread/stop intent", () => {
   });
 });
 
+describe("provider maintenance mapping", () => {
+  it("sends provider/health with the adapter id", () => {
+    const adapter = makeAdapter();
+    expect(adapter.buildCommandPlan({ type: "provider/health", cwd: "/tmp/proj" })).toMatchObject({
+      kind: "request",
+      method: "provider/health",
+      params: { providerId: "fake-bridge", cwd: "/tmp/proj" },
+    });
+  });
+});
+
 describe("options mapping", () => {
   it("keeps core fields top-level and packs provider-flavored fields opaquely", () => {
     const adapter = makeAdapter();
@@ -172,6 +183,7 @@ describe("options mapping", () => {
         model: "gpt-5.6-sol",
         workflowsEnabled: true,
         memoryEnabled: false,
+        providerOptions: { acpMode: "plan" },
       },
     });
     expect(plan).toMatchObject({
@@ -183,6 +195,7 @@ describe("options mapping", () => {
           providerOptions: {
             workflowsEnabled: true,
             memoryEnabled: false,
+            acpMode: "plan",
             claudeCodeMockCliTraffic:
               DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
           },
@@ -193,6 +206,7 @@ describe("options mapping", () => {
       .params.options;
     expect(options).not.toHaveProperty("workflowsEnabled");
     expect(options).not.toHaveProperty("skillRoots");
+    expect((options.providerOptions as Record<string, unknown>)).not.toHaveProperty("providerOptions");
   });
 });
 

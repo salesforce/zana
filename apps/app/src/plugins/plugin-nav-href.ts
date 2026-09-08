@@ -1,6 +1,18 @@
 import { paneContentForPathname } from '../lib/split-layout/splitThreadNavigation.js';
-import { getExtensionsHubPageRoutePath, getPluginPanelRoutePath } from '../lib/route-paths.js';
-import { listNavPanels } from './plugin-slots.js';
+import {
+  getExtensionsHubPageRoutePath,
+  getPluginPanelRoutePath,
+  getProjectModeRoutePath,
+  getProjectRoutePath
+} from '../lib/route-paths.js';
+import type {
+  PluginCreateProjectActionContext,
+  PluginProjectMenuActionContext,
+  PluginProjectStatusbarItemContext,
+  PluginProjectStatusbarMenuItem
+} from '@zana-ai/zcc-plugin-sdk';
+import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
+import { listNavPanels, listProjectTabs, projectTabView } from './plugin-slots.js';
 
 export function hrefForPluginNavPanel(
   pluginId: string,
@@ -14,6 +26,80 @@ export function hrefForPluginNavPanel(
     return getExtensionsHubPageRoutePath({ pluginId, pageId: path, subPath });
   }
   return getPluginPanelRoutePath({ pluginId, path, subPath });
+}
+
+/** Project workspace URL for a plugin `projectTab`, or the project home when none is registered. */
+export function hrefForPluginProjectTab(pluginId: string, projectId: string, tabId?: string): string {
+  const tabs = listProjectTabs();
+  const forPlugin = tabs.filter((row) => row.pluginId === pluginId);
+  const tab = (tabId ? forPlugin.find((row) => row.id === tabId) : undefined) ?? forPlugin[0];
+  if (!tab) return getProjectRoutePath(projectId);
+  return getProjectModeRoutePath(projectId, projectTabView(tab, tabs));
+}
+
+export function projectMenuNavigateContext(
+  pluginId: string,
+  projectId: string | null,
+  navigate: (to: string) => void
+): PluginProjectMenuActionContext {
+  return {
+    projectId,
+    toProject(id, options) {
+      navigate(hrefForPluginProjectTab(pluginId, id, options?.tabId));
+    }
+  };
+}
+
+export function createProjectActionContext(
+  pluginId: string,
+  deps: {
+    pickDirectory(): Promise<string | null>;
+    addProject(path: string): Promise<{ id: string } | null>;
+    cloneRoot(): Promise<string | null>;
+    navigate(to: string): void;
+    openDialog(options?: { title?: string; params?: JsonValue }): boolean;
+  }
+): PluginCreateProjectActionContext {
+  return {
+    pickDirectory: deps.pickDirectory,
+    addProject: deps.addProject,
+    cloneRoot: deps.cloneRoot,
+    toProject(id, options) {
+      deps.navigate(hrefForPluginProjectTab(pluginId, id, options?.tabId));
+    },
+    openDialog: deps.openDialog
+  };
+}
+
+export function projectStatusbarItemContext(
+  pluginId: string,
+  deps: {
+    projectId: string;
+    navigate: (to: string, options?: { replace?: boolean }) => void;
+    openDialog(options?: { title?: string; params?: JsonValue }): boolean;
+    openMenu(items: readonly PluginProjectStatusbarMenuItem[]): boolean;
+  }
+): PluginProjectStatusbarItemContext {
+  return {
+    projectId: deps.projectId,
+    toProject(id, options) {
+      deps.navigate(hrefForPluginProjectTab(pluginId, id, options?.tabId));
+      return true;
+    },
+    toPluginPanel(path, options) {
+      const resolved =
+        path ??
+        listNavPanels().find((row) => row.pluginId === pluginId)?.path ??
+        listNavPanels().find((row) => row.pluginId === pluginId)?.id;
+      if (!resolved) return false;
+      deps.navigate(hrefForPluginNavPanel(pluginId, resolved, options?.subPath), {
+        replace: options?.replace
+      });
+      return true;
+    },
+    openDialog: deps.openDialog,
+    openMenu: deps.openMenu
+  };
 }
 
 /** Hub URL when a split `/plugins/...` path belongs to an extensions-placed panel. */

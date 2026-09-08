@@ -407,6 +407,47 @@ function extractTaskCandidate(
   );
 }
 
+function planStepTodoStatus(
+  status: string | undefined,
+): ThreadTimelinePendingTodoItemStatus | null {
+  if (status === "active" || status === "in_progress") return "in_progress";
+  if (status === "pending" || status === "completed") return status;
+  return null;
+}
+
+/**
+ * Grammar-v3 `planSteps` snapshots from any harness (Claude TodoWrite fold,
+ * ACP `sessionUpdate: "plan"`, Codex `turn/plan/updated`). Latest seq wins
+ * against TodoWrite / Task* candidates. Legacy `turn/plan/updated` events
+ * are ignored — providers emit `item/completed` `{ type: "planSteps" }`.
+ */
+function extractPlanStepsCandidate(
+  event: ThreadEvent,
+  meta: SnapshotCandidateMeta,
+): SnapshotCandidate | null {
+  if (event.type !== "item/started" && event.type !== "item/completed") {
+    return null;
+  }
+  if (event.item.type !== "planSteps") return null;
+  const items: ThreadTimelinePendingTodoItem[] = [];
+  event.item.steps.forEach((step, index) => {
+    const status = planStepTodoStatus(step.status);
+    if (status === null) return;
+    const text = trimAndTruncate(step.step);
+    if (text.length === 0) return;
+    items.push({
+      id: todoIdFor(meta.seq, index),
+      text,
+      status,
+    });
+  });
+  return {
+    seq: meta.seq,
+    createdAt: meta.createdAt,
+    items,
+  };
+}
+
 /**
  * Walks decoded thread events and emits the latest valid TODO snapshot.
  * Treated like `activeThinking`: only meaningful while the thread has an
@@ -416,6 +457,8 @@ function extractTaskCandidate(
  * TodoWrite carries complete legacy snapshots. Claude Task tools carry deltas
  * or snapshots, so this walks ordered events and reduces
  * TaskCreate/TaskUpdate/TaskList/TaskGet into a current snapshot.
+ * Harness-neutral `planSteps` items are complete snapshots and compete on
+ * sequence with the Claude-specific sources.
  */
 export function extractThreadTimelinePendingTodos(
   threadStatus: Thread["status"],
@@ -427,6 +470,7 @@ export function extractThreadTimelinePendingTodos(
   const taskState: ClaudeTaskTodoState = { tasks: new Map() };
   for (const { event, meta } of getOrderedThreadEvents(events)) {
     const candidate =
+      extractPlanStepsCandidate(event, meta) ??
       extractTodoWriteCandidate(event, meta) ??
       extractTaskCandidate(event, meta, taskState);
     if (!candidate || candidate.items === null) continue;

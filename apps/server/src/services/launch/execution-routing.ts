@@ -47,22 +47,32 @@ export async function preflightTerminalExecution(
   const effectiveProfile = input.persona?.baseProfile ?? input.profile;
   const provider = deps.provider ?? providerFor(effectiveProfile);
   const adapterId = harnessFamilyOf(effectiveProfile) || provider.adapter.descriptor.id;
-  const resolved = resolveExecutionState(provider, {
-    config: input.config,
-    persona: input.persona,
-    projectSettings: input.projectSettings,
-    perTabRouting: input.harnessRouting,
-    profile: effectiveProfile,
-    extraArgs: input.extraArgs ?? [],
-    scope: input.scope
-  });
-  let installedVersion: string | undefined;
-  const preflight = resolveStructuredRouting(provider, input);
-  const combinationError = provider.validateRoutingCombination?.({
-    roleTargetId: preflight.role.targetId,
-    executionOrigin: preflight.execution.origin
-  });
+  let resolved: ReturnType<typeof resolveExecutionState>;
+  let preflight: ReturnType<typeof resolveStructuredRouting>;
+  try {
+    resolved = resolveExecutionState(provider, {
+      config: input.config,
+      persona: input.persona,
+      projectSettings: input.projectSettings,
+      perTabRouting: input.harnessRouting,
+      profile: effectiveProfile,
+      extraArgs: input.extraArgs ?? [],
+      scope: input.scope
+    });
+    preflight = resolveStructuredRouting(provider, input);
+  } catch (error) {
+    return {
+      decision: 'blocked',
+      reason: error instanceof Error ? error.message : String(error)
+    };
+  }
+    const combinationError = provider.validateRoutingCombination?.({
+      roleTargetId: preflight.role.targetId,
+      executionOrigin: preflight.execution.origin,
+      executionTargetId: preflight.execution.targetId
+    });
   if (combinationError) return { decision: 'blocked', reason: combinationError };
+  let installedVersion: string | undefined;
   if (preflight.requested) {
     installedVersion = await deps.installedVersion(adapterId);
     const unavailable = await preflightStructuredRouting(provider, input, installedVersion, preflight);
@@ -154,12 +164,25 @@ async function preflightStructuredRouting(
     if (evaluated.classification === 'unavailable') return `role target: ${evaluated.reason}`;
   }
   if (model.targetId && model.structuredSelected) {
-    const target = provider.adapter.descriptor.targets?.models.find(({ id }) => id === model.targetId);
-    if (!target) {
-      if (!allowsLiveListedModelTarget(provider, model.targetId)) return 'model target unavailable';
-    } else {
-      const evaluated = evaluateTargetEvidence(provider, target, input.scope, installedVersion);
+    const snapshotTarget = provider.adapter.descriptor.targets?.models.find(({ id }) => id === model.targetId);
+    // The static model catalog is a release-maintained snapshot that DRIFTS when
+    // the gateway renames models (aisuite/* → llmgw/*): a snapshot id can be GONE
+    // (its spawn dies with ProviderModelNotFoundError / exit 64) and a valid NEW id
+    // can be ABSENT from the snapshot. So the LIVE gateway inventory is
+    // authoritative when the provider can probe it — it decides yes/no for BOTH
+    // cases, catching a drifted-away id before the spawn. Only when no probe is
+    // possible (no projectPath, or the provider can't list) do we fall back to the
+    // snapshot rule (evidence for a snapshot id; live-listed allowance otherwise).
+    const liveModels = provider.discoverModelTargets && input.projectPath
+      ? await provider.discoverModelTargets({ cwd: input.projectPath, config: input.config })
+      : undefined;
+    if (liveModels) {
+      if (!liveModels.includes(model.targetId)) return 'model target unavailable';
+    } else if (snapshotTarget) {
+      const evaluated = evaluateTargetEvidence(provider, snapshotTarget, input.scope, installedVersion);
       if (evaluated.classification === 'unavailable') return `model target: ${evaluated.reason}`;
+    } else if (!allowsLiveListedModelTarget(provider, model.targetId)) {
+      return 'model target unavailable';
     }
   }
   return undefined;

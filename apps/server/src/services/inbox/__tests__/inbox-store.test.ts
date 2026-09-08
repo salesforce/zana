@@ -120,6 +120,27 @@ describe('InboxStore (in-memory)', () => {
     expect(entry.question?.options).toHaveLength(1);
   });
 
+  it('append rejects thread-approval clones so they never land', async () => {
+    await expect(
+      store.append({
+        projectId: 'proj-1',
+        subject: 'Approval needed',
+        comments: 'Approval needed on "demo"',
+        dedupeKey: 'pending-interaction:pint_1',
+        question: { options: [{ id: 'A', label: 'Open thread' }], blocking: true }
+      })
+    ).rejects.toThrow(/pending-interaction clones are not stored/);
+    await expect(
+      store.append({
+        projectId: 'proj-1',
+        comments: 'Approval needed',
+        question: { options: [{ id: 'A', label: 'Open thread' }], blocking: true }
+      })
+    ).rejects.toThrow(/pending-interaction clones are not stored/);
+    const { entries } = await store.read();
+    expect(entries).toHaveLength(0);
+  });
+
   it('read returns entries newest-first', async () => {
     await store.append({ projectId: 'proj-1', comments: 'first' });
     await store.append({ projectId: 'proj-1', comments: 'second' });
@@ -457,6 +478,24 @@ describe('InboxStore (JSONL persistence)', () => {
     dir = await mkdtemp(join(tmpdir(), 'zcc-inbox-'));
     path = join(dir, 'entries.jsonl');
     store = createInboxStore({ filePath: path });
+  });
+
+  it('does not persist or emit thread-approval clones', async () => {
+    const appended: InboxEntry[] = [];
+    store.onAppended((entry) => appended.push(entry));
+    await expect(
+      store.append({
+        projectId: 'proj-1',
+        subject: 'Approval needed',
+        comments: 'Approval needed on "demo"',
+        dedupeKey: 'pending-interaction:pint_disk',
+        question: { options: [{ id: 'A', label: 'Open thread' }], blocking: true }
+      })
+    ).rejects.toThrow(/pending-interaction clones are not stored/);
+    expect(appended).toEqual([]);
+    const { entries } = await store.read();
+    expect(entries).toHaveLength(0);
+    await rm(dir, { recursive: true, force: true });
   });
 
   it('persists across new store instances on the same file', async () => {

@@ -27,3 +27,19 @@ export function createPendingInteractionId(): string {
 export function createDeferredThreadMessageId(): string {
   return `dmsg_${randomUUID()}`;
 }
+
+export function createThreadPlanId(): string {
+  return `tplan_${randomUUID()}`;
+}
+
+export function createThreadPlanRevisionId(): string {
+  return `tprev_${randomUUID()}`;
+}
+
+export function createThreadPlanTaskId(): string {
+  return `tptask_${randomUUID()}`;
+}
+
+export function createThreadPlanReferenceId(): string {
+  return `tpref_${randomUUID()}`;
+}

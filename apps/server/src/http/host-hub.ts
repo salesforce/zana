@@ -19,6 +19,7 @@ import {
   appendConversationThreadEvent,
   appendThreadEvent,
   closeHostSession,
+  listConversationThreadEventsWindow,
   disconnectLiveThreadsForHost,
   getConversationThread,
   getHost,
@@ -27,7 +28,7 @@ import {
   markHostProtocolRejected,
   markHostSeen,
   openHostSession,
-  updateConversationThreadStatus,
+  applyConversationThreadLifecycleEvent,
   updateThreadStatus,
   type ZccDatabase
 } from '@zana-ai/zcc-db';
@@ -39,14 +40,23 @@ import {
   interruptLiveConversationThreadsForHost,
   shouldInterruptLiveThreadsOnNewHostInstance
 } from '../services/threads/conversation-host-recovery.js';
-import { conversationStatusForHostEvent } from '../services/threads/conversation-host-event-status.js';
+import {
+  conversationLifecycleEventForHostEvent,
+  isNestedConversationTurnCompletion
+} from '../services/threads/conversation-host-event-status.js';
+import { syncPlanFromLatestEvents } from '../services/threads/conversation-plan.js';
 import type { ProductHub } from './product-hub.js';
+import { isBackgroundTaskLifecyclePayload } from '@zana-ai/zcc-thread-view';
+import type { ThreadLifecycleEvent } from '@zana-ai/zcc-domain/thread-runtime';
+import { appendBoundedTerminalOutput } from './terminal-output-buffer.js';
 
 export interface HostTerminalSessionRecord {
   hostId: string;
   status: 'starting' | 'running' | 'exited';
   exitCode?: number;
   finishedAt?: number;
+  outputText?: string;
+  outputTruncated?: boolean;
 }
 
 export class HostUnavailableError extends Error {
@@ -93,6 +103,8 @@ export interface ConnectedHostSession {
 }
 
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
+/** Turn-length host RPCs (`thread.start`, `turn.submit`) wait for `runTurn()`. */
+export const LIVE_TURN_COMMAND_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 export function createHostHub(
   db: ZccDatabase,
@@ -100,6 +112,17 @@ export function createHostHub(
   terminalSessions: Map<string, HostTerminalSessionRecord> = new Map(),
   options?: {
     onNewHostInstance?: (hostId: string) => void;
+    onHostConnected?: (hostId: string) => void;
+    onConversationEvent?: (input: {
+      threadId: string;
+      type: string;
+      payload: unknown;
+    }) => void;
+    onConversationLifecycle?: (input: {
+      threadId: string;
+      event: ThreadLifecycleEvent;
+    }) => void;
+    onHostDisconnected?: (hostId: string) => void;
   }
 ) {
   const sessions = new Map<string, ConnectedHostSession>();
@@ -143,6 +166,7 @@ export function createHostHub(
     sessions.delete(hostId);
     closeHostSession(db, hostId, reason);
     hub.emit('hosts:changed', undefined);
+    options?.onHostDisconnected?.(hostId);
     for (const [requestId, waiter] of pending) {
       if (requestId.startsWith(`${hostId}:`)) {
         clearTimeout(waiter.timer);
@@ -170,6 +194,7 @@ export function createHostHub(
     markHostSeen(db, hostId);
     sessions.set(hostId, { hostId, instanceId, socket });
     hub.emit('hosts:changed', undefined);
+    options?.onHostConnected?.(hostId);
     const waiters = connectWaiters.get(hostId);
     if (waiters) {
       connectWaiters.delete(hostId);
@@ -260,6 +285,17 @@ export function createHostHub(
             const data = event.payload && typeof event.payload === 'object' && 'data' in event.payload
               ? String((event.payload as { data: unknown }).data)
               : '';
+            const record = terminalSessions.get(event.terminalId);
+            if (record) {
+              const next = appendBoundedTerminalOutput(
+                record.outputText !== undefined
+                  ? { text: record.outputText, truncated: record.outputTruncated ?? false }
+                  : undefined,
+                data
+              );
+              record.outputText = next.text;
+              record.outputTruncated = next.truncated;
+            }
             hub.emit('terminals:data', { sessionId: event.terminalId, data });
           } else {
             const exitCode = event.payload && typeof event.payload === 'object' && 'exitCode' in event.payload
@@ -301,12 +337,26 @@ export function createHostHub(
           if (providerThreadId) {
             rememberConversationProviderThreadId(db, event.threadId, providerThreadId);
           }
-          const nextStatus = conversationStatusForHostEvent({
+          const lifecycleEvent = conversationLifecycleEventForHostEvent({
             kind: event.kind,
-            payload: event.payload
+            payload: event.payload,
+            nestedTurn: isNestedConversationTurnCompletion(
+              event.payload,
+              listConversationThreadEventsWindow(db, event.threadId, { limit: 80 })
+            )
           });
-          if (nextStatus) {
-            updateConversationThreadStatus(db, event.threadId, nextStatus);
+          if (lifecycleEvent) {
+            if (options?.onConversationLifecycle) {
+              options.onConversationLifecycle({
+                threadId: event.threadId,
+                event: lifecycleEvent
+              });
+            } else {
+              applyConversationThreadLifecycleEvent(db, {
+                threadId: event.threadId,
+                event: lifecycleEvent
+              });
+            }
           }
           hub.emit('threads:event', {
             threadId: event.threadId,
@@ -315,6 +365,18 @@ export function createHostHub(
             type: eventType,
             payload: event.payload
           });
+          try {
+            syncPlanFromLatestEvents(db, event.threadId);
+          } catch {
+            /* plan import is advisory */
+          }
+          if (isBackgroundTaskLifecyclePayload(eventType, event.payload)) {
+            options?.onConversationEvent?.({
+              threadId: event.threadId,
+              type: eventType,
+              payload: event.payload
+            });
+          }
           return;
         }
         const thread = getThread(db, event.threadId);

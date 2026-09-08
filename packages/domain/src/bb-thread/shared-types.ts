@@ -544,6 +544,12 @@ export const threadExecutionOptionsSchema = z.object({
   permissionMode: permissionModeSchema.optional(),
   source: threadExecutionSourceSchema.optional(),
   seq: z.number().int().optional(),
+  /**
+   * Provider-native session mode/role (e.g. an ACP provider's session-mode
+   * selector). Recorded on the turn so the running thread's picked role can be
+   * read back and re-applied on follow-ups; absent for providers without one.
+   */
+  acpMode: z.string().optional(),
 });
 export type ThreadExecutionOptions = z.infer<
   typeof threadExecutionOptionsSchema
@@ -628,6 +634,8 @@ const runtimeThreadExecutionBaseOptionsSchema = z.object({
   // Optional for legacy command compatibility; the server fills the current
   // provider preference before dispatching new runtime work.
   providerSubagentsEnabled: z.boolean().optional(),
+  /** Provider-scoped runtime options. Core transports this opaque bag only. */
+  providerOptions: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const runtimeThreadExecutionOptionsSchema =

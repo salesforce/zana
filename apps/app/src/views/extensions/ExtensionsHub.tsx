@@ -63,6 +63,7 @@ import {
   type InstalledPublisherFilter
 } from './installed-plugins.js';
 import { reportPluginEnabledFailure, setHubRowEnabled } from './plugin-row-enabled.js';
+import { reportHubInstallFailure } from './hub-install.js';
 import { uninstallHubRow } from './plugin-row-uninstall.js';
 import {
   applyHubPluginUpdate,
@@ -99,7 +100,6 @@ export function ExtensionsHub({
   onTabChange?: (tab: HubTab) => void;
   showTabs?: boolean;
 } = {}) {
-  const navigate = useNavigate();
   const [uncontrolledTab, setUncontrolledTab] = useState<HubTab>(initialTab);
   const tab = controlledTab ?? uncontrolledTab;
   const [reloading, setReloading] = useState(false);
@@ -108,7 +108,6 @@ export function ExtensionsHub({
   const [moreOpen, setMoreOpen] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
-  const selectedProjectId = useUi((s) => s.selectedProjectId);
 
   useEffect(() => {
     if (!moreOpen) return;
@@ -160,12 +159,6 @@ export function ExtensionsHub({
       })
       .catch(() => setRedeployNote('Redeploy failed'))
       .finally(() => setRedeploying(false));
-  };
-
-  const startCreatePlugin = (prompt: string = CREATE_PLUGIN_PROMPT) => {
-    setMoreOpen(false);
-    const target = createPluginComposeNavigation({ prompt, projectId: selectedProjectId });
-    void navigate(target.pathname, { state: target.state });
   };
 
   const checkUpdates = () => {
@@ -254,7 +247,6 @@ export function ExtensionsHub({
         <InstalledView toolbarExtra={showTabs ? undefined : maintenanceActions} />
       ) : (
         <Marketplace
-          onCreate={startCreatePlugin}
           toolbarExtra={showTabs ? undefined : maintenanceActions}
         />
       )}
@@ -454,7 +446,12 @@ export function InstalledView({ toolbarExtra }: { toolbarExtra?: ReactNode } = {
                   className="ext-install-menu-item"
                   onClick={() => {
                     setNewMenuOpen(false);
-                    product.extensions.install({ kind: 'localDir' }).catch(() => {});
+                    product.extensions
+                      .install({ kind: 'localDir' })
+                      .then((res) => reportHubInstallFailure(res, useUi.getState().pushToast))
+                      .catch((err) =>
+                        useUi.getState().pushToast(err instanceof Error ? err.message : String(err), 'error')
+                      );
                   }}
                 >
                   <FolderOpen size={14} />

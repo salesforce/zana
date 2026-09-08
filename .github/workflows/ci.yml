@@ -93,12 +93,20 @@ jobs:
           sudo apt-get install -y xvfb
           npx playwright install-deps chromium
 
+      # ubuntu-24.04 blocks Chromium's sandbox via AppArmor; Electron never
+      # creates a window without this (microsoft/playwright#34251).
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Build app
         run: pnpm run build
         env:
           # The renderer bundle includes Monaco and exceeds Node's default heap
           # on GitHub-hosted runners.
           NODE_OPTIONS: --max-old-space-size=6144
+
+      - name: Rebuild native modules for Electron
+        run: pnpm run rebuild:electron
 
       - name: E2E tests
         run: xvfb-run -a pnpm run test:e2e:only

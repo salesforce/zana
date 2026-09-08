@@ -22,5 +22,7 @@ export type {
 export {
   STANDALONE_SUGGESTION_KINDS,
   inboxQuestions,
-  hasBlockingQuestion
+  hasBlockingQuestion,
+  isThreadPendingInboxClone,
+  PENDING_INTERACTION_INBOX_DEDUPE_PREFIX
 } from './product.js';

@@ -32,10 +32,12 @@ export function appendClientTurnRequested(
     threadId: string;
     prompt: readonly string[];
     promptInput?: unknown;
-    kind: 'thread-start' | 'new-turn';
+    kind: 'thread-start' | 'new-turn' | 'steer';
+    expectedTurnId?: string | null;
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
+    acpMode?: string;
   }
 ): string | undefined {
   const input = promptInputForTurn(args.prompt, args.promptInput);
@@ -54,7 +56,9 @@ export function appendClientTurnRequested(
     initiator: 'user',
     senderThreadId: null,
     input,
-    target: { kind: args.kind },
+    target: args.kind === 'steer'
+      ? { kind: 'steer', expectedTurnId: args.expectedTurnId ?? null }
+      : { kind: args.kind },
     request: {
       method: args.kind === 'thread-start' ? 'thread/start' : 'turn/start',
       params: {}
@@ -64,7 +68,10 @@ export function appendClientTurnRequested(
       serviceTier: 'default',
       reasoningLevel: args.reasoningLevel ?? 'medium',
       permissionMode: args.permissionMode ?? 'accept-edits',
-      source: 'client/turn/requested'
+      source: 'client/turn/requested',
+      // Only record a native role when the turn actually carried one, so a
+      // thread that never picked reads back null (picker stays neutral).
+      ...(args.acpMode?.trim() ? { acpMode: args.acpMode.trim() } : {})
     }
   });
   if (!parsed.success) return undefined;

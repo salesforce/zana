@@ -6,7 +6,10 @@ import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 
-export const ACP_BRIDGE_MCP_SERVER_NAME = "bb-bridge";
+// Session-scoped ACP tools need a distinct server key. Reusing `zcc-inbox`
+// collides with OpenCode's project MCP registration and can bind calls to the
+// wrong tool while keeping the dynamic tool's displayed name.
+export const ACP_BRIDGE_MCP_SERVER_NAME = "zcc";
 
 const ENV_HOST = "BB_ACP_DYNAMIC_TOOL_HOST";
 const ENV_PORT = "BB_ACP_DYNAMIC_TOOL_PORT";
@@ -14,11 +17,28 @@ const ENV_TOKEN = "BB_ACP_DYNAMIC_TOOL_TOKEN";
 const ENV_THREAD_ID = "BB_ACP_DYNAMIC_TOOL_THREAD_ID";
 const ENV_TOOLS = "BB_ACP_DYNAMIC_TOOLS";
 
-export interface AcpMcpServerConfig {
+export interface AcpStdioMcpServerConfig {
   name: string;
   command: string;
   args: string[];
   env: { name: string; value: string }[];
+}
+
+export interface AcpHttpMcpServerConfig {
+  name: string;
+  type: "http";
+  url: string;
+  headers: { name: string; value: string }[];
+}
+
+export type AcpMcpServerConfig =
+  | AcpStdioMcpServerConfig
+  | AcpHttpMcpServerConfig;
+
+export function isAcpHttpMcpServerConfig(
+  config: AcpMcpServerConfig,
+): config is AcpHttpMcpServerConfig {
+  return (config as AcpHttpMcpServerConfig).type === "http";
 }
 
 export interface BuildAcpMcpServerConfigArgs {
@@ -71,7 +91,7 @@ let nextMcpToolCallId = 0;
 
 export function buildAcpMcpServerConfig(
   args: BuildAcpMcpServerConfigArgs,
-): AcpMcpServerConfig {
+): AcpStdioMcpServerConfig {
   return {
     name: ACP_BRIDGE_MCP_SERVER_NAME,
     command: args.command,
@@ -84,6 +104,18 @@ export function buildAcpMcpServerConfig(
       { name: ENV_THREAD_ID, value: args.threadId },
       { name: ENV_TOOLS, value: JSON.stringify(args.dynamicTools) },
     ],
+  };
+}
+
+export function buildAcpHttpMcpServerConfig(
+  url: string,
+  token: string,
+): AcpHttpMcpServerConfig {
+  return {
+    name: ACP_BRIDGE_MCP_SERVER_NAME,
+    type: "http",
+    url,
+    headers: [{ name: "Authorization", value: `Bearer ${token}` }],
   };
 }
 

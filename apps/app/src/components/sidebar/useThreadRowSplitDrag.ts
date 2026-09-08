@@ -1,4 +1,4 @@
-import { useCallback, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useIsCompactViewport } from '../../hooks/useIsCompactViewport.js';
 import {
@@ -9,7 +9,8 @@ import {
 } from '../../lib/split-drag/index.js';
 import {
   countPanes,
-  findPaneByThread,
+  findPane,
+  findPaneByContent,
   listPanes,
   MAX_PANES,
   replacePaneContent,
@@ -18,20 +19,24 @@ import {
   type PaneContent,
   type SplitLayout
 } from '../../lib/split-layout/index.js';
-import { openThreadInSplit } from '../../lib/split-layout/openThreadInSplit.js';
-import { focusedPaneRoute } from '../../lib/split-layout/splitThreadNavigation.js';
+import { openRoutedPaneInSplit } from '../../lib/split-layout/openThreadInSplit.js';
+import {
+  createSinglePaneLayout,
+  focusedPaneRoute,
+  paneContentForPathname,
+  paneContentRoute
+} from '../../lib/split-layout/splitThreadNavigation.js';
 import { useSplitWorkspace } from '../../lib/split-layout/store.js';
 
 const SIDEBAR_SELECTOR = '.sidebar, .project-scoped-nav, [data-sidebar="sidebar"]';
-const MAIN_CONTENT_SELECTOR = '.split-workspace, main.shell-main';
+/** The live workspace box — never the shell landmark (display:contents, empty rect). */
+const MAIN_CONTENT_SELECTOR = '.split-workspace';
 
-export function useThreadRowSplitDrag({
-  projectId,
-  threadId,
+export function usePaneContentSplitDrag({
+  content,
   title
 }: {
-  projectId: string | null;
-  threadId: string;
+  content: PaneContent;
   title: string;
 }): {
   onPointerDown: ((event: ReactPointerEvent<HTMLElement>) => void) | undefined;
@@ -40,6 +45,9 @@ export function useThreadRowSplitDrag({
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const isCompact = useIsCompactViewport();
+  const contentKey = paneContentRoute(content);
+  const contentRef = useRef(content);
+  contentRef.current = content;
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -49,9 +57,9 @@ export function useThreadRowSplitDrag({
       const sidebarRightEdge = (sidebarEl ?? rowEl).getBoundingClientRect().right;
       const startX = event.clientX;
       const startY = event.clientY;
-      const content: PaneContent = { kind: 'thread', projectId, threadId };
       const startLayout = useSplitWorkspace.getState().layout;
       const fallback = singlePaneFallback(startLayout);
+      const paneContent = contentRef.current;
 
       beginSplitDrag({
         ghostLabel: title,
@@ -66,31 +74,34 @@ export function useThreadRowSplitDrag({
             y,
             sidebarRightEdge
           }),
-        decide: (_paneId, zone) => {
+        decide: (paneId, zone) => {
           const layout = useSplitWorkspace.getState().layout ?? startLayout;
           if (layout === null) {
             return decideThreadDrop({ zone, threadAlreadyOpen: false, atMaxPanes: false });
           }
-          const alreadyOpen = findPaneByThread(layout.root, projectId, threadId) !== null;
+          const alreadyOpen = findPaneByContent(layout.root, paneContent) !== null;
+          const target = findPane(layout.root, paneId);
           return decideThreadDrop({
             zone,
             threadAlreadyOpen: alreadyOpen,
-            atMaxPanes: countPanes(layout.root) >= MAX_PANES
+            atMaxPanes: countPanes(layout.root) >= MAX_PANES,
+            emptyTarget: target?.content.kind === 'empty'
           });
         },
         onDrop: (target) => {
-          const layout = useSplitWorkspace.getState().layout ?? startLayout;
+          const stored = useSplitWorkspace.getState().layout ?? startLayout;
+          const keep = stored === null ? paneContentForPathname(pathname) : null;
+          const layout = stored ?? (keep === null ? null : createSinglePaneLayout(keep));
           if (layout === null) {
-            openThreadInSplit({
+            openRoutedPaneInSplit({
               navigate,
-              projectId,
-              threadId,
+              content: paneContent,
               isCompact: false,
               currentPathname: pathname
             });
             return;
           }
-          const existing = findPaneByThread(layout.root, projectId, threadId);
+          const existing = findPaneByContent(layout.root, paneContent);
           if (existing !== null) {
             const next = setFocus(layout, existing.paneId);
             if (next !== layout) useSplitWorkspace.getState().setLayout(next);
@@ -98,27 +109,52 @@ export function useThreadRowSplitDrag({
             if (route) navigate(route, { replace: true });
             return;
           }
+          const paneId =
+            findPane(layout.root, target.paneId) !== null ? target.paneId : layout.focusedPaneId;
           const next =
             target.zone === 'center'
-              ? replacePaneContent(layout, target.paneId, content)
-              : splitPane(layout, target.paneId, target.zone, content);
+              ? replacePaneContent(layout, paneId, paneContent)
+              : splitPane(layout, paneId, target.zone, paneContent);
           if (next !== layout) useSplitWorkspace.getState().setLayout(next);
           const route = focusedPaneRoute(next);
           if (route) navigate(route);
         }
       });
     },
-    [isCompact, navigate, pathname, projectId, threadId, title]
+    [contentKey, navigate, pathname, title]
   );
 
   const openInSplit = useCallback(() => {
-    openThreadInSplit({ navigate, projectId, threadId, isCompact, currentPathname: pathname });
-  }, [isCompact, navigate, pathname, projectId, threadId]);
+    openRoutedPaneInSplit({
+      navigate,
+      content: contentRef.current,
+      isCompact,
+      currentPathname: pathname
+    });
+  }, [contentKey, isCompact, navigate, pathname]);
 
   if (isCompact) {
     return { onPointerDown: undefined, openInSplit };
   }
   return { onPointerDown, openInSplit };
+}
+
+export function useThreadRowSplitDrag({
+  projectId,
+  threadId,
+  title
+}: {
+  projectId: string | null;
+  threadId: string;
+  title: string;
+}): {
+  onPointerDown: ((event: ReactPointerEvent<HTMLElement>) => void) | undefined;
+  openInSplit: () => void;
+} {
+  return usePaneContentSplitDrag({
+    content: { kind: 'thread', projectId, threadId },
+    title
+  });
 }
 
 function singlePaneFallback(layout: SplitLayout | null): SplitDragFallbackTarget | undefined {

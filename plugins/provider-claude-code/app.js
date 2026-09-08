@@ -36,3 +36,4 @@ var app_default = definePluginApp((app) => {
 export {
   app_default as default
 };
+//# sourceMappingURL=app.js.map

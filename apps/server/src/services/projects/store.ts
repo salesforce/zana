@@ -4,13 +4,14 @@ import { join, basename, dirname, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { Project, ProjectRemote, AppConfig, ProjectSettings, OpenTarget, ProjectLaunchDefault, HarnessFamily } from '@zana-ai/zcc-domain/product';
-import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS } from '@zana-ai/zcc-domain/product';
+import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, DEFAULT_PROJECT_DISPLAY_NAME } from '@zana-ai/zcc-domain/product';
 import { isTerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
 import { PROJECT_COLORS, pickProjectColor } from '@zana-ai/zcc-domain/project-colors';
 import { registeredAdapters } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { atomicDurableWrite } from '../harness-routing/storage.js';
 import { normalizeRepoUrl } from './git-clone.js';
 import { createConfigStore } from '../config/config-store.js';
+import { electronZccDataDir } from '../../electron-data-dir.js';
 
 const HARNESS_FAMILIES = ['claude', 'cursor', 'codex', 'pi', 'opencode'] as const;
 
@@ -253,7 +254,7 @@ function canonicalProjectSettingsForWrite(settings: ProjectSettings): ProjectSet
   return next;
 }
 
-const dataDir = join(app.getPath('home'), '.zcc');
+const dataDir = electronZccDataDir();
 const projectsFile = join(dataDir, 'projects.json');
 const configFile = join(dataDir, 'config.json');
 const projectSettingsFile = join(dataDir, 'project-settings.json');
@@ -268,15 +269,22 @@ export const PROJECTS_SCHEMA_VERSION = 1 as const;
 export const SCRATCH_DIR_NAME = 'zcc-workspace';
 /** Pre-rebrand scratch folder name, kept only so we can migrate it. */
 const LEGACY_SCRATCH_DIR_NAME = 'cc-workspace';
-/** User-facing label; folder and tag stay {@link SCRATCH_DIR_NAME}. */
-const DEFAULT_WORKSPACE_DISPLAY_NAME = 'Default Workspace';
+/** Pre-rename scratch display name; rewritten to {@link DEFAULT_PROJECT_DISPLAY_NAME}. */
+const LEGACY_DEFAULT_WORKSPACE_DISPLAY_NAME = 'Default Workspace';
 /** App-managed parent for isolated git worktrees. */
 export const WORKTREE_DIR_NAME = 'zcc-worktrees';
+/** Local working trees for SSH projects (`~/zcc-workspace/remotes/<tag>`). */
+export const REMOTES_DIR_NAME = 'remotes';
 
 /** Absolute path to the built-in scratch workspace (`~/zcc-workspace`). Shared
  *  by the Quick Agent anchor and the clone-root fallback so both agree. */
 export function scratchWorkspaceRoot(): string {
   return join(app.getPath('home'), SCRATCH_DIR_NAME);
+}
+
+/** Absolute path to the per-remote local folders (`~/zcc-workspace/remotes`). */
+export function remoteProjectsRoot(): string {
+  return join(scratchWorkspaceRoot(), REMOTES_DIR_NAME);
 }
 
 /** Absolute path to the app-managed isolated worktree root (`~/zcc-worktrees`). */
@@ -726,15 +734,22 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.lastProjectId === 'string' || input.lastProjectId === null) {
     normalized.lastProjectId = input.lastProjectId;
   }
-  if (input.workspaceModes && typeof input.workspaceModes === 'object') {
-    // A project view is either a core WorkspaceMode literal OR an opaque
+  if (input.projectViews && typeof input.projectViews === 'object') {
+    // A project view is either a core mode literal OR an opaque
     // extension module id (an extension-contributed project tab, e.g. the
     // `zana-tickets` extension). Core never enumerates extension ids, so we
     // can't value-whitelist here — validate shape only (non-empty string),
     // mirroring the renderer's own persist filter (`if (v) …`). A stale id
     // whose extension is gone on next launch is tolerated at render time
-    // (falls back to the default view). See ProjectView / AppConfig.workspaceModes.
-    normalized.workspaceModes = Object.fromEntries(
+    // (falls back to the default view). See ProjectView / AppConfig.projectViews.
+    normalized.projectViews = Object.fromEntries(
+      Object.entries(input.projectViews).filter(
+        (_entry): _entry is [string, string] =>
+          typeof _entry[1] === 'string' && _entry[1].length > 0
+      )
+    );
+  } else if (input.workspaceModes && typeof input.workspaceModes === 'object') {
+    normalized.projectViews = Object.fromEntries(
       Object.entries(input.workspaceModes).filter(
         (_entry): _entry is [string, string] =>
           typeof _entry[1] === 'string' && _entry[1].length > 0
@@ -881,9 +896,6 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.idleTriageEnabled === 'boolean') {
     normalized.idleTriageEnabled = input.idleTriageEnabled;
   }
-  if (input.monitorSemanticProvider === 'openai' || input.monitorSemanticProvider === 'gemini') {
-    normalized.monitorSemanticProvider = input.monitorSemanticProvider;
-  }
   if (typeof input.heldQuestionsEnabled === 'boolean') {
     normalized.heldQuestionsEnabled = input.heldQuestionsEnabled;
   }
@@ -908,6 +920,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.feedNoiseClassifierEnabled === 'boolean') {
     normalized.feedNoiseClassifierEnabled = input.feedNoiseClassifierEnabled;
+  }
+  if (typeof input.autoOpenThreadPlanPanel === 'boolean') {
+    normalized.autoOpenThreadPlanPanel = input.autoOpenThreadPlanPanel;
   }
   if (typeof input.autoReportLinkEnabled === 'boolean') {
     normalized.autoReportLinkEnabled = input.autoReportLinkEnabled;
@@ -954,8 +969,26 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.teamLaunchEnabled === 'boolean') {
     normalized.teamLaunchEnabled = input.teamLaunchEnabled;
   }
+  if (typeof input.teamJobLaunchEnabled === 'boolean') {
+    normalized.teamJobLaunchEnabled = input.teamJobLaunchEnabled;
+  }
+  if (typeof input.composerShowCliAgent === 'boolean') {
+    normalized.composerShowCliAgent = input.composerShowCliAgent;
+  }
+  if (typeof input.composerShowModern === 'boolean') {
+    normalized.composerShowModern = input.composerShowModern;
+  }
+  if (typeof input.composerShowAutonomousTeam === 'boolean') {
+    normalized.composerShowAutonomousTeam = input.composerShowAutonomousTeam;
+  }
   if (typeof input.goalsEnabled === 'boolean') {
     normalized.goalsEnabled = input.goalsEnabled;
+  }
+  if (typeof input.cliRemoteToolProxyEnabled === 'boolean') {
+    normalized.cliRemoteToolProxyEnabled = input.cliRemoteToolProxyEnabled;
+  }
+  if (typeof input.cliRemoteHostCatalogEnabled === 'boolean') {
+    normalized.cliRemoteHostCatalogEnabled = input.cliRemoteHostCatalogEnabled;
   }
   if (typeof input.followUpsEnabled === 'boolean') {
     normalized.followUpsEnabled = input.followUpsEnabled;
@@ -1007,6 +1040,13 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.steerActiveThreadOnEnter === 'boolean') {
     normalized.steerActiveThreadOnEnter = input.steerActiveThreadOnEnter;
+  }
+  if (
+    input.composerSendMode === 'auto'
+    || input.composerSendMode === 'steer'
+    || input.composerSendMode === 'queue-if-active'
+  ) {
+    normalized.composerSendMode = input.composerSendMode;
   }
   if (typeof input.showUnhandledProviderEvents === 'boolean') {
     normalized.showUnhandledProviderEvents = input.showUnhandledProviderEvents;
@@ -1134,9 +1174,73 @@ const configStore = createConfigStore(
   { normalizeConfig, projectConfigCompatibility, canonicalConfigForWrite, harnessEnabled }
 );
 
+function legacyRemotePlaceholderPath(id: string): string {
+  return join(dataDir, 'remote-projects', id);
+}
+
+function preferredRemoteLocalDir(project: Pick<Project, 'name' | 'tag' | 'remote'>): string {
+  const tag = project.tag?.trim() || slugifyTag(project.name || project.remote?.host || 'remote');
+  return join(remoteProjectsRoot(), tag);
+}
+
+function isLegacyRemotePlaceholder(project: Pick<Project, 'id' | 'path'>): boolean {
+  return project.path === legacyRemotePlaceholderPath(project.id);
+}
+
+function isAppOwnedRemoteLocalDir(project: Pick<Project, 'id' | 'path' | 'name' | 'tag' | 'remote'>): boolean {
+  return project.path === preferredRemoteLocalDir(project) || isLegacyRemotePlaceholder(project);
+}
+
+/** Mkdir (and migrate off `~/.zcc/remote-projects/<id>`) without throwing. */
+function ensureRemoteProjectLocalDirRecord(project: Project): Project {
+  if (!project.remote) return project;
+  try {
+    const anchor = scratchWorkspaceRoot();
+    mkdirSync(anchor, { recursive: true });
+    const preferred = preferredRemoteLocalDir(project);
+    const current = project.path;
+    const relocate = !current || isLegacyRemotePlaceholder(project);
+    const target = relocate ? preferred : current;
+    mkdirSync(remoteProjectsRoot(), { recursive: true });
+    if (relocate && current && current !== target && existsSync(current) && !existsSync(target)) {
+      renameSync(current, target);
+    } else if (!existsSync(target)) {
+      mkdirSync(target, { recursive: true });
+    }
+    if (target === preferred) trustDirInClaudeConfig(target);
+    if (current !== target) return { ...project, path: target };
+    return project;
+  } catch {
+    return project;
+  }
+}
+
 export const store = {
   listProjects(): Project[] {
-    return readProjectsFile().projects;
+    const projects = readProjectsFile().projects;
+    if (projects.some((project) => project.remote)) this.ensureScratchRoot();
+    let mutated = false;
+    const next = projects.map((project) => {
+      const healed = ensureRemoteProjectLocalDirRecord(project);
+      if (healed.path !== project.path) mutated = true;
+      return healed;
+    });
+    if (mutated) writeProjects(next);
+    return next;
+  },
+  /** Create or migrate the local working tree for an SSH project. Never throws. */
+  ensureRemoteProjectLocalDir(project: Project): Project {
+    if (!project.remote) return project;
+    this.ensureScratchRoot();
+    const healed = ensureRemoteProjectLocalDirRecord(project);
+    if (healed.path === project.path) return healed;
+    const projects = readProjectsFile().projects;
+    const idx = projects.findIndex((row) => row.id === project.id);
+    if (idx >= 0) {
+      projects[idx] = { ...projects[idx], path: healed.path };
+      writeProjects(projects);
+    }
+    return healed;
   },
   /**
    * One-time backfill: assign a palette color to every project that lacks one,
@@ -1160,10 +1264,10 @@ export const store = {
   },
   /**
    * Create a Project that points at a remote SSH host instead of a local
-   * folder. We still write a placeholder local path so existing
-   * path-touching call sites keep working — `~/.zcc/remote-projects/<id>`,
-   * created empty. Terminal spawns branch on `project.remote` and skip the
-   * local cwd entirely.
+   * folder. We still write a local working tree so plans, docs, and `.zcc`
+   * have somewhere to live — `~/zcc-workspace/remotes/<tag>`, created empty.
+   * Terminal spawns branch on `project.remote` (ssh -t) or CLI remote tools
+   * (local cwd, tools over SSH).
    */
   addRemoteProject(input: {
     host: string;
@@ -1194,7 +1298,8 @@ export const store = {
     const taken = new Set(projects.map((p) => p.tag).filter((t): t is string => !!t));
     const tag = pickTag(rawName, taken);
     const id = randomUUID();
-    const placeholder = join(dataDir, 'remote-projects', id);
+    this.ensureScratchRoot();
+    const placeholder = join(remoteProjectsRoot(), tag);
     const remote: ProjectRemote = { host };
     if (user) remote.user = user;
     if (remotePath) remote.remotePath = remotePath;
@@ -1215,6 +1320,7 @@ export const store = {
     projects.push(project);
     writeProjects(projects);
     if (!existsSync(placeholder)) mkdirSync(placeholder, { recursive: true });
+    trustDirInClaudeConfig(placeholder);
     return project;
   },
   addProject(path: string): Project {
@@ -1330,8 +1436,9 @@ export const store = {
    * The single built-in scratch project that backs the Agents-module Quick
    * Agent. Rooted at `~/zcc-workspace` (created on first call), reused on every
    * subsequent call via `addProject`'s path-dedup. Tagged `quickAgent` so the
-   * UI can treat it specially. Display name is `Default Workspace` when it is
-   * still the folder basename; the path and tag stay `zcc-workspace`. Idempotent.
+   * UI can treat it specially. Display name is `Default Project` when it is
+   * still the folder basename or the pre-rename `Default Workspace` label; the
+   * path and tag stay `zcc-workspace`. Idempotent.
    *
    * Migration: pre-rebrand installs anchored the scratch project at
    * `~/cc-workspace`. On first call we rename that folder to the new name (and
@@ -1344,7 +1451,9 @@ export const store = {
     const project = this.addProject(anchor);
     const needsQuickAgent = !project.quickAgent;
     const needsDisplayName =
-      project.name === SCRATCH_DIR_NAME || project.name === LEGACY_SCRATCH_DIR_NAME;
+      project.name === SCRATCH_DIR_NAME
+      || project.name === LEGACY_SCRATCH_DIR_NAME
+      || project.name === LEGACY_DEFAULT_WORKSPACE_DISPLAY_NAME;
     if (!needsQuickAgent && !needsDisplayName) return project;
     const projects = this.listProjects();
     const idx = projects.findIndex((p) => p.id === project.id);
@@ -1352,7 +1461,7 @@ export const store = {
     projects[idx] = {
       ...projects[idx],
       ...(needsQuickAgent ? { quickAgent: true } : {}),
-      ...(needsDisplayName ? { name: DEFAULT_WORKSPACE_DISPLAY_NAME } : {})
+      ...(needsDisplayName ? { name: DEFAULT_PROJECT_DISPLAY_NAME } : {})
     };
     writeProjects(projects);
     return projects[idx];
@@ -1429,17 +1538,14 @@ export const store = {
         writeJson(projectSettingsFile, all);
       }
     }
-    // Clean up the remote-project placeholder dir we mkdir'd in addRemoteProject.
-    // We only nuke paths under our own data dir — never anything user-supplied.
-    if (removed?.remote) {
-      const placeholderRoot = join(dataDir, 'remote-projects');
-      const expected = join(placeholderRoot, id);
-      if (removed.path === expected && existsSync(expected)) {
-        try {
-          rmSync(expected, { recursive: true, force: true });
-        } catch {
-          /* best-effort cleanup */
-        }
+    // Clean up the app-owned local dir we mkdir'd for the remote project.
+    // Only nuke paths under ~/zcc-workspace/remotes or the legacy
+    // ~/.zcc/remote-projects/<id> — never a user-supplied folder.
+    if (removed?.remote && isAppOwnedRemoteLocalDir(removed) && existsSync(removed.path)) {
+      try {
+        rmSync(removed.path, { recursive: true, force: true });
+      } catch {
+        /* best-effort cleanup */
       }
     }
   },
@@ -1480,8 +1586,8 @@ export const store = {
     // Remote start-path override. Only meaningful for a remote project; ignored
     // for local ones. sanitizeRemoteField enforces the same length / control-char
     // guard as add-time (it feeds an ssh `cd` prefix in buildRemoteCmd). An empty
-    // string clears the override so the project falls back to the global
-    // remoteDefaultPath, then the remote $HOME.
+    // string clears the override so the project falls back to the matching
+    // Machine default, then the global remoteDefaultPath, then the remote $HOME.
     if (remotePathPatch !== undefined && next.remote) {
       const cleaned = sanitizeRemoteField(remotePathPatch, 'remotePath');
       const remote = { ...next.remote };

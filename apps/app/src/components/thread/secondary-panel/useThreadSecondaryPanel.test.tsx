@@ -1,6 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useSecondaryPanel, useThreadSecondaryPanel } from './useThreadSecondaryPanel.js';
+
+vi.mock('../../../lib/product-client.js', () => ({
+  product: {
+    threads: {
+      tabs: async () => ({ revision: 0, tabs: [] }),
+      updateTabs: async () => ({ revision: 1, tabs: [] }),
+      onTabs: () => () => undefined
+    }
+  }
+}));
 
 function Probe({ threadId }: { threadId?: string }) {
   const panel = useThreadSecondaryPanel(threadId);
@@ -33,5 +44,12 @@ describe('useThreadSecondaryPanel', () => {
   it('defaults agent owners open', () => {
     const html = renderToStaticMarkup(<AgentProbe ownerId="session-x" />);
     expect(html).toContain('open');
+  });
+
+  it('memoizes panel commands so selectPin stays stable across state', () => {
+    const source = readFileSync(new URL('./useThreadSecondaryPanel.ts', import.meta.url), 'utf8');
+    expect(source).toContain('useMemo(() => createSecondaryPanelCommands(update), [update])');
+    expect(source).toContain('secondaryPanelStatesEqual');
+    expect(source).not.toContain('...createSecondaryPanelCommands(update)');
   });
 });

@@ -19,13 +19,13 @@ const SECTIONS: Section[] = [
   {
     title: 'Navigation',
     rows: [
+      { keys: ['⌘', 'N'], label: 'New Chat' },
       { keys: ['⌘', 'P'], label: 'Command palette / project switcher' },
       { keys: ['⌘', '⇧', '1'], label: 'Switch to project 1 (… up to ⌘⇧9)' },
       { keys: ['⌘', '⇧', ']'], label: 'Next project' },
       { keys: ['⌘', '⇧', '['], label: 'Previous project' },
       { keys: ['⌘', 'E'], label: 'Find file in selected project' },
       { keys: ['⌘', '⇧', 'F'], label: 'Search file contents in selected project' },
-      { keys: ['⌘', 'R'], label: 'Resume Claude session…' },
       { keys: ['⌘', 'B'], label: 'Toggle Terminals / Explorer' },
       { keys: ['⌘', 'L'], label: 'Open Preview Browser' },
       { keys: ['⌘', 'O'], label: 'Open Agents dashboard' },
@@ -66,6 +66,15 @@ const SECTIONS: Section[] = [
       { keys: ['⌘', 'S'], label: 'Save edited file' },
       { keys: ['⌘', 'D'], label: 'Toggle diff vs HEAD on open file' },
       { keys: ['⌘', '⇧', 'G'], label: 'Toggle Changes view (modified files only)' }
+    ]
+  },
+  {
+    title: 'Split',
+    rows: [
+      { keys: ['⌘', '⌥', 'W'], label: 'Close focused pane' },
+      { keys: ['⌘', '1'], label: 'Focus pane 1 (… up to ⌘8)' },
+      { keys: ['⌘', '⌥', ']'], label: 'Next pane' },
+      { keys: ['⌘', '⌥', '['], label: 'Previous pane' }
     ]
   },
   {

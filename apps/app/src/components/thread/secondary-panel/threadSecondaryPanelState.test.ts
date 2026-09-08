@@ -15,6 +15,7 @@ import {
   persistSecondaryPanelState,
   restoreIfThread,
   restoreSecondaryPanel,
+  secondaryPanelStatesEqual,
   selectPinnedView,
   setSecondaryPanelWidth,
   storageKeyForThread,
@@ -28,13 +29,19 @@ describe('thread secondary panel state', () => {
     if (typeof localStorage !== 'undefined') localStorage.clear();
   });
 
+  it('returns the same width state when the clamp is a no-op', () => {
+    const state = emptySecondaryPanelState();
+    expect(setSecondaryPanelWidth(state, state.widthPx)).toBe(state);
+    expect(secondaryPanelStatesEqual(state, emptySecondaryPanelState())).toBe(true);
+    expect(secondaryPanelStatesEqual(state, { ...state, isOpen: true })).toBe(false);
+  });
+
   it('opens onto the Info pin by default', () => {
     const next = openSecondaryPanel(emptySecondaryPanelState());
     expect(next.isOpen).toBe(true);
     expect(next.activeId).toBe(INFO_PIN_ID);
     expect(activePinnedView(next)).toBe('info');
     expect(activePinnedView(selectPinnedView(next, 'diff'))).toBe('diff');
-    expect(activePinnedView(selectPinnedView(next, 'plan'))).toBe('plan');
     const withTab = addClosableTab(next, { kind: 'browser', title: 'Browser', url: 'https://example.com' });
     expect(activePinnedView(withTab)).toBeNull();
     expect(toggleSecondaryPanelMaximized(emptySecondaryPanelState())).toMatchObject({
@@ -49,7 +56,15 @@ describe('thread secondary panel state', () => {
     expect(next.activeId).toBe('diff');
   });
 
-  it('restores a persisted Plan pin', () => {
+  it('returns the same state when the pin is already active and open', () => {
+    const opened = selectPinnedView(emptySecondaryPanelState(), 'diff');
+    expect(selectPinnedView(opened, 'diff')).toBe(opened);
+    const closed = { ...opened, isOpen: false };
+    expect(selectPinnedView(closed, 'diff')).not.toBe(closed);
+    expect(selectPinnedView(closed, 'diff')).toMatchObject({ isOpen: true, activeId: 'diff' });
+  });
+
+  it('maps a persisted Plan pin onto Plan', () => {
     const parsed = parseSecondaryPanelState({
       version: 1,
       isOpen: true,
@@ -90,6 +105,13 @@ describe('thread secondary panel state', () => {
     const again = addClosableTab(opened, { kind: 'file-preview', title: 'a.ts', path: '/tmp/a.ts' });
     expect(again.tabs).toHaveLength(1);
     expect(again.activeId).toBe(opened.tabs[0]?.id);
+    const focused = addClosableTab(opened, {
+      kind: 'file-preview',
+      title: 'a.ts',
+      path: '/tmp/a.ts',
+      lineNumber: 9
+    });
+    expect(focused.tabs[0]?.lineNumber).toBe(9);
   });
 
   it('falls back to Info after closing the active tab', () => {
@@ -101,6 +123,22 @@ describe('thread secondary panel state', () => {
     const closed = closeClosableTab(opened, opened.tabs[0]!.id);
     expect(closed.tabs).toEqual([]);
     expect(closed.activeId).toBe(INFO_PIN_ID);
+  });
+
+  it('restores a persisted preview line number', () => {
+    expect(parseSecondaryPanelState({
+      version: 1,
+      isOpen: true,
+      widthPx: 352,
+      activeId: 'file-preview:1',
+      tabs: [{
+        id: 'file-preview:1',
+        kind: 'file-preview',
+        title: 'a.ts',
+        path: 'src/a.ts',
+        lineNumber: 14
+      }]
+    }).tabs[0]?.lineNumber).toBe(14);
   });
 
   it('clamps persisted width and ignores unknown tabs', () => {
@@ -221,6 +259,8 @@ describe('thread secondary panel state', () => {
     const patched = patchClosableTab(opened, opened.tabs[0]!.id, { url: 'https://zana.ai' });
     expect(patched.tabs[0]?.url).toBe('https://zana.ai');
     expect(patched.tabs[0]?.id).toBe(opened.tabs[0]?.id);
+    expect(patchClosableTab(patched, patched.tabs[0]!.id, { url: 'https://zana.ai' })).toBe(patched);
+    expect(patchClosableTab(patched, 'missing', { title: 'Nope' })).toBe(patched);
   });
 
   it('falls back when persisted JSON is invalid or storage throws', () => {

@@ -1,5 +1,5 @@
-import type { HostBridgeLaunch, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
-import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import type { HostBridgeLaunch, ProviderHealthResult, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
+import type { PromptInput, ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ReapIdleProviderSessionsArgs, ReapIdleProviderSessionsResult } from '@zana-ai/zcc-agent-runtime';
 import type {
   ThreadArchiveInput,
@@ -14,14 +14,25 @@ export interface ThreadRuntimeAdapter {
     bridgeLaunch: HostBridgeLaunch;
     cwd?: string;
   }): Promise<ProviderListModelsResult>;
+  providerHealth(input: {
+    providerId: string;
+    bridgeLaunch: HostBridgeLaunch;
+    cwd?: string;
+  }): Promise<ProviderHealthResult>;
   startWork(input: ThreadWorkInput): Promise<{ providerThreadId?: string } | void>;
   submitTurn(input: {
     threadId: string;
-    input: string[];
+    input: PromptInput[];
     mode?: string;
     model?: string;
     reasoningLevel?: ReasoningLevel;
+    acpMode?: string;
     clientRequestId?: string;
+    permissionMode?: 'accept-edits' | 'auto' | 'full';
+    claudeCodePermissionMode?: 'plan';
+    providerOptions?: Record<string, unknown>;
+    permissionEscalation?: 'ask' | 'deny';
+    expectedTurnId?: string;
   }): Promise<void>;
   resumeWork(input: ThreadResumeInput): Promise<{ providerThreadId?: string } | void>;
   resizeWork(input: { threadId: string; cols: number; rows: number }): Promise<void>;

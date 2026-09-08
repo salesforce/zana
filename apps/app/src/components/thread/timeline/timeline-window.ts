@@ -7,10 +7,15 @@ export function retainTerminalExpansionIds(
   cap = TERMINAL_EXPANSION_RETENTION
 ): string[] {
   const next = [...previous];
+  let added = false;
   for (const id of incoming) {
-    if (!next.includes(id)) next.push(id);
+    if (!next.includes(id)) {
+      next.push(id);
+      added = true;
+    }
   }
-  return next.slice(Math.max(0, next.length - cap));
+  if (next.length > cap) return next.slice(next.length - cap);
+  return added ? next : (previous as string[]);
 }
 
 export function windowTimelineRows<T extends { id: string }>(

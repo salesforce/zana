@@ -10,7 +10,8 @@ const MAX_EVAL_SCRIPT_LENGTH = 16_384;
 export const BROWSER_OPEN_DESCRIPTION = [
   'Open a visible in-app browser tab in this thread\'s side panel and return a target id.',
   'The user can watch the page. Use browser_snapshot after navigation, then click/type.',
-  'http(s) URLs only. WebFetch remains the tool for headless page fetches.'
+  'http(s) URLs only. WebFetch remains the tool for headless page fetches.',
+  'The tab always opens in THIS session\'s thread — do not try to name another thread.'
 ].join(' ');
 
 function jsonResult(payload: unknown): { content: Array<{ type: 'text'; text: string }> } {
@@ -55,18 +56,16 @@ export function registerBrowserAutomationTools(
       description: BROWSER_OPEN_DESCRIPTION,
       inputSchema: {
         url: z.string().max(MAX_URL_LENGTH).describe('http(s) URL to load. Empty opens a blank tab.'),
-        threadId: z.string().min(1).optional().describe('Thread to open the tab in. Defaults to this session\'s thread.'),
         visible: z.boolean().optional().describe('Open a visible side-panel tab. Defaults to true.')
       }
     },
-    async ({ url, threadId, visible }) => run(async () => {
+    async ({ url, visible }) => run(async () => {
       const host = requireHost();
-      const resolvedThreadId = threadId ?? defaultThreadId;
-      if (!resolvedThreadId) {
-        throw new Error('threadId is required when this tool is not session-scoped');
+      if (!defaultThreadId) {
+        throw new Error('browser_open is only available on a session-scoped route');
       }
       return host.open({
-        threadId: resolvedThreadId,
+        threadId: defaultThreadId,
         url,
         visible: visible !== false
       });
@@ -79,7 +78,7 @@ export function registerBrowserAutomationTools(
       description: 'List in-app browser automation targets the user can see.',
       inputSchema: {}
     },
-    async () => run(async () => requireHost().list())
+    async () => run(async () => requireHost().list(defaultThreadId ?? undefined))
   );
 
   server.registerTool(
@@ -90,7 +89,7 @@ export function registerBrowserAutomationTools(
         targetId: z.string().min(1).describe('Target id returned by browser_open.')
       }
     },
-    async ({ targetId }) => run(async () => requireHost().snapshot(targetId))
+    async ({ targetId }) => run(async () => requireHost().snapshot(targetId, defaultThreadId ?? undefined))
   );
 
   server.registerTool(
@@ -105,7 +104,7 @@ export function registerBrowserAutomationTools(
       }
     },
     async ({ targetId, selector, x, y }) => run(async () => {
-      await requireHost().click(targetId, { selector, x, y });
+      await requireHost().click(targetId, { selector, x, y }, defaultThreadId ?? undefined);
       return { ok: true };
     })
   );
@@ -121,7 +120,7 @@ export function registerBrowserAutomationTools(
       }
     },
     async ({ targetId, text, selector }) => run(async () => {
-      await requireHost().type(targetId, { text, selector });
+      await requireHost().type(targetId, { text, selector }, defaultThreadId ?? undefined);
       return { ok: true };
     })
   );
@@ -135,7 +134,7 @@ export function registerBrowserAutomationTools(
         script: z.string().max(MAX_EVAL_SCRIPT_LENGTH)
       }
     },
-    async ({ targetId, script }) => run(async () => ({ result: await requireHost().evaluate(targetId, script) }))
+    async ({ targetId, script }) => run(async () => ({ result: await requireHost().evaluate(targetId, script, defaultThreadId ?? undefined) }))
   );
 
   server.registerTool(
@@ -147,7 +146,7 @@ export function registerBrowserAutomationTools(
       }
     },
     async ({ targetId }) => run(async () => {
-      await requireHost().close(targetId);
+      await requireHost().close(targetId, defaultThreadId ?? undefined);
       return { ok: true };
     })
   );

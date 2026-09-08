@@ -37,8 +37,11 @@ import { diagnoseApexSource, parseApexInput } from './apex.js';
 import { createKvArtifactStore, type ArtifactStore } from './artifacts.js';
 import { CONSTITUTION_INSTRUCTIONS, shouldContributeConstitution } from './constitution.js';
 import { ConnectionError, ConnectionManager } from './connection.js';
-import { formatDoctor, runDoctor } from './doctor.js';
+import { formatDoctor } from './doctor.js';
+import { createSalesforceSdk } from './sdk.js';
+import type { SalesforceSdk } from './sdk-contract.js';
 import { compactError, fingerprint, isDxProject, resolveUnderRoot } from './dx-project.js';
+import { generatedOutputPath, parseGenerateInput } from './project-generate.js';
 import {
   AgentFilesError,
   listAgentFiles,
@@ -46,12 +49,15 @@ import {
   writeAgentFile
 } from './agent-files.js';
 import { parseAgentScriptSource } from './agent-script-parse.js';
+import { isAgentScriptLspQuery, queryAgentScriptLsp } from './agent-script-lsp.js';
 import { AGENT_SCRIPT_EXAMPLES } from './agent-script-model.js';
 import { envelopeTitle, Guardrail } from './guardrail.js';
 import { diagnoseLwc, findLwcComponent, inspectLwc, parseLwcInput, resolveJestBin, scanLwcComponents } from './lwc.js';
 import { createNodeDeps } from './node-deps.js';
-import { publicOrgView } from './org-resolution.js';
+import { formatOrgRoster, orgRosterInstructions } from './org-list.js';
+import { orgLoginArgs, parseOrgLoginInput, SF_ORG_LOGIN_TIMEOUT_MS } from './org-login.js';
 import { applyLimit, parseSoqlInput, previewRecords } from './soql.js';
+import { SoqlExplorer } from './soql-explorer.js';
 import {
   DEFAULT_API_VERSION,
   EVAL_API_VERSION,
@@ -68,7 +74,7 @@ import {
   type DoctorReport,
   type EnvelopeKind,
   type PluginSettingsValues,
-  type ResolvedOrg,
+  type PublicOrgView,
   type SafetyEnvelope,
   type SalesforceDeps,
   type ToolResult
@@ -78,7 +84,8 @@ const SETTINGS = {
   [SETTING_DEFAULT_ORG]: {
     type: 'string' as const,
     label: 'Default org alias',
-    description: 'Salesforce CLI alias used by family tools. Blank falls back to SF_TARGET_ORG, then the CLI default.'
+    description:
+      'Salesforce CLI alias used by SOQL, Apex, LWC, and Agentforce. Pick from CLI-connected orgs in these settings or on the Salesforce tab. Blank falls back to SF_TARGET_ORG, then the CLI default.'
   },
   [SETTING_API_VERSION]: {
     type: 'string' as const,
@@ -89,11 +96,11 @@ const SETTINGS = {
   [SETTING_PROJECT_ROOT]: {
     type: 'string' as const,
     label: 'DX project root',
-    description: 'Local Salesforce DX project path (the folder that contains sfdx-project.json). Used for LWC and Agent Script bundles.'
+    description: 'Local Salesforce DX project path (the folder that contains sfdx-project.json). Used for LWC and Agentforce bundles.'
   },
   [SETTING_AGENT_SCRIPT_DIALECT]: {
     type: 'select' as const,
-    label: 'Agent Script dialect',
+    label: 'Agentforce dialect',
     description: 'Parser and playground dialect for .agent files.',
     options: [...AGENT_SCRIPT_DIALECTS],
     default: DEFAULT_AGENT_SCRIPT_DIALECT
@@ -131,56 +138,171 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       agentScriptDialect: dialectSetting(values[SETTING_AGENT_SCRIPT_DIALECT])
     };
   };
+  const { sdk, emitOrgChange } = createSalesforceSdk({
+    connections,
+    guardrail,
+    deps,
+    readSettings
+  });
+  zcc.services.provide(sdk);
+  const explorer = new SoqlExplorer(sdk, zcc.storage.kv, deps.now);
 
   const applyStatus = async () => {
     const snapshot = await readSettings();
     if (!snapshot.defaultOrg) {
-      zcc.status.needsConfiguration('Set a default org alias under Plugins → Salesforce, then run zcc sf doctor.');
+      zcc.status.needsConfiguration('Pick a CLI-connected org under Plugins → Salesforce, or set a default org alias, then run zcc sf doctor.');
     }
   };
 
-  await applyStatus();
+  const resolveAgentFilesRoot = async (
+    args: unknown
+  ): Promise<{ root: string; options?: { allowNonDx?: boolean } }> => {
+    const projectId = rpcString(args, 'projectId');
+    if (projectId) {
+      let projects: Array<{ id: string; path?: string }> = [];
+      try {
+        projects = await zcc.sdk.projects.list();
+      } catch {
+        throw new AgentFilesError('not_configured', 'Project list is not available.');
+      }
+      const match = projects.find((row) => row.id === projectId);
+      if (!match) throw new AgentFilesError('not_found', `Project not found: ${projectId}`);
+      if (!match.path?.trim()) {
+        throw new AgentFilesError('not_configured', 'This project has no local folder to scan for .agent files.');
+      }
+      return { root: match.path, options: { allowNonDx: true } };
+    }
+    const snapshot = await readSettings();
+    return { root: snapshot.projectRoot };
+  };
+
   settings.onChange(() => {
     connections.invalidate();
+    emitOrgChange();
     void applyStatus();
   });
 
   zcc.rpc.method('doctor', async () => {
-    const snapshot = await readSettings();
-    lastDoctor = await runDoctor(deps, snapshot);
+    lastDoctor = await sdk.doctor();
     return lastDoctor;
   });
   zcc.rpc.method('status', async () => {
     const snapshot = await readSettings();
+    const listed = await listOrgsSafe(sdk);
     return {
       defaultOrg: snapshot.defaultOrg,
+      selectedAlias: listed.selectedAlias,
       apiVersion: snapshot.apiVersion,
       projectRoot: snapshot.projectRoot,
       agentScriptDialect: snapshot.agentScriptDialect,
       dxProject: isDxProject(snapshot.projectRoot, deps.exists),
-      lastDoctor
+      lastDoctor,
+      orgs: listed.orgs
     };
   });
-  zcc.rpc.method('agentFiles.list', async () => {
-    const snapshot = await readSettings();
+  zcc.rpc.method('orgs', async () => {
     try {
-      return { ok: true, files: listAgentFiles(snapshot.projectRoot, deps) };
+      const orgs = await sdk.listOrgs();
+      const selectedAlias = await sdk.resolveAlias();
+      return { ok: true, orgs, selectedAlias };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = error instanceof ConnectionError ? error.code : 'orgs_failed';
+      return { ok: false, error: message, code, orgs: [], selectedAlias: null };
+    }
+  });
+  zcc.rpc.method('orgs.login', async (args) => {
+    const parsed = parseOrgLoginInput(args);
+    if (!parsed.ok) return { ok: false, code: parsed.code, error: parsed.error, orgs: [], selectedAlias: null };
+    const result = await deps.execSf(orgLoginArgs(parsed), { timeoutMs: SF_ORG_LOGIN_TIMEOUT_MS });
+    if (result.code === 127) {
+      return {
+        ok: false,
+        code: 'cli_missing',
+        error: result.stderr.trim() || result.stdout.trim() || 'Salesforce CLI missing. Install sf, then retry.',
+        orgs: [],
+        selectedAlias: null
+      };
+    }
+    if (result.code !== 0) {
+      return {
+        ok: false,
+        code: 'login_failed',
+        error:
+          result.stderr.trim() ||
+          result.stdout.trim() ||
+          'Salesforce CLI web login did not finish. Complete sign-in in the browser, then retry.',
+        orgs: [],
+        selectedAlias: null
+      };
+    }
+    connections.invalidate();
+    try {
+      const orgs = await sdk.listOrgs();
+      const selectedAlias = await sdk.resolveAlias();
+      return { ok: true, orgs, selectedAlias };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = error instanceof ConnectionError ? error.code : 'orgs_failed';
+      return { ok: false, error: message, code, orgs: [], selectedAlias: null };
+    }
+  });
+  zcc.rpc.method('project.generate', async (args) => {
+    const parsed = parseGenerateInput(args);
+    if (!parsed.ok) return { ok: false, code: parsed.code, error: parsed.error };
+    const result = await sdk.execSf([
+      'project',
+      'generate',
+      '--name',
+      parsed.name,
+      '--output-dir',
+      parsed.outputDir,
+      '--json'
+    ]);
+    if (result.code === 127) {
+      return {
+        ok: false,
+        code: 'cli_missing',
+        error: result.stderr.trim() || result.stdout.trim() || 'Salesforce CLI missing. Install sf, then retry.'
+      };
+    }
+    const cli = parseSfJson(result.stdout);
+    if (result.code !== 0 || cli.status !== 0) {
+      return {
+        ok: false,
+        code: 'generate_failed',
+        error:
+          cli.message ||
+          result.stderr.trim() ||
+          result.stdout.trim() ||
+          `sf project generate failed (${result.code})`
+      };
+    }
+    return {
+      ok: true,
+      name: parsed.name,
+      path: generatedOutputPath(cli.result, parsed.outputDir, parsed.name)
+    };
+  });
+  zcc.rpc.method('agentFiles.list', async (args) => {
+    try {
+      const resolved = await resolveAgentFilesRoot(args);
+      return { ok: true, files: listAgentFiles(resolved.root, deps, resolved.options) };
     } catch (error) {
       return agentFilesFailure(error);
     }
   });
   zcc.rpc.method('agentFiles.read', async (args) => {
-    const snapshot = await readSettings();
     const path = rpcString(args, 'path');
     if (!path) return { ok: false, code: 'invalid_input', error: 'read requires path.' };
     try {
-      return { ok: true, file: readAgentFile(snapshot.projectRoot, path, deps) };
+      const resolved = await resolveAgentFilesRoot(args);
+      return { ok: true, file: readAgentFile(resolved.root, path, deps, resolved.options) };
     } catch (error) {
       return agentFilesFailure(error);
     }
   });
   zcc.rpc.method('agentFiles.write', async (args) => {
-    const snapshot = await readSettings();
     const path = rpcString(args, 'path');
     const content = args && typeof args === 'object' && 'content' in args ? (args as { content?: unknown }).content : undefined;
     const expectedSha256 = rpcString(args, 'expectedSha256') || undefined;
@@ -188,7 +310,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return { ok: false, code: 'invalid_input', error: 'write requires path and string content.' };
     }
     try {
-      return { ok: true, file: writeAgentFile(snapshot.projectRoot, path, content, deps, expectedSha256) };
+      const resolved = await resolveAgentFilesRoot(args);
+      return { ok: true, file: writeAgentFile(resolved.root, path, content, deps, expectedSha256, resolved.options) };
     } catch (error) {
       return agentFilesFailure(error);
     }
@@ -205,10 +328,41 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     );
     return { ok: true, result: parseAgentScriptSource(source, dialect) };
   });
+  zcc.rpc.method('agentScript.query', async (args) => {
+    const snapshot = await readSettings();
+    const source = args && typeof args === 'object' && typeof (args as { source?: unknown }).source === 'string'
+      ? (args as { source: string }).source
+      : '';
+    const dialect = dialectSetting(
+      args && typeof args === 'object' && 'dialect' in args
+        ? (args as { dialect?: unknown }).dialect
+        : snapshot.agentScriptDialect
+    );
+    const query = args && typeof args === 'object' && 'query' in args ? (args as { query?: unknown }).query : undefined;
+    const line = args && typeof args === 'object' && 'line' in args ? (args as { line?: unknown }).line : undefined;
+    const column = args && typeof args === 'object' && 'column' in args ? (args as { column?: unknown }).column : undefined;
+    const result = queryAgentScriptLsp({
+      source,
+      dialect,
+      ...(isAgentScriptLspQuery(query) ? { query } : {}),
+      line: typeof line === 'number' ? line : undefined,
+      column: typeof column === 'number' ? column : undefined
+    });
+    return result.ok ? { ok: true, result: result.result } : { ok: false, error: result.error };
+  });
   zcc.rpc.method('agentScript.examples', async () => ({ ok: true, examples: AGENT_SCRIPT_EXAMPLES }));
+  zcc.rpc.method('agentPreview.start', (args) =>
+    runUiPreview('preview.start', args, sdk, artifacts, deps, readSettings)
+  );
+  zcc.rpc.method('agentPreview.send', (args) =>
+    runUiPreview('preview.send', args, sdk, artifacts, deps, readSettings)
+  );
+  zcc.rpc.method('agentPreview.end', (args) =>
+    runUiPreview('preview.end', args, sdk, artifacts, deps, readSettings)
+  );
   zcc.rpc.method('org', async () => {
     try {
-      const org = publicOrgView(await connections.connect());
+      const org = await sdk.connect();
       return { ok: true, org };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -216,13 +370,32 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return { ok: false, error: message, code };
     }
   });
+  const soqlRpcs: Record<string, (args: unknown) => unknown> = {
+    describeGlobal: (args) => explorer.describeGlobal(args),
+    describeSObject: (args) => explorer.describeSObject(args),
+    query: (args) => explorer.query(args),
+    queryMore: (args) => explorer.queryMore(args),
+    explain: (args) => explorer.explain(args),
+    limits: () => explorer.limits(),
+    abort: (args) => explorer.abort(args),
+    'history.list': () => explorer.historyList(),
+    'history.save': (args) => explorer.historySave(args),
+    'history.remove': (args) => explorer.historyRemove(args)
+  };
+  for (const [name, handler] of Object.entries(soqlRpcs)) {
+    zcc.rpc.method(`soql.${name}`, handler);
+    // Older UI bundles called the Salesforce REST verb (`sql.describeGlobal`).
+    zcc.rpc.method(`sql.${name}`, handler);
+  }
+  zcc.onDispose(() => explorer.dispose());
+  await applyStatus();
 
   zcc.cli.register({
     name: 'sf',
-    summary: 'Salesforce DX doctor, org status, and Agent Script lint',
+    summary: 'Salesforce DX doctor, org status, and Agentforce lint',
     commands: [
       { name: 'doctor', summary: 'Check Salesforce CLI, aliases, and the target org', usage: 'zcc sf doctor' },
-      { name: 'org', summary: 'Show the resolved target org (no token)', usage: 'zcc sf org' },
+      { name: 'org', summary: 'List CLI-connected orgs and the resolved target (no token)', usage: 'zcc sf org' },
       { name: 'lint', summary: 'Lint a confined .agent file (or every bundle)', usage: 'zcc sf lint [path]' }
     ],
     async run(argv) {
@@ -232,21 +405,34 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       }
       const snapshot = await readSettings();
       if (command === 'doctor' || command === '') {
-        lastDoctor = await runDoctor(deps, snapshot);
+        lastDoctor = await sdk.doctor();
         return { exitCode: lastDoctor.cliOk ? 0 : 1, stdout: formatDoctor(lastDoctor) };
       }
       if (command === 'org') {
+        let listed: Awaited<ReturnType<SalesforceSdk['listOrgs']>> = [];
+        let selectedAlias: string | null = null;
         try {
-          const org = publicOrgView(await connections.connect());
-          return {
-            exitCode: 0,
-            stdout: `${org.alias}  ${org.username}  ${org.kind}  ${org.instanceUrl}  api ${org.apiVersion}\n`
-          };
+          listed = await sdk.listOrgs();
+          selectedAlias = await sdk.resolveAlias();
         } catch (error) {
           return {
             exitCode: 1,
             stderr: `${error instanceof Error ? error.message : String(error)}\n`
           };
+        }
+        const roster = `${formatOrgRoster(listed, selectedAlias)}\n`;
+        try {
+          const org = await sdk.connect();
+          return {
+            exitCode: 0,
+            stdout: `${roster}Target: ${org.alias}  ${org.username}  ${org.kind}  ${org.instanceUrl}  api ${org.apiVersion}\n`
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (listed.length === 0) {
+            return { exitCode: 1, stderr: `${message}\n` };
+          }
+          return { exitCode: 1, stdout: roster, stderr: `${message}\n` };
         }
       }
       if (command === 'lint') {
@@ -264,8 +450,9 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     })) {
       return {};
     }
+    const listed = await listOrgsSafe(sdk);
     return {
-      instructions: CONSTITUTION_INSTRUCTIONS,
+      instructions: CONSTITUTION_INSTRUCTIONS + orgRosterInstructions(listed.orgs, listed.selectedAlias),
       tools: ['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent'],
       skills: ['salesforce-constitution', 'salesforce-dx']
     };
@@ -286,7 +473,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       },
       required: ['action']
     },
-    execute: (input, ctx) => runSoql(input, ctx, connections, guardrail, artifacts)
+    execute: (input, ctx) => runSoql(input, ctx, sdk, artifacts)
   });
 
   zcc.agents.registerTool({
@@ -306,7 +493,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       },
       required: ['action']
     },
-    execute: (input, ctx) => runApex(input, ctx, connections, guardrail, artifacts, deps, readSettings)
+    execute: (input, ctx) => runApex(input, ctx, sdk, artifacts, deps, readSettings)
   });
 
   zcc.agents.registerTool({
@@ -328,7 +515,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   zcc.agents.registerTool({
     name: 'sf_agent',
     description:
-      'Agentforce Agent Script lifecycle: compile/inspect a confined .agent file, live preview, eval via a confined spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate. Edit source in the Agent Script panel or file tools. Publish and activate always confirm.',
+      'Agentforce lifecycle: LSP diagnose (diagnostics/hover/complete/definition/symbols) on a confined .agent file, compile/inspect, preview (simulate by default; live confirms), eval via a confined spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate. Edit source in the Agentforce Playground side panel or file tools. Publish, activate, and live preview always confirm.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -337,6 +524,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
           enum: [
             'compile',
             'inspect',
+            'diagnose',
             'preview.start',
             'preview.send',
             'preview.end',
@@ -348,6 +536,9 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         },
         apiName: { type: 'string' },
         path: { type: 'string' },
+        query: { type: 'string', enum: ['diagnostics', 'hover', 'complete', 'definition', 'symbols'] },
+        line: { type: 'number' },
+        column: { type: 'number' },
         sessionId: { type: 'string' },
         utterance: { type: 'string' },
         specPath: { type: 'string' },
@@ -355,12 +546,13 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         botVersionId: { type: 'string' },
         versionNumber: { type: 'number' },
         allow_untested: { type: 'boolean' },
-        published: { type: 'boolean' }
+        published: { type: 'boolean' },
+        live: { type: 'boolean' }
       },
       required: ['action']
     },
     execute: (input, ctx) =>
-      runAgent(input, ctx, connections, guardrail, artifacts, deps, readSettings, evalEvidence)
+      runAgent(input, ctx, sdk, artifacts, deps, readSettings, evalEvidence)
   });
 }
 
@@ -402,24 +594,22 @@ function fail(code: string, error: string): ToolResult {
 async function runSoql(
   input: unknown,
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail,
+  sdk: SalesforceSdk,
   artifacts: ArtifactStore
 ): Promise<ToolResult> {
   const parsed = parseSoqlInput(input);
   if (!parsed.ok) return fail('invalid_input', parsed.error);
   try {
     if (parsed.plan.action === 'schema.search') {
-      const org = await connections.connect();
-      const mediated = await guardrail.mediate({
-        threadId: ctx.threadId,
+      const org = await sdk.connect();
+      const mediated = await sdk.confirm({
         orgAlias: org.alias,
         orgId: org.orgId,
         orgKind: org.kind,
         summary: `Describe global sObjects on ${org.alias} (${org.kind})`
-      });
+      }, ctx.threadId);
       if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} schema.search.`);
-      const { response } = await connections.request('/sobjects', { method: 'GET' });
+      const { response } = await sdk.request('/sobjects', { method: 'GET' });
       if (response.status >= 400) return fail('api_error', compactError(response.status, response.json, response.text));
       const sobjects = Array.isArray((response.json as { sobjects?: unknown })?.sobjects)
         ? ((response.json as { sobjects: Array<{ name?: string; label?: string }> }).sobjects)
@@ -432,16 +622,15 @@ async function runSoql(
       return { ok: true, summary: `${hits.length} sObject(s) matching ${JSON.stringify(parsed.plan.term)}`, data: hits };
     }
     if (parsed.plan.action === 'schema.describe') {
-      const org = await connections.connect();
-      const mediated = await guardrail.mediate({
-        threadId: ctx.threadId,
+      const org = await sdk.connect();
+      const mediated = await sdk.confirm({
         orgAlias: org.alias,
         orgId: org.orgId,
         orgKind: org.kind,
         summary: `Describe ${parsed.plan.sobject} on ${org.alias} (${org.kind})`
-      });
+      }, ctx.threadId);
       if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} schema.describe.`);
-      const { response } = await connections.request(`/sobjects/${parsed.plan.sobject}/describe`, { method: 'GET' });
+      const { response } = await sdk.request(`/sobjects/${parsed.plan.sobject}/describe`, { method: 'GET' });
       if (response.status >= 400) return fail('api_error', compactError(response.status, response.json, response.text));
       const describe = response.json as { name?: string; fields?: Array<{ name?: string; type?: string; label?: string }> };
       const fields = (describe.fields ?? []).slice(0, 80).map((field) => ({
@@ -468,9 +657,8 @@ async function runSoql(
     }
 
     const query = applyLimit(parsed.plan.query ?? '', parsed.plan.limit);
-    const org = await connections.connect();
-    const mediated = await guardrail.mediate({
-      threadId: ctx.threadId,
+    const org = await sdk.connect();
+    const mediated = await sdk.confirm({
       orgAlias: org.alias,
       orgId: org.orgId,
       orgKind: org.kind,
@@ -478,9 +666,9 @@ async function runSoql(
       summary: `${parsed.plan.action} on ${org.alias} (${org.kind}): ${query.slice(0, 180)}`,
       fingerprint: fingerprint(query),
       preview: query.slice(0, 400)
-    });
+    }, ctx.threadId);
     if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} ${parsed.plan.action}.`);
-    const { response } = await connections.request(parsed.plan.allRows ? '/queryAll' : '/query', {
+    const { response } = await sdk.request(parsed.plan.allRows ? '/queryAll' : '/query', {
       method: 'GET',
       query: { q: query }
     });
@@ -502,8 +690,7 @@ async function runSoql(
 async function runApex(
   input: unknown,
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail,
+  sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
   readSettings: () => Promise<PluginSettingsValues>
@@ -531,16 +718,15 @@ async function runApex(
     }
 
     if (parsed.plan.action === 'test.run') {
-      const org = await connections.connect();
-      const mediated = await guardrail.mediate({
-        threadId: ctx.threadId,
+      const org = await sdk.connect();
+      const mediated = await sdk.confirm({
         orgAlias: org.alias,
         orgId: org.orgId,
         orgKind: org.kind,
         summary: `Run Apex tests ${parsed.plan.className} on ${org.alias} (${org.kind})`
-      });
+      }, ctx.threadId);
       if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} test.run.`);
-      const { response } = await connections.request('/tooling/runTestsSynchronous', {
+      const { response } = await sdk.request('/tooling/runTestsSynchronous', {
         method: 'POST',
         body: {
           tests: [
@@ -566,22 +752,21 @@ async function runApex(
 
     if (parsed.plan.action === 'logs.fetch') {
       const soql = `SELECT Id, StartTime, DurationMilliseconds, Status, Operation, LogLength FROM ApexLog ORDER BY StartTime DESC LIMIT ${parsed.plan.limit}`;
-      const org = await connections.connect();
-      const mediated = await guardrail.mediate({
-        threadId: ctx.threadId,
+      const org = await sdk.connect();
+      const mediated = await sdk.confirm({
         orgAlias: org.alias,
         orgId: org.orgId,
         orgKind: org.kind,
         summary: `Fetch Apex logs on ${org.alias} (${org.kind})`
-      });
+      }, ctx.threadId);
       if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} logs.fetch.`);
-      const { response } = await connections.request('/tooling/query', { method: 'GET', query: { q: soql } });
+      const { response } = await sdk.request('/tooling/query', { method: 'GET', query: { q: soql } });
       if (response.status >= 400) return fail('api_error', compactError(response.status, response.json, response.text));
       const records = ((response.json as { records?: Array<{ Id?: string }> }).records ?? []).slice(0, parsed.plan.limit);
       let bodyPreview: string | undefined;
       const firstId = records[0]?.Id;
       if (firstId) {
-        const body = await connections.request(`/tooling/sobjects/ApexLog/${firstId}/Body`, { method: 'GET' });
+        const body = await sdk.request(`/tooling/sobjects/ApexLog/${firstId}/Body`, { method: 'GET' });
         bodyPreview = body.response.text.slice(0, LOG_BODY_PREVIEW_CHARS);
       }
       const artifactId = await artifacts.put('apex-logs', { records, bodyPreview });
@@ -594,9 +779,8 @@ async function runApex(
     }
 
     const body = parsed.plan.body ?? '';
-    const org = await connections.connect();
-    const mediated = await guardrail.mediate({
-      threadId: ctx.threadId,
+    const org = await sdk.connect();
+    const mediated = await sdk.confirm({
       orgAlias: org.alias,
       orgId: org.orgId,
       orgKind: org.kind,
@@ -604,9 +788,9 @@ async function runApex(
       summary: `Anonymous Apex on ${org.alias} (${org.kind})${parsed.plan.mutationLikely ? ' — mutation-like tokens detected' : ''}${parsed.plan.allowMutation ? ' (allow_mutation intent)' : ''}`,
       fingerprint: fingerprint(`${org.orgId}:${body}`),
       preview: body.slice(0, 400)
-    });
+    }, ctx.threadId);
     if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} anon.run.`);
-    const { response } = await connections.request('/tooling/executeAnonymous/', {
+    const { response } = await sdk.request('/tooling/executeAnonymous/', {
       method: 'GET',
       query: { anonymousBody: body }
     });
@@ -678,8 +862,7 @@ async function runLwc(
 async function runAgent(
   input: unknown,
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail,
+  sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
   readSettings: () => Promise<PluginSettingsValues>,
@@ -690,21 +873,24 @@ async function runAgent(
   const snapshot = await readSettings();
   try {
     if (parsed.plan.action === 'compile' || parsed.plan.action === 'inspect') {
-      return await runAgentLocal(parsed.plan, snapshot, deps);
+      return await runAgentLocal(parsed.plan, snapshot, sdk, deps);
+    }
+    if (parsed.plan.action === 'diagnose') {
+      return await runAgentDiagnose(parsed.plan, snapshot, deps);
     }
     if (parsed.plan.action === 'eval.run') {
-      return await runAgentEval(parsed.plan, ctx, connections, guardrail, artifacts, deps, snapshot, evalEvidence);
+      return await runAgentEval(parsed.plan, ctx, sdk, artifacts, deps, snapshot, evalEvidence);
     }
     if (parsed.plan.action.startsWith('preview.')) {
-      return await runAgentPreview(parsed.plan, ctx, connections, guardrail, artifacts, deps, snapshot);
+      return await runAgentPreview(parsed.plan, ctx, sdk, artifacts, deps, snapshot);
     }
     if (parsed.plan.action === 'lifecycle.list') {
-      return await runAgentList(ctx, connections, guardrail);
+      return await runAgentList(ctx, sdk);
     }
     if (parsed.plan.action === 'lifecycle.publish') {
-      return await runAgentPublish(parsed.plan, ctx, connections, guardrail, artifacts, deps, snapshot);
+      return await runAgentPublish(parsed.plan, ctx, sdk, artifacts, deps, snapshot);
     }
-    return await runAgentActivate(parsed.plan, ctx, connections, guardrail, artifacts, deps, snapshot, evalEvidence);
+    return await runAgentActivate(parsed.plan, ctx, sdk, artifacts, deps, snapshot, evalEvidence);
   } catch (error) {
     return connectionFailure(error);
   }
@@ -723,6 +909,7 @@ async function requireDxRoot(
 async function runAgentLocal(
   plan: AgentPlan,
   snapshot: PluginSettingsValues,
+  sdk: SalesforceSdk,
   deps: SalesforceDeps
 ): Promise<ToolResult> {
   const loaded = await loadAgentBundles(plan, snapshot, deps);
@@ -730,11 +917,11 @@ async function runAgentLocal(
   if (plan.action === 'inspect' && !plan.apiName && !plan.path) {
     return {
       ok: true,
-      summary: `${loaded.bundles.length} Agent Script bundle(s)`,
+      summary: `${loaded.bundles.length} Agentforce bundle(s)`,
       data: loaded.bundles
     };
   }
-  if (!loaded.bundle) return fail('not_found', `Agent Script bundle not found: ${plan.apiName ?? plan.path}`);
+  if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.apiName ?? plan.path}`);
   if (plan.action === 'inspect') {
     const issues = diagnoseAgentBundle(loaded.bundle);
     return {
@@ -750,7 +937,7 @@ async function runAgentLocal(
   if (probed.compiler === 'missing') {
     return fail(
       'compiler_missing',
-      'No Agent Script compiler. Install the official compiler under the DX project node_modules or the sf agent plugin, then retry compile.'
+      'No Agentforce compiler. Install the official compiler under the DX project node_modules or the sf agent plugin, then retry compile.'
     );
   }
   const bin = resolveAgentCompilerBin(loaded.projectRoot, deps);
@@ -769,7 +956,7 @@ async function runAgentLocal(
   if (!alias) {
     return fail('not_configured', 'Set a default org alias under Plugins → Salesforce to compile with sf agent validate.');
   }
-  const result = await deps.execSf(validateArgs(loaded.bundle.apiName, alias), agentCliOpts(loaded.projectRoot));
+  const result = await sdk.execSf(validateArgs(loaded.bundle.apiName, alias), agentCliOpts(loaded.projectRoot));
   const parsedCli = parseSfJson(result.stdout);
   const cliText = `${result.stdout}\n${result.stderr}`;
   if (result.code === 127 || /command agent not found|is not a sf command|unknown topic:? agent/i.test(cliText)) {
@@ -788,6 +975,47 @@ async function runAgentLocal(
   };
 }
 
+async function runAgentDiagnose(
+  plan: AgentPlan,
+  snapshot: PluginSettingsValues,
+  deps: SalesforceDeps
+): Promise<ToolResult> {
+  try {
+    const loaded = await loadAgentBundles(plan, snapshot, deps);
+    if (!('projectRoot' in loaded)) return loaded;
+    if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.apiName ?? plan.path}`);
+    const file = readAgentFile(snapshot.projectRoot, loaded.bundle.path, deps);
+    const queried = queryAgentScriptLsp({
+      source: file.content,
+      dialect: snapshot.agentScriptDialect,
+      uri: `file://${file.path}`,
+      query: plan.query ?? 'diagnostics',
+      line: plan.line,
+      column: plan.column
+    });
+    if (!queried.ok) return fail('invalid_input', queried.error);
+    const result = queried.result;
+    const query = result.query;
+    const summary =
+      query === 'hover'
+        ? result.hover
+          ? `${file.apiName}: hover`
+          : `${file.apiName}: no hover`
+        : query === 'complete'
+          ? `${file.apiName}: ${result.completions?.length ?? 0} completion(s)`
+          : query === 'definition'
+            ? result.definition
+              ? `${file.apiName}: definition`
+              : `${file.apiName}: no definition`
+            : query === 'symbols'
+              ? `${file.apiName}: ${result.symbols?.length ?? 0} symbol(s)`
+              : `${file.apiName}: ${result.diagnostics.length} diagnostic(s)`;
+    return { ok: true, summary, data: { path: file.path, apiName: file.apiName, ...result } };
+  } catch (error) {
+    return agentFilesFailure(error);
+  }
+}
+
 async function loadAgentBundles(
   plan: Pick<AgentPlan, 'apiName' | 'path'>,
   snapshot: PluginSettingsValues,
@@ -800,7 +1028,7 @@ async function loadAgentBundles(
   if (!('projectRoot' in root)) return root;
   if (plan.path) {
     const confined = resolveUnderRoot(root.projectRoot, plan.path, deps.realpath);
-    if (!confined) return fail('path_refused', 'Agent Script path must stay inside the configured DX project root.');
+    if (!confined) return fail('path_refused', 'Agentforce path must stay inside the configured DX project root.');
   }
   const bundles = scanAgentBundles(root.projectRoot, deps);
   return {
@@ -813,15 +1041,13 @@ async function loadAgentBundles(
 
 async function mediateOrgRead(
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail,
-  summary: string | ((org: ResolvedOrg) => string),
+  sdk: SalesforceSdk,
+  summary: string | ((org: PublicOrgView) => string),
   kind?: EnvelopeKind,
   extra?: { fingerprint?: string; preview?: string }
 ) {
-  const org = await connections.connect();
-  const mediated = await guardrail.mediate({
-    threadId: ctx.threadId,
+  const org = await sdk.connect();
+  const mediated = await sdk.confirm({
     orgAlias: org.alias,
     orgId: org.orgId,
     orgKind: org.kind,
@@ -829,15 +1055,50 @@ async function mediateOrgRead(
     summary: typeof summary === 'function' ? summary(org) : summary,
     fingerprint: extra?.fingerprint,
     preview: extra?.preview
-  });
+  }, ctx.threadId);
   return { org, mediated };
+}
+
+async function runUiPreview(
+  action: 'preview.start' | 'preview.send' | 'preview.end',
+  args: unknown,
+  sdk: SalesforceSdk,
+  artifacts: ArtifactStore,
+  deps: SalesforceDeps,
+  readSettings: () => Promise<PluginSettingsValues>
+): Promise<ToolResult> {
+  const threadId = rpcString(args, 'threadId');
+  if (!threadId) return fail('refused', 'Preview requires an open thread.');
+  const parsed = parseAgentInput({
+    action,
+    apiName: rpcString(args, 'apiName') || undefined,
+    path: rpcString(args, 'path') || undefined,
+    sessionId: rpcString(args, 'sessionId') || undefined,
+    utterance:
+      args && typeof args === 'object' && typeof (args as { utterance?: unknown }).utterance === 'string'
+        ? (args as { utterance: string }).utterance
+        : undefined,
+    published: Boolean(args && typeof args === 'object' && (args as { published?: unknown }).published === true),
+    live: Boolean(args && typeof args === 'object' && (args as { live?: unknown }).live === true)
+  });
+  if (!parsed.ok) return fail('invalid_input', parsed.error);
+  const snapshot = await readSettings();
+  const ctx: PluginAgentToolContext = {
+    threadId,
+    projectId: rpcString(args, 'projectId'),
+    signal: new AbortController().signal
+  };
+  try {
+    return await runAgentPreview(parsed.plan, ctx, sdk, artifacts, deps, snapshot);
+  } catch (error) {
+    return connectionFailure(error);
+  }
 }
 
 async function runAgentPreview(
   plan: AgentPlan,
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail,
+  sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
   snapshot: PluginSettingsValues
@@ -848,12 +1109,13 @@ async function runAgentPreview(
   const label = resolved.identity?.apiName ?? plan.sessionId ?? '';
   const { org, mediated } = await mediateOrgRead(
     ctx,
-    connections,
-    guardrail,
-    (connected) => `${plan.action} ${label} on ${connected.alias} (${connected.kind})`
+    sdk,
+    (connected) => `${plan.live ? 'Live ' : ''}${plan.action} ${label} on ${connected.alias} (${connected.kind})`,
+    plan.live ? 'agent.preview.live' : undefined,
+    { preview: label }
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} ${plan.action}.`);
-  const result = await deps.execSf(
+  const result = await sdk.execSf(
     previewArgs(verb, plan, org.alias, resolved.identity),
     agentCliOpts(resolved.projectRoot ?? dxProjectRoot(snapshot, deps))
   );
@@ -883,24 +1145,22 @@ async function runAgentPreview(
 async function runAgentEval(
   plan: AgentPlan,
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail,
+  sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
   snapshot: PluginSettingsValues,
   evalEvidence: EvalEvidenceStore
 ): Promise<ToolResult> {
   if (plan.specPath) {
-    return runAgentEvalSpec(plan, ctx, connections, guardrail, artifacts, deps, snapshot, evalEvidence);
+    return runAgentEvalSpec(plan, ctx, sdk, artifacts, deps, snapshot, evalEvidence);
   }
-  return runAgentEvalDefinition(plan, ctx, connections, guardrail, artifacts, deps, evalEvidence);
+  return runAgentEvalDefinition(plan, ctx, sdk, artifacts, deps, evalEvidence);
 }
 
 async function runAgentEvalSpec(
   plan: AgentPlan,
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail,
+  sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
   snapshot: PluginSettingsValues,
@@ -914,12 +1174,11 @@ async function runAgentEvalSpec(
   if (specText === null) return fail('not_found', `Eval spec not found: ${plan.specPath}`);
   const { org, mediated } = await mediateOrgRead(
     ctx,
-    connections,
-    guardrail,
+    sdk,
     (connected) => `eval.run ${plan.specPath} on ${connected.alias} (${connected.kind})`
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} eval.run.`);
-  const result = await deps.execSf(runEvalArgs(specFile, org.alias), agentCliOpts(root.projectRoot));
+  const result = await sdk.execSf(runEvalArgs(specFile, org.alias), agentCliOpts(root.projectRoot));
   const parsedCli = parseSfJson(result.stdout);
   if (result.code !== 0 || parsedCli.status !== 0) {
     return fail(
@@ -951,8 +1210,7 @@ async function runAgentEvalSpec(
 async function runAgentEvalDefinition(
   plan: AgentPlan,
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail,
+  sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
   evalEvidence: EvalEvidenceStore
@@ -960,12 +1218,11 @@ async function runAgentEvalDefinition(
   const definition = plan.aiEvaluationDefinitionName ?? '';
   const { org, mediated } = await mediateOrgRead(
     ctx,
-    connections,
-    guardrail,
+    sdk,
     (connected) => `eval.run ${definition} on ${connected.alias} (${connected.kind})`
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} eval.run.`);
-  const created = await connections.request(EVAL_RUNS_PATH, {
+  const created = await sdk.request(EVAL_RUNS_PATH, {
     method: 'POST',
     body: { aiEvaluationDefinitionName: definition },
     apiVersion: EVAL_API_VERSION
@@ -977,9 +1234,9 @@ async function runAgentEvalDefinition(
   if (!runId) {
     return fail('api_error', 'Eval run did not return a run id.');
   }
-  const polled = await pollEvalRun(connections, deps, runId);
+  const polled = await pollEvalRun(sdk, deps, runId);
   if (!polled.ok) return polled;
-  const results = await connections.request(evalResultsPath(runId), {
+  const results = await sdk.request(evalResultsPath(runId), {
     method: 'GET',
     apiVersion: EVAL_API_VERSION
   });
@@ -1008,14 +1265,14 @@ async function runAgentEvalDefinition(
 }
 
 async function pollEvalRun(
-  connections: ConnectionManager,
+  sdk: SalesforceSdk,
   deps: SalesforceDeps,
   runId: string
 ): Promise<{ ok: true; payload: unknown } | { ok: false; error: string; code: string }> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   let payload: unknown = null;
   for (let attempt = 0; attempt < EVAL_POLL_MAX_ATTEMPTS; attempt += 1) {
-    const { response } = await connections.request(evalRunPath(runId), {
+    const { response } = await sdk.request(evalRunPath(runId), {
       method: 'GET',
       apiVersion: EVAL_API_VERSION
     });
@@ -1033,17 +1290,15 @@ async function pollEvalRun(
 
 async function runAgentList(
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail
+  sdk: SalesforceSdk
 ): Promise<ToolResult> {
   const { mediated } = await mediateOrgRead(
     ctx,
-    connections,
-    guardrail,
+    sdk,
     (org) => `lifecycle.list BotVersion on ${org.alias} (${org.kind})`
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} lifecycle.list.`);
-  const { response } = await connections.request('/tooling/query', { method: 'GET', query: { q: BOT_VERSION_SOQL } });
+  const { response } = await sdk.request('/tooling/query', { method: 'GET', query: { q: BOT_VERSION_SOQL } });
   if (response.status >= 400) return fail('api_error', compactError(response.status, response.json, response.text));
   const records = ((response.json as { records?: unknown[] })?.records ?? []).slice(0, 25);
   return { ok: true, summary: `${records.length} BotVersion(s)`, data: { records } };
@@ -1052,8 +1307,7 @@ async function runAgentList(
 async function runAgentPublish(
   plan: AgentPlan,
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail,
+  sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
   snapshot: PluginSettingsValues
@@ -1062,17 +1316,16 @@ async function runAgentPublish(
   if (!('projectRoot' in loaded)) return loaded;
   const apiName = loaded.bundle?.apiName ?? plan.apiName;
   if (!apiName) return fail('invalid_input', 'lifecycle.publish requires apiName or path.');
-  if (!loaded.bundle) return fail('not_found', `Agent Script bundle not found: ${plan.apiName ?? plan.path}`);
+  if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.apiName ?? plan.path}`);
   const { org, mediated } = await mediateOrgRead(
     ctx,
-    connections,
-    guardrail,
-    (connected) => `Publish inactive Agent Script version ${apiName} on ${connected.alias} (${connected.kind})`,
+    sdk,
+    (connected) => `Publish inactive Agentforce version ${apiName} on ${connected.alias} (${connected.kind})`,
     'agent.publish',
     { preview: apiName }
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} lifecycle.publish.`);
-  const result = await deps.execSf(publishArgs(apiName, org.alias), agentCliOpts(loaded.projectRoot));
+  const result = await sdk.execSf(publishArgs(apiName, org.alias), agentCliOpts(loaded.projectRoot));
   const parsedCli = parseSfJson(result.stdout);
   if (result.code !== 0 || parsedCli.status !== 0) {
     return fail(
@@ -1092,8 +1345,7 @@ async function runAgentPublish(
 async function runAgentActivate(
   plan: AgentPlan,
   ctx: PluginAgentToolContext,
-  connections: ConnectionManager,
-  guardrail: Guardrail,
+  sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
   snapshot: PluginSettingsValues,
@@ -1102,7 +1354,7 @@ async function runAgentActivate(
   const apiName = plan.apiName ?? '';
   const botVersionId = plan.botVersionId || (plan.versionNumber !== undefined ? String(plan.versionNumber) : apiName);
   if (!botVersionId) return fail('invalid_input', 'lifecycle.activate requires apiName or botVersionId.');
-  const org = await connections.connect();
+  const org = await sdk.connect();
   const gate = canActivate({
     evidence: await evalEvidence.get(org.orgId, botVersionId),
     orgId: org.orgId,
@@ -1112,15 +1364,14 @@ async function runAgentActivate(
   if (!gate.ok) return fail(gate.code, gate.error);
   const { mediated } = await mediateOrgRead(
     ctx,
-    connections,
-    guardrail,
+    sdk,
     (connected) =>
-      `Activate Agent Script ${apiName || botVersionId} (${gate.untested ? 'untested intent' : 'eval evidence'}) on ${connected.alias} (${connected.kind})`,
+      `Activate Agentforce ${apiName || botVersionId} (${gate.untested ? 'untested intent' : 'eval evidence'}) on ${connected.alias} (${connected.kind})`,
     'agent.activate',
     { preview: apiName || botVersionId }
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} lifecycle.activate.`);
-  const result = await deps.execSf(
+  const result = await sdk.execSf(
     activateArgs(apiName || botVersionId, org.alias, plan.versionNumber),
     agentCliOpts(dxProjectRoot(snapshot, deps))
   );
@@ -1159,7 +1410,7 @@ async function resolvePreviewIdentity(
   if (plan.path) {
     const loaded = await loadAgentBundles(plan, snapshot, deps);
     if (!('projectRoot' in loaded)) return loaded;
-    if (!loaded.bundle) return fail('not_found', `Agent Script bundle not found: ${plan.path}`);
+    if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.path}`);
     return {
       identity: { flag: 'authoring-bundle', apiName: loaded.bundle.apiName },
       projectRoot: loaded.projectRoot
@@ -1184,6 +1435,18 @@ function readConfinedFile(projectRoot: string, relativePath: string, deps: Sales
   const resolved = resolveUnderRoot(projectRoot, relativePath, deps.realpath);
   if (!resolved) return null;
   return deps.readFile(resolved);
+}
+
+async function listOrgsSafe(
+  sdk: SalesforceSdk
+): Promise<{ orgs: Awaited<ReturnType<SalesforceSdk['listOrgs']>>; selectedAlias: string | null }> {
+  try {
+    const orgs = await sdk.listOrgs();
+    const selectedAlias = await sdk.resolveAlias();
+    return { orgs, selectedAlias };
+  } catch {
+    return { orgs: [], selectedAlias: null };
+  }
 }
 
 function rpcString(args: unknown, key: string): string {

@@ -54,6 +54,7 @@ reconnect_existing() {
   fi
   echo "Reconnecting host-daemon ($host_id) to $server_url"
   runuser -u zcc -- env HOME=/home/zcc ZCC_DATA_DIR="$data_dir" ZCC_SERVER_URL="$server_url" \
+    OPENAI_API_KEY="${OPENAI_API_KEY-}" CURSOR_API_KEY="${CURSOR_API_KEY-}" \
     nohup node "$join_bin" join \
       --host-id "$host_id" \
       --server-url "$server_url" \

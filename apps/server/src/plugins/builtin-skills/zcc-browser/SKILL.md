@@ -7,17 +7,26 @@ description: Drive the visible in-app browser tab in Zana's thread side panel. U
 
 Use the **in-app browser** in this thread's right-hand panel when the user should
 watch you navigate a page. These MCP tools drive a live desktop
-`WebContentsView` — not a headless fetch.
+`WebContentsView` — not a headless fetch. `browser_list`, snapshot, click, type,
+eval, and close are scoped to this thread's automation targets.
+
+`browser_open` defaults to a **visible** side-panel tab. Pass `visible: false`
+for off-screen automation (no chrome, no "watch the agent" tab). Snapshot,
+click, type, and eval still work against the returned `targetId`.
+
+Automation tabs use a **separate cookie jar** from personal in-app tabs. Agent
+logins do not leak into a tab the user opened themselves, and vice versa.
 
 `WebFetch` / `WebSearch` stay the tools for **headless** page fetches and search.
-Do not use this skill for those.
+Do not use this skill for those. Headless browsing on enrolled remote machines
+is a later additive layer — not a replacement for this visible tab.
 
 ## Tools
 
 | Tool | Use |
 | --- | --- |
-| `browser_open` | Open (or focus) a visible tab. `url` is http(s) only; empty opens a blank tab. Returns `{ targetId, tabId }`. |
-| `browser_list` | List automation targets the user can see. |
+| `browser_open` | Open a tab. `url` is http(s) only; empty opens a blank tab. Defaults to visible in the side panel. `visible: false` is off-screen. Returns `{ targetId, tabId }`. |
+| `browser_list` | List automation targets this thread owns. |
 | `browser_snapshot` | URL, title, and a JPEG screenshot of a target. |
 | `browser_click` | Click by CSS `selector` (preferred) or `x`/`y` coordinates. |
 | `browser_type` | Type `text`. Optionally focus `selector` first. |
@@ -29,14 +38,15 @@ targets returned by `browser_open`.
 
 ## Workflow
 
-1. `browser_open` with the URL (or empty, then wait for the user).
+1. `browser_open` with the URL (or empty, then wait for the user). Use
+   `visible: false` only when the user should not see the tab.
 2. `browser_snapshot` after navigation settles.
 3. Click / type / eval against that `targetId`.
 4. Snapshot again if you need to confirm the result.
 5. `browser_close` when done, unless the user still wants the tab.
 
-The user sees an **Agent is controlling this page** bar with **Stop**. If they
-stop you, do not keep sending click/type/eval to that target.
+On a visible open, the user sees an **Agent is controlling this page** bar with
+**Stop**. If they stop you, do not keep sending click/type/eval to that target.
 
 ## Caps and limits
 
@@ -44,6 +54,7 @@ stop you, do not keep sending click/type/eval to that target.
 - URL, selector, typed text, and eval script are length-capped.
 - Screenshots are bounded JPEGs.
 - There is **no** `--remote-debugging-port` on the app session.
+- Automation cookies are not the personal in-app tab jar.
 
 ## When not to use this
 

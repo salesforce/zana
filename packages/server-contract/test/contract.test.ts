@@ -1,7 +1,5 @@
-import {
-  collectOptionalFieldPaths,
-  makeWorkspaceStatus,
-} from "@zana-ai/zcc-agent-runtime";
+import { collectOptionalFieldPaths } from "./collect-optional-field-paths.js";
+import { makeWorkspaceStatus } from "./workspace-status.js";
 import type { WorkspaceResolutionFailure } from "@zana-ai/zcc-host-daemon-contract";
 import { describe, expect, it } from "vitest";
 import * as contract from "../src/index.js";
@@ -144,6 +142,8 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
     fields: [
       "createQueuedMessageRequestSchema.senderThreadId",
       "sendMessageRequestSchema.senderThreadId",
+      "sendQueuedMessageResponseSchema.queuedMessage.senderThreadId",
+      "sendQueuedMessageResponseSchema.queuedMessage.threadId",
     ],
   },
   {

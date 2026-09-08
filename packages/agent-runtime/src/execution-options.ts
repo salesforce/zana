@@ -170,6 +170,9 @@ export function toProviderExecutionContext(
     workflowsEnabled: args.execOpts.workflowsEnabled,
     memoryEnabled: args.execOpts.memoryEnabled,
     providerSubagentsEnabled: args.execOpts.providerSubagentsEnabled,
+    ...(args.execOpts.providerOptions !== undefined
+      ? { providerOptions: args.execOpts.providerOptions }
+      : {}),
     ...permissionPolicy,
     instructions: args.instructions,
     envVars: args.envVars,

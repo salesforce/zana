@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { useLocation } from 'react-router-dom';
-import { Bot, PanelRight, Plus, Sparkles } from 'lucide-react';
-import type { AgentState, IdleTriageResult, TerminalSession } from '@zana-ai/zcc-domain/product';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Bot, Crown, PanelRight, Plus, Sparkles, Users } from 'lucide-react';
+import type { AgentState, ExecutionBoardProjection, IdleTriageResult, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useAgentStatus, useIdleTriage, openWhatsNewAll } from '@/store';
 import { useThreads, type ThreadListItem } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { threadIdFromPath } from '@/lib/route-paths';
+import { getAgentSessionRoutePath, sessionIdFromPath, threadIdFromPath } from '@/lib/route-paths';
 import { getScopedProjectId } from '@/lib/windowScope';
 import { profileIcon } from '@/lib/profileIcon';
 import { isRecentlyFinished } from '@/lib/sessionBuckets';
-import { idleSurfacesToNeedsYou, partitionSquadMembers, type AgentCard } from '@/components/AgentBoard';
+import { idleSurfacesToNeedsYou, partitionSquadMembers, executionNeedsAttention, type AgentCard } from '@/components/AgentBoard';
 import { AgentLauncher } from '@/components/AgentLauncher';
+import { ExecutionJobDetails } from '@/components/ExecutionJobDetails';
 import { ThreadListEntry } from '@/components/ThreadListEntry';
 import { FleetKindChip } from '@/components/FleetKindChip';
 import { isVisibleThread } from '@/components/fleet-item';
@@ -21,15 +22,18 @@ import { PromptModal } from '@/components/PromptModal';
 import { ListPaneResizer } from '@/components/ListPaneResizer';
 import { PluginNavRows } from '@/plugins/PluginNavRows';
 import { PluginExclusiveThreadList } from '@/plugins/PluginExclusiveThreadList';
+import { usePaneContentSplitDrag } from '@/components/sidebar/useThreadRowSplitDrag';
+import { usePaneContentSplitIndicator } from '@/components/sidebar/paneContentSplitIndicator';
+import { SplitPaneMiniMap } from '@/components/sidebar/SplitPaneMiniMap';
 
 /**
  * The Agents section's column-2 list pane. Column 3 under the Agents nav is the
  * cross-project {@link AgentsBoard} (wired in App.tsx).
  *
  * AgentsListPane lists all agents across every project grouped by liveness,
- * with a live "running for X", a state dot, and badges. Clicking a row opens
- * the agent-inspector modal (the same one the board cards open) — a peek at the
- * live terminal with "Open in workspace" as the escape hatch into Projects.
+ * with a live "running for X", a state dot, and badges. Clicking a CLI-agent
+ * row navigates to its session page in the split workspace (the same pattern
+ * as a thread row). Kanban cards still open the inspector modal.
  */
 
 interface AgentRow {
@@ -40,6 +44,8 @@ interface AgentRow {
   /** Idle-triage verdict for this session, if the add-on has classified it.
    *  Only consulted when the "promote triaged agents" setting is on. */
   triage?: IdleTriageResult;
+  /** Durable Job projection when this row is (or hosts) an execution-backed cohort. */
+  execution?: ExecutionBoardProjection;
 }
 
 // Display priority: who needs attention first. Mirrors AGENT_STATE_RANK in the
@@ -47,6 +53,7 @@ interface AgentRow {
 const STATE_RANK: Record<AgentState, number> = {
   blocked: 0,
   working: 1,
+  waiting: 1.5,
   idle: 2,
   done: 3,
   unknown: 4
@@ -57,7 +64,8 @@ const STATE_LABEL: Record<AgentState, string> = {
   working: 'Working',
   idle: 'Idle',
   done: 'Done',
-  unknown: 'Idle'
+  unknown: 'Idle',
+  waiting: 'Waiting for model'
 };
 
 /**
@@ -80,6 +88,33 @@ export function sideListNeedsYou(
 
 export function openFullAgentsList(setView: (view: 'list') => void): void {
   setView('list');
+}
+
+/**
+ * Apply one poll tick's `Promise.allSettled` results over the execution-board
+ * `listProject` calls: a fulfilled project's executions REPLACE its entry in
+ * `priorByProject` (mutated in place — the caller's ref); a rejected
+ * project's prior entry is left untouched (retained) and reported via
+ * `onError`, so one failing project never blanks its own last-known state OR
+ * discards sibling projects' fresh results for this tick. Pure aside from the
+ * map mutation + error callback — exported for direct unit coverage since
+ * this app's test setup has no DOM/render harness to exercise the effect.
+ */
+export function applyExecutionRefreshResults(
+  ids: readonly string[],
+  results: readonly PromiseSettledResult<{ executions: ExecutionBoardProjection[] }>[],
+  priorByProject: Map<string, ExecutionBoardProjection[]>,
+  onError: (projectId: string, error: unknown) => void
+): ExecutionBoardProjection[] {
+  results.forEach((result, i) => {
+    const id = ids[i];
+    if (result.status === 'fulfilled') {
+      priorByProject.set(id, result.value.executions);
+    } else {
+      onError(id, result.reason);
+    }
+  });
+  return ids.flatMap((id) => priorByProject.get(id) ?? []);
 }
 
 /**
@@ -143,24 +178,115 @@ function formatDuration(ms: number): string {
   return `${h}h ${m % 60}m`;
 }
 
+/**
+ * Collapse execution-backed rows the same way {@link partitionSquadMembers}
+ * collapses a live squad: one host row per running Job (its orchestrator, or a
+ * synthetic placeholder when the orchestrator hasn't spawned/registered yet),
+ * with every other cohort member nested underneath as a worker.
+ */
+function partitionExecutionRows(
+  items: AgentRow[],
+  executions: readonly ExecutionBoardProjection[] = []
+): { top: AgentRow[]; workersByHost: Map<string, AgentRow[]> } {
+  const executionById = new Map(executions.map((execution) => [execution.executionId, execution]));
+  const hostByExecution = new Map<string, AgentRow>();
+  for (const item of items) {
+    const cohort = item.session.cohort;
+    if (!cohort?.executionId || cohort.role !== 'orchestrator' || item.session.status === 'exited') continue;
+    const execution = executionById.get(cohort.executionId);
+    if (!hostByExecution.has(cohort.executionId)) {
+      hostByExecution.set(cohort.executionId, execution ? executionRowHost(item, execution, false) : item);
+    }
+  }
+  const syntheticByExecution = new Map<string, AgentRow>();
+  const top: AgentRow[] = [];
+  const workersByHost = new Map<string, AgentRow[]>();
+  for (const item of items) {
+    const executionId = item.session.cohort?.executionId;
+    let host = executionId ? hostByExecution.get(executionId) : undefined;
+    if (!host && executionId) {
+      const execution = executionById.get(executionId);
+      if (execution) {
+        host = syntheticByExecution.get(executionId);
+        if (!host) {
+          host = executionRowHost(item, execution, true);
+          syntheticByExecution.set(executionId, host);
+          top.push(host);
+        }
+      }
+    }
+    if (host && item.session.id !== host.session.id) {
+      const members = workersByHost.get(host.session.id) ?? [];
+      members.push(item);
+      workersByHost.set(host.session.id, members);
+    } else top.push(host ?? item);
+  }
+  for (const execution of executions) {
+    if (hostByExecution.has(execution.executionId) || syntheticByExecution.has(execution.executionId)) continue;
+    const template = items.find((item) => item.projectId === execution.projectId);
+    const host = executionRowHost(template, execution, true);
+    syntheticByExecution.set(execution.executionId, host);
+    top.push(host);
+  }
+  return { top, workersByHost };
+}
+
+/** Build (or re-skin) the one row that represents a Job's execution as a whole. */
+function executionRowHost(member: AgentRow | undefined, execution: ExecutionBoardProjection, synthetic = !member): AgentRow {
+  const terminal = execution.state === 'COMPLETED' || execution.state === 'FAILED' || execution.state === 'STOPPED';
+  const session = member?.session ?? {
+    id: `execution:${execution.executionId}`,
+    title: execution.jobTitle,
+    status: terminal ? 'exited' : 'running',
+    profile: 'claude'
+  } as TerminalSession;
+  return {
+    ...(member ?? { projectId: execution.projectId, projectName: 'Project', state: 'idle' }),
+    session: {
+      ...session,
+      id: synthetic ? `execution:${execution.executionId}` : session.id,
+      title: execution.jobTitle,
+      status: terminal ? 'exited' : 'running',
+      headless: synthetic || session.headless,
+      cohort: {
+        ...(session.cohort ?? { cohortId: execution.executionId, teamId: 'execution', teamName: 'Execution', role: 'orchestrator' }),
+        executionId: execution.executionId,
+        executionJobTitle: execution.jobTitle,
+        role: 'orchestrator'
+      }
+    },
+    state: terminal ? 'done' : executionNeedsAttention(execution) ? 'blocked'
+      : execution.state === 'RUNNING' || execution.state === 'STARTING' ? 'working' : 'idle',
+    execution
+  };
+}
+
 // ── Column 2: the agent list ────────────────────────────────────────────────
 
 export function AgentsListPane() {
   const rows = useAgentRows();
-  const selectedTabId = useUi((s) => s.selectedTabId);
-  const selectedProjectId = useUi((s) => s.selectedProjectId);
   // Optional (off by default): also pull a triage-flagged idle agent into the
   // "Needs you" group, using the same sensitivity mapping as the board. When
   // off, only `blocked` agents are "Needs you" and a triaged idle one stays Idle.
   const promoteTriage = useData((s) => s.agentListNeedsYouFromTriage);
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
+  // Durable Job Team executions surfaced on this list (mirrors AgentsBoard's
+  // own polling), so a Job-backed cohort collapses into one host row here too.
+  const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+  // Per-project last-known executions, so a rejected `listProject` call for one
+  // project (this tick) retains that project's prior data instead of blanking
+  // it, while sibling projects' fresh results still apply.
+  const executionsByProjectRef = useRef<Map<string, ExecutionBoardProjection[]>>(new Map());
+  const [selectedExecution, setSelectedExecution] = useState<{ projectId: string; executionId: string } | null>(null);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   const threads = useThreads((s) => s.threads);
   const projects = useData((s) => s.projects);
   useEnsureThreads();
   const scopedProjectId = getScopedProjectId();
   const activeThreadId = threadIdFromPath(location.pathname);
+  const activeSessionId = sessionIdFromPath(location.pathname);
   const openLauncher = () => setLauncherOpen(true);
   const openBoard = () => {
     // List mode consumes the full content area, avoiding a duplicate fleet list
@@ -173,12 +299,58 @@ export function AgentsListPane() {
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
   const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
 
-  // Clicking a row opens the agent-inspector modal — a peek at the live terminal
-  // plus metadata, with "Open in workspace" as the escape hatch to the full
-  // split-pane view. Same modal the board cards open; it doesn't navigate away
-  // from the Agents section, so the list stays put behind it.
-  const open = (r: AgentRow) => {
-    useUi.getState().openAgentModal(r.session.id, r.projectId);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      const ids = scopedProjectId ? [scopedProjectId] : projects.map((project) => project.id);
+      void Promise.allSettled(ids.map((id) => window.cc.executionBoard.listProject(id))).then((results) => {
+        if (cancelled) return;
+        // A per-project rejection must not wipe out sibling projects' results
+        // for this tick, nor blank a failed project's prior state — retain
+        // whatever we last had for it and log the failure with context.
+        const merged = applyExecutionRefreshResults(ids, results, executionsByProjectRef.current, (id, error) => {
+          console.error(
+            `[AgentsListPane] executionBoard.listProject failed for project ${id}; retaining prior state`,
+            error
+          );
+        });
+        setExecutions(merged);
+      });
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [scopedProjectId, projects]);
+
+  // Fold each row's live execution (if its cohort names one) in, and promote its
+  // host row to `blocked` when the Job needs a response — mirrors the board's
+  // own `executionRowHost`/`executionNeedsAttention` promotion.
+  const executionRows = useMemo(() => {
+    const byExecutionId = new Map(executions.map((execution) => [execution.executionId, execution]));
+    return rows.map((row) => {
+      const executionId = row.session.cohort?.executionId;
+      const execution = executionId ? byExecutionId.get(executionId) : undefined;
+      if (!execution) return row;
+      const needsAttention = executionNeedsAttention(execution);
+      return {
+        ...row,
+        execution,
+        state: (needsAttention && row.session.cohort?.role === 'orchestrator') ? 'blocked' as const : row.state
+      };
+    });
+  }, [rows, executions]);
+
+  // A Job-backed row opens the Job details drawer — the shared inspector Job
+  // members (and needsAttention prompts) route through. Plain agent rows
+  // navigate straight to the split workspace instead (handled inside the row
+  // components), so this only ever fires for execution-backed rows.
+  const openJob = (r: AgentRow) => {
+    if (!r.session.cohort?.executionId) return;
+    setSelectedExecution({ projectId: r.projectId, executionId: r.session.cohort.executionId });
   };
 
   // The context menu speaks in `AgentCard`s (shared with the board). A list row
@@ -204,7 +376,7 @@ export function AgentsListPane() {
     } else {
       ui.selectTab(c.projectId, c.session.id);
     }
-    ui.setWorkspaceMode(c.projectId, 'terminals');
+    ui.setProjectView(c.projectId, 'terminals');
   };
 
   const onRowContextMenu = (e: MouseEvent, r: AgentRow) => {
@@ -217,9 +389,10 @@ export function AgentsListPane() {
   // (and drop keystrokes) on this list's 1s tick / agent-status churn.
   const closeLauncher = useCallback(() => setLauncherOpen(false), []);
   const onLauncherLaunched = useCallback(
-    (session: TerminalSession, projectId: string) =>
-      useUi.getState().openAgentModal(session.id, projectId),
-    []
+    (session: TerminalSession) => {
+      navigate(getAgentSessionRoutePath(session.id, scopedProjectId));
+    },
+    [navigate, scopedProjectId]
   );
 
   // One timer for the whole list drives the live "running for X". A tick state
@@ -238,8 +411,8 @@ export function AgentsListPane() {
   // worker into every liveness bucket. Solo agents + driverless worker fleets
   // pass through untouched. `topRows` is what the groups below filter over.
   const { top: topRows, workersByHost } = useMemo(
-    () => partitionSquadMembers(rows),
-    [rows]
+    () => partitionExecutionRows(executionRows, executions),
+    [executionRows, executions]
   );
   // Exited agents linger here only briefly, then auto-dismiss: once a finished
   // run is older than FINISHED_LINGER_MS it drops out of the list (the 1s tick
@@ -266,17 +439,20 @@ export function AgentsListPane() {
     [threads, scopedProjectId]
   );
 
+  const pinnedThreads = visibleThreads.filter((thread) => thread.pinnedAt != null);
+  const unpinnedThreads = visibleThreads.filter((thread) => thread.pinnedAt == null);
+
   const liveEntries = useMemo<LiveEntry[]>(() => {
     const nameById = new Map(projects.map((p) => [p.id, p.name]));
     const agents: LiveEntry[] = live.map((row) => ({ kind: 'agent', row }));
-    const threadEntries: LiveEntry[] = visibleThreads.map((thread) => ({
+    const threadEntries: LiveEntry[] = unpinnedThreads.map((thread) => ({
       kind: 'thread',
       thread,
       projectName: nameById.get(thread.projectId) ?? 'Unknown',
-      state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction)
+      state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity)
     }));
     return [...agents, ...threadEntries];
-  }, [live, visibleThreads, projects]);
+  }, [live, unpinnedThreads, projects]);
 
   const entryNeedsYou = (entry: LiveEntry): boolean => {
     if (entry.kind === 'thread') return entry.state === 'blocked';
@@ -289,7 +465,16 @@ export function AgentsListPane() {
   // `unknown` collapse into the Idle bucket — neither is actively running nor
   // waiting, so they read as "at rest" alongside idle. Order: most-urgent first.
   // Each group is mutually exclusive: a promoted card is in "Needs you", not Idle.
+  const nameById = new Map(projects.map((p) => [p.id, p.name]));
+  const pinnedEntries: LiveEntry[] = pinnedThreads.map((thread) => ({
+    kind: 'thread' as const,
+    thread,
+    projectName: nameById.get(thread.projectId) ?? 'Unknown',
+    state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity)
+  }));
+
   const liveGroups: Array<{ key: string; label: string; entries: LiveEntry[] }> = [
+    { key: 'pinned', label: 'Pinned', entries: pinnedEntries },
     { key: 'blocked', label: 'Needs you', entries: liveEntries.filter(entryNeedsYou) },
     { key: 'working', label: 'Working', entries: liveEntries.filter((entry) => entryState(entry) === 'working') },
     {
@@ -303,99 +488,31 @@ export function AgentsListPane() {
   // title + duration, no icon/project/badges — smaller than a top-level row so a
   // squad's members read as a tight sub-list, not a wall of full rows. At-rest
   // (idle/done/unknown) workers show no colored dot (matches the board).
-  const renderWorker = (r: AgentRow) => {
-    const { session: t } = r;
-    const exited = t.status === 'exited';
-    const active = selectedProjectId === r.projectId && selectedTabId[r.projectId] === t.id;
-    const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
-    const label = t.cohort?.slotLabel || t.title;
-    return (
-      <button
-        key={t.id}
-        className={`agents-worker-row ${active ? 'active' : ''} ${exited ? 'exited' : ''}`}
-        onClick={() => open(r)}
-        onContextMenu={(e) => onRowContextMenu(e, r)}
-        aria-current={active ? 'true' : undefined}
-        title={`${t.title} — ${r.projectName} · ${STATE_LABEL[r.state]}`}
-      >
-        <span className={`tab-agent-dot agent-${exited ? 'done' : r.state}`} aria-hidden="true" />
-        <span className="agents-worker-title">{label}</span>
-        <span className="agents-worker-dur">{exited ? `ran ${dur}` : dur}</span>
-      </button>
-    );
-  };
+  const renderWorker = (r: AgentRow) => (
+    <AgentWorkerRow
+      key={r.session.id}
+      row={r}
+      now={now}
+      scopedProjectId={scopedProjectId}
+      active={activeSessionId === r.session.id}
+      onContextMenu={onRowContextMenu}
+      onOpenJob={openJob}
+    />
+  );
 
-  const renderRow = (r: AgentRow) => {
-    const { session: t } = r;
-    const exited = t.status === 'exited';
-    // "Active" = this agent is the selected tab of the selected project, i.e.
-    // the one a click would re-surface in Projects.
-    const active = selectedProjectId === r.projectId && selectedTabId[r.projectId] === t.id;
-    // Live agents grow against `now`; exited ones freeze at their run length
-    // (finishedAt - createdAt) so the timer doesn't keep ticking after death.
-    const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
-    // Workers nested under this row when it's a squad's live orchestrator (empty
-    // otherwise). partitionSquadMembers pulled them out of the flat groups, so
-    // they render here or nowhere — the squad reads as one entry.
-    const workers = workersByHost.get(t.id) ?? [];
-    const isOrch = t.cohort?.role === 'orchestrator';
-    const row = (
-      <button
-        key={t.id}
-        className={`agents-row ${active ? 'active' : ''} ${exited ? 'exited' : ''} ${
-          isOrch && workers.length ? 'is-squad-orch' : ''
-        }`}
-        onClick={() => open(r)}
-        onContextMenu={(e) => onRowContextMenu(e, r)}
-        aria-current={active ? 'true' : undefined}
-        title={`${t.title} — ${r.projectName} · ${STATE_LABEL[r.state]}`}
-      >
-        <span className="agents-row-icon">{profileIcon(t.profile, 13)}</span>
-        <span className="agents-row-text">
-          <span className="agents-row-title-line">
-            {!exited && <span className={`tab-agent-dot agent-${r.state}`} aria-hidden="true" />}
-            <span className="agents-row-title">{t.title}</span>
-            <FleetKindChip kind="agent" />
-          </span>
-          <span className="agents-row-meta">
-            <span className="agents-row-project">{r.projectName}</span>
-            {r.state === 'blocked' && !exited ? (
-              <span className="agents-row-needs-you">Needs you</span>
-            ) : null}
-            {!exited && <span className="agents-row-duration">{dur}</span>}
-            {exited && t.finishedAt && (
-              <span className="agents-row-duration" title="Total run time">
-                ran {dur}
-              </span>
-            )}
-            {/* Squad size chip — shows a collapsed team's worker count at a
-                glance (the workers themselves nest below). */}
-            {workers.length > 0 && (
-              <span className="agents-row-badge" title={`${workers.length} squad worker${workers.length === 1 ? '' : 's'}`}>
-                +{workers.length}
-              </span>
-            )}
-            {/* No "Background" pill: these rows live under the Background
-                header, so it'd be redundant. Scheduled stays — a background run
-                can also be a scheduled job, which is worth flagging. */}
-            {t.scheduled && <span className="agents-row-badge">Scheduled</span>}
-            {exited && (
-              <span className={`agents-row-badge ${t.exitCode ? 'bad' : ''}`}>
-                {t.exitCode ? `Exited ${t.exitCode}` : 'Exited'}
-              </span>
-            )}
-          </span>
-        </span>
-      </button>
-    );
-    if (workers.length === 0) return row;
-    return (
-      <div key={t.id} className="agents-squad">
-        {row}
-        <div className="agents-squad-workers">{workers.map(renderWorker)}</div>
-      </div>
-    );
-  };
+  const renderRow = (r: AgentRow) => (
+    <AgentSideListRow
+      key={r.session.id}
+      row={r}
+      now={now}
+      scopedProjectId={scopedProjectId}
+      workers={workersByHost.get(r.session.id) ?? []}
+      active={activeSessionId === r.session.id}
+      onContextMenu={onRowContextMenu}
+      onOpenJob={openJob}
+      renderWorker={renderWorker}
+    />
+  );
 
   return (
     <section className="list-pane agents-list-pane">
@@ -531,12 +648,211 @@ export function AgentsListPane() {
       {launcherOpen && (
         <AgentLauncher
           onClose={closeLauncher}
-          // From the global Agents view, pop the agent-inspector modal on the
-          // new session instead of redirecting into its project — keeps the user
-          // on the board, mirroring how clicking a row opens the modal.
+          // From the global Agents list, open the new session page — the same
+          // destination as clicking a row, so launch stays in the split workspace.
           onLaunched={onLauncherLaunched}
         />
       )}
+      {selectedExecution && (
+        <ExecutionJobDetails
+          projectId={selectedExecution.projectId}
+          executionId={selectedExecution.executionId}
+          onClose={() => setSelectedExecution(null)}
+        />
+      )}
     </section>
+  );
+}
+
+function AgentWorkerRow({
+  row,
+  now,
+  scopedProjectId,
+  active,
+  onContextMenu,
+  onOpenJob
+}: {
+  row: AgentRow;
+  now: number;
+  scopedProjectId: string | null;
+  active: boolean;
+  onContextMenu: (e: MouseEvent, r: AgentRow) => void;
+  /** Job-backed rows open the Job details drawer instead of navigating. */
+  onOpenJob: (r: AgentRow) => void;
+}) {
+  const navigate = useNavigate();
+  const { session: t } = row;
+  const exited = t.status === 'exited';
+  const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
+  const label = t.cohort?.slotLabel || t.title;
+  const isJob = !!t.cohort?.executionId;
+  const paneProjectId = scopedProjectId ?? row.projectId;
+  const { onPointerDown, openInSplit } = usePaneContentSplitDrag({
+    content: { kind: 'agent-session', projectId: paneProjectId, sessionId: t.id },
+    title: t.title
+  });
+  return (
+    <button
+      type="button"
+      className={`agents-worker-row ${active ? 'active' : ''} ${exited ? 'exited' : ''}`}
+      data-kind="agent"
+      onPointerDown={onPointerDown}
+      onClick={(e) => {
+        if (isJob) {
+          e.preventDefault();
+          onOpenJob(row);
+          return;
+        }
+        if (e.metaKey || e.ctrlKey) {
+          e.preventDefault();
+          openInSplit();
+          return;
+        }
+        navigate(getAgentSessionRoutePath(t.id, scopedProjectId));
+      }}
+      onContextMenu={(e) => onContextMenu(e, row)}
+      aria-current={active ? 'true' : undefined}
+      title={`${t.title} — ${row.projectName} · ${STATE_LABEL[row.state]}`}
+    >
+      <span className={`tab-agent-dot agent-${exited ? 'done' : row.state}`} aria-hidden="true" />
+      {isJob && (
+        <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort!.executionId})`} style={{ margin: 0, marginRight: 5 }}>
+          job
+        </span>
+      )}
+      <span className="agents-worker-title">{label}</span>
+      {t.cohort?.role === 'worker' && (
+        <span title="Worker">
+          <Users size={10} className="agents-worker-role-icon" style={{ marginLeft: 4, opacity: 0.6 }} />
+        </span>
+      )}
+      <span className="agents-worker-dur">{exited ? `ran ${dur}` : dur}</span>
+    </button>
+  );
+}
+
+function AgentSideListRow({
+  row,
+  now,
+  scopedProjectId,
+  workers,
+  active,
+  onContextMenu,
+  onOpenJob,
+  renderWorker
+}: {
+  row: AgentRow;
+  now: number;
+  scopedProjectId: string | null;
+  workers: AgentRow[];
+  active: boolean;
+  onContextMenu: (e: MouseEvent, r: AgentRow) => void;
+  /** Job-backed rows open the Job details drawer instead of navigating. */
+  onOpenJob: (r: AgentRow) => void;
+  renderWorker: (r: AgentRow) => ReactNode;
+}) {
+  const navigate = useNavigate();
+  const { session: t } = row;
+  const exited = t.status === 'exited';
+  const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
+  const isOrch = t.cohort?.role === 'orchestrator';
+  const isJob = !!t.cohort?.executionId;
+  const paneProjectId = scopedProjectId ?? row.projectId;
+  const { onPointerDown, openInSplit } = usePaneContentSplitDrag({
+    content: { kind: 'agent-session', projectId: paneProjectId, sessionId: t.id },
+    title: t.title
+  });
+  const indicator = usePaneContentSplitIndicator({
+    kind: 'agent-session',
+    projectId: paneProjectId,
+    sessionId: t.id
+  });
+  const button = (
+    <button
+      type="button"
+      className={`agents-row ${active ? 'active' : ''} ${exited ? 'exited' : ''} ${
+        isOrch && workers.length ? 'is-squad-orch' : ''
+      }`}
+      data-kind="agent"
+      onPointerDown={onPointerDown}
+      onClick={(e) => {
+        if (isJob) {
+          e.preventDefault();
+          onOpenJob(row);
+          return;
+        }
+        if (e.metaKey || e.ctrlKey) {
+          e.preventDefault();
+          openInSplit();
+          return;
+        }
+        navigate(getAgentSessionRoutePath(t.id, scopedProjectId));
+      }}
+      onContextMenu={(e) => onContextMenu(e, row)}
+      aria-current={active ? 'true' : undefined}
+      title={`${t.title} — ${row.projectName} · ${STATE_LABEL[row.state]}`}
+    >
+      <span className="agents-row-icon">{profileIcon(t.profile, 13)}</span>
+      <span className="agents-row-text">
+        <span className="agents-row-title-line">
+          {!exited && <span className={`tab-agent-dot agent-${row.state}`} aria-hidden="true" />}
+          {isJob && (
+            <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort!.executionId})`} style={{ margin: 0, marginRight: 5 }}>
+              job
+            </span>
+          )}
+          <span className="agents-row-title">{t.title}</span>
+          {isOrch && (
+            <span title="Coordinator">
+              <Crown size={12} className="agents-row-role-icon" style={{ marginLeft: 4, opacity: 0.6 }} />
+            </span>
+          )}
+          {t.cohort?.role === 'worker' && (
+            <span title="Worker">
+              <Users size={12} className="agents-row-role-icon" style={{ marginLeft: 4, opacity: 0.6 }} />
+            </span>
+          )}
+          <FleetKindChip kind="agent" />
+          {indicator.miniMap ? (
+            <SplitPaneMiniMap slots={indicator.miniMap} label="Split position" />
+          ) : null}
+        </span>
+        <span className="agents-row-meta">
+          <span className="agents-row-project">{row.projectName}</span>
+          {row.state === 'blocked' && !exited ? (
+            <span className="agents-row-needs-you">Needs you</span>
+          ) : null}
+          {!exited && <span className="agents-row-duration">{dur}</span>}
+          {exited && t.finishedAt && (
+            <span className="agents-row-duration" title="Total run time">
+              ran {dur}
+            </span>
+          )}
+          {workers.length > 0 && (
+            <span className="agents-row-badge" title={`${workers.length} squad worker${workers.length === 1 ? '' : 's'}`}>
+              +{workers.length}
+            </span>
+          )}
+          {t.scheduled && <span className="agents-row-badge">Scheduled</span>}
+          {row.execution && row.state === 'blocked' && (
+            <span className="agents-row-badge bad" title={row.execution.currentBlocker?.question}>
+              Needs you
+            </span>
+          )}
+          {exited && (
+            <span className={`agents-row-badge ${t.exitCode ? 'bad' : ''}`}>
+              {t.exitCode ? `Exited ${t.exitCode}` : 'Exited'}
+            </span>
+          )}
+        </span>
+      </span>
+    </button>
+  );
+  if (workers.length === 0) return button;
+  return (
+    <div className="agents-squad">
+      {button}
+      <div className="agents-squad-workers">{workers.map(renderWorker)}</div>
+    </div>
   );
 }

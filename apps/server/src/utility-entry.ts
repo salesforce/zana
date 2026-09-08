@@ -11,6 +11,11 @@ import { createTerminalExecutionService, type TerminalExecutionService } from '.
 import { TerminalSessionService } from './terminal-session-service.js';
 import { createRuntimeDatabase, type TerminalSessionRepository } from './runtime-database.js';
 import { createTerminalLaunchAuthority } from './terminal-launch-authority.js';
+import { createModernTeamLaunchConfigSource } from './services/agents/modern-team-launch-config.js';
+import { createRuntimeMcpConfig } from './services/agents/runtime-mcp-config.js';
+import { isThreadLiveInProject } from './services/agents/thread-liveness.js';
+import { getConversationThread } from '@zana-ai/zcc-db';
+import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
 import {
   attachProductPluginService,
@@ -37,6 +42,13 @@ let projects: ProjectStore | null = null;
 let projectSettings: ProjectSettingsStore | null = null;
 let hostConnectionRenewal: NodeJS.Timeout | null = null;
 let plugins: PluginService | null = null;
+// Electron-main's loopback MCP base URL + gate, pushed post-boot (mcp-ready).
+// Read lazily by the Modern team-launch forwarder each tool call.
+const runtimeMcpConfig = createRuntimeMcpConfig();
+// Captured from the product context at start so the `thread-live` liveness probe
+// can read the conversation-thread store (main asks before honoring a loopback
+// launch_team from a Modern/ACP thread).
+let threadDb: ZccDatabase | null = null;
 parentPort.on('message', async ({ data }) => {
   const parsed = ServerRuntimeInboundSchema.safeParse(data);
   if (!parsed.success) {
@@ -59,8 +71,13 @@ parentPort.on('message', async ({ data }) => {
         origins: { serverPort: 0, devAppPort: DEFAULT_DEV_APP_PORT },
         projects: projects ?? undefined
       });
+      threadDb = product.db;
       plugins = await attachProductPluginService(product, {
         bundledRoot: bundledPluginsRootFromDataDir(message.dataDir, message.bundledPluginsRoot),
+        hostAgentToolSource: createModernTeamLaunchConfigSource({
+          getMcpBaseUrl: () => runtimeMcpConfig.get().mcpBaseUrl,
+          getAppConfig: () => runtimeMcpConfig.get()
+        }),
         onAgentCapabilitiesChanged: (contributors) => {
           parentPort.postMessage({
             type: 'plugin-capabilities',
@@ -113,6 +130,7 @@ parentPort.on('message', async ({ data }) => {
         });
       }, 10_000);
       parentPort.postMessage({ type: 'ready', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, url: host.url });
+      runtimeMcpConfig.started();
     } catch (error) {
       if (hostConnectionRenewal) {
         clearInterval(hostConnectionRenewal);
@@ -125,6 +143,15 @@ parentPort.on('message', async ({ data }) => {
       parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, message: error instanceof Error ? error.message : String(error) });
     }
   }
+  if (message.type === 'mcp-ready') {
+    const next = {
+      mcpBaseUrl: message.mcpBaseUrl,
+      teamLaunchEnabled: message.teamLaunchEnabled,
+      teamJobLaunchEnabled: message.teamJobLaunchEnabled === true
+    };
+    runtimeMcpConfig.receive(next, close !== null);
+    return;
+  }
   if (message.type === 'request') {
     if (Date.parse(message.deadlineAt) <= Date.now()) {
       parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'server runtime request expired' });
@@ -132,6 +159,19 @@ parentPort.on('message', async ({ data }) => {
     }
     if (message.operation === 'app-version') {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: version });
+    }
+    if (message.operation === 'thread-live') {
+      // Live owner = non-archived thread still usable in the asserted project.
+      // Idle is rest between turns, not death. Any lookup miss / mismatch /
+      // error ⇒ false (never throw). Cohort verbs stay pty-only.
+      let live = false;
+      try {
+        const row = threadDb ? getConversationThread(threadDb, message.threadId) : null;
+        live = isThreadLiveInProject(row, message.projectId);
+      } catch {
+        live = false;
+      }
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: live });
     }
     if (message.operation === 'projects-list') {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: projects?.list() ?? [] });

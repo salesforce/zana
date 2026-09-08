@@ -39,6 +39,9 @@ import type {
   SpawnEnvironmentChoice,
   WorkspaceDiffResponse,
   WorkspaceStatus,
+  ExecutionBoardProjection,
+  ExecutionBoardSnapshot,
+  ExecutionSourceCapabilityView,
   ExtensionEntry,
   ExtensionInstallSource,
   ExtensionUpdateOutcome,
@@ -109,6 +112,7 @@ import type {
   Result,
   SavedRecord,
   SavedRecordInput,
+  SaveCrashReportResult,
   ScheduleCreateInput,
   ScheduleGroup,
   ScheduleGroupInput,
@@ -132,6 +136,8 @@ import type {
   Suggestion,
   Team,
   TeamInput,
+  TeamJobLaunchInput,
+  TeamJobLaunchResult,
   TerminalSession,
   TmuxRestoreCandidate,
   TmuxVerifyResult,
@@ -176,6 +182,30 @@ export interface CcApi {
   executionConsent: {
     listProject(projectId: string): Promise<ProjectExecutionConsentGrant[]>;
     revokeProject(projectId: string, grantId: string): Promise<ProjectExecutionConsentGrant[]>;
+  };
+  executionBoard: {
+    listProject(projectId: string, before?: number, limit?: number): Promise<{ executions: ExecutionBoardProjection[]; hasMore: boolean }>;
+    snapshot(projectId: string, executionId: string, after?: number): Promise<ExecutionBoardSnapshot | undefined>;
+    readArtifact(projectId: string, executionId: string, artifactId: string): Promise<Result<{ content: string }>>;
+    dismiss(projectId: string, executionId: string): Promise<Result<{ dismissedSessionIds: string[] }>>;
+    stop(projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionBoardProjection>>;
+    retry(projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionBoardProjection>>;
+    retryWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId?: string): Promise<Result<ExecutionBoardProjection>>;
+    releaseWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string): Promise<Result<ExecutionBoardProjection>>;
+    reassignWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId: string): Promise<Result<ExecutionBoardProjection>>;
+    /**
+     * `expectedStateVersion === -1` means "use the execution's current
+     * stateVersion" — main only honors that sentinel when `allowLatestVersion`
+     * is explicitly `true` (otherwise -1 is rejected as invalid), so a caller
+     * can't silently skip optimistic-concurrency by passing -1. Only the Inbox
+     * reply flow — which doesn't track a live stateVersion — should pass `true`;
+     * every other caller should supply a real stateVersion and omit this.
+     */
+    respond(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string, allowLatestVersion?: boolean): Promise<Result<ExecutionBoardProjection>>;
+    resume(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string, allowLatestVersion?: boolean): Promise<Result<ExecutionBoardProjection>>;
+    retryDelivery(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, deliveryId: string): Promise<Result<ExecutionBoardProjection>>;
+    clearResumeToken(projectId: string, executionId: string): Promise<Result<true>>;
+    relaunchMonitor(projectId: string, executionId: string): Promise<Result<{ sessionId: string }>>;
   };
   /**
    * Per-harness auth (Settings → Harness). `status` returns the base URL +
@@ -306,15 +336,18 @@ export interface CcApi {
     createJoinCode(): Promise<{ joinCode: string; hostId: string; expiresAt: number }>;
     list(): Promise<Host[]>;
     get(id: string): Promise<Host>;
-    update(id: string, patch: { name: string }): Promise<Host>;
+    update(
+      id: string,
+      patch: { name?: string; defaultWorkspacePath?: string | null }
+    ): Promise<Host>;
     updatePermissionCeiling(
       id: string,
       maxPermissionMode: 'accept-edits' | 'auto' | 'full'
     ): Promise<Host>;
     retryUpdate(id: string): Promise<{ ok: true }>;
     remove(id: string): Promise<{ ok: true }>;
-    bootstrap(projectId: string): Promise<HostBootstrapEvent[]>;
-    repair(id: string): Promise<HostBootstrapEvent[]>;
+    bootstrap(projectId: string, onEvent?: (event: HostBootstrapEvent) => void): Promise<HostBootstrapEvent[]>;
+    repair(id: string, onEvent?: (event: HostBootstrapEvent) => void): Promise<HostBootstrapEvent[]>;
     updateSshIdentity(
       id: string,
       patch: { host: string; user?: string; proxyJump?: string }
@@ -401,6 +434,7 @@ export interface CcApi {
       permissionMode?: 'accept-edits' | 'auto' | 'full';
       model?: string;
       reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
+      acpMode?: string;
     }): Promise<Result<{
       id: string;
       projectId: string;
@@ -453,6 +487,13 @@ export interface CcApi {
       lastReadSeq?: number | null;
       maxSeq?: number;
       updatedAt?: number;
+      activity?: {
+        activeWorkflowCount: number;
+        activeBackgroundAgentCount: number;
+        activeBackgroundCommandCount: number;
+        activePlanModeCount: number;
+        activeGoalCount: number;
+      };
     }>>;
     get(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     send(
@@ -462,10 +503,23 @@ export interface CcApi {
       extras?: {
         model?: string;
         reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
+        acpMode?: string;
       }
     ): Promise<{ ok: boolean }>;
     stop(threadId: string): Promise<{ ok: boolean }>;
     cancelPlan(threadId: string): Promise<{ ok: boolean }>;
+    plan(threadId: string): Promise<{ ok: boolean; plan?: unknown }>;
+    updatePlan(threadId: string, markdown: string): Promise<{ ok: boolean; plan?: unknown }>;
+    addPlanTask(threadId: string, text: string): Promise<{ ok: boolean; plan?: unknown }>;
+    flushNextTurn(threadId: string, force?: boolean): Promise<{ ok: boolean }>;
+    deleteNextTurn(threadId: string, itemId: string): Promise<{ ok: boolean }>;
+    nextTurn(threadId: string): Promise<{ ok?: boolean; items?: unknown[] }>;
+    compact(threadId: string): Promise<{ ok: boolean }>;
+    promptHistory(threadId: string): Promise<{ entries?: Array<{ input?: unknown }> }>;
+    pin(threadId: string): Promise<{ thread: Record<string, unknown> }>;
+    unpin(threadId: string): Promise<{ thread: Record<string, unknown> }>;
+    search(query: string, projectId?: string): Promise<{ threads: unknown[] }>;
+    childSummary(threadId: string): Promise<{ total: number; live: number }>;
     resume(threadId: string): Promise<{ ok: boolean }>;
     timeline(threadId: string, query?: {
       segmentLimit?: number;
@@ -480,6 +534,9 @@ export interface CcApi {
       status: string;
       goal?: unknown;
       pendingTodos?: unknown;
+      durablePlan?: unknown;
+      executionMode?: unknown;
+      nextTurn?: unknown;
       activeThinking?: unknown;
       activePromptMode?: unknown;
       activeWorkflows?: unknown;
@@ -543,6 +600,12 @@ export interface CcApi {
       encoding: 'utf8' | 'base64';
       contentType: string | null;
     }>;
+    tabs(threadId: string): Promise<{ revision: number; tabs: unknown[] }>;
+    updateTabs(threadId: string, body: { expectedRevision: number; tabs: unknown[] }): Promise<{
+      revision: number;
+      tabs: unknown[];
+    }>;
+    onTabs(cb: (payload: unknown) => void): () => void;
     open(threadId: string, body: {
       split?: 'right' | 'down' | 'left' | 'top' | 'replace';
       file: {
@@ -553,7 +616,7 @@ export interface CcApi {
     }): Promise<{ delivered: number }>;
     onOpen(cb: (payload: unknown) => void): () => void;
     events(threadId: string): Promise<{ events: unknown[] }>;
-    executionOptions(query?: { providerId?: string }): Promise<{
+    executionOptions(query?: { providerId?: string; hostId?: string }): Promise<{
       providers: Array<{
         id: string;
         displayName: string;
@@ -579,6 +642,10 @@ export interface CcApi {
       }>;
       permissionCeiling: string;
       modelLoadError: { providerId: string; code: string } | null;
+      acpMode?: {
+        currentValue?: string;
+        options: Array<{ value: string; name?: string }>;
+      };
     }>;
     providers(): Promise<{ providers: Array<{
       id: string;
@@ -970,6 +1037,10 @@ export interface CcApi {
      */
     downloadFromRemote(projectId: string, remotePath: string): Promise<RemoteTransferResult>;
   };
+  executionSources: {
+    /** Native chooser returns opaque, window/project-scoped capabilities; never paths. */
+    pick(projectId: string): Promise<Result<ExecutionSourceCapabilityView[]>>;
+  };
   openers: {
     openIn(target: OpenTarget, path: string): Promise<OpenResult>;
   };
@@ -1084,6 +1155,15 @@ export interface CcApi {
     isFullScreen(): Promise<boolean>;
     /** Fired on 'enter-full-screen'/'leave-full-screen' for this window (OS-initiated or IPC-initiated). */
     onFullScreenChanged(cb: (isFullScreen: boolean) => void): () => void;
+    /**
+     * Persist a renderer crash report under the main-owned crashes dir and
+     * return version/OS plus the saved basename (never an absolute path).
+     */
+    saveCrashReport(input: {
+      message: string;
+      stack?: string;
+      componentStack?: string;
+    }): Promise<SaveCrashReportResult>;
   };
   /**
    * Menu-bar popover surface. Read-only for the popover renderer: it subscribes
@@ -1647,6 +1727,8 @@ export interface CcApi {
     ): Promise<Result<LaunchTeamResult>>;
     /** Cancel sessions from a renderer-owned interactive Team launch. */
     cancel(launchRequestId: string): Promise<Result<CancelTeamLaunchResult>>;
+    /** Start a durable Team job. Main re-authorizes Team/project and maps slots. */
+    startJob(input: TeamJobLaunchInput): Promise<Result<TeamJobLaunchResult>>;
     /**
      * Launch a team as an AUTONOMOUS run into a project: opens orchestrator +
      * worker tabs, the orchestrator seeded with `goal`, and a main-side
@@ -1819,10 +1901,11 @@ export interface CcApi {
     consumeWhatsNew(): Promise<WhatsNewEvent | null>;
   };
   /**
-   * First-run dependency doctor. `check` re-runs detection; `install` triggers
-   * the auto-installable steps (no-op for `manual`/`bundled` items); `dismiss`
-   * persists `AppConfig.setupDismissed`. `onStatus`/`onProgress` push the live
-   * setup snapshot + per-step install log; both return an unsubscribe fn.
+   * First-run dependency doctor. `check` re-runs detection; `install` runs
+   * auto-installable companion CLIs (npm / official install scripts; Claude
+   * Code stays manual); `dismiss` persists `AppConfig.setupDismissed`.
+   * `onStatus`/`onProgress` push the live setup snapshot + per-step install
+   * log; both return an unsubscribe fn.
    */
   deps: {
     get(): Promise<SetupStatus>;

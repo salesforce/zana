@@ -3,6 +3,7 @@ import {
   composerProjectLabel,
   composerProjectOptions,
   DEFAULT_COMPOSER_WORKSPACE_LABEL,
+  isRemoteWorkspaceProject,
   resolveComposerProjectId,
   scratchWorkspaceProject,
   SCRATCH_WORKSPACE_NAME
@@ -22,9 +23,18 @@ describe('scratchWorkspaceProject', () => {
   });
 });
 
+describe('isRemoteWorkspaceProject', () => {
+  it('treats SSH remotes and host-bound folders as remote', () => {
+    expect(isRemoteWorkspaceProject({ remote: { host: 'limited-pony' } })).toBe(true);
+    expect(isRemoteWorkspaceProject({ hostId: 'h-remote' })).toBe(true);
+    expect(isRemoteWorkspaceProject(alpha)).toBe(false);
+    expect(isRemoteWorkspaceProject(undefined)).toBe(false);
+  });
+});
+
 describe('composerProjectLabel', () => {
-  it('shows Default Workspace for the scratch folder name and keeps other names', () => {
-    expect(composerProjectLabel(scratch)).toBe('Default Workspace');
+  it('shows Default Project for the scratch folder name and keeps other names', () => {
+    expect(composerProjectLabel(scratch)).toBe('Default Project');
     expect(composerProjectLabel({ id: 'ws', name: SCRATCH_WORKSPACE_NAME })).toBe(DEFAULT_COMPOSER_WORKSPACE_LABEL);
     expect(composerProjectLabel(coreRepo)).toBe('zana-command-center');
   });
@@ -63,5 +73,17 @@ describe('resolveComposerProjectId', () => {
 
   it('returns empty when scratch is not in the list yet', () => {
     expect(resolveComposerProjectId([coreRepo, alpha], '')).toBe('');
+  });
+
+  it('prefers the selected or last-used project over scratch', () => {
+    expect(resolveComposerProjectId([scratch, coreRepo, alpha], '', undefined, 'alpha')).toBe('alpha');
+  });
+
+  it('ignores a preferred id that is no longer in the list', () => {
+    expect(resolveComposerProjectId([scratch, coreRepo], '', undefined, 'gone')).toBe('scratch-1');
+  });
+
+  it('keeps the current pick ahead of a preferred id', () => {
+    expect(resolveComposerProjectId([scratch, coreRepo, alpha], 'core-repo', undefined, 'alpha')).toBe('core-repo');
   });
 });

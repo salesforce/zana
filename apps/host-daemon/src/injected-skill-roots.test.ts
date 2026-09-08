@@ -59,7 +59,7 @@ describe('injected skill roots', () => {
   it('loadRuntimeSkillRoots is empty when dataDir has no skills', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-no-skills-'));
     dirs.push(dataDir);
-    expect(loadRuntimeSkillRoots(dataDir)).toEqual([]);
+    expect(loadRuntimeSkillRoots(dataDir, [])).toEqual([]);
   });
 
   it('hashes the injected skill catalog', () => {

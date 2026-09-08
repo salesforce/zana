@@ -91,6 +91,7 @@ export default {
       id: 'board',
       title: 'Tasks',
       layout: 'padded',
+      scopes: ['thread', 'agent-session'],
       component: TasksBoard
     });
     app.slots.messageDirective({

@@ -16,10 +16,10 @@ const DISCOVERED_MODELS: ModelInfo[] = [
     description: "Opus 5 with 1M context",
   },
   {
-    value: "claude-fable-5[1m]",
-    resolvedModel: "claude-fable-5",
+    value: "claude-fable-5-1[1m]",
+    resolvedModel: "claude-fable-5-1",
     displayName: "Fable",
-    description: "Fable 5",
+    description: "Fable 5.1",
   },
   {
     value: "sonnet",
@@ -36,7 +36,7 @@ const DISCOVERED_MODELS: ModelInfo[] = [
 ];
 
 const CURATED_MODELS = [
-  "claude-fable-5",
+  "claude-fable-5-1",
   "claude-opus-5[1m]",
   "claude-opus-4-8[1m]",
   "claude-opus-4-7[1m]",
@@ -47,17 +47,13 @@ describe("buildClaudeCodeModels", () => {
   it("always offers the curated catalog and appends discovered extras", () => {
     const result = buildClaudeCodeModels(DISCOVERED_MODELS);
 
-    // Discovery is additive: every curated row survives, and only the reported
-    // model BB has no curated entry for (Haiku's dated id) is appended.
     expect(result.models.map((model) => model.model)).toEqual([
       ...CURATED_MODELS,
       "claude-haiku-4-5-20251001",
     ]);
     expect(result.models.find((model) => model.isDefault)?.model).toBe(
-      "claude-sonnet-5",
+      "claude-opus-5[1m]",
     );
-    // Selected-only rows stay discovery-gated — they only label a selection the
-    // user already has.
     expect(result.selectedOnlyModels.map((model) => model.model)).toEqual([
       "opus[1m]",
       "sonnet",
@@ -70,14 +66,12 @@ describe("buildClaudeCodeModels", () => {
     ).toBe(false);
   });
 
-  // A probe that returns nothing must not strand the picker. This is the whole
-  // point of the always-offered base set.
   it("still offers the curated catalog when the provider reports no models", () => {
     const result = buildClaudeCodeModels([]);
 
     expect(result.models.map((model) => model.model)).toEqual(CURATED_MODELS);
     expect(result.models.find((model) => model.isDefault)?.model).toBe(
-      "claude-sonnet-5",
+      "claude-opus-5[1m]",
     );
     expect(result.selectedOnlyModels).toEqual([]);
   });
@@ -104,49 +98,17 @@ describe("buildClaudeCodeModels", () => {
         displayName: "Future 6",
         isDefault: false,
         defaultReasoningEffort: "high",
-        supportedReasoningEfforts: expect.arrayContaining([
-          expect.objectContaining({ reasoningEffort: "none" }),
-          expect.objectContaining({ reasoningEffort: "low" }),
-          expect.objectContaining({ reasoningEffort: "high" }),
-        ]),
       }),
     );
   });
 
-  it("does not default discovered models to thinking-off", () => {
-    const result = buildClaudeCodeModels([
-      {
-        value: "haiku-next",
-        resolvedModel: "claude-haiku-next",
-        displayName: "Haiku Next",
-        description: "Newly discovered Haiku",
-        supportsEffort: true,
-        supportedEffortLevels: ["low"],
-      },
-    ]);
-
-    expect(result.models.at(-1)).toEqual(
-      expect.objectContaining({
-        model: "claude-haiku-next",
-        defaultReasoningEffort: "low",
-        supportedReasoningEfforts: expect.arrayContaining([
-          expect.objectContaining({ reasoningEffort: "none" }),
-          expect.objectContaining({ reasoningEffort: "low" }),
-        ]),
-      }),
-    );
-  });
-
-  // ZCC's product default (Sonnet) wins over the CLI's recommended default, so
-  // a probe that still reports Opus as "Default (recommended)" cannot snap new
-  // threads back to Opus.
-  it("keeps the product default even when the probe recommends another model", () => {
+  it("prefers the discovered default model", () => {
     const result = buildClaudeCodeModels([
       {
         value: "default",
-        resolvedModel: "claude-opus-5[1m]",
+        resolvedModel: "claude-sonnet-5",
         displayName: "Default (recommended)",
-        description: "Opus 5 with 1M context",
+        description: "Sonnet 5",
       },
     ]);
 

@@ -39,13 +39,20 @@ import {
 } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { startLocalRegistry, type LocalRegistry, type DummyExtensionSpec } from './registry.js';
 import { EventRecorder } from '../sdk/events.js';
+import { linuxCiElectronArgs, linuxCiElectronEnv } from './linux-electron-launch.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const MAIN_ENTRY = join(REPO_ROOT, 'out/main/index.js');
 const PACKAGE_VERSION = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')).version as string;
+
+/** This repo's Electron binary — ABI-matched to node-pty / better-sqlite3. */
+function projectElectronBinary(): string {
+  return createRequire(import.meta.url)('electron') as string;
+}
 
 export interface RegistryConfig {
   enabled: boolean;
@@ -86,8 +93,13 @@ function writeAppConfig(home: string, initialConfig: Record<string, unknown> = {
  * HOME-rooted artifacts the CLI needs:
  *   - `~/.claude.json`   — onboarding flag + userID
  *   - `~/.claude/`       — settings.json (apiKeyHelper + ANTHROPIC_* gateway env)
- *   - `~/.devbar` (symlink) — the apiKeyHelper's daemon socket lives here and its
- *     path is HOME-relative, so rewriting HOME would break auth without it.
+ *   - `~/.devbar/devbar.sock` (symlink to the live socket only) — the
+ *     apiKeyHelper's daemon socket lives here and its path is HOME-relative, so
+ *     rewriting HOME would break auth without it. Only the socket file is
+ *     linked in, never the whole `.devbar` dir (which also holds
+ *     `devbar-install-id`, `jwks-cache.json`, `config.yaml`, plugin state, and
+ *     real binaries) — symlinking the whole dir would let the sandboxed app and
+ *     copied OpenCode plugins read/modify those real credentials/state.
  *
  * Returns true if it seeded a usable state, false if the source artifacts are
  * absent (so the spec can skip cleanly on a machine without a logged-in claude).
@@ -111,17 +123,81 @@ export function seedClaudeAuthState(home: string): boolean {
       /* best-effort — settings may be partially copyable */
     }
   }
-  // The apiKeyHelper resolves its daemon socket under $HOME/.devbar; symlink the
-  // real one so the rewritten HOME still reaches the live auth daemon.
-  const srcDevbar = join(realHome, '.devbar');
-  if (existsSync(srcDevbar)) {
+  // The apiKeyHelper resolves its daemon socket under $HOME/.devbar/devbar.sock;
+  // symlink ONLY that socket file (never the whole `.devbar` dir — which also
+  // holds `devbar-install-id`, `jwks-cache.json`, `config.yaml`, plugin state,
+  // and real binaries) so the rewritten HOME still reaches the live auth daemon
+  // without exposing unrelated real credentials/state to the sandboxed app.
+  const srcDevbarSock = join(realHome, '.devbar', 'devbar.sock');
+  if (existsSync(srcDevbarSock)) {
     try {
-      symlinkSync(srcDevbar, join(home, '.devbar'));
+      mkdirSync(join(home, '.devbar'), { recursive: true, mode: 0o700 });
+      symlinkSync(srcDevbarSock, join(home, '.devbar', 'devbar.sock'));
     } catch {
       /* best-effort — absent on machines not using the devbar auth helper */
     }
   }
   return true;
+}
+
+/** Seed real OpenCode config/auth while keeping ZCC state in the sandbox HOME. */
+export function seedOpenCodeAuthState(home: string): boolean {
+  const realHome = homedir();
+  let seeded = false;
+  for (const [source, destination] of [
+    [join(realHome, '.config', 'opencode'), join(home, '.config', 'opencode')],
+    [join(realHome, '.local', 'share', 'opencode'), join(home, '.local', 'share', 'opencode')]
+  ]) {
+    if (!existsSync(source)) continue;
+    try {
+      mkdirSync(join(destination, '..'), { recursive: true });
+      cpSync(source, destination, { recursive: true });
+      seeded = true;
+    } catch {
+      /* best-effort — caller's live test will expose unusable auth */
+    }
+  }
+  for (const name of ['.devbar', '.aisuite']) {
+    const source = join(realHome, name);
+    if (!existsSync(source)) continue;
+    try {
+      if (name === '.aisuite') {
+        cpSync(source, join(home, name), { recursive: true });
+      } else {
+        // Only the live daemon socket is needed (see seedClaudeAuthState) —
+        // never symlink the whole `.devbar` dir into the sandbox.
+        const sock = join(source, 'devbar.sock');
+        if (existsSync(sock)) {
+          mkdirSync(join(home, name), { recursive: true, mode: 0o700 });
+          symlinkSync(sock, join(home, name, 'devbar.sock'));
+        }
+      }
+    } catch {
+      /* best-effort — absent when auth does not use these helpers */
+    }
+  }
+  const gatewayKey = join(realHome, '.config', 'opencode', '.llmgw-key');
+  if (existsSync(gatewayKey)) {
+    try {
+      mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
+      copyFileSync(gatewayKey, join(home, '.config', 'opencode', '.llmgw-key'));
+    } catch {
+      /* best-effort — plugin credential command may remain available */
+    }
+  }
+  // Sandbox uses copied OpenCode's file-backed provider config. Its AI Suite
+  // provider plugin shells to a HOME-scoped credential manager and cannot read
+  // developer auth under isolated HOME, despite the copied key being valid.
+  try {
+    rmSync(join(home, '.config', 'opencode', 'plugins', 'aisuite_provider.js'), { force: true });
+    // Live provider E2E needs developer auth, not developer MCP/tool injection.
+    // Leaving sync enabled floods the model catalog and lets it route a
+    // session-local MCP call through AI Suite's Python proxy instead.
+    rmSync(join(home, '.config', 'opencode', 'plugins', 'aisuite_sync.js'), { force: true });
+  } catch {
+    /* best-effort — absent when OpenCode is not managed by AI Suite */
+  }
+  return seeded;
 }
 
 /**
@@ -207,6 +283,7 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     ZCC_E2E_APP_VERSION: PACKAGE_VERSION,
     ...(opts.e2e ? { ZCC_E2E: '1' } : {}),
     ...opts.env,
+    ...linuxCiElectronEnv(),
   };
   // A parent `electron-vite dev` / leftover diagnostic must not steal this
   // unpackaged E2E boot onto the live renderer or product server.
@@ -217,14 +294,28 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
   if (opts.caCertPath) env.NODE_EXTRA_CA_CERTS = opts.caCertPath;
 
   const app = await electron.launch({
-    args: [`--user-data-dir=${userDataDir}`, MAIN_ENTRY],
+    // Without this, Playwright downloads its own Electron (log: "Downloading
+    // Electron binary...") which will not load this repo's native addons.
+    executablePath: projectElectronBinary(),
+    args: [...linuxCiElectronArgs(), `--user-data-dir=${userDataDir}`, MAIN_ENTRY],
     env,
     timeout: 60_000
   });
-  const window = await appWindow(app);
-  await window.waitForSelector('#root', { timeout: 30_000 });
-  await dismissConsentOverlays(window);
-  return { electron: app, window, home };
+  const stderrChunks: string[] = [];
+  app.process()?.stderr?.on('data', (chunk: Buffer | string) => {
+    stderrChunks.push(String(chunk));
+  });
+  try {
+    const window = await appWindow(app);
+    await window.waitForSelector('#root', { timeout: 30_000 });
+    await dismissConsentOverlays(window);
+    return { electron: app, window, home };
+  } catch (err) {
+    const stderr = stderrChunks.join('').trim();
+    if (!stderr) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`${message}\n\nmain stderr:\n${stderr}`);
+  }
 }
 
 /**
@@ -275,6 +366,8 @@ type Fixtures = {
    * that spawn a real model need it. See {@link seedClaudeAuthState}.
    */
   seedClaudeAuth: boolean;
+  /** Seed real OpenCode config/auth before Electron launches. */
+  seedOpenCodeAuth: boolean;
   /** The booted registry (null unless useRegistry). */
   registry: LocalRegistry | null;
   /** A freshly booted, isolated Electron app. */
@@ -292,10 +385,13 @@ export const test = base.extend<Fixtures>({
   launchEnv: [{}, { option: true }],
   initialConfig: [{}, { option: true }],
   seedClaudeAuth: [false, { option: true }],
+  seedOpenCodeAuth: [false, { option: true }],
 
   home: async ({}, use) => {
     const home = mkdtempSync(join(tmpdir(), 'zcc-e2e-home-'));
+    if (process.env.ZCC_E2E_KEEP_HOME === '1') console.error(`[e2e] preserving HOME ${home}`);
     await use(home);
+    if (process.env.ZCC_E2E_KEEP_HOME === '1') return;
     try {
       rmSync(home, { recursive: true, force: true });
     } catch {
@@ -316,7 +412,7 @@ export const test = base.extend<Fixtures>({
     }
   },
 
-  app: async ({ home, registry, requireSignature, e2e, launchEnv, initialConfig, seedClaudeAuth, isolateBundledCatalog }, use) => {
+  app: async ({ home, registry, requireSignature, e2e, launchEnv, initialConfig, seedClaudeAuth, seedOpenCodeAuth, isolateBundledCatalog }, use) => {
     if (registry) {
       writeRegistryConfig(home, {
         enabled: true,
@@ -328,6 +424,7 @@ export const test = base.extend<Fixtures>({
     // AI specs need a real, authenticated `claude` — seed the sandbox HOME with
     // its onboarding/auth artifacts BEFORE launch (the CLI reads them at spawn).
     if (seedClaudeAuth) seedClaudeAuthState(home);
+    if (seedOpenCodeAuth) seedOpenCodeAuthState(home);
     // SAFETY: on macOS the app resolves ~/.zcc via app.getPath('home') and
     // IGNORES the sandbox HOME, so any test that calls `config.set(...)` writes
     // the DEVELOPER's real ~/.zcc/config.json. A spec pointing `claudeBinary` at

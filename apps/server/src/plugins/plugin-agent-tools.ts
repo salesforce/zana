@@ -15,6 +15,7 @@ export interface PluginAgentToolSource {
     ) => PluginAgentConfigureResult | void | Promise<PluginAgentConfigureResult | void>
   >;
   extraInstructions?: readonly string[];
+  extraInstructionProviders?: ReadonlyArray<(ctx: { threadId: string; projectId: string }) => string | null>;
 }
 
 export interface PluginSessionTools {
@@ -24,6 +25,7 @@ export interface PluginSessionTools {
 
 export const HOST_SESSION_TOOLS_MAX = 128;
 export const HOST_SESSION_INSTRUCTIONS_MAX = 100_000;
+export const LIVE_INSTRUCTION_MAX = 4_096;
 
 export function packHostSessionTooling(
   session: PluginSessionTools | undefined | null
@@ -49,10 +51,21 @@ export async function safePackPluginSession(
 }
 
 export function toDynamicTool(registration: PluginAgentToolRegistration): DynamicTool {
+  const presentation = registration.presentation;
+  const toolPresentation =
+    presentation?.label && presentation.icon
+      ? {
+          label: presentation.label,
+          icon: presentation.icon,
+          ...(presentation.suppress !== undefined ? { suppress: presentation.suppress } : {}),
+          ...(presentation.tint ? { tint: presentation.tint } : {})
+        }
+      : undefined;
   return {
     name: registration.name,
     description: registration.description,
-    inputSchema: registration.inputSchema ?? { type: 'object', properties: {} }
+    inputSchema: registration.inputSchema ?? { type: 'object', properties: {} },
+    ...(toolPresentation ? { presentation: toolPresentation } : {})
   };
 }
 
@@ -76,6 +89,18 @@ export async function resolvePluginSessionTools(
   for (const source of sources) {
     const extra = (source.extraInstructions ?? []).map((row) => row.trim()).filter(Boolean);
     instructionParts.push(...extra);
+    for (const provider of source.extraInstructionProviders ?? []) {
+      try {
+        const raw = provider({
+          threadId: ctx.threadId ?? '',
+          projectId: ctx.projectId ?? ''
+        });
+        const trimmed = typeof raw === 'string' ? raw.trim().slice(0, LIVE_INSTRUCTION_MAX) : '';
+        if (trimmed) instructionParts.push(trimmed);
+      } catch {
+        /* a throwing provider contributes nothing */
+      }
+    }
 
     const configured = await configurePlugin(source, ctx);
     instructionParts.push(...configured.instructions);

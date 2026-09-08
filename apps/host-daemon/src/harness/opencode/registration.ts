@@ -9,7 +9,8 @@ export const openCodeHarness: HarnessRegistration = {
   label: 'OpenCode',
   profiles: [
     { id: 'opencode', posture: 'default' },
-    { id: 'opencode-resume', posture: 'resume' }
+    { id: 'opencode-resume', posture: 'resume' },
+    { id: 'opencode-yolo', posture: 'unrestricted' }
   ],
   defaultProfileId: 'opencode',
   implementation,
@@ -38,7 +39,6 @@ export const openCodeHarness: HarnessRegistration = {
     };
   },
   createTranscriptAdapter: ({ openCodeBinary }) => new OpenCodeTranscriptAdapter(openCodeBinary),
-  monitorCapability: { state: 'unsupported', sources: [], reason: 'No live native monitor fact is wired' },
   supportedScopes: ['local', 'remote'],
   verification: {
     enabledConfigKey: 'harnessOpenCodeEnabled',

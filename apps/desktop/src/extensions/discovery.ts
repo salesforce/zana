@@ -16,9 +16,9 @@
 import { existsSync } from 'node:fs';
 import { readFile, readdir, rename, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { isWithin, resolveContained, resolveContainedReal } from '@zana-ai/zcc-path-confine';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { readConsentMap, consentStateFor, type ConsentMap } from './consent.js';
 import {
   checkApiCompat,
@@ -41,7 +41,7 @@ import type {
 export function getExtensionsDir(): string {
   const override = process.env.ZCC_EXTENSIONS_DIR;
   if (override) return override;
-  return join(homedir(), '.zcc', 'extensions');
+  return join(resolveZccDataDir(), 'extensions');
 }
 
 function getEnabledFile(): string {

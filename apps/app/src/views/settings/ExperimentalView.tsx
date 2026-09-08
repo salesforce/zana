@@ -31,7 +31,7 @@ export function ExperimentalView({
         />
         <CheckboxField
           label="Catch-up summary"
-          help="Experimental — when an agent sits idle or is waiting on a choice, precompute a quick catch-up summary under the terminal through monitor HTTP provider selected in Agents settings. Without one, summaries report unavailable. Also shows manual 'Summarize to inbox' button in agent modal. Off ⇒ both are hidden."
+          help="Experimental — when an agent sits idle or is waiting on a choice, precompute a quick catch-up summary under the terminal using the fastest model. Also shows the manual 'Summarize to inbox' button in the agent modal. Off ⇒ both are hidden."
           checked={config.catchUpSummaryEnabled ?? false}
           onChange={(v) => onUpdate({ catchUpSummaryEnabled: v })}
         />
@@ -40,6 +40,12 @@ export function ExperimentalView({
           help="Experimental — a fast-model micro-call that DEMOTES routine 'task done' reports (comment-only, no docs/question/goal) into a folded 'Routine' section of the inbox feed, so high-value reports stay inline. Advisory only: it never hides a report with docs, an idea, a question, or a goal outcome, and a missing verdict just leaves everything inline. Off by default — each inbox change may trigger a background call on your own key."
           checked={config.feedNoiseClassifierEnabled ?? false}
           onChange={(v) => onUpdate({ feedNoiseClassifierEnabled: v })}
+        />
+        <CheckboxField
+          label="CLI Agent host catalog"
+          help="On a remote project, the CLI Agent picker asks that machine which CLIs and models are installed (same execution-options path Modern uses). Off ⇒ today’s local install list."
+          checked={config.cliRemoteHostCatalogEnabled ?? false}
+          onChange={(v) => onUpdate({ cliRemoteHostCatalogEnabled: v })}
         />
       </Section>
 

@@ -13,7 +13,9 @@ import { join } from 'node:path';
 import type { Project, ScheduleTemplate, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 
-const userTemplatesDir = () => join(app.getPath('home'), '.zcc', 'templates');
+import { electronZccDataDir } from '../../electron-data-dir.js';
+
+const userTemplatesDir = () => join(electronZccDataDir(), 'templates');
 const projectTemplatesDir = (project: Project) =>
   join(project.path, '.zcc', 'templates');
 

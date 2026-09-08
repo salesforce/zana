@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { AuroraGrid } from '../components/AuroraGrid';
+import { PluginGuideMap } from '../components/plugin-guide/PluginGuideMap';
 
 export const metadata: Metadata = {
   title: 'Plugins',
@@ -59,6 +60,22 @@ export default function ExtensionsPage() {
               <Link className="zcc-btn zcc-btn-ghost" href="/marketplace/">Browse marketplace</Link>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section id="plugin-guide" style={{ paddingTop: 12 }}>
+        <div className="wrap">
+          <div className="section-head" data-reveal>
+            <span className="zcc-kicker">Plugin Guide</span>
+            <h2>Every surface a plugin can own.</h2>
+            <p className="section-lede">
+              The same annotated map as Plugins → Plugin Guide in the app: wireframes, numbered chips, and Copy for agent.
+            </p>
+          </div>
+          <PluginGuideMap />
+          <p style={{ marginTop: 16 }} data-reveal>
+            <Link className="text-link" href="/docs/extensions-sdk-reference/">Read the matching SDK reference →</Link>
+          </p>
         </div>
       </section>
 

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   bufferThreadOpenFile,
   consumePendingOpenFile,
+  isOpenableWorkspaceRelPath,
+  openWorkspaceFileForThread,
   parseThreadOpenFilePayload,
   resetThreadOpenFileBuffer,
   tabFromOpenFile
@@ -47,6 +49,26 @@ describe('thread-open file signal', () => {
       kind: 'storage-preview',
       title: 'plan.md',
       path: 'notes/plan.md'
+    });
+    expect(tabFromOpenFile({ source: 'workspace', path: 'src/a.ts', lineNumber: 12 })).toEqual({
+      kind: 'file-preview',
+      title: 'a.ts',
+      path: 'src/a.ts',
+      lineNumber: 12
+    });
+  });
+
+  it('opens confined workspace paths on a thread and rejects escapes', () => {
+    expect(isOpenableWorkspaceRelPath('src/a.ts')).toBe(true);
+    expect(isOpenableWorkspaceRelPath('../secret')).toBe(false);
+    expect(isOpenableWorkspaceRelPath('')).toBe(false);
+    expect(openWorkspaceFileForThread(null, 'src/a.ts')).toBe(false);
+    expect(openWorkspaceFileForThread('t1', '../secret')).toBe(false);
+    expect(openWorkspaceFileForThread('t1', 'src/a.ts')).toBe(true);
+    expect(consumePendingOpenFile('t1')).toEqual({
+      source: 'workspace',
+      path: 'src/a.ts',
+      lineNumber: null
     });
   });
 

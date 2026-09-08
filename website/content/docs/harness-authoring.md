@@ -1,6 +1,6 @@
 # Author a Harness
 
-Zana Command Center supports multiple coding-agent CLIs through **first-party
+Zana supports multiple coding-agent CLIs through **first-party
 harness integrations**. A harness teaches the app how one CLI launches, resumes
 sessions, accepts optional integrations, and reports useful state without making
 the generic terminal host understand that CLI's private flags.

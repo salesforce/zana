@@ -1,7 +1,7 @@
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Bot, Moon, Plus, Puzzle, Search, X, Loader2 } from 'lucide-react';
-import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { ExecutionBoardProjection, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   useData,
   useUi,
@@ -16,14 +16,15 @@ import {
 } from '@/store';
 import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { getThreadRoutePath, threadIdFromPath } from '@/lib/route-paths';
+import { getThreadRoutePath, getAgentSessionRoutePath, threadIdFromPath } from '@/lib/route-paths';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
-import { AgentViewToggle } from '@/components/AgentViewToggle';
+import { AgentViewToggle, ScheduledColumnToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
 import { AutonomousRunBanner } from '@/components/AutonomousRunBanner';
 import { AgentMonitor } from '@/components/AgentMonitor';
 import { CloseIdleAgentsDialog } from '@/components/CloseIdleAgentsDialog';
 import { CohortBar, type LiveCohort } from '@/components/CohortBar';
+import { ExecutionJobDetails } from '@/components/ExecutionJobDetails';
 import { AuroraGrid } from '@/components/AuroraGrid';
 import {
   agentFleetItem,
@@ -36,6 +37,7 @@ import {
 import { resolveIcon } from '@/lib/resolveIcon';
 import { invokeAgentsBoardAction } from '@/plugins/plugin-agent-actions';
 import { listAgentsBoardActions, subscribePluginSlots } from '@/plugins/plugin-slots';
+import { openScheduleFromAgents } from '@/components/scheduler/openScheduledLive';
 
 /**
  * One Agents Kanban, two scopes. Global (`kind: 'global'`) flattens every
@@ -50,6 +52,24 @@ import { listAgentsBoardActions, subscribePluginSlots } from '@/plugins/plugin-s
 export type AgentsBoardScope =
   | { kind: 'global' }
   | { kind: 'project'; project: Project };
+
+/**
+ * Merge a freshly-polled first page of executions with the previously known
+ * list: fresh entries go first (so a brand-new execution that landed on the
+ * first page shows up), then any prior entries — including ones brought in
+ * via `loadMoreExecutions` beyond the first page — whose id is NOT present in
+ * the fresh page, so paginated-in history survives a poll refresh instead of
+ * being silently dropped. Exported (pure, no React) so it has direct unit
+ * coverage without a render harness.
+ */
+export function mergeExecutionsPage(
+  prev: readonly ExecutionBoardProjection[],
+  freshFirstPage: readonly ExecutionBoardProjection[]
+): ExecutionBoardProjection[] {
+  const freshIds = new Set(freshFirstPage.map((e) => e.executionId));
+  const survivingOld = prev.filter((e) => !freshIds.has(e.executionId));
+  return [...freshFirstPage, ...survivingOld];
+}
 
 function groupSessionIdsByProject(cards: AgentCard[]): Map<string, string[]> {
   const byProject = new Map<string, string[]>();
@@ -77,6 +97,7 @@ function toCard(
     projectId: project.id,
     projectName: project.name,
     projectColor: project.color,
+    projectRemote: Boolean(project.remote),
     triage: triageById[session.id],
     overseer: overseerById[session.id],
     liveSubagents: subagentsById[session.id] ?? 0
@@ -98,7 +119,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const setNav = useUi((s) => s.setNav);
   const selectTab = useUi((s) => s.selectTab);
   const selectProject = useUi((s) => s.selectProject);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const restoreTerminal = useData((s) => s.restoreTerminal);
   const closeIdleAgents = useData((s) => s.closeIdleAgents);
@@ -113,6 +134,72 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const [filter, setFilter] = useState('');
   const [closeIdleTarget, setCloseIdleTarget] = useState<AgentCard[] | null>(null);
   const [busyAction, setBusyAction] = useState<null | 'close'>(null);
+  // Durable Job Team executions surfaced on the board. In project scope they're
+  // scoped to one project (with `before`-paginated Load more); in global scope
+  // they're the flattened union across every project.
+  const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+  const [hasMoreExecutions, setHasMoreExecutions] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [selectedExecution, setSelectedExecution] = useState<{ projectId: string; executionId: string } | null>(null);
+
+  const loadMoreExecutions = async () => {
+    // Can be invoked while the board is in GLOBAL scope (no scoped project) —
+    // pagination is project-scoped only, so no-op rather than risk a crash on
+    // a non-null assertion against an absent project.
+    if (!scopedProject || loadingMore || !hasMoreExecutions || executions.length === 0) return;
+    setLoadingMore(true);
+    try {
+      const oldest = executions[executions.length - 1].createdAt;
+      const next = await window.cc.executionBoard.listProject(scopedProject.id, oldest);
+      setExecutions((prev) => {
+        const existing = new Set(prev.map((e) => e.executionId));
+        const added = next.executions.filter((e) => !existing.has(e.executionId));
+        return [...prev, ...added];
+      });
+      setHasMoreExecutions(next.hasMore);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    // Single-flight guard: an interval tick that fires while the previous
+    // refresh is still in flight is skipped rather than starting an
+    // overlapping request (which could otherwise apply a stale response after
+    // a newer one, or double up on unhandled rejections).
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        if (scopedProject) {
+          const next = await window.cc.executionBoard.listProject(scopedProject.id);
+          if (cancelled) return;
+          setExecutions((prev) => mergeExecutionsPage(prev, next.executions));
+          setHasMoreExecutions(next.hasMore);
+        } else {
+          const lists = await Promise.all(
+            projects.map((project) => window.cc.executionBoard.listProject(project.id))
+          );
+          if (!cancelled) setExecutions(lists.flatMap((list) => list.executions));
+        }
+      } catch (error) {
+        console.error('[AgentsBoard] executionBoard.listProject refresh failed', error);
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => {
+      void refresh();
+    }, 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [scopedProject, projects, terminals]);
+
   const boardPluginActions = useSyncExternalStore(
     subscribePluginSlots,
     listAgentsBoardActions,
@@ -123,7 +210,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const cards = useMemo<AgentCard[]>(() => {
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
     if (scopedProject) {
-      return agentViewTerminals(terminals[scopedProject.id], includeScheduled)
+      return agentViewTerminals(terminals[scopedProject.id], includeScheduled, byId)
         .filter((s) => s.profile !== 'shell')
         .map((s) =>
           toCard(s, scopedProject, byId, sinceById, triageById, overseerById, subagentsById)
@@ -133,7 +220,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     for (const [projectId, list] of Object.entries(terminals)) {
       const project = byProjectId.get(projectId);
       if (!project) continue;
-      for (const s of agentViewTerminals(list, includeScheduled)) {
+      for (const s of agentViewTerminals(list, includeScheduled, byId)) {
         if (s.profile === 'shell') continue;
         out.push(toCard(s, project, byId, sinceById, triageById, overseerById, subagentsById));
       }
@@ -187,6 +274,9 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const activeThreadId = threadIdFromPath(location.pathname);
   const activeId = activeThreadId ?? activeTabId;
   const threadProjectId = isGlobal ? undefined : scopedProject?.id;
+  // Keep the toolbar (and this toggle) mounted after the user hides Scheduled
+  // so they can turn the column back on even if that was the only fleet.
+  const showToolbar = fleet.length > 0 || executions.length > 0 || !includeScheduled;
 
   const inspect = (item: FleetItem) => {
     if (item.kind === 'thread') {
@@ -194,7 +284,16 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       return;
     }
     if (item.kind === 'schedule') {
-      useUi.getState().revealSchedule(item.task.id);
+      openScheduleFromAgents(item.task, terminals, navigate);
+      return;
+    }
+    if (item.card.session.scheduled) {
+      navigate(getAgentSessionRoutePath(item.card.session.id, item.projectId));
+      return;
+    }
+    const executionId = item.card.session.cohort?.executionId;
+    if (executionId) {
+      setSelectedExecution({ projectId: item.projectId, executionId });
       return;
     }
     useUi.getState().openAgentModal(item.card.session.id, item.projectId);
@@ -206,7 +305,11 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       return;
     }
     if (item.kind === 'schedule') {
-      useUi.getState().revealSchedule(item.task.id);
+      openScheduleFromAgents(item.task, terminals, navigate);
+      return;
+    }
+    if (item.card.session.scheduled) {
+      navigate(getAgentSessionRoutePath(item.card.session.id, item.projectId));
       return;
     }
     const c = item.card;
@@ -221,7 +324,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     } else {
       selectTab(c.projectId, c.session.id);
     }
-    setWorkspaceMode(c.projectId, 'terminals');
+    setProjectView(c.projectId, 'terminals');
   };
 
   const confirmCloseIdle = (summarize: boolean) => {
@@ -237,10 +340,12 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   };
 
   return (
-    <div className={isGlobal ? 'agents-board agents-board--global panel-body--full' : 'agents-board'}>
-      {fleet.length > 0 && (
+    <div className={isGlobal ? 'agents-board agents-board--global panel-body--full aurora-host' : 'agents-board aurora-host'}>
+      <AuroraGrid />
+      {showToolbar && (
         <div className="agents-board-toolbar">
           <AgentViewToggle />
+          <ScheduledColumnToggle />
           {reclaimableAgents.length > 0 && (
             <button
               type="button"
@@ -319,7 +424,15 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
         </div>
       )}
 
+      <div className="agents-board-content">
       {scopedProject && <AutonomousRunBanner projectId={scopedProject.id} />}
+      {selectedExecution && (
+        <ExecutionJobDetails
+          projectId={selectedExecution.projectId}
+          executionId={selectedExecution.executionId}
+          onClose={() => setSelectedExecution(null)}
+        />
+      )}
       {boardView === 'board' && (
         <CohortBar
           cards={visibleCards}
@@ -334,12 +447,19 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       )}
 
       {boardView === 'flow' ? (
-        <SquadFlowView projectId={scopedProject?.id} />
+        <SquadFlowView
+          projectId={scopedProject?.id}
+          onInspectExecution={(projectId, executionId) => setSelectedExecution({ projectId, executionId })}
+        />
       ) : boardView === 'list' ? (
-        <AgentMonitor cards={visibleFleet} showProject={isGlobal} />
-      ) : fleet.length === 0 ? (
-        <div className="agents-board-empty agents-board-empty--launch aurora-host">
-          <AuroraGrid />
+        <AgentMonitor
+          cards={visibleFleet}
+          executions={executions}
+          showProject={isGlobal}
+          onInspectExecution={(projectId, executionId) => setSelectedExecution({ projectId, executionId })}
+        />
+      ) : fleet.length === 0 && executions.length === 0 ? (
+        <div className="agents-board-empty agents-board-empty--launch">
           <div className="agents-board-empty-copy">
             <Bot size={28} aria-hidden="true" />
             {isGlobal ? (
@@ -355,15 +475,17 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
                 <p>Start an agent in this project and watch it move across the board.</p>
               </>
             )}
-            <button
-              type="button"
-              className="btn primary"
-              data-testid="agents-board-new-thread"
-              onClick={() => useUi.getState().setLauncherOpen(true)}
-            >
-              <Plus size={14} />
-              New agent
-            </button>
+            {!showToolbar && (
+              <button
+                type="button"
+                className="btn primary"
+                data-testid="agents-board-new-thread"
+                onClick={() => useUi.getState().setLauncherOpen(true)}
+              >
+                <Plus size={14} />
+                New agent
+              </button>
+            )}
           </div>
         </div>
       ) : isGlobal && visibleFleet.length === 0 ? (
@@ -384,8 +506,16 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           onInspect={inspect}
           onPick={pick}
           showProject={isGlobal}
+          executions={executions}
+          hasMoreExecutions={hasMoreExecutions}
+          onLoadMoreExecutions={loadMoreExecutions}
+          onDismissExecution={(executionId) => {
+            setExecutions((current) => current.filter((execution) => execution.executionId !== executionId));
+            setSelectedExecution((current) => (current?.executionId === executionId ? null : current));
+          }}
         />
       )}
+      </div>
 
       {closeIdleTarget && (
         <CloseIdleAgentsDialog

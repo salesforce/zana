@@ -35,6 +35,9 @@ export function recoverConversationProviderThreadId(
   thread: ConversationThreadRow
 ): ConversationThreadRow {
   if (thread.providerThreadId) return thread;
+  // Inherited fork history keeps the source session id in event payloads.
+  // That id must not be treated as a session this thread owns and resumes.
+  if (thread.originKind === 'fork') return thread;
   const events = listConversationThreadEventsWindow(db, thread.id, { limit: PROVIDER_IDENTITY_SCAN_CAP });
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const providerThreadId = providerThreadIdFromPayload(events[i]?.payload);

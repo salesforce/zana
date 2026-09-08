@@ -1,11 +1,17 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { product } from '../lib/product-client.js';
+import { createPortal } from 'react-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Puzzle, Trash2 } from 'lucide-react';
+import { product } from '../lib/product-client.js';
 import { useData, useIdleTriage } from '../store.js';
 import { cardNeedsAttention, type AgentCard } from './AgentBoard.js';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
+import { getScopedProjectId } from '../lib/windowScope.js';
+import { openAgentSessionInSplit } from '../lib/split-layout/openThreadInSplit.js';
+import { isCompactViewport } from '../hooks/useIsCompactViewport.js';
+import { useRouteState } from '../hooks/useRouteState.js';
 import {
   availableAgentCardActions,
   invokeAgentCardAction
@@ -29,7 +35,7 @@ export interface CardMenu {
 export interface AgentCardActions {
   /** Interrupt a running agent (Ctrl-C). Non-destructive — session stays alive. */
   stop: (c: AgentCard) => void;
-  /** Kill + relaunch with the same profile/args (confirms while live). */
+  /** Stop the process and relaunch with the same profile/args (confirms while live). */
   restart: (c: AgentCard) => void;
   /**
    * Re-attach a REMOTE tombstone whose `ssh` proxy died during sleep — spawns a
@@ -64,6 +70,23 @@ export function canCloseWithFollowup(
   session: Pick<TerminalSession, 'status' | 'profile'>
 ): boolean {
   return session.status !== 'exited' && isClaudeProfile(session.profile);
+}
+
+/** Live: terminate and remove. Exited: drop the card. */
+export function cliAgentRemoveLabel(exited: boolean): 'Dismiss' | 'Delete' {
+  return exited ? 'Dismiss' : 'Delete';
+}
+
+export function cliAgentDeleteConfirm(title: string): string {
+  return `Delete “${title}”? The process will be terminated.`;
+}
+
+export function cliAgentRestartLiveTitle(): string {
+  return 'Stop the process and relaunch this session with the same profile and args';
+}
+
+export function cliAgentRestartConfirm(title: string): string {
+  return `Stop the process and relaunch "${title}"?`;
 }
 
 /**
@@ -178,7 +201,7 @@ export function useAgentCardActions(): {
       const isLead = c.session.cohort?.role === 'orchestrator';
       const message = isLead
         ? `Close “${c.session.title}”? It's the team lead — closing it will also stop every other agent in “${c.session.cohort?.teamName}”.`
-        : `Delete “${c.session.title}”? The process will be terminated.`;
+        : cliAgentDeleteConfirm(c.session.title);
       if (live && !window.confirm(message)) {
         return;
       }
@@ -208,9 +231,16 @@ interface AgentCardMenuProps {
  * The card right-click menu. Reuses the TabBar context-menu styling so it
  * matches the rest of the app; stopPropagation on mousedown keeps the global
  * close-on-mousedown from firing before a button's onClick.
+ *
+ * Portaled to `document.body` so the Agents kanban's `.aurora-host` (container
+ * queries + a more-specific `position: relative` on direct children) cannot
+ * steal `position: fixed` and shove the menu outside the window.
  */
 export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuProps) {
   const { card } = menu;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const route = useRouteState();
   const exited = card.session.status === 'exited';
   // A remote tombstone can be re-attached to its still-live tmux session on the
   // box (the sleep-recovery path), unlike a local exited session which is truly
@@ -226,13 +256,30 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
   const pluginSlots = useSyncExternalStore(subscribePluginSlots, listAgentCardActions, listAgentCardActions);
   const pluginCtx = { sessionId: card.session.id, projectId: card.projectId };
   const pluginActions = availableAgentCardActions(pluginSlots, pluginCtx);
-  return (
+  const node = (
     <div
       className="tab-context-menu"
       style={{ top: menu.y, left: menu.x }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       <button onClick={() => { setMenu(null); onPick(card); }}>{exited ? 'View' : 'Open'}</button>
+      <button
+        type="button"
+        onClick={() => {
+          setMenu(null);
+          openAgentSessionInSplit({
+            navigate,
+            projectId: route.isProjectFocused
+              ? route.focusedProjectId
+              : (getScopedProjectId() ?? null),
+            sessionId: card.session.id,
+            isCompact: isCompactViewport(),
+            currentPathname: location.pathname
+          });
+        }}
+      >
+        Open in split
+      </button>
       {canReconnect && (
         <button
           onClick={() => { setMenu(null); actions.reconnect(card); }}
@@ -262,7 +309,7 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
         title={
           exited
             ? 'Relaunch this session with the same profile and args'
-            : 'Kill and relaunch this session with the same profile and args'
+            : cliAgentRestartLiveTitle()
         }
       >
         {exited ? 'Restart' : 'Restart…'}
@@ -316,10 +363,11 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
             : 'Terminate this agent and remove it from the board'
         }
       >
-        {exited ? 'Dismiss' : 'Delete'}
+        {cliAgentRemoveLabel(exited)}
       </button>
     </div>
   );
+  return typeof document === 'undefined' ? node : createPortal(node, document.body);
 }
 
 /** Hover-revealed one-click delete. Closes the PTY with no confirm, matching thread archive. */
@@ -337,8 +385,8 @@ export function AgentDeleteQuickAction({
       type="button"
       className="project-terminal-close agent-delete-quick"
       data-testid="agent-delete-quick"
-      aria-label={exited ? `Dismiss ${session.title}` : `Delete ${session.title}`}
-      title={exited ? 'Dismiss' : 'Delete agent'}
+      aria-label={`${cliAgentRemoveLabel(exited)} ${session.title}`}
+      title={cliAgentRemoveLabel(exited)}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => {
         event.preventDefault();

@@ -19,9 +19,9 @@ const openCodeExecutionEvidence = (
   version: 1,
   status: 'approved',
   cliVersion: '1.18.0',
-  scopes: ['local'],
+  scopes: ['local', 'remote'],
   probe: 'opencode --version; opencode --help; opencode run --help; opencode agent list',
-  environmentAssumptions: ['local registered project', 'OpenCode built-in plan and build agents'],
+  environmentAssumptions: ['registered project', 'OpenCode built-in plan and build agents'],
   observed,
   reviewedAt: '2026-08-04',
   adapterOwnerApproval: 'ZCC harness execution approval'
@@ -58,7 +58,7 @@ const exactObserved = (effect: string): ExecutionEvidenceFixture['observed'] => 
 const APPROVED_EXECUTION_EVIDENCE: Readonly<Record<string, ExecutionEvidenceFixture>> = Object.freeze({
   ...Object.fromEntries((['plan', 'interactive', 'accept-edits', 'autonomous'] as const).map((state) => [
     `claude.execution.${state}`,
-    exactExecutionEvidence('claude', state, '2.1.209', ['local', 'remote'], exactObserved(`Claude ${state} permission mode`))
+    exactExecutionEvidence('claude', state, '2.1.220', ['local', 'remote'], exactObserved(`Claude ${state} permission mode`))
   ])),
   ...Object.fromEntries((['plan', 'interactive', 'accept-edits', 'autonomous'] as const).map((state) => [
     `codex.execution.${state}`,

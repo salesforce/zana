@@ -81,7 +81,7 @@ describe('host-rpc contract', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'claude',
-      input: ['hello'],
+      input: [{ type: 'text', text: 'hello' }],
       clientRequestId: 'creq_23456789ab'
     })).toMatchObject({
       type: 'thread.start',
@@ -93,7 +93,7 @@ describe('host-rpc contract', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'claude',
-      input: ['hello'],
+      input: [{ type: 'text', text: 'hello' }],
       clientRequestId: 'not-a-request-id'
     }).success).toBe(false);
     expect(HostRpcCommandSchema.parse({
@@ -102,7 +102,7 @@ describe('host-rpc contract', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'claude',
-      input: ['hello'],
+      input: [{ type: 'text', text: 'hello' }],
       remote: { host: 'box', user: 'me', remotePath: '/src' },
       remoteToolProxy: true
     })).toMatchObject({
@@ -116,7 +116,7 @@ describe('host-rpc contract', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'opencode',
-      input: ['hello'],
+      input: [{ type: 'text', text: 'hello' }],
       dynamicTools: [{
         name: 'sf_soql',
         description: 'Run SOQL',
@@ -173,7 +173,7 @@ describe('host-rpc contract', () => {
       type: 'turn.submit',
       threadId,
       environmentId,
-      input: ['follow up'],
+      input: [{ type: 'text', text: 'follow up' }],
       model: 'claude-sonnet-5',
       reasoningLevel: 'high',
       clientRequestId: 'creq_23456789ab',
@@ -190,13 +190,64 @@ describe('host-rpc contract', () => {
       resume: { providerThreadId: 'prov-1' }
     });
     expect(HostRpcCommandSchema.parse({
+      type: 'turn.submit',
+      threadId,
+      environmentId,
+      input: [{
+        type: 'text',
+        text: '/plan inspect',
+        mentions: [{
+          start: 0,
+          end: 5,
+          resource: {
+            kind: 'command',
+            trigger: '/',
+            name: 'plan',
+            source: 'command',
+            origin: 'builtin',
+            label: 'plan',
+            argumentHint: null
+          }
+        }]
+      }]
+    }).input).toEqual([{
+      type: 'text',
+      text: '/plan inspect',
+      mentions: [{
+        start: 0,
+        end: 5,
+        resource: {
+          kind: 'command',
+          trigger: '/',
+          name: 'plan',
+          source: 'command',
+          origin: 'builtin',
+          label: 'plan',
+          argumentHint: null
+        }
+      }]
+    }]);
+    expect(HostRpcCommandSchema.safeParse({
+      type: 'turn.submit',
+      threadId,
+      environmentId,
+      input: ['follow up']
+    }).success).toBe(false);
+    expect(HostRpcCommandSchema.parse({
       type: 'terminal.start',
       sessionId: threadId,
       root: '/tmp/proj',
       cwd: '/tmp/proj',
       cols: 80,
-      rows: 24
+      rows: 24,
+      command: 'npm run dev'
     }).type).toBe('terminal.start');
+    expect(HostRpcCommandSchema.safeParse({
+      type: 'terminal.start',
+      sessionId: threadId,
+      root: '/tmp/proj',
+      command: 'x'.repeat(10_001)
+    }).success).toBe(false);
     expect(HostRpcCommandSchema.parse({
       type: 'host.list_dir',
       root: '/tmp/proj',
@@ -216,6 +267,14 @@ describe('host-rpc contract', () => {
       prompt: null,
       timeoutMs: 10_000
     }).type).toBe('codex.voice.transcribe');
+    expect(HostRpcCommandSchema.parse({
+      type: 'codex.inference.complete',
+      model: 'gpt-5',
+      reasoningEffort: 'none',
+      prompt: 'Name this thread.',
+      outputSchema: { type: 'object' },
+      timeoutMs: 10_000
+    }).type).toBe('codex.inference.complete');
     expect(HostRpcCommandSchema.safeParse({
       type: 'thread.resize',
       threadId,
@@ -325,6 +384,30 @@ describe('host-rpc contract', () => {
     }).models[0]?.displayName).toBe('GPT-5.5');
   });
 
+  it('parses provider.health commands and results', () => {
+    const command = HostRpcCommandSchema.parse({
+      type: 'provider.health',
+      providerId: 'acp-opencode',
+      bridgeLaunch: {
+        pluginId: 'provider-acp',
+        source: { kind: 'daemon-bundled', id: 'acp-opencode' },
+        capabilities: {
+          supportsServiceTier: true,
+          permissionModes: ['full'],
+          supportsThreadArchive: false,
+          supportsThreadRename: false,
+          fork: 'tip'
+        }
+      }
+    });
+    expect(command.type).toBe('provider.health');
+    expect(parseHostRpcResult('provider.health', { supported: false })).toEqual({ supported: false });
+    expect(parseHostRpcResult('provider.health', {
+      supported: true,
+      health: { status: 'not_installed' }
+    })).toMatchObject({ supported: true, health: { status: 'not_installed' } });
+  });
+
   it('rejects leftover laptop artifactPath and dataDir on HostBridgeLaunch', () => {
     const launch = {
       pluginId: 'provider-acp',
@@ -344,7 +427,7 @@ describe('host-rpc contract', () => {
       }
     };
     expect(HostBridgeLaunchSchema.safeParse(launch).success).toBe(false);
-    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(18);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(20);
   });
 
   it('parses provider CLI status and install commands', () => {
@@ -396,10 +479,22 @@ describe('host-rpc contract', () => {
     expect(parseHostRpcResult('host.install_global_skills', {
       installations: [{ name: 'zcc-cli', path: '/tmp/.agents/skills/zcc-cli' }]
     }).installations[0]?.name).toBe('zcc-cli');
+    expect(parseHostRpcResult('codex.voice.transcribe', {
+      model: 'gpt-transcribe',
+      text: 'hello'
+    })).toEqual({ model: 'gpt-transcribe', text: 'hello' });
+    expect(parseHostRpcResult('codex.inference.complete', {
+      model: 'gpt-5',
+      value: { title: 'Hello' }
+    })).toEqual({ model: 'gpt-5', value: { title: 'Hello' } });
   });
 
   it('parses provider.status results by command type', () => {
     expect(parseHostRpcResult('provider.status', { providers: [] })).toEqual({ providers: [] });
+    expect(parseHostRpcResult('provider.status', {
+      providers: [],
+      extraInstalledAgents: [{ providerId: 'acp-omp', installed: false }]
+    }).extraInstalledAgents).toEqual([{ providerId: 'acp-omp', installed: false }]);
     expect(parseHostRpcResult('thread.resize', { threadId, resized: true })).toEqual({
       threadId,
       resized: true
@@ -466,6 +561,13 @@ describe('host-rpc contract', () => {
     }).type).toBe('peer_daemon.install');
     expect(parseHostRpcResult('peer_daemon.status', { state: 'not_installed' })).toEqual({
       state: 'not_installed'
+    });
+    expect(parseHostRpcResult('peer_daemon.status', {
+      state: 'disconnected',
+      hostId
+    })).toEqual({
+      state: 'disconnected',
+      hostId
     });
     expect(parseHostRpcResult('peer_daemon.restart', { ok: true, log: 'restarted' })).toEqual({
       ok: true,

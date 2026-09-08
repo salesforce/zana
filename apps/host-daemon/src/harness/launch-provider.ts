@@ -227,14 +227,40 @@ export interface LaunchProvider {
   /** Discover adapter-native role targets from main-authorized effective configuration. */
   discoverRoleTargets?(context: { cwd: string; config: AppConfig }): Promise<readonly import('@zana-ai/zcc-domain/harness-adapter').HarnessRoleTarget[]>;
 
+  /**
+   * Discover the adapter's LIVE model-id inventory from the CLI (`opencode
+   * models`), so a persona-pinned model can be validated against what the gateway
+   * actually serves — not just the release-baked static snapshot, which DRIFTS
+   * when the gateway renames/drops ids (`aisuite/*` → `llmgw/*`). Returns the live
+   * ids on a successful probe, or `undefined` when the probe is unavailable/failed
+   * (offline, CLI missing, timeout) so the caller degrades to the static snapshot
+   * rather than blocking a launch on a transient probe error. Bounded/temp-file
+   * captured + cached, like {@link discoverRoleTargets}.
+   */
+  discoverModelTargets?(context: { cwd: string; config: AppConfig }): Promise<readonly string[] | undefined>;
+
   /** Dynamic role catalogs are revalidated in main before launch. */
   acceptsDynamicRoleTargets?: boolean;
+
+  /**
+   * A resolved native role pins its OWN model, so any host-injected `--model`
+   * (from per-tab / persona / project / global routing) must be SUPPRESSED when
+   * a role target resolves — forcing a catalog model alongside `--agent <role>`
+   * overrides the agent's pin and dies with a provider-model-not-found error on
+   * any install whose model inventory differs from the shipped snapshot. Default
+   * false; only OpenCode overrides. See CLAUDE.md OpenCode coupling note.
+   */
+  readonly nativeRolePinsModel?: boolean;
 
   /** Return the adapter-owned evidence identity for a discovered role target. */
   dynamicRoleEvidenceTarget?(target: import('@zana-ai/zcc-domain/harness-adapter').HarnessRoleTarget, installedVersion: string): import('@zana-ai/zcc-domain/harness-adapter').HarnessRoleTarget;
 
   /** Reject adapter-native combinations that cannot be represented safely. */
-  validateRoutingCombination?(input: { roleTargetId?: string; executionOrigin: string }): string | undefined;
+  validateRoutingCombination?(input: {
+    roleTargetId?: string;
+    executionOrigin: string;
+    executionTargetId?: string;
+  }): string | undefined;
 
   /** Emit an adapter-owned native contribution for a stable execution target ID. */
   executionContribution?(targetId: string): import('./adapter-contract.js').HarnessNativeContribution;
@@ -451,4 +477,16 @@ export interface LaunchProvider {
    * bounded recent-text window each time a non-OSC agent settles.
    */
   detectBlockedPrompt(profile: LaunchProfileId, recentText: string): boolean;
+
+  /**
+   * Explain an UNEXPECTED (non-zero) early exit in human terms from the session's
+   * recent output tail, or `undefined` when there is no adapter-specific
+   * explanation (fall back to the generic dead-session line). The concrete,
+   * harness-specific failure SIGNATURE lives ONLY in the provider that owns it
+   * (Rule 6) — e.g. OpenCode's `ProviderModelNotFoundError` on exit 64 when a
+   * host-injected `--model` no longer exists on the gateway (snapshot drift). Must
+   * be PURE (no I/O) and cheap: it runs once on a bounded recent-text window at
+   * finalize time. The returned string is surfaced verbatim in the terminal pane.
+   */
+  explainUnexpectedExit?(profile: LaunchProfileId, exitCode: number, recentText: string): string | undefined;
 }

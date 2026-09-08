@@ -1,12 +1,12 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { readEnrollToken, startEnrolledHostDaemon } from './enroll-runtime.js';
+import { resolveZccDataDir } from './host-config.js';
+import { joinServerUrl } from './server-url.js';
 
-const dataDir = process.env.ZCC_DATA_DIR ?? join(homedir(), '.zcc');
+const dataDir = resolveZccDataDir();
 const serverUrl = process.env.ZCC_SERVER_URL ?? `http://127.0.0.1:${process.env.ZCC_SERVER_PORT ?? '8780'}/`;
 
 async function waitForServer(url: string): Promise<void> {
-  const health = new URL('/api/v1/health', url);
+  const health = joinServerUrl(url, '/api/v1/health');
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
       const response = await fetch(health);

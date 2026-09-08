@@ -53,6 +53,41 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     category: 'Agent interaction'
   },
   {
+    name: 'harness-claude',
+    pluginId: 'harness-claude',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'harness-cursor',
+    pluginId: 'harness-cursor',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'harness-codex',
+    pluginId: 'harness-codex',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'harness-opencode',
+    pluginId: 'harness-opencode',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'harness-pi',
+    pluginId: 'harness-pi',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
     name: 'custom-instructions',
     pluginId: 'custom-instructions',
     autoInstall: true,
@@ -148,6 +183,20 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
     category: 'Context & knowledge'
   },
   {
+    name: 'monaco-editor',
+    pluginId: 'monaco-editor',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Interface'
+  },
+  {
+    name: 'pdf-preview',
+    pluginId: 'pdf-preview',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Interface'
+  },
+  {
     name: 'keep-awake',
     pluginId: 'keep-awake',
     autoInstall: false,
@@ -170,8 +219,13 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
   }
 ];
 
+export const BUNDLED_PLUGINS: readonly BundledPluginDefinition[] = [
+  ...BUILTIN_PLUGINS,
+  ...OFFICIAL_PLUGINS
+];
+
 export function bundledPluginByName(name: string): BundledPluginDefinition | undefined {
-  return [...BUILTIN_PLUGINS, ...OFFICIAL_PLUGINS].find((plugin) => plugin.name === name);
+  return BUNDLED_PLUGINS.find((plugin) => plugin.name === name);
 }
 
 /**
@@ -179,7 +233,21 @@ export function bundledPluginByName(name: string): BundledPluginDefinition | und
  * and no longer ship. Start() uninstalls them so leftover hub rows cannot
  * come back. Local-authored working dirs (local.json) are left alone.
  */
-export const RETIRED_FIRST_PARTY_PLUGIN_IDS = ['consensus', 'slack', 'zana', 'zana-hub'] as const;
+export const RETIRED_FIRST_PARTY_PLUGIN_IDS = [
+  'consensus',
+  'slack',
+  'zana',
+  'zana-hub'
+] as const;
+
+/**
+ * Experimental installs later promoted to autoInstall builtins. Forget a leftover
+ * uninstall tombstone once so the builtin can land; a later user uninstall sticks.
+ */
+export const RECLAIM_UNINSTALLED_AUTOINSTALL_IDS = [
+  'provider-claude-code',
+  'provider-codex'
+] as const;
 
 export function isRetiredFirstPartyPluginId(id: string): boolean {
   return (RETIRED_FIRST_PARTY_PLUGIN_IDS as readonly string[]).includes(id);

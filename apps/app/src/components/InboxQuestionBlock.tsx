@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { CornerDownLeft, MessageSquare } from 'lucide-react';
 import type { InboxEntry, InboxQuestion } from '@zana-ai/zcc-domain/product';
 import { replyToInboxEntry, useInboxAnswered } from '../store.js';
+import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
 import { MarkdownContent } from './MarkdownContent.js';
 
 /**
@@ -135,10 +136,18 @@ export function QuestionBlock({
   const submit = async () => {
     if (busy || !canSend) return;
     setSending(true);
-    const ok = dead
-      ? await onAnswerDeadSession!(buildReply())
-      : await replyToInboxEntry(entry.id, sessionId!, buildReply());
-    setSending(false);
+    let ok = false;
+    try {
+      if (entry.executionId && entry.blockerId) {
+        ok = await respondToInboxBlocker(entry, buildReply());
+      } else {
+        ok = dead
+          ? await onAnswerDeadSession!(buildReply())
+          : await replyToInboxEntry(entry.id, sessionId!, buildReply());
+      }
+    } finally {
+      setSending(false);
+    }
     if (ok) setReopened(false);
   };
 

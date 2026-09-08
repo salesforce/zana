@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   reconcileReasoningLevel,
   reasoningLevelSchema,
@@ -15,6 +15,7 @@ import {
   type ThreadComposerProviderOption
 } from './fallback-models.js';
 import {
+  defaultOfferedComposerModel,
   preferredComposerModel,
   rememberComposerSelection,
   rememberedProviderId,
@@ -23,9 +24,11 @@ import {
 import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
-  prefetchThreadModelCatalog,
+  reloadThreadProviderModels,
+  setThreadModelCatalogHost,
   subscribeThreadModelCatalog
 } from './thread-model-catalog.js';
+import { nextAcpModeSelection } from './acp-mode-selection.js';
 
 export type { ThreadComposerProviderOption };
 
@@ -59,6 +62,8 @@ export function useThreadComposerOptions(input: {
   lockedProviderId?: string;
   initialModel?: string | null;
   initialReasoningLevel?: string | null;
+  initialAcpMode?: string | null;
+  hostId?: string;
 }) {
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
@@ -80,39 +85,39 @@ export function useThreadComposerOptions(input: {
     const provider = input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code';
     return restoreProviderSelection(provider).reasoningLevel;
   });
+  const [acpMode, setAcpMode] = useState<string | undefined>(() => input.initialAcpMode ?? undefined);
+  const appliedRequestedAcpModeRef = useRef<string | undefined>(undefined);
   const persistSelection = !input.threadId;
 
   const setModel = useCallback((value: string) => {
     setModelState(value);
-    if (persistSelection) {
-      rememberComposerSelection({ providerId, model: value, reasoningLevel });
-    }
-  }, [persistSelection, providerId, reasoningLevel]);
+    rememberComposerSelection({ providerId, model: value, reasoningLevel });
+  }, [providerId, reasoningLevel]);
 
   const setReasoningLevel = useCallback((value: ReasoningLevel) => {
     setReasoningLevelState(value);
-    if (persistSelection) {
-      rememberComposerSelection({ providerId, model, reasoningLevel: value });
-    }
-  }, [model, persistSelection, providerId]);
+    rememberComposerSelection({ providerId, model, reasoningLevel: value });
+  }, [model, providerId]);
 
   const setProviderId = useCallback((value: string) => {
     if (value === providerId) return;
-    if (persistSelection) {
-      rememberComposerSelection({ providerId, model, reasoningLevel });
-    }
+    rememberComposerSelection({ providerId, model, reasoningLevel });
     setProviderIdState(value);
     const restored = restoreProviderSelection(value);
     setModelState(restored.model);
     setReasoningLevelState(restored.reasoningLevel);
-    if (persistSelection && restored.model) {
+    if (restored.model) {
       rememberComposerSelection({
         providerId: value,
         model: restored.model,
         reasoningLevel: restored.reasoningLevel
       });
     }
-  }, [model, persistSelection, providerId, reasoningLevel]);
+  }, [model, providerId, reasoningLevel]);
+
+  const refreshAcpModeOptions = useCallback(() => {
+    void reloadThreadProviderModels(providerId);
+  }, [providerId]);
 
   useEffect(() => {
     if (input.lockedProviderId) setProviderIdState(input.lockedProviderId);
@@ -126,12 +131,20 @@ export function useThreadComposerOptions(input: {
   }, [input.initialModel, input.initialReasoningLevel]);
 
   useEffect(() => {
-    void prefetchThreadModelCatalog();
-  }, []);
+    // Adopt the existing thread's persisted native role once the fetch resolves,
+    // so the picker shows the mode the thread is actually running (not neutral).
+    // This effect only re-fires when `initialAcpMode` itself changes value, which
+    // only happens once the caller's fetch for the CURRENT thread resolves (an
+    // unresolved/pending render repeats the same value, so no spurious re-fire
+    // clobbers a pick the user already made this session). Unconditional so a
+    // thread reused with a persisted mode of `null` (explicit "no role") clears a
+    // previous thread's mode instead of leaving it selected.
+    setAcpMode(input.initialAcpMode ?? undefined);
+  }, [input.initialAcpMode]);
 
   useEffect(() => {
-    void ensureThreadProviderModels(providerId);
-  }, [providerId]);
+    void setThreadModelCatalogHost(input.hostId);
+  }, [input.hostId]);
 
   const providers = composerProvidersFromCatalog(
     catalog.providers,
@@ -143,40 +156,98 @@ export function useThreadComposerOptions(input: {
   const cached = catalog.byProvider[providerId];
   const models = cached?.models ?? fallbackModelsForProvider(providerId);
   const moreModels = cached?.selectedOnlyModels ?? fallbackMoreModelsForProvider(providerId);
-  const loading = !cached;
+  const loading = !cached && catalog.inflight.has(providerId);
   const modelLoadError = cached?.modelLoadError ?? null;
+  const acpModeOptions = cached?.acpMode?.options ?? [];
+
+  useEffect(() => {
+    if (cached) return;
+    void ensureThreadProviderModels(providerId);
+  }, [providerId, cached]);
+
+  useEffect(() => {
+    appliedRequestedAcpModeRef.current = undefined;
+  }, [input.threadId]);
+
+  useEffect(() => {
+    const requested = input.initialAcpMode?.trim() || undefined;
+    const requestedValid = Boolean(
+      requested && acpModeOptions.some((option) => option.value === requested)
+    );
+    if (requestedValid && requested !== appliedRequestedAcpModeRef.current) {
+      appliedRequestedAcpModeRef.current = requested;
+      if (acpMode !== requested) setAcpMode(requested);
+      return;
+    }
+
+    // Existing threads: never auto-seed or reset the native role. There is NO
+    // per-thread source for the running mode (the catalog `currentValue` is a
+    // sessionless provider probe, always the default e.g. `build`), so seeding it
+    // would (1) mislead the picker into showing a mode the thread may not be
+    // running and (2) force that default onto every follow-up turn, silently
+    // resetting a thread launched under another role. Leave acpMode undefined
+    // until the user explicitly picks; an omitted acpMode leaves the running mode
+    // untouched. Only a NEW thread seeds the provider default at compose time.
+    if (input.threadId) return;
+    const next = nextAcpModeSelection({
+      current: cached?.acpMode?.currentValue,
+      selected: acpMode,
+      options: acpModeOptions
+    });
+    if (next !== undefined && next !== acpMode) setAcpMode(next);
+  }, [input.threadId, acpMode, acpModeOptions, cached?.acpMode?.currentValue, input.initialAcpMode]);
 
   useEffect(() => {
     if (input.threadId || input.lockedProviderId) return;
-    const offered = composerProvidersFromCatalog(catalog.providers, false, providerId);
-    const next = snapNewThreadProviderId(offered.map((row) => row.id), providerId);
+    if (catalog.providers.length === 0) return;
+    const next = snapNewThreadProviderId(catalog.providers.map((row) => row.id), providerId);
     if (!next) return;
     setProviderIdState(next);
     const restored = restoreProviderSelection(next);
     setModelState(restored.model);
     setReasoningLevelState(restored.reasoningLevel);
+    if (restored.model) {
+      rememberComposerSelection({
+        providerId: next,
+        model: restored.model,
+        reasoningLevel: restored.reasoningLevel
+      });
+    }
   }, [input.threadId, input.lockedProviderId, catalog.providers, providerId]);
 
   const activeModel = useMemo(
-    () => models.concat(moreModels).find((row) => row.model === model) ?? models.find((row) => row.isDefault) ?? models[0],
+    () => {
+      const offered = models.concat(moreModels);
+      return offered.find((row) => row.model === model) ?? defaultOfferedComposerModel(models, moreModels);
+    },
     [model, models, moreModels]
   );
 
   useEffect(() => {
-    if (!activeModel) return;
+    const offeredRows = models.concat(moreModels);
+    const offeredIds = offeredRows.map((row) => row.model);
+    if (offeredIds.length === 0) {
+      if (!loading && model) setModelState('');
+      return;
+    }
+    const fallback = defaultOfferedComposerModel(models, moreModels)?.model ?? offeredIds[0]!;
     const nextModel = preferredComposerModel({
       rememberedModel: persistSelection ? rememberedSelectionFor(providerId)?.model : undefined,
       currentModel: model,
       persistRemembered: persistSelection,
-      offeredModels: models.concat(moreModels).map((row) => row.model),
-      fallbackModel: activeModel.model,
+      offeredModels: offeredIds,
+      fallbackModel: fallback,
       loading
     });
+    if (!nextModel) return;
     if (nextModel !== model) {
       setModelState(nextModel);
+      rememberComposerSelection({ providerId, model: nextModel, reasoningLevel });
       return;
     }
-    const row = models.concat(moreModels).find((item) => item.model === nextModel) ?? activeModel;
+    rememberComposerSelection({ providerId, model: nextModel, reasoningLevel });
+    const row = offeredRows.find((item) => item.model === nextModel) ?? activeModel;
+    if (!row) return;
     const supported = visibleComposerReasoningLevels(
       row.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)
     );
@@ -217,6 +288,10 @@ export function useThreadComposerOptions(input: {
     registeredProviderIds,
     model,
     setModel,
+    acpMode,
+    setAcpMode,
+    acpModeOptions,
+    refreshAcpModeOptions,
     modelOptions,
     moreModelOptions,
     modelIsLoading: loading,

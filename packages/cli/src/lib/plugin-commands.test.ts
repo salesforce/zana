@@ -1,8 +1,18 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runPluginCommand } from './plugin-commands.js';
+
+function okReloadFetch(seen: string[]): typeof fetch {
+  return (async (input, init) => {
+    seen.push(`${String(init?.method)} ${String(input)}`);
+    return new Response(JSON.stringify({ ok: true, value: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  }) as typeof fetch;
+}
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -43,6 +53,67 @@ describe('plugin commands', () => {
     }
   });
 
+  it('reloads over product HTTP without a control socket', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-reload-'));
+    dirs.push(dataDir);
+    const seen: string[] = [];
+    const result = await runPluginCommand(dataDir, 'reload', ['gus'], false, {
+      fetchImpl: okReloadFetch(seen)
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/Reloaded gus/);
+    expect(seen.join('\n')).toMatch(/POST .*\/api\/v1\/plugin-apps\/gus\/reload/);
+  });
+
+  it('maps a product HTTP connection failure on reload to not running', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-reload-down-'));
+    dirs.push(dataDir);
+    const result = await runPluginCommand(dataDir, 'reload', ['gus'], false, {
+      fetchImpl: async () => {
+        throw new Error('ECONNREFUSED');
+      }
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/not running/);
+  });
+
+  it('plugin dev --once reloads over product HTTP without a control socket', async () => {
+    const dest = mkdtempSync(join(tmpdir(), 'zcc-plugin-devonce-'));
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-devonce-data-'));
+    dirs.push(dest, dataDir);
+    writeFileSync(
+      join(dest, 'package.json'),
+      JSON.stringify({
+        name: 'zcc-plugin-gus',
+        zcc: { name: 'Gus', server: './server.ts' }
+      })
+    );
+    mkdirSync(join(dataDir, 'plugins'), { recursive: true });
+    writeFileSync(
+      join(dataDir, 'plugins', 'installed.json'),
+      JSON.stringify({
+        version: 1,
+        plugins: [
+          {
+            id: 'gus',
+            name: 'Gus',
+            version: '1.0.0',
+            enabled: true,
+            status: 'running',
+            source: `path:${dest}`
+          }
+        ]
+      })
+    );
+    const seen: string[] = [];
+    const result = await runPluginCommand(dataDir, 'dev', [dest, '--once'], false, {
+      fetchImpl: okReloadFetch(seen)
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/Reloaded gus/);
+    expect(seen.join('\n')).toMatch(/POST .*\/api\/v1\/plugin-apps\/gus\/reload/);
+  });
+
   it('refuses plugin dev until the directory is installed', async () => {
     const dest = mkdtempSync(join(tmpdir(), 'zcc-plugin-dev-'));
     dirs.push(dest);
@@ -56,7 +127,6 @@ describe('plugin commands', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-logs-'));
     dirs.push(dataDir);
     const logDir = join(dataDir, 'plugins', 'hello', 'logs');
-    const { mkdirSync, writeFileSync } = await import('node:fs');
     mkdirSync(logDir, { recursive: true });
     writeFileSync(join(logDir, 'plugin.log'), `${JSON.stringify({ ts: 1, level: 'info', message: 'hi' })}\n`);
     const result = await runPluginCommand(dataDir, 'logs', ['hello', '-n', '10'], false);
@@ -74,6 +144,10 @@ describe('plugin commands', () => {
     };
     expect(pkg.zcc.app).toBe('./app.tsx');
     expect(pkg.zcc.server).toBe('./server.ts');
+    const server = readFileSync(join(dest, 'server.ts'), 'utf8');
+    expect(server).toContain("zcc.rpc.method('list'");
+    expect(readFileSync(join(dest, 'app.tsx'), 'utf8')).toContain('useRpc');
+    expect(readFileSync(join(dest, 'app.test.tsx'), 'utf8')).toContain('loadPluginApp');
   });
 
   it('writes bundled types into a scaffolded plugin', async () => {

@@ -416,6 +416,21 @@ describe('cc CLI', () => {
     expect(result.stdout).not.toContain('No schedules found');
   });
 
+  it('honors ZCC_DATA_DIR over the default ~/.zcc', async () => {
+    const prev = process.env.ZCC_DATA_DIR;
+    process.env.ZCC_DATA_DIR = fixtureDir;
+    try {
+      const result = await runCli(['node', 'zcc', 'inbox', 'ls', '--json']);
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed.length).toBeGreaterThan(0);
+    } finally {
+      if (prev === undefined) delete process.env.ZCC_DATA_DIR;
+      else process.env.ZCC_DATA_DIR = prev;
+    }
+  });
+
   it('lists a single project from the product API', async () => {
     const result = await runCli(['node', 'zcc', 'projects', 'ls', '--json'], {
       fetchImpl: projectsFetch([
@@ -426,6 +441,36 @@ describe('cc CLI', () => {
     const parsed = JSON.parse(result.stdout);
     expect(parsed).toHaveLength(1);
     expect(parsed[0].id).toBe('v0proj');
+  });
+
+  it('reloads a plugin over product HTTP without a control socket', async () => {
+    const seen: string[] = [];
+    const result = await runCli(['node', 'zcc', 'plugin', 'reload', 'gus'], {
+      dataDir: fixtureDir,
+      fetchImpl: async (input, init) => {
+        seen.push(`${String(init?.method)} ${String(input)}`);
+        return new Response(JSON.stringify({ ok: true, value: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/Reloaded gus/);
+    expect(seen.join('\n')).toMatch(/POST .*\/api\/v1\/plugin-apps\/gus\/reload/);
+  });
+
+  it('lists plugin reload and plugin dev as product API commands', async () => {
+    const help = await runCli(['node', 'zcc', '--help']);
+    const product = help.stdout.slice(
+      help.stdout.indexOf('PRODUCT API'),
+      help.stdout.indexOf('FILE READS')
+    );
+    const live = help.stdout.slice(help.stdout.indexOf('LIVE CONTROL PLANE'));
+    expect(product).toContain('plugin reload');
+    expect(product).toContain('plugin dev');
+    expect(live).not.toMatch(/plugin reload/);
+    expect(live).not.toMatch(/plugin dev/);
   });
 
   it('reports APP_NOT_RUNNING when the product API is unreachable', async () => {

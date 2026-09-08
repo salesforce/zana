@@ -5,7 +5,7 @@ import { SkillsBody } from '@/views/extensions/SkillsView';
  * The per-project Skills tab, mounted in a project's workspace (sibling to the
  * Goals / Follow-ups / Feed tabs). A thin wrapper over {@link SkillsBody} in its
  * project-scoped shape: it locks the panel to THIS project so the project-scope
- * skills (`.claude/skills`, `.cursor/rules`, …) resolve against it regardless of
+ * skills (`.claude/skills`, `.opencode/skills`, `.cursor/rules`, …) resolve against it regardless of
  * the globally selected project. The Settings → Skills tab mounts the same
  * component with no `projectId` for the follow-the-selection behaviour.
  */

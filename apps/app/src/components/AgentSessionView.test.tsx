@@ -22,12 +22,15 @@ vi.mock('./thread/secondary-panel/BrowserTabDeck.js', () => ({
   BrowserTabDeck: () => <div data-testid="thread-browser-tab" />
 }));
 vi.mock('./thread/secondary-panel/ThreadPluginTab.js', () => ({
-  ThreadPluginTab: () => <div data-testid="thread-plugin-tab" />
+  ThreadPluginTab: ({ threadId }: { threadId?: string }) => (
+    <div data-testid="thread-plugin-tab" data-thread-id={threadId ?? ''} />
+  )
 }));
 vi.mock('./thread/secondary-panel/ThreadExplorerTab.js', () => ({
   ThreadExplorerTab: () => <div data-testid="thread-explorer-tab" />
 }));
 
+import { PaneContextProvider } from '../views/thread-detail/PaneContext.js';
 import { AgentSessionView, agentWriteScope } from './AgentSessionView.js';
 
 function session(over: Partial<TerminalSession> = {}): TerminalSession {
@@ -79,14 +82,14 @@ describe('AgentSessionView', () => {
         projectName="demo-project"
         state="idle"
         terminalAnchorId="cc-terminal-anchor-agent-modal"
-        footer={<button type="button">Close Session</button>}
+        footer={<button type="button">Delete</button>}
         modal
       />
     );
     expect(html).toContain('thread-detail-view--modal');
     expect(html).toContain('data-testid="thread-secondary-show"');
     expect(html).not.toContain('data-testid="thread-secondary-panel"');
-    expect(html).not.toContain('Close Session');
+    expect(html).not.toContain('Delete');
   });
 
   it('does not inherit a workspace-open panel into the inspector modal', () => {
@@ -106,6 +109,35 @@ describe('AgentSessionView', () => {
     expect(html).not.toContain('data-testid="thread-secondary-panel"');
   });
 
+  it('shows split maximize/close chrome when hosted in a pane', () => {
+    const html = renderToStaticMarkup(
+      <PaneContextProvider
+        value={{
+          paneId: 'pane-1',
+          isFocused: true,
+          isSplitPane: true,
+          secondaryPanelHost: null,
+          onRequestClose: () => undefined,
+          isMaximized: false,
+          onToggleMaximize: () => undefined,
+          isBoundedPane: false,
+          navigateInPane: () => undefined
+        }}
+      >
+        <AgentSessionView
+          session={session()}
+          projectId="p1"
+          projectName="demo-project"
+          state="idle"
+          terminalAnchorId="cc-terminal-anchor-agent-session-s1"
+        />
+      </PaneContextProvider>
+    );
+    expect(html).toContain('thread-detail-view--split-pane');
+    expect(html).toContain('data-testid="split-pane-maximize"');
+    expect(html).toContain('data-testid="split-pane-close"');
+  });
+
   it('opens the thread secondary panel by default with agent actions in the footer', () => {
     const html = renderToStaticMarkup(
       <AgentSessionView
@@ -114,7 +146,7 @@ describe('AgentSessionView', () => {
         projectName="demo-project"
         state="idle"
         terminalAnchorId="cc-terminal-anchor-agent-modal"
-        footer={<button type="button">Close Session</button>}
+        footer={<button type="button">Delete</button>}
       />
     );
     expect(html).toContain('data-testid="agent-session-view"');
@@ -128,7 +160,7 @@ describe('AgentSessionView', () => {
     expect(html).toContain('data-testid="thread-diff-pin"');
     expect(html).not.toContain('data-testid="thread-plan-pin"');
     expect(html).toContain('data-testid="thread-secondary-footer"');
-    expect(html).toContain('Close Session');
+    expect(html).toContain('Delete');
     expect(html).toContain('Status PID');
     expect(html).toContain('id="cc-terminal-anchor-agent-modal"');
     expect(html).not.toContain('data-testid="thread-secondary-show"');
@@ -175,7 +207,7 @@ describe('AgentSessionView', () => {
     persistPanel('s-plugin', { activeId: 'plugin:1', tabs: [{ id: 'plugin:1', kind: 'plugin', title: 'Docs', moduleId: 'docs' }] });
     expect(renderToStaticMarkup(
       <AgentSessionView session={session({ id: 's-plugin' })} projectId="p1" projectName="demo" state="working" terminalAnchorId="a" />
-    )).toContain('data-testid="thread-plugin-tab"');
+    )).toContain('data-thread-id="s-plugin"');
 
     persistPanel('s-explorer', { activeId: 'explorer:1', tabs: [{ id: 'explorer:1', kind: 'explorer', title: 'Explorer' }] });
     expect(renderToStaticMarkup(
@@ -234,6 +266,8 @@ describe('AgentSessionView', () => {
   it('omits the sidecar terminal path and uses AgentDiffPanel for the Diff pin', () => {
     const source = readFileSync(new URL('./AgentSessionView.tsx', import.meta.url), 'utf8');
     expect(source).toContain('allowSidecarTerminal={false}');
+    expect(source).toContain('panelScope="agent-session"');
+    expect(source).toContain('threadId={session.id}');
     expect(source).toContain("kind: 'explorer'");
     expect(source).toContain('<ThreadExplorerTab');
     expect(source).toContain('thread-detail-split');
@@ -241,6 +275,8 @@ describe('AgentSessionView', () => {
     expect(source.indexOf('thread-detail-split')).toBeLessThan(source.indexOf('thread-detail-main agent-session-main'));
     expect(source.indexOf('thread-detail-main agent-session-main')).toBeLessThan(source.indexOf('className="thread-detail-header"'));
     expect(source).toContain('thread-detail-view--modal');
+    expect(source).toContain('data-testid="split-pane-close"');
+    expect(source).toContain('thread-detail-view--split-pane');
     expect(source).toContain('defaultOpen: !modal');
     expect(source).not.toContain('agent-session-show-panel');
     expect(source).toContain('<AgentDiffPanel');

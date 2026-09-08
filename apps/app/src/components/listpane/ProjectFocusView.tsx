@@ -1,10 +1,10 @@
 import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { Plus, X, ArrowLeft, AppWindow } from 'lucide-react';
+import { Plus, X, ArrowLeft, AppWindow, Network } from 'lucide-react';
 import { useData, useUi, useAgentStatus, useIdleTriage, usePersonas } from '../../store.js';
 import type { Project, LaunchProfileId, Persona, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileLabel } from '@zana-ai/zcc-domain/launch-provider';
-import { composerProjectLabel } from '../composer-project-default.js';
+import { composerProjectLabel, isRemoteWorkspaceProject } from '../composer-project-default.js';
 import { profileIcon, personaIcon } from '../../lib/profileIcon.js';
 import { bucketSessions } from '../../lib/sessionBuckets.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
@@ -13,7 +13,13 @@ import { SectionHeader } from './SectionHeader.js';
 import { AgentStatusDot } from './AgentStatusDot.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { AppPageHeader } from '../AppPageHeader.js';
-import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
+import {
+  useAgentCardActions,
+  AgentCardMenu,
+  clampMenuAnchor,
+  cliAgentDeleteConfirm,
+  cliAgentRemoveLabel
+} from '../agentCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
 
@@ -33,7 +39,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
   const exitProjectFocus = useUi((s) => s.exitProjectFocus);
   const selectProject = useUi((s) => s.selectProject);
   const selectTab = useUi((s) => s.selectTab);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const selectedId = useUi((s) => s.selectedProjectId);
   const collapsedSections = useUi((s) => s.collapsedSections);
@@ -73,7 +79,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
     } else {
       selectTab(card.projectId, card.session.id);
     }
-    setWorkspaceMode(card.projectId, 'terminals');
+    setProjectView(card.projectId, 'terminals');
   };
 
   // Inline rename of an agent row, mirroring the tab strip's double-click→edit.
@@ -192,8 +198,13 @@ export function ProjectFocusView({ project }: { project: Project }) {
           className="project-dot"
           style={project.color ? { background: project.color } : undefined}
         />
-        <span className="focus-project-name" title={project.path}>
-          {composerProjectLabel(project)}
+        <span className="project-meta project-meta--inline">
+          <span className="focus-project-name" title={project.path}>
+            {composerProjectLabel(project)}
+          </span>
+          {isRemoteWorkspaceProject(project) && (
+            <Network size={11} strokeWidth={2} className="project-remote-icon" aria-label="Remote SSH project" />
+          )}
         </span>
         <ProjectRollupDot projectId={project.id} />
         <div className="focus-new" ref={newMenuRef}>
@@ -297,7 +308,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
                             } else {
                               selectTab(project.id, t.id);
                             }
-                            setWorkspaceMode(project.id, 'terminals');
+                            setProjectView(project.id, 'terminals');
                           }}
                           onContextMenu={(e) => openAgentCardMenu(e, t)}
                           aria-label={isUnread ? `${t.title} · unread output` : undefined}
@@ -359,15 +370,13 @@ export function ProjectFocusView({ project }: { project: Project }) {
                           <button
                             type="button"
                             className="project-terminal-close"
-                            aria-label={exited ? `Dismiss ${t.title}` : `Delete ${t.title}`}
-                            title={exited ? 'Dismiss' : 'Delete (ends the process)'}
+                            aria-label={`${cliAgentRemoveLabel(exited)} ${t.title}`}
+                            title={exited ? cliAgentRemoveLabel(true) : 'Delete (ends the process)'}
                             onClick={(e) => {
                               e.stopPropagation();
                               if (
                                 !exited &&
-                                !window.confirm(
-                                  `Delete "${t.title}"? The process will be terminated.`
-                                )
+                                !window.confirm(cliAgentDeleteConfirm(t.title))
                               ) {
                                 return;
                               }

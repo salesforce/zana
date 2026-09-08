@@ -1,6 +1,6 @@
 /**
  * OpenCodeProvider — launching the OpenCode CLI (`opencode`, npm `opencode-ai`),
- * for the profiles it serves: `opencode` and `opencode-resume`.
+ * for the profiles it serves: `opencode`, `opencode-resume`, and `opencode-yolo`.
  *
  * OpenCode is a cursor/pi-shaped interactive TUI at the command line: the bare
  * `opencode [dir]` opens the TUI in a directory (the positional is a DIRECTORY,
@@ -43,9 +43,9 @@
  * OpenCode-owned (its `opencode auth login` / provider env keys), so
  * `authKey`/`authInjection` remain the base no-ops.
  *
- * Rule 6: the concrete profile literals (`'opencode'`, `'opencode-resume'`) and the
- * provider id (`'opencode'`) appear ONLY here + the registry — `PtyManager`
- * dispatches through the interface.
+ * Rule 6: the concrete profile literals (`'opencode'`, `'opencode-resume'`,
+ * `'opencode-yolo'`) and the provider id (`'opencode'`) appear ONLY here + the
+ * registry — `PtyManager` dispatches through the interface.
  */
 
 import type { AppConfig, LaunchProfileId } from '@zana-ai/zcc-domain/product';
@@ -70,15 +70,24 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { remoteCdPrefix, shellQuote, shellQuoteArgv } from '../shell-quote.js';
 import { cleanExtraArgs } from '../argv-utils.js';
-import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
+import { isLiveListedModelTargetId, resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 
 const OPENCODE_MIN_VERSION = '1.18.0';
-const OPENCODE_REVIEWED_AT = '2026-08-04';
+const OPENCODE_REVIEWED_AT = '2026-09-02';
+const OPENCODE_VERIFIED_SCOPES = ['local', 'remote'] as const;
+const OPENCODE_MODEL_IDS = [
+  'llmgw/gpt-5.6-luna-1M',
+  'llmgw/gpt-5.6-terra-1M',
+  'llmgw/gpt-5.6-sol-1M',
+  'llmgw/gemini-3.1-pro-preview',
+  'llmgw/gemini-3.5-flash',
+  'llmgw/grok-4.6'
+] as const;
 const openCodeEvidence = (id: string, observed: string, scope: 'local' | 'remote' = 'local') => ({
   id,
   versionRange: OPENCODE_MIN_VERSION,
   scope,
-  probe: 'opencode --version; opencode --help; opencode run --help; opencode models aisuite',
+  probe: 'opencode --version; opencode --help; opencode run --help; opencode models',
   observed: `Minimum supported/reviewed CLI floor: ${OPENCODE_MIN_VERSION}. ${observed}`,
   reviewedAt: OPENCODE_REVIEWED_AT
 });
@@ -89,7 +98,7 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
   // Keep catalog, level mapping, and opencode-provider.test.ts in sync.
   descriptor: {
     id: 'opencode', label: 'OpenCode', agentDefaultEligible: true, terminalEligible: false, defaultProfileId: 'opencode',
-    profiles: [{ id: 'opencode', posture: 'default' }, { id: 'opencode-resume', posture: 'resume' }],
+    profiles: [{ id: 'opencode', posture: 'default' }, { id: 'opencode-resume', posture: 'resume' }, { id: 'opencode-yolo', posture: 'unrestricted' }],
     capabilities: facetSupport(
       { 'opening-prompt': 'exact', 'mcp-references': 'exact' },
       { 'opening-prompt': 'exact' },
@@ -105,28 +114,33 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     configFiles: [{ id: 'native-settings', label: 'Native settings', scopes: [], effect: 'unsupported', rawEdit: false, reason: 'Native project settings file is not verified.' }],
     targets: {
       roles: [
-        { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
+        { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
+      // One opencode provider namespace (`llmgw/…`) serves every model; the
+      // `provider` field groups by underlying vendor for the picker/provider
+      // filter only — it never reconstructs the `--model` id (the full id ships).
       providers: [
         { id: 'openai', label: 'OpenAI' },
-        { id: 'anthropic', label: 'Anthropic' },
-        { id: 'google', label: 'Google' }
+        { id: 'google', label: 'Google' },
+        { id: 'xai', label: 'xAI' }
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
-        { id: 'aisuite/gpt-5.6-luna', label: 'Luna', provider: 'openai', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gpt-5.6-terra', label: 'Terra', provider: 'openai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gpt-5.6-sol', label: 'Sol', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Haiku', provider: 'anthropic', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/us.anthropic.claude-sonnet-5', label: 'Sonnet', provider: 'anthropic', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
+        { id: 'llmgw/gpt-5.6-luna-1M', label: 'Luna', provider: 'openai', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', provider: 'openai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-5.6-sol-1M', label: 'Sol', provider: 'openai', level: 'high', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
+      // Single-family monotonic ladder (matches claude haiku/sonnet/opus, codex
+      // openai): the gpt-5.6 family is the only family spanning all three tiers.
+      // gemini + grok stay catalog-selectable but off the default ladder.
       modelLevelMapping: {
-        low: 'aisuite/gpt-5.6-luna',
-        medium: 'aisuite/gpt-5.6-terra',
-        high: 'aisuite/gpt-5.6-sol',
+        low: 'llmgw/gpt-5.6-luna-1M',
+        medium: 'llmgw/gpt-5.6-terra-1M',
+        high: 'llmgw/gpt-5.6-sol-1M',
         'extra-high': undefined
       },
       executionStateMapping: {
@@ -139,10 +153,10 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     initialTaskDelivery: { local: 'spawn-arg', remote: 'spawn-arg', readinessSignal: 'process-spawned', acceptanceSignal: 'argv-bound' }
   },
   executionTargetMetadata: {
-    plan: { equivalence: 'exact', scopes: ['local'] },
-    interactive: { equivalence: 'conditional', scopes: ['local'] },
-    'accept-edits': { equivalence: 'closest', scopes: ['local'] },
-    autonomous: { equivalence: 'exact', scopes: ['local'] }
+    plan: { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    interactive: { equivalence: 'conditional', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    'accept-edits': { equivalence: 'closest', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    autonomous: { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] }
   },
   collision: {
     role: [{ names: ['--agent'], arity: 1, acceptsAttachedValue: true }],
@@ -165,16 +179,16 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     }
   },
   evidence: [
-    openCodeEvidence('aisuite/gpt-5.6-luna', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gpt-5.6-terra', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gpt-5.6-sol', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/us.anthropic.claude-sonnet-5', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gemini-3.1-pro-preview', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gemini-3.5-flash', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
+    ...OPENCODE_MODEL_IDS.flatMap((id) => [
+      openCodeEvidence(id, 'Model appears in opencode models and --model accepts provider/model IDs.'),
+      openCodeEvidence(id, 'Remote login-shell command binds --model provider/model IDs.', 'remote')
+    ]),
     openCodeEvidence('build', 'Built-in build role appears in effective opencode agent list output.'),
+    openCodeEvidence('build', 'Remote login-shell command binds --agent build.', 'remote'),
     openCodeEvidence('plan', 'Built-in plan role appears in effective opencode agent list output.'),
-    openCodeEvidence('opencode.role.discovery', 'Project-scoped opencode agent list supplies exact effective role names before launch.')
+    openCodeEvidence('plan', 'Remote login-shell command binds --agent plan.', 'remote'),
+    openCodeEvidence('opencode.role.discovery', 'Project-scoped opencode agent list supplies exact effective role names before launch.'),
+    openCodeEvidence('opencode.role.discovery', 'Remote login-shell command binds --agent <discovered role> the same as a local launch.', 'remote')
   ]
 };
 
@@ -295,10 +309,12 @@ export class OpenCodeAgentDiscoveryCache {
 
   constructor(
     private readonly successTtlMs = Infinity,
-    private readonly maxEntries = 8,
+    // Boot warms every local project. Retain those catalogs for normal picker
+    // opens; only the user's Refresh action should invoke OpenCode again.
+    private readonly maxEntries = 64,
     private readonly now = Date.now,
     private readonly maxConcurrentLoads = 2,
-    private readonly maxPendingLoads = 16
+    private readonly maxPendingLoads = 128
   ) {}
 
   discover(command: string, cwd: string, load: DiscoveryLoader, options: DiscoveryOptions = {}) {
@@ -446,17 +462,96 @@ function discoverOpenCodeAgents(context: { cwd: string; config: AppConfig }, opt
   );
 }
 
+/**
+ * Parse `opencode models` stdout into the live provider/model ids. The CLI prints
+ * one `provider/model` id per line; we keep only lines that parse as a model
+ * target id (a `provider/model` shape, never a bare flag), trimmed and de-duped in
+ * first-seen order. Tolerant of blank lines / stray banner text (non-matching
+ * lines are dropped) so a noisy CLI build can't poison the set.
+ */
+export function parseOpenCodeModelIds(output: string): string[] {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const raw of output.split(/\r?\n/)) {
+    const id = raw.trim();
+    if (!id || !id.includes('/') || !isLiveListedModelTargetId(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * Live model-id inventory cache — the model twin of {@link agentDiscoveryCache}.
+ * Success is retained until an explicit refresh (a launch shouldn't re-probe the
+ * CLI on every spawn); failures are NOT cached (return `undefined` and re-probe
+ * next time), so a transient offline blip can't pin an empty inventory. In-flight
+ * loads are de-duped per (command, cwd). Bounded by `maxEntries` (oldest-evicted).
+ */
+class OpenCodeModelDiscoveryCache {
+  private readonly entries = new Map<string, { value?: readonly string[]; inFlight?: Promise<readonly string[]> }>();
+
+  constructor(private readonly maxEntries = 64) {}
+
+  discover(command: string, cwd: string, load: () => Promise<readonly string[]>): Promise<readonly string[]> {
+    const key = JSON.stringify([command, cwd]);
+    const existing = this.entries.get(key);
+    if (existing?.value) return Promise.resolve(existing.value);
+    if (existing?.inFlight) return existing.inFlight;
+    const inFlight = load()
+      .then((value) => {
+        this.entries.delete(key);
+        this.entries.set(key, { value });
+        while (this.entries.size > this.maxEntries) this.entries.delete(this.entries.keys().next().value!);
+        return value;
+      })
+      .catch((error) => {
+        if (this.entries.get(key)?.inFlight === inFlight) this.entries.delete(key);
+        throw error;
+      });
+    this.entries.set(key, { inFlight });
+    return inFlight;
+  }
+}
+
+const modelDiscoveryCache = new OpenCodeModelDiscoveryCache();
+
+function runOpenCodeModelDiscovery(command: string, cwd: string): Promise<readonly string[]> {
+  return runOpenCodeCaptured(command, ['models'], cwd).then(parseOpenCodeModelIds);
+}
+
+function discoverOpenCodeModels(context: { cwd: string; config: AppConfig }): Promise<readonly string[]> {
+  const command = opencodeBinary(context.config);
+  return modelDiscoveryCache.discover(command, context.cwd, () => runOpenCodeModelDiscovery(command, context.cwd));
+}
+
 export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
   readonly adapter = OPENCODE_ADAPTER;
   readonly acceptsDynamicRoleTargets = true;
+  // An OpenCode `--agent <role>` pins the agent's own model; a forced catalog
+  // `--model` overrides that pin and dies with ProviderModelNotFoundError (dead
+  // session / exit 64) on any install whose provider inventory differs from the
+  // shipped snapshot. So a resolved native role suppresses the injected model.
+  readonly nativeRolePinsModel = true;
 
   dynamicRoleEvidenceTarget(target: { id: string; label: string; scope: readonly ('local' | 'remote')[] }, _installedVersion: string) {
     return { ...target, id: 'opencode.role.discovery', scope: [...target.scope], evidenceVersion: OPENCODE_MIN_VERSION };
   }
 
-  validateRoutingCombination(input: { roleTargetId?: string; executionOrigin: string }) {
-    return input.roleTargetId && input.executionOrigin !== 'inherited-native-default'
+  validateRoutingCombination(input: {
+    roleTargetId?: string;
+    executionOrigin: string;
+    executionTargetId?: string;
+  }) {
+    // A native `--agent` role IS the execution policy. Pairing it with a portable
+    // execution state (or an explicit execution target) double-binds `--agent`.
+    // Unrestricted `opencode-yolo` is `--auto` with origin explicit-native and NO
+    // execution target — `--auto` and `--agent <role>` are compatible.
+    if (!input.roleTargetId) return undefined;
+    const competingExecution = input.executionOrigin === 'portable-mapped'
+      || Boolean(input.executionTargetId);
+    return competingExecution
       ? 'OpenCode native role and execution state require one compatible role policy; clear one selection'
       : undefined;
   }
@@ -467,7 +562,7 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   ): readonly HarnessRoleTarget[] {
     if (result.status === 'failure') return staticRoles;
     return result.descriptors.filter(({ directLaunchAllowed }) => directLaunchAllowed).map(({ id, label }) => ({
-      id, label, scope: ['local']
+      id, label, scope: [...OPENCODE_VERIFIED_SCOPES]
     }));
   }
 
@@ -501,6 +596,35 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     } catch (error) {
       return OpenCodeProvider.failureResult(error);
     }
+  }
+
+  /**
+   * Live model inventory (`opencode models`) for preflight validation against
+   * gateway drift. Returns `undefined` on ANY probe failure (CLI missing,
+   * timeout, non-zero exit, empty parse) so the caller falls back to the static
+   * snapshot rather than blocking a launch on a transient probe error — an empty
+   * live list would otherwise reject every model. A non-empty result is the
+   * authoritative set the gateway currently exposes.
+   */
+  async discoverModelTargets(context: { cwd: string; config: AppConfig }): Promise<readonly string[] | undefined> {
+    try {
+      const ids = await discoverOpenCodeModels(context);
+      return ids.length > 0 ? ids : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Turn an opaque exit-64 into a specific, actionable message when the crash
+   * signature is a `ProviderModelNotFoundError` — the exact failure gateway model
+   * renames produce when a stale pinned `--model` reaches argv. Any other
+   * exit/text returns `undefined` (the generic exit handling stands).
+   */
+  explainUnexpectedExit(_profile: LaunchProfileId, exitCode: number, recentText: string): string | undefined {
+    if (exitCode !== 64) return undefined;
+    if (!/ProviderModelNotFoundError|ModelNotFoundError|model .* not found/i.test(recentText)) return undefined;
+    return 'OpenCode exited: the pinned model is no longer available on the gateway (likely renamed). Clear the forced model in routing/persona settings, or pick a native --agent role (which carries its own model), then relaunch.';
   }
 
   modelContribution(targetId: string, level?: ModelLevel) {
@@ -537,6 +661,11 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     // `baseArgsPinSession` returns true for both.
     if (profile === 'opencode-resume') {
       return { command, args: resumeSessionId ? ['--session', resumeSessionId] : ['--continue'] };
+    }
+    // opencode-yolo → `--auto`: OpenCode's documented auto-approve. Keep the
+    // literal on its own line (profile-completeness / Rule 6 family mirrors).
+    if (profile === 'opencode-yolo') {
+      return { command, args: ['--auto'] };
     }
     return { command, args: [] };
   }
@@ -667,10 +796,12 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     });
     // Remote tmux inherits its server's stale PATH. A pane-local login shell loads
     // the remote user's CLI installation without mutating that shared environment.
+    // A native role pins its own model — drop any injected `--model` (nativeRolePinsModel).
+    const suppressModelForRole = Boolean(roleTarget.targetId && this.nativeRolePinsModel);
     const argv = [
       'opencode',
       ...baseArgs,
-      ...(modelTarget.contribution.args || []),
+      ...(suppressModelForRole ? [] : (modelTarget.contribution.args || [])),
       ...(roleTarget.contribution.args || []),
       ...(execution.contribution.args || []),
       ...remoteExtra
@@ -681,6 +812,8 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   }
 
   title(profile: LaunchProfileId): string {
-    return profile === 'opencode-resume' ? 'opencode --continue' : 'opencode';
+    if (profile === 'opencode-resume') return 'opencode --continue';
+    if (profile === 'opencode-yolo') return 'opencode --auto';
+    return 'opencode';
   }
 }

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename, relative, sep } from 'node:path';
-import { isDxProject, resolveUnderRoot } from './dx-project.js';
-import { scanAgentBundles } from './agent.js';
+import { isDxProject, listFilesRecursive, resolveUnderRoot } from './dx-project.js';
+import { inspectAgentSource, scanAgentBundles } from './agent.js';
 import { isAgentScriptFile } from './agent-script-model.js';
 import type { SalesforceDeps } from './types.js';
 
@@ -18,6 +18,11 @@ export type AgentFilesErrorCode =
   | 'invalid_input'
   | 'sha_mismatch'
   | 'write_unavailable';
+
+export interface AgentFilesRootOptions {
+  /** When true, the folder need not contain sfdx-project.json. */
+  allowNonDx?: boolean;
+}
 
 export class AgentFilesError extends Error {
   readonly code: AgentFilesErrorCode;
@@ -43,35 +48,66 @@ export function requireDxProjectRoot(projectRoot: string, deps: SalesforceDeps):
   return deps.realpath(root);
 }
 
+export function requireScanRoot(projectRoot: string, deps: SalesforceDeps): string {
+  const root = projectRoot.trim();
+  if (!root) {
+    throw new AgentFilesError('not_configured', 'Open a project folder that contains Agentforce .agent files.');
+  }
+  const real = deps.realpath(root);
+  if (deps.stat(real) !== 'dir') {
+    throw new AgentFilesError('not_found', `Project folder not found: ${projectRoot}`);
+  }
+  return real;
+}
+
+function resolveAgentRoot(projectRoot: string, deps: SalesforceDeps, options?: AgentFilesRootOptions): string {
+  return options?.allowNonDx ? requireScanRoot(projectRoot, deps) : requireDxProjectRoot(projectRoot, deps);
+}
+
 export function confineAgentPath(projectRoot: string, candidate: string, deps: SalesforceDeps): string {
   const confined = resolveUnderRoot(projectRoot, candidate, deps.realpath);
   if (!confined || !isAgentScriptFile(confined)) {
     throw new AgentFilesError(
       'path_refused',
-      'Agent Script path must stay inside the configured DX project root and end in .agent or .afscript.'
+      'Agentforce path must stay inside the project folder and end in .agent or .afscript.'
     );
   }
   return confined;
 }
 
-export function listAgentFiles(projectRoot: string, deps: SalesforceDeps): AgentFileListItem[] {
-  const root = requireDxProjectRoot(projectRoot, deps);
-  return scanAgentBundles(root, deps).map((row) => ({
-    apiName: row.apiName,
-    path: toPosixRelative(root, row.path),
-    lines: row.lines
-  }));
+function collectAgentFiles(root: string, deps: SalesforceDeps): AgentFileListItem[] {
+  const bundles = isDxProject(root, deps.exists)
+    ? scanAgentBundles(root, deps)
+    : listFilesRecursive(root, deps)
+        .filter((file) => file.toLowerCase().endsWith('.agent'))
+        .map((file) => inspectAgentSource(file, deps.readFile(file) ?? ''));
+  return bundles
+    .map((row) => ({
+      apiName: row.apiName,
+      path: toPosixRelative(root, row.path),
+      lines: row.lines
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export function listAgentFiles(
+  projectRoot: string,
+  deps: SalesforceDeps,
+  options?: AgentFilesRootOptions
+): AgentFileListItem[] {
+  return collectAgentFiles(resolveAgentRoot(projectRoot, deps, options), deps);
 }
 
 export function readAgentFile(
   projectRoot: string,
   candidate: string,
-  deps: SalesforceDeps
+  deps: SalesforceDeps,
+  options?: AgentFilesRootOptions
 ): { path: string; content: string; sha256: string; apiName: string } {
-  const root = requireDxProjectRoot(projectRoot, deps);
+  const root = resolveAgentRoot(projectRoot, deps, options);
   const absolute = confineAgentPath(root, candidate, deps);
   if (deps.stat(absolute) === 'missing') {
-    throw new AgentFilesError('not_found', `Agent Script file not found: ${candidate}`);
+    throw new AgentFilesError('not_found', `Agentforce file not found: ${candidate}`);
   }
   const content = deps.readFile(absolute) ?? '';
   return {
@@ -87,18 +123,19 @@ export function writeAgentFile(
   candidate: string,
   content: string,
   deps: SalesforceDeps,
-  expectedSha256?: string
+  expectedSha256?: string,
+  options?: AgentFilesRootOptions
 ): { path: string; sha256: string } {
   if (typeof content !== 'string') {
     throw new AgentFilesError('invalid_input', 'write requires string content.');
   }
-  const root = requireDxProjectRoot(projectRoot, deps);
+  const root = resolveAgentRoot(projectRoot, deps, options);
   const absolute = confineAgentPath(root, candidate, deps);
   const existing = deps.stat(absolute) === 'missing' ? null : (deps.readFile(absolute) ?? '');
   if (expectedSha256) {
     const current = existing === null ? '' : sha256Hex(existing);
     if (current !== expectedSha256) {
-      throw new AgentFilesError('sha_mismatch', 'Agent Script file changed on disk. Reload before saving.');
+      throw new AgentFilesError('sha_mismatch', 'Agentforce file changed on disk. Reload before saving.');
     }
   }
   deps.writeFile(absolute, content);

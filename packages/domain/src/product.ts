@@ -17,6 +17,19 @@ export {
   GITHUB_REPO_URL,
   REPORT_BUG_URL
 } from './about-credits.js';
+export {
+  CRASH_ISSUE_TITLE_MAX,
+  CRASH_ISSUE_URL_MAX,
+  CRASH_REPORT_FIELD_MAX,
+  CRASH_REPORT_MARKDOWN_MAX,
+  boundCrashText,
+  crashIssueMarkdown,
+  crashIssueTitle,
+  crashIssueUrl,
+  type CrashIssueContext,
+  type RendererCrashPayload,
+  type SaveCrashReportResult
+} from './crash-report.js';
 
 export type {
   Environment,
@@ -41,7 +54,8 @@ export type LaunchProfileId =
   | 'pi'
   | 'pi-resume'
   | 'opencode'
-  | 'opencode-resume';
+  | 'opencode-resume'
+  | 'opencode-yolo';
 
 /**
  * A verifiable code-harness FAMILY — the coarse grouping the Settings → Code
@@ -91,6 +105,11 @@ export interface HarnessVerifyResult {
   alwaysEnabled: boolean;
   /** Machine reality: `<binary> --version` exited 0. */
   installed: boolean;
+  /**
+   * Thread/ACP adapter binary is on PATH. Absent when the family has no
+   * separate adapter (Cursor/OpenCode: the PTY CLI *is* the ACP agent).
+   */
+  threadAdapterInstalled?: boolean;
   /** Trimmed `--version` output when installed. */
   version?: string;
   /** Exact normalized numeric CLI version, when the output contains one. */
@@ -171,10 +190,12 @@ export type PersonaSource =
   | { extensionId: string; extensionTitle?: string };
 
 /**
- * User-facing label for the built-in scratch workspace. The on-disk folder
+ * User-facing label for the built-in scratch project. The on-disk folder
  * and project tag stay `zcc-workspace` (the API / handle name).
  */
-export const DEFAULT_WORKSPACE_DISPLAY_NAME = 'Default Workspace';
+export const DEFAULT_PROJECT_DISPLAY_NAME = 'Default Project';
+/** @deprecated Use {@link DEFAULT_PROJECT_DISPLAY_NAME}. */
+export const DEFAULT_WORKSPACE_DISPLAY_NAME = DEFAULT_PROJECT_DISPLAY_NAME;
 
 export interface Project {
   id: string;
@@ -616,6 +637,14 @@ export interface InboxEntry {
    * surface to land on by then.
    */
   target?: { moduleId: string };
+  /**
+   * OPTIONAL execution coordinates — set only when the host stamps this entry
+   * to link it to a durable Job blocker. When present, answering this question
+   * (or replying) routes through the execution-blocker response flow rather
+   * than a generic terminal write/reopen.
+   */
+  executionId?: string;
+  blockerId?: string;
 }
 
 /**
@@ -643,6 +672,28 @@ export function hasBlockingQuestion(
   entry: Pick<InboxEntry, 'question' | 'questions'>
 ): boolean {
   return inboxQuestions(entry).some((q) => q.blocking === true);
+}
+
+/** Dedupe key prefix used when thread pending decisions were cloned into Inbox. */
+export const PENDING_INTERACTION_INBOX_DEDUPE_PREFIX = 'pending-interaction:';
+
+/**
+ * True for leftover Inbox clones of in-thread approvals/questions.
+ * Those clones only offered "Open thread" and never resolved the decision.
+ */
+export function isThreadPendingInboxClone(
+  entry: Pick<InboxEntry, 'dedupeKey' | 'question' | 'questions'>
+): boolean {
+  if (
+    typeof entry.dedupeKey === 'string'
+    && entry.dedupeKey.startsWith(PENDING_INTERACTION_INBOX_DEDUPE_PREFIX)
+  ) {
+    return true;
+  }
+  const questions = inboxQuestions(entry);
+  if (questions.length !== 1) return false;
+  const options = questions[0]?.options ?? [];
+  return options.length === 1 && options[0]?.label === 'Open thread';
 }
 
 /** Structured AI digest of the inbox — backs the "AI Summary" card. */
@@ -837,12 +888,31 @@ export interface SavedRecordInput {
  *  - `done`    — agent finished its turn but the user hasn't looked yet.
  *  - `idle`    — at the prompt, nothing pending, and the user has seen it.
  *  - `unknown` — plain shell, or no detector has a confident read yet.
+ *  - `waiting` — at rest but has produced no output yet this turn. This is the
+ *                resting state of non-OSC harnesses (codex/cursor/pi/opencode),
+ *                derived by the output-activity silence heuristic; `idle` is
+ *                claude's OSC-glyph equivalent. See {@link isRestfulAgentState}.
  *
  * See `docs/live-agent-status-plan.md`. State lives in a dedicated main-side
  * store and streams over the `onAgentStatus` IPC channel — NOT on this object
  * — so status ticks don't rebuild the `terminals` map (render-storm guard).
  */
-export type AgentState = 'working' | 'blocked' | 'done' | 'idle' | 'unknown';
+export type AgentState = 'working' | 'blocked' | 'done' | 'idle' | 'unknown' | 'waiting';
+
+/**
+ * At-rest states where it is safe to inject a peer message / nudge, on ANY
+ * harness. `waiting` is the resting state of non-OSC harnesses
+ * (codex/cursor/pi/opencode) before first output; `idle` is claude's. `unknown`
+ * is deliberately excluded — a plain shell reads `unknown` at all times
+ * (including mid-command) and an agent reads `unknown` transiently before first
+ * detection, so injecting then races the prompt. `blocked`/`working` are never
+ * restful. This is the single source of truth for "the agent is at its prompt,
+ * push now" — use it everywhere a peer message, mail nudge, or execution
+ * delivery must reach an at-rest worker.
+ */
+export function isRestfulAgentState(state: AgentState): boolean {
+  return state === 'idle' || state === 'done' || state === 'waiting';
+}
 
 /**
  * Why an agent (or an Agent-tool subagent) reached its terminal / idle state —
@@ -1137,7 +1207,15 @@ export interface SessionCohort {
   slotLabel?: string;
   /** Main-minted stable identity for this expanded slot within one cohort. */
   slotId?: string;
+  /** Durable execution identity stamped only by main's execution coordinator. */
+  executionId?: string;
+  /** Immutable execution title stamped by main for board display. */
+  executionJobTitle?: string;
+  /** Main-owned launch semantics. Renderer cannot select or widen this authority. */
+  coordinationMode?: TeamCoordinationMode;
 }
+
+export type TeamCoordinationMode = 'interactive-team' | 'autonomous-team' | 'job-team';
 
 /**
  * Canonical name for a PTY-spawned coding agent. Same shape as
@@ -1156,6 +1234,8 @@ export interface TerminalSession {
   cwd: string;
   pid?: number;
   status: 'starting' | 'running' | 'exited';
+  /** Command passed to `terminal.start` for a product PTY, when set. */
+  launchCommand?: string;
   exitCode?: number;
   createdAt: number;
   /**
@@ -1306,6 +1386,13 @@ export interface TerminalSession {
    * {@link isolationStatus}: a warn-and-run posture, never a silent assumption.
    */
   remoteTunnel?: { ok: boolean; reason?: string };
+  /**
+   * Local CLI + SSH remote tools (Experimental). Set when this session was
+   * spawned on this machine with `zcc-inbox` `remote_*` tools instead of
+   * `ssh -t`. Board labels use this rather than {@link Project.remote} so an
+   * SSH project can show **Local agent · remote tools** vs **Remote host**.
+   */
+  remoteToolProxy?: boolean;
   /**
    * Per-agent opt-in for the Heartbeat feature (absent/false = off). When true
    * AND the global {@link AppConfig.heartbeatEnabled} master switch is on, this
@@ -1647,13 +1734,17 @@ export interface AppConfig {
    */
   focusedProjectId?: string | null;
   /**
-   * Per-project active workspace view. A value is either a core
-   * {@link WorkspaceMode} OR an
+   * Per-project active view. A value is either a core project mode OR an
    * extension module id, when that project's active tab is an
    * extension-contributed project tab (see `ProjectTabContribution`). Stored as
    * a bare string so an arbitrary extension id round-trips; the renderer
    * tolerates an id whose extension is no longer installed (falls back to the
    * default view).
+   */
+  projectViews?: Record<string, string>;
+  /**
+   * Legacy key for {@link projectViews}. Still accepted on read.
+   * @deprecated
    */
   workspaceModes?: Record<string, string>;
   /** Global Agents-board layout preference: kanban lanes, grouped list, or the
@@ -1880,12 +1971,6 @@ export interface AppConfig {
    */
   idleTriageEnabled?: boolean;
   /**
-   * Explicit HTTP provider for monitor-only semantic work (idle triage and
-   * catch-up summaries). Absent means unavailable: monitor paths never fall
-   * back to a coding-harness CLI.
-   */
-  monitorSemanticProvider?: 'openai' | 'gemini';
-  /**
    * Suppress a BLOCKING inbox question (from `inbox_ask`, or an `inbox_push`
    * question marked `blocking`) WHILE its originating agent is still `working`,
    * flushing it to the inbox the moment the agent goes idle/blocked — or after a
@@ -1932,11 +2017,13 @@ export interface AppConfig {
    */
   agentListNeedsYouFromTriage?: boolean;
   /**
-   * Include scheduler-spawned sessions (`session.scheduled`) on the Agents board,
-   * list, and flow. Default ON: waiting scheduled jobs sit in a **Scheduled**
+   * Include waiting scheduler-spawned sessions (`session.scheduled`) on the
+   * Agents board, list, and flow. Default ON: waiting jobs sit in a **Scheduled**
    * lane; working / exited ones use the normal Working / Done lanes. Turn off
-   * to keep those runs on the Scheduler panel and in the inbox only. Does not
-   * change project session lists, the tab strip, or focus buckets.
+   * to hide that column (and armed schedule cards). A scheduled run that is
+   * working or blocked still appears in Working. Scheduled runs never appear
+   * under a project in the sidebar. Does not change the tab strip or focus
+   * buckets.
    */
   includeScheduledAgentsInAgentView?: boolean;
   /**
@@ -1990,6 +2077,13 @@ export interface AppConfig {
    * every report stays inline (no demotion).
    */
   feedNoiseClassifierEnabled?: boolean;
+  /**
+   * Automatically open the thread secondary panel on the Plan pin when Plan
+   * mode is active (native ACP Plan, `/plan`, or a durable plan artifact).
+   * EXPERIMENTAL; default OFF. Plan-approval prompts still open the panel
+   * regardless of this flag.
+   */
+  autoOpenThreadPlanPanel?: boolean;
   /**
    * Auto-link report-looking files an agent wrote to the inbox, even when it
    * never calls `inbox_push` itself (see {@link AutoReportLinkerService}). On
@@ -2099,6 +2193,27 @@ export interface AppConfig {
    */
   teamLaunchEnabled?: boolean;
   /**
+   * Enable operator-launched durable Team jobs. Unlike autonomous Teams, jobs
+   * are owned by SquadExecutionService and remain monitorable after UI closes.
+   * Default on; explicit false provides an operator opt-out.
+   */
+  teamJobLaunchEnabled?: boolean;
+  /**
+   * Show CLI Agent in the New Chat / New agent launch switcher. Default ON.
+   * At least one of this and {@link composerShowModern} must stay on.
+   */
+  composerShowCliAgent?: boolean;
+  /**
+   * Show Modern in the New Chat / New agent launch switcher. Default ON.
+   * At least one of this and {@link composerShowCliAgent} must stay on.
+   */
+  composerShowModern?: boolean;
+  /**
+   * Show Autonomous Team in the New Chat / New agent launch switcher. Default
+   * ON; the button still only appears when at least one team exists.
+   */
+  composerShowAutonomousTeam?: boolean;
+  /**
    * Master switch for the EXPERIMENTAL Goals feature: when ON, the "Goals"
    * project-scoped nav tab appears (persistent objectives with falsifiable
    * success criteria that spawn worker sessions and self-evaluate). Under
@@ -2107,6 +2222,23 @@ export interface AppConfig {
    * project mode, the workspace falls back to Terminals.
    */
   goalsEnabled?: boolean;
+  /**
+   * EXPERIMENTAL — CLI Agent on an SSH project can run the CLI on this machine
+   * and execute file/shell tools over SSH (`zcc-inbox` `remote_*`), same as
+   * Modern's local-agent / remote-tools path. Unlocks a New Chat picker
+   * (Remote host vs Local agent · remote tools). Default OFF: CLI Agent on
+   * SSH always uses `ssh -t` (Remote host). Main re-authorizes the pick
+   * (Rule 1); the renderer never sends host credentials.
+   */
+  cliRemoteToolProxyEnabled?: boolean;
+  /**
+   * EXPERIMENTAL — CLI Agent asks the project’s execution host which CLIs and
+   * models are installed (`GET /system/execution-options?hostId=…`, same path
+   * Modern uses) instead of this machine’s local `harness.descriptors` list.
+   * Default OFF: the CLI Agent picker still reflects locally installed
+   * harnesses and trusted PTY adapter catalogs.
+   */
+  cliRemoteHostCatalogEnabled?: boolean;
   /**
    * Master switch for the EXPERIMENTAL Follow-ups feature: when ON, the
    * "Follow-ups" project-scoped nav tab appears (durable parked questions from
@@ -2188,15 +2320,16 @@ export interface AppConfig {
    */
   tmuxScope?: 'off' | 'remote' | 'all';
   /**
-   * Global fallback start path for remote (SSH) projects. When a remote project
-   * has no per-project `ProjectRemote.remotePath` of its own, both the terminal
-   * (the `cd` prefix in the ssh command) and the Explorer browse root start here
-   * instead of the remote `$HOME`. Useful when every workspace lives under a
-   * fixed root on the dev box — set it once here rather than on every project.
-   * Precedence: per-project `remotePath` → this default → remote `$HOME`.
-    * Trimmed; when absent or blank, remotes start in their own `$HOME`. The
-    * renderer is untrusted, so the value is sanitized in main (no control chars,
-    * length-capped) like the per-project field.
+   * Global fallback start path for unpaired remote (SSH) projects. When a
+   * remote has no per-project `remotePath` and is not paired to a Machine (or
+   * that Machine has no default), the terminal `cd` prefix, Explorer browse
+   * root, and new Modern harness threads start here instead of the remote
+   * `$HOME`. Enrolled machines own their default under Settings → Machines.
+   * Precedence: per-project `remotePath` → matching Machine
+   * `defaultWorkspacePath` → this default → remote `$HOME`.
+   * Trimmed; when absent or blank, unpaired remotes start in their own `$HOME`.
+   * The renderer is untrusted, so the value is sanitized in main (no control chars,
+   * length-capped) like the per-project field.
    */
   remoteDefaultPath?: string;
   /**
@@ -2216,8 +2349,15 @@ export interface AppConfig {
   /**
    * When on and a thread is running, Enter steers the active turn and
    * Cmd/Ctrl+Enter queues. Default off: Enter always uses `auto`.
+   * Kept for backward compatibility; {@link composerSendMode} is the picker.
    */
   steerActiveThreadOnEnter?: boolean;
+  /**
+   * Composer send intent: Auto | Steer | Queue. Absent maps from
+   * {@link steerActiveThreadOnEnter} (true → steer, otherwise auto).
+   * Default remains auto; existing false configs stay auto.
+   */
+  composerSendMode?: 'auto' | 'steer' | 'queue-if-active';
   /**
    * Surface `provider/unhandled` timeline rows. Default off; development
    * builds also force this on.
@@ -2256,8 +2396,10 @@ export interface AppConfig {
    */
   cloneRoot?: string;
   /**
-   * Persisted leftover. Pairing uses runtime `ZCC_APP_URL` or the compile-time
-   * bake, not this field. `presentAppConfig` overwrites it for the renderer.
+   * Public origin remotes use to enroll (Tailscale Serve, Heroku pairing door).
+   * Pairing prefers runtime `ZCC_APP_URL` or the compile-time bake, then this
+   * field, then the repo `public-app-url` file. `presentAppConfig` overlays the
+   * resolved origin for the renderer and never includes the relay token.
    */
   publicAppUrl?: string;
   /**
@@ -2689,6 +2831,13 @@ export interface CreateTerminalRequest {
   microVmImage?: string;
   microVmCpus?: number;
   microVmMemoryMib?: number;
+  /**
+   * Renderer INTENT: run this CLI launch as local agent + remote SSH tools
+   * instead of `ssh -t`. Main honors it only when
+   * {@link AppConfig.cliRemoteToolProxyEnabled} is on AND the store project
+   * has `remote` (Rule 1). Never send host / credentials from the renderer.
+   */
+  remoteToolProxy?: boolean;
 }
 
 export interface FsEntry {
@@ -3596,9 +3745,19 @@ export interface TeamLaunchAuthorizationInputSlot {
 }
 
 export interface TeamLaunchAuthorizationResult {
-  teamId: string;
+  teamId?: string;
   projectId: string;
   slots: Array<TeamLaunchTaskSlot & { personaId: string; authorizationId: string }>;
+  context?: TeamLaunchAuthorizationContextV1;
+}
+
+/** Main-issued audit snapshot. Historical only; never a reusable launch grant. */
+export interface TeamLaunchAuthorizationContextV1 {
+  version: 1;
+  principalId: string;
+  authorizedAt: number;
+  expiresAt: number;
+  slots: Array<{ slotId: string; personaId: string; authorizationIdDigest: string }>;
 }
 
 export interface TeamLaunchRequestInput {
@@ -3609,6 +3768,22 @@ export interface TeamLaunchRequestInput {
   goal?: string;
   /** Main route adapter stamps this for public structured launches. */
   requirePreauthorization?: boolean;
+  /** Main-only correlation for execution-managed Team launches. */
+  executionId?: string;
+  /** Main-only immutable execution display title for Team session cohorts. */
+  executionJobTitle?: string;
+  /** Main-owned team coordination contract. Public renderer input never carries this field. */
+  coordinationMode?: TeamCoordinationMode;
+  /** Main-owned durable job briefing composed after source snapshotting. */
+  jobContext?: {
+    goal: string;
+    title?: string;
+    summary?: string;
+    sourceBundle?: {
+      contentRef: string;
+      sources: Array<Omit<ExecutionSourceSnapshot, 'extractedText'>>;
+    };
+  };
 }
 
 export interface TeamLaunchedWorker {
@@ -3693,6 +3868,22 @@ export interface SquadBundle {
   version: 1;
   team: TeamInput & { id: string };
   personas: Array<PersonaInput & { id: string }>;
+  /** Optional portable workflow profile. Runtime execution authority stays in main. */
+  workflow?: SquadBundleWorkflowMetadataV1;
+}
+
+/**
+ * Declarative profile metadata for an importable Squad bundle. It identifies
+ * the intended controller and worker slots but never carries runtime grants,
+ * execution ids, resolved models, or task payloads.
+ */
+export interface SquadBundleWorkflowMetadataV1 {
+  schemaVersion: 1;
+  profileId: string;
+  profileVersion: string;
+  controller: { personaId: string; slotId: string };
+  workers: Array<{ role: string; personaId: string; slotId: string }>;
+  supportedRequestVersions: number[];
 }
 
 /**
@@ -3833,6 +4024,8 @@ export interface SquadFlowNode {
   /** True for the squad orchestrator: the node with the highest out-degree in
    *  the handoff graph, tie-broken by earliest `registeredAt`. Heuristic. */
   isOrchestrator: boolean;
+  /** Job execution status attached to an orchestrator node for attention display. */
+  job?: { executionId: string; blockerQuestion?: string; needsAttention: boolean };
 }
 
 /**
@@ -4368,14 +4561,14 @@ export interface HarnessAuthStatusInfo {
 export type SkillSource = 'user' | 'plugin' | 'project';
 
 /**
- * The agent tool a skill belongs to — Claude Code, Cursor, and (in future)
- * Codex/Gemini/Windsurf. Core NEVER hardcodes a concrete id in logic: skill
- * discovery is dispatched through the `SKILL_PROVIDERS` registry
+ * The agent tool a skill belongs to — Claude Code, Cursor, OpenCode, and (in
+ * future) Codex/Gemini/Windsurf. Core NEVER hardcodes a concrete id in logic:
+ * skill discovery is dispatched through the `SKILL_PROVIDERS` registry
  * (`src/main/skills/registry.ts`), and the renderer derives its tool filters
  * from the distinct `tool` values present in the returned entries. Widened to
  * `string` so an unregistered/future tool id is tolerated everywhere.
  */
-export type SkillTool = 'claude-code' | 'cursor' | (string & {});
+export type SkillTool = 'claude-code' | 'cursor' | 'opencode' | (string & {});
 
 /**
  * How (and whether) a skill can be enabled/disabled. Modelled as a descriptor
@@ -4557,6 +4750,7 @@ export interface PluginSettingsSnapshot {
       label: string;
       description?: string;
       secret?: true;
+      multiline?: true;
       options?: string[];
       default?: string | boolean;
     }
@@ -4784,11 +4978,12 @@ export type ExtensionInstallSource =
   /**
    * Install from a remote git repository. `url`/`ref`/`subdir` are ADVISORY
    * renderer hints (Rule #1): main normalizes + clones the url itself, validates
-   * `ref` via `safeRef`, realpath-confines `subdir`, and funnels the result
-   * through the single trusted `installFromDir` seam — so consent + the
-   * deny-by-default broker fire exactly as for `localDir`. `ref` is an optional
-   * branch/tag/SHA (default branch when absent); `subdir` locates
-   * `extension.json` when it isn't at the repo root.
+   * `ref` via `safeRef`, and realpath-confines `subdir`. A `package.json` `zcc`
+   * plugin is staged (symlink/`.git` scrub) then path-installed through
+   * PluginService. A leftover `extension.json` still funnels through
+   * `installFromDir` so consent + the deny-by-default broker fire exactly as
+   * for `localDir`. `ref` is an optional branch/tag/SHA (default branch when
+   * absent); `subdir` locates the manifest when it isn't at the repo root.
    */
   | { kind: 'git'; url: string; ref?: string; subdir?: string }
   /**
@@ -4990,10 +5185,8 @@ export interface WhatsNewEvent {
 
 /**
  * First-run dependency check ("setup doctor"). On launch the app verifies that
- * the companion pieces the installer normally sets up are actually present —
- * the `claude` CLI, the Zana MCP server + Claude Code plugins, and the bundled
- * disk extensions — and auto-installs the ones it can do non-interactively,
- * guiding the user through the rest.
+ * the companion CLIs are actually present — Claude Code, Cursor, OpenCode, Pi,
+ * Codex, and the Salesforce CLI — and guides the user through anything missing.
  *
  * `kind` distinguishes how a missing dependency is remediated:
  *   - `installable` — the app can install it itself (npm / claude CLI calls).
@@ -5013,9 +5206,9 @@ export type DependencyPhase =
   | 'failed';
 
 export interface DependencyState {
-  /** Stable id, e.g. 'claude-cli', 'zana-mcp'. */
+  /** Stable id, e.g. 'claude-cli'. */
   id: string;
-  /** Human label shown in the checklist, e.g. "Zana MCP server". */
+  /** Human label shown in the checklist, e.g. "Claude Code CLI". */
   label: string;
   /** One-line description of what it is / why it's needed. */
   detail: string;
@@ -5028,6 +5221,11 @@ export interface DependencyState {
    * shell command the user can copy to install it themselves.
    */
   manualCommand?: string;
+  /**
+   * When false, a missing/failed item is listed and can be installed, but it
+   * does not auto-open the first-run checklist. Absent means required.
+   */
+  required?: boolean;
 }
 
 /** The full setup snapshot pushed to the renderer on `deps:onStatus`. */
@@ -5054,4 +5252,122 @@ export interface ProjectExecutionConsentGrant {
   launchScope: 'local' | 'remote';
   createdAt: number;
   expiresAt?: number;
+}
+
+/** Non-secret execution status projected by main for one project Agent Board. */
+export interface ExecutionBoardProjection {
+  executionId: string;
+  projectId: string;
+  teamId?: string;
+  launchKind?: 'team';
+  launchDisplay?: { label: string };
+  jobTitle: string;
+  /** Main-owned coordination contract, so Job UI never infers its mode from a title. */
+  coordinationMode?: TeamCoordinationMode;
+  state: 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
+  attempt: number;
+  stateVersion?: number;
+  createdAt: number;
+  updatedAt: number;
+  orchestratorSessionId?: string;
+  hasResumeToken?: boolean;
+  teamName?: string;
+  goal?: string;
+  summary?: string;
+  sources?: Array<{
+    id: string;
+    name: string;
+    mediaType: string;
+    byteSize: number;
+    contentDigest: string;
+    extractionWarnings: readonly string[];
+  }>;
+  work?: {
+    total: number;
+    completed: number;
+    counts: Record<'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED', number>;
+    assignments: Array<{ workUnitId: string; title: string; slotId?: string; state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED'; result?: string }>;
+    rosterSlotIds: string[];
+  };
+  currentBlocker?: {
+    id: string;
+    workUnitId: string;
+    slotId: string;
+    question: string;
+    options?: string[];
+    response?: string;
+    delivery?: {
+      id: string;
+      state: 'PENDING' | 'LEASED' | 'DELIVERED' | 'FAILED';
+      attempt: number;
+      maxAttempts: number;
+      error?: string;
+      retryEligible: boolean;
+    };
+  };
+  finalSummary?: string;
+  eventCursor?: number;
+  coordinator?: { status: 'live' | 'lost' | 'complete'; sessionId?: string };
+  recoveryAttention?: boolean;
+  recovery?: { status: 'available' | 'expired' | 'terminal'; deadlineAt?: number };
+}
+
+/** Renderer advisory input for a durable Team job. Main owns project and slot expansion. */
+export interface TeamJobLaunchInput {
+  teamId: string;
+  projectId: string;
+  goal: string;
+  title?: string;
+  summary?: string;
+  sourceCapabilityIds?: string[];
+}
+
+/** Safe renderer projection for a main-owned, short-lived selected-file capability. */
+export interface ExecutionSourceCapabilityView {
+  id: string;
+  name: string;
+  byteSize: number;
+  expiresAt: number;
+}
+
+/** Immutable normalized execution source metadata persisted outside argv/artifacts. */
+export interface ExecutionSourceSnapshot {
+  id: string;
+  name: string;
+  mediaType: string;
+  byteSize: number;
+  /** Digest of original captured file bytes. */
+  contentDigest: string;
+  /** Digest of normalized extractedText bytes; distinct from original contentDigest. */
+  extractedTextDigest?: string;
+  extractionStatus: 'READY' | 'UNSUPPORTED' | 'FAILED';
+  extractedText?: string;
+  extractionWarnings: readonly string[];
+}
+
+export interface TeamJobLaunchResult {
+  executionId: string;
+  state: ExecutionBoardProjection['state'];
+}
+
+export interface ExecutionBoardSnapshot {
+  execution: ExecutionBoardProjection;
+  events: Array<{
+    id: string;
+    sequence: number;
+    severity: 'info' | 'warning' | 'error';
+    summary: string;
+    createdAt: number;
+    detail?: string;
+    blocker?: { question: string; options?: string[] };
+    progress?: { completed: number; total: number };
+    slotId?: string;
+    producerRole?: 'worker' | 'orchestrator';
+    eventType?: 'progress' | 'blocker' | 'failure' | 'outcome';
+    references?: Array<{ label: string; uri: string }>;
+  }>;
+  nextAfter: number;
+  truncated: boolean;
+  artifacts: Array<{ id: string; name: string; mediaType: string; contentDigest: string; attempt: number; createdAt: number; producerRole?: 'worker' | 'orchestrator'; producerSlotId?: string }>;
+  artifactsTruncated: boolean;
 }

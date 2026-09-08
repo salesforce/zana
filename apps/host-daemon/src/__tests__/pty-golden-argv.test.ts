@@ -47,7 +47,8 @@ vi.mock('../mcp-config.js', () => ({
 vi.mock('../tmux.js', () => ({
   isTmuxAvailable: () => false,
   buildLocalTmuxCommand: (_id: string, command: string, args: string[]) => ({ command, args }),
-  wrapRemoteTmux: (_id: string, quoted: string) => quoted
+  wrapRemoteTmux: (_id: string, quoted: string) => quoted,
+  tmuxSessionName: (sessionId: string) => `cc-${sessionId}`
 }));
 
 // Model-alias resolution reads the developer's real ~/.claude/settings.json
@@ -174,6 +175,7 @@ const PROFILES: LaunchProfileId[] = [
   'pi-resume',
   'opencode',
   'opencode-resume',
+  'opencode-yolo',
   'shell'
 ];
 type LayerName = 'plain' | 'persona' | 'projectSettings' | 'persona+projectSettings';
@@ -410,6 +412,34 @@ describe('golden argv — auto-mode + overseer variants', () => {
     expect(
       normalize({ command: call.command, args: call.args, sessionEnv: pickSessionEnv(call.env) })
     ).toMatchSnapshot();
+  });
+
+  it('autonomous + job-team both active: --disallowedTools AskUserQuestion folds to ONE occurrence', () => {
+    // Both `autonomousArgs` and `jobTeamArgs` independently emit
+    // `--disallowedTools AskUserQuestion` (pty.ts ~1176/~1205). mergeDisallowedTools
+    // runs over the FULL assembled argv (~1225) and must fold every occurrence into
+    // one flag with deduped values — a naive double-spread would otherwise emit the
+    // flag twice, which strict CLI arg parsers can reject.
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: BASE_CONFIG,
+      autonomous: true,
+      coordinationMode: 'job-team'
+    });
+    const call = spawns[0];
+    const disallowedIdx = call.args.reduce<number[]>((acc, a, i) => {
+      if (a === '--disallowedTools') acc.push(i);
+      return acc;
+    }, []);
+    expect(disallowedIdx).toHaveLength(1);
+    const values = call.args[disallowedIdx[0] + 1].split(',');
+    expect(values.filter((v) => v === 'AskUserQuestion')).toHaveLength(1);
   });
 });
 

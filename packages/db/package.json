@@ -15,6 +15,7 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "@zana-ai/zcc-domain": "workspace:*",
     "better-sqlite3": "^12.11.1"
   },
   "devDependencies": {

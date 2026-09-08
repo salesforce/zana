@@ -71,6 +71,20 @@ describe('ModelReasoningPicker', () => {
     expect(html).toMatch(/model-reasoning-picker-trigger-icon"[^>]*>F</);
   });
 
+  it('shows the Pi sign-in hint on the trigger when that catalog is empty', () => {
+    const html = renderToStaticMarkup(
+      <ModelReasoningPicker
+        providerOptions={[{ value: 'pi', label: 'Pi' }]}
+        selectedProviderId="pi"
+        modelValue=""
+        modelOptions={[]}
+        onModelChange={() => undefined}
+      />
+    );
+    expect(html).toContain('Sign in with pi');
+    expect(html).not.toContain('Select model');
+  });
+
   it('closes the menu after a model is chosen, including Enter from search', () => {
     const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
     expect(source).toMatch(

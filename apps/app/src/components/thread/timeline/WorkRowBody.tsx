@@ -1,44 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import type { TimelineViewWorkRow } from '@zana-ai/zcc-thread-view';
 import { formatDiffStatsText } from '@zana-ai/zcc-thread-view';
+import { isBackgroundAgentTaskType, isBackgroundCommandTaskType } from '@zana-ai/zcc-domain/thread-runtime';
 import { MarkdownContent } from '../../MarkdownContent.js';
-import { DiffViewer } from '../../DiffViewer.js';
-import { product } from '../../../lib/product-client.js';
 import { ExpandableLine } from './ExpandableLine.js';
 import { ansiToHtml, stripAnsi } from './ansi-output.js';
-import { imagePreviewSrc } from './work-row-helpers.js';
 import { ThreadImageLightbox } from './ThreadImageLightbox.js';
+import { ThreadDisplayedImage } from './ThreadDisplayedImage.js';
+import { threadImageStubLabel } from './thread-inline-images.js';
 import {
   isPluginRenderableWorkRow,
   PluginTimelineRendererBody
 } from './PluginTimelineRendererBody.js';
 import { dispatchThreadOpenFile } from '../secondary-panel/useThreadOpenFileSignal.js';
+import { ThreadDiffHunkView } from '../ThreadDiffHunkView.js';
+import { listFileOpeners, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
+import { fileOpenerKey, matchingFileOpeners } from '../../../plugins/plugin-slot-resolvers.js';
 import { useTimelineWorkRowFullOutput } from './useTimelineWorkRowFullOutput.js';
 import { ThreadOpenFilePreviewButton } from './TimelineTitleView.js';
-
-function splitUnifiedDiff(diff: string): { original: string; modified: string } {
-  const original: string[] = [];
-  const modified: string[] = [];
-  for (const line of diff.split('\n')) {
-    if (
-      line.startsWith('diff ')
-      || line.startsWith('index ')
-      || line.startsWith('---')
-      || line.startsWith('+++')
-      || line.startsWith('@@')
-    ) {
-      continue;
-    }
-    if (line.startsWith('-')) original.push(line.slice(1));
-    else if (line.startsWith('+')) modified.push(line.slice(1));
-    else {
-      const body = line.startsWith(' ') ? line.slice(1) : line;
-      original.push(body);
-      modified.push(body);
-    }
-  }
-  return { original: original.join('\n'), modified: modified.join('\n') };
-}
 
 function PresentationDetail({
   presentation,
@@ -178,9 +157,17 @@ function ToolBody({ row }: { row: Extract<TimelineViewWorkRow, { workKind: 'tool
   );
 }
 
+function firstChangedLine(diff: string | null | undefined): number | null {
+  if (!diff) return null;
+  const match = /@@ -\d+(?:,\d+)? \+(\d+)/.exec(diff);
+  const line = match ? Number(match[1]) : NaN;
+  return Number.isInteger(line) && line > 0 ? line : null;
+}
+
 function FileChangeBody({
   change,
   stderr,
+  threadId,
   onOpenDiff
 }: {
   change: {
@@ -189,12 +176,14 @@ function FileChangeBody({
     diffStats?: { added: number; removed: number };
   };
   stderr?: string | null;
+  threadId?: string;
   onOpenDiff?: (path: string) => void;
 }) {
   const tally = change.diffStats
-    ? formatDiffStatsText(change.diffStats) ?? `+${change.diffStats.added} −${change.diffStats.removed}`
+    ? formatDiffStatsText({ ...change.diffStats, hideZero: true })
     : '';
-  const sides = change.diff ? splitUnifiedDiff(change.diff) : null;
+  const openers = useSyncExternalStore(subscribePluginSlots, listFileOpeners, listFileOpeners);
+  const matches = matchingFileOpeners(change.path, openers);
   return (
     <div className="thread-file-change-body">
       <div className="thread-file-change-meta">
@@ -210,20 +199,44 @@ function FileChangeBody({
           <span className="thread-file-change-path">{change.path}</span>
         )}
         {tally ? <span className="thread-timeline-title-deco">{tally}</span> : null}
+        {threadId ? (
+          <button
+            type="button"
+            className="thread-timeline-preview-btn"
+            data-testid="thread-file-change-open"
+            onClick={() => dispatchThreadOpenFile(threadId, change.path, firstChangedLine(change.diff))}
+          >
+            Open file
+          </button>
+        ) : null}
+        {matches.length > 0 ? (
+          <label className="thread-file-open-with">
+            <span className="thread-file-open-with-label">Open with</span>
+            <select
+              aria-label="Open with"
+              data-testid="thread-file-change-open-with"
+              defaultValue=""
+              onChange={(event) => {
+                const key = event.target.value;
+                const opener = matches.find((row) => fileOpenerKey(row) === key);
+                if (!opener || !threadId) return;
+                dispatchThreadOpenFile(threadId, change.path, firstChangedLine(change.diff));
+              }}
+            >
+              <option value="" disabled>Choose…</option>
+              {matches.map((row) => (
+                <option key={fileOpenerKey(row)} value={fileOpenerKey(row)}>
+                  {row.title}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
-      {sides && (sides.original.length > 0 || sides.modified.length > 0) ? (
-        <div className="thread-file-change-diff">
-          <DiffViewer
-            original={sides.original}
-            modified={sides.modified}
-            path={change.path}
-            compact
-            wrap
-            fitContent
-          />
+      {change.diff ? (
+        <div className="thread-file-change-diff" data-testid="thread-inline-diff">
+          <ThreadDiffHunkView path={change.path} patch={change.diff} wrap />
         </div>
-      ) : change.diff ? (
-        <pre className="thread-timeline-work-body thread-file-hunk">{change.diff}</pre>
       ) : null}
       {stderr ? <pre className="thread-timeline-work-body is-danger">{stderr}</pre> : null}
     </div>
@@ -233,8 +246,13 @@ function FileChangeBody({
 function WorkflowBody({ row }: { row: Extract<TimelineViewWorkRow, { workKind: 'workflow' }> }) {
   const phases = row.workflow?.phases ?? [];
   const agents = row.workflow?.agents ?? [];
+  const backgroundTask =
+    isBackgroundCommandTaskType(row.taskType) || isBackgroundAgentTaskType(row.taskType);
   return (
-    <div className="thread-workflow-body">
+    <div
+      className="thread-workflow-body"
+      data-testid={backgroundTask ? 'thread-background-task-body' : undefined}
+    >
       {row.description ? <p className="thread-workflow-summary">{row.description}</p> : null}
       {phases.length > 0 ? (
         <ol className="thread-workflow-phases">
@@ -305,33 +323,17 @@ function ImageViewBody({
   path: string;
   threadId?: string;
 }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [lightbox, setLightbox] = useState(false);
-  useEffect(() => {
-    if (!threadId) return;
-    let cancelled = false;
-    void product.threads.hostFileContent(threadId, path).then((file) => {
-      if (cancelled) return;
-      const preview = imagePreviewSrc(file);
-      if (preview) setSrc(preview);
-    }).catch(() => {
-      if (!cancelled) setFailed(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [path, threadId]);
-  if (!src || failed) {
-    return <p className="thread-image-stub" data-testid="thread-image-stub">{path}</p>;
-  }
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   return (
     <>
-      <button type="button" className="thread-image-open" onClick={() => setLightbox(true)}>
-        <img className="thread-image-thumb" src={src} alt={`Viewed image: ${path}`} onError={() => setFailed(true)} />
-      </button>
+      <ThreadDisplayedImage
+        path={path}
+        threadId={threadId}
+        alt={`Viewed image: ${threadImageStubLabel(path)}`}
+        onOpen={(src, alt) => setLightbox({ src, alt })}
+      />
       {lightbox ? (
-        <ThreadImageLightbox src={src} alt={path} onClose={() => setLightbox(false)} />
+        <ThreadImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />
       ) : null}
     </>
   );
@@ -378,6 +380,7 @@ function HostWorkRowBody({
         <FileChangeBody
           change={row.change}
           stderr={row.stderr}
+          threadId={threadId}
           onOpenDiff={onOpenDiff}
         />
       );

@@ -187,6 +187,9 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
     return false;
   }
 
+  /** No provider suppresses an injected model for a native role by default (OpenCode overrides). */
+  readonly nativeRolePinsModel: boolean = false;
+
   /**
    * No screen-scan blocked pattern by default. Only a provider whose CLI goes
    * QUIET at an interactive prompt with no OSC/hook blocked signal (OpenCode's
@@ -196,6 +199,17 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
    */
   detectBlockedPrompt(_profile: LaunchProfileId, _recentText: string): boolean {
     return false;
+  }
+
+  /**
+   * No provider-specific exit explanation by default. A provider whose CLI exits
+   * with an opaque non-zero code for a diagnosable, actionable reason (OpenCode's
+   * exit-64 ProviderModelNotFoundError on gateway model drift) overrides this to
+   * turn that code into a specific message surfaced to the user; returning
+   * `undefined` leaves the generic exit handling in place.
+   */
+  explainUnexpectedExit(_profile: LaunchProfileId, _exitCode: number, _recentText: string): string | undefined {
+    return undefined;
   }
 
   /** Build the command handed to the remote sshd, plus the resumable session id. */
@@ -232,7 +246,9 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
     const roleTarget = resolveRoleTarget(this, { config: input.config, persona: input.persona, projectSettings: input.projectSettings, perTabRouting: input.harnessRouting, profile: effectiveProfile, extraArgs: remoteExtra, scope: 'remote' });
     const execution = resolveExecutionState(this, { config: input.config, persona: input.persona, projectSettings: input.projectSettings, perTabRouting: input.harnessRouting, profile: effectiveProfile, extraArgs: remoteExtra, scope: 'remote' });
 
-    const argv = [remoteBinary, ...baseArgs, ...injectedArgs, ...(modelTarget.contribution.args || []), ...(roleTarget.contribution.args || []), ...(execution.contribution.args || []), ...remoteExtra];
+    // A native role pins its own model — drop any injected `--model` (see nativeRolePinsModel).
+    const suppressModelForRole = Boolean(roleTarget.targetId && this.nativeRolePinsModel);
+    const argv = [remoteBinary, ...baseArgs, ...injectedArgs, ...(suppressModelForRole ? [] : (modelTarget.contribution.args || [])), ...(roleTarget.contribution.args || []), ...(execution.contribution.args || []), ...remoteExtra];
     // cursor/codex don't take a launcher-injected `--session-id` in v1
     // (acceptsSessionId is false), so there's no resumable id to surface here.
     return { cmd: `${cdPrefix}exec ${shellQuoteArgv(argv)}` };

@@ -10,7 +10,7 @@ const CORS_HEADER_NAMES = [
 export function applyTrustedOriginCors(response: ServerResponse, origin: string): void {
   response.setHeader('Access-Control-Allow-Origin', origin);
   response.setHeader('Access-Control-Allow-Headers', 'content-type, x-zcc-app-surface');
-  response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PATCH, DELETE, OPTIONS');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS');
   response.setHeader('Vary', 'Origin');
 }
 
@@ -50,6 +50,15 @@ export function sendBytes(
 }
 
 export function sendNdjson(response: ServerResponse, events: unknown[]): void {
+  const stream = beginNdjson(response);
+  for (const event of events) stream.write(event);
+  stream.end();
+}
+
+export function beginNdjson(response: ServerResponse): {
+  write(event: unknown): void;
+  end(): void;
+} {
   response.writeHead(
     200,
     headersWithCors(response, {
@@ -58,10 +67,15 @@ export function sendNdjson(response: ServerResponse, events: unknown[]): void {
       'X-Content-Type-Options': 'nosniff'
     })
   );
-  for (const event of events) {
-    response.write(`${JSON.stringify(event)}\n`);
-  }
-  response.end();
+  response.flushHeaders();
+  return {
+    write(event) {
+      response.write(`${JSON.stringify(event)}\n`);
+    },
+    end() {
+      response.end();
+    }
+  };
 }
 
 export async function readJsonBody(request: IncomingMessage, limit = 1_000_000): Promise<unknown> {

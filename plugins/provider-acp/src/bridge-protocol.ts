@@ -19,6 +19,9 @@ import {
   turnStartParamsSchema as canonicalTurnStartParamsSchema,
   turnSteerParamsSchema as canonicalTurnSteerParamsSchema,
   skillsConfigureParamsSchema,
+  providerMaintenanceParamsSchema,
+  providerInstallationRunParamsSchema,
+  providerInstallationStatusParamsSchema,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { z } from "zod";
 import { acpSessionUpdateSchema, acpStopReasonSchema } from "./wire.js";
@@ -74,6 +77,22 @@ export const acpBridgeCommandSchema = z.discriminatedUnion("method", [
   z.object({
     method: z.literal("model/list"),
     params: acpModelListParamsSchema,
+  }),
+  z.object({
+    method: z.literal("provider/health"),
+    params: providerMaintenanceParamsSchema,
+  }),
+  z.object({
+    method: z.literal("provider/usage"),
+    params: providerMaintenanceParamsSchema,
+  }),
+  z.object({
+    method: z.literal("provider/installation/status"),
+    params: providerInstallationStatusParamsSchema,
+  }),
+  z.object({
+    method: z.literal("provider/installation/run"),
+    params: providerInstallationRunParamsSchema,
   }),
   z.object({
     method: z.literal("thread/start"),

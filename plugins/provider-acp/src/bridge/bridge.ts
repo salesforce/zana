@@ -16,6 +16,7 @@ import {
   pendingInteractionResolutionSchema,
   reasoningEffortsForLevels,
   type AvailableModel,
+  type DynamicTool,
   type PromptInput,
   type ReasoningLevel,
   hostDaemonAcpLaunchSpecSchema,
@@ -40,8 +41,14 @@ import {
   experimental_defineProviderBridge,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { execFile } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { promises as fs, readFileSync } from "node:fs";
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from "node:http";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,9 +78,30 @@ import {
 import { resolveAcpDialect } from "../dialect.js";
 import {
   buildAcpPermissionInteractionPayload,
+  extractAcpWritePaths,
+  isAcpFileChangePermission,
   resolveAcpPermissionDecision,
+  type AcpPermissionToolCall,
 } from "../interactions.js";
+import { isPlanAcpMode, isPlanArtifactWritePath } from "../plan-write-policy.js";
 import { acpProfileFromLaunchSpec, type AcpAgentProfile } from "../profiles.js";
+import {
+  approveCursorSessionMcpServer,
+  revokeCursorSessionMcpServer,
+  type CursorMcpApproval,
+} from "./cursor-mcp-approval.js";
+import {
+  getCursorProviderHealth,
+  getCursorProviderInstallationRun,
+  getCursorProviderInstallationStatus,
+  getCursorProviderUsage,
+  isCursorLaunchCommand,
+} from "./cursor-maintenance.js";
+import { getGenericAcpProviderHealth } from "./acp-health.js";
+import {
+  agentAdvertisesSessionFork,
+  narrowAcpForkCapability,
+} from "./fork-capability.js";
 import {
   buildAcpModelListParams,
   buildAcpSessionParams,
@@ -118,11 +146,15 @@ import {
   splitPrimaryModels,
   type AcpNativeReasoningSupport,
   type AgentModelCatalog,
+  findAcpModeConfigOption,
 } from "./model-catalog.js";
 import {
+  ACP_BRIDGE_MCP_SERVER_NAME,
   buildAcpMcpServerConfig,
+  buildAcpHttpMcpServerConfig,
   runAcpDynamicToolMcpServer,
   type AcpMcpServerConfig,
+  type AcpStdioMcpServerConfig,
 } from "./tool-proxy-mcp.js";
 
 // ---------------------------------------------------------------------------
@@ -169,6 +201,9 @@ interface AcpThreadSession {
   /** Resolves when the in-flight turn or maintenance prompt fully settles. */
   turnSettled: Promise<void> | undefined;
   pendingPermissions: Set<PendingAcpPermission>;
+  configOptions: readonly AcpConfigOption[] | undefined;
+  acpMode: string | undefined;
+  cursorMcpApproval: CursorMcpApproval | undefined;
 }
 
 const sessionsByBbThreadId = new Map<string, AcpThreadSession>();
@@ -179,6 +214,7 @@ const pendingRuntimeRequests = new Map<
 >();
 let runtimeRequestIdCounter = 0;
 let dynamicToolBridgePromise: Promise<AcpDynamicToolBridge> | null = null;
+const dynamicToolsByThreadId = new Map<string, readonly DynamicTool[]>();
 
 // Runtime waits on thread/stop until the agent settles the cancelled prompt or
 // this timeout forces disposal. Stop remains a best-effort success boundary.
@@ -318,13 +354,10 @@ function emitSessionError(session: AcpThreadSession, message: string): void {
 }
 
 function resolveBridgeProcessArgsForMcpServer(): string[] {
-  const entryPoint = process.argv[1]
-    ? resolve(process.argv[1])
-    : fileURLToPath(import.meta.url);
-  return [...process.execArgv, entryPoint, "--mcp-stdio"];
+  return [...process.execArgv, fileURLToPath(import.meta.url), "--mcp-stdio"];
 }
 
-function resolveBridgeProcessEnvForMcpServer(): AcpMcpServerConfig["env"] {
+function resolveBridgeProcessEnvForMcpServer(): AcpStdioMcpServerConfig["env"] {
   const electronRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
   if (electronRunAsNode === undefined) {
     return [];
@@ -350,6 +383,7 @@ async function forwardDynamicToolCall(args: {
   }
 
   try {
+    session.translator.noteInjectedToolCall(session.bbThreadId, args.tool);
     const result = await sendRuntimeRequest("item/tool/call", {
       providerThreadId: session.providerThreadId,
       threadId: session.bbThreadId,
@@ -400,6 +434,129 @@ function handleDynamicToolBridgeSocket(
   });
 }
 
+const MAX_PAYLOAD_SIZE_BYTES = 1_000_000;
+
+// The HTTP MCP transport must be as authenticated as the socket path: a thread
+// id in the URL is a routing key, not a secret, so a request that reaches the
+// loopback port with only a thread id could otherwise drive dynamic tools. We
+// require the same per-bridge token the socket path already checks, compared in
+// constant time so a bad token can't be discovered by timing.
+function isAuthorizedMcpHttpRequest(request: IncomingMessage, token: string): boolean {
+  const header = request.headers.authorization;
+  const value = Array.isArray(header) ? header[0] : header;
+  const match = value ? value.match(/^Bearer\s+(.+)$/i) : null;
+  const provided = match?.[1];
+  if (!provided) return false;
+  const providedBuf = Buffer.from(provided);
+  const expectedBuf = Buffer.from(token);
+  return providedBuf.length === expectedBuf.length && timingSafeEqual(providedBuf, expectedBuf);
+}
+
+function writeMcpHttpJson(response: ServerResponse, status: number, body?: unknown): void {
+  response.statusCode = status;
+  if (body === undefined) {
+    response.end();
+    return;
+  }
+  response.setHeader("content-type", "application/json");
+  response.end(JSON.stringify(body));
+}
+
+async function readMcpHttpBody(request: IncomingMessage): Promise<unknown> {
+  let body = "";
+  for await (const chunk of request) {
+    body += chunk.toString();
+    if (body.length > MAX_PAYLOAD_SIZE_BYTES) throw new Error("MCP request body too large");
+  }
+  return JSON.parse(body);
+}
+
+function dynamicToolMcpThreadId(request: IncomingMessage): string | undefined {
+  if (!request.url) return;
+  const match = /^\/mcp\/([^/?]+)$/.exec(new URL(request.url, "http://127.0.0.1").pathname);
+  if (!match?.[1]) return;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return;
+  }
+}
+
+async function handleDynamicToolMcpHttp(
+  request: IncomingMessage,
+  response: ServerResponse,
+  bridge: AcpDynamicToolBridge,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeMcpHttpJson(response, 405);
+    return;
+  }
+  if (!isAuthorizedMcpHttpRequest(request, bridge.token)) {
+    writeMcpHttpJson(response, 401, { error: "Unauthorized" });
+    return;
+  }
+  const threadId = dynamicToolMcpThreadId(request);
+  const tools = threadId ? dynamicToolsByThreadId.get(threadId) : undefined;
+  if (!threadId || !tools) {
+    writeMcpHttpJson(response, 404);
+    return;
+  }
+
+  let message: { id?: string | number; method?: string; params?: unknown };
+  try {
+    message = (await readMcpHttpBody(request)) as typeof message;
+  } catch {
+    writeMcpHttpJson(response, 400);
+    return;
+  }
+  if (message.id === undefined) {
+    writeMcpHttpJson(response, 202);
+    return;
+  }
+  const result = (value: unknown) =>
+    writeMcpHttpJson(response, 200, { jsonrpc: "2.0", id: message.id, result: value });
+  if (message.method === "initialize") {
+    result({
+      protocolVersion: "2025-03-26",
+      capabilities: { tools: {} },
+      serverInfo: { name: ACP_BRIDGE_MCP_SERVER_NAME, version: "1.0.0" },
+    });
+    return;
+  }
+  if (message.method === "tools/list") {
+    result({ tools });
+    return;
+  }
+  if (message.method === "tools/call") {
+    const params = message.params && typeof message.params === "object"
+      ? (message.params as { name?: unknown; arguments?: unknown })
+      : {};
+    const name = typeof params.name === "string" ? params.name : "";
+    if (!tools.some((tool) => tool.name === name)) {
+      result({ content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true });
+      return;
+    }
+    const toolArguments = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
+      ? (params.arguments as Record<string, unknown>)
+      : {};
+    const forwarded = await forwardDynamicToolCall({
+      arguments: toolArguments,
+      callId: `acp-mcp-${name}-${randomUUID()}`,
+      threadId,
+      tool: name,
+    });
+    result(forwarded.ok
+      ? { content: [{ type: "text", text: forwarded.content }], ...(forwarded.isError ? { isError: true } : {}) }
+      : { content: [{ type: "text", text: forwarded.error }], isError: true });
+    return;
+  }
+  writeMcpHttpJson(response, 200, {
+    jsonrpc: "2.0",
+    id: message.id,
+    error: { code: -32601, message: `Unsupported MCP method: ${message.method ?? ""}` },
+  });
+}
+
 async function ensureDynamicToolBridge(): Promise<AcpDynamicToolBridge> {
   if (dynamicToolBridgePromise) {
     return dynamicToolBridgePromise;
@@ -412,20 +569,46 @@ async function ensureDynamicToolBridge(): Promise<AcpDynamicToolBridge> {
         handleDynamicToolBridgeSocket(bridge, socket);
       });
     });
-    server.once("error", rejectBridge);
+    const httpServer = createHttpServer((request, response) => {
+      void dynamicToolBridgePromise
+        ?.then((bridge) => handleDynamicToolMcpHttp(request, response, bridge))
+        .catch((error) => {
+        if (!response.headersSent) {
+          writeMcpHttpJson(response, 500, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } else {
+          response.end();
+        }
+      });
+    });
+    const fail = (error: Error) => {
+      server.close();
+      httpServer.close();
+      rejectBridge(error);
+    };
+    server.once("error", fail);
+    httpServer.once("error", fail);
     server.listen(0, host, () => {
       const address = server.address();
       if (!address || typeof address === "string") {
-        rejectBridge(
-          new Error("ACP dynamic tool bridge did not bind a TCP port"),
-        );
+        fail(new Error("ACP dynamic tool bridge did not bind a TCP port"));
         return;
       }
-      resolveBridge({
-        host,
-        port: address.port,
-        server,
-        token: randomBytes(32).toString("hex"),
+      httpServer.listen(0, host, () => {
+        const httpAddress = httpServer.address();
+        if (!httpAddress || typeof httpAddress === "string") {
+          fail(new Error("ACP dynamic tool MCP server did not bind an HTTP port"));
+          return;
+        }
+        resolveBridge({
+          host,
+          httpPort: httpAddress.port,
+          httpServer,
+          port: address.port,
+          server,
+          token: randomBytes(32).toString("hex"),
+        });
       });
     });
   });
@@ -435,23 +618,33 @@ async function ensureDynamicToolBridge(): Promise<AcpDynamicToolBridge> {
 
 async function buildSessionMcpServers(
   params: AcpSessionParams,
+  supportsHttpMcp = false,
 ): Promise<AcpMcpServerConfig[]> {
   const dynamicTools = params.dynamicTools ?? [];
   if (dynamicTools.length === 0) {
     return [];
   }
   const bridge = await ensureDynamicToolBridge();
+  dynamicToolsByThreadId.set(params.threadId, dynamicTools);
+  if (!supportsHttpMcp) {
+    return [
+      buildAcpMcpServerConfig({
+        bridgeArgs: resolveBridgeProcessArgsForMcpServer(),
+        command: process.execPath,
+        dynamicTools,
+        host: bridge.host,
+        port: bridge.port,
+        runtimeEnv: resolveBridgeProcessEnvForMcpServer(),
+        threadId: params.threadId,
+        token: bridge.token,
+      }),
+    ];
+  }
   return [
-    buildAcpMcpServerConfig({
-      bridgeArgs: resolveBridgeProcessArgsForMcpServer(),
-      command: process.execPath,
-      dynamicTools,
-      host: bridge.host,
-      port: bridge.port,
-      runtimeEnv: resolveBridgeProcessEnvForMcpServer(),
-      threadId: params.threadId,
-      token: bridge.token,
-    }),
+    buildAcpHttpMcpServerConfig(
+      `http://${bridge.host}:${bridge.httpPort}/mcp/${encodeURIComponent(params.threadId)}`,
+      bridge.token,
+    ),
   ];
 }
 
@@ -687,6 +880,8 @@ function applyPermissionCliArgs(
 interface AcpDynamicToolBridge {
   host: string;
   port: number;
+  httpPort: number;
+  httpServer: HttpServer;
   server: Server;
   token: string;
 }
@@ -709,6 +904,7 @@ const SESSION_MODEL_DISCOVERY_TTL_MS = 60_000;
 let cachedSessionDiscoveredModels: {
   key: string;
   models: AvailableModel[];
+  acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
   fetchedAt: number;
 } | null = null;
 
@@ -716,15 +912,20 @@ function resolveAcpAuthMethodId(
   authMethods: readonly { id: string }[] | undefined,
   env: Record<string, string | undefined>,
 ): string | undefined {
-  // Grok is currently the only known ACP agent that advertises auth methods.
-  // Keep this preference local until another authenticated ACP provider needs
-  // a data-driven policy; cached_token is an ACP-side local-login flow.
   const methodIds = new Set((authMethods ?? []).map((method) => method.id));
   if (methodIds.size === 0) {
     return undefined;
   }
   if (env.XAI_API_KEY && methodIds.has("xai.api_key")) {
     return "xai.api_key";
+  }
+  // Codex ACP (`codex-acp`) advertises a generic `api-key` method and reads
+  // CODEX_API_KEY / OPENAI_API_KEY from the process environment.
+  if (
+    (env.CODEX_API_KEY || env.OPENAI_API_KEY) &&
+    methodIds.has("api-key")
+  ) {
+    return "api-key";
   }
   if (methodIds.has("cached_token")) {
     return "cached_token";
@@ -825,7 +1026,7 @@ async function loadSessionDiscoveredModels(
   agent: AcpBridgeAgentCommand,
   reasoningProbePriorityModelIds: readonly string[],
   parameterizedModelPicker: boolean,
-): Promise<AvailableModel[] | null> {
+): Promise<{ models: AvailableModel[]; acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> } } | null> {
   const key = JSON.stringify({
     agent,
     reasoningProbePriorityModelIds,
@@ -836,7 +1037,12 @@ async function loadSessionDiscoveredModels(
     Date.now() - cachedSessionDiscoveredModels.fetchedAt <
       SESSION_MODEL_DISCOVERY_TTL_MS
   ) {
-    return cachedSessionDiscoveredModels.models;
+    return {
+      models: cachedSessionDiscoveredModels.models,
+      ...(cachedSessionDiscoveredModels.acpMode
+        ? { acpMode: cachedSessionDiscoveredModels.acpMode }
+        : {}),
+    };
   }
 
   const childEnv = {
@@ -936,12 +1142,28 @@ async function loadSessionDiscoveredModels(
               newSession.models,
               reasoningByModel,
             );
+    const modeOption = findAcpModeConfigOption(newSession.configOptions);
+    const acpMode = modeOption?.options
+      ? {
+          ...(modeOption.currentValue !== undefined
+            ? { currentValue: modeOption.currentValue }
+            : {}),
+          options: modeOption.options.map((option) => ({
+            value: option.value,
+            ...(option.name !== undefined ? { name: option.name } : {}),
+          })),
+        }
+      : undefined;
     cachedSessionDiscoveredModels = {
       key,
       models,
+      ...(acpMode ? { acpMode } : {}),
       fetchedAt: Date.now(),
     };
-    return models;
+    return {
+      models,
+      ...(acpMode ? { acpMode } : {}),
+    };
   } catch (error) {
     process.stderr.write(
       `acp bridge: ACP-native model discovery for "${agent.command}" failed: ${
@@ -1316,6 +1538,36 @@ async function selectAcpNativeServiceTier(args: {
   });
 }
 
+async function selectAcpNativeMode(args: {
+  connection: AcpAgentConnection;
+  sessionId: string;
+  configOptions: readonly AcpConfigOption[] | undefined;
+  acpMode: string | undefined;
+}): Promise<readonly AcpConfigOption[] | undefined> {
+  if (args.acpMode === undefined) return args.configOptions;
+  const modeOption = findAcpModeConfigOption(args.configOptions);
+  if (
+    !modeOption?.options?.some((option) => option.value === args.acpMode) ||
+    modeOption.currentValue === args.acpMode
+  ) {
+    return args.configOptions;
+  }
+  try {
+    const configState = await args.connection.request({
+      method: "session/set_config_option",
+      params: {
+        sessionId: args.sessionId,
+        configId: modeOption.id,
+        value: args.acpMode,
+      },
+      resultSchema: acpConfigStateResultSchema,
+    });
+    return configState.configOptions ?? args.configOptions;
+  } catch {
+    return args.configOptions;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Prompt content
 // ---------------------------------------------------------------------------
@@ -1462,6 +1714,27 @@ function handlePermissionRequest(
     options: parsed.data.options,
   };
 
+  const rawToolCall = parsed.data.toolCall;
+  if (isPlanAcpMode(session.acpMode) && rawToolCall) {
+    const mapped: AcpPermissionToolCall = {
+      toolCallId: rawToolCall.toolCallId ?? "acp-permission",
+      ...(rawToolCall.title ? { title: rawToolCall.title } : {}),
+      ...(rawToolCall.kind ? { kind: rawToolCall.kind } : {}),
+      ...(rawToolCall.locations ? { locations: rawToolCall.locations } : {}),
+      ...(rawToolCall.content ? { content: rawToolCall.content } : {}),
+    };
+    if (isAcpFileChangePermission(mapped)) {
+      const paths = extractAcpWritePaths(mapped);
+      const allowed =
+        paths.length > 0 &&
+        paths.every((path) => isPlanArtifactWritePath(session.cwd, path));
+      if (!allowed) {
+        respondPermission(pending, "deny");
+        return;
+      }
+    }
+  }
+
   if (session.policy.permissionMode === "full") {
     respondPermission(pending, "allow_once");
     return;
@@ -1588,6 +1861,17 @@ async function handleFsWriteTextFile(
   }
 
   if (
+    isPlanAcpMode(session.acpMode) &&
+    !isPlanArtifactWritePath(session.cwd, parsed.data.path)
+  ) {
+    responder.error(
+      -32000,
+      `Plan mode only allows writes under .zcc/plans: ${parsed.data.path}`,
+    );
+    return;
+  }
+
+  if (
     session.policy.permissionMode === "accept-edits" &&
     !isPathInsideRoots(parsed.data.path, session.policy.workspaceWriteRoots)
   ) {
@@ -1629,6 +1913,7 @@ async function handleFsWriteTextFile(
 // ---------------------------------------------------------------------------
 
 function removeSession(session: AcpThreadSession): void {
+  dynamicToolsByThreadId.delete(session.bbThreadId);
   if (sessionsByBbThreadId.get(session.bbThreadId) === session) {
     sessionsByBbThreadId.delete(session.bbThreadId);
   }
@@ -1637,6 +1922,25 @@ function removeSession(session: AcpThreadSession): void {
     session.bbThreadId
   ) {
     bbThreadIdByProviderThreadId.delete(session.providerThreadId);
+  }
+}
+
+async function releaseCursorMcpApproval(
+  session: AcpThreadSession,
+): Promise<void> {
+  const approval = session.cursorMcpApproval;
+  session.cursorMcpApproval = undefined;
+  if (!approval) {
+    return;
+  }
+  try {
+    await revokeCursorSessionMcpServer(approval);
+  } catch (error) {
+    process.stderr.write(
+      `acp bridge: failed to remove Cursor session MCP approval for thread "${session.bbThreadId}": ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    );
   }
 }
 
@@ -1677,6 +1981,7 @@ async function startAgentSession(
     params.cwd,
     params.agent.command,
   );
+  translator.configureInjectedTools(params.dynamicTools ?? []);
   // Ordering guarantee: thread/identity precedes any thread/event for the
   // session, so pre-identity notifications are held and flushed after the
   // identity goes out.
@@ -1721,8 +2026,10 @@ async function startAgentSession(
       cancelPendingPermissions(session);
       removeSession(session);
       if (!wasCurrent || session.stopping) {
+        void releaseCursorMcpApproval(session);
         return;
       }
+      void releaseCursorMcpApproval(session);
       emitSessionError(
         session,
         `ACP agent "${agentLabel}" exited unexpectedly` +
@@ -1756,6 +2063,9 @@ async function startAgentSession(
     stopping: false,
     turnSettled: undefined,
     pendingPermissions: new Set(),
+    configOptions: undefined,
+    acpMode: params.acpMode,
+    cursorMcpApproval: undefined,
   };
 
   try {
@@ -1781,15 +2091,34 @@ async function startAgentSession(
     const supportsLoadSession =
       initializeResult.agentCapabilities?.loadSession ?? false;
     const supportsFork =
-      initializeResult.agentCapabilities?.sessionCapabilities?.fork != null;
+      narrowAcpForkCapability({
+        declared: "tip",
+        agentAdvertisesFork: agentAdvertisesSessionFork(initializeResult),
+      }) !== "none";
     if (request.kind === "fork" && !supportsFork) {
       throw new Error(
         `ACP agent "${agentLabel}" does not advertise session/fork support.`,
       );
     }
     session.supportsLoadSession = supportsLoadSession;
-    const mcpServers = await buildSessionMcpServers(params);
-
+    const mcpServers = await buildSessionMcpServers(
+      params,
+      initializeResult.agentCapabilities?.mcpCapabilities?.http === true,
+    );
+    const mcpServer = mcpServers[0];
+    if (mcpServer) {
+      session.cursorMcpApproval = await approveCursorSessionMcpServer({
+        agentCommand: params.agent.command,
+        config: mcpServer,
+        cwd: params.cwd,
+        env: childEnv,
+      });
+      if (session.cursorMcpApproval?.installedByBb) {
+        process.stderr.write(
+          `acp bridge: installed Cursor session MCP approval for thread "${bbThreadId}"\n`,
+        );
+      }
+    }
     let sessionId: string | undefined;
     let loadedConfigOptions: readonly AcpConfigOption[] | undefined;
     let loadedModels: AcpSessionModels | undefined;
@@ -1860,6 +2189,13 @@ async function startAgentSession(
         modelSelection: params.modelSelection,
         nativeReasoning: params.nativeReasoning,
       });
+      session.configOptions = newSession.configOptions;
+      session.configOptions = await selectAcpNativeMode({
+        connection,
+        sessionId,
+        configOptions: session.configOptions,
+        acpMode: params.acpMode,
+      });
       if (request.kind === "resume") {
         emitStartNotification(ACP_WARNING_METHOD, {
           threadId: bbThreadId,
@@ -1874,6 +2210,13 @@ async function startAgentSession(
         models: loadedModels,
         modelSelection: params.modelSelection,
         nativeReasoning: params.nativeReasoning,
+      });
+      session.configOptions = loadedConfigOptions;
+      session.configOptions = await selectAcpNativeMode({
+        connection,
+        sessionId,
+        configOptions: session.configOptions,
+        acpMode: params.acpMode,
       });
       const loadUsageUpdate = session.pendingLoadUsageUpdate;
       session.loading = false;
@@ -1905,6 +2248,7 @@ async function startAgentSession(
     session.stopping = true;
     connection.kill();
     removeSession(session);
+    await releaseCursorMcpApproval(session);
     throw error;
   }
 }
@@ -1933,6 +2277,7 @@ async function stopSession(session: AcpThreadSession): Promise<void> {
 
   session.connection.kill();
   removeSession(session);
+  await releaseCursorMcpApproval(session);
 }
 
 /**
@@ -1950,6 +2295,7 @@ function releaseSession(session: AcpThreadSession): void {
   cancelPendingPermissions(session);
   session.connection.kill();
   removeSession(session);
+  void releaseCursorMcpApproval(session);
 }
 
 // ---------------------------------------------------------------------------
@@ -2249,16 +2595,18 @@ async function handleModelList(
       )
     : null;
   if (sessionDiscoveredModels) {
-    sendResult(
-      id,
-      splitPrimaryModels(
-        applyConfiguredReasoningToModels(sessionDiscoveredModels, {
+    sendResult(id, {
+      ...splitPrimaryModels(
+        applyConfiguredReasoningToModels(sessionDiscoveredModels.models, {
           reasoningCli: params.reasoningCli,
           nativeReasoning: params.nativeReasoning,
         }),
         params.primaryModels,
       ),
-    );
+      ...(sessionDiscoveredModels.acpMode
+        ? { acpMode: sessionDiscoveredModels.acpMode }
+        : {}),
+    });
     return;
   }
   const catalog = params.listCommand
@@ -2364,6 +2712,50 @@ function decodeAdditionalWorkspaceWriteRoots(
   );
 }
 
+function isCursorMaintenanceTarget(params: {
+  providerId: string;
+  providerOptions?: Record<string, unknown>;
+}): boolean {
+  if (params.providerId === "acp-cursor" || params.providerId === "cursor") {
+    return true;
+  }
+  return isCursorLaunchCommand(
+    decodeLaunchProfile(params.providerOptions)?.agentCommand.command,
+  );
+}
+
+async function handleAcpProviderMaintenance(
+  request: Extract<
+    AcpBridgeCommand,
+    {
+      method:
+        | "provider/health"
+        | "provider/usage"
+        | "provider/installation/status"
+        | "provider/installation/run";
+    }
+  >,
+): Promise<unknown> {
+  if (isCursorMaintenanceTarget(request.params)) {
+    switch (request.method) {
+      case "provider/health":
+        return getCursorProviderHealth();
+      case "provider/usage":
+        return getCursorProviderUsage();
+      case "provider/installation/status":
+        return getCursorProviderInstallationStatus();
+      case "provider/installation/run":
+        return getCursorProviderInstallationRun(request.params.action);
+    }
+  }
+  if (request.method === "provider/health") {
+    return getGenericAcpProviderHealth(
+      decodeLaunchProfile(request.params.providerOptions)?.agentCommand.command ?? null,
+    );
+  }
+  return { supported: false };
+}
+
 async function handleRequest(
   request: AcpBridgeCommand & { id: string | number },
 ): Promise<void> {
@@ -2413,6 +2805,13 @@ async function handleRequest(
           decodeAcpModelPickerOptions(request.params.providerOptions),
         ),
       );
+      return;
+
+    case "provider/health":
+    case "provider/usage":
+    case "provider/installation/status":
+    case "provider/installation/run":
+      sendResult(request.id, await handleAcpProviderMaintenance(request));
       return;
 
     case "thread/start":
@@ -2503,6 +2902,17 @@ async function handleRequest(
       sendThreadDeltas(session.bbThreadId, [
         { kind: "input.accepted", clientRequestId: params.clientRequestId },
       ]);
+      const requestedMode =
+        typeof params.options.providerOptions?.acpMode === "string"
+          ? params.options.providerOptions.acpMode
+          : undefined;
+      session.configOptions = await selectAcpNativeMode({
+        connection: session.connection,
+        sessionId: session.providerThreadId,
+        configOptions: session.configOptions,
+        acpMode: requestedMode,
+      });
+      session.acpMode = requestedMode;
       // A standalone builtin `/compact` mention is bb's manual-compaction
       // request, not model input: it runs the agent's own compaction command
       // instead of becoming a prompt.
@@ -2625,6 +3035,13 @@ async function stopAllSessions(): Promise<void> {
       return;
     }
     dynamicToolBridge.server.close(() => resolveClose());
+  });
+  await new Promise<void>((resolveClose) => {
+    if (!dynamicToolBridge) {
+      resolveClose();
+      return;
+    }
+    dynamicToolBridge.httpServer.close(() => resolveClose());
   });
 }
 

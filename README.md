@@ -1,8 +1,8 @@
 # Zana
 
 <p align="center">
-  <a href="https://zcc-7808c5bc8f3d.herokuapp.com/">
-    <img alt="Website and docs" src="https://img.shields.io/badge/Website-zcc--7808c5bc8f3d.herokuapp.com-2f81f7?style=for-the-badge">
+  <a href="https://zana-ide.com/">
+    <img alt="Website and docs" src="https://img.shields.io/badge/Website-zana--ide.com-2f81f7?style=for-the-badge">
   </a>
   <a href="https://github.com/salesforce/zana/releases/latest">
     <img alt="Download the latest Zana release" src="https://img.shields.io/badge/Download-Latest_Release-2ea44f?style=for-the-badge">
@@ -27,7 +27,9 @@ ways to operate the same workspace.
 > supported coding-agent CLI on your `PATH`.
 
 <p align="center">
-  <img alt="Zana Agents board showing a multi-agent workspace" src="docs/assets/screenshot-agents-board.gif" width="100%">
+  <a href="https://zana-ide.com/">
+    <img alt="Zana Command Center product tour — New Chat, Agents board, and Thread" src="docs/assets/product-demo.gif" width="100%">
+  </a>
 </p>
 
 ## Use Zana
@@ -36,7 +38,7 @@ ways to operate the same workspace.
 
 Docs, download, plugin marketplace, and pairing live on the public site:
 
-**[https://zcc-7808c5bc8f3d.herokuapp.com/](https://zcc-7808c5bc8f3d.herokuapp.com/)**
+**[https://zana-ide.com/](https://zana-ide.com/)**
 
 ### Download the desktop app
 
@@ -58,8 +60,30 @@ pnpm run rebuild
 pnpm dev
 ```
 
-`pnpm dev` launches the Electron development app. The pre-dev step builds the
-`zcc` CLI and seeds bundled plugins automatically.
+`pnpm dev` launches the Electron development app against an isolated data
+dir (`~/.zcc-dev`) and product port (`8781`) so it can run beside the
+installed app, which keeps `~/.zcc`. The pre-dev step builds the `zcc` CLI
+and seeds bundled plugins automatically.
+
+Swap the unpackaged app onto the packaged workspace (exclusive — quit the
+installed Zana app first; only one host-daemon may own `~/.zcc`):
+
+```bash
+pnpm dev:prod
+```
+
+That is `~/.zcc` on port `8780`. Switch back with `pnpm dev`. Do not run
+`pnpm dev --prod` — that is pnpm's production-deps flag; use `pnpm dev:prod`
+or `pnpm dev -- --packaged`.
+
+To drive the isolated DEV app from the CLI:
+
+```bash
+ZCC_DATA_DIR="$HOME/.zcc-dev" ZCC_SERVER_URL=http://127.0.0.1:8781 zcc …
+```
+
+Plain `zcc` talks to the packaged app (`~/.zcc`, port `8780`), including
+while `pnpm dev:prod` is running.
 
 ## The Operating Loop
 
@@ -151,7 +175,7 @@ environments it already uses.
 
 ## Further Reading
 
-- [Public website](https://zcc-7808c5bc8f3d.herokuapp.com/) — docs, download, marketplace.
+- [Public website](https://zana-ide.com/) — docs, download, marketplace.
 - [Getting started](docs/getting-started.md) for the first project-to-agent loop.
 - [Using Zana](docs/using-zana.md) for the day-to-day Inbox, Agents, Teams, and Scheduler workflows.
 - [Plugin authoring](docs/extensions-authoring.md) for `package.json` `zcc`, `definePluginApp`, and `ZccPluginApi`.

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
@@ -6,6 +6,7 @@ import {
   reloadThreadModelCatalog,
   reloadThreadProviderModels,
   resetThreadModelCatalog,
+  setThreadModelCatalogHost,
   type ThreadExecutionOptionsFetcher
 } from './thread-model-catalog.js';
 
@@ -175,6 +176,36 @@ describe('thread model catalog', () => {
     expect(getThreadModelCatalog().byProvider.codex?.models[0]?.model).toBe('codex-model');
   });
 
+  it('stores session-advertised ACP modes verbatim and refreshes them with the provider', async () => {
+    let load = 0;
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      load += 1;
+      const body = optionsBody(['acp-cursor'], query?.providerId ?? 'roster');
+      return {
+        ...body,
+        acpMode: {
+          currentValue: load < 3 ? 'build' : 'review',
+          options: load < 3
+            ? [{ value: 'build', name: 'Build' }, { value: 'plan', name: 'Plan' }]
+            : [{ value: 'review', name: 'Review changes' }]
+        }
+      };
+    };
+    resetThreadModelCatalog(fetcher);
+
+    await prefetchThreadModelCatalog();
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.acpMode).toEqual({
+      currentValue: 'build',
+      options: [{ value: 'build', name: 'Build' }, { value: 'plan', name: 'Plan' }]
+    });
+
+    await reloadThreadProviderModels('acp-cursor');
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.acpMode).toEqual({
+      currentValue: 'review',
+      options: [{ value: 'review', name: 'Review changes' }]
+    });
+  });
+
   it('shares an in-flight reload instead of starting a second fetch', async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => {
@@ -221,5 +252,73 @@ describe('thread model catalog', () => {
     release();
     await first;
     expect(getThreadModelCatalog().byProvider.codex).toBeDefined();
+  });
+
+  it('refills after reload wipes an in-flight provider fetch', async () => {
+    let releaseClaude: () => void = () => undefined;
+    const claudeGate = new Promise<void>((resolve) => {
+      releaseClaude = resolve;
+    });
+    let claudeFetches = 0;
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      if (query?.providerId === 'claude-code') {
+        claudeFetches += 1;
+        if (claudeFetches === 1) await claudeGate;
+      }
+      return optionsBody(['claude-code'], query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+    const first = prefetchThreadModelCatalog();
+    await vi.waitFor(() => expect(claudeFetches).toBe(1));
+    const reloaded = reloadThreadModelCatalog();
+    expect(getThreadModelCatalog().byProvider['claude-code']).toBeUndefined();
+    releaseClaude();
+    await reloaded;
+    await vi.waitFor(() => {
+      expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+    });
+    expect(claudeFetches).toBeGreaterThanOrEqual(2);
+  });
+
+  it('refills when reload races prefetch settle', async () => {
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => (
+      optionsBody(['claude-code'], query?.providerId ?? 'roster')
+    );
+    resetThreadModelCatalog(fetcher);
+    const first = prefetchThreadModelCatalog();
+    queueMicrotask(() => {
+      void reloadThreadModelCatalog();
+    });
+    await first;
+    await vi.waitFor(() => {
+      expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+    });
+  });
+
+  it('passes hostId on every fetch and drops the old roster when the machine changes', async () => {
+    const calls: Array<{ providerId?: string; hostId?: string }> = [];
+    let roster = ['claude-code', 'acp-opencode'];
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      calls.push({ providerId: query?.providerId, hostId: query?.hostId });
+      return optionsBody(roster, query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+
+    await setThreadModelCatalogHost('sfwork');
+    expect(calls.some((call) => call.hostId === 'sfwork' && call.providerId === undefined)).toBe(true);
+    expect(calls.filter((call) => call.providerId).every((call) => call.hostId === 'sfwork')).toBe(true);
+    expect(getThreadModelCatalog().byProvider['acp-opencode']?.models[0]?.model).toBe('acp-opencode-model');
+
+    roster = ['claude-code'];
+    calls.length = 0;
+    await setThreadModelCatalogHost('other-host');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.hostId === 'other-host')).toBe(true);
+    expect(getThreadModelCatalog().byProvider['acp-opencode']).toBeUndefined();
+    expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+
+    calls.length = 0;
+    await setThreadModelCatalogHost('other-host');
+    expect(calls).toEqual([{ providerId: undefined, hostId: 'other-host' }]);
   });
 });

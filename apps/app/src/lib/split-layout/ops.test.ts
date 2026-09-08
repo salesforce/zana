@@ -3,16 +3,19 @@ import {
   MAX_PANES,
   countPanes,
   findPane,
+  findPaneByContent,
   findPaneByThread,
   listPanes,
   movePane,
   normalize,
+  paneContentEquals,
   removePane,
   replacePaneContent,
   resizeSplit,
   setFocus,
   splitPane,
-  swapPanes
+  swapPanes,
+  openEmptySplitPane
 } from './ops.js';
 import type { PaneContent, PaneNode, SplitLayout } from './types.js';
 
@@ -105,6 +108,62 @@ describe('split layout operations', () => {
     expect(eight.focusedPaneId).toBe('pane-8');
     expect(rejected).toBe(eight);
     expect(findPaneByThread(two.root, 'project-2', 'thread-2')?.paneId).toBe('pane-2');
+    expect(
+      findPaneByContent(two.root, { kind: 'thread', projectId: 'project-2', threadId: 'thread-2' })?.paneId
+    ).toBe('pane-2');
+  });
+
+  it('matches a schedule pane by schedule id across project ids', () => {
+    const schedule: PaneContent = { kind: 'schedule', projectId: 'p1', scheduleId: 'sched-1' };
+    const layout = splitPane(singlePaneLayout(), 'pane-1', 'right', schedule);
+    expect(findPaneByContent(layout.root, schedule)?.paneId).toBe('pane-2');
+    expect(
+      findPaneByContent(layout.root, { kind: 'schedule', projectId: null, scheduleId: 'sched-1' })?.paneId
+    ).toBe('pane-2');
+    expect(
+      paneContentEquals(schedule, { kind: 'schedule', projectId: null, scheduleId: 'sched-1' })
+    ).toBe(false);
+    expect(paneContentEquals({ kind: 'scheduler' }, { kind: 'scheduler', projectId: 'p1' })).toBe(true);
+  });
+
+  it('matches an agent-session pane by session id across project ids', () => {
+    const session: PaneContent = { kind: 'agent-session', projectId: 'p1', sessionId: 's1' };
+    const layout = splitPane(singlePaneLayout(), 'pane-1', 'right', session);
+    expect(findPaneByContent(layout.root, session)?.paneId).toBe('pane-2');
+    expect(
+      findPaneByContent(layout.root, { kind: 'agent-session', projectId: null, sessionId: 's1' })?.paneId
+    ).toBe('pane-2');
+    expect(
+      findPaneByContent(layout.root, { kind: 'agent-session', projectId: 'p1', sessionId: 'other' })
+    ).toBeNull();
+    expect(paneContentEquals(session, { kind: 'agent-session', projectId: null, sessionId: 's1' })).toBe(
+      false
+    );
+  });
+
+  it('matches a project-view pane by project id and mode', () => {
+    const explorer: PaneContent = { kind: 'project-view', projectId: 'p1', mode: 'explorer' };
+    const layout = splitPane(singlePaneLayout(), 'pane-1', 'right', explorer);
+    expect(findPaneByContent(layout.root, explorer)?.paneId).toBe('pane-2');
+    expect(
+      findPaneByContent(layout.root, { kind: 'project-view', projectId: 'p1', mode: 'terminals' })
+    ).toBeNull();
+    expect(
+      paneContentEquals(explorer, { kind: 'project-view', projectId: 'p1', mode: 'explorer' })
+    ).toBe(true);
+    expect(
+      paneContentEquals(explorer, { kind: 'project-view', projectId: 'p2', mode: 'explorer' })
+    ).toBe(false);
+  });
+
+  it('does not clone a layout when replacePaneContent is a no-op', () => {
+    const session: PaneContent = { kind: 'agent-session', projectId: null, sessionId: 's1' };
+    const layout: SplitLayout = {
+      root: { type: 'pane', paneId: 'pane-1', content: session },
+      focusedPaneId: 'pane-1'
+    };
+    expect(replacePaneContent(layout, 'pane-1', session)).toBe(layout);
+    expect(setFocus(layout, 'pane-1')).toBe(layout);
   });
 
   it('replaces and swaps content while applying the reference focus semantics', () => {
@@ -236,5 +295,25 @@ describe('split layout operations', () => {
     expect(normalized.focusedPaneId).toBe('pane-1');
     expectNormalizedSizes(normalized);
     expectValidFocus(normalized);
+  });
+
+  it('treats empty panes as equal and reuses one drop well', () => {
+    expect(paneContentEquals({ kind: 'empty' }, { kind: 'empty' })).toBe(true);
+    const seeded = singlePaneLayout();
+    const opened = openEmptySplitPane(seeded);
+    expect(countPanes(opened.root)).toBe(2);
+    expect(findPaneByContent(opened.root, { kind: 'empty' })?.paneId).toBe(opened.focusedPaneId);
+    expect(openEmptySplitPane(opened)).toBe(opened);
+    const unfocused = setFocus(opened, 'pane-1');
+    expect(openEmptySplitPane(unfocused).focusedPaneId).toBe(opened.focusedPaneId);
+  });
+
+  it('does not add an empty pane at the cap when none exists', () => {
+    const eight = layoutAtPaneCount(MAX_PANES);
+    expect(openEmptySplitPane(eight)).toBe(eight);
+    const withEmpty = replacePaneContent(eight, 'pane-8', { kind: 'empty' });
+    const focused = openEmptySplitPane(setFocus(withEmpty, 'pane-1'));
+    expect(countPanes(focused.root)).toBe(MAX_PANES);
+    expect(focused.focusedPaneId).toBe('pane-8');
   });
 });

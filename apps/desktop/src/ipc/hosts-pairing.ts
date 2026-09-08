@@ -2,6 +2,7 @@ import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { productServerUrl } from '../window/renderer-url.js';
 import { resolvePublicAppUrl } from '@zana-ai/zcc-server/http/public-app-url';
+import { store } from '@zana-ai/zcc-server/services/projects/store';
 import {
   authorizeSshPairing,
   sshPairingSession
@@ -28,7 +29,9 @@ export function registerHostsPairingIpc(): void {
     (req: unknown): { ok: true } | { ok: false; message: string } => {
       const authorized = authorizeSshPairing(req, {
         localServerUrl: productServerUrl(),
-        publicServerUrl: resolvePublicAppUrl() ?? null
+        publicServerUrl: resolvePublicAppUrl({
+          configUrl: store.getConfig().publicAppUrl
+        }) ?? null
       });
       if (!authorized.ok) return authorized;
       try {

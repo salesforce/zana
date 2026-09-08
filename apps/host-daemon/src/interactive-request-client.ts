@@ -5,6 +5,7 @@ import {
   type HostDaemonInteractiveInterruptRequest,
   type HostDaemonInteractiveRequestResponse
 } from '@zana-ai/zcc-host-daemon-contract';
+import { joinServerUrl } from './server-url.js';
 
 const REGISTER_ATTEMPTS = 5;
 
@@ -34,10 +35,6 @@ export function createInteractiveRequestHttpClient(options: {
 }): InteractiveRequestHttpClient {
   const fetchFn = options.fetchFn ?? fetch;
 
-  function url(path: string): string {
-    return new URL(path, options.serverUrl.endsWith('/') ? options.serverUrl : `${options.serverUrl}/`).toString();
-  }
-
   function headers(): Record<string, string> {
     return {
       authorization: `Bearer ${options.hostKey}`,
@@ -51,7 +48,7 @@ export function createInteractiveRequestHttpClient(options: {
       let lastError: Error = new Error('interactive request registration failed');
       for (let attempt = 0; attempt < REGISTER_ATTEMPTS; attempt += 1) {
         try {
-          const response = await fetchFn(url('internal/hosts/interactive-request'), {
+          const response = await fetchFn(joinServerUrl(options.serverUrl, '/internal/hosts/interactive-request').href, {
             method: 'POST',
             headers: headers(),
             body: JSON.stringify({ sessionId: options.sessionId, interaction: request })
@@ -84,7 +81,7 @@ export function createInteractiveRequestHttpClient(options: {
         reason: args.reason
       };
       try {
-        const response = await fetchFn(url('internal/hosts/interactive-request/interrupt'), {
+        const response = await fetchFn(joinServerUrl(options.serverUrl, '/internal/hosts/interactive-request/interrupt').href, {
           method: 'POST',
           headers: headers(),
           body: JSON.stringify(payload)

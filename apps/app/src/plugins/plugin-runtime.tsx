@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ComponentType } from 'react';
+import { lazy, Suspense, useContext, useEffect, useMemo, useState, type ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
   PluginComposerApi,
   PluginSdkApp,
   PluginSettingsState,
+  ThreadChatProps,
   ZccNavigate
 } from '@zana-ai/zcc-plugin-sdk/app';
 import { callPluginRpc, getPluginSettings } from '@zana-ai/zcc-plugin-sdk/app';
@@ -17,8 +18,8 @@ import {
   NEW_THREAD_ROUTE_PATH
 } from '../lib/route-paths.js';
 import { appNavigate } from '../lib/app-navigate.js';
-import { hrefForPluginNavPanel } from './plugin-nav-href.js';
-import { getActiveComposerApi } from './plugin-composer-api.js';
+import { hrefForPluginNavPanel, hrefForPluginProjectTab } from './plugin-nav-href.js';
+import { ComposerViewContext, getActiveComposerApi, getActiveComposerView, setPluginLaunchPatch } from './plugin-composer-api.js';
 import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
 import { openPluginThreadPanel } from './plugin-thread-panel.js';
 
@@ -79,8 +80,11 @@ function useZccNavigateImpl(): ZccNavigate {
       toThread(threadId: string) {
         void navigate(getThreadRoutePath(threadId));
       },
-      toProject(projectId: string) {
-        void navigate(getProjectRoutePath(projectId));
+      toProject(projectId: string, options?: { tabId?: string }) {
+        const to = options?.tabId
+          ? hrefForPluginProjectTab(pluginId, projectId, options.tabId)
+          : getProjectRoutePath(projectId);
+        void navigate(to);
       },
       toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }) {
         const to = hrefForPluginNavPanel(pluginId, path, options?.subPath);
@@ -117,14 +121,21 @@ const composerFallback: PluginComposerApi = {
   setInputLock() {},
   addQuote() {},
   insertMention() {},
-  focus() {}
+  focus() {},
+  experimental_setLaunchPatch() {}
 };
 
-function ThreadChatImpl({ threadId, className }: { threadId: string; className?: string }) {
+function ThreadChatImpl(props: ThreadChatProps) {
   return (
-    <div className={className} data-testid="plugin-thread-chat">
+    <div className={props.className} data-testid="plugin-thread-chat">
       <Suspense fallback={null}>
-        <ThreadDetailLazy threadId={threadId} embedded />
+        <ThreadDetailLazy
+          threadId={props.threadId}
+          embedded
+          leadingContent={props.leadingContent}
+          messageActions={props.messageActions}
+          includePluginMessageActions={props.includePluginMessageActions ?? false}
+        />
       </Suspense>
     </div>
   );
@@ -163,8 +174,17 @@ export function installPluginRuntime(): void {
     useSettings: useSettingsImpl,
     useZccContext: useZccContextImpl,
     useZccNavigate: useZccNavigateImpl,
-    useComposer: () => getActiveComposerApi() ?? composerFallback,
-    useComposerView: () => ({
+    useComposer: () => {
+      const { pluginId } = usePluginRuntimeContext();
+      const api = getActiveComposerApi() ?? composerFallback;
+      return {
+        ...api,
+        experimental_setLaunchPatch(patch) {
+          setPluginLaunchPatch(pluginId, patch);
+        }
+      };
+    },
+    useComposerView: () => useContext(ComposerViewContext) ?? getActiveComposerView() ?? {
       scope: getActiveComposerApi()?.scope ?? { kind: 'new-thread', projectId: null },
       layout: 'expanded',
       draft: {
@@ -173,7 +193,7 @@ export function installPluginRuntime(): void {
         attachmentCount: 0
       },
       run: { isRunning: false, isSubmitting: false }
-    }),
+    },
     experimental_useSidebarThreads: () => {
       const threads = useThreads.getState().threads.map((thread) => ({
         id: thread.id,
@@ -192,7 +212,7 @@ export function installPluginRuntime(): void {
     }),
     experimental_useSidebarThreadPullRequest: () => ({ isLoading: false, pullRequest: null }),
     experimental_useSidebarThreadSplit: () => ({ isAvailable: false, splitProps: {}, layout: null }),
-    ThreadChat: ThreadChatImpl as ComponentType<{ threadId: string }>,
+    ThreadChat: ThreadChatImpl,
     Markdown: MarkdownImpl as ComponentType<{ content: string; className?: string }>,
     experimental_NewThreadComposer: NewThreadComposerImpl as never,
     toast: (message, kind = 'info') => {

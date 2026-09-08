@@ -3,6 +3,8 @@ import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import { AgentforceSchema } from '@sf-agentscript/agentforce';
 import { registerAgentScriptLanguage, type SchemaFieldInfo } from '@sf-agentscript/monaco';
 import type { AgentScriptDiagnostic } from '../../lib/agent-script-model.js';
+import { queryAgentScriptLsp } from '../../lib/agent-script-lsp.js';
+import type { AgentScriptDialect } from '../../lib/types.js';
 
 const globalScope = self as unknown as { MonacoEnvironment?: { getWorker(): Worker } };
 globalScope.MonacoEnvironment = {
@@ -11,45 +13,90 @@ globalScope.MonacoEnvironment = {
   }
 };
 
-const SCHEMA_KEYS = Object.keys(AgentforceSchema);
-const EXTRA_KEYWORDS = [
-  'topic',
-  'start_agent',
-  'subagent',
-  'transition',
-  'reasoning',
-  'description',
-  'instructions',
-  'config',
-  'system',
-  'variables',
-  'actions',
-  'run',
-  'if',
-  'else'
-];
-
 let registered = false;
+let dialectForLsp: AgentScriptDialect = 'agentforce';
 
-function registerCompletions(): void {
+export function setAgentScriptLspDialect(dialect: AgentScriptDialect): void {
+  dialectForLsp = dialect;
+}
+
+function lspRangeToMonaco(range: { start: { line: number; column: number }; end: { line: number; column: number } }): monaco.IRange {
+  return {
+    startLineNumber: range.start.line + 1,
+    startColumn: range.start.column + 1,
+    endLineNumber: range.end.line + 1,
+    endColumn: Math.max(range.end.column + 1, range.start.column + 2)
+  };
+}
+
+function wordRange(model: monaco.editor.ITextModel, position: monaco.Position): monaco.IRange {
+  const word = model.getWordUntilPosition(position);
+  return {
+    startLineNumber: position.lineNumber,
+    endLineNumber: position.lineNumber,
+    startColumn: word.startColumn,
+    endColumn: word.endColumn
+  };
+}
+
+function registerLspProviders(): void {
   monaco.languages.registerCompletionItemProvider('agentscript', {
-    triggerCharacters: ['@', '.', ' ', ':'],
+    triggerCharacters: ['@', '.', ' ', ':', '#'],
     provideCompletionItems(model, position) {
-      const word = model.getWordUntilPosition(position);
-      const range = {
-        startLineNumber: position.lineNumber,
-        endLineNumber: position.lineNumber,
-        startColumn: word.startColumn,
-        endColumn: word.endColumn
-      };
-      const labels = [...new Set([...SCHEMA_KEYS, ...EXTRA_KEYWORDS])];
+      const queried = queryAgentScriptLsp({
+        source: model.getValue(),
+        dialect: dialectForLsp,
+        query: 'complete',
+        line: position.lineNumber - 1,
+        column: position.column - 1
+      });
+      const range = wordRange(model, position);
+      const completions = queried.ok ? queried.result.completions ?? [] : [];
       return {
-        suggestions: labels.map((label) => ({
-          label,
-          kind: monaco.languages.CompletionItemKind.Keyword,
-          insertText: label,
+        suggestions: completions.map((item) => ({
+          label: item.label,
+          kind:
+            typeof item.kind === 'number'
+              ? (item.kind as monaco.languages.CompletionItemKind)
+              : monaco.languages.CompletionItemKind.Field,
+          insertText: item.insertText ?? item.label,
+          detail: item.detail,
           range
         }))
+      };
+    }
+  });
+
+  monaco.languages.registerHoverProvider('agentscript', {
+    provideHover(model, position) {
+      const queried = queryAgentScriptLsp({
+        source: model.getValue(),
+        dialect: dialectForLsp,
+        query: 'hover',
+        line: position.lineNumber - 1,
+        column: position.column - 1
+      });
+      if (!queried.ok || !queried.result.hover) return null;
+      return {
+        contents: [{ value: queried.result.hover }],
+        ...(queried.result.range ? { range: lspRangeToMonaco(queried.result.range) } : {})
+      };
+    }
+  });
+
+  monaco.languages.registerDefinitionProvider('agentscript', {
+    provideDefinition(model, position) {
+      const queried = queryAgentScriptLsp({
+        source: model.getValue(),
+        dialect: dialectForLsp,
+        query: 'definition',
+        line: position.lineNumber - 1,
+        column: position.column - 1
+      });
+      if (!queried.ok || !queried.result.definition) return null;
+      return {
+        uri: model.uri,
+        range: lspRangeToMonaco(queried.result.definition)
       };
     }
   });
@@ -58,12 +105,10 @@ function registerCompletions(): void {
 export function ensureAgentScriptMonaco(): typeof monaco {
   if (!registered) {
     registered = true;
-    // Standalone Monaco: highlighting + hover come from @sf-agentscript/monaco.
-    // Full lsp-browser needs monaco-vscode-api; keyword completions cover the iframe IDE.
     void registerAgentScriptLanguage({
       schema: AgentforceSchema as unknown as Record<string, SchemaFieldInfo>
     });
-    registerCompletions();
+    registerLspProviders();
   }
   return monaco;
 }

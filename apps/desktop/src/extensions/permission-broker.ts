@@ -85,10 +85,11 @@ export type GrantProvider = (moduleId: string) => ExtensionGrant | null;
  */
 export function sensitiveRoots(): string[] {
   const home = homedir();
-  return [
+  const roots = [
     realpathOrSelf(resolve(home, '.ssh')),
     realpathOrSelf(resolve(home, '.aws')),
     realpathOrSelf(resolve(home, '.zcc')),
+    realpathOrSelf(resolve(home, '.zcc-dev')),
     // Provider auth/session caches (0.4): a coding-agent CLI stores credentials
     // and transcripts here, none covered by the three above. `~/.codex` holds
     // OpenAI Codex's `auth.json`; `~/.config/gcloud` holds Google's OAuth
@@ -102,6 +103,12 @@ export function sensitiveRoots(): string[] {
     realpathOrSelf(resolve(home, '.config', 'gcloud')),
     realpathOrSelf(resolve(home, '.claude', 'sessions'))
   ];
+  const extra = process.env.ZCC_DATA_DIR?.trim();
+  if (extra) {
+    const real = realpathOrSelf(resolve(extra));
+    if (!roots.includes(real)) roots.push(real);
+  }
+  return roots;
 }
 
 export interface AuditEntry {

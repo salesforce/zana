@@ -8,11 +8,17 @@ import {
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { HomeView } from '../home/HomeView.js';
+import { InboxView } from '../inbox/InboxView.js';
 import { AgentsView } from '../agents/AgentsView.js';
+import { AgentSessionPage } from '../agents/AgentSessionPage.js';
 import { NewThreadView } from '../threads/NewThreadView.js';
 import { ThreadDetail } from '../threads/ThreadDetailView.js';
-import { useData } from '../../store.js';
+import { SchedulerView } from '../scheduler/SchedulerView.js';
+import { ScheduleDetailPage } from '../scheduler/ScheduleDetailPage.js';
+import { useRouteState } from '../../hooks/useRouteState.js';
 import { useIsCompactViewport } from '../../hooks/useIsCompactViewport.js';
+import { useData, useUi } from '../../store.js';
+import { getScopedProjectId } from '../../lib/windowScope.js';
 import {
   beginSplitDrag,
   decidePaneDrop,
@@ -34,23 +40,26 @@ import {
   type PaneContent,
   type PaneNode,
   type SplitLayout,
+  splitLayoutScopeKey,
   type SplitPath,
   type SplitSide
 } from '../../lib/split-layout/index.js';
 import { useSplitWorkspace } from '../../lib/split-layout/store.js';
 import {
   focusedPaneRoute,
+  paneContentForPathname,
   paneContentRoute,
   reconcileLayoutForContent
 } from '../../lib/split-layout/splitThreadNavigation.js';
 import {
-  createPaneSecondaryPanelRegistry,
   PaneContextProvider,
   usePaneContextValue,
   type PaneSecondaryPanelRegistry
 } from './PaneContext.js';
 import { PluginPanelPaneView } from './PluginPanelPaneView.js';
-import { SplitWorkspaceSecondaryPanelHost } from './SplitWorkspaceSecondaryPanelHost.js';
+import { SplitPaneBar } from './SplitPaneBar.js';
+import { paneUsesHostBar } from './split-pane-bar-title.js';
+import { ProjectModePane } from '../project/ProjectModePane.js';
 
 const EMPTY_PATH: SplitPath = [];
 const PANE_DRAG_ENGAGE_DISTANCE_PX = 8;
@@ -61,26 +70,54 @@ type BeginPaneDrag = (paneId: string, event: ReactPointerEvent, label: string) =
 export function SplitThreadArea({ routeContent }: { routeContent: PaneContent }) {
   const navigate = useNavigate();
   const isCompact = useIsCompactViewport();
-  const layout = useSplitWorkspace((s) => s.layout);
+  const route = useRouteState();
+  const storeFocusedProjectId = useUi((s) => s.focusedProjectId);
+  const focusedProjectId = route.focusedProjectId ?? storeFocusedProjectId;
+  const scopeKey = splitLayoutScopeKey({
+    scopedProjectId: getScopedProjectId(),
+    nav: route.nav,
+    focusedProjectId
+  });
+  const storedScopeKey = useSplitWorkspace((s) => s.scopeKey);
+  const layoutFromStore = useSplitWorkspace((s) => s.layout);
   const setLayout = useSplitWorkspace((s) => s.setLayout);
   const updateLayout = useSplitWorkspace((s) => s.updateLayout);
   const dimsInactiveSplits = useSplitWorkspace((s) => s.dimInactiveSplits);
   const maximizedPaneId = useSplitWorkspace((s) => s.maximizedPaneId);
   const setMaximizedPaneIdAtom = useSplitWorkspace((s) => s.setMaximizedPaneId);
-  const secondaryPanelRegistry = useMemo(() => createPaneSecondaryPanelRegistry(), []);
+  const routeKey = paneContentRoute(routeContent);
+
+  // Activate before reconcile so a project route never writes into the global tree.
+  if (storedScopeKey !== scopeKey) {
+    useSplitWorkspace.getState().activateScope(scopeKey);
+  }
+  const layout =
+    storedScopeKey === scopeKey ? layoutFromStore : useSplitWorkspace.getState().layout;
 
   useEffect(() => {
-    updateLayout((previous) => reconcileLayoutForContent(previous, routeContent));
-  }, [routeContent, updateLayout]);
+    useSplitWorkspace.getState().activateScope(scopeKey);
+  }, [scopeKey]);
+
+  useEffect(() => {
+    updateLayout((previous) =>
+      reconcileLayoutForContent(previous, paneContentForPathname(routeKey) ?? routeContent)
+    );
+    // Reconstruct from the path key. Depending on the `routeContent` object
+    // re-runs this on every parent render and hits React #185.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey, scopeKey, updateLayout]);
 
   const effectiveLayout: SplitLayout =
     layout ?? reconcileLayoutForContent(null, routeContent);
   const panes = listPanes(effectiveLayout.root);
   const isSplitActive = !isCompact && panes.length > 1;
+  const focusedPaneId = effectiveLayout.focusedPaneId;
+  const paneCount = countPanes(effectiveLayout.root);
   const maximizedPane =
     maximizedPaneId !== null ? findPane(effectiveLayout.root, maximizedPaneId) : null;
+  const maximizedPaneMissing = maximizedPaneId !== null && maximizedPane === null;
   const effectiveMaximizedPaneId =
-    countPanes(effectiveLayout.root) > 1 && maximizedPaneId !== null && maximizedPane !== null
+    paneCount > 1 && maximizedPaneId !== null && maximizedPane !== null
       ? maximizedPaneId
       : null;
 
@@ -94,14 +131,14 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
 
   useEffect(() => {
     if (maximizedPaneId === null) return;
-    if (countPanes(effectiveLayout.root) < 2 || maximizedPane === null) {
+    if (paneCount < 2 || maximizedPaneMissing) {
       setMaximizedPaneId(null);
       return;
     }
-    if (effectiveLayout.focusedPaneId !== maximizedPaneId) {
-      setMaximizedPaneId(effectiveLayout.focusedPaneId);
+    if (focusedPaneId !== maximizedPaneId) {
+      setMaximizedPaneId(focusedPaneId);
     }
-  }, [effectiveLayout, maximizedPane, maximizedPaneId, setMaximizedPaneId]);
+  }, [focusedPaneId, maximizedPaneId, maximizedPaneMissing, paneCount, setMaximizedPaneId]);
 
   const navigateInPane = useCallback<NavigateInPane>(
     (paneId, threadId, projectId) => {
@@ -121,7 +158,9 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
       const next = setFocus(current, paneId);
       setLayout(next);
       if (useSplitWorkspace.getState().maximizedPaneId !== null) setMaximizedPaneId(paneId);
-      if (pane !== null) navigate(paneContentRoute(pane.content), { replace: true });
+      if (pane !== null && pane.content.kind !== 'empty') {
+        navigate(paneContentRoute(pane.content), { replace: true });
+      }
     },
     [effectiveLayout, navigate, setLayout, setMaximizedPaneId]
   );
@@ -252,46 +291,45 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
 
   if (isCompact || panes.length <= 1) {
     const firstPane = panes[0];
+    const paneId = firstPane?.paneId ?? 'pane-1';
     return (
       <div className="split-workspace" data-testid="split-workspace" data-split="false">
-        <WorkspacePaneContent
-          content={firstPane?.content ?? routeContent}
-          paneId={firstPane?.paneId ?? 'pane-1'}
-          isFocused
-          isSplitPane={false}
-          secondaryPanelRegistry={null}
-          onRequestClose={null}
-          isMaximized={false}
-          onToggleMaximize={null}
-          isBoundedPane={false}
-          navigateInPane={navigateInPane}
-        />
+        {/* Hit-test target for sidebar / rail drag. Without this attribute the
+            drop layer cannot see the live view (the shell landmark is display:contents). */}
+        <div className="split-pane" data-split-pane-id={paneId} data-focused="true">
+          <WorkspacePaneContent
+            content={firstPane?.content ?? routeContent}
+            paneId={paneId}
+            isFocused
+            isSplitPane={false}
+            secondaryPanelRegistry={null}
+            onRequestClose={null}
+            isMaximized={false}
+            onToggleMaximize={null}
+            isBoundedPane={false}
+            navigateInPane={navigateInPane}
+          />
+        </div>
       </div>
     );
   }
 
   return (
     <div className="split-workspace" data-testid="split-workspace" data-split="true">
-      <SplitWorkspaceSecondaryPanelHost
+      <SplitTree
+        node={effectiveLayout.root}
+        path={EMPTY_PATH}
+        dimsInactiveSplits={dimsInactiveSplits}
         focusedPaneId={effectiveMaximizedPaneId ?? effectiveLayout.focusedPaneId}
-        registry={secondaryPanelRegistry}
-      >
-        <SplitTree
-          node={effectiveLayout.root}
-          path={EMPTY_PATH}
-          dimsInactiveSplits={dimsInactiveSplits}
-          focusedPaneId={effectiveMaximizedPaneId ?? effectiveLayout.focusedPaneId}
-          maximizedPaneId={effectiveMaximizedPaneId}
-          secondaryPanelRegistry={secondaryPanelRegistry}
-          onFocusPane={focusPane}
-          onClosePane={closePane}
-          onToggleMaximizePane={toggleMaximizePane}
-          onMovePaneToSide={movePaneToSide}
-          onResize={resize}
-          onNavigateInPane={navigateInPane}
-          onBeginPaneDrag={beginPaneDrag}
-        />
-      </SplitWorkspaceSecondaryPanelHost>
+        maximizedPaneId={effectiveMaximizedPaneId}
+        onFocusPane={focusPane}
+        onClosePane={closePane}
+        onToggleMaximizePane={toggleMaximizePane}
+        onMovePaneToSide={movePaneToSide}
+        onResize={resize}
+        onNavigateInPane={navigateInPane}
+        onBeginPaneDrag={beginPaneDrag}
+      />
     </div>
   );
 }
@@ -359,7 +397,6 @@ interface SplitTreeProps {
   dimsInactiveSplits: boolean;
   focusedPaneId: string;
   maximizedPaneId: string | null;
-  secondaryPanelRegistry: PaneSecondaryPanelRegistry;
   onFocusPane: (paneId: string) => void;
   onClosePane: (paneId: string) => void;
   onToggleMaximizePane: (paneId: string) => void;
@@ -391,12 +428,21 @@ function SplitTree(props: SplitTreeProps) {
         data-maximized={isMaximized ? 'true' : undefined}
         aria-hidden={isHiddenByMaximize || undefined}
       >
+        {paneUsesHostBar(node.content) ? (
+          <SplitPaneBar
+            content={node.content}
+            isMaximized={isMaximized}
+            onClose={() => props.onClosePane(node.paneId)}
+            onToggleMaximize={() => props.onToggleMaximizePane(node.paneId)}
+            onBeginDrag={(event, label) => props.onBeginPaneDrag(node.paneId, event, label)}
+          />
+        ) : null}
         <WorkspacePaneContent
           content={node.content}
           paneId={node.paneId}
           isFocused={isFocused}
           isSplitPane
-          secondaryPanelRegistry={props.secondaryPanelRegistry}
+          secondaryPanelRegistry={null}
           onRequestClose={() => props.onClosePane(node.paneId)}
           isMaximized={isMaximized}
           onToggleMaximize={() => props.onToggleMaximizePane(node.paneId)}
@@ -467,6 +513,10 @@ function WorkspacePaneContent({
         : undefined,
     [onBeginPaneDrag, paneId]
   );
+  const navigateInThisPane = useCallback(
+    (threadId: string, projectId: string | null) => navigateInPane(paneId, threadId, projectId),
+    [navigateInPane, paneId]
+  );
   const value = usePaneContextValue({
     paneId,
     isFocused,
@@ -478,26 +528,65 @@ function WorkspacePaneContent({
     onMoveToSide,
     isBoundedPane,
     beginPaneDrag,
-    navigateInPane: (threadId, projectId) => navigateInPane(paneId, threadId, projectId)
+    navigateInPane: navigateInThisPane
   });
 
   return (
     <PaneContextProvider value={value}>
-      <PaneBody content={content} />
+      <PaneBody content={content} paneId={paneId} />
     </PaneContextProvider>
   );
 }
 
-function PaneBody({ content }: { content: PaneContent }) {
+function PaneBody({
+  content,
+  paneId
+}: {
+  content: PaneContent;
+  paneId: string;
+}) {
   const projects = useData((s) => s.projects);
   if (content.kind === 'thread') {
     return <ThreadDetail key={content.threadId} threadId={content.threadId} />;
   }
+  if (content.kind === 'agent-session') {
+    return (
+      <AgentSessionPage
+        key={content.sessionId}
+        projectId={content.projectId}
+        sessionId={content.sessionId}
+      />
+    );
+  }
   if (content.kind === 'home') {
     return <HomeView />;
   }
+  if (content.kind === 'inbox') {
+    return <InboxView />;
+  }
   if (content.kind === 'agents') {
     return <AgentsView />;
+  }
+  if (content.kind === 'scheduler') {
+    return <SchedulerView />;
+  }
+  if (content.kind === 'schedule') {
+    return (
+      <ScheduleDetailPage
+        key={content.scheduleId}
+        projectId={content.projectId}
+        scheduleId={content.scheduleId}
+      />
+    );
+  }
+  if (content.kind === 'new-schedule') {
+    return (
+      <ScheduleDetailPage
+        key={`new:${content.projectId ?? ''}`}
+        projectId={content.projectId ?? null}
+        scheduleId={null}
+      />
+    );
   }
   if (content.kind === 'new-thread') {
     const project = content.projectId
@@ -514,7 +603,29 @@ function PaneBody({ content }: { content: PaneContent }) {
       />
     );
   }
+  if (content.kind === 'project-view') {
+    return (
+      <ProjectModePane
+        projectId={content.projectId}
+        mode={content.mode}
+        paneId={paneId}
+      />
+    );
+  }
+  if (content.kind === 'empty') {
+    return <EmptySplitPane />;
+  }
   return <div className="split-pane-empty">This page cannot live in a split pane.</div>;
+}
+
+function EmptySplitPane() {
+  return (
+    <section className="split-pane-empty-well" data-testid="split-pane-empty">
+      <div className="split-pane-empty">
+        <p className="split-pane-empty-copy">Drop a view here</p>
+      </div>
+    </section>
+  );
 }
 
 function SplitDivider({

@@ -6,6 +6,7 @@ import {
   FILE_ATTACHMENT_LIMIT_BYTES,
   IMAGE_ATTACHMENT_LIMIT_BYTES,
   hostPromptFromInput,
+  hostPromptInputFromInput,
   pathLooksRuntimeReadable,
   readAttachment,
   resolvePromptAttachmentPath,
@@ -99,6 +100,42 @@ describe('project attachments', () => {
     )).toEqual([
       '[Attached file. It is on disk at /tmp/a.bin — use the Read tool to view it.]'
     ]);
+  });
+
+  it('preserves structured prompt mentions and resolves attachment paths in place', () => {
+    const plan = {
+      type: 'text' as const,
+      text: '/plan inspect',
+      mentions: [{
+        start: 0,
+        end: 5,
+        resource: {
+          kind: 'command' as const,
+          trigger: '/' as const,
+          name: 'plan',
+          source: 'command' as const,
+          origin: 'builtin' as const,
+          label: 'plan',
+          argumentHint: null
+        }
+      }]
+    };
+    expect(hostPromptInputFromInput(
+      [plan, { type: 'localImage', path: 'shot.png' }],
+      ['/plan inspect'],
+      (path) => `/data/attachments/p1/${path}`
+    )).toEqual([
+      plan,
+      { type: 'localImage', path: '/data/attachments/p1/shot.png' }
+    ]);
+    expect(hostPromptInputFromInput(null, ['  ', 'keep'])).toEqual([
+      { type: 'text', text: 'keep', mentions: [] }
+    ]);
+    expect(hostPromptInputFromInput(
+      [{ type: 'localImage', path: '/tmp/a.png' }],
+      [],
+      (path) => path
+    )).toEqual([{ type: 'localImage', path: '/tmp/a.png' }]);
   });
 
   it('stores non-image files, sanitizes names, and refuses empty or oversized uploads', async () => {

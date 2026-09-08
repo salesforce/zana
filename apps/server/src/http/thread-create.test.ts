@@ -25,8 +25,13 @@ describe('createThreadFromRequest host spawn', () => {
     expect(source).not.toContain('requireLocalProject');
     expect(source).toContain("parseProfile(input.providerId) === 'shell' ? 'Shell' : 'Agent'");
     expect(source).toContain('requestedThreadId(input)');
-    expect(source).toContain('isRemoteToolProxyActive(project, input.hostId)');
-    expect(source).toContain('remoteWorkspacePath(project, remoteToolProxy)');
+    expect(source).toContain('boundRemoteHostId(project)');
+    expect(source).toContain('REMOTE_HOST_DAEMON_REQUIRED');
+    expect(source).toContain('isRemoteToolProxyActive(project, boundRemote ?? input.hostId)');
+    expect(source).toContain('resolveHarnessWorkspacePath');
+    expect(source).toContain('remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath');
+    expect(source).toContain('hosts: listHosts(ctx.db).map(toRemoteStartPathHost)');
+    expect(source).toContain("type: 'host.browse_directory'");
     expect(source).toContain('resolveSpawnChoiceForHost');
     expect(source).toContain('resolvePersonalTargetPathOnHost');
     expect(source).not.toContain('readRemoteToolProxySetting');

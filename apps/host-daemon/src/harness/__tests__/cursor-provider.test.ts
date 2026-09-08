@@ -6,6 +6,7 @@ describe('CursorProvider model routing', () => {
 
   it('exposes current account models and emits Cursor model argv', () => {
     expect(provider.adapter.descriptor.targets?.models.map((model) => model.id)).toEqual([
+      'auto',
       'cursor-grok-4.6-high',
       'cursor-grok-4.5-high',
       'claude-opus-5-high',
@@ -18,6 +19,8 @@ describe('CursorProvider model routing', () => {
     expect(provider.modelContribution('claude-sonnet-5-high')).toEqual({
       args: ['--model', 'claude-sonnet-5-high']
     });
+    expect(provider.modelContribution('auto')).toEqual({});
+    expect(provider.modelContribution('default')).toEqual({});
     expect(provider.adapter.descriptor.targets?.modelLevelMapping).toEqual({
       low: undefined,
       medium: 'gpt-5.6-terra-medium',
@@ -36,6 +39,11 @@ describe('CursorProvider model routing', () => {
       'cursor-grok-4.6-medium',
       'gpt-5.6-sol-medium'
     ]);
+    expect(live.adapter.descriptor.targets?.models.every((model) => model.evidenceVersion === '2026.01.23')).toBe(true);
+    expect(live.adapter.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'cursor-grok-4.6-medium', scope: 'local', versionRange: '2026.01.23' }),
+      expect.objectContaining({ id: 'gpt-5.6-sol-medium', scope: 'local', versionRange: '2026.01.23' })
+    ]));
   });
 
   it('declares approved global execution-state mappings', () => {

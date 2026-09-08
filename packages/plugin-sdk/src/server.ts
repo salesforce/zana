@@ -7,6 +7,17 @@
  * receive host-daemon tokens or signing keys.
  */
 
+import {
+  parsePluginAgentToolPresentation,
+  type PluginAgentToolPresentation
+} from './plugin-agent-tool-presentation.js';
+
+export {
+  PLUGIN_AGENT_STATUS_LABEL_MAX_CHARS,
+  parsePluginAgentToolPresentation,
+  type PluginAgentToolPresentation
+} from './plugin-agent-tool-presentation.js';
+
 export interface PluginLogger {
   debug(message: string): void;
   info(message: string): void;
@@ -20,6 +31,7 @@ export type PluginSettingDescriptor =
       label: string;
       description?: string;
       secret?: true;
+      multiline?: true;
       default?: string;
     }
   | { type: 'boolean'; label: string; description?: string; default?: boolean }
@@ -33,6 +45,7 @@ export type PluginSettingDescriptor =
   | { type: 'project'; label: string; description?: string; default?: string };
 
 export type PluginSettingValue = string | boolean;
+export type PluginSettingDescriptors = Record<string, PluginSettingDescriptor>;
 
 export interface PluginSettingsHandle {
   get(): Promise<Record<string, PluginSettingValue | undefined>>;
@@ -65,6 +78,7 @@ export interface PluginDatabase {
   runScript(sql: string): void;
   prepare(sql: string): PluginDatabaseStatement;
   migrate(statements: readonly string[]): void;
+  transaction<T>(fn: () => T): T;
 }
 
 export interface PluginStorage {
@@ -167,6 +181,9 @@ export interface PluginThreadEvent {
   name: PluginThreadEventName;
   threadId: string;
   projectId?: string;
+  thread?: PluginSdkThreadSummary;
+  lastAssistantText?: string | null;
+  error?: string | null;
 }
 
 export interface PluginEvents {
@@ -180,6 +197,12 @@ export interface PluginSdkThreadSummary {
   environmentId: string | null;
   providerId: string;
   status: string;
+  originKind?: string | null;
+  originPluginId?: string | null;
+  visibility?: string;
+  archivedAt?: number | null;
+  createdAt?: number;
+  parentThreadId?: string | null;
 }
 
 export interface PluginSdkThreadEventRow {
@@ -204,16 +227,55 @@ export interface PluginSdkThreadIdArgs {
   threadId: string;
 }
 
+export interface PluginSdkAgentContextSeed {
+  type: 'text';
+  text: string;
+  mentions: unknown[];
+  visibility: 'agent-only';
+}
+
+export interface PluginSdkThreadForkArgs {
+  threadId?: string;
+  sourceThreadId?: string;
+  sourceSeqEnd?: number;
+  visibility?: 'visible' | 'hidden';
+  workspace?: 'reuse' | 'isolated';
+  agentContextSeed?: readonly PluginSdkAgentContextSeed[];
+  title?: string;
+}
+
+export interface PluginSdkThreadListArgs {
+  includeHidden?: boolean;
+  originKind?: 'fork';
+  originPluginId?: string;
+  archived?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export interface PluginSdkQueuedMessage {
+  id: string;
+}
+
 export interface PluginSdkThreads {
-  spawn(args: { projectId: string; prompt: string; providerId?: string }): Promise<{ id: string }>;
+  spawn(args: { projectId: string; prompt: string; providerId?: string; parentThreadId?: string }): Promise<{ id: string }>;
   get(args: { threadId: string }): Promise<PluginSdkThreadSummary | null>;
+  list(args?: PluginSdkThreadListArgs): Promise<PluginSdkThreadSummary[]>;
   events: {
     list(args: PluginSdkThreadEventListArgs): Promise<PluginSdkThreadEventRow[]>;
   };
   send(args: PluginSdkThreadSendArgs): Promise<{ id: string }>;
   archive(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
-  fork(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
+  fork(args: PluginSdkThreadForkArgs | PluginSdkThreadIdArgs): Promise<{ id: string }>;
   unarchive(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
+  queuedMessages: {
+    list(args: PluginSdkThreadIdArgs): Promise<PluginSdkQueuedMessage[]>;
+    create(args: {
+      threadId: string;
+      input: unknown[];
+      senderThreadId?: string;
+    }): Promise<PluginSdkQueuedMessage>;
+  };
 }
 
 export interface PluginSdkInboxPushArgs {
@@ -260,6 +322,7 @@ export interface PluginAgentToolRegistration {
   name: string;
   description: string;
   inputSchema?: unknown;
+  presentation?: PluginAgentToolPresentation;
   execute(input: unknown, ctx: PluginAgentToolContext): unknown | Promise<unknown>;
 }
 
@@ -296,7 +359,7 @@ export interface PluginBackground {
 export interface PluginProviderCapabilities {
   supportsServiceTier: boolean;
   supportsNativeUserQuestion?: boolean;
-  fork: string;
+  fork: ProviderFork;
   supportsManualCompaction?: boolean;
   supportsThreadArchive: boolean;
   supportsThreadRename: boolean;
@@ -305,17 +368,63 @@ export interface PluginProviderCapabilities {
   reasoningLevels?: string[];
 }
 
+export type PluginProviderVisibility = 'always' | 'installed';
+
+export interface PluginProviderOptionsContext {
+  threadId: string;
+  projectId: string;
+  model?: string;
+  permissionMode: string;
+  promptMode?: 'plan';
+  settings: Readonly<Record<string, PluginSettingValue | undefined>>;
+}
+
 export interface PluginProviderDeclaration {
   id: string;
   displayName: string;
+  family?: string;
   icon?: string;
   capabilities: PluginProviderCapabilities;
   composerActions?: string[];
+  /** Hide from the picker until CLI health reports the binary is installed. */
+  visibility?: PluginProviderVisibility;
+  experimental_visibility?: PluginProviderVisibility;
+  experimental_bridgeOptions?: Readonly<Record<string, JsonValue>>;
+  maintenance?: PluginProviderMaintenance;
+  strings?: PluginProviderStrings;
+  serviceTiers?: readonly PluginProviderOptionDescriptor[];
+  reasoningLevels?: readonly PluginProviderOptionDescriptor[];
+  extensionKinds?: Readonly<Record<string, PluginProviderExtensionKindDeclaration>>;
+  models?: {
+    fallback?: readonly PluginProviderFallbackModel[];
+    scope?: PluginProviderModelCatalogScope;
+  };
+  env?: { passthrough: readonly string[] };
+  experimental_nativeSkillRoots?: PluginProviderNativeRoots;
+  experimental_nativeCommandRoots?: PluginProviderNativeRoots;
+  experimental_resolvesNativeRoots?: boolean;
+  deriveProviderOptions?: (
+    context: PluginProviderOptionsContext
+  ) => Record<string, unknown> | void;
 }
 
 export interface PluginProviderHandle {
   id: string;
   unregister(): void;
+}
+
+export interface PluginPtyHarnessProfile {
+  id: string;
+  label: string;
+}
+
+export interface PluginPtyHarnessDeclaration {
+  id: string;
+  displayName: string;
+  icon?: string;
+  profiles: PluginPtyHarnessProfile[];
+  alwaysEnabled?: boolean;
+  enableConfigKey?: string;
 }
 
 export interface PluginAgentConfigureContext {
@@ -330,10 +439,13 @@ export interface PluginAgentConfigureResult {
 }
 
 export interface PluginAgents {
-  contributeInstructions(text: string): void;
+  contributeInstructions(
+    textOrProvider: string | ((ctx: { threadId: string; projectId: string }) => string | null)
+  ): void;
   contributeSkills(rootPaths: string[]): void;
   registerTool(registration: PluginAgentToolRegistration): void;
   experimental_registerProvider(declaration: PluginProviderDeclaration): PluginProviderHandle;
+  experimental_registerPtyHarness(declaration: PluginPtyHarnessDeclaration): PluginProviderHandle;
   configure(
     provider: (
       ctx: PluginAgentConfigureContext
@@ -341,7 +453,27 @@ export interface PluginAgents {
   ): void;
 }
 
-import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
+import type { JsonValue, ProviderFork } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PluginServices } from './plugin-services.js';
+import type {
+  PluginProviderExtensionKindDeclaration,
+  PluginProviderFallbackModel,
+  PluginProviderMaintenance,
+  PluginProviderModelCatalogScope,
+  PluginProviderNativeRoots,
+  PluginProviderOptionDescriptor,
+  PluginProviderStrings
+} from './backend-contract.js';
+
+export {
+  PLUGIN_SERVICE_UNAVAILABLE,
+  PluginServiceUnavailableError,
+  bindPluginServices,
+  createLiveServiceProxy,
+  createPluginServicesRegistry,
+  type PluginServices,
+  type PluginServicesRegistry
+} from './plugin-services.js';
 
 export type PluginInteractionCancelReason =
   | 'user'
@@ -424,6 +556,13 @@ export interface ZccPluginApi {
   readonly status: PluginStatusApi;
   readonly sdk: PluginSdk;
   readonly host: PluginHostApi;
+  /**
+   * Experimental plugin-to-plugin SDK registry. `provide` is keyed by this
+   * plugin's id; `use(id)` returns a live proxy that throws
+   * `service_unavailable` until that plugin is running and has provided.
+   * `has(id)` is true after that plugin has called `provide`.
+   */
+  readonly services: PluginServices;
   onDispose(hook: () => void | Promise<void>): void;
 }
 

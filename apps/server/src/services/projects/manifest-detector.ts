@@ -14,8 +14,8 @@
 
 import { EventEmitter } from 'node:events';
 import { existsSync, readdirSync, readFileSync, watch, type FSWatcher } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
 import { isWithin } from '@zana-ai/zcc-path-confine';
@@ -91,7 +91,7 @@ export class ManifestDetector extends EventEmitter {
       // User manifests: ~/.zcc/manifests (only resolve when not overridden).
       // Use homedir() rather than electron's app.getPath so this main-process
       // module stays unit-testable and matches env.ts / extension-installer.ts.
-      this.userDir = join(homedir(), '.zcc', 'manifests');
+      this.userDir = join(resolveZccDataDir(), 'manifests');
     }
   }
 

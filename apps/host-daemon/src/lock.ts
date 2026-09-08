@@ -46,6 +46,14 @@ function waitUntilDead(pid: number, timeoutMs: number): boolean {
   return !pidIsAlive(pid);
 }
 
+function lockHeldMessage(lockPath: string, pid?: number): string {
+  const pidBit = pid != null ? ` (pid ${pid})` : '';
+  return (
+    `another host-daemon holds ${lockPath}${pidBit}. ` +
+    'Quit that app, or run `pnpm dev` without overriding ZCC_DATA_DIR (defaults to ~/.zcc-dev).'
+  );
+}
+
 function unlinkIfOwner(lockPath: string, pid: number): void {
   try {
     if (readLockPid(lockPath) === pid) unlinkSync(lockPath);
@@ -67,7 +75,7 @@ export function acquireDaemonLock(dataDir: string, options?: { steal?: boolean }
   const existingPid = readLockPid(lockPath);
   if (existingPid !== null && pidIsAlive(existingPid)) {
     if (existingPid === process.pid || !options?.steal) {
-      throw new DaemonLockError(`another host-daemon holds ${lockPath} (pid ${existingPid})`);
+      throw new DaemonLockError(lockHeldMessage(lockPath, existingPid));
     }
     signalPid(existingPid, 'SIGTERM');
     if (!waitUntilDead(existingPid, 1_500)) signalPid(existingPid, 'SIGKILL');
@@ -84,7 +92,7 @@ export function acquireDaemonLock(dataDir: string, options?: { steal?: boolean }
     writeFileSync(lockPath, `${process.pid}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new DaemonLockError(`another host-daemon holds ${lockPath}`);
+      throw new DaemonLockError(lockHeldMessage(lockPath));
     }
     throw error;
   }

@@ -1,49 +1,53 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { GripVertical, Pencil, Send, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Send, Square } from 'lucide-react';
+import type { GitHostPullRequest } from '@zana-ai/zcc-domain';
 import {
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent
-} from '@dnd-kit/core';
-import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import type { GitHostPullRequest, WorkspaceStatus } from '@zana-ai/zcc-domain';
-import type { ThreadTimelineModelFallback } from '@zana-ai/zcc-domain/thread-runtime';
+  isBackgroundAgentTaskType,
+  LOCAL_WORKFLOW_TASK_TYPE,
+  type ThreadTimelineModelFallback
+} from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { product } from '../../../lib/product-client.js';
 import { handleHttpLinkClick } from '../../../lib/in-app-browser-link-preference.js';
-import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../../lib/suppress-post-drag-click.js';
 import { loadWorkspaceMeta } from '../secondary-panel/threadSecondaryPanelLogic.js';
-import { queuedMessageTextFromUnknown } from './queued-message-text.js';
-import { previousQueuedIdAfterReorder } from './queued-reorder.js';
+import { nextTurnItemText, queuedMessagePreview } from './queued-message-text.js';
 
-interface QueuedMessageView {
+interface NextTurnItemView {
   id: string;
   text: string;
-  updatedAt: number;
-  raw: unknown;
+  failureReason: string | null;
+  status: string;
 }
 
 export function QueuedMessagesCard({ threadId }: { threadId: string }) {
-  const [items, setItems] = useState<QueuedMessageView[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
+  const [items, setItems] = useState<NextTurnItemView[]>([]);
+  const [paused, setPaused] = useState(false);
+  const [flushing, setFlushing] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [flushError, setFlushError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    void product.threads.queuedMessages(threadId).then((list) => {
-      const rows = Array.isArray(list) ? list : [];
+    void product.threads.nextTurn(threadId).then((body) => {
+      const payload = body as { items?: unknown; paused?: unknown } | null | undefined;
+      setPaused(payload?.paused === true);
+      const rows = Array.isArray(payload?.items) ? payload.items : [];
       setItems(rows.map((row) => {
-        const record = row as { id?: string; updatedAt?: number };
+        const record = row as {
+          id?: string;
+          payload?: string;
+          input?: unknown;
+          text?: unknown;
+          failureReason?: unknown;
+          status?: unknown;
+        };
+        const text = typeof record.text === 'string' && record.text.trim()
+          ? record.text
+          : nextTurnItemText(record);
         return {
           id: typeof record.id === 'string' ? record.id : '',
-          text: queuedMessageTextFromUnknown(row),
-          updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : 0,
-          raw: row
+          text,
+          failureReason: typeof record.failureReason === 'string' ? record.failureReason : null,
+          status: typeof record.status === 'string' ? record.status : 'queued'
         };
       }).filter((row) => row.id));
     }).catch(() => undefined);
@@ -59,147 +63,74 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
     return stop;
   }, [refresh, threadId]);
 
-  const suppressClickRef = useRef(false);
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
-
-  const clearClickSuppress = () => {
-    window.setTimeout(() => {
-      suppressClickRef.current = false;
-    }, POST_DRAG_CLICK_SUPPRESS_MS);
-  };
-
-  const onDragStart = ({ activatorEvent }: DragStartEvent) => {
-    suppressClickRef.current = activatorEvent.type === 'pointerdown';
-  };
-
-  const onDragEnd = (event: DragEndEvent) => {
-    if (suppressClickRef.current) suppressPostDragClick();
-    clearClickSuppress();
-    const overId = event.over?.id;
-    if (typeof overId !== 'string') return;
-    const ids = items.map((item) => item.id);
-    const previous = previousQueuedIdAfterReorder(ids, String(event.active.id), overId);
-    if (previous === undefined) return;
-    void product.threads.reorderQueuedMessage(threadId, String(event.active.id), previous).then(refresh);
-  };
-
-  const onDragCancel = () => {
-    if (suppressClickRef.current) suppressPostDragClick();
-    clearClickSuppress();
-  };
-
   if (items.length === 0) return null;
   return (
-    <section className="thread-composer-stack-card" data-testid="thread-queued-messages">
-      <header className="thread-stack-card-title">Queued</header>
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
-        onDragCancel={onDragCancel}
-      >
-        <SortableContext items={items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
-          <ul className="thread-queued-list">
-            {items.map((item) => (
-              <SortableQueuedItem
-                key={item.id}
-                item={item}
-                editing={editingId === item.id}
-                draft={draft}
-                onDraft={setDraft}
-                onEdit={() => {
-                  setEditingId(item.id);
-                  setDraft(item.text);
-                }}
-                onCancel={() => setEditingId(null)}
-                onSave={() => {
-                  void product.threads.updateQueuedMessage(threadId, item.id, {
-                    input: [{ type: 'text', text: draft, mentions: [] }],
-                    expectedUpdatedAt: item.updatedAt
-                  }).then(() => {
-                    setEditingId(null);
+    <section className="thread-queued-ghosts" data-testid="thread-queued-messages">
+      {paused ? (
+        <header className="thread-queued-ghosts-header">
+          <span className="thread-queued-card-paused" data-testid="thread-queued-paused">Paused after stop</span>
+          <button
+            type="button"
+            className="thread-queued-flush"
+            data-testid="thread-queued-send-now"
+            aria-busy={flushing}
+            onClick={() => {
+              if (flushing) return;
+              setFlushing(true);
+              setFlushError(null);
+              void product.threads.flushNextTurn(threadId, true)
+                .then(refresh)
+                .catch((err) => {
+                  setFlushError(err instanceof Error ? err.message : 'Failed to send queued messages');
+                })
+                .finally(() => setFlushing(false));
+            }}
+          >
+            <Send size={12} aria-hidden="true" />
+            Send now
+          </button>
+        </header>
+      ) : null}
+      {flushError ? (
+        <p className="thread-queued-failure" data-testid="thread-queued-flush-error">{flushError}</p>
+      ) : null}
+      <ul className="thread-queued-list">
+        {items.map((item) => (
+          <li key={item.id} className="thread-queued-ghost" data-status={item.status}>
+            <div className="thread-queued-ghost-body">
+              <p className="thread-queued-item-text">{queuedMessagePreview(item.text) || '(queued message)'}</p>
+              {item.failureReason ? (
+                <p className="thread-queued-failure" data-testid="thread-queued-failure">{item.failureReason}</p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              className="thread-queued-ghost-stop"
+              data-testid="thread-queued-delete"
+              aria-label="Remove queued message"
+              title="Remove queued message"
+              disabled={deletingId === item.id}
+              onClick={() => {
+                if (deletingId) return;
+                setDeletingId(item.id);
+                setFlushError(null);
+                void product.threads.deleteNextTurn(threadId, item.id)
+                  .then(() => {
+                    setItems((current) => current.filter((row) => row.id !== item.id));
                     refresh();
-                  });
-                }}
-                onSend={() => {
-                  void product.threads.sendQueuedMessage(threadId, item.id, 'auto').then(refresh);
-                }}
-                onDelete={() => {
-                  void product.threads.deleteQueuedMessage(threadId, item.id).then(refresh);
-                }}
-              />
-            ))}
-          </ul>
-        </SortableContext>
-      </DndContext>
+                  })
+                  .catch((err) => {
+                    setFlushError(err instanceof Error ? err.message : 'Failed to remove queued message');
+                  })
+                  .finally(() => setDeletingId(null));
+              }}
+            >
+              <Square size={14} fill="currentColor" aria-hidden="true" />
+            </button>
+          </li>
+        ))}
+      </ul>
     </section>
-  );
-}
-
-function SortableQueuedItem({
-  item,
-  editing,
-  draft,
-  onDraft,
-  onEdit,
-  onCancel,
-  onSave,
-  onSend,
-  onDelete
-}: {
-  item: QueuedMessageView;
-  editing: boolean;
-  draft: string;
-  onDraft: (value: string) => void;
-  onEdit: () => void;
-  onCancel: () => void;
-  onSave: () => void;
-  onSend: () => void;
-  onDelete: () => void;
-}) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: item.id,
-    animateLayoutChanges: () => false
-  });
-  return (
-    <li
-      ref={setNodeRef}
-      className={`thread-queued-item${isDragging ? ' is-dragging' : ''}`}
-      style={{ transform: CSS.Translate.toString(transform) ?? undefined }}
-    >
-      <button type="button" className="thread-queued-handle" aria-label="Reorder queued message" {...attributes} {...listeners}>
-        <GripVertical size={12} />
-      </button>
-      {editing ? (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSave();
-          }}
-        >
-          <input value={draft} onChange={(event) => onDraft(event.target.value)} aria-label="Edit queued message" />
-          <button type="submit">Save</button>
-          <button type="button" onClick={onCancel}>Cancel</button>
-        </form>
-      ) : (
-        <p>{item.text}</p>
-      )}
-      <div className="thread-queued-actions">
-        <button type="button" aria-label="Edit queued message" onClick={onEdit}>
-          <Pencil size={12} />
-        </button>
-        <button type="button" aria-label="Send queued message" onClick={onSend}>
-          <Send size={12} />
-        </button>
-        <button type="button" aria-label="Delete queued message" onClick={onDelete}>
-          <Trash2 size={12} />
-        </button>
-      </div>
-    </li>
   );
 }
 
@@ -214,18 +145,54 @@ export function ModelFallbackCard({ fallback }: { fallback: ThreadTimelineModelF
   );
 }
 
+function backgroundActivityKind(row: TimelineViewWorkflowWorkRow): 'workflow' | 'agent' | 'command' {
+  if (row.taskType === LOCAL_WORKFLOW_TASK_TYPE) return 'workflow';
+  if (isBackgroundAgentTaskType(row.taskType)) return 'agent';
+  return 'command';
+}
+
+function backgroundActivityTitle(rows: TimelineViewWorkflowWorkRow[]): string {
+  const kinds = new Set(rows.map(backgroundActivityKind));
+  if (kinds.size !== 1) return 'Background activity';
+  if (kinds.has('workflow')) return rows.length === 1 ? 'Workflow' : 'Workflows';
+  if (kinds.has('agent')) return rows.length === 1 ? 'Background agent' : 'Background agents';
+  return rows.length === 1 ? 'Background command' : 'Background commands';
+}
+
+function backgroundActivityKindLabel(row: TimelineViewWorkflowWorkRow): string {
+  switch (backgroundActivityKind(row)) {
+    case 'workflow':
+      return 'Workflow';
+    case 'agent':
+      return 'Background agent';
+    case 'command':
+      return 'Background command';
+  }
+}
+
 export function BackgroundCommandsCard({
-  commands
+  commands,
+  workflows
 }: {
   commands: TimelineViewWorkflowWorkRow[] | null | undefined;
+  workflows?: TimelineViewWorkflowWorkRow[] | null;
 }) {
-  if (!commands?.length) return null;
+  const rows = [...(workflows ?? []), ...(commands ?? [])];
+  if (rows.length === 0) return null;
   return (
-    <section className="thread-composer-stack-card" data-testid="thread-background-commands">
-      <header className="thread-stack-card-title">Background commands</header>
-      <ul>
-        {commands.map((command) => (
-          <li key={command.id}>{command.workflowName || command.description || 'Running'}</li>
+    <section
+      className="thread-composer-stack-card thread-background-commands-card"
+      data-testid="thread-background-commands"
+    >
+      <header className="thread-queued-card-header">
+        <span className="thread-stack-card-title">{backgroundActivityTitle(rows)}</span>
+      </header>
+      <ul className="thread-queued-list">
+        {rows.map((row) => (
+          <li key={row.id} className="thread-queued-item">
+            <span className="thread-banner-meta">{backgroundActivityKindLabel(row)}</span>
+            <span>{row.workflowName || row.description || 'Running'}</span>
+          </li>
         ))}
       </ul>
     </section>
@@ -239,24 +206,18 @@ export function PromptContextBanner({
   isWorktree,
   parentThreadId,
   childCount,
-  environmentId,
-  onReview
+  environmentId
 }: {
   branchName?: string | null;
   isWorktree?: boolean;
   parentThreadId?: string | null;
   childCount?: number;
   environmentId?: string | null;
-  onReview?: () => void;
 }) {
-  const [dirtyCount, setDirtyCount] = useState(0);
-  const [filesTruncated, setFilesTruncated] = useState(false);
   const [pullRequest, setPullRequest] = useState<GitHostPullRequest | null>(null);
 
   useEffect(() => {
     if (!environmentId) {
-      setDirtyCount(0);
-      setFilesTruncated(false);
       setPullRequest(null);
       return;
     }
@@ -266,11 +227,8 @@ export function PromptContextBanner({
         product.environments.status,
         product.environments.pullRequest,
         environmentId
-      ).then(({ status, pullRequest: nextPr }) => {
+      ).then(({ pullRequest: nextPr }) => {
         if (cancelled) return;
-        const workspace = status as WorkspaceStatus | null;
-        setDirtyCount(workspace?.dirty ? workspace.files.length : 0);
-        setFilesTruncated(Boolean(workspace?.filesTruncated));
         setPullRequest((nextPr as GitHostPullRequest | null) ?? null);
       });
     };
@@ -285,19 +243,13 @@ export function PromptContextBanner({
   const bits = [
     branchName ? `git: ${branchName}` : null,
     isWorktree ? 'worktree' : null,
-    dirtyCount > 0 ? `${dirtyCount}${filesTruncated ? '+' : ''} uncommitted` : null,
     parentThreadId ? 'child thread' : null,
     childCount && childCount > 0 ? `${childCount} child ${childCount === 1 ? 'agent' : 'agents'}` : null
   ].filter(Boolean);
   if (bits.length === 0 && !pullRequest) return null;
   return (
     <div className="thread-composer-stack-card thread-prompt-context" data-testid="thread-prompt-context">
-      <span>{bits.join(' · ')}</span>
-      {dirtyCount > 0 && onReview ? (
-        <button type="button" className="thread-prompt-context-review" onClick={onReview}>
-          Review
-        </button>
-      ) : null}
+      {bits.length > 0 ? <span>{bits.join(' · ')}</span> : null}
       {pullRequest ? (
         <a
           className="thread-prompt-context-pr"

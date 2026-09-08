@@ -1,4 +1,5 @@
 export { fillTemplate, LlmService } from './llm-service.js';
+export { redactTranscript } from './redact-transcript.js';
 export {
   PromptRegistry,
   type PromptRegistryDeps

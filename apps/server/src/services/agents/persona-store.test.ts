@@ -590,7 +590,7 @@ describe('PersonaStore', () => {
         byAdapter: {
           opencode: {
             providerTargetId: 'openai',
-            modelTargetId: 'aisuite/gpt-5.6-sol',
+            modelTargetId: 'llmgw/gpt-5.6-sol-1M',
             executionState: 'accept-edits'
           }
         }
@@ -598,7 +598,7 @@ describe('PersonaStore', () => {
     });
     expect(native.harnessRouting?.byAdapter.opencode).toEqual({
       providerTargetId: 'openai',
-      modelTargetId: 'aisuite/gpt-5.6-sol',
+      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
       executionState: 'accept-edits'
     });
 
@@ -777,7 +777,7 @@ describe('resolvePersonaLaunch', () => {
     // Regression for the `Failed to change directory to …/<prompt>` launch bug:
     // OpenCode's positional is a project directory, so a bare positional prompt
     // makes it cd into a bogus path and exit. It must ride `--prompt <text>`.
-    for (const profile of ['opencode', 'opencode-resume'] as const) {
+    for (const profile of ['opencode', 'opencode-resume', 'opencode-yolo'] as const) {
       const { extraArgs } = resolvePersonaLaunch(
         { profile, prompt: 'fix the flaky test', extraArgs: ['--foo'] },
         []

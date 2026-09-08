@@ -68,7 +68,7 @@ const STEPS: Step[] = [
     title: 'Add a project',
     body: (
       <p>
-        In <strong>Workspaces</strong> on the left rail, click <strong>＋</strong> to point Zana at
+        In <strong>Projects</strong> on the left rail, click <strong>＋</strong> to point Zana at
         a folder. Agents run there with its files and git.
       </p>
     )

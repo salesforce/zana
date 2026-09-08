@@ -4,8 +4,20 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ThreadDetailOverflowMenu, threadOverflowMenuPosition } from './ThreadDetailOverflow.js';
 
 describe('threadOverflowMenuPosition', () => {
-  it('anchors the menu just below the trigger in viewport coords', () => {
-    expect(threadOverflowMenuPosition({ bottom: 80, left: 24 })).toEqual({ top: 84, left: 24 });
+  it('hangs the menu from the trigger’s right edge in viewport coords', () => {
+    expect(threadOverflowMenuPosition({ bottom: 80, right: 400 }, { innerWidth: 1000 })).toEqual({
+      top: 84,
+      right: 600,
+      maxWidth: 392
+    });
+  });
+
+  it('clamps to a viewport gutter when the trigger sits on the window edge', () => {
+    expect(threadOverflowMenuPosition({ bottom: 80, right: 996 }, { innerWidth: 1000 })).toEqual({
+      top: 84,
+      right: 8,
+      maxWidth: 984
+    });
   });
 });
 
@@ -63,8 +75,22 @@ describe('ThreadDetailOverflow wiring', () => {
     expect(source).toContain('shouldShowThreadStop');
     expect(source).toContain('inFlightRetry');
     expect(source).toContain('createPortal(menu, document.body)');
-    expect(source).toContain('threadOverflowMenuPosition');
+    expect(source).toContain('threadOverflowMenuPosition(rect, window)');
     expect(source).toContain('queueMicrotask(() => setRenaming(true))');
     expect(source).toContain('onRenamed?.(next)');
+  });
+
+  it('stacks the portaled menu above the modal backdrop', () => {
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const backdrop = css.slice(
+      css.indexOf('.modal-backdrop {'),
+      css.indexOf('.modal {')
+    );
+    const overflow = css.slice(
+      css.indexOf('.thread-detail-overflow-menu {'),
+      css.indexOf('.thread-status-badge {')
+    );
+    expect(backdrop).toContain('z-index: 100;');
+    expect(overflow).toContain('z-index: 110;');
   });
 });

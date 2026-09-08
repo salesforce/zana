@@ -4,6 +4,7 @@ import {
   isRemoteProxyTool,
   projectRemoteFromLaunch,
   usesRemoteToolProxy,
+  CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS,
   REMOTE_TOOL_PROXY_DISALLOWED_TOOLS,
   REMOTE_TOOL_PROXY_DYNAMIC_TOOLS,
   REMOTE_TOOL_PROXY_INSTRUCTIONS
@@ -60,5 +61,11 @@ describe('remote tool proxy helpers', () => {
   it('tells Claude Code the MCP-prefixed remote tool names', () => {
     expect(REMOTE_TOOL_PROXY_INSTRUCTIONS).toMatch(/mcp__bb-bridge__remote_read/);
     expect(REMOTE_TOOL_PROXY_INSTRUCTIONS).toMatch(/mcp__bb-bridge__remote_exec/);
+  });
+
+  it('tells a local CLI the zcc-inbox remote tool names', () => {
+    expect(CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS).toMatch(/mcp__zcc-inbox__remote_read/);
+    expect(CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS).toMatch(/mcp__zcc-inbox__remote_exec/);
+    expect(CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS).not.toMatch(/mcp__bb-bridge__/);
   });
 });

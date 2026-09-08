@@ -1,3 +1,4 @@
+import { navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
 import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import {
   Blocks,
@@ -19,16 +20,15 @@ import {
   type NavId
 } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
-import { getNavRoutePath } from '../lib/route-paths.js';
+import { DEFAULT_PLUGIN_PANEL_PATH, getNavRoutePath } from '../lib/route-paths.js';
 import { hrefForPluginNavPanel } from '../plugins/plugin-nav-href.js';
 import { useMergedModules } from '../modules/index.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { ProjectsList } from './listpane/ProjectsList.js';
-import { PINNED_SIDEBAR_NAV_IDS } from './sidebarNavOrder.js';
+import { PINNED_SIDEBAR_NAV_IDS, PROJECTS_SECTION_SORT_ID } from './sidebarNavOrder.js';
 import {
-  GLOBAL_NAV_ORDER_KEY,
-  WORKSPACES_SECTION_SORT_ID
+  GLOBAL_NAV_ORDER_KEY
 } from './sidebarSortable.js';
 import {
   SidebarCountBadge,
@@ -36,6 +36,7 @@ import {
   type SidebarRailItem
 } from './SidebarRail.js';
 import { listNavPanels, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import type { PaneContent } from '../lib/split-layout/types.js';
 
 interface NavEntry {
   id: NavId;
@@ -64,6 +65,16 @@ const followupsNavItem: NavEntry = { id: 'followups', label: 'Follow-ups', icon:
 // alongside Settings.
 const extensionsNavItem: NavEntry = { id: 'extensions', label: 'Plugins', icon: Blocks };
 
+/** Core destinations that stay full-main (no split-pane drag payload). */
+const NON_SPLITTABLE_NAV_IDS = new Set<string>([
+  'extensions',
+  'settings',
+  'suggestions',
+  'followups',
+  'projects',
+  'goals'
+]);
+
 export function Sidebar() {
   const route = useRouteState();
   const { nav, pluginPanelPath } = route;
@@ -82,7 +93,7 @@ export function Sidebar() {
     [navPanels]
   );
   const pluginPanels = useMemo(
-    () => navPanels.filter((panel) => panel.placement !== 'extensions'),
+    () => navPanels.filter((panel) => navPanelListsInSidebar(panel.placement)),
     [navPanels]
   );
   const extraItems = useMemo(() => {
@@ -151,6 +162,23 @@ export function Sidebar() {
         />
       );
     }
+    const splitContent: PaneContent | undefined =
+      item.id === 'home'
+        ? { kind: 'home' }
+        : item.id === 'inbox'
+          ? { kind: 'inbox' }
+          : item.id === 'agents'
+            ? { kind: 'agents' }
+            : item.id === 'scheduler'
+              ? { kind: 'scheduler' }
+              : NON_SPLITTABLE_NAV_IDS.has(item.id)
+                ? undefined
+                : {
+                    kind: 'plugin-panel',
+                    pluginId: item.id,
+                    panelPath: DEFAULT_PLUGIN_PANEL_PATH,
+                    subPath: ''
+                  };
     return {
       kind: 'row',
       id: item.id,
@@ -161,6 +189,7 @@ export function Sidebar() {
       active: nav === item.id,
       running,
       badge,
+      splitContent,
       title: collapsed
         ? running
           ? `${item.label} — ${isAgents ? agentsTitle : scheduleTitle}`
@@ -190,12 +219,18 @@ export function Sidebar() {
         to: hrefForPluginNavPanel(panel.pluginId, path),
         testId: `nav-${id}`,
         active,
-        title: collapsed ? panel.title : undefined
+        title: collapsed ? panel.title : undefined,
+        splitContent: {
+          kind: 'plugin-panel',
+          pluginId: panel.pluginId,
+          panelPath: path,
+          subPath: ''
+        }
       };
     }),
     {
       kind: 'section',
-      id: WORKSPACES_SECTION_SORT_ID,
+      id: PROJECTS_SECTION_SORT_ID,
       node: <ProjectsList placement="sidebar" />
     }
   ];

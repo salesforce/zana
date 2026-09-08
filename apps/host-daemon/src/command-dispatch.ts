@@ -1,13 +1,15 @@
-import { homedir } from 'node:os';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, relative, sep } from 'node:path';
+import { resolveZccDataDir } from './host-config.js';
 import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import type {
   HostDirEntry,
   HostEventEnvelope,
   HostListedFile,
   HostRpcCommand,
+  ProviderAgentDescriptorsResult,
   ProviderListModelsResult,
+  ProviderHealthResult,
   ProviderStatusResult,
   ThreadResumeFields,
   ThreadStartCommandSchema
@@ -15,8 +17,8 @@ import type {
 import type { z } from 'zod';
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { PERSONAL_WORKSPACE_DIR_NAME } from '@zana-ai/zcc-domain';
-import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
-import type { PendingInteractionResolution } from '@zana-ai/zcc-domain/thread-runtime';
+import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import type { PendingInteractionResolution, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   WorkspaceError,
   cloneProject,
@@ -34,9 +36,13 @@ import {
   workspaceSquashMerge,
   workspaceStatus
 } from '@zana-ai/zcc-host-workspace';
+import { probeExtraAcpAgents } from './extra-acp-agent-probes.js';
 import { verifyHarnesses } from './harness/harness-verify.js';
+import { registrationFor } from './harness/registry.js';
 import { HostCommandError } from './host-command-error.js';
+import { watchWorkspacePath } from './workspace-fs-watch.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
+import { completeCodexInference } from './codex-inference-complete.js';
 import { getProviderCliStatus, runProviderCliInstall } from './provider-cli-health.js';
 import { installGlobalSkills, readGlobalSkillsStatus } from './global-skills.js';
 import {
@@ -82,6 +88,7 @@ export type ThreadStartFields = z.infer<typeof ThreadStartCommandSchema>;
 
 export type ThreadWorkInput = Omit<ThreadStartFields, 'type' | 'cwd'> & {
   cwd: string;
+  acpMode?: string;
 };
 
 export type ThreadResumeInput = {
@@ -95,6 +102,9 @@ export type ThreadResumeInput = {
   permissionMode?: ThreadStartFields['permissionMode'];
   model?: string;
   reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+  acpMode?: string;
+  claudeCodePermissionMode?: 'plan';
+  providerOptions?: Record<string, unknown>;
   dynamicTools?: ThreadStartFields['dynamicTools'];
   instructions?: ThreadStartFields['instructions'];
 };
@@ -130,16 +140,23 @@ export interface CommandRuntime {
   terminals: Map<string, { cwd: string }>;
   provisionSignals: Map<string, AbortController>;
   lanes: Map<string, Promise<void>>;
+  loadConfig: () => AppConfig;
   verifyProviders: () => Promise<ProviderStatusResult>;
   emit: (event: HostEventEnvelope) => void;
   startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
   submitTurn?: (input: {
     threadId: string;
-    input: string[];
+    input: PromptInput[];
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+    acpMode?: string;
+    claudeCodePermissionMode?: 'plan';
+    providerOptions?: Record<string, unknown>;
     clientRequestId?: ThreadWorkInput['clientRequestId'];
+    permissionMode?: ThreadWorkInput['permissionMode'];
+    permissionEscalation?: 'ask' | 'deny';
+    expectedTurnId?: string;
   }) => Promise<void>;
   resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
@@ -159,7 +176,7 @@ export interface CommandRuntime {
   archiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   unarchiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   clearGoal?: (input: { threadId: string }) => Promise<{ cleared: boolean }>;
-  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
+  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number; command?: string }) => Promise<{ pid?: number } | void>;
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
   stopTerminal?: (input: { sessionId: string }) => Promise<void>;
@@ -168,6 +185,11 @@ export interface CommandRuntime {
     bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
     cwd?: string;
   }) => Promise<ProviderListModelsResult>;
+  providerHealth?: (input: {
+    providerId: string;
+    bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
+    cwd?: string;
+  }) => Promise<ProviderHealthResult>;
   homeDir?: string;
   peerSsh?: PeerDaemonSsh;
 }
@@ -180,11 +202,17 @@ export function createCommandRuntime(options: {
   startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
   submitTurn?: (input: {
     threadId: string;
-    input: string[];
+    input: PromptInput[];
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+    acpMode?: string;
+    claudeCodePermissionMode?: 'plan';
+    providerOptions?: Record<string, unknown>;
     clientRequestId?: ThreadWorkInput['clientRequestId'];
+    permissionMode?: ThreadWorkInput['permissionMode'];
+    permissionEscalation?: 'ask' | 'deny';
+    expectedTurnId?: string;
   }) => Promise<void>;
   resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
@@ -204,7 +232,7 @@ export function createCommandRuntime(options: {
   archiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   unarchiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   clearGoal?: (input: { threadId: string }) => Promise<{ cleared: boolean }>;
-  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
+  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number; command?: string }) => Promise<{ pid?: number } | void>;
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
   stopTerminal?: (input: { sessionId: string }) => Promise<void>;
@@ -213,12 +241,18 @@ export function createCommandRuntime(options: {
     bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
     cwd?: string;
   }) => Promise<ProviderListModelsResult>;
+  providerHealth?: (input: {
+    providerId: string;
+    bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
+    cwd?: string;
+  }) => Promise<ProviderHealthResult>;
   homeDir?: string;
   peerSsh?: PeerDaemonSsh;
 }): CommandRuntime {
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
   return {
-    dataDir: options.dataDir ?? join(homedir(), '.zcc'),
+    dataDir: options.dataDir ?? resolveZccDataDir(),
+    loadConfig,
     environments: new Map(),
     threads: new Map(),
     terminals: new Map(),
@@ -243,11 +277,15 @@ export function createCommandRuntime(options: {
     resizeTerminal: options.resizeTerminal,
     stopTerminal: options.stopTerminal,
     listModels: options.listModels,
+    providerHealth: options.providerHealth,
     homeDir: options.homeDir,
     peerSsh: options.peerSsh,
     verifyProviders: options.verifyProviders ?? (async () => {
-      const results: HarnessVerifyResult[] = await verifyHarnesses(loadConfig());
-      return { providers: results };
+      const [results, extraInstalledAgents] = await Promise.all([
+        verifyHarnesses(loadConfig()),
+        probeExtraAcpAgents()
+      ]);
+      return { providers: results, extraInstalledAgents };
     })
   };
 }
@@ -339,6 +377,9 @@ async function applyThreadResume(
       permissionMode: command.permissionMode,
       model: command.model,
       reasoningLevel: command.reasoningLevel,
+      acpMode: command.acpMode,
+      claudeCodePermissionMode: command.claudeCodePermissionMode,
+      providerOptions: command.providerOptions,
       dynamicTools: command.dynamicTools,
       instructions: command.instructions
     });
@@ -498,11 +539,43 @@ export async function dispatchHostCommand(
   switch (command.type) {
     case 'provider.status':
       return runtime.verifyProviders();
+    case 'provider.agent_descriptors': {
+      const profile = parseProfile(command.profile);
+      if (!profile) {
+        return { status: 'failure' } satisfies ProviderAgentDescriptorsResult;
+      }
+      const registration = profile ? registrationFor(profile) : undefined;
+      if (!registration?.discoverAgentDescriptors) {
+        return { status: 'failure' } satisfies ProviderAgentDescriptorsResult;
+      }
+      const verified = (await runtime.verifyProviders()).providers.find(
+        (entry) => entry.family === registration.id
+      );
+      if (!verified?.enabled || !verified.installed) {
+        return { status: 'failure' } satisfies ProviderAgentDescriptorsResult;
+      }
+      return registration.discoverAgentDescriptors({
+        profile,
+        cwd: command.cwd,
+        config: runtime.loadConfig(),
+        refresh: command.refresh
+      });
+    }
     case 'provider.list_models': {
       if (!runtime.listModels) {
         throw new HostCommandError('unsupported', 'model listing is not available on this host');
       }
       return runtime.listModels({
+        providerId: command.providerId,
+        bridgeLaunch: command.bridgeLaunch,
+        ...(command.cwd !== undefined ? { cwd: command.cwd } : {})
+      });
+    }
+    case 'provider.health': {
+      if (!runtime.providerHealth) {
+        throw new HostCommandError('unsupported', 'provider health is not available on this host');
+      }
+      return runtime.providerHealth({
         providerId: command.providerId,
         bridgeLaunch: command.bridgeLaunch,
         ...(command.cwd !== undefined ? { cwd: command.cwd } : {})
@@ -738,7 +811,13 @@ export async function dispatchHostCommand(
           mode: command.mode,
           model: command.model,
           reasoningLevel: command.reasoningLevel,
-          clientRequestId: command.clientRequestId
+          acpMode: command.acpMode,
+          claudeCodePermissionMode: command.claudeCodePermissionMode,
+          providerOptions: command.providerOptions,
+          clientRequestId: command.clientRequestId,
+          permissionMode: command.resume?.permissionMode,
+          permissionEscalation: command.permissionEscalation,
+          expectedTurnId: command.expectedTurnId
         });
       } else {
         runtime.emit({ threadId: command.threadId, kind: 'turn.completed' });
@@ -755,7 +834,8 @@ export async function dispatchHostCommand(
           sessionId: command.sessionId,
           cwd,
           cols,
-          rows
+          rows,
+          command: command.command
         });
         pid = started?.pid;
       }
@@ -860,6 +940,7 @@ export async function dispatchHostCommand(
       }
     case 'workspace.status':
       try {
+        watchWorkspacePath(command.workspacePath);
         return await workspaceStatus(command.workspacePath);
       } catch (error) {
         mapWorkspaceError(error);
@@ -952,6 +1033,8 @@ export async function dispatchHostCommand(
       } catch (error) {
         mapWorkspaceError(error);
       }
+    case 'codex.inference.complete':
+      return completeCodexInference(command);
     case 'codex.voice.transcribe':
       return transcribeCodexVoice(command);
     case 'interactive.resolve': {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { canvasPanIgnoresTarget, canvasPanOffset, Kanban, KanbanColumn } from './kanban.js';
 
@@ -61,5 +62,10 @@ describe('Kanban', () => {
     expect(html).toContain('zcc-kanban-col-empty');
     expect(html).not.toContain('zcc-kanban-col-collapse');
     expect(html).toContain('--zcc-kanban-col-flex:1 1 200px');
+  });
+
+  it('keeps the column header background transparent so the lane surface shows through', () => {
+    const css = readFileSync(new URL('./kanban.css', import.meta.url), 'utf8');
+    expect(css).toMatch(/\.zcc-kanban-col-header \{[^}]*background:\s*transparent;/);
   });
 });

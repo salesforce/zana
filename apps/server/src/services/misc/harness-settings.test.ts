@@ -48,10 +48,10 @@ describe('harness settings', () => {
   });
 
   it('creates, preserves unknown, and rejects stale OpenCode project settings', async () => {
-    const first = await writeOpenCodeProjectSettings(project, { model: 'aisuite/gpt-5.6-terra' }, null);
+    const first = await writeOpenCodeProjectSettings(project, { model: 'llmgw/gpt-5.6-terra-1M' }, null);
     expect(first.state).toBe('valid');
     const file = join(project, 'opencode.json');
-    await writeFile(file, JSON.stringify({ model: 'aisuite/gpt-5.6-terra', mcp: { test: {} } }));
+    await writeFile(file, JSON.stringify({ model: 'llmgw/gpt-5.6-terra-1M', mcp: { test: {} } }));
     const current = await readOpenCodeProjectSettings(project);
     if (current.state !== 'valid') throw new Error('fixture not valid');
     expect(current.settings._unknown).toEqual(['mcp']);

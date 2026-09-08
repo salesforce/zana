@@ -1,6 +1,8 @@
 import { useData, useUi, usePersonas, sortProjectsForDisplay } from './store.js';
 import { getTerminal } from './lib/findRegistry.js';
 import { projectDefaultLaunch, type ProjectDefaultLaunch } from './lib/launchProfile.js';
+import { cliAgentDeleteConfirm, cliAgentRestartConfirm } from './components/agentCardActions.js';
+import { shortcutForCommand } from './lib/keyboard-shortcut-settings.js';
 
 /** The project's one-click "+" default: a pinned persona (on its baseProfile)
  *  or the profile default. Shared with TabBar / the menu so ⌘T agrees. */
@@ -33,32 +35,25 @@ export function installShortcuts(): () => void {
     const activeIdx = activeTabId ? tabs.findIndex((t) => t.id === activeTabId) : -1;
 
     // cmd+b — toggle terminals/explorer mode (flips between the two
-    // text-editing modes).
-    if (e.key === 'b' && !e.shiftKey) {
+    // text-editing modes). Remappable in Settings → Shortcuts.
+    if (shortcutForCommand('sidebar.toggle', e)) {
       if (!projectId) return;
       e.preventDefault();
-      const cur = ui.workspaceMode[projectId] ?? 'terminals';
-      ui.setWorkspaceMode(projectId, cur === 'explorer' ? 'terminals' : 'explorer');
+      const cur = ui.projectView[projectId] ?? 'terminals';
+      ui.setProjectView(projectId, cur === 'explorer' ? 'terminals' : 'explorer');
       return;
     }
-    // cmd+p — project switcher / command palette
-    if (e.key === 'p' && !e.shiftKey) {
+    // cmd+p — project switcher / command palette. Remappable in Settings → Shortcuts.
+    if (shortcutForCommand('thread.search', e)) {
       e.preventDefault();
       ui.setPaletteOpen(true);
       return;
     }
-    // cmd+e — quick open file in selected project
-    if (e.key === 'e' && !e.shiftKey) {
+    // cmd+e — quick open file in selected project. Remappable in Settings → Shortcuts.
+    if (shortcutForCommand('file.quickOpen', e)) {
       if (!projectId) return;
       e.preventDefault();
       ui.setQuickOpenOpen(true);
-      return;
-    }
-    // cmd+r — resume Claude session picker
-    if (e.key === 'r' && !e.shiftKey) {
-      if (!projectId) return;
-      e.preventDefault();
-      ui.setResumeOpen(true);
       return;
     }
     // cmd+shift+r — restart active terminal (kill+respawn for live, or
@@ -70,14 +65,22 @@ export function installShortcuts(): () => void {
       if (!active) return;
       e.preventDefault();
       const live = active.status !== 'exited';
-      if (live && !window.confirm(`Kill and restart "${active.title}"?`)) return;
+      if (live && !window.confirm(cliAgentRestartConfirm(active.title))) return;
       data.restartTerminal(activeTabId, projectId).catch(() => {});
       return;
     }
-    // cmd+, — toggle Settings
-    if (e.key === ',') {
+    // cmd+, — toggle Settings. Remappable in Settings → Shortcuts.
+    if (shortcutForCommand('settings.open', e)) {
       e.preventDefault();
       ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
+      return;
+    }
+    // cmd+n — New Chat (Home composer in the user's default launch mode).
+    // Remappable in Settings → Shortcuts. Distinct from cmd+t, which still
+    // spawns a CLI terminal tab in the selected project.
+    if (shortcutForCommand('thread.new', e)) {
+      e.preventDefault();
+      ui.setNav('home');
       return;
     }
     // cmd+. — close the agent or thread inspector modal. Escape is reserved
@@ -134,7 +137,7 @@ export function installShortcuts(): () => void {
     // explorer mode; no-op in terminal mode so we don't clobber chrome).
     if ((e.key === 'G' || e.key === 'g') && e.shiftKey) {
       if (!projectId) return;
-      const mode = ui.workspaceMode[projectId] ?? 'terminals';
+      const mode = ui.projectView[projectId] ?? 'terminals';
       if (mode !== 'explorer') return;
       e.preventDefault();
       ui.toggleExplorerTreeMode(projectId);
@@ -144,7 +147,7 @@ export function installShortcuts(): () => void {
     // when the explorer is the active surface.
     if (e.key === 'd' && !e.shiftKey) {
       if (!projectId) return;
-      const mode = ui.workspaceMode[projectId] ?? 'terminals';
+      const mode = ui.projectView[projectId] ?? 'terminals';
       if (mode !== 'explorer') return;
       if (!ui.explorerFile[projectId]) return;
       e.preventDefault();
@@ -220,7 +223,7 @@ export function installShortcuts(): () => void {
       if (
         active &&
         active.status !== 'exited' &&
-        !window.confirm(`Delete “${active.title}”? The process will be terminated.`)
+        !window.confirm(cliAgentDeleteConfirm(active.title))
       ) {
         return;
       }

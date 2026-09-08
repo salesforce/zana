@@ -39,10 +39,15 @@ describe('thread / legacy isolation', () => {
     expect(modePicker).not.toContain('createTerminal');
     expect(hook).not.toContain('LauncherModelPicker');
     expect(hook).not.toContain('AgentLauncher');
-    expect(hook).toContain('prefetchThreadModelCatalog');
+    expect(hook).toContain('setThreadModelCatalogHost');
     expect(hook).toContain('ensureThreadProviderModels');
     expect(hook).toContain('reconcileReasoningLevel');
     expect(catalog).toContain('executionOptions');
+    expect(catalog).toContain('catalogHostId');
+    expect(catalog).toContain('setThreadModelCatalogHost');
+    expect(stripComments(readFileSync(join(appRoot, 'lib/product-client.ts'), 'utf8'))).toContain(
+      "if (query?.hostId) params.set('hostId', query.hostId)"
+    );
     expect(catalog).toContain('composerActionsFromProvider');
     expect(catalog).not.toContain('list_models');
     expect(catalog).not.toContain('AgentLauncher');
@@ -66,15 +71,28 @@ describe('thread / legacy isolation', () => {
     expect(source).toContain('ThreadCommandComposer');
     expect(source).toContain('LegacyAgentHomeComposer');
     expect(source).toContain('AutonomousTeamComposer');
+    expect(source).toContain('JobTeamComposer');
     expect(source).not.toContain('PromptComposer');
     expect(source).not.toContain('threads.create');
     expect(source).not.toContain('product.threads');
     expect(source).not.toContain('product.teams.launchAutonomous');
+    expect(source).not.toContain('product.teams.startJob');
   });
 
   it('keeps AutonomousTeamComposer on launchAutonomous only', () => {
     const source = stripComments(readFileSync(join(appRoot, 'components/AutonomousTeamComposer.tsx'), 'utf8'));
     expect(source).toContain('product.teams.launchAutonomous');
+    expect(source).not.toContain('threads.create');
+    expect(source).not.toContain('createTerminal');
+    expect(source).not.toContain('ModelReasoningPicker');
+    expect(source).not.toContain('ComposerModePicker');
+    expect(source).not.toContain('ReasoningEffortPicker');
+  });
+
+  it('keeps JobTeamComposer on startJob only', () => {
+    const source = stripComments(readFileSync(join(appRoot, 'components/JobTeamComposer.tsx'), 'utf8'));
+    expect(source).toContain('product.teams.startJob');
+    expect(source).not.toContain('product.teams.launchAutonomous');
     expect(source).not.toContain('threads.create');
     expect(source).not.toContain('createTerminal');
     expect(source).not.toContain('ModelReasoningPicker');
@@ -90,12 +108,16 @@ describe('thread / legacy isolation', () => {
     expect(home).toContain('allowLegacyAgent');
     expect(home).toContain('LegacyAgentHomeComposer');
     expect(home).toContain('AutonomousTeamComposer');
+    expect(home).toContain('JobTeamComposer');
     expect(home).toContain('LaunchModeSegmented');
     expect(home).toContain('showAutonomousTeam={showAutonomousTeam}');
+    expect(home).toContain('showJobTeam={showJobTeam}');
     expect(home).toContain("kind === 'autonomous'");
+    expect(home).toContain("kind === 'job'");
     expect(home).not.toContain('HomeAutonomousComposer');
     expect(home).not.toContain('createTerminal');
     expect(home).not.toContain('product.teams.launchAutonomous');
+    expect(home).not.toContain('product.teams.startJob');
     expect(legacy).toContain('createTerminal');
     expect(legacy).toContain('buildLaunchArgs');
     expect(legacy).toContain("from './legacy-agent-home.js'");

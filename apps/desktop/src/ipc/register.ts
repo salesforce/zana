@@ -4,6 +4,7 @@ import { registerWindowsIpc } from './windows.js';
 import { registerTerminalsIpc } from './terminals.js';
 import { registerConfigIpc } from './config.js';
 import { registerExecutionIpc } from './execution.js';
+import { registerExecutionBoardIpc } from './execution-board.js';
 import { registerSessionsIpc } from './sessions.js';
 import { registerFsIpc } from './fs.js';
 import { registerInboxIpc } from './inbox.js';
@@ -27,6 +28,7 @@ export function registerIpcFamilies(host: IpcCtx): void {
   registerTerminalsIpc();
   registerConfigIpc();
   registerExecutionIpc();
+  registerExecutionBoardIpc();
   registerSessionsIpc();
   registerFsIpc();
   registerInboxIpc();

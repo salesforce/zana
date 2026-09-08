@@ -22,5 +22,7 @@ export function packedBridgeBundleDir(fromUrl: string = import.meta.url): string
     const bundled = join(resources, 'host-bridge');
     if (existsSync(join(bundled, PACKED_BRIDGE_WORKER_FILE))) return bundled;
   }
+  const checkoutDist = join(process.cwd(), 'apps', 'host-daemon', 'dist');
+  if (existsSync(join(checkoutDist, PACKED_BRIDGE_WORKER_FILE))) return checkoutDist;
   return undefined;
 }

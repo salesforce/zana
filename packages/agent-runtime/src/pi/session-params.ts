@@ -23,7 +23,7 @@ export type PiReasoningLevel = z.infer<typeof piReasoningLevelSchema>;
 // Levels Pi does not support ("ultracode", "ultra") are dropped so the bridge
 // never receives a value it would reject; reconciliation picks the closest
 // supported level before this point, so this is a defensive floor.
-function toPiThinkingLevel(
+export function toPiThinkingLevel(
   reasoningLevel: ReasoningLevel | undefined,
 ): PiReasoningLevel | undefined {
   switch (reasoningLevel) {

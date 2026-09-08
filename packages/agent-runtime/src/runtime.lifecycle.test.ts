@@ -1566,6 +1566,23 @@ rl.on("line", (line) => {
       expect(models[0].isDefault).toBe(true);
       await runtime.shutdown();
     });
+
+    it("returns unsupported health when the adapter noops provider/health", async () => {
+      const runtime = createAgentRuntimeWithAdapters({
+        workspacePath: tmpDir,
+        onEvent: () => {},
+        onToolCall: async () => ({
+          contentItems: [{ type: "inputText", text: "ok" }],
+          success: true,
+        }),
+        adapterFactory: () => createFakeAdapter(scriptPath),
+      });
+
+      await expect(
+        runtime.providerHealth({ providerId: "fake" }),
+      ).resolves.toEqual({ supported: false });
+      await runtime.shutdown();
+    });
   });
 
   describe("errors", () => {

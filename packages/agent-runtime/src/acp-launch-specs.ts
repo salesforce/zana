@@ -7,6 +7,8 @@ import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract"
  * with a launch spec on the command; the bundled providers have no server-side
  * entry, so the registry falls back to this table when it packs the ACP
  * bridge's provider-scoped statics.
+ *
+ * Claude Code and Codex are dedicated plugins, not ACP.
  */
 export const BUILT_IN_ACP_LAUNCH_SPECS: Readonly<
   Record<string, HostDaemonAcpLaunchSpec>
@@ -22,6 +24,20 @@ export const BUILT_IN_ACP_LAUNCH_SPECS: Readonly<
     // `cursor-agent --api-key ... acp` form.
     args: ["acp"],
     env: {},
+    nativeSkillRoots: {
+      user: [
+        ".cursor/skills",
+        ".agents/skills",
+        ".claude/skills",
+        ".codex/skills",
+      ],
+      project: [
+        ".cursor/skills",
+        ".agents/skills",
+        ".claude/skills",
+        ".codex/skills",
+      ],
+    },
     // ACP-native parameterized picker: Cursor only advertises bare family ids
     // plus effort/Fast options when the client opts in. A `--list-models` CLI
     // would keep encoding effort in the id (`cursor-grok-4.6-medium`) and hide
@@ -32,10 +48,66 @@ export const BUILT_IN_ACP_LAUNCH_SPECS: Readonly<
     command: "opencode",
     args: ["acp"],
     env: {},
-    // ACP-native: OpenCode advertises models and per-model `thought_level`
-    // (`effort`, including the family's "default" variant) over the protocol.
-    // A list CLI (`opencode models`) would print bare `provider/model` ids and
-    // collapse every family to a single medium effort.
+    nativeSkillRoots: {
+      user: [".claude/skills", ".agents/skills"],
+      project: [".opencode/skills", ".claude/skills", ".agents/skills"],
+    },
+  },
+  "acp-omp": {
+    displayName: "OMP",
+    command: "omp",
+    args: ["acp"],
+    env: {},
+    nativeSkillRoots: {
+      user: [".omp/skills", ".agents/skills"],
+      project: [".omp/skills", ".agents/skills"],
+    },
+  },
+  "acp-grok": {
+    displayName: "Grok Build",
+    command: "grok",
+    // Grok Build's ACP session is `grok agent stdio`, not a `grok acp` subcommand.
+    args: ["agent", "stdio"],
+    env: {},
+    modelCli: {
+      listArgs: ["models"],
+      selectFlag: "--model",
+      primaryModels: ["grok-4.5", "grok-composer-2.5-fast"],
+    },
+    permissionCli: {
+      full: ["--always-approve"],
+      insertAfterArgs: 1,
+    },
+    reasoningCli: {
+      flag: "--reasoning-effort",
+      supportedLevels: ["low", "medium", "high"],
+      levelValues: {
+        none: "low",
+        xhigh: "high",
+        ultracode: "high",
+        max: "high",
+      },
+      defaultLevel: "high",
+    },
+    nativeSkillRoots: {
+      user: [".grok/skills", ".agents/skills"],
+      project: [".grok/skills", ".agents/skills"],
+    },
+  },
+  "acp-hermes-agent": {
+    displayName: "Hermes Agent",
+    command: "hermes",
+    args: ["acp"],
+    env: {},
+    nativeReasoning: {
+      configId: "reasoning_effort",
+      supportedLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+      defaultLevel: "medium",
+    },
+    nativeSkillRoots: {
+      user: [".hermes/skills", ".agents/skills"],
+      project: [".hermes/skills", ".agents/skills"],
+    },
   },
 };
 
@@ -68,4 +140,6 @@ export const BUILT_IN_ACP_MODEL_PICKER: Readonly<
     ],
     reasoningProbePriorityModelIds: ["grok-4.6", "grok-4.5"],
   },
+  "acp-grok": { acpDialect: "grok" },
+  "acp-omp": { acpDialect: "omp" },
 };

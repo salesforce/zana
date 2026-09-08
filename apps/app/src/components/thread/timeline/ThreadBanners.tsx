@@ -7,8 +7,9 @@ import type {
   ThreadTimelinePendingTodos
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
+import { ThreadTodoChecklist } from '../thread-todo-checklist.js';
 import {
-  isBusyThreadStatus,
+  showOngoingThreadWork,
   threadStatusLabel,
   threadStatusTone,
   threadWorkingIndicatorLabel
@@ -59,11 +60,7 @@ export function ThreadTodoCard({
         hidden={!isExpanded}
         className="thread-stack-card-body"
       >
-        <ul>
-          {ordered.map((item) => (
-            <li key={item.id} data-status={item.status}>{item.text}</li>
-          ))}
-        </ul>
+        <ThreadTodoChecklist items={ordered} />
       </div>
     </section>
   );
@@ -71,19 +68,16 @@ export function ThreadTodoCard({
 
 export function ThreadPromptModeCard({
   mode,
-  isExpanded,
   isExitPending = false,
-  onToggle,
+  onOpenPlan,
   onExitPlanMode
 }: {
   mode: { mode: string; prompt?: string } | null | undefined;
-  isExpanded: boolean;
   isExitPending?: boolean;
-  onToggle: () => void;
+  onOpenPlan: () => void;
   onExitPlanMode?: () => void;
 }) {
   if (mode?.mode !== 'plan') return null;
-  const promptText = mode.prompt?.trim() ?? '';
   return (
     <section
       className="thread-composer-stack-card thread-prompt-mode-card"
@@ -93,18 +87,12 @@ export function ThreadPromptModeCard({
         <button
           type="button"
           className="thread-stack-card-toggle"
-          aria-expanded={isExpanded}
-          aria-controls="thread-prompt-mode-card-body"
-          aria-label="Plan"
-          onClick={onToggle}
+          aria-label="Show plan"
+          data-testid="thread-open-plan"
+          onClick={onOpenPlan}
         >
           <ListTodo size={14} aria-hidden="true" />
           <span className="thread-stack-card-title">Plan</span>
-          <ChevronDown
-            size={14}
-            aria-hidden="true"
-            className={`thread-stack-card-chevron${isExpanded ? ' is-open' : ''}`}
-          />
         </button>
         {onExitPlanMode ? (
           <button
@@ -123,15 +111,6 @@ export function ThreadPromptModeCard({
           </button>
         ) : null}
       </div>
-      <div
-        id="thread-prompt-mode-card-body"
-        hidden={!isExpanded}
-        className="thread-stack-card-body"
-      >
-        <p className="thread-prompt-mode-prompt">
-          {promptText.length > 0 ? promptText : 'No prompt text.'}
-        </p>
-      </div>
     </section>
   );
 }
@@ -139,18 +118,24 @@ export function ThreadPromptModeCard({
 export function ThreadWorkingIndicator({
   status,
   thinking,
-  waitingOnUser
+  waitingOnUser,
+  hasRunningWork = false
 }: {
   status: string;
   thinking: ActiveThinking | null;
   waitingOnUser?: boolean;
+  hasRunningWork?: boolean;
 }) {
-  const isThinking = thinking != null;
-  const visible = !waitingOnUser && (isBusyThreadStatus(status) || isThinking);
-  const phrase = useThreadWorkingPhrase(visible && !isThinking);
+  const ongoing = showOngoingThreadWork(status, waitingOnUser);
+  const isThinking = thinking != null && ongoing;
+  // Running tools already communicate progress; keep reconnection copy.
+  const visible = ongoing && (status === 'host-reconnecting' || !hasRunningWork);
+  const phrase = useThreadWorkingPhrase(ongoing);
   if (!visible) return null;
   const details = thinking?.text?.trim() ?? '';
-  const label = threadWorkingIndicatorLabel(isThinking, phrase);
+  const label = status === 'host-reconnecting'
+    ? 'Waiting for reconnection…'
+    : threadWorkingIndicatorLabel(isThinking, phrase);
   if (details) {
     return (
       <details className="thread-working-indicator" data-testid="thread-thinking">
@@ -193,6 +178,18 @@ export function ThreadWorkflowChips({
           {workflow.workflowName || workflow.description || 'Workflow'}
         </span>
       ))}
+    </div>
+  );
+}
+
+export function ThreadHostDisconnectedBanner({ status }: { status: string }) {
+  if (status !== 'host-reconnecting' && status !== 'waiting-for-host') return null;
+  const copy = status === 'host-reconnecting'
+    ? 'Host disconnected. Waiting for reconnection.'
+    : 'Host is not connected. The thread will resume when the host is back.';
+  return (
+    <div className="thread-banner thread-host-disconnected-banner" data-testid="thread-host-disconnected">
+      {copy}
     </div>
   );
 }

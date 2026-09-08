@@ -56,9 +56,9 @@ describe('ThreadProviderCatalog', () => {
     expect(html).not.toContain('Claude Codeprovider-claude-code');
     expect(html).toContain('class="opener-row-name">Claude Code<');
     expect(html).toContain('class="thread-provider-id" title="provider-claude-code">provider-claude-code<');
-    expect(html).toContain('the default Modern provider.');
+    expect(html).toContain('dedicated Agent SDK Modern provider.');
     expect(html).toContain('Agent Client Protocol');
-    expect(html).toContain('Codex coding CLI');
+    expect(html).toContain('dedicated app-server Modern provider.');
     expect(html).toContain('Pi coding-agent CLI');
     expect(html).toContain('OpenCode via the Agent Client Protocol');
     expect(html).toContain('Not loaded');
@@ -75,6 +75,11 @@ describe('ThreadProviderCatalog', () => {
       { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' }
     ]);
     expect(merged.map((row) => row.id)).toContain('acp-opencode');
+    expect(merged.map((row) => row.id)).toEqual(expect.arrayContaining([
+      'acp-omp',
+      'acp-grok',
+      'acp-hermes-agent'
+    ]));
     expect(merged.find((row) => row.id === 'acp-opencode')).toEqual({
       id: 'acp-opencode',
       displayName: 'OpenCode',
@@ -142,6 +147,40 @@ describe('ThreadProviderCatalog', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Models for Cursor' }));
     expect(screen.getByRole('button', { name: 'Load' })).toBeTruthy();
+  });
+
+  it('asks to sign in with pi when that catalog is empty', async () => {
+    const fetcher: ThreadExecutionOptionsFetcher = async () => ({
+      providers: [providerRow('pi', 'Pi')],
+      models: [],
+      selectedOnlyModels: [],
+      permissionCeiling: 'full',
+      modelLoadError: null
+    });
+    resetThreadModelCatalog(fetcher);
+    await prefetchThreadModelCatalog();
+
+    render(<ThreadProviderCatalog providers={[{ id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' }]} />);
+    expect(screen.getByText('Sign in with pi')).toBeTruthy();
+  });
+
+  it('asks to sign in with opencode auth login when listing reports auth_required', async () => {
+    const fetcher: ThreadExecutionOptionsFetcher = async () => ({
+      providers: [providerRow('acp-opencode', 'OpenCode')],
+      models: [],
+      selectedOnlyModels: [],
+      permissionCeiling: 'full',
+      modelLoadError: { providerId: 'acp-opencode', code: 'auth_required' }
+    });
+    resetThreadModelCatalog(fetcher);
+    await prefetchThreadModelCatalog();
+
+    render(
+      <ThreadProviderCatalog
+        providers={[{ id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' }]}
+      />
+    );
+    expect(screen.getByText('Sign in with opencode auth login')).toBeTruthy();
   });
 
   it('shows Loading on the closed row and disables Load while a fetch is in flight', async () => {

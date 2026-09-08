@@ -27,6 +27,10 @@ import {
   parseTimelineSegmentLimit
 } from './thread-path-confine.js';
 import { getThreadReadSeq } from './thread-reads.js';
+import { getDurableThreadPlanView } from './conversation-plan.js';
+import { getThreadExecutionState } from '@zana-ai/zcc-db';
+import { isPlanExecutionMode } from './conversation-execution-mode.js';
+import { conversationNextTurnView } from './conversation-next-turn.js';
 
 export interface TimelineQuery {
   segmentLimit?: string | null;
@@ -144,6 +148,17 @@ function projectTimeline(
     const projectedRows = options.includeNestedRows
       ? timeline.rows
       : previewTimelineResponseOutputs({ rows: timeline.rows }).rows;
+    const durablePlan = getDurableThreadPlanView(ctx.db, thread.id);
+    const execution = getThreadExecutionState(ctx.db, thread.id);
+    const requestedPlan = isPlanExecutionMode(execution?.requestedMode);
+    const effectivePlan = isPlanExecutionMode(execution?.effectiveMode);
+    const nativePlanMode = requestedPlan
+      && (execution?.effectiveMode == null || effectivePlan);
+    const activePromptMode = timeline.activePromptMode ?? (
+      nativePlanMode
+        ? { mode: 'plan' as const, providerId: thread.providerId, prompt: '' }
+        : null
+    );
     return {
       threadId: thread.id,
       status: thread.status,
@@ -153,12 +168,25 @@ function projectTimeline(
       rows: projectedRows,
       goal: timeline.goal,
       pendingTodos: timeline.pendingTodos,
-      activePromptMode: timeline.activePromptMode,
+      durablePlan,
+      activePromptMode,
+      executionMode: execution
+        ? {
+          requested: execution.requestedMode,
+          effective: execution.effectiveMode,
+          mismatch: Boolean(
+            execution.requestedMode
+            && execution.effectiveMode
+            && execution.requestedMode !== execution.effectiveMode
+          )
+        }
+        : null,
       activeThinking: timeline.activeThinking,
       activeWorkflows: timeline.activeWorkflows,
       activeBackgroundCommands: timeline.activeBackgroundCommands,
       modelFallback: timeline.modelFallback,
       contextWindowUsage: timeline.contextWindowUsage,
+      nextTurn: conversationNextTurnView(ctx, thread.id),
       lastReadSeq: getThreadReadSeq(ctx.dataDir, thread.id),
       maxSeq,
       timelinePage: {

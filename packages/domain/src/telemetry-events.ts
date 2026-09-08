@@ -85,12 +85,25 @@ export interface UsageRollupEvent {
   sessionCount: number;
 }
 
+/** Aggregate durable-job telemetry. No task, summary, path, or artifact content. */
+export interface ExecutionJobEvent {
+  kind: 'execution.job';
+  executionId: string;
+  projectId: string;
+  teamId: string;
+  state: 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
+  attempt: number;
+  durationMs?: number;
+  eventCount: number;
+  artifactCount: number;
+}
+
 /**
  * The full telemetry event union. New telemetry concepts (feature-usage counts,
  * etc.) are added HERE as variants — each MUST stay UGC-free (scalars / enums /
  * identifiers only), which {@link containsUgc}'s exhaustiveness check enforces.
  */
-export type TelemetryEvent = UsageSessionEvent | UsageRollupEvent;
+export type TelemetryEvent = UsageSessionEvent | UsageRollupEvent | ExecutionJobEvent;
 
 /** The allowlisted keys per variant — the runtime guard rejects anything else. */
 const ALLOWED_KEYS: Record<TelemetryEvent['kind'], ReadonlySet<string>> = {
@@ -116,6 +129,17 @@ const ALLOWED_KEYS: Record<TelemetryEvent['kind'], ReadonlySet<string>> = {
     'toolCalls',
     'mcpCalls',
     'sessionCount'
+  ]),
+  'execution.job': new Set([
+    'kind',
+    'executionId',
+    'projectId',
+    'teamId',
+    'state',
+    'attempt',
+    'durationMs',
+    'eventCount',
+    'artifactCount'
   ])
 };
 
@@ -132,6 +156,8 @@ export function containsUgc(event: TelemetryEvent): boolean {
     case 'usage.session':
       return false;
     case 'usage.rollup':
+      return false;
+    case 'execution.job':
       return false;
     default: {
       // Exhaustiveness: if a new variant is added without a case above, `event`

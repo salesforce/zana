@@ -100,10 +100,12 @@ function appModuleFromPluginSet(entry: ExtensionEntry, set: PluginRegistrationSe
         );
       }
     : undefined;
+  // Plugin identity is the manifest title/icon. A nav panel or project tab is a
+  // destination, not the installed extension name.
   return {
     id: entry.id,
-    title: nav?.title ?? title,
-    icon: nav?.icon ?? entry.manifest?.icon ?? 'Puzzle',
+    title,
+    icon: entry.manifest?.icon ?? nav?.icon ?? 'Puzzle',
     titleLabel: entry.manifest?.titleLabel,
     panel: Panel,
     projectTab: projectTab

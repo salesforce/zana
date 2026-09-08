@@ -262,7 +262,7 @@ describe('SchedulerManager.fire — headless spawn', () => {
   it('delivers the prompt via --prompt for OpenCode (positional is a project dir)', () => {
     // Regression for the `Failed to change directory to …/<prompt>` bug: a bare
     // positional prompt makes OpenCode cd into a bogus path and exit.
-    for (const profile of ['opencode', 'opencode-resume'] as const) {
+    for (const profile of ['opencode', 'opencode-resume', 'opencode-yolo'] as const) {
       const { manager, ptys, task } = makeManager({ profile, prompt: 'hi' });
       manager.runNow(task.id);
       expect(ptys.createCalls[0].extraArgs, profile).toEqual(['--prompt', 'hi']);

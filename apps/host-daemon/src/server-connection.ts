@@ -18,9 +18,11 @@ import {
   InteractiveRequestRegistry,
   InteractiveRequestRegistryError
 } from './interactive-request-registry.js';
+import { joinServerWsUrl } from './server-url.js';
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 5_000];
 const HEARTBEAT_MS = 15_000;
+// Pairing URLs keep `/t/<session>` via joinServerWsUrl (not a leading-slash new URL).
 
 export interface EnrolledHostConnection {
   runtime: CommandRuntime;
@@ -40,7 +42,7 @@ export function startEnrolledHostConnection(options: {
   onSocketClose?: (code: number) => void;
 }): EnrolledHostConnection {
   const instanceId = options.instanceId ?? randomUUID();
-  const wsUrl = new URL('/internal/hosts/ws', options.serverUrl.replace(/^http/, 'ws'));
+  const wsUrl = joinServerWsUrl(options.serverUrl, '/internal/hosts/ws');
   wsUrl.searchParams.set('hostId', options.hostId);
   wsUrl.searchParams.set('hostKey', options.hostKey);
 
@@ -169,7 +171,8 @@ export function startEnrolledHostConnection(options: {
       writeTerminal: (input) => enrolledPty!.writeTerminal(input),
       resizeTerminal: (input) => enrolledPty!.resizeTerminal(input),
       stopTerminal: (input) => enrolledPty!.stopTerminal(input),
-      listModels: (input) => adapter!.listModels(input)
+      listModels: (input) => adapter!.listModels(input),
+      providerHealth: (input) => adapter!.providerHealth(input)
     });
   })();
   runtime.emit = (event: HostEventEnvelope) => sink.emit(event);

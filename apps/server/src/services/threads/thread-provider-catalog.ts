@@ -77,12 +77,12 @@ export function getThreadProvider(providerId: string): ThreadProviderRecord | un
 export function canonicalThreadProviderId(providerId: string): string {
   if (providerId === 'claude' || providerId === 'claude-yolo') return 'claude-code';
   if (providerId === 'cursor') return 'acp-cursor';
-  if (providerId === 'opencode' || providerId === 'opencode-resume') return 'acp-opencode';
+  if (providerId === 'opencode' || providerId === 'opencode-resume' || providerId === 'opencode-yolo') return 'acp-opencode';
   return providerId;
 }
 
 export function permissionModeForLaunchProfile(providerId: string): 'accept-edits' | 'auto' | 'full' {
-  return providerId === 'claude-yolo' ? 'full' : 'accept-edits';
+  return providerId === 'claude-yolo' || providerId === 'opencode-yolo' ? 'full' : 'accept-edits';
 }
 
 export const DEFAULT_PLAN_COMMAND = { trigger: '/', name: 'plan' } as const;

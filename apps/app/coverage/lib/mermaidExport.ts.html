@@ -1,0 +1,370 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for lib/mermaidExport.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../prettify.css" />
+    <link rel="stylesheet" href="../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../index.html">All files</a> / <a href="index.html">lib</a> mermaidExport.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>0/47</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/25</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/10</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>0/43</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
+ * Rasterize a mermaid SVG *string* to a PNG/JPEG blob, plus a download helper.
+ *
+ * IMPORTANT — why this takes a string, not the on-screen &lt;svg&gt;: mermaid 11
+ * renders node labels inside &lt;foreignObject&gt; (HTML labels). A browser TAINTS a
+ * canvas the moment you drawImage() an &lt;img&gt; whose SVG contains a
+ * foreignObject, so canvas.toBlob() then yields a blank (background-only)
+ * image — the ~300-byte "download did nothing" bug. The caller therefore
+ * re-renders the diagram with `htmlLabels: false` (native &lt;text&gt; labels, no
+ * foreignObject) and hands us that clean, self-contained markup. That SVG also
+ * carries an explicit font, so we don't need getComputedStyle here.
+ */
+&nbsp;
+/** Read the intrinsic pixel size of an SVG string from its viewBox (or w/h). */
+function <span class="fstat-no" title="function not covered" >svgSize(x</span>ml: string): { width: number; height: number } {
+  const doc = <span class="cstat-no" title="statement not covered" >new DOMParser().parseFromString(xml, 'image/svg+xml');</span>
+  const svg = <span class="cstat-no" title="statement not covered" >doc.documentElement as unknown as SVGSVGElement;</span>
+  const vb = <span class="cstat-no" title="statement not covered" >svg.getAttribute('viewBox');</span>
+<span class="cstat-no" title="statement not covered" >  if (vb) {</span>
+    const parts = <span class="cstat-no" title="statement not covered" >vb.split(/[\s,]+/).map(Number);</span>
+<span class="cstat-no" title="statement not covered" >    if (parts.length === 4 &amp;&amp; parts[2] &gt; 0 &amp;&amp; parts[3] &gt; 0) {</span>
+<span class="cstat-no" title="statement not covered" >      return { width: Math.ceil(parts[2]), height: Math.ceil(parts[3]) };</span>
+    }
+  }
+  const w = <span class="cstat-no" title="statement not covered" >Number(svg.getAttribute('width'));</span>
+  const h = <span class="cstat-no" title="statement not covered" >Number(svg.getAttribute('height'));</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    width: Number.isFinite(w) &amp;&amp; w &gt; 0 ? Math.ceil(w) : 800,
+    height: Number.isFinite(h) &amp;&amp; h &gt; 0 ? Math.ceil(h) : 600
+  };
+}
+&nbsp;
+/**
+ * Rasterize an SVG string to a PNG or JPEG blob at `scale`× (2 = retina-crisp).
+ * `background` paints a solid fill first — required for JPEG (no transparency),
+ * and used for PNG too so a dark-theme diagram exported for a light doc reads.
+ */
+export async function <span class="fstat-no" title="function not covered" >rasterizeSvgString(</span>
+  xml: string,
+  opts: { type: 'image/png' | 'image/jpeg'; scale?: number; background?: string }
+): Promise&lt;Blob&gt; {
+  const { type } = <span class="cstat-no" title="statement not covered" >opts;</span>
+  const scale = <span class="cstat-no" title="statement not covered" >opts.scale ?? 2;</span>
+  const { width, height } = <span class="cstat-no" title="statement not covered" >svgSize(xml);</span>
+&nbsp;
+  const svgBlob = <span class="cstat-no" title="statement not covered" >new Blob([xml], { type: 'image/svg+xml;charset=utf-8' });</span>
+  const url = <span class="cstat-no" title="statement not covered" >URL.createObjectURL(svgBlob);</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >  try {</span>
+    const img = <span class="cstat-no" title="statement not covered" >await loadImage(url);</span>
+    const canvas = <span class="cstat-no" title="statement not covered" >document.createElement('canvas');</span>
+<span class="cstat-no" title="statement not covered" >    canvas.width = width * scale;</span>
+<span class="cstat-no" title="statement not covered" >    canvas.height = height * scale;</span>
+    const ctx = <span class="cstat-no" title="statement not covered" >canvas.getContext('2d');</span>
+<span class="cstat-no" title="statement not covered" >    if (!ctx) <span class="cstat-no" title="statement not covered" >throw new Error('no 2d context');</span></span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >    if (opts.background) {</span>
+<span class="cstat-no" title="statement not covered" >      ctx.fillStyle = opts.background;</span>
+<span class="cstat-no" title="statement not covered" >      ctx.fillRect(0, 0, canvas.width, canvas.height);</span>
+    }
+<span class="cstat-no" title="statement not covered" >    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >    return await new <span class="fstat-no" title="function not covered" >Promise&lt;Blob&gt;((r</span>esolve, reject) =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >      canvas.<span class="fstat-no" title="function not covered" >toBlob(</span></span>
+        (blob) =&gt; (<span class="cstat-no" title="statement not covered" >blob ? resolve(blob) : reject(new Error('toBlob failed'))),</span>
+        type,
+        type === 'image/jpeg' ? 0.92 : undefined
+      );
+    });
+  } finally {
+<span class="cstat-no" title="statement not covered" >    URL.revokeObjectURL(url);</span>
+  }
+}
+&nbsp;
+function <span class="fstat-no" title="function not covered" >loadImage(s</span>rc: string): Promise&lt;HTMLImageElement&gt; {
+<span class="cstat-no" title="statement not covered" >  return new <span class="fstat-no" title="function not covered" >Promise((r</span>esolve, reject) =&gt; {</span>
+    const img = <span class="cstat-no" title="statement not covered" >new Image();</span>
+<span class="cstat-no" title="statement not covered" >    img.<span class="fstat-no" title="function not covered" >onload = () =&gt; <span class="cstat-no" title="statement not covered" >r</span>esolve(img);</span></span>
+<span class="cstat-no" title="statement not covered" >    img.<span class="fstat-no" title="function not covered" >onerror = () =&gt; <span class="cstat-no" title="statement not covered" >r</span>eject(new Error('svg image load failed'));</span></span>
+<span class="cstat-no" title="statement not covered" >    img.src = src;</span>
+  });
+}
+&nbsp;
+/** Trigger a browser download of a blob under `filename`. */
+export function <span class="fstat-no" title="function not covered" >downloadBlob(b</span>lob: Blob, filename: string): void {
+  const url = <span class="cstat-no" title="statement not covered" >URL.createObjectURL(blob);</span>
+  const a = <span class="cstat-no" title="statement not covered" >document.createElement('a');</span>
+<span class="cstat-no" title="statement not covered" >  a.href = url;</span>
+<span class="cstat-no" title="statement not covered" >  a.download = filename;</span>
+<span class="cstat-no" title="statement not covered" >  document.body.appendChild(a);</span>
+<span class="cstat-no" title="statement not covered" >  a.click();</span>
+<span class="cstat-no" title="statement not covered" >  a.remove();</span>
+  // Revoke on the next tick so the click has consumed the URL first.
+<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >  setTimeout(() =&gt; <span class="cstat-no" title="statement not covered" >U</span>RL.revokeObjectURL(url), 0</span>);</span>
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-09-06T18:14:40.081Z
+            </div>
+        <script src="../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../sorter.js"></script>
+        <script src="../block-navigation.js"></script>
+    </body>
+</html>
+    

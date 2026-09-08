@@ -1,16 +1,5 @@
-/**
- * Interactive-request invariants for the Claude Code provider.
- *
- * These moved off the deleted claude-code legacy adapter suite. The adapter is
- * gone, but `interactions.ts` and `interactive-contract.ts` are shared with the
- * canonical bridge — `bridge/bridge.ts` calls
- * `buildClaudeApprovalInteractionPayload`, `buildClaudeUserQuestionPayload`, and
- * `buildClaudeInteractiveResponse` directly — which is why these invariants
- * outlive the adapter. The tests exercise the modules directly instead of going
- * through the adapter's request/response envelope.
- */
-
 import { describe, expect, it } from "vitest";
+import { providerInteractionOutcomeSchema } from "@zana-ai/zcc-domain/thread-runtime";
 import type {
   PendingInteractionResolution,
   UserQuestionPendingInteractionPayload,
@@ -193,7 +182,6 @@ describe("claude-code interactive requests", () => {
       }),
     ).toMatchObject({
       kind: "approval",
-      // A plan verdict grants nothing, so "allow for session" must not appear.
       availableDecisions: ["allow_once", "deny"],
       subject: {
         kind: "plan",
@@ -220,8 +208,6 @@ describe("claude-code interactive requests", () => {
       resolution: { decision: "deny" },
     });
 
-    // A bare "denied" leaves the model free to re-propose the same plan, and
-    // the SDK keeps the session in plan mode, so it loops.
     expect(response).toMatchObject({
       behavior: "deny",
       message: expect.stringContaining("AskUserQuestion"),
@@ -637,19 +623,17 @@ describe("claude-code interactive requests", () => {
     },
   );
 
-  it("rejects Claude AskUserQuestion responses whose resolution kind does not match", () => {
+  it("cannot pair an AskUserQuestion payload with an approval decision: the wire parse rejects it", () => {
     const resolution: PendingInteractionResolution = {
       decision: "deny",
     };
 
-    expect(() =>
-      buildClaudeInteractiveResponse({
+    expect(
+      providerInteractionOutcomeSchema.safeParse({
         payload: createClaudeUserQuestionPayload(),
         resolution,
-      }),
-    ).toThrow(
-      "Claude Code interactive response kind does not match the request payload",
-    );
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects Claude AskUserQuestion response payloads without returnable options", () => {

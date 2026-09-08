@@ -55,6 +55,21 @@ describe('agentNavCounts', () => {
     })).toEqual({ active: 3, blocked: 1 });
   });
 
+  it('counts idle threads with leftover background commands as active', () => {
+    expect(agentNavCounts({
+      terminals: {},
+      agentStateById: {},
+      threads: [
+        {
+          projectId: 'p1',
+          status: 'idle',
+          activity: { activeBackgroundCommandCount: 1 }
+        },
+        { projectId: 'p1', status: 'idle' }
+      ]
+    })).toEqual({ active: 1, blocked: 0 });
+  });
+
   it('does not treat a failed thread as Needs you', () => {
     expect(agentNavCounts({
       terminals: {},

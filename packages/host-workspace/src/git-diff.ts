@@ -45,34 +45,37 @@ function includesUntracked(target: WorkspaceDiffTarget): boolean {
   return target.type === 'uncommitted' || target.type === 'all';
 }
 
-function nameStatusArgs(target: WorkspaceDiffTarget): string[] {
+function nameStatusArgs(target: WorkspaceDiffTarget, mergeBaseRef: string | null): string[] {
   if (target.type === 'commit') {
     return ['show', '--format=', '--name-status', '-M', '-z', target.sha];
   }
-  if (target.type === 'uncommitted') {
-    return ['diff', '--name-status', '-M', '-z', 'HEAD'];
-  }
-  return ['diff', '--name-status', '-M', '-z', `${target.mergeBaseBranch}...HEAD`];
+  return ['diff', '--name-status', '-M', '-z', trackedDiffRev(target, mergeBaseRef)];
 }
 
-function numstatArgs(target: WorkspaceDiffTarget): string[] {
+function numstatArgs(target: WorkspaceDiffTarget, mergeBaseRef: string | null): string[] {
   if (target.type === 'commit') {
     return ['show', '--format=', '--numstat', '-M', '-z', target.sha];
   }
-  if (target.type === 'uncommitted') {
-    return ['diff', '--numstat', '-M', '-z', 'HEAD'];
-  }
-  return ['diff', '--numstat', '-M', '-z', `${target.mergeBaseBranch}...HEAD`];
+  return ['diff', '--numstat', '-M', '-z', trackedDiffRev(target, mergeBaseRef)];
 }
 
-function patchArgs(target: WorkspaceDiffTarget, paths: string[]): string[] {
+function patchArgs(target: WorkspaceDiffTarget, mergeBaseRef: string | null, paths: string[]): string[] {
   if (target.type === 'commit') {
     return ['show', '--format=', '--binary', target.sha, '--', ...paths];
   }
-  if (target.type === 'uncommitted') {
-    return ['diff', '--binary', 'HEAD', '--', ...paths];
-  }
-  return ['diff', '--binary', `${target.mergeBaseBranch}...HEAD`, '--', ...paths];
+  return ['diff', '--binary', trackedDiffRev(target, mergeBaseRef), '--', ...paths];
+}
+
+/**
+ * `all` is working tree vs the merge-base commit (two-dot), so uncommitted
+ * edits on the current branch still show when HEAD has not moved past main.
+ * `branch_committed` stays three-dot (`A...HEAD`) — commits only.
+ */
+function trackedDiffRev(target: WorkspaceDiffTarget, mergeBaseRef: string | null): string {
+  if (target.type === 'uncommitted') return 'HEAD';
+  if (target.type === 'all') return mergeBaseRef ?? 'HEAD';
+  if (target.type === 'branch_committed') return `${target.mergeBaseBranch}...HEAD`;
+  return 'HEAD';
 }
 
 function combinedPageBufferBudget(fileCount: number, maxBytesPerFile: number): number {
@@ -288,8 +291,8 @@ export async function readWorkspaceDiffFiles(
   }
   const mergeBaseRef = await readMergeBaseRef(cwd, target);
   const [nameStatus, numstat] = await Promise.all([
-    runGit(cwd, nameStatusArgs(target), { allowFail: true, overflow: 'truncate' }),
-    runGit(cwd, numstatArgs(target), { allowFail: true, overflow: 'truncate' })
+    runGit(cwd, nameStatusArgs(target, mergeBaseRef), { allowFail: true, overflow: 'truncate' }),
+    runGit(cwd, numstatArgs(target, mergeBaseRef), { allowFail: true, overflow: 'truncate' })
   ]);
   const trackedEntries = parseNameStatusSourceEntries(nameStatus.stdout);
   const numstatByPath = new Map(parseNumstatEntriesZ(numstat.stdout).map((entry) => [entry.path, entry] as const));
@@ -321,13 +324,14 @@ export async function readWorkspaceDiffFiles(
 async function readTrackedPatchesCombined(
   cwd: string,
   target: WorkspaceDiffTarget,
+  mergeBaseRef: string | null,
   paths: string[],
   maxBytesPerFile: number
 ): Promise<Map<string, string>> {
   if (paths.length === 0) return new Map();
   const [nameStatus, patch] = await Promise.all([
-    runGit(cwd, [...nameStatusArgs(target), '--', ...paths], { allowFail: true, overflow: 'truncate' }),
-    runGit(cwd, patchArgs(target, paths), {
+    runGit(cwd, [...nameStatusArgs(target, mergeBaseRef), '--', ...paths], { allowFail: true, overflow: 'truncate' }),
+    runGit(cwd, patchArgs(target, mergeBaseRef, paths), {
       allowFail: true,
       overflow: 'truncate',
       maxBuffer: combinedPageBufferBudget(paths.length, maxBytesPerFile)
@@ -342,7 +346,7 @@ async function readTrackedPatchesCombined(
   for (const path of paths) {
     const previous = entries.find((entry) => entry.path === path)?.previousPath;
     const pathspec = previous && previous !== path ? [previous, path] : [path];
-    const single = await runGit(cwd, patchArgs(target, pathspec), {
+    const single = await runGit(cwd, patchArgs(target, mergeBaseRef, pathspec), {
       allowFail: true,
       overflow: 'truncate',
       maxBuffer: maxBytesPerFile + COMBINED_PAGE_PER_FILE_HEADROOM_BYTES
@@ -399,13 +403,14 @@ export async function readWorkspaceDiffPatch(
 ): Promise<WorkspaceDiffPatchEntry[]> {
   if (paths.length === 0 || !(await detectGitRepo(cwd))) return [];
   const uniquePaths = [...new Set(paths)];
+  const mergeBaseRef = await readMergeBaseRef(cwd, target);
   const untrackedSet = includesUntracked(target)
     ? await filterRequestedUntrackedPaths(cwd, uniquePaths)
     : new Set<string>();
   const untrackedPaths = uniquePaths.filter((path) => untrackedSet.has(path));
   const trackedPaths = uniquePaths.filter((path) => !untrackedSet.has(path));
   const [trackedPatches, untrackedPatches] = await Promise.all([
-    readTrackedPatchesCombined(cwd, target, trackedPaths, maxBytesPerFile),
+    readTrackedPatchesCombined(cwd, target, mergeBaseRef, trackedPaths, maxBytesPerFile),
     readUntrackedPatchesCombined(cwd, untrackedPaths, maxBytesPerFile)
   ]);
   return uniquePaths.map((path) => {

@@ -32,9 +32,10 @@ describe('scaffoldPlugin', () => {
     expect(readFileSync(join(dest, 'app.js'), 'utf8')).toContain('__zccPluginApp');
     expect(readFileSync(join(dest, 'app.test.js'), 'utf8')).toContain('collectTestPluginApp');
     expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).toContain('zcc plugin install .');
-    expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).toContain('zcc plugin dev');
     expect(readFileSync(join(dest, 'README.md'), 'utf8')).toContain('zcc plugin install .');
-    expect(readFileSync(join(dest, 'README.md'), 'utf8')).toContain('zcc plugin dev');
+    expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).not.toMatch(
+      /zcc plugin install \.\s*\nthen `zcc plugin dev/
+    );
     expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).not.toContain('extension.json');
     expect(readFileSync(join(dest, 'app.js'), 'utf8')).not.toMatch(/activate\s*\(/);
     expect(readFileSync(join(dest, 'skills', 'hello-abcd', 'SKILL.md'), 'utf8')).toMatch(/hello-abcd/);
@@ -67,5 +68,44 @@ describe('scaffoldPlugin', () => {
     expect(pkg.zcc.server).toBe('./server.ts');
     expect(pkg.zcc.mcpServers).toBeTruthy();
     expect(readFileSync(join(dest, 'server.test.js'), 'utf8')).toContain('createFakePluginHost');
+  });
+
+  it('scaffolds a todos mini-app for main-panel', async () => {
+    const dest = mkdtempSync(join(tmpdir(), 'zcc-plugin-todos-'));
+    dirs.push(dest);
+    await scaffoldPlugin({
+      targetDir: dest,
+      id: 'hello-abcd',
+      name: 'Hello',
+      kind: 'main-panel'
+    });
+    const pkg = JSON.parse(readFileSync(join(dest, 'package.json'), 'utf8')) as {
+      scripts?: { test?: string };
+      zcc: { app?: string; server?: string; branding?: { icon?: string } };
+    };
+    expect(pkg.zcc.app).toBe('./app.tsx');
+    expect(pkg.zcc.server).toBe('./server.ts');
+    expect(pkg.zcc.branding?.icon).toBe('ListTodo');
+    expect(pkg.scripts?.test).toBe('vitest run');
+    const server = readFileSync(join(dest, 'server.ts'), 'utf8');
+    expect(server).toContain("zcc.rpc.method('list'");
+    expect(server).toContain("zcc.rpc.method('add'");
+    expect(server).toContain("zcc.rpc.method('toggle'");
+    expect(server).toContain('cli.register');
+    expect(server).toContain('showDone');
+    const app = readFileSync(join(dest, 'app.tsx'), 'utf8');
+    expect(app).toContain("from '@zana-ai/zcc-plugin-sdk/app'");
+    expect(app).toContain('useRpc');
+    expect(app).not.toContain('__ZCC_HOST_REACT__');
+    expect(readFileSync(join(dest, 'server.test.ts'), 'utf8')).toContain('runCli');
+    expect(readFileSync(join(dest, 'app.test.tsx'), 'utf8')).toContain('loadPluginApp');
+    expect(readFileSync(join(dest, 'app.test.tsx'), 'utf8')).toContain('renderSlot');
+    expect(readFileSync(join(dest, 'vitest.config.ts'), 'utf8')).toContain("environment: 'jsdom'");
+    expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).toContain('npm test');
+    expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).toContain('zcc plugin reload');
+    expect(readFileSync(join(dest, 'README.md'), 'utf8')).toContain('zcc plugin install .');
+    expect(readFileSync(join(dest, 'README.md'), 'utf8')).not.toMatch(
+      /zcc plugin install \.\s*\nthen `zcc plugin dev/
+    );
   });
 });

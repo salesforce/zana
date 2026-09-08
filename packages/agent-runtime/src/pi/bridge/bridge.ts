@@ -55,6 +55,7 @@ import {
 import type { ThreadDelta } from "@zana-ai/zcc-provider-bridge-protocol";
 import {
   buildPiSessionParams,
+  toPiThinkingLevel,
   type PiSessionParams,
 } from "../session-params.js";
 import { PiSdkSession, type PiSdkSessionOptions } from "./sdk-session.js";
@@ -68,7 +69,7 @@ import {
   type ToolCallForwarder,
 } from "./tool-proxy.js";
 import { listPiBridgeModels } from "./model-list.js";
-import { getPiModelRuntime } from "./model-runtime.js";
+import { getPiModelPickerScope, getPiModelRuntime } from "./model-runtime.js";
 import {
   takeOverPiBridgeStdout,
   writePiBridgeProtocol,
@@ -219,6 +220,8 @@ interface ThreadSession {
   providerThreadId: string;
   /** Every session-scoped notification is translated through this. */
   translator: ReturnType<typeof createPiDeltaTranslator>;
+  /** Construction params so a later turn can rebuild on model/thinking change. */
+  construction: PiSessionParams;
 }
 
 interface PiThreadStopResult {
@@ -641,7 +644,21 @@ async function handleRequest(
         toPiSessionParams(request.params),
       );
       break;
-    case "thread/resume":
+    case "thread/resume": {
+      const recordedCwd = readPiSessionRecordedCwd(
+        resolvePiSessionFilePath({
+          env: process.env,
+          threadId: request.params.providerThreadId,
+        }),
+      );
+      if (recordedCwd !== null && !existsSync(recordedCwd)) {
+        sendError(
+          request.id,
+          -32000,
+          `Cannot resume: the pi session's working directory "${recordedCwd}" no longer exists.`,
+        );
+        break;
+      }
       await handleThreadConstruction(
         request.id,
         request.params.threadId,
@@ -649,12 +666,13 @@ async function handleRequest(
         toPiSessionParams(request.params),
       );
       break;
+    }
     case "thread/fork":
       // Pi supports checkpoint forks natively.
       await handleThreadFork(request.id, request.params);
       break;
     case "turn/start":
-      handleTurnStart(request.id, request.params);
+      await handleTurnStart(request.id, request.params);
       break;
     case "turn/steer":
       await handleTurnSteer(request.id, request.params);
@@ -698,6 +716,27 @@ function toPiSessionParams(
   });
 }
 
+function readPiSessionRecordedCwd(sessionFilePath: string): string | null {
+  try {
+    const firstLine = readFileSync(sessionFilePath, "utf8")
+      .split(/\r?\n/u)
+      .find((line) => line.trim().length > 0);
+    if (!firstLine) return null;
+    const parsed: unknown = JSON.parse(firstLine);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const record = parsed as { type?: unknown; cwd?: unknown };
+    if (record.type !== "session" || typeof record.cwd !== "string") {
+      return null;
+    }
+    const cwd = record.cwd.trim();
+    return cwd.length > 0 ? cwd : null;
+  } catch {
+    return null;
+  }
+}
+
 async function handleModelList(
   id: string | number,
   params: { cwd?: string },
@@ -705,7 +744,10 @@ async function handleModelList(
   try {
     sendResult(
       id,
-      await listPiBridgeModels(await getPiModelRuntime(params.cwd)),
+      await listPiBridgeModels(
+        await getPiModelRuntime(params.cwd),
+        await getPiModelPickerScope(params.cwd),
+      ),
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -743,6 +785,7 @@ async function startPiThreadSession(
     closing: false,
     providerThreadId,
     translator: createSessionTranslator(),
+    construction: params,
   };
   sessions.set(threadId, threadSession);
 
@@ -917,17 +960,135 @@ function recordAcceptedTurnInput(
   ]);
 }
 
-function handleTurnStart(id: string | number, params: TurnStartParams): void {
-  // Requests resolve the session by bb threadId — pi's stable session handle.
-  const threadSession = sessions.get(params.threadId);
-  if (!threadSession || threadSession.closing) {
+function retireReplacedPiChild(replaced: ThreadSession): void {
+  replaced.closing = true;
+  resolvePendingToolCalls(
+    replaced,
+    "Pi thread session replaced while tool call was pending",
+  );
+  void replaced.session
+    .closeGracefully(THREAD_STOP_CLOSE_TIMEOUT_MS)
+    .catch(() => undefined);
+}
+
+async function rebuildThreadSession(
+  threadId: string,
+  previous: ThreadSession,
+  params: PiSessionParams,
+): Promise<ThreadSession> {
+  const sessionOptions = buildSessionOptions({
+    params,
+    providerThreadId: previous.providerThreadId,
+  });
+  applyDynamicTools(sessionOptions, params.dynamicTools, threadId);
+  const sessionSerial = nextSessionSerial();
+  const session = new PiSdkSession(
+    sessionOptions,
+    createOnPiEvent({ sessionSerial, threadId }),
+    createOnSessionDone({ sessionSerial, threadId }),
+  );
+  const replacement: ThreadSession = {
+    session,
+    sessionSerial,
+    closing: false,
+    providerThreadId: previous.providerThreadId,
+    translator: createSessionTranslator(),
+    construction: params,
+  };
+  sessions.set(threadId, replacement);
+  try {
+    await session.start();
+  } catch (error) {
+    if (sessions.get(threadId) === replacement) {
+      sessions.set(threadId, previous);
+    }
+    throw error;
+  }
+  retireReplacedPiChild(previous);
+  return replacement;
+}
+
+function nextTurnConstruction(
+  construction: PiSessionParams,
+  options: TurnStartParams["options"],
+): PiSessionParams | undefined {
+  const nextModel = options?.model !== undefined ? options.model : undefined;
+  const nextThinking =
+    options?.reasoningLevel !== undefined
+      ? toPiThinkingLevel(options.reasoningLevel)
+      : undefined;
+  const modelChanged =
+    nextModel !== undefined && nextModel !== construction.model;
+  const thinkingChanged =
+    nextThinking !== undefined && nextThinking !== construction.thinkingLevel;
+  if (!modelChanged && !thinkingChanged) {
+    return undefined;
+  }
+  return {
+    ...construction,
+    ...(modelChanged ? { model: nextModel } : {}),
+    ...(thinkingChanged ? { thinkingLevel: nextThinking } : {}),
+  };
+}
+
+async function applyTurnOptionRebuild(
+  threadId: string,
+  threadSession: ThreadSession,
+  nextConstruction: PiSessionParams,
+): Promise<ThreadSession> {
+  const replacement = await rebuildThreadSession(
+    threadId,
+    threadSession,
+    nextConstruction,
+  );
+  sendThreadIdentity(threadId, replacement.providerThreadId);
+  sendSessionReset(threadId, replacement.translator);
+  send({
+    jsonrpc: "2.0",
+    method: BRIDGE_NOTIFICATION_METHODS.sessionReplaced,
+    params: {
+      threadId,
+      providerThreadId: replacement.providerThreadId,
+      reason:
+        "Execution settings changed; the pi session was rebuilt to apply them.",
+      contextLost: false,
+    },
+  });
+  return replacement;
+}
+
+async function handleTurnStart(
+  id: string | number,
+  params: TurnStartParams,
+): Promise<void> {
+  const liveSession = sessions.get(params.threadId);
+  if (!liveSession || liveSession.closing) {
     sendError(id, -32000, "No active pi session");
     return;
   }
 
-  // A standalone builtin `/compact` mention is bb's manual-compaction request,
-  // not model input. Prompting with the literal text would make the model talk
-  // about compaction while the context keeps growing.
+  const nextConstruction = nextTurnConstruction(
+    liveSession.construction,
+    params.options,
+  );
+  let threadSession = liveSession;
+  if (nextConstruction !== undefined) {
+    try {
+      threadSession = await applyTurnOptionRebuild(
+        params.threadId,
+        liveSession,
+        nextConstruction,
+      );
+    } catch (error) {
+      sendError(
+        id,
+        -32000,
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
+  }
+
   if (isStandaloneBuiltinCompactCommand(params.input)) {
     recordAcceptedTurnInput(threadSession, params);
     startPiCompaction(threadSession, params.threadId);

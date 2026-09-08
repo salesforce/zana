@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
 import { providerFor, registrationFor } from '../registry.js';
 import {
   OpenCodeAgentDiscoveryCache,
@@ -7,10 +7,14 @@ import {
   enrichOpenCodeAgentDescriptors,
   parseOpenCodeAgentDescriptors,
   parseOpenCodeAgentDebugOutput,
-  parseOpenCodeAgentDiscoveryOutput
+  parseOpenCodeAgentDiscoveryOutput,
+  parseOpenCodeModelIds
 } from '../opencode/provider.js';
 import type { AppConfig, ProjectRemote } from '@zana-ai/zcc-domain/product';
 import { shellQuote, shellQuoteArgv } from '../shell-quote.js';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const CONFIG: AppConfig = {
   version: 1,
@@ -204,7 +208,7 @@ describe('parseOpenCodeAgentDescriptors', () => {
       { id: 'build', label: 'Build', scope: ['local'] },
       { id: 'plan', label: 'Plan', scope: ['local'] }
     ])).toEqual([
-      { id: 'general', label: 'general', scope: ['local'] }
+      { id: 'general', label: 'general', scope: ['local', 'remote'] }
     ]);
   });
 
@@ -368,10 +372,12 @@ describe('registry.providerFor — opencode family', () => {
   it('routes opencode profiles to the OpenCodeProvider', () => {
     expect(providerFor('opencode')).toBeInstanceOf(OpenCodeProvider);
     expect(providerFor('opencode-resume')).toBeInstanceOf(OpenCodeProvider);
+    expect(providerFor('opencode-yolo')).toBeInstanceOf(OpenCodeProvider);
   });
 
   it('reuses ONE instance per family (built once, Rule 3)', () => {
     expect(providerFor('opencode')).toBe(providerFor('opencode-resume'));
+    expect(providerFor('opencode')).toBe(providerFor('opencode-yolo'));
   });
 
   it('has a stable provider id', () => {
@@ -407,34 +413,40 @@ describe('OpenCodeProvider', () => {
     });
   });
 
+  it('resolveLaunch: opencode-yolo passes --auto (auto-approve)', () => {
+    expect(p.resolveLaunch('opencode-yolo', CONFIG, false)).toEqual({
+      command: 'opencode',
+      args: ['--auto']
+    });
+  });
+
   it('honors the configured opencodeBinary path', () => {
     const cfg: AppConfig = { ...CONFIG, opencodeBinary: '/opt/opencode/opencode' };
     expect(p.resolveLaunch('opencode', cfg, false).command).toBe('/opt/opencode/opencode');
   });
 
-  it('exposes every configured OpenCode model target for verified local launches only', () => {
+  it('exposes every configured OpenCode model target for verified local and remote launches', () => {
     const models = p.adapter.descriptor.targets?.models ?? [];
     expect(models.map((model) => model.id)).toEqual([
-      'aisuite/gpt-5.6-luna',
-      'aisuite/gpt-5.6-terra',
-      'aisuite/gpt-5.6-sol',
-      'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0',
-      'aisuite/us.anthropic.claude-sonnet-5',
-      'aisuite/gemini-3.1-pro-preview',
-      'aisuite/gemini-3.5-flash'
+      'llmgw/gpt-5.6-luna-1M',
+      'llmgw/gpt-5.6-terra-1M',
+      'llmgw/gpt-5.6-sol-1M',
+      'llmgw/gemini-3.1-pro-preview',
+      'llmgw/gemini-3.5-flash',
+      'llmgw/grok-4.6'
     ]);
     expect(Object.fromEntries(models.map((model) => [model.id, model.level]))).toMatchObject({
-      'aisuite/gpt-5.6-luna': 'low',
-      'aisuite/gpt-5.6-terra': 'medium',
-      'aisuite/gpt-5.6-sol': 'high',
-      'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0': 'low',
-      'aisuite/us.anthropic.claude-sonnet-5': 'medium',
-      'aisuite/gemini-3.1-pro-preview': 'medium',
-      'aisuite/gemini-3.5-flash': 'low'
+      'llmgw/gpt-5.6-luna-1M': 'low',
+      'llmgw/gpt-5.6-terra-1M': 'medium',
+      'llmgw/gpt-5.6-sol-1M': 'high',
+      'llmgw/gemini-3.1-pro-preview': 'medium',
+      'llmgw/gemini-3.5-flash': 'low',
+      'llmgw/grok-4.6': 'medium'
     });
-    expect(models.every((model) => model.scope.length === 1 && model.scope[0] === 'local')).toBe(true);
+    expect(models.every((model) => model.scope.length === 2 && model.scope.includes('local') && model.scope.includes('remote'))).toBe(true);
     expect(models.every((model) => model.evidenceVersion === '1.18.0')).toBe(true);
     expect(p.adapter.evidence.map(({ id }) => id)).toEqual(expect.arrayContaining(models.map(({ id }) => id)));
+    expect(p.adapter.evidence.filter(({ id, scope }) => id === models[0]?.id).map(({ scope }) => scope)).toEqual(['local', 'remote']);
   });
 
   it('describes 1.18.0 as a minimum supported and reviewed floor', () => {
@@ -445,11 +457,19 @@ describe('OpenCodeProvider', () => {
 
   it('maps dynamic roles to explicit reviewed discovery evidence', () => {
     expect(p.dynamicRoleEvidenceTarget(
-      { id: 'doc-vault', label: 'doc-vault', scope: ['local'] },
+      { id: 'custom-reviewer', label: 'custom-reviewer', scope: ['local'] },
       '1.18.10'
     )).toEqual({
-      id: 'opencode.role.discovery', label: 'doc-vault', scope: ['local'], evidenceVersion: '1.18.0'
+      id: 'opencode.role.discovery', label: 'custom-reviewer', scope: ['local'], evidenceVersion: '1.18.0'
     });
+    expect(p.dynamicRoleEvidenceTarget(
+      { id: 'general', label: 'general', scope: ['local', 'remote'] },
+      '1.18.10'
+    )).toEqual({
+      id: 'opencode.role.discovery', label: 'general', scope: ['local', 'remote'], evidenceVersion: '1.18.0'
+    });
+    expect(p.adapter.evidence.filter(({ id }) => id === 'opencode.role.discovery').map(({ scope }) => scope))
+      .toEqual(['local', 'remote']);
   });
 
   it('declares approved global execution-state mappings', () => {
@@ -512,6 +532,7 @@ describe('OpenCodeProvider', () => {
   it('baseArgsPinSession true only for opencode-resume', () => {
     expect(p.baseArgsPinSession('opencode-resume')).toBe(true);
     expect(p.baseArgsPinSession('opencode')).toBe(false);
+    expect(p.baseArgsPinSession('opencode-yolo')).toBe(false);
   });
 
   it('capabilities: agent + promptArgv, no launcher-injected flags', () => {
@@ -573,15 +594,15 @@ describe('OpenCodeProvider', () => {
     expect(cmd).not.toContain('/opt/local/opencode');
   });
 
-  it('remote command rejects unverified structured target routing', () => {
-    expect(() => p.buildRemoteCommand({
+  it('remote command binds verified structured target routing', () => {
+    const { cmd } = p.buildRemoteCommand({
       profile: 'opencode',
       config: {
         ...CONFIG,
         harnessRouting: {
           schemaVersion: 1,
           byAdapter: {
-            opencode: { modelTargetId: 'aisuite/gpt-5.6-luna', executionState: 'plan' }
+            opencode: { modelTargetId: 'llmgw/gpt-5.6-luna-1M', executionState: 'plan' }
           }
         }
       },
@@ -590,7 +611,7 @@ describe('OpenCodeProvider', () => {
         harnessRouting: {
           schemaVersion: 1,
           byAdapter: {
-            opencode: { modelTargetId: 'aisuite/gpt-5.6-terra', executionState: 'interactive' }
+            opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M', executionState: 'interactive' }
           }
         }
       },
@@ -598,15 +619,41 @@ describe('OpenCodeProvider', () => {
       harnessRouting: {
         schemaVersion: 1,
         byAdapter: {
-          opencode: { modelTargetId: 'aisuite/gemini-3.5-flash', executionState: 'autonomous' }
+          opencode: { modelTargetId: 'llmgw/gemini-3.5-flash', executionState: 'autonomous' }
         }
       }
-    })).toThrow('model target is unavailable for remote launches');
+    });
+    expect(cmd).toBe(
+      `cd '/home/sfwork/core' && exec 'bash' '-lic' ${shellQuote(
+        `exec ${shellQuoteArgv(['opencode', '--model', 'llmgw/gemini-3.5-flash', '--agent', 'build', '--auto'])}`
+      )}`
+    );
   });
 
   it('title maps each profile', () => {
     expect(p.title('opencode')).toBe('opencode');
     expect(p.title('opencode-resume')).toBe('opencode --continue');
+    expect(p.title('opencode-yolo')).toBe('opencode --auto');
+  });
+
+  it('validateRoutingCombination allows a native role with yolo --auto, not with execution state', () => {
+    expect(p.validateRoutingCombination({
+      roleTargetId: 'build',
+      executionOrigin: 'explicit-native'
+    })).toBeUndefined();
+    expect(p.validateRoutingCombination({
+      roleTargetId: 'build',
+      executionOrigin: 'inherited-native-default'
+    })).toBeUndefined();
+    expect(p.validateRoutingCombination({
+      roleTargetId: 'build',
+      executionOrigin: 'portable-mapped'
+    })).toBe('OpenCode native role and execution state require one compatible role policy; clear one selection');
+    expect(p.validateRoutingCombination({
+      roleTargetId: 'build',
+      executionOrigin: 'explicit-native',
+      executionTargetId: 'opencode.execution.plan'
+    })).toBe('OpenCode native role and execution state require one compatible role policy; clear one selection');
   });
 
   describe('detectBlockedPrompt (LAS-07 — the non-OSC "needs-you" signal)', () => {
@@ -690,6 +737,90 @@ describe('OpenCodeProvider', () => {
   });
 });
 
+describe('parseOpenCodeModelIds', () => {
+  it('keeps provider/model ids, trims, dedupes first-seen, and drops noise', () => {
+    expect(parseOpenCodeModelIds([
+      '  llmgw/gpt-5.6-sol-1M  ',
+      'Available models:',        // banner — no slash
+      'llmgw/grok-4.6',
+      'llmgw/gpt-5.6-sol-1M',     // duplicate
+      '',                         // blank
+      '-flag',                    // starts with '-' → rejected id shape
+      'bare-model',               // no slash
+      'llmgw/gemini-3.5-flash'
+    ].join('\n'))).toEqual([
+      'llmgw/gpt-5.6-sol-1M',
+      'llmgw/grok-4.6',
+      'llmgw/gemini-3.5-flash'
+    ]);
+  });
+
+  it('returns an empty list for whitespace or pure-banner output', () => {
+    expect(parseOpenCodeModelIds(' \n\t\r\n')).toEqual([]);
+    expect(parseOpenCodeModelIds('Fetching models...\nNo models configured')).toEqual([]);
+  });
+});
+
+describe('OpenCodeProvider.explainUnexpectedExit', () => {
+  const p = new OpenCodeProvider();
+  const NOT_FOUND = 'Error: ProviderModelNotFoundError: model llmgw/aisuite-old not found';
+
+  it('explains an exit-64 ProviderModelNotFoundError with an actionable message', () => {
+    const msg = p.explainUnexpectedExit('opencode', 64, NOT_FOUND);
+    expect(msg).toContain('no longer available on the gateway');
+    expect(msg).toMatch(/--agent|routing|persona/i);
+  });
+
+  it('matches the generic model-not-found phrasing case-insensitively', () => {
+    expect(p.explainUnexpectedExit('opencode', 64, 'ModelNotFoundError')).toBeTruthy();
+    expect(p.explainUnexpectedExit('opencode', 64, 'the requested Model X not Found here')).toBeTruthy();
+  });
+
+  it('stays silent for a different exit code or an unrelated crash', () => {
+    expect(p.explainUnexpectedExit('opencode', 1, NOT_FOUND)).toBeUndefined();
+    expect(p.explainUnexpectedExit('opencode', 64, 'Segmentation fault')).toBeUndefined();
+    expect(p.explainUnexpectedExit('opencode', 0, NOT_FOUND)).toBeUndefined();
+  });
+});
+
+describe('OpenCodeProvider.discoverModelTargets', () => {
+  const p = new OpenCodeProvider();
+  const scripts: string[] = [];
+
+  const fakeBinary = (body: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-oc-models-'));
+    const path = join(dir, 'opencode');
+    writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    chmodSync(path, 0o755);
+    scripts.push(dir);
+    return path;
+  };
+
+  afterAll(() => {
+    for (const dir of scripts) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns the live gateway ids parsed from `opencode models`', async () => {
+    const bin = fakeBinary('printf "llmgw/gpt-5.6-sol-1M\\nllmgw/grok-4.6\\n"');
+    const cfg: AppConfig = { ...CONFIG, opencodeBinary: bin };
+    // Unique cwd per binary keeps the module-level discovery cache from colliding.
+    await expect(p.discoverModelTargets({ cwd: tmpdir(), config: cfg }))
+      .resolves.toEqual(['llmgw/gpt-5.6-sol-1M', 'llmgw/grok-4.6']);
+  });
+
+  it('returns undefined when the CLI exits non-zero (probe unavailable → snapshot fallback)', async () => {
+    const bin = fakeBinary('echo "boom" >&2\nexit 1');
+    const cfg: AppConfig = { ...CONFIG, opencodeBinary: bin };
+    await expect(p.discoverModelTargets({ cwd: tmpdir(), config: cfg })).resolves.toBeUndefined();
+  });
+
+  it('returns undefined when the CLI lists nothing usable (empty parse is not authoritative)', async () => {
+    const bin = fakeBinary('printf "Fetching models...\\nNo models configured\\n"');
+    const cfg: AppConfig = { ...CONFIG, opencodeBinary: bin };
+    await expect(p.discoverModelTargets({ cwd: tmpdir(), config: cfg })).resolves.toBeUndefined();
+  });
+});
+
 describe.runIf(process.env.ZCC_LIVE_OPENCODE === '1')('OpenCodeProvider live discovery', () => {
   it('discovers this project through the real CLI', async () => {
     const result = await new OpenCodeProvider().discoverAgentDescriptors({
@@ -698,8 +829,10 @@ describe.runIf(process.env.ZCC_LIVE_OPENCODE === '1')('OpenCodeProvider live dis
     }, { bypassCache: true });
     expect(result).toMatchObject({ status: 'success' });
     if (result.status === 'success') {
+      // Assert only the built-in primaries every install has — never a
+      // developer-local custom agent name (kept out of the committed suite).
       expect(result.descriptors.filter(({ directLaunchAllowed }) => directLaunchAllowed).map(({ id }) => id))
-        .toEqual(expect.arrayContaining(['build', 'plan', 'doc-vault', 'test-primary']));
+        .toEqual(expect.arrayContaining(['build', 'plan']));
       expect(result.descriptors.filter(({ hidden }) => hidden).map(({ id }) => id))
         .toEqual(expect.arrayContaining(['compaction', 'summary', 'title']));
     }

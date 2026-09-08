@@ -9,7 +9,9 @@ import {
 } from '@zana-ai/zcc-thread-view';
 import type { ActiveThinking, ThreadTimelineGoal } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
-import { isBusyThreadStatus, timelineRowsAwaitUser } from './thread-timeline-model.js';
+import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
+import type { PlanExecutionTask } from './timeline/plan-execution-card.js';
+import { showOngoingThreadWork, timelineHasRunningWork, timelineRowsAwaitUser } from './thread-timeline-model.js';
 import { collectTimelineAutoExpansionRowIds } from './timeline/timeline-auto-expand.js';
 import {
   findStreamingAssistantMessageId,
@@ -25,6 +27,7 @@ import {
 } from './timeline/timeline-scroll.js';
 import {
   ThreadGoalBanner,
+  ThreadHostDisconnectedBanner,
   ThreadWorkflowChips,
   ThreadWorkingIndicator
 } from './timeline/ThreadBanners.js';
@@ -51,6 +54,9 @@ export interface ThreadTimelineProps {
   onFork?: (sourceSeqEnd?: number) => void;
   forceExpandedRowIds?: ReadonlySet<string>;
   searchHitRowId?: string | null;
+  messageActions?: readonly ThreadChatMessageAction[];
+  includePluginMessageActions?: boolean;
+  planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
 }
 
 function flattenForUnread(rows: ThreadTimelineViewRow[]): Array<{ id: string; sourceSeqStart?: number }> {
@@ -89,7 +95,10 @@ export function ThreadTimeline({
   parentThreadId,
   onFork,
   forceExpandedRowIds,
-  searchHitRowId
+  searchHitRowId,
+  messageActions,
+  includePluginMessageActions,
+  planExecution
 }: ThreadTimelineProps) {
   const [now, setNow] = useState(() => Date.now());
   const [retainedTerminalIds, setRetainedTerminalIds] = useState<string[]>([]);
@@ -106,7 +115,7 @@ export function ThreadTimeline({
   const expansion = useMemo(
     () => collectTimelineAutoExpansionRowIds({
       rows: viewRows,
-      scopeActive: isBusyThreadStatus(status) && !awaitingUser
+      scopeActive: showOngoingThreadWork(status, awaitingUser)
     }),
     [awaitingUser, status, viewRows]
   );
@@ -124,7 +133,7 @@ export function ThreadTimeline({
     () => firstUnreadRowId(flattenForUnread(viewRows), lastReadSeq),
     [lastReadSeq, viewRows]
   );
-  const busy = isBusyThreadStatus(status);
+  const busy = showOngoingThreadWork(status);
   const streamingAssistantMessageId = useMemo(
     () => (busy ? findStreamingAssistantMessageId(viewRows) : null),
     [busy, viewRows]
@@ -222,9 +231,19 @@ export function ThreadTimeline({
             parentThreadId={parentThreadId}
             threadIdle={!busy && !awaitingUser}
             onFork={onFork}
+            scopeActive={busy && !awaitingUser}
+            messageActions={messageActions}
+            includePluginMessageActions={includePluginMessageActions}
+            planExecution={planExecution}
           />
         )}
-        <ThreadWorkingIndicator status={status} thinking={thinking} waitingOnUser={awaitingUser} />
+        <ThreadHostDisconnectedBanner status={status} />
+        <ThreadWorkingIndicator
+          status={status}
+          thinking={thinking}
+          waitingOnUser={awaitingUser}
+          hasRunningWork={timelineHasRunningWork(rows)}
+        />
       </div>
       {pinnedAway ? (
         <button

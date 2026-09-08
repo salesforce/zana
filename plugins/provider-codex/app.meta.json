@@ -5,7 +5,7 @@
   "pluginId": "provider-codex",
   "pluginVersion": "0.1.0",
   "builtWith": {
-    "zccVersion": "1.0.10",
+    "zccVersion": "2.0.6",
     "pluginSdkVersion": "0.1.0"
   }
 }

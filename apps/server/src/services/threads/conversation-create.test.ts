@@ -192,6 +192,7 @@ describe('thread provider catalog', () => {
     expect(canonicalThreadProviderId('cursor')).toBe('acp-cursor');
     expect(canonicalThreadProviderId('opencode')).toBe('acp-opencode');
     expect(canonicalThreadProviderId('opencode-resume')).toBe('acp-opencode');
+    expect(canonicalThreadProviderId('opencode-yolo')).toBe('acp-opencode');
     expect(canonicalThreadProviderId('codex')).toBe('codex');
   });
 
@@ -216,11 +217,23 @@ describe('unmanaged environment reuse', () => {
     expect(source).toContain('needsHostAttach');
     expect(source).toContain("existing.workspaceProvisionType === 'unmanaged'");
     expect(source).toContain('requestAutoThreadTitle(ctx, input, running.id, textPrompt)');
-    expect(source).toContain('hostPromptFromInput');
+    expect(source).toContain('hostPromptInputFromInput');
     expect(source).toContain('titleFromPrompt');
     expect(source).toContain('reasoningLevel: args.input.reasoningLevel');
     expect(source).toContain("...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})");
+    expect(source).toContain('recordThreadExecutionMode');
+    expect(source).toContain('claudeCodePermissionMode');
+    expect(source).toContain('providerOptions');
+    expect(source).toContain('derivedProviderOptionsForCommand');
     expect(source).toContain('clientRequestId');
+    expect(source).toContain("from './conversation-live-turn.js'");
+    expect(source).toContain('startLiveTurnCommand');
+    expect(source).toContain('settleLiveTurnCommandFailure');
+    expect(source).not.toMatch(/import \{[\s\S]*startLiveTurnCommand[\s\S]*\} from '\.\/conversation-turn-settlement\.js'/);
+    expect(source).toContain("from './conversation-thread-view.js'");
+    const outcome = readFileSync(new URL('./conversation-lifecycle-outcome.ts', import.meta.url), 'utf8');
+    expect(outcome).toContain("from './conversation-thread-view.js'");
+    expect(outcome).not.toContain("from './conversation-create.js'");
   });
 });
 
@@ -235,20 +248,26 @@ describe('thread title namer wiring', () => {
 });
 
 describe('SSH remotes', () => {
-  it('run on this machine with remote tools unless the enrolled host is selected', () => {
+  it('require a bound host daemon before creating a thread', () => {
     const source = readFileSync(new URL('./conversation-create.ts', import.meta.url), 'utf8');
+    const view = readFileSync(new URL('./conversation-thread-view.ts', import.meta.url), 'utf8');
     expect(source).toContain('conversationThreadViews');
-    expect(source).toContain('peekThreadReadSeq');
-    expect(source).toContain('maxConversationEventSequenceByThreadIds');
-    expect(source).toContain('isRemoteToolProxyActive(project, input.hostId)');
-    expect(source).toContain('remoteWorkspacePath(project, remoteToolProxy)');
+    expect(view).toContain('peekThreadReadSeq');
+    expect(view).toContain('maxConversationEventSequenceByThreadIds');
+    expect(view).toContain('threadActivityForConversation');
+    expect(source).toContain('boundRemoteHostId(project)');
+    expect(source).toContain('REMOTE_HOST_DAEMON_REQUIRED');
+    expect(source).toContain('isRemoteToolProxyActive(project, boundRemote ?? input.hostId)');
+    expect(source).toContain('resolveHarnessWorkspacePath');
+    expect(source).toContain('remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath');
+    expect(source).toContain("type: 'host.browse_directory'");
     expect(source).toContain('resolveSpawnChoiceForHost');
     expect(source).toContain('dropCwd');
     expect(source).toContain('resolvePersonalTargetPathOnHost');
     expect(source).not.toContain('readRemoteToolProxySetting');
+    expect(source).toContain('hosts: listHosts(ctx.db).map(toRemoteStartPathHost)');
     expect(source).toContain('getPrimaryHost(ctx.db)');
-    expect(source).toContain('remoteToolProxy: true');
-    expect(source).toContain('threadLaunchRemote(args.project)');
+    expect(source).toContain('threadLaunchRemote(');
   });
 });
 

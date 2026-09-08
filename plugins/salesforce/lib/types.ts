@@ -2,6 +2,8 @@ export const DEFAULT_API_VERSION = '62.0';
 export const QUERY_SAMPLE_LIMIT = 25;
 export const QUERY_RUN_MAX_LIMIT = 200;
 export const QUERY_HARD_CAP = 2000;
+export const EXPLORER_LOAD_ALL_CAP = 10_000;
+export const SOQL_HISTORY_RECENT_CAP = 50;
 export const ARTIFACT_PREVIEW_ROWS = 20;
 export const ARTIFACT_MAX_CHARS = 64_000;
 export const LOG_BODY_PREVIEW_CHARS = 8_000;
@@ -31,11 +33,13 @@ export type OrgKind = 'production' | 'sandbox' | 'scratch' | 'unknown';
 export type EnvelopeKind =
   | 'org.production.read'
   | 'org.unknown.read'
+  | 'org.write'
   | 'apex.anonymous'
   | 'soql.unbounded'
   | 'soql.export'
   | 'agent.publish'
-  | 'agent.activate';
+  | 'agent.activate'
+  | 'agent.preview.live';
 
 export type AgentCompilerKind = 'library' | 'cli' | 'missing';
 
@@ -45,13 +49,25 @@ export interface ExecResult {
   stderr: string;
 }
 
+export type SalesforceHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
 export interface SalesforceRequest {
-  method: 'GET' | 'POST';
+  method: SalesforceHttpMethod;
   path: string;
   query?: Record<string, string>;
   body?: unknown;
   apiVersion?: string;
+  signal?: AbortSignal;
 }
+
+export type SalesforceRequestInit = {
+  method?: SalesforceHttpMethod;
+  query?: Record<string, string>;
+  body?: unknown;
+  apiVersion?: string;
+  signal?: AbortSignal;
+  alias?: string;
+};
 
 export interface SalesforceResponse {
   status: number;
@@ -78,6 +94,17 @@ export interface PublicOrgView {
   apiVersion: string;
   kind: OrgKind;
   isDefault: boolean;
+}
+
+/** Auth'd CLI org from `sf org list` — never includes tokens. */
+export interface PublicListedOrg {
+  alias: string;
+  username: string;
+  kind: OrgKind;
+  isDefault: boolean;
+  orgId: string;
+  instanceUrl: string;
+  connectedStatus: string;
 }
 
 export interface SafetyEnvelope {
@@ -131,7 +158,7 @@ export interface DoctorReport {
   cliError: string | null;
   defaultOrg: string | null;
   org: PublicOrgView | null;
-  aliases: Array<{ alias: string; username: string; kind: OrgKind; isDefault: boolean }>;
+  aliases: PublicListedOrg[];
   dxProject: boolean;
   projectRoot: string | null;
   agentCompiler: AgentCompilerKind;

@@ -19,8 +19,8 @@ const h = vi.hoisted(() => {
     nav: 'projects',
     setNav: vi.fn(),
     sidebarCollapsed: false,
-    workspaceMode: {} as Record<string, string>,
-    setWorkspaceMode: vi.fn(),
+    projectView: {} as Record<string, string>,
+    setProjectView: vi.fn(),
     collapsedSections: {},
     toggleSection: vi.fn(),
     setLauncherOpen: vi.fn()
@@ -34,6 +34,15 @@ const h = vi.hoisted(() => {
     state,
     data,
     modules: [] as AppModule[],
+    slotTabs: [] as Array<{
+      pluginId: string;
+      id: string;
+      label: string;
+      icon: string;
+      generation: number;
+      global?: boolean;
+      component: () => null;
+    }>,
     unreadInbox: 15,
     agentCounts: { active: 0, blocked: 0 },
     scheduleCount: 6
@@ -64,13 +73,27 @@ vi.mock('../../plugins/plugin-slots', () => ({
     return () => undefined;
   },
   listSidebarFooterActions: () => [],
-  listProjectTabs: () => []
+  listProjectTabs: () => h.slotTabs,
+  projectTabView: (
+    tab: { pluginId: string; id: string },
+    tabs: ReadonlyArray<{ pluginId: string; id: string }>
+  ) => {
+    const first = tabs.find((row) => row.pluginId === tab.pluginId);
+    return first?.id === tab.id ? tab.pluginId : `${tab.pluginId}:${tab.id}`;
+  }
 }));
 vi.mock('../../lib/resolveIcon', () => ({
   resolveIcon: () => () => null
 }));
 vi.mock('../../lib/libraryPlugin', () => ({
   resolveProjectTabModule: () => undefined
+}));
+vi.mock('../listpane/project-session-rail', () => ({
+  ProjectSessionRail: () => (
+    <section className="sidebar-projects" data-testid="project-session-rail">
+      <span>Project</span>
+    </section>
+  )
 }));
 
 import { ProjectScopedNav } from '../ProjectScopedNav.js';
@@ -101,7 +124,6 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).not.toContain('Project workspace');
     expect(markup).not.toContain('nav-section-label');
     expect(markup).not.toContain('brand-avatar');
-    expect(markup).not.toContain('>Project<');
     expect(markup).not.toContain('>Workspace<');
     expect(markup).not.toContain('>System<');
     expect(markup).toContain('data-testid="project-nav-inbox"');
@@ -136,6 +158,11 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup.indexOf('data-testid="project-nav-agents"')).toBeLessThan(
       markup.indexOf('data-testid="project-nav-feed"')
     );
+    expect(markup.indexOf('data-testid="project-nav-scheduler"')).toBeLessThan(
+      markup.indexOf('data-testid="project-session-rail"')
+    );
+    expect(markup).not.toContain('data-sortable-sidebar-section-id="sidebar-section:project-sessions"');
+    expect(markup).toContain('>Project<');
   });
 
   it('badges this project Agents row from the scoped fleet count', () => {
@@ -191,15 +218,90 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     h.modules = [];
   });
 
+  it('puts Salesforce SOQL on the project rail, not as a global sidebar panel', () => {
+    h.slotTabs = [
+      {
+        pluginId: 'salesforce',
+        id: 'salesforce',
+        label: 'Salesforce',
+        icon: 'Cloud',
+        generation: 1,
+        global: false,
+        component: () => null
+      },
+      {
+        pluginId: 'salesforce',
+        id: 'soql',
+        label: 'SOQL',
+        icon: 'Database',
+        generation: 1,
+        global: false,
+        component: () => null
+      }
+    ];
+
+    const markup = renderNav(
+      <ProjectScopedNav project={project} variant="focus" onBack={() => undefined} />
+    );
+
+    expect(markup).toContain('data-testid="project-nav-salesforce"');
+    expect(markup).toContain('href="/projects/proj-1/salesforce"');
+    expect(markup).toContain('>Salesforce<');
+    expect(markup).toContain('data-testid="project-nav-salesforce:soql"');
+    expect(markup).toContain('href="/projects/proj-1/salesforce%3Asoql"');
+    expect(markup).toContain('>SOQL<');
+    expect(markup).not.toContain('data-testid="nav-salesforce/soql"');
+    h.slotTabs = [];
+  });
+
   it('opens this project Agents board from the Agents destination', () => {
     const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain("mode: 'agents'");
-    expect(source).toContain('getProjectWorkspaceRoutePath(project.id, item.mode)');
+    expect(source).toContain('getProjectModeRoutePath(project.id, item.mode)');
     expect(source).toContain('testId: `project-nav-${item.mode}`');
+    expect(source).toContain("splitContent: { kind: 'project-view', projectId: project.id, mode: item.mode }");
+    expect(source).toContain('splitContent: { kind: \'inbox\' }');
+    expect(source).toContain('splitContent: { kind: \'project-view\', projectId: project.id, mode: m.id }');
+    expect(source).toContain('splitContent: { kind: \'project-view\', projectId: project.id, mode: railId }');
     expect(source).toContain('PROJECT_NAV_ORDER_KEY');
     expect(source).toContain('sidebar--titlebar-controls');
+    expect(source).toContain('PROJECT_SESSIONS_SECTION_SORT_ID');
+    expect(source).toContain('TRAILING_PROJECT_NAV_IDS');
+    expect(source).toContain('trailingIds={TRAILING_PROJECT_NAV_IDS}');
+    expect(source).not.toContain('useProjectRailSessions');
     expect(source).not.toContain('AgentsSidebarSection');
     expect(source).not.toContain('onOpenDashboard');
+    expect(source).not.toContain('AgentTray');
+  });
+
+  it('pins the Project session tree at the bottom of the rail, not under Agents', () => {
+    const markup = renderNav(
+      <ProjectScopedNav project={project} variant="focus" onBack={() => undefined} />
+    );
+    const agents = markup.indexOf('data-testid="project-nav-agents"');
+    const feed = markup.indexOf('data-testid="project-nav-feed"');
+    const scheduler = markup.indexOf('data-testid="project-nav-scheduler"');
+    const rail = markup.indexOf('data-testid="project-session-rail"');
+
+    expect(feed).toBeGreaterThan(agents);
+    expect(rail).toBeGreaterThan(scheduler);
+    expect(markup).not.toContain('data-sortable-sidebar-section-id="sidebar-section:project-sessions"');
+    expect(markup).toContain('class="sidebar-projects"');
+    expect(markup).toContain('>Project<');
+    expect(markup).not.toContain('class="sidebar-agents "');
+    expect(markup).not.toContain('data-agent-tray-placement="inline"');
+    expect(markup).not.toContain('aria-label="Organize projects"');
+    expect(markup).not.toContain('aria-label="Add project"');
+  });
+
+  it('lets the Project tree occupy the same bottom rail slot as global Projects', () => {
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('kind: \'section\'');
+    expect(source).toContain('TRAILING_PROJECT_NAV_IDS');
+    expect(css).toContain('.project-scoped-nav .sidebar-nav {\n  display: flex;\n  flex: 1 1 auto;\n  flex-direction: column;\n  gap: 2px;\n  min-height: 0;\n  overflow: hidden;');
+    expect(css).toContain('.project-scoped-nav .project-terminals {\n  margin: 1px 0 4px 8px;\n}');
+    expect(css).toContain('.sidebar-section-sortable:last-child:has(.sidebar-projects:not(.sidebar-projects--collapsed)) .sidebar-projects');
   });
 });

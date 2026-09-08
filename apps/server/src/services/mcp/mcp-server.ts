@@ -53,6 +53,10 @@ import { registerMicrovmExecTool, type RegisterMicrovmExecOpts } from '@zana-ai/
 import { registerSuggestActionTool } from '../suggestions/suggest-action-mcp-tool.js';
 import type { ISuggestionsStore } from '../suggestions/suggestions-store.js';
 import { registerScheduleReportTool } from '../scheduler/schedule-report-mcp-tool.js';
+import {
+  registerScheduleManageTools,
+  type ScheduleAgentApi
+} from '../scheduler/schedule-manage-mcp-tools.js';
 import { registerRegisterProjectTool } from '../projects/register-project-mcp-tool.js';
 import { registerCloneProjectTool } from '../projects/clone-project-mcp-tool.js';
 import { registerCloseSessionTools } from '../followups/close-session-mcp-tool.js';
@@ -71,6 +75,9 @@ import {
   registerLaunchTeamTool,
   type RegisterLaunchTeamToolOpts
 } from '../agents/launch-team-mcp-tool.js';
+import { registerExecutionTools, type RegisterExecutionToolOptions } from '../execution/execution-mcp-tool.js';
+import type { ExecutionService } from '../execution/service.js';
+import type { createExecutionHandoffStore } from '../execution/handoff-store.js';
 import { registerListProjectsTool } from '../projects/list-projects-mcp-tool.js';
 import { registerLibraryTools, type LibraryAgentApi } from '../library/library-mcp-tools.js';
 import { registerGoalTools, type GoalAgentApi } from '../goals/goal-mcp-tools.js';
@@ -381,7 +388,29 @@ export interface McpServerOptions {
   cancelTeamLaunch?: RegisterLaunchTeamToolOpts['cancelTeamLaunch'];
   getTeamLaunch?: RegisterLaunchTeamToolOpts['getTeamLaunch'];
   reportTeamTask?: RegisterLaunchTeamToolOpts['reportTeamTask'];
-  validateTeamRouteIdentity?: RegisterLaunchTeamToolOpts['validateRouteIdentity'];
+  /**
+   * SYNC pty-only liveness gate. Feeds the cohort / worker `execution.*` plane
+   * (`plan.register`, `work.*`, `delivery.*`, …) AND is the fallback base for
+   * launch identity. Deliberately sync and pty-only — a Modern thread is a
+   * launcher, never a cohort member. Keep it distinct from
+   * {@link validateLaunchRouteIdentity}.
+   */
+  validateTeamRouteIdentity?: (sessionId: string, projectId: string) => boolean;
+  /**
+   * ASYNC owner-session identity gate for `launch_team` siblings AND the
+   * owner execution verbs (`execution.start`, `execution.snapshot`,
+   * `execution.resume_binding`). Wider than {@link validateTeamRouteIdentity}:
+   * main accepts either a live pty session OR a live Modern/ACP conversation
+   * thread (the latter needs an async cross-process liveness probe). Falls back
+   * to the sync pty gate when unset. Cohort verbs stay on the pty-only gate.
+   */
+  validateLaunchRouteIdentity?: RegisterLaunchTeamToolOpts['validateRouteIdentity'];
+  resolveExecutionCohortBinding?: RegisterExecutionToolOptions['resolveCohortBinding'];
+  validateExecutionRecoveryBinding?: RegisterExecutionToolOptions['validateRecoveryBinding'];
+  executionService?: ExecutionService;
+  executionHandoffs?: ReturnType<typeof createExecutionHandoffStore>;
+  validateExecutionHandoffTarget?: (sourceSessionId: string, targetSessionId: string, projectId: string) => boolean;
+  approveExecutionHandoff?: (sourceSessionId: string, targetSessionId: string, projectId: string, executionId: string, operation: 'execution.control' | 'execution.resume-monitor') => Promise<boolean>;
   /**
    * Resolve the project list as non-sensitive {@link ProjectSummary} metadata
    * (the `list_projects` tool — agents discover the projects they can scope work
@@ -447,6 +476,15 @@ export interface McpServerOptions {
    */
   followupAgentApi?: FollowUpAgentApi;
   /**
+   * Live SchedulerManager slice for `schedule_list` / `schedule_run_now` /
+   * `schedule_set_enabled`. These operate on the same `.zcc/schedules` store
+   * the Scheduler UI uses. The route's projectId is the default confined
+   * scope; `allProjects: true` is an explicit widen. Available on both route
+   * shapes. Absent ⇒ the tools aren't registered (e.g. tests that don't
+   * exercise the scheduler).
+   */
+  scheduleAgentApi?: ScheduleAgentApi;
+  /**
    * Open a file in this session's visible side-panel preview. Session-scoped
    * only — identity is closed over from the MCP URL. The implementation confines
    * the path (Rule 2) and broadcasts `threads:open`. Absent disables the tool
@@ -510,6 +548,13 @@ function buildProjectMcpServer(opts: {
   getTeamLaunch?: McpServerOptions['getTeamLaunch'];
   reportTeamTask?: McpServerOptions['reportTeamTask'];
   validateTeamRouteIdentity?: McpServerOptions['validateTeamRouteIdentity'];
+  validateLaunchRouteIdentity?: McpServerOptions['validateLaunchRouteIdentity'];
+  resolveExecutionCohortBinding?: McpServerOptions['resolveExecutionCohortBinding'];
+  validateExecutionRecoveryBinding?: McpServerOptions['validateExecutionRecoveryBinding'];
+  executionService?: McpServerOptions['executionService'];
+  executionHandoffs?: McpServerOptions['executionHandoffs'];
+  validateExecutionHandoffTarget?: McpServerOptions['validateExecutionHandoffTarget'];
+  approveExecutionHandoff?: McpServerOptions['approveExecutionHandoff'];
   listProjects?: McpServerOptions['listProjects'];
   runRemoteCommand?: McpServerOptions['runRemoteCommand'];
   remoteFs?: McpServerOptions['remoteFs'];
@@ -518,6 +563,7 @@ function buildProjectMcpServer(opts: {
   libraryAgentApi?: McpServerOptions['libraryAgentApi'];
   goalAgentApi?: McpServerOptions['goalAgentApi'];
   followupAgentApi?: McpServerOptions['followupAgentApi'];
+  scheduleAgentApi?: McpServerOptions['scheduleAgentApi'];
   previewFile?: McpServerOptions['previewFile'];
 }): McpServer {
   const mcp = new McpServer({ name: 'zcc-inbox', version: '0.1.0' });
@@ -563,6 +609,7 @@ function buildProjectMcpServer(opts: {
       projectId: opts.projectId,
       projectLabel: opts.projectLabel,
       sessionId: opts.sessionId,
+      isExecutionBound: !!opts.resolveExecutionCohortBinding?.(opts.sessionId, opts.projectId),
       scheduled: scheduledLevel !== null,
       notify: scheduledLevel ?? undefined,
       inboxStore: opts.inboxStore,
@@ -605,6 +652,17 @@ function buildProjectMcpServer(opts: {
       onReport: opts.onReport
         ? (sessionId, summary, status) => opts.onReport!(opts.projectId, sessionId, summary, status)
         : undefined
+    });
+  }
+  // schedule_list / schedule_run_now / schedule_set_enabled: the agent-facing
+  // twin of the Scheduler UI. Available on both route shapes (no originating
+  // session needed). projectId from the route is the default confined scope;
+  // the agent can widen to all projects explicitly. Gated on the scheduler
+  // slice being wired (absent in scheduler-less tests).
+  if (opts.scheduleAgentApi) {
+    registerScheduleManageTools(mcp, {
+      projectId: opts.projectId,
+      scheduleAgentApi: opts.scheduleAgentApi
     });
   }
   // Agent-registry discovery tools (register_agent / list_agents / find_agent).
@@ -731,8 +789,36 @@ function buildProjectMcpServer(opts: {
       cancelTeamLaunch: opts.cancelTeamLaunch,
       getTeamLaunch: opts.getTeamLaunch,
       reportTeamTask: opts.reportTeamTask,
+      // Launch identity accepts a live pty session OR a live Modern/ACP thread
+      // (async probe). Falls back to the sync pty-only gate when the async one
+      // isn't wired. Distinct from the execution plane's sync gate below.
+      validateRouteIdentity: async (sessionId, projectId) => {
+        if (!routeAuthenticated) return false;
+        const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;
+        return (await gate?.(sessionId, projectId)) ?? false;
+      }
+    });
+  }
+  if (opts.sessionId && opts.executionService) {
+    const routeAuthenticated = !!opts.sessionCredential
+      && verifySessionControlCredential(opts.sessionId, opts.sessionCredential);
+    registerExecutionTools(mcp, {
+      sessionId: opts.sessionId,
+      projectId: opts.projectId,
+      projectName: opts.projectLabel,
+      service: opts.executionService,
+      resolveCohortBinding: opts.resolveExecutionCohortBinding,
+      validateRecoveryBinding: opts.validateExecutionRecoveryBinding,
+      handoffs: opts.executionHandoffs,
+      validateHandoffTarget: opts.validateExecutionHandoffTarget,
+      approveHandoff: opts.approveExecutionHandoff,
       validateRouteIdentity: (sessionId, projectId) => routeAuthenticated
-        && (opts.validateTeamRouteIdentity?.(sessionId, projectId) ?? false)
+        && (opts.validateTeamRouteIdentity?.(sessionId, projectId) ?? false),
+      validateOwnerRouteIdentity: async (sessionId, projectId) => {
+        if (!routeAuthenticated) return false;
+        const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;
+        return (await gate?.(sessionId, projectId)) ?? false;
+      }
     });
   }
   // list_projects: read-only project discovery. Identity-free (no sessionId
@@ -1597,8 +1683,19 @@ async function handleRequest(
   // Stateless mode: per-request transport, no session id retention. A
   // long-lived session would pin the projectId-from-URL identity to the
   // first request and let later requests forge through reuse.
+  //
+  // enableJsonResponse: reply with a single Content-Length-delimited
+  // application/json body instead of an SSE stream. Zana's stateless usage is
+  // pure request->response (no server->client notifications, GET is rejected),
+  // so SSE buys nothing — and a real OpenCode MCP client wedges after the first
+  // larger (multi-chunk) SSE response: it leaves the stream unconsumed, so every
+  // subsequent request blocks until it times out (-32001). A delimited JSON body
+  // has no open stream to mishandle. The SDK client and Claude's CLI both accept
+  // JSON responses, so this is transparent to them (proven by the SDK-client
+  // integration tests + the execution-waiting-delivery E2E).
   const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true
   });
 
   const mcp = buildProjectMcpServer({
@@ -1635,6 +1732,13 @@ async function handleRequest(
     getTeamLaunch: opts.getTeamLaunch,
     reportTeamTask: opts.reportTeamTask,
     validateTeamRouteIdentity: opts.validateTeamRouteIdentity,
+    validateLaunchRouteIdentity: opts.validateLaunchRouteIdentity,
+    resolveExecutionCohortBinding: opts.resolveExecutionCohortBinding,
+    validateExecutionRecoveryBinding: opts.validateExecutionRecoveryBinding,
+    executionService: opts.executionService,
+    executionHandoffs: opts.executionHandoffs,
+    validateExecutionHandoffTarget: opts.validateExecutionHandoffTarget,
+    approveExecutionHandoff: opts.approveExecutionHandoff,
     listProjects: opts.listProjects,
     runRemoteCommand: opts.runRemoteCommand,
     remoteFs: opts.remoteFs,
@@ -1643,6 +1747,7 @@ async function handleRequest(
     libraryAgentApi: opts.libraryAgentApi,
     goalAgentApi: opts.goalAgentApi,
     followupAgentApi: opts.followupAgentApi,
+    scheduleAgentApi: opts.scheduleAgentApi,
     previewFile: opts.previewFile
   });
 

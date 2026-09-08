@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { QuickPrompt, LaunchProfileId, WorkflowArgument } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
+import { electronZccDataDir } from '../../electron-data-dir.js';
 
 /** Atomic write (tmp + rename) so a concurrent read never sees a half-written
  *  file — Rule 4. Mirrors prompt-registry.ts's helper. */
@@ -62,7 +63,7 @@ function sanitizeArguments(raw: unknown): WorkflowArgument[] | undefined {
   return out.length ? out : undefined;
 }
 
-const userDir = () => join(app.getPath('home'), '.zcc', 'quick-prompts');
+const userDir = () => join(electronZccDataDir(), 'quick-prompts');
 
 /**
  * Built-in starter prompts for the Agents-module Quick Agent launcher. Stable

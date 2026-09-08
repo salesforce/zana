@@ -1,4 +1,3 @@
-import { app } from 'electron';
 import { EventEmitter } from 'node:events';
 import {
   existsSync,
@@ -22,7 +21,9 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import { listSkills, setManyEnabled, type ListSkillsOptions } from './skills.js';
 
-const bundlesDir = () => join(app.getPath('home'), '.zcc', 'skill-bundles');
+import { electronZccDataDir } from '../../electron-data-dir.js';
+
+const bundlesDir = () => join(electronZccDataDir(), 'skill-bundles');
 
 function ensureDir(dir: string) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

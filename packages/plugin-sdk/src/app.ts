@@ -27,7 +27,9 @@ export type {
   PluginAppSetup,
   PluginAppSlots,
   PluginComposerApi,
+  PluginComposerLaunchPatch,
   PluginComposerScope,
+  PluginComposerScopeKind,
   PluginContentScriptContext,
   PluginFileOpenerProps,
   PluginFileOpenerRegistration,
@@ -44,6 +46,7 @@ export type {
   PluginCommandPaletteActionRegistration,
   PluginMessageDirectiveProps,
   PluginMessageDirectiveRegistration,
+  PluginNavPanelPlacement,
   PluginNavPanelProps,
   PluginNavPanelRegistration,
   PluginNewThreadPanelActionRegistration,
@@ -53,6 +56,10 @@ export type {
   PluginProjectTabRegistration,
   PluginProjectMenuActionRegistration,
   PluginProjectMenuActionContext,
+  PluginCreateProjectActionRegistration,
+  PluginCreateProjectActionContext,
+  PluginCreateProjectDialogProps,
+  ZccNavigateToProjectOptions,
   PluginProviderIconRegistration,
   PluginRegistrationSet,
   PluginSdkApp,
@@ -60,19 +67,40 @@ export type {
   PluginSettingsSectionRegistration,
   PluginSidebarFooterActionContext,
   PluginSidebarFooterActionRegistration,
+  PluginProjectStatusbarAlign,
+  PluginProjectStatusbarDialogProps,
+  PluginProjectStatusbarItemContext,
+  PluginProjectStatusbarItemProps,
+  PluginProjectStatusbarItemRegistration,
+  PluginProjectStatusbarMenuItem,
   PluginSlotBase,
   PluginThreadHeaderActionProps,
   PluginThreadHeaderActionRegistration,
   PluginThreadListProps,
   PluginThreadListRegistration,
+  PluginThreadPanelActionContext,
   PluginThreadPanelActionRegistration,
   PluginThreadPanelProps,
+  PluginThreadPanelScope,
+  ThreadChatMessageAction,
+  ThreadChatMessageReference,
   ThreadChatProps,
   ZccContext,
   ZccNavigate
 } from './app-contract.js';
 
-export { collectPluginApp, emptyRegistrationSet } from './app-contract.js';
+export {
+  collectPluginApp,
+  DEFAULT_PLUGIN_THREAD_PANEL_SCOPES,
+  emptyRegistrationSet,
+  navPanelListsInExtensionsHub,
+  navPanelListsInSidebar,
+  PLUGIN_COMPOSER_SCOPE_KINDS,
+  PLUGIN_NAV_PANEL_PLACEMENTS,
+  PLUGIN_PROJECT_STATUSBAR_ALIGNS,
+  PLUGIN_THREAD_PANEL_SCOPES,
+  threadPanelActionMatchesScope
+} from './app-contract.js';
 
 export interface PluginHostBridge {
   callRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;

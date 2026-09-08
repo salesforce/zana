@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { getDesktopBrowserApi } from '../../../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../../../lib/browser-url.js';
 import { OPEN_IN_APP_BROWSER_EVENT } from '../../../lib/in-app-browser-link-preference.js';
+import { subscribeProductEvent } from '../../../lib/product-ws.js';
 import { appendThreadRecentItem } from './threadRecentItems.js';
 import type { ClosableSecondaryTab } from './threadSecondaryPanelState.js';
 
@@ -64,5 +65,22 @@ export function useInAppBrowserPanel(ownerId: string, panel: PanelCommands): voi
     };
     window.addEventListener(OPEN_IN_APP_BROWSER_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_IN_APP_BROWSER_EVENT, onOpen);
+  }, [ownerId]);
+
+  useEffect(() => {
+    return subscribeProductEvent<{ threadId?: string; url?: string }>('threads:browser', (payload) => {
+      if (!payload?.url) return;
+      if (payload.threadId && payload.threadId !== ownerId) return;
+      addTabRef.current({
+        kind: 'browser',
+        title: getBrowserUrlHost(payload.url) || 'Browser',
+        url: payload.url
+      });
+      appendThreadRecentItem(ownerId, {
+        kind: 'browser',
+        url: payload.url,
+        title: getBrowserUrlHost(payload.url) || null
+      });
+    });
   }, [ownerId]);
 }

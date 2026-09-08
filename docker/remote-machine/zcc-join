@@ -34,6 +34,7 @@ server_url=${server_url%/}
 if [ "$(id -u)" -eq 0 ]; then
   exec runuser -u zcc -- env HOME=/home/zcc \
     JOIN_CODE="$join_code" HOST_ID="$host_id" ZCC_SERVER_URL="$server_url" \
+    OPENAI_API_KEY="${OPENAI_API_KEY-}" CURSOR_API_KEY="${CURSOR_API_KEY-}" \
     /usr/local/bin/zcc-join --join-code "$join_code" --host-id "$host_id" --server "$server_url"
 fi
 
@@ -42,6 +43,9 @@ server_host=$(printf '%s' "$server_url" | sed -E 's#^https?://##; s#[/:].*##')
 
 data_root=${ZCC_MACHINES_ROOT:-"$HOME/.zcc-machines"}
 data_dir="$data_root/$server_host"
+# A new join code cannot reuse a previous enroll's host id (persistHostId
+# refuses a mismatch). This script is Docker-only; wipe and enroll fresh.
+rm -rf "$data_dir"
 mkdir -p "$data_dir"
 chmod 700 "$data_root" "$data_dir" 2>/dev/null || true
 printf '%s\n' "$server_url" > "$data_dir/.server-url"

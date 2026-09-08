@@ -12,8 +12,9 @@ import {
   Trash2,
   Terminal as TerminalIcon
 } from 'lucide-react';
-import type { AgentState } from '@zana-ai/zcc-domain/product';
+import type { AgentState, ExecutionBoardProjection } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, usePersonas } from '../store.js';
+import { useNavigate } from 'react-router-dom';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { AGENT_MONITOR_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
@@ -22,6 +23,8 @@ import {
   AgentCardMenu,
   clampMenuAnchor,
   canCloseWithFollowup,
+  cliAgentRemoveLabel,
+  cliAgentRestartLiveTitle,
   closeAgentWithFollowup
 } from './agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCardActions.js';
@@ -32,6 +35,7 @@ import {
   cardCohort,
   formatDuration,
   isBackgroundAgent,
+  visibleAgentLanes,
   type AgentCard,
   type IdleAttentionSensitivity,
   type LaneKey
@@ -40,6 +44,7 @@ import { FleetKindChip } from './FleetKindChip.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { fleetMatchesLane, resolveMonitorSelection, type FleetItem } from './fleet-item.js';
 import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
+import { openScheduleFromAgents } from './scheduler/openScheduledLive.js';
 
 /**
  * The Agents "List" view: a live monitor — item list (left), the selected
@@ -62,13 +67,17 @@ const STATE_LABEL: Record<AgentState, string> = {
   working: 'Working',
   idle: 'Idle',
   done: 'Done',
-  unknown: 'Idle'
+  unknown: 'Idle',
+  waiting: 'Waiting for model'
 };
 
 interface AgentMonitorProps {
   cards: FleetItem[];
+  /** Durable Job state promotes only its orchestrator when a response is needed. */
+  executions?: readonly ExecutionBoardProjection[];
   /** Show the owning-project chip on rows + in the status pane (global board). */
   showProject?: boolean;
+  onInspectExecution?: (projectId: string, executionId: string) => void;
 }
 
 /** Which lane an item sits in — reuses the board's exact lane predicates so the
@@ -80,7 +89,7 @@ function laneOf(item: FleetItem, sensitivity: IdleAttentionSensitivity): LaneKey
 }
 
 /** Same workspace jump the status-rail Open button and the card menu share. */
-function openAgentInWorkspace(card: AgentCard): void {
+function openAgentInProject(card: AgentCard): void {
   const ui = useUi.getState();
   const data = useData.getState();
   ui.setNav('projects');
@@ -90,11 +99,12 @@ function openAgentInWorkspace(card: AgentCard): void {
   } else {
     ui.selectTab(card.projectId, card.session.id);
   }
-  ui.setWorkspaceMode(card.projectId, 'terminals');
+  ui.setProjectView(card.projectId, 'terminals');
 }
 
-export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) {
+export function AgentMonitor({ cards, executions = [], showProject = false, onInspectExecution }: AgentMonitorProps) {
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
+  const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
   const selection = useUi((s) => s.agentMonitor);
   const selectMonitorAgent = useUi((s) => s.selectMonitorAgent);
   const clearMonitorAgent = useUi((s) => s.clearMonitorAgent);
@@ -104,32 +114,52 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
 
   useEffect(() => () => clearMonitorAgent(), [clearMonitorAgent]);
 
+  // Durable-Job-aware fleet: an orchestrator with an actionable blocker is
+  // promoted to `blocked` (both on the FleetItem and its wrapped AgentCard, so
+  // lane matching AND the row dot/state label agree) regardless of its raw
+  // live status — mirrors the board's own execution-attention promotion.
+  const jobCards = useMemo(() => {
+    const byExecutionId = new Map(executions.map((execution) => [execution.executionId, execution]));
+    return cards.map((item) => {
+      if (item.kind !== 'agent') return item;
+      const executionId = item.card.session.cohort?.executionId;
+      const execution = executionId ? byExecutionId.get(executionId) : undefined;
+      const terminal = execution?.state === 'COMPLETED' || execution?.state === 'FAILED' || execution?.state === 'STOPPED';
+      const needsAttention = !!execution?.currentBlocker && !terminal &&
+        execution.currentBlocker.delivery?.state !== 'PENDING' && execution.currentBlocker.delivery?.state !== 'LEASED';
+      if (needsAttention && item.card.session.cohort?.role === 'orchestrator') {
+        return { ...item, state: 'blocked' as const, card: { ...item.card, state: 'blocked' as const } };
+      }
+      return item;
+    });
+  }, [cards, executions]);
+
   const grouped = useMemo(() => {
     const byLane = new Map<LaneKey, FleetItem[]>();
-    for (const item of cards) {
+    for (const item of jobCards) {
       const key = laneOf(item, sensitivity);
       const list = byLane.get(key) ?? [];
       list.push(item);
       byLane.set(key, list);
     }
-    return LANES.map((l) => ({ key: l.key, label: l.label, cards: byLane.get(l.key) ?? [] })).filter(
-      (g) => g.cards.length > 0
-    );
-  }, [cards, sensitivity]);
+    return visibleAgentLanes(includeScheduled)
+      .map((l) => ({ key: l.key, label: l.label, cards: byLane.get(l.key) ?? [] }))
+      .filter((g) => g.cards.length > 0);
+  }, [jobCards, sensitivity, includeScheduled]);
 
   const selected = useMemo(
     () =>
       resolveMonitorSelection(
-        cards,
+        jobCards,
         selection ? { sessionId: selection.sessionId, projectId: selection.projectId } : null,
         pickedId
       ),
-    [cards, selection, pickedId]
+    [jobCards, selection, pickedId]
   );
 
   useEffect(() => {
     if (!selected) {
-      clearMonitorAgent();
+      if (selection) clearMonitorAgent();
       return;
     }
     if (selected.kind === 'agent') {
@@ -138,7 +168,7 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
       }
       return;
     }
-    clearMonitorAgent();
+    if (selection) clearMonitorAgent();
   }, [selected, selection, selectMonitorAgent, clearMonitorAgent]);
 
   if (cards.length === 0) {
@@ -193,7 +223,12 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
         ))}
       </nav>
 
-      <AgentMonitorTerminal selected={selected} showProject={showProject} />
+      <AgentMonitorTerminal
+        selected={selected}
+        showProject={showProject}
+        executions={executions}
+        onInspectExecution={onInspectExecution}
+      />
 
       {typeof document !== 'undefined' &&
         menu &&
@@ -202,7 +237,7 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
             menu={menu}
             setMenu={setMenu}
             actions={actions}
-            onPick={openAgentInWorkspace}
+            onPick={openAgentInProject}
           />,
           document.body
         )}
@@ -239,13 +274,15 @@ interface RowProps {
 
 function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onContextMenu }: RowProps) {
   const personas = usePersonas((s) => s.personas);
+  const terminals = useData((s) => s.terminals);
+  const navigate = useNavigate();
   if (item.kind === 'schedule') {
     return (
       <button
         type="button"
         className={`agent-monitor-row is-schedule lane-${laneKey} ${active ? 'active' : ''}${item.task.enabled ? '' : ' exited'}`}
         data-kind="schedule"
-        onClick={() => useUi.getState().revealSchedule(item.task.id)}
+        onClick={() => openScheduleFromAgents(item.task, terminals, navigate)}
         onContextMenu={onContextMenu}
         title={`${item.title} · ${item.projectName}`}
       >
@@ -335,6 +372,11 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
       <span className="agent-monitor-row-text">
         <span className="agent-monitor-row-title-line">
           {!exited && <span className={`tab-agent-dot agent-${card.state}`} aria-hidden="true" />}
+          {!!t.cohort?.executionId && (
+            <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort.executionId})`} style={{ margin: 0, marginRight: 5 }}>
+              job
+            </span>
+          )}
           <span className="agent-monitor-row-title">{t.title}</span>
           <FleetKindChip kind="agent" />
         </span>
@@ -355,10 +397,14 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
 
 function AgentMonitorTerminal({
   selected,
-  showProject
+  showProject,
+  executions,
+  onInspectExecution
 }: {
   selected: FleetItem | null;
   showProject: boolean;
+  executions: readonly ExecutionBoardProjection[];
+  onInspectExecution?: (projectId: string, executionId: string) => void;
 }) {
   const agent = selected?.kind === 'agent' ? selected : null;
   const thread = selected?.kind === 'thread' ? selected : null;
@@ -373,6 +419,11 @@ function AgentMonitorTerminal({
       {!thread && agent && (
         <header className="agent-monitor-main-head">
           <TerminalIcon size={13} aria-hidden="true" />
+          {!!agent.card.session.cohort?.executionId && (
+            <span className="job-badge" title={`Execution-backed job member (Run ID: ${agent.card.session.cohort.executionId})`} style={{ margin: 0, marginRight: 5 }}>
+              job
+            </span>
+          )}
           <span className="agent-monitor-main-title">{agent.card.session.title}</span>
           {agent.card.session.status !== 'exited' && (
             <span className={`agent-monitor-main-state agent-${agent.state}`}>
@@ -390,10 +441,15 @@ function AgentMonitorTerminal({
       >
         {thread ? (
           <div className="agent-monitor-thread" data-testid="agent-monitor-thread">
-            <ThreadDetail threadId={thread.id} embedded />
+            <ThreadDetail key={thread.id} threadId={thread.id} embedded />
           </div>
         ) : agent ? (
-          <AgentMonitorSession card={agent.card} showProject={showProject} />
+          <AgentMonitorSession
+            card={agent.card}
+            showProject={showProject}
+            executions={executions}
+            onInspectExecution={onInspectExecution}
+          />
         ) : (
           <div className="agent-monitor-terminal-empty">
             <Bot size={24} aria-hidden="true" />
@@ -405,14 +461,29 @@ function AgentMonitorTerminal({
   );
 }
 
-function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProject: boolean }) {
+function AgentMonitorSession({
+  card,
+  showProject,
+  executions,
+  onInspectExecution
+}: {
+  card: AgentCard;
+  showProject: boolean;
+  executions: readonly ExecutionBoardProjection[];
+  onInspectExecution?: (projectId: string, executionId: string) => void;
+}) {
   const { actions } = useAgentCardActions();
   const { session: t } = card;
   const exited = t.status === 'exited';
   const background = isBackgroundAgent(card);
   const cohort = cardCohort(card);
+  const execution = executions.find(
+    (candidate) =>
+      (t.cohort?.executionId && candidate.executionId === t.cohort.executionId) ||
+      candidate.orchestratorSessionId === t.id
+  );
   const project = useData((s) => s.projects.find((row) => row.id === card.projectId));
-  const openInWorkspace = () => openAgentInWorkspace(card);
+  const openInWorkspace = () => openAgentInProject(card);
   const canSummarize = isClaudeProfile(t.profile);
   const canFollowupClose = canCloseWithFollowup(t);
   const [summarizing, setSummarizing] = useState(false);
@@ -444,6 +515,15 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
 
   const monitorActions = (
     <>
+      {execution && onInspectExecution && (
+        <button
+          type="button"
+          className="agent-monitor-action"
+          onClick={() => onInspectExecution(execution.projectId, execution.executionId)}
+        >
+          {execution.currentBlocker ? 'Respond in job details' : 'Job details'}
+        </button>
+      )}
       {!exited && (
         <button
           type="button"
@@ -461,7 +541,7 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
         title={
           exited
             ? 'Relaunch this session with the same profile and args'
-            : 'Kill and relaunch this session with the same profile and args'
+            : cliAgentRestartLiveTitle()
         }
       >
         <RotateCw size={13} /> Restart
@@ -494,7 +574,7 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
         type="button"
         className="agent-monitor-action"
         onClick={openInWorkspace}
-        title="Open this agent in the full workspace view"
+        title="Open this agent in the full project view"
       >
         <ExternalLink size={13} /> Open
       </button>
@@ -506,7 +586,7 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
           exited ? 'Dismiss this finished agent' : 'Terminate this agent and remove it from the board'
         }
       >
-        <Trash2 size={13} /> {exited ? 'Dismiss' : 'Kill'}
+        <Trash2 size={13} /> {cliAgentRemoveLabel(exited)}
       </button>
     </>
   );

@@ -152,9 +152,10 @@ function toBridgeWireOptions(
   } = options;
   const providerOptions = {
     ...staticProviderOptions,
+    ...(options.providerOptions ?? {}),
     ...Object.fromEntries(
       Object.entries(providerFlavored).filter(
-        ([, value]) => value !== undefined,
+        ([key, value]) => key !== "providerOptions" && value !== undefined,
       ),
     ),
   };
@@ -265,6 +266,18 @@ export function createBridgeProtocolAdapter(
               // Model listing has no session to carry providerOptions, so the
               // provider-scoped statics (e.g. the ACP launch spec the bridge
               // resolves its list command from) ride the request directly.
+              ...(options.staticProviderOptions !== undefined
+                ? { providerOptions: options.staticProviderOptions }
+                : {}),
+            },
+          };
+        case "provider/health":
+          return {
+            kind: "request",
+            method: BRIDGE_REQUEST_METHODS.providerHealth,
+            params: {
+              providerId: options.id,
+              ...(command.cwd !== undefined ? { cwd: command.cwd } : {}),
               ...(options.staticProviderOptions !== undefined
                 ? { providerOptions: options.staticProviderOptions }
                 : {}),

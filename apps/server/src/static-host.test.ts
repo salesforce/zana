@@ -105,6 +105,46 @@ describe('startStaticHost', () => {
     });
   });
 
+  it('pins the document base so a nested client route reloads its relative assets', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(
+      join(root, 'index.html'),
+      '<!DOCTYPE html><html><head><title>Zana</title><script src="./assets/index-abc.js"></script></head><body></body></html>'
+    );
+    mkdirSync(join(root, 'assets'), { recursive: true });
+    writeFileSync(join(root, 'assets', 'index-abc.js'), 'export default 1;');
+    host = await startStaticHost({ rootDir: root });
+
+    // Without a pinned base, `./assets/index-abc.js` on `/settings/global`
+    // resolves to `/settings/assets/index-abc.js`, which does not exist.
+    const nested = await fetch(`${host.url}settings/global`);
+    expect(nested.status).toBe(200);
+    await expect(nested.text()).resolves.toContain('<head><base href="/">');
+    await expect(
+      fetch(`${host.url}settings/assets/index-abc.js`).then((response) => response.status)
+    ).resolves.toBe(404);
+
+    await expect(fetch(host.url).then((response) => response.text())).resolves.toContain('<base href="/">');
+    await expect(
+      fetch(`${host.url}assets/index-abc.js`).then((response) => response.text())
+    ).resolves.toBe('export default 1;');
+  });
+
+  it('leaves index markup untouched when it declares no head or its own base', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    host = await startStaticHost({ rootDir: root });
+    await expect(fetch(host.url).then((response) => response.text())).resolves.toBe('<main>zana</main>');
+    await host.close();
+
+    const scoped = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(scoped, 'index.html'), '<html><head><base href="/ui/"></head></html>');
+    host = await startStaticHost({ rootDir: scoped });
+    const body = await fetch(host.url).then((response) => response.text());
+    expect(body).toContain('<base href="/ui/">');
+    expect(body).not.toContain('<base href="/">');
+  });
+
   it('serves the loopback product API beside renderer assets', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
     writeFileSync(join(root, 'index.html'), '<main>zana</main>');

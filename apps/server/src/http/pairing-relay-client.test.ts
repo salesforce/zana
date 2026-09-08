@@ -9,6 +9,8 @@ let next: ReturnType<typeof createServer> | null = null;
 let product: ReturnType<typeof createServer> | null = null;
 let client: ReturnType<typeof createPairingRelayClient> | null = null;
 const tarball = Buffer.alloc(80 * 1024, 9);
+const PLUGIN_DIGEST = 'ab'.repeat(32);
+const pluginHostJs = Buffer.from('export default 1;\n');
 
 afterEach(async () => {
   client?.stop();
@@ -44,7 +46,7 @@ function listen(server: ReturnType<typeof createServer>): Promise<number> {
   });
 }
 
-async function startStack() {
+async function startStack(options?: { joinTtlMs?: number }) {
   next = createServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' });
     response.end('<html>ok</html>');
@@ -67,6 +69,14 @@ async function startStack() {
         'content-length': String(tarball.length)
       });
       response.end(tarball);
+      return;
+    }
+    if (url.pathname === `/internal/plugins/provider-acp/host/${PLUGIN_DIGEST}`) {
+      response.writeHead(200, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'content-length': String(pluginHostJs.length)
+      });
+      response.end(pluginHostJs);
       return;
     }
     if (url.pathname === '/internal/hosts/enroll' && request.method === 'POST') {
@@ -115,7 +125,8 @@ async function startStack() {
     port: 0,
     token: 'relay-token-relay-token',
     spawnNext: false,
-    nextOrigin: `http://127.0.0.1:${nextPort}`
+    nextOrigin: `http://127.0.0.1:${nextPort}`,
+    ...(options?.joinTtlMs ? { joinTtlMs: options.joinTtlMs } : {})
   });
   client = createPairingRelayClient({
     productPort,
@@ -153,8 +164,16 @@ describe('pairing relay client', () => {
 
     const artifact = await fetch(new URL('install/zcc-host.tgz', stack.door.url));
     expect(artifact.status).toBe(200);
+    expect(artifact.headers.get('content-length')).toBe(String(tarball.length));
     const bytes = Buffer.from(await artifact.arrayBuffer());
     expect(bytes.equals(tarball)).toBe(true);
+
+    const plugin = await fetch(
+      new URL(`internal/plugins/provider-acp/host/${PLUGIN_DIGEST}`, stack.door.url)
+    );
+    expect(plugin.status).toBe(200);
+    expect(plugin.headers.get('content-length')).toBe(String(pluginHostJs.length));
+    expect(Buffer.from(await plugin.arrayBuffer()).equals(pluginHostJs)).toBe(true);
 
     const enrolled = await fetch(new URL('internal/hosts/enroll', stack.door.url), {
       method: 'POST',
@@ -239,4 +258,14 @@ describe('pairing relay client', () => {
     expect(client.state()).toBe('offline');
     expect(seen).toContain('offline');
   });
+
+  it('renews the join hint before the ttl elapses so install.sh stays open', async () => {
+    const stack = await startStack({ joinTtlMs: 1_500 });
+    const firstUntil = client?.joinUntil();
+    expect(firstUntil).toBeGreaterThan(Date.now());
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+    expect(client?.joinUntil()).toBeGreaterThan(firstUntil ?? 0);
+    const script = await fetch(new URL(`t/${client!.sessionId()}/install.sh`, stack.door.url));
+    expect(script.status).toBe(200);
+  }, 10_000);
 });

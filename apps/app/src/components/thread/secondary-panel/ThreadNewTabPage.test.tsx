@@ -1,3 +1,6 @@
+/**
+ * @vitest-environment happy-dom
+ */
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -10,15 +13,27 @@ vi.mock('../../../lib/product-client.js', () => ({
 vi.mock('../../../store.js', () => ({
   useData: (selector: (s: { projects: unknown[] }) => unknown) => selector({ projects: [] })
 }));
+const slots = vi.hoisted(() => ({
+  thread: [
+    { pluginId: 'tasks', id: 'board', title: 'Tasks', layout: 'padded' as const },
+    {
+      pluginId: 'tasks',
+      id: 'live',
+      title: 'Live board',
+      layout: 'padded' as const,
+      scopes: ['agent-session'] as const
+    }
+  ],
+  compose: [{ pluginId: 'tasks', id: 'compose', title: 'Compose tasks' }]
+}));
+
 vi.mock('../../../plugins/plugin-slots.js', () => ({
   subscribePluginSlots: (listener: () => void) => {
     listener();
     return () => undefined;
   },
-  listThreadPanelActions: () => [
-    { pluginId: 'tasks', id: 'board', title: 'Tasks', layout: 'padded' }
-  ],
-  listNewThreadPanelActions: () => []
+  listThreadPanelActions: () => slots.thread,
+  listNewThreadPanelActions: () => slots.compose
 }));
 
 import { ThreadNewTabPage, ThreadNewTabView } from './ThreadNewTabPage.js';
@@ -40,7 +55,9 @@ describe('ThreadNewTabPage', () => {
     expect(html).toContain('Start terminal');
     expect(html).not.toContain('data-testid="thread-new-tab-browser"');
     expect(html).not.toContain('data-testid="thread-new-tab-explorer"');
-    expect(html).toContain('Tasks');
+    expect(html).toContain('data-testid="thread-new-tab-plugin-tasks-board"');
+    expect(html).toContain('data-testid="thread-new-tab-plugin-tasks-compose"');
+    expect(html).not.toContain('data-testid="thread-new-tab-plugin-tasks-live"');
 
     const withProject = renderToStaticMarkup(
       <ThreadNewTabPage
@@ -141,5 +158,60 @@ describe('ThreadNewTabPage', () => {
     expect(noSidecar).not.toContain('data-testid="thread-new-tab-terminal"');
     expect(noSidecar).not.toContain('Start terminal');
     expect(noSidecar).not.toContain('data-testid="thread-new-tab-explorer"');
+  });
+
+  it('lists only agent-session-scoped plugin actions on the CLI-agent inspector', () => {
+    const html = renderToStaticMarkup(
+      <ThreadNewTabPage
+        projectId="p1"
+        cwd={null}
+        panelScope="agent-session"
+        onOpenFile={() => undefined}
+        onOpenBrowser={() => undefined}
+        onStartTerminal={() => undefined}
+        onOpenPlugin={() => undefined}
+      />
+    );
+    expect(html).toContain('data-testid="thread-new-tab-plugin-tasks-live"');
+    expect(html).not.toContain('data-testid="thread-new-tab-plugin-tasks-board"');
+    expect(html).not.toContain('data-testid="thread-new-tab-plugin-tasks-compose"');
+  });
+
+  it('invokes threadPanelAction.run before opening a tab', async () => {
+    const { fireEvent, render, screen } = await import('@testing-library/react');
+    const run = vi.fn(async (context: {
+      threadId: string;
+      openPanel: (options?: { title?: string; params?: unknown }) => boolean;
+    }) => {
+      context.openPanel({ title: 'Forked', params: { threadId: 'thr_fork' } });
+    });
+    slots.thread.push({
+      pluginId: 'demo',
+      id: 'panel',
+      title: 'Start panel',
+      layout: 'flush' as const,
+      run
+    });
+    const onOpenPlugin = vi.fn();
+    render(
+      <ThreadNewTabPage
+        projectId="p1"
+        cwd={null}
+        threadId="thr_src"
+        onOpenFile={() => undefined}
+        onOpenBrowser={() => undefined}
+        onStartTerminal={() => undefined}
+        onOpenPlugin={onOpenPlugin}
+      />
+    );
+    fireEvent.click(screen.getByTestId('thread-new-tab-plugin-demo-panel'));
+    await Promise.resolve();
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thr_src' }));
+    expect(onOpenPlugin).toHaveBeenCalledWith('demo', 'Forked', expect.objectContaining({
+      actionId: 'panel',
+      params: { threadId: 'thr_fork' },
+      layout: 'flush'
+    }));
+    slots.thread.pop();
   });
 });

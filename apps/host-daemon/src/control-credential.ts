@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { resolveZccDataDir } from './host-config.js';
 
 const SECRET_BYTES = 32;
 
@@ -56,7 +56,7 @@ export function createControlCredentialSigner(options: {
 const signer = createControlCredentialSigner({
   ...(process.env.NODE_ENV === 'test'
     ? { randomSecret: () => randomBytes(SECRET_BYTES) }
-    : { secretPath: join(homedir(), '.zcc', 'control-signing.key') })
+    : { secretPath: join(resolveZccDataDir(), 'control-signing.key') })
 });
 
 export function controlCredentialForSession(sessionId: string): string {

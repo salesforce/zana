@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { PluginComposerChrome } from './PluginComposerChrome.js';
@@ -29,10 +30,23 @@ describe('PluginComposerChrome create-plugin action', () => {
     expect(html).toContain('Create plugin');
   });
 
+  it('keeps Create plugin on the CLI Agent composer scope', () => {
+    const html = render({ kind: 'cli-agent', projectId: 'proj-1' });
+    expect(html).toContain('data-testid="composer-create-plugin"');
+    expect(html).toContain('Create plugin');
+  });
+
   it('hides the action on an existing thread', () => {
     const html = render({ kind: 'thread', threadId: 't1' });
     expect(html).not.toContain('composer-create-plugin');
     expect(html).not.toContain('Create plugin');
     expect(html).not.toContain('plugin-composer-actions');
+  });
+});
+
+describe('plugin composer banners', () => {
+  it('collapses empty host chrome so a null plugin banner is not a blank card', () => {
+    const css = readFileSync(new URL('../styles/global.css', import.meta.url), 'utf8');
+    expect(css).toMatch(/\.plugin-composer-banner:empty\s*\{[^}]*display:\s*none/);
   });
 });

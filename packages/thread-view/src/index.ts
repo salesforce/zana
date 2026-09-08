@@ -24,7 +24,9 @@ export type { TimelineWorkRowGlyph } from "./timeline-work-row-glyph.js";
 export {
   hasTimelineExplorationIntent,
   primaryTimelineActivityIntent,
+  timelineRowActivityIntents,
 } from "./timeline-activity-intents.js";
+export type { TimelineExplorationWorkRow } from "./timeline-activity-intents.js";
 export {
   capitalize,
   durationToCompactString,
@@ -59,6 +61,11 @@ export {
   type ThreadTimelineActivePlanTurn,
 } from "./active-prompt-mode-extraction.js";
 export { extractThreadTimelineGoal } from "./goal-snapshot-extraction.js";
+export {
+  EMPTY_THREAD_ACTIVITY,
+  isBackgroundTaskLifecyclePayload,
+  threadActivityFromEvents,
+} from "./thread-activity-from-events.js";
 export { extractThreadTimelineModelFallback } from "./model-fallback-extraction.js";
 export type { AcceptedClientRequestContext } from "./accepted-client-request-context.js";
 export { EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT } from "./accepted-client-request-context.js";
@@ -76,4 +83,5 @@ export type {
   TimelineViewWorkRow,
 } from "./timeline-view.js";
 export { compactThreadTimelineSummaryEvents } from "./summary-event-compaction.js";
+export { parseCompactionLifecycleEvent } from "./compaction-lifecycle.js";
 export type { ThreadEventWithMeta } from "./group-event-projection-turns.js";

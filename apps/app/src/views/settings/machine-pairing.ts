@@ -50,21 +50,11 @@ export function resolveRelayPairingServerUrl(input: {
   if (!relay.sessionId || !RELAY_SESSION_ID_RE.test(relay.sessionId)) {
     return { url: base, error: 'join_expired' };
   }
-  const prefixed = pairingSessionServerUrl(base, relay.sessionId);
-  const now = input.now ?? Date.now();
-  if (typeof relay.joinUntil === 'number' && relay.joinUntil <= now) {
-    return { url: prefixed, error: 'join_expired' };
-  }
-  return { url: prefixed };
+  return { url: pairingSessionServerUrl(base, relay.sessionId) };
 }
 
-export function joinCountdownMs(
-  joinCodeExpiresAt: number,
-  joinUntil: number | undefined,
-  now: number
-): number {
-  const end = typeof joinUntil === 'number' ? Math.min(joinCodeExpiresAt, joinUntil) : joinCodeExpiresAt;
-  return end - now;
+export function joinCountdownMs(joinCodeExpiresAt: number, now: number): number {
+  return joinCodeExpiresAt - now;
 }
 
 

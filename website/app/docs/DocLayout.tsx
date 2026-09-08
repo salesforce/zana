@@ -49,7 +49,7 @@ function DocsPager({ slug }: { slug: string }) {
 function DocsNextStep({ slug }: { slug: string }) {
   const nextSteps: Partial<Record<string, { title: string; body: string; href: string; action: string }>> = {
     'getting-started': {
-      title: 'Operate the workspace',
+      title: 'Operate projects and agents',
       body: 'Learn how projects, threads, the Agents board, and Inbox fit together.',
       href: '/docs/using-zana/',
       action: 'Read using Zana'

@@ -66,7 +66,8 @@ describe('ThreadModal', () => {
     expect(modalSource).toContain('className="modal-header agent-modal-header thread-modal-header"');
     expect(modalSource).not.toContain('agent-modal-title');
     expect(modalSource).toContain('className="agent-modal-body"');
-    expect(modalSource).toContain('embedded');
+    expect(modalSource).toContain('<ThreadDetail threadId={threadId} modal />');
+    expect(modalSource).not.toContain('embedded');
     expect(modalSource).toContain("FavoriteStar session={{ id: threadId, kind: 'thread' }}");
     expect(modalSource).toContain('className="agent-modal-fav"');
     expect(modalSource).not.toContain('onToggleFullScreen={toggleFullScreen}');
@@ -75,6 +76,12 @@ describe('ThreadModal', () => {
     expect(css).toContain('.thread-detail-split {');
     expect(css).toContain('.agent-terminal-modal > .modal-header');
     expect(css).toContain('.agent-modal-header.thread-modal-header');
+    const inspectorModal = css.slice(
+      css.indexOf('.agent-terminal-modal {'),
+      css.indexOf('.agent-terminal-modal.is-fullscreen {')
+    );
+    expect(inspectorModal).toContain('background: var(--bg-panel);');
+    expect(css).toContain('.thread-detail-view--modal .thread-timeline-current-turn > .thread-timeline-item.is-user {\n  background: var(--bg-panel);\n}');
   });
 
   it('is opened from the kanban inspect path and hosted beside the agent modal', () => {
@@ -91,7 +98,7 @@ describe('ThreadModal', () => {
     expect(store).toContain('set({ agentModal: { sessionId, projectId }, threadModal: null })');
   });
 
-  it('renders the dialog around the embedded thread surface', () => {
+  it('renders the dialog around the modal thread surface', () => {
     h.threads = [{ id: 't1', title: 'Review the board' }];
     const html = renderToStaticMarkup(<ThreadModal threadId="t1" onClose={() => undefined} />);
     expect(html).toContain('data-testid="thread-modal"');
@@ -101,7 +108,7 @@ describe('ThreadModal', () => {
     expect(html).not.toContain('Review the board</span>');
     expect(html).toContain('data-testid="thread-detail"');
     expect(html).toContain('data-thread-id="t1"');
-    expect(html).toContain('data-embedded="true"');
+    expect(html).not.toContain('data-embedded="true"');
     expect(html).toContain('data-modal="true"');
     expect(html).toContain('data-testid="thread-modal-close"');
     expect(html).toContain('data-testid="thread-modal-fullscreen"');

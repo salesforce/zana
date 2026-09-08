@@ -23,7 +23,7 @@ vi.mock('electron', () => ({
   app: { getPath: (k: string) => (k === 'home' ? h.home : h.home) }
 }));
 
-const { store, scratchWorkspaceRoot, SCRATCH_DIR_NAME, normalizeConfig } = await import('./store.js');
+const { store, scratchWorkspaceRoot, SCRATCH_DIR_NAME, normalizeConfig, remoteProjectsRoot } = await import('./store.js');
 const { PROJECT_COLORS } = await import('@zana-ai/zcc-domain/project-colors');
 
 const dataDir = join(h.home, '.zcc');
@@ -46,6 +46,11 @@ describe('scratchWorkspaceRoot', () => {
     expect(scratchWorkspaceRoot()).toBe(join(h.home, 'zcc-workspace'));
     expect(SCRATCH_DIR_NAME).toBe('zcc-workspace');
   });
+
+  it('keeps the project store on electronZccDataDir (~/.zcc unless ZCC_DATA_DIR)', () => {
+    const src = readFileSync(new URL('./store.ts', import.meta.url), 'utf8');
+    expect(src).toContain('const dataDir = electronZccDataDir()');
+  });
 });
 
 describe('config — boolean feature flags round-trip through setConfig', () => {
@@ -63,7 +68,12 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'agentSelfCloseEnabled',
     'closeIdlePeersEnabled',
     'teamLaunchEnabled',
+    'teamJobLaunchEnabled',
+    'composerShowCliAgent',
+    'composerShowModern',
+    'composerShowAutonomousTeam',
     'goalsEnabled',
+    'cliRemoteHostCatalogEnabled',
     'followUpsEnabled',
     'heartbeatEnabled',
     'autoRenameTabs',
@@ -77,12 +87,21 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'providerBridgeRecordingEnabled',
     'enableUpdateSimulation',
     'microVmEnabled',
-    'followupsFromIdle'
+    'followupsFromIdle',
+    'autoOpenThreadPlanPanel'
   ] as const)('persists %s', (flag) => {
     store.setConfig({ [flag]: true });
     expect(store.getConfig()[flag]).toBe(true);
     store.setConfig({ [flag]: false });
     expect(store.getConfig()[flag]).toBe(false);
+  });
+
+  it('persists composerSendMode without inventing a default for existing installs', () => {
+    expect(store.getConfig().composerSendMode).toBeUndefined();
+    store.setConfig({ composerSendMode: 'queue-if-active' });
+    expect(store.getConfig().composerSendMode).toBe('queue-if-active');
+    store.setConfig({ composerSendMode: 'auto' });
+    expect(store.getConfig().composerSendMode).toBe('auto');
   });
 
   // Menu-bar popover is ON by default (like autoModeEnabled):
@@ -322,8 +341,8 @@ describe('config — voiceModel / voiceLanguage normalization', () => {
   });
 });
 
-describe('config — workspaceModes normalization (shape-only: non-empty string)', () => {
-  // A project view is either a core WorkspaceMode OR an opaque extension module
+describe('config — projectViews normalization (shape-only: non-empty string)', () => {
+  // A project view is either a core mode OR an opaque extension module
   // id (an extension-contributed project tab, e.g. the `zana-tickets`
   // extension). Core can't value-whitelist extension ids, so normalizeConfig
   // validates SHAPE only — any non-empty string round-trips; empty/non-string
@@ -331,7 +350,7 @@ describe('config — workspaceModes normalization (shape-only: non-empty string)
   // the goals/followups/feed core modes) persist across launches.
   it('keeps every non-empty string (core modes + extension ids), drops empty/non-string', () => {
     store.setConfig({
-      workspaceModes: {
+      projectViews: {
         p: 'terminals',
         q: 'agents',
         r: 'library',
@@ -342,11 +361,24 @@ describe('config — workspaceModes normalization (shape-only: non-empty string)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any
     });
-    expect(store.getConfig().workspaceModes).toEqual({
+    expect(store.getConfig().projectViews).toEqual({
       p: 'terminals',
       q: 'agents',
       r: 'library',
       s: 'feed',
+      ext: 'zana-tickets'
+    });
+  });
+
+  it('reads legacy workspaceModes into projectViews', () => {
+    store.setConfig({
+      workspaceModes: {
+        p: 'terminals',
+        ext: 'zana-tickets'
+      }
+    });
+    expect(store.getConfig().projectViews).toEqual({
+      p: 'terminals',
       ext: 'zana-tickets'
     });
   });
@@ -374,6 +406,64 @@ describe('createScratchSubfolder', () => {
     expect(store.createScratchSubfolder('')).toMatch(/\/session-\d{14}(-\d+)?$/);
     expect(store.createScratchSubfolder('!!!')).toMatch(/\/session-\d{14}(-\d+)?$/);
     expect(store.createScratchSubfolder(undefined)).toMatch(/\/session-\d{14}(-\d+)?$/);
+  });
+});
+
+describe('addRemoteProject local working tree', () => {
+  it('creates ~/zcc-workspace/remotes/<tag>', () => {
+    const project = store.addRemoteProject({ host: 'limited-pony' });
+    expect(project.tag).toBe('limited-pony');
+    expect(project.path).toBe(join(remoteProjectsRoot(), 'limited-pony'));
+    expect(existsSync(project.path)).toBe(true);
+    expect(project.path.startsWith(scratchWorkspaceRoot())).toBe(true);
+  });
+
+  it('heals a missing dir on listProjects without changing the path', () => {
+    const project = store.addRemoteProject({ host: 'kit-kat' });
+    rmSync(project.path, { recursive: true, force: true });
+    expect(existsSync(project.path)).toBe(false);
+    const listed = store.listProjects().find((row) => row.id === project.id);
+    expect(listed?.path).toBe(project.path);
+    expect(existsSync(project.path)).toBe(true);
+  });
+
+  it('migrates ~/.zcc/remote-projects/<id> onto remotes/<tag> and keeps files', () => {
+    const project = store.addRemoteProject({ host: 'old-box' });
+    const legacy = join(h.home, '.zcc', 'remote-projects', project.id);
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, 'PLAN.md'), 'keep');
+    const file = readJson(projectsFile);
+    const row = file.projects.find((entry: { id: string }) => entry.id === project.id);
+    row.path = legacy;
+    writeFileSync(projectsFile, JSON.stringify(file, null, 2));
+    rmSync(project.path, { recursive: true, force: true });
+
+    const listed = store.listProjects().find((entry) => entry.id === project.id);
+    expect(listed?.path).toBe(join(remoteProjectsRoot(), project.tag!));
+    expect(existsSync(join(listed!.path, 'PLAN.md'))).toBe(true);
+    expect(existsSync(legacy)).toBe(false);
+  });
+
+  it('removeProject deletes the app-owned remotes folder', () => {
+    const project = store.addRemoteProject({ host: 'gone' });
+    const path = project.path;
+    store.removeProject(project.id);
+    expect(existsSync(path)).toBe(false);
+    expect(store.listProjects().some((row) => row.id === project.id)).toBe(false);
+  });
+
+  it('removeProject leaves a custom local path on disk', () => {
+    const custom = join(h.home, 'my-remote-docs');
+    mkdirSync(custom, { recursive: true });
+    writeFileSync(join(custom, 'keep.txt'), 'x');
+    const project = store.addRemoteProject({ host: 'custom-box' });
+    const file = readJson(projectsFile);
+    const row = file.projects.find((entry: { id: string }) => entry.id === project.id);
+    row.path = custom;
+    writeFileSync(projectsFile, JSON.stringify(file, null, 2));
+    rmSync(project.path, { recursive: true, force: true });
+    store.removeProject(project.id);
+    expect(existsSync(join(custom, 'keep.txt'))).toBe(true);
   });
 });
 
@@ -633,7 +723,7 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     expect(existsSync(join(scratchWorkspaceRoot(), 'keepme.txt'))).toBe(true);
     expect(project.path).toBe(scratchWorkspaceRoot());
     expect(project.quickAgent).toBe(true);
-    expect(project.name).toBe('Default Workspace');
+    expect(project.name).toBe('Default Project');
     expect(project.tag).toBe('zcc-workspace');
   });
 
@@ -650,7 +740,7 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     expect(rows.length).toBe(1);
     // same id survived the rename (re-pointed, not orphaned + re-added)
     expect(rows[0].id).toBe(existing.id);
-    expect(rows[0].name).toBe('Default Workspace');
+    expect(rows[0].name).toBe('Default Project');
     expect(store.listProjects().some((p) => p.path === legacy)).toBe(false);
   });
 
@@ -691,7 +781,7 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     expect(existsSync(scratchWorkspaceRoot())).toBe(true);
     expect(project.path).toBe(scratchWorkspaceRoot());
     expect(project.quickAgent).toBe(true);
-    expect(project.name).toBe('Default Workspace');
+    expect(project.name).toBe('Default Project');
     expect(project.tag).toBe('zcc-workspace');
     // exactly one scratch dir, freshly made
     expect(readdirSync(h.home)).toContain('zcc-workspace');
@@ -704,7 +794,7 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     const project = store.ensureQuickAgentProject();
 
     expect(project.id).toBe(first.id);
-    expect(project.name).toBe('Default Workspace');
+    expect(project.name).toBe('Default Project');
     expect(project.tag).toBe('zcc-workspace');
     expect(project.path).toBe(scratchWorkspaceRoot());
   });
@@ -714,5 +804,16 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     store.updateProject(first.id, { name: 'My Scratch' });
 
     expect(store.ensureQuickAgentProject().name).toBe('My Scratch');
+  });
+
+  it('rewrites a stored Default Workspace label to Default Project', () => {
+    const first = store.ensureQuickAgentProject();
+    store.updateProject(first.id, { name: 'Default Workspace' });
+
+    const project = store.ensureQuickAgentProject();
+
+    expect(project.id).toBe(first.id);
+    expect(project.name).toBe('Default Project');
+    expect(project.tag).toBe('zcc-workspace');
   });
 });

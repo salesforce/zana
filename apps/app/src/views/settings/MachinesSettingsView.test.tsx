@@ -38,7 +38,10 @@ vi.mock('../../hooks/useHosts.js', () => ({
 
 vi.mock('@/store', () => ({
   useData: (selector: (s: { projects: Array<{ hostId?: string }> }) => unknown) =>
-    selector({ projects: projectsState.current })
+    selector({ projects: projectsState.current }),
+  useUi: {
+    getState: () => ({ appendHostInstallLogs: () => undefined })
+  }
 }));
 
 const config: AppConfig = {
@@ -93,7 +96,7 @@ function cli(overrides: Partial<ProviderCliStatus> = {}): ProviderCliStatus {
 }
 
 describe('MachinesTab', () => {
-  it('renders add-machine without public origin or relay fields', () => {
+  it('renders add-machine and a public origin field, not a relay token field', () => {
     hostsState.current = [];
     projectsState.current = [];
     const html = renderToStaticMarkup(
@@ -103,7 +106,9 @@ describe('MachinesTab', () => {
         onUpdate={vi.fn().mockResolvedValue(undefined)}
       />
     );
-    expect(html).not.toContain('Public app URL');
+    expect(html).toContain('Public app URL');
+    expect(html).toContain('data-testid="public-app-url"');
+    expect(html).toContain('https://box.tailnet.ts.net');
     expect(html).not.toContain('Relay token');
     expect(html).not.toContain('data-testid="relay-status"');
     expect(html).toContain('Add a machine');
@@ -269,6 +274,8 @@ describe('MachineCard', () => {
     expect(html).toContain('Online');
     expect(html).toContain('0 projects');
     expect(html).toContain('Permission ceiling');
+    expect(html).toContain('Default workspace path');
+    expect(html).toContain('data-testid="machine-workspace-h1"');
     expect(html).toContain('Rename');
     expect(html).toContain('Remove');
     expect(html).not.toContain('Reconnect');
@@ -329,6 +336,7 @@ describe('MachineCard', () => {
     expect(html).toContain('this machine');
     expect(html).toContain('1 project');
     expect(html).toContain('Connect this machine to see harness CLI versions');
+    expect(html).not.toContain('Default workspace path');
     expect(html).not.toContain('Remove');
     expect(html).not.toContain('Reconnect');
     expect(html).toContain('Relaunch harness');
@@ -487,5 +495,14 @@ describe('MachineCard', () => {
     );
     expect(failed).toContain('ssh timed out');
     expect(failed).toContain('role="alert"');
+  });
+
+  it('renews pairing before repair', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./MachinesSettingsView.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('product.relay.renewJoinWindow');
+    expect(source.indexOf('product.hosts.repair')).toBeGreaterThan(
+      source.indexOf('product.relay.renewJoinWindow')
+    );
   });
 });

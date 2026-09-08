@@ -120,15 +120,15 @@ describe('ProjectHarnessSettings', () => {
 
   it('keeps configured native values available when absent from live catalogs', () => {
     const codex = { ...descriptors[0], id: 'codex' as const, label: 'Codex', targets: { ...descriptors[0].targets!, models: [{ id: 'gpt-5', label: 'GPT-5', scope: ['local'] }] } } as HarnessAdapterDescriptor;
-    const opencode = { ...descriptors[0], id: 'opencode' as const, label: 'OpenCode', targets: { ...descriptors[0].targets!, models: [{ id: 'aisuite/gpt-5.6-terra', label: 'Terra', scope: ['local'] }], roles: [{ id: 'build', label: 'Build', scope: ['local'] }] } } as HarnessAdapterDescriptor;
+    const opencode = { ...descriptors[0], id: 'opencode' as const, label: 'OpenCode', targets: { ...descriptors[0].targets!, models: [{ id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', scope: ['local'] }], roles: [{ id: 'build', label: 'Build', scope: ['local'] }] } } as HarnessAdapterDescriptor;
 
     expect(modelOptions(codex, 'legacy-model').map(({ id }) => id)).toEqual(['legacy-model', 'gpt-5']);
-    expect(modelOptions(opencode).map(({ id }) => id)).toEqual(['aisuite/gpt-5.6-terra']);
+    expect(modelOptions(opencode).map(({ id }) => id)).toEqual(['llmgw/gpt-5.6-terra-1M']);
     expect(roleOptions(opencode, 'custom-agent').map(({ id }) => id)).toEqual(['custom-agent', 'build']);
   });
 
   it('renders loading, invalid, and catalog-backed native editor states', () => {
-    const descriptor = { ...descriptors[0], id: 'opencode' as const, label: 'OpenCode', targets: { ...descriptors[0].targets!, models: [{ id: 'aisuite/gpt-5.6-terra', label: 'Terra', scope: ['local'] }], roles: [{ id: 'build', label: 'Build', scope: ['local'] }] } } as HarnessAdapterDescriptor;
+    const descriptor = { ...descriptors[0], id: 'opencode' as const, label: 'OpenCode', targets: { ...descriptors[0].targets!, models: [{ id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', scope: ['local'] }], roles: [{ id: 'build', label: 'Build', scope: ['local'] }] } } as HarnessAdapterDescriptor;
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
       value: { cc: { codexSettings: { read: vi.fn() }, openCodeSettings: { read: vi.fn() } } }

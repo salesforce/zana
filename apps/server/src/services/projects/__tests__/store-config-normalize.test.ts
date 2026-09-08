@@ -227,11 +227,11 @@ describe('harness settings containers', () => {
     expect(normalizeConfig({
       harnessRouting: {
         schemaVersion: 1,
-        byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } }
+        byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } }
       }
     }).harnessRouting).toEqual({
       schemaVersion: 1,
-      byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } }
+      byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } }
     });
   });
 
@@ -311,13 +311,6 @@ describe('normalizeConfig — theme (WARP-A2 tri-state)', () => {
 });
 
 describe('normalizeConfig — catch-up summary flags', () => {
-  it('accepts only explicit HTTP monitor providers', () => {
-    expect(normalizeConfig({ monitorSemanticProvider: 'openai' }).monitorSemanticProvider).toBe('openai');
-    expect(normalizeConfig({ monitorSemanticProvider: 'gemini' }).monitorSemanticProvider).toBe('gemini');
-    // @ts-expect-error monitor paths must never accept coding-harness providers
-    expect(normalizeConfig({ monitorSemanticProvider: 'claude-cli' }).monitorSemanticProvider).toBeUndefined();
-  });
-
   it('passes through a boolean catchUpSummaryEnabled', () => {
     expect(normalizeConfig({ catchUpSummaryEnabled: true }).catchUpSummaryEnabled).toBe(true);
     expect(normalizeConfig({ catchUpSummaryEnabled: false }).catchUpSummaryEnabled).toBe(false);
@@ -342,6 +335,30 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ feedNoiseClassifierEnabled: false }).feedNoiseClassifierEnabled).toBe(false);
     // @ts-expect-error intentional bad input
     expect(normalizeConfig({ feedNoiseClassifierEnabled: 'yes' }).feedNoiseClassifierEnabled).toBeUndefined();
+  });
+
+  it('passes through a boolean cliRemoteHostCatalogEnabled, drops non-booleans', () => {
+    expect(normalizeConfig({ cliRemoteHostCatalogEnabled: true }).cliRemoteHostCatalogEnabled).toBe(true);
+    expect(normalizeConfig({ cliRemoteHostCatalogEnabled: false }).cliRemoteHostCatalogEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ cliRemoteHostCatalogEnabled: 'yes' }).cliRemoteHostCatalogEnabled).toBeUndefined();
+  });
+
+  it('passes through boolean composer launch-surface flags, drops non-booleans', () => {
+    expect(normalizeConfig({ composerShowCliAgent: true }).composerShowCliAgent).toBe(true);
+    expect(normalizeConfig({ composerShowCliAgent: false }).composerShowCliAgent).toBe(false);
+    expect(normalizeConfig({ composerShowModern: true }).composerShowModern).toBe(true);
+    expect(normalizeConfig({ composerShowModern: false }).composerShowModern).toBe(false);
+    expect(normalizeConfig({ composerShowAutonomousTeam: true }).composerShowAutonomousTeam).toBe(true);
+    expect(normalizeConfig({ composerShowAutonomousTeam: false }).composerShowAutonomousTeam).toBe(false);
+    expect(normalizeConfig({ teamJobLaunchEnabled: true }).teamJobLaunchEnabled).toBe(true);
+    expect(normalizeConfig({ teamJobLaunchEnabled: false }).teamJobLaunchEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ composerShowCliAgent: 'yes' }).composerShowCliAgent).toBeUndefined();
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ composerShowModern: 1 }).composerShowModern).toBeUndefined();
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ composerShowAutonomousTeam: 'yes' }).composerShowAutonomousTeam).toBeUndefined();
   });
 
   it('passes through a boolean suggestionsEnabled, drops non-booleans', () => {

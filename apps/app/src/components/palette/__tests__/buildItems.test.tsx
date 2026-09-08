@@ -30,7 +30,7 @@ const whenCtx: WhenContext = {
   tabCount: 1,
   activeTabStatus: 'running',
   activeTabProfile: 'claude',
-  workspaceMode: 'terminals',
+  projectView: 'terminals',
   platform: 'darwin',
   panelFocused: false,
   scopedWindow: false
@@ -64,7 +64,7 @@ function baseCtx(over: Partial<PaletteBuildContext> = {}): PaletteBuildContext {
     setNav: noop,
     selectProject: noop,
     selectTab: noop,
-    setWorkspaceMode: noop,
+    setProjectView: noop,
     setSettingsTab: noop,
     setExtensionsTab: noop,
     setOverviewOpen: noop,
@@ -84,6 +84,7 @@ describe('buildPaletteItems', () => {
     expect(keys).toEqual([
       'project:p1',
       'tab:t1',
+      'action:new-chat',
       'action:add-project',
       'action:settings',
       'action:shortcuts',
@@ -147,6 +148,7 @@ describe('buildPaletteItems', () => {
     expect(keys).toEqual([
       'project:p1', // still listed as a switch target
       'tab:t1',     // cross-project tab
+      'action:new-chat',
       'action:add-project',
       'action:settings',
       'action:shortcuts',
@@ -167,6 +169,14 @@ describe('buildPaletteItems', () => {
     expect(item).toBeTruthy();
     item!.run();
     expect(setNav).toHaveBeenCalledWith('agents');
+  });
+
+  it('New Chat opens Home', () => {
+    const setNav = vi.fn();
+    const item = buildPaletteItems(baseCtx({ setNav })).find((i) => i.key === 'action:new-chat');
+    expect(item?.label).toBe('New Chat');
+    item!.run();
+    expect(setNav).toHaveBeenCalledWith('home');
   });
 
   it('opens Skills, Plugins, and MCP on the Extensions workspace', () => {

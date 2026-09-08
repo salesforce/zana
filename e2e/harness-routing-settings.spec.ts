@@ -51,18 +51,18 @@ test('Global and Project harness settings persist provider, model, execution, an
     const globalProvider = globalOpenCode.getByRole('button', { name: 'Default provider' });
     const globalModel = globalOpenCode.getByRole('button', { name: 'Default model level' });
     const globalExecution = globalOpenCode.getByRole('button', { name: 'Default execution state' });
-    await selectPicklistOption(globalProvider, window, 'Default provider', 'Anthropic');
-    await selectPicklistOption(globalModel, window, 'Default model level', 'Sonnet [Medium]', 'Sonnet');
+    await selectPicklistOption(globalProvider, window, 'Default provider', 'OpenAI');
+    await selectPicklistOption(globalModel, window, 'Default model level', 'Terra [Medium]', 'Terra');
     await selectPicklistOption(globalExecution, window, 'Default execution state', 'plan [Plan]');
-    await expect(globalProvider).toContainText('Anthropic');
-    await expect(globalModel).toContainText('Sonnet [Medium]');
+    await expect(globalProvider).toContainText('OpenAI');
+    await expect(globalModel).toContainText('Terra [Medium]');
     await expect(globalExecution).toContainText('plan [Plan]');
     await expect.poll(() => window.evaluate(() => window.cc.config.get())).toMatchObject({
       harnessRouting: {
         byAdapter: {
           opencode: {
-            providerTargetId: 'anthropic',
-            modelTargetId: 'aisuite/us.anthropic.claude-sonnet-5',
+            providerTargetId: 'openai',
+            modelTargetId: 'llmgw/gpt-5.6-terra-1M',
             executionState: 'plan'
           }
         }
@@ -110,7 +110,7 @@ test('Global and Project harness settings persist provider, model, execution, an
         byAdapter: {
           opencode: {
             providerTargetId: 'google',
-            modelTargetId: 'aisuite/gemini-3.5-flash',
+            modelTargetId: 'llmgw/gemini-3.5-flash',
             executionState: 'autonomous'
           }
         }

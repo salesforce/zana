@@ -1,13 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
   absolutePathMentions,
+  applyLaunchPatch,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
+  cliAgentCatalogProviders,
+  cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
+  cliAgentMoreModelOptions,
+  cliLaunchFromPermissionMode,
+  cliPermissionModesFor,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
+  readCliExtraArgs,
+  resolveCliAgentFamily,
+  resolveCliLaunchProfile,
   rewritePromptPaths,
-  threadProviderIdForFamily
+  threadProviderIdForFamily,
+  unrestrictedProfileId,
+  withExecutionState,
+  writeCliExtraArgs
 } from '../legacy-agent-home.js';
 
 describe('availableAgentHarnesses', () => {
@@ -49,6 +61,56 @@ describe('thread provider id mapping', () => {
   });
 });
 
+describe('resolveCliAgentFamily', () => {
+  it('keeps the current family when it is still installed', () => {
+    expect(resolveCliAgentFamily({
+      currentFamilyId: 'codex',
+      availableFamilyIds: ['claude', 'codex'],
+      rememberedFamilyId: 'pi',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('codex');
+  });
+
+  it('restores the last-used family when the current pick is empty or gone', () => {
+    expect(resolveCliAgentFamily({
+      currentFamilyId: '',
+      availableFamilyIds: ['claude', 'codex'],
+      rememberedFamilyId: 'codex',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('codex');
+    expect(resolveCliAgentFamily({
+      currentFamilyId: 'pi',
+      availableFamilyIds: ['claude', 'codex'],
+      rememberedFamilyId: 'codex',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('codex');
+  });
+
+  it('falls through to the configured default when nothing remembered is available', () => {
+    expect(resolveCliAgentFamily({
+      currentFamilyId: '',
+      availableFamilyIds: ['claude', 'codex'],
+      rememberedFamilyId: 'pi',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('claude');
+  });
+
+  it('keeps current then remembered before descriptors arrive', () => {
+    expect(resolveCliAgentFamily({
+      currentFamilyId: 'codex',
+      availableFamilyIds: [],
+      rememberedFamilyId: 'pi',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('codex');
+    expect(resolveCliAgentFamily({
+      currentFamilyId: '',
+      availableFamilyIds: [],
+      rememberedFamilyId: 'pi',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('pi');
+  });
+});
+
 describe('cliAgentModelOptions', () => {
   it('keeps a trusted PTY adapter catalog when the adapter lists models', () => {
     expect(cliAgentModelOptions({
@@ -69,6 +131,235 @@ describe('cliAgentModelOptions', () => {
       { id: 'anthropic/claude-opus-4-8', label: 'Opus 4.8' }
     ]);
   });
+
+  it('prefers the host catalog once it is ready, including an empty list', () => {
+    expect(cliAgentModelOptions({
+      adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
+      catalogModels: [{ model: 'claude-sonnet-5', displayName: 'Sonnet 5' }],
+      preferCatalog: true,
+      catalogReady: true
+    })).toEqual([{ id: 'claude-sonnet-5', label: 'Sonnet 5' }]);
+    expect(cliAgentModelOptions({
+      adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
+      catalogModels: [],
+      preferCatalog: true,
+      catalogReady: true
+    })).toEqual([]);
+  });
+
+  it('keeps the adapter catalog as a placeholder until the host list loads', () => {
+    expect(cliAgentModelOptions({
+      adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
+      catalogModels: [],
+      preferCatalog: true,
+      catalogReady: false
+    })).toEqual([{ id: 'sonnet', label: 'Sonnet (latest)' }]);
+  });
+});
+
+describe('cliAgentMoreModelOptions', () => {
+  it('hides more-models when the adapter catalog is the source of truth', () => {
+    expect(cliAgentMoreModelOptions({
+      adapterModelCount: 2,
+      catalogMoreModels: [{ model: 'opus', displayName: 'Opus' }],
+      preferCatalog: false
+    })).toEqual([]);
+  });
+
+  it('surfaces host more-models when preferring the live catalog', () => {
+    expect(cliAgentMoreModelOptions({
+      adapterModelCount: 2,
+      catalogMoreModels: [{ model: 'opus', displayName: 'Opus' }],
+      preferCatalog: true
+    })).toEqual([{ value: 'opus', label: 'Opus' }]);
+  });
+});
+
+describe('cliAgentCatalogProviders', () => {
+  it('keeps only PTY-mapped host providers and drops thread-only ids', () => {
+    expect(cliAgentCatalogProviders([
+      { id: 'claude-code', displayName: 'Claude Code' },
+      { id: 'codex', displayName: 'Codex' },
+      { id: 'fake', displayName: 'Fake' },
+      { id: 'acp-opencode', displayName: 'OpenCode' }
+    ])).toEqual([
+      { id: 'claude-code', displayName: 'Claude Code', permissionModes: [], composerActions: [] },
+      { id: 'codex', displayName: 'Codex', permissionModes: [], composerActions: [] },
+      { id: 'acp-opencode', displayName: 'OpenCode', permissionModes: [], composerActions: [] }
+    ]);
+    expect(cliAgentFamilyIdsFromCatalog([
+      { id: 'claude-code' },
+      { id: 'fake' },
+      { id: 'pi' }
+    ])).toEqual(['claude', 'pi']);
+  });
+
+  it('passes catalog permission modes through instead of zeroing them', () => {
+    expect(cliAgentCatalogProviders([
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        permissionModes: ['accept-edits', 'auto', 'full'],
+        composerActions: ['plan']
+      },
+      { id: 'fake', displayName: 'Fake', permissionModes: ['full'], composerActions: [] }
+    ])).toEqual([
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        permissionModes: ['accept-edits', 'auto', 'full'],
+        composerActions: ['plan']
+      }
+    ]);
+  });
+});
+
+describe('CLI permission modes', () => {
+  it('keeps Claude and Codex modes when an unrestricted profile exists', () => {
+    expect(cliPermissionModesFor({
+      catalogModes: ['accept-edits', 'auto', 'full'],
+      hasUnrestrictedProfile: true
+    })).toEqual(['accept-edits', 'auto', 'full']);
+  });
+
+  it('drops Full Access without an unrestricted profile', () => {
+    expect(cliPermissionModesFor({
+      catalogModes: ['accept-edits', 'full'],
+      hasUnrestrictedProfile: false
+    })).toEqual(['accept-edits']);
+    expect(cliPermissionModesFor({
+      catalogModes: ['full'],
+      hasUnrestrictedProfile: false
+    })).toEqual([]);
+  });
+
+  it('resolves the unrestricted profile from posture, not a harness id literal', () => {
+    expect(unrestrictedProfileId([
+      { id: 'codex', posture: 'default' },
+      { id: 'codex-yolo', posture: 'unrestricted' }
+    ])).toBe('codex-yolo');
+    expect(unrestrictedProfileId([{ id: 'pi', posture: 'default' }])).toBeUndefined();
+  });
+
+  it('maps Edits / Auto / Full onto PTY spawn knobs', () => {
+    expect(cliLaunchFromPermissionMode({ mode: 'accept-edits' })).toEqual({
+      executionState: 'accept-edits'
+    });
+    expect(cliLaunchFromPermissionMode({ mode: 'auto' })).toEqual({});
+    expect(cliLaunchFromPermissionMode({
+      mode: 'full',
+      unrestrictedProfileId: 'cursor-yolo'
+    })).toEqual({ profileId: 'cursor-yolo' });
+    expect(cliLaunchFromPermissionMode({ mode: 'full' })).toEqual({});
+  });
+
+  it('maps every family × offered mode onto spawn knobs, including yolo', () => {
+    const rows: ReadonlyArray<{
+      family: string;
+      mode: string;
+      unrestrictedId?: string;
+      expected: { profileId?: string; executionState?: 'accept-edits' };
+    }> = [
+      { family: 'claude', mode: 'accept-edits', unrestrictedId: 'claude-yolo', expected: { executionState: 'accept-edits' } },
+      { family: 'claude', mode: 'auto', unrestrictedId: 'claude-yolo', expected: {} },
+      { family: 'claude', mode: 'full', unrestrictedId: 'claude-yolo', expected: { profileId: 'claude-yolo' } },
+      { family: 'cursor', mode: 'accept-edits', unrestrictedId: 'cursor-yolo', expected: { executionState: 'accept-edits' } },
+      { family: 'cursor', mode: 'full', unrestrictedId: 'cursor-yolo', expected: { profileId: 'cursor-yolo' } },
+      { family: 'codex', mode: 'accept-edits', unrestrictedId: 'codex-yolo', expected: { executionState: 'accept-edits' } },
+      { family: 'codex', mode: 'auto', unrestrictedId: 'codex-yolo', expected: {} },
+      { family: 'codex', mode: 'full', unrestrictedId: 'codex-yolo', expected: { profileId: 'codex-yolo' } },
+      { family: 'pi', mode: 'full', expected: {} },
+      { family: 'opencode', mode: 'accept-edits', unrestrictedId: 'opencode-yolo', expected: { executionState: 'accept-edits' } },
+      { family: 'opencode', mode: 'full', unrestrictedId: 'opencode-yolo', expected: { profileId: 'opencode-yolo' } }
+    ];
+    for (const row of rows) {
+      expect(
+        cliLaunchFromPermissionMode({
+          mode: row.mode,
+          unrestrictedProfileId: row.unrestrictedId
+        }),
+        `${row.family} ${row.mode}`
+      ).toEqual(row.expected);
+    }
+  });
+
+  it('withExecutionState would stack Edits onto a native role — the composer must skip that merge', () => {
+    expect(withExecutionState(
+      { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'reviewer' } } },
+      'opencode',
+      'accept-edits'
+    )).toEqual({
+      schemaVersion: 1,
+      byAdapter: { opencode: { roleTargetId: 'reviewer', executionState: 'accept-edits' } }
+    });
+  });
+
+  it('locks picker modes to each family\'s catalog plus unrestricted posture', () => {
+    const families: ReadonlyArray<{
+      family: string;
+      catalogModes: readonly string[];
+      profiles: ReadonlyArray<{ id: string; posture: string }>;
+      expectedModes: readonly string[];
+      unrestrictedId: string | undefined;
+    }> = [
+      {
+        family: 'claude',
+        catalogModes: ['accept-edits', 'auto', 'full'],
+        profiles: [
+          { id: 'claude', posture: 'default' },
+          { id: 'claude-yolo', posture: 'unrestricted' }
+        ],
+        expectedModes: ['accept-edits', 'auto', 'full'],
+        unrestrictedId: 'claude-yolo'
+      },
+      {
+        family: 'cursor',
+        catalogModes: ['accept-edits', 'full'],
+        profiles: [
+          { id: 'cursor', posture: 'default' },
+          { id: 'cursor-yolo', posture: 'unrestricted' }
+        ],
+        expectedModes: ['accept-edits', 'full'],
+        unrestrictedId: 'cursor-yolo'
+      },
+      {
+        family: 'codex',
+        catalogModes: ['accept-edits', 'auto', 'full'],
+        profiles: [
+          { id: 'codex', posture: 'default' },
+          { id: 'codex-yolo', posture: 'unrestricted' }
+        ],
+        expectedModes: ['accept-edits', 'auto', 'full'],
+        unrestrictedId: 'codex-yolo'
+      },
+      {
+        family: 'pi',
+        catalogModes: ['full'],
+        profiles: [{ id: 'pi', posture: 'default' }],
+        expectedModes: [],
+        unrestrictedId: undefined
+      },
+      {
+        family: 'opencode',
+        catalogModes: ['accept-edits', 'full'],
+        profiles: [
+          { id: 'opencode', posture: 'default' },
+          { id: 'opencode-yolo', posture: 'unrestricted' }
+        ],
+        expectedModes: ['accept-edits', 'full'],
+        unrestrictedId: 'opencode-yolo'
+      }
+    ];
+    for (const row of families) {
+      const unrestrictedId = unrestrictedProfileId(row.profiles);
+      expect(unrestrictedId, row.family).toBe(row.unrestrictedId);
+      expect(cliPermissionModesFor({
+        catalogModes: row.catalogModes,
+        hasUnrestrictedProfile: Boolean(unrestrictedId)
+      }), row.family).toEqual(row.expectedModes);
+      expect(row.expectedModes.length > 1, `${row.family} picker`).toBe(Boolean(row.unrestrictedId));
+    }
+  });
 });
 
 describe('CLI launch prompt from mention pills', () => {
@@ -87,5 +378,55 @@ describe('CLI launch prompt from mention pills', () => {
     ])).toBe('See @/remote/a.ts please');
     expect(assembleCliLaunchPrompt({ text: '  ship it  ', imagePaths: ['shots/a.png'] })).toBe('ship it\n@shots/a.png');
     expect(assembleCliLaunchPrompt({ text: '   ' })).toBe('');
+  });
+});
+
+describe('CLI launch overlay helpers', () => {
+  it('lets a plugin profile override the base profile', () => {
+    expect(resolveCliLaunchProfile({ baseProfile: 'claude' })).toBe('claude');
+    expect(resolveCliLaunchProfile({
+      baseProfile: 'claude',
+      patchProfileId: 'claude-yolo'
+    })).toBe('claude-yolo');
+  });
+
+  it('merges extra args and execution state with a plugin patch', () => {
+    const merged = applyLaunchPatch({
+      baseProfile: 'claude',
+      extraArgs: ['--verbose'],
+      harnessRouting: withExecutionState(undefined, 'claude', 'plan'),
+      patch: {
+        extraArgs: ['--dangerously-skip-permissions'],
+        profileId: 'claude-yolo',
+        harnessRouting: {
+          schemaVersion: 1,
+          byAdapter: { claude: { modelTargetId: 'sonnet' } }
+        }
+      }
+    });
+    expect(merged.profile).toBe('claude-yolo');
+    expect(merged.extraArgs).toEqual(['--verbose', '--dangerously-skip-permissions']);
+    expect(merged.harnessRouting?.byAdapter.claude).toMatchObject({
+      executionState: 'plan',
+      modelTargetId: 'sonnet'
+    });
+  });
+
+  it('remembers extra args per family in localStorage', () => {
+    const memory = new Map<string, string>();
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem(key: string) { return memory.get(key) ?? null; },
+        setItem(key: string, value: string) { memory.set(key, value); },
+        removeItem(key: string) { memory.delete(key); }
+      }
+    });
+    expect(readCliExtraArgs('claude')).toEqual([]);
+    writeCliExtraArgs('claude', ['--plugin-dir', '/tmp/p']);
+    expect(readCliExtraArgs('claude')).toEqual(['--plugin-dir', '/tmp/p']);
+    expect(readCliExtraArgs('codex')).toEqual([]);
+    writeCliExtraArgs('claude', []);
+    expect(readCliExtraArgs('claude')).toEqual([]);
   });
 });

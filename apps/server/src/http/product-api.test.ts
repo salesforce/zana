@@ -2,7 +2,9 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createConversationThread, createEnvironment, updateConversationThreadStatus, upsertHost, appendConversationThreadEvent } from '@zana-ai/zcc-db';
+import { archiveConversationThread, createConversationThread, createEnvironment, updateConversationThreadStatus, upsertHost, appendConversationThreadEvent } from '@zana-ai/zcc-db';
+import { turnScope } from '@zana-ai/zcc-domain/thread-runtime';
+import { EMPTY_THREAD_ACTIVITY } from '@zana-ai/zcc-thread-view';
 import { startProductServer, type ProductServer } from './product-server.js';
 import { HostUnavailableError } from './host-hub.js';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
@@ -95,7 +97,7 @@ describe('product HTTP', () => {
             supportsThreadRename: false,
             permissionModes: ['full']
           },
-          composerActions: id === 'claude-code' ? ['plan'] : undefined
+          composerActions: id === 'codex' ? ['plan', 'goal'] : id === 'claude-code' ? ['plan'] : []
         })
       );
     }
@@ -164,9 +166,10 @@ describe('product HTTP', () => {
       selectedOnlyModels?: Array<{ displayName: string; model: string }>;
     };
     expect(options.providers.map((row) => row.id)).toEqual(
-      expect.arrayContaining(['claude-code', 'codex', 'pi', 'acp-cursor', 'acp-opencode'])
+      expect.arrayContaining(['claude-code', 'codex', 'pi', 'acp-cursor'])
     );
     expect(options.providers.find((row) => row.id === 'claude-code')?.composerActions).toEqual(['plan']);
+    expect(options.providers.find((row) => row.id === 'codex')?.composerActions).toEqual(['plan', 'goal']);
     expect(options.models.map((row) => row.displayName)).toEqual(expect.arrayContaining([
       'Fable 5',
       'Opus 5 (1M)',
@@ -199,6 +202,136 @@ describe('product HTTP', () => {
     });
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173');
+  });
+
+  it('still offers OpenCode when the family CLI is installed even if ACP health says not_installed', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-health-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const capabilities = {
+      supportsServiceTier: false,
+      fork: 'checkpoint' as const,
+      supportsThreadArchive: false,
+      supportsThreadRename: false,
+      permissionModes: ['full' as const]
+    };
+    providerHandles.push(
+      registerThreadProvider('test', {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        capabilities
+      }),
+      registerThreadProvider('test', {
+        id: 'acp-opencode',
+        displayName: 'OpenCode',
+        visibility: 'installed',
+        capabilities
+      })
+    );
+    server.ctx.hostHub.resolveHostId = (hostId?: string) => hostId ?? 'sfwork';
+    server.ctx.hostHub.callHostOnlineRpc = async (input: { command: { type: string } }) => {
+      if (input.command.type === 'provider.status') {
+        return {
+          providers: [
+            {
+              family: 'claude',
+              label: 'Claude Code',
+              binary: 'claude',
+              enabled: true,
+              alwaysEnabled: true,
+              installed: true,
+              installHint: 'install claude'
+            },
+            {
+              family: 'opencode',
+              label: 'OpenCode',
+              binary: 'opencode',
+              enabled: true,
+              alwaysEnabled: false,
+              installed: true,
+              installHint: 'install opencode'
+            }
+          ]
+        };
+      }
+      if (input.command.type === 'provider.health') {
+        return { supported: true, health: { status: 'not_installed' } };
+      }
+      if (input.command.type === 'provider.list_models') {
+        return { models: [], selectedOnlyModels: [] };
+      }
+      throw new Error(`unexpected ${input.command.type}`);
+    };
+
+    const execution = await fetch(`${server.url}api/v1/system/execution-options?hostId=sfwork`);
+    expect(execution.status).toBe(200);
+    const options = await execution.json() as { providers: Array<{ id: string }> };
+    expect(options.providers.map((row) => row.id)).toContain('claude-code');
+    expect(options.providers.map((row) => row.id)).toContain('acp-opencode');
+  });
+
+  it('still offers OpenCode when health is a noop and that host reports the CLI installed', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-health-noop-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const capabilities = {
+      supportsServiceTier: false,
+      fork: 'checkpoint' as const,
+      supportsThreadArchive: false,
+      supportsThreadRename: false,
+      permissionModes: ['full' as const]
+    };
+    providerHandles.push(
+      registerThreadProvider('test', {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        capabilities
+      }),
+      registerThreadProvider('test', {
+        id: 'acp-opencode',
+        displayName: 'OpenCode',
+        visibility: 'installed',
+        capabilities
+      })
+    );
+    server.ctx.hostHub.resolveHostId = (hostId?: string) => hostId ?? 'sfwork';
+    server.ctx.hostHub.callHostOnlineRpc = async (input: { command: { type: string } }) => {
+      if (input.command.type === 'provider.status') {
+        return {
+          providers: [
+            {
+              family: 'opencode',
+              label: 'OpenCode',
+              binary: 'opencode',
+              enabled: true,
+              alwaysEnabled: false,
+              installed: true,
+              installHint: 'install opencode'
+            }
+          ]
+        };
+      }
+      if (input.command.type === 'provider.health') {
+        return { supported: false };
+      }
+      if (input.command.type === 'provider.list_models') {
+        return { models: [], selectedOnlyModels: [] };
+      }
+      throw new Error(`unexpected ${input.command.type}`);
+    };
+
+    const execution = await fetch(`${server.url}api/v1/system/execution-options?hostId=sfwork`);
+    expect(execution.status).toBe(200);
+    const options = await execution.json() as { providers: Array<{ id: string }> };
+    expect(options.providers.map((row) => row.id)).toContain('acp-opencode');
   });
 
   it('launches a terminal through a connected host and drives input/resize/close', async () => {
@@ -238,23 +371,47 @@ describe('product HTTP', () => {
     const launch = await fetch(`${server.url}api/v1/terminals`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ projectId: 'proj-1', profile: 'claude' })
+      body: JSON.stringify({ projectId: 'proj-1', profile: 'shell', command: 'npm run dev' })
     });
     expect(launch.status).toBe(201);
-    const created = await launch.json() as { ok: true; value: { id: string; status: string; pid?: number } };
+    const created = await launch.json() as {
+      ok: true;
+      value: { id: string; status: string; pid?: number; title?: string; launchCommand?: string };
+    };
     expect(created).toMatchObject({
       ok: true,
-      value: { projectId: 'proj-1', profile: 'claude', status: 'running', pid: 4242 }
+      value: {
+        projectId: 'proj-1',
+        profile: 'shell',
+        status: 'running',
+        pid: 4242,
+        title: 'npm run dev',
+        launchCommand: 'npm run dev'
+      }
     });
     expect(created.value).not.toHaveProperty('hostId');
+    expect(created.value).not.toHaveProperty('outputText');
     expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
       hostId: 'host-1',
       command: expect.objectContaining({
         type: 'terminal.start',
         root: realpathSync(projectRoot),
-        cwd: realpathSync(projectRoot)
+        cwd: realpathSync(projectRoot),
+        command: 'npm run dev'
       })
     }));
+
+    const shown = await fetch(`${server.url}api/v1/terminals/${created.value.id}`).then((response) => response.json());
+    expect(shown.session.id).toBe(created.value.id);
+    expect(shown.session.launchCommand).toBe('npm run dev');
+
+    const record = server.ctx.terminalSessions.get(created.value.id);
+    if (record) {
+      record.outputText = 'Local: http://localhost:5173\n';
+      record.outputTruncated = false;
+    }
+    const output = await fetch(`${server.url}api/v1/terminals/${created.value.id}/output`).then((response) => response.json());
+    expect(output).toEqual({ text: 'Local: http://localhost:5173\n', truncated: false });
 
     const listed = await fetch(`${server.url}api/v1/terminals`).then((response) => response.json());
     expect(listed.sessions).toHaveLength(1);
@@ -376,8 +533,102 @@ describe('product HTTP', () => {
       threads: Array<{ id: string; status: string; lastReadSeq: number | null; maxSeq: number }>;
     };
     expect(body.threads).toEqual([
-      expect.objectContaining({ id: thread.id, status: 'idle', lastReadSeq: null, maxSeq: 0 })
+      expect.objectContaining({
+        id: thread.id,
+        status: 'idle',
+        lastReadSeq: null,
+        maxSeq: 0,
+        activity: EMPTY_THREAD_ACTIVITY
+      })
     ]);
+  });
+
+  it('reports Modern/ACP owner-session liveness via /threads/:id/live', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-thread-live-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'acp-opencode',
+      title: 'Owner'
+    });
+    updateConversationThreadStatus(server.ctx.db, thread.id, 'idle');
+    const live = (id: string, projectId: string) =>
+      fetch(`${server!.url}api/v1/threads/${id}/live?projectId=${projectId}`).then((r) => r.json());
+
+    // A live thread in its own project authorizes the loopback owner-auth gate.
+    expect(await live(thread.id, 'proj-1')).toEqual({ live: true });
+    // A mismatched project must NOT authorize (Rule 1: owner identity is exact).
+    expect(await live(thread.id, 'proj-2')).toEqual({ live: false });
+    // An unknown thread id is a miss, not a 404 — the gate reads a plain boolean.
+    expect(await live('11111111-1111-1111-1111-111111111111', 'proj-1')).toEqual({ live: false });
+    // An archived (dead) owner thread never authorizes.
+    archiveConversationThread(server.ctx.db, thread.id);
+    expect(await live(thread.id, 'proj-1')).toEqual({ live: false });
+  });
+
+  it('projects running background bash onto thread list activity', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-thread-activity-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Dev server'
+    });
+    updateConversationThreadStatus(server.ctx.db, thread.id, 'idle');
+    appendConversationThreadEvent(server.ctx.db, {
+      threadId: thread.id,
+      type: 'item/started',
+      payload: {
+        type: 'item/started',
+        threadId: thread.id,
+        providerThreadId: 'provider-1',
+        scope: turnScope('turn-1'),
+        item: {
+          type: 'backgroundTask',
+          id: 'task:bash-1',
+          taskType: 'local_bash',
+          description: 'npm run dev',
+          status: 'pending',
+          taskStatus: 'running',
+          skipTranscript: false
+        }
+      }
+    });
+    const body = await fetch(`${server.url}api/v1/threads`).then((response) => response.json()) as {
+      threads: Array<{ id: string; activity: { activeBackgroundCommandCount: number } }>;
+    };
+    expect(body.threads).toEqual([
+      expect.objectContaining({
+        id: thread.id,
+        activity: expect.objectContaining({ activeBackgroundCommandCount: 1 })
+      })
+    ]);
+    const shown = await fetch(`${server.url}api/v1/threads/${thread.id}`).then((response) => response.json()) as {
+      thread: { activity: { activeBackgroundCommandCount: number } };
+    };
+    expect(shown.thread.activity.activeBackgroundCommandCount).toBe(1);
   });
 
   it('lists lastReadSeq and maxSeq and emits threads:updated on read', async () => {
@@ -936,6 +1187,19 @@ describe('product HTTP thread reasoning', () => {
     expect(source).toContain('parseReasoningLevel(body.reasoningLevel)');
     expect(source).toContain("routeParams(path, '/api/v1/threads/:id/plan/cancel')");
     expect(source).toContain('cancelConversationPlan');
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/plan')");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/plan/tasks')");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/next-turn/flush')");
+    expect(source).toContain('flushHeldConversationSends');
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/next-turn/:itemId')");
+    expect(source).toContain('dropDeferredConversationMessage');
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/compact')");
+    expect(source).toContain('compactConversation');
+    expect(source).toContain("path === '/api/v1/threads/search'");
+    expect(source).toContain("path === '/api/v1/threads/resolve-mentions'");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/prompt-history')");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/pin')");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/child-summary')");
   });
 });
 
@@ -1504,5 +1768,76 @@ describe('product HTTP thread file preview', () => {
       projectId: 'proj-1',
       file: { source: 'workspace', path: 'README.md', lineNumber: null }
     });
+  });
+});
+
+describe('product HTTP thread tabs', () => {
+  it('gets empty tabs then puts and conflicts on a stale revision', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-tabs-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-tabs-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [
+          {
+            id: 'proj-1',
+            name: 'Alpha',
+            path: projectRoot,
+            createdAt: 1,
+            lastActiveAt: 1
+          }
+        ]
+      })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: projectRoot
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+
+    const empty = await fetch(`${server.url}api/v1/threads/${thread.id}/tabs`);
+    expect(empty.status).toBe(200);
+    await expect(empty.json()).resolves.toEqual({ revision: 0, tabs: [] });
+
+    const tab = {
+      id: 'file-preview:1',
+      kind: 'workspace-file-preview',
+      environmentId: null,
+      projectId: null,
+      path: 'src/a.ts',
+      source: { kind: 'working-tree' },
+      statusLabel: null,
+      lineRange: { startLineNumber: 3, endLineNumber: 3 }
+    };
+    const put = await fetch(`${server.url}api/v1/threads/${thread.id}/tabs`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 0, tabs: [tab] })
+    });
+    expect(put.status).toBe(200);
+    await expect(put.json()).resolves.toMatchObject({ revision: 1, tabs: [tab] });
+
+    const stale = await fetch(`${server.url}api/v1/threads/${thread.id}/tabs`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 0, tabs: [] })
+    });
+    expect(stale.status).toBe(409);
+    await expect(stale.json()).resolves.toMatchObject({ error: 'revision_conflict' });
+
+    const missing = await fetch(`${server.url}api/v1/threads/missing/tabs`);
+    expect(missing.status).toBe(404);
   });
 });

@@ -89,6 +89,14 @@ export interface UpdaterDeps {
    * electron-updater, the network, or `quitAndInstall`.
    */
   allowSimulation?: boolean;
+  /**
+   * Called immediately before a real `quitAndInstall` so the host can skip the
+   * live-sessions quit prompt. "Restart now" / "Download & restart" is already
+   * the user's consent to end running terminals; a blocking `before-quit`
+   * dialog (or a silent Cancel when the window is already quitting) is why the
+   * button can look like a no-op.
+   */
+  prepareQuitForUpdate?: () => void;
 }
 
 export interface Updater {
@@ -356,6 +364,14 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   let updateStaged = false;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+  // `isSilent=false`, `isForceRunAfter=true`: show the installer's normal
+  // progress and relaunch afterward. Host `prepareQuitForUpdate` must run
+  // BEFORE Squirrel starts quitting so `before-quit` cannot cancel the install.
+  function installStagedUpdate(): void {
+    deps.prepareQuitForUpdate?.();
+    autoUpdater.quitAndInstall(false, true);
+  }
+
   autoUpdater.on('checking-for-update', () => emitStatus({ kind: 'checking' }));
   autoUpdater.on('update-available', (info) => {
     pendingVersion = info?.version;
@@ -388,9 +404,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
     emitStatus({ kind: 'downloaded', version: info?.version ?? pendingVersion });
     if (installWhenDownloaded) {
       installWhenDownloaded = false;
-      // `isSilent=false`, `isForceRunAfter=true`: show the installer's normal
-      // progress and relaunch the app afterward.
-      autoUpdater.quitAndInstall(false, true);
+      installStagedUpdate();
     }
   });
   autoUpdater.on('error', (err) => {
@@ -469,7 +483,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       // quits-without-installing otherwise. The renderer only shows the button
       // on `downloaded`, but the IPC is callable in any state, so guard here.
       if (!updateStaged) return;
-      autoUpdater.quitAndInstall(false, true);
+      installStagedUpdate();
     },
     async simulate(version: string) {
       // Gate: only when explicitly armed (Rule 1 — the IPC handler re-checks the

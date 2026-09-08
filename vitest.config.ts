@@ -29,14 +29,16 @@ export default defineConfig({
     setupFiles: [resolve(__dirname, './vitest.setup.ts')],
     // e2e/ holds Playwright `*.spec.ts` that launch a real Electron app — they
     // are NOT vitest unit tests and must not be collected by `npm test`.
-    // .claude/worktrees/** are git worktrees for other in-progress branches
-    // (git-ignored): their tests belong to THAT checkout and may import symbols
-    // that don't exist on this branch — collect them and `pnpm test` fails on
-    // unrelated code and masks real failures.
+    // .worktrees/** and .claude/worktrees/** are git worktrees for other
+    // in-progress branches (git-ignored): their tests belong to THAT checkout
+    // and may import symbols that don't exist on this branch — collect them and
+    // `pnpm test` fails on unrelated code and masks real failures.
     exclude: [
       ...configDefaults.exclude,
       'e2e/**',
+      'e2e-web/**',
       '.claude/worktrees/**',
+      '.worktrees/**',
       'salesforce-only/**',
       'packages/agent-runtime/src/integration*.test.ts',
       'packages/host-daemon-contract/test/**',
@@ -45,7 +47,43 @@ export default defineConfig({
       // does not build it — the root `pnpm test` deliberately never runs a
       // build. It runs via packages/cli's own `test` script (`build && vitest`),
       // so collecting it here fails on a stale/absent dist.
-      'packages/cli/src/__tests__/bundled-bin.test.ts'
+      'packages/cli/src/__tests__/bundled-bin.test.ts',
+      // Root vitest does not compose per-package configs. Honor each package's
+      // own include/exclude so CI `pnpm test` matches `pnpm --filter … test`.
+      'packages/agent-runtime/src/permission-matrix.test.ts',
+      'packages/agent-runtime/src/runtime.acp-topology.test.ts',
+      'packages/agent-runtime/src/runtime.codex-topology.test.ts',
+      'packages/agent-runtime/src/runtime.fake-approvals.test.ts',
+      'packages/agent-runtime/src/runtime.recovery.test.ts',
+      'packages/agent-runtime/src/runtime.skill-roots-capability.test.ts',
+      'packages/host-workspace/test/**',
+      'packages/plugin-build/src/toolchain.test.ts',
+      'packages/plugin-build/src/build-plugin-app.test.ts',
+      'packages/plugin-build/src/runtime-export-manifest.test.ts',
+      'packages/plugin-build/src/builtin-server-artifacts.test.ts',
+      'packages/plugin-build/src/svg-asset.test.ts',
+      'packages/plugin-build/src/build-plugin-server.test.ts',
+      'packages/provider-bridge-acp/src/bridge/bridge.recorded-conformance.test.ts',
+      'packages/provider-bridge-protocol/src/testing/parity.test.ts',
+      'packages/provider-bridge-protocol/test/provider-recordings-redact.test.ts',
+      'packages/thread-view/test/v3-item-projection.test.ts',
+      'packages/thread-view/test/delegation-item-projection.test.ts',
+      'plugins/provider-acp/server.test.ts',
+      'plugins/provider-acp/public-sdk-only.test.ts',
+      'plugins/provider-claude-code/src/native-roots.test.ts',
+      'plugins/provider-claude-code/src/server.test.ts',
+      'plugins/provider-claude-code/src/bridge/bridge.recorded-conformance.test.ts',
+      'plugins/provider-claude-code/src/bridge/bridge.conformance.test.ts',
+      'plugins/provider-claude-code/src/bridge/__tests__/bridge.calibration.test.ts',
+      'plugins/provider-codex/src/native-roots.test.ts',
+      'plugins/provider-codex/src/ai/chatgpt-client.test.ts',
+      'plugins/provider-codex/src/bridge/bridge.recorded-conformance.test.ts',
+      'plugins/provider-codex/src/bridge/bridge.conformance.test.ts',
+      // Pi bridge tests need `@earendil-works/pi-coding-agent` at runtime.
+      // The leftover BB `server.test.ts` is covered by src/plugin-contract.test.ts.
+      'plugins/provider-pi/server.test.ts',
+      'plugins/provider-pi/src/bridge/**',
+      'plugins/provider-pi/src/delta-translation.test.ts'
     ]
   },
   resolve: {
@@ -176,7 +214,7 @@ export default defineConfig({
       },
       {
         find: /^@zana-ai\/zcc-plugin-sdk\/testing\/app$/,
-        replacement: resolve(__dirname, 'packages/plugin-sdk/src/testing/app.ts')
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/testing/app-entry.ts')
       },
       {
         find: /^@zana-ai\/zcc-plugin-sdk\/testing$/,
@@ -190,8 +228,40 @@ export default defineConfig({
         )
       },
       {
+        find: /^@zana-ai\/zcc-plugin-sdk\/testing\/host$/,
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/testing/host.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-sdk\/provider-bridge\/acp$/,
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/provider-bridge-acp.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-sdk\/provider-bridge$/,
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/provider-bridge.ts')
+      },
+      {
         find: /^@zana-ai\/zcc-plugin-sdk\/(.*)$/,
         replacement: resolve(__dirname, 'packages/plugin-sdk/src/$1.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-interaction-contracts$/,
+        replacement: resolve(__dirname, 'packages/plugin-interaction-contracts/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-fuzzy-match$/,
+        replacement: resolve(__dirname, 'packages/fuzzy-match/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-secret-storage$/,
+        replacement: resolve(__dirname, 'packages/secret-storage/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-host-watcher$/,
+        replacement: resolve(__dirname, 'packages/host-watcher/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-provider-bridge-acp$/,
+        replacement: resolve(__dirname, 'packages/provider-bridge-acp/src/index.ts')
       },
       {
         find: /^@zana-ai\/zcc-plugin-templates$/,

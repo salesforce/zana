@@ -51,6 +51,8 @@ export function profileIcon(profile: LaunchProfileId, size = 11) {
       return <Code2 size={size} />;
     case 'opencode-resume':
       return <History size={size} />;
+    case 'opencode-yolo':
+      return <Zap size={size} />;
     case 'shell':
       return <Play size={size} />;
   }
