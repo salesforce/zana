@@ -208,6 +208,8 @@ describe('parseOpenCodeAgentDescriptors', () => {
       { id: 'build', label: 'Build', scope: ['local'] },
       { id: 'plan', label: 'Plan', scope: ['local'] }
     ])).toEqual([
+      { id: 'build', label: 'Build', scope: ['local'] },
+      { id: 'plan', label: 'Plan', scope: ['local'] },
       { id: 'general', label: 'general', scope: ['local', 'remote'] }
     ]);
   });
@@ -226,7 +228,7 @@ describe('parseOpenCodeAgentDescriptors', () => {
     await expect(new ThrowingOpenCodeProvider().discoverRoleTargets({
       cwd: '/repo', config: { ...CONFIG, nativeAgentDiscoveryEnabled: true }
     }))
-      .resolves.toEqual([]);
+      .resolves.toEqual(new ThrowingOpenCodeProvider().adapter.descriptor.targets?.roles);
   });
 
   it('uses built-in roles without invoking project discovery when disabled', async () => {

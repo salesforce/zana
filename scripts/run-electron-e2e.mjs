@@ -4,10 +4,14 @@
  * supported E2E commands and always restore Node's ABI for Vitest and dev tools.
  */
 import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const args = process.argv.slice(2).filter((arg, index) => arg !== '--' || index !== 0);
-const build = args[0] === '--build';
-const playwrightArgs = build ? args.slice(1) : args;
+export function parseArgs(argv) {
+  const args = argv.filter((arg) => arg !== '--');
+  const build = args[0] === '--build';
+  return { build, playwrightArgs: build ? args.slice(1) : args };
+}
 
 function run(command, commandArgs) {
   const result = spawnSync(command, commandArgs, {
@@ -18,7 +22,8 @@ function run(command, commandArgs) {
   return result.status ?? 1;
 }
 
-function main() {
+export function main(argv = process.argv.slice(2)) {
+  const { build, playwrightArgs } = parseArgs(argv);
   let exitCode = 0;
   try {
     if (build) {
@@ -38,4 +43,6 @@ function main() {
   return exitCode;
 }
 
-process.exitCode = main();
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  process.exitCode = main();
+}

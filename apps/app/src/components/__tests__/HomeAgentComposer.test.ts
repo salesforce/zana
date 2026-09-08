@@ -262,7 +262,10 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('applyComposerWorkMode');
     expect(source).toContain("selectedComposerMode?.usesSlashPlan ? 'plan' : 'agent'");
     expect(source).toContain('executionModeRequested');
+    expect(source).toContain('entry.id === next || entry.nativeValue === next');
+    expect(source).toContain('setComposerMode(matched.id)');
     expect(source).toContain('composerModeEntries');
+    expect(source).toContain('visibleAcpModeOptions');
     expect(source).toContain('initialAcpMode: executionModeRequested');
     expect(source).toContain('consumeComposerModeCycle');
     expect(source).toContain("kind: 'native'");

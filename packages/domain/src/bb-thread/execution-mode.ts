@@ -23,6 +23,18 @@ export interface ComposerModeEntry {
 }
 
 /**
+ * Keep portable ACP modes available until optional native-role discovery is
+ * explicitly enabled. Discovery may add provider-specific ask/custom modes.
+ */
+export function visibleAcpModeOptions(
+  options: readonly { value: string; name?: string }[],
+  nativeAgentDiscoveryEnabled: boolean,
+): readonly { value: string; name?: string }[] {
+  if (nativeAgentDiscoveryEnabled) return options;
+  return options.filter((option) => option.value === "build" || option.value === "plan");
+}
+
+/**
  * Map a harness-native mode id/label onto a portable semantic kind.
  * Core never branches on a provider id — Cursor `plan`/`agent`/`ask` fall
  * out of this classifier like any other ACP session mode.

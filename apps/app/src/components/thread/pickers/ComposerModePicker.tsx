@@ -24,7 +24,7 @@ export function ComposerModePicker({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const selected = entries.find((entry) => entry.id === value) ?? entries[0];
-  const selectedLabel = selected?.label ?? 'Agent';
+  const selectedLabel = selected?.label ?? entries[0]?.label ?? '';
 
   useEffect(() => {
     if (!open || !triggerRef.current || !menuRef.current) return;

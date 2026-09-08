@@ -261,4 +261,15 @@ describe('ComposerModePicker', () => {
     );
     expect(html).not.toContain('Refresh roles');
   });
+
+  it('uses first entry label if selected mode is no longer offered', () => {
+    const html = renderToStaticMarkup(
+      <ComposerModePicker
+        value="stale"
+        entries={composerModeEntries({ acpModeOptions: [] })}
+        onChange={() => undefined}
+      />
+    );
+    expect(html).toContain('Agent');
+  });
 });

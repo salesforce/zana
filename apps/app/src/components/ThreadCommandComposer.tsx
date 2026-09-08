@@ -43,7 +43,8 @@ import {
   consumeComposerModeCycle
 } from './thread/pickers/composer-mode.js';
 import {
-  composerModeEntries
+  composerModeEntries,
+  visibleAcpModeOptions
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { fallbackProviderOption, isOfferedModernProvider } from './thread/pickers/fallback-models.js';
 import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOptions.js';
@@ -244,9 +245,7 @@ export function ThreadCommandComposer({
 
   const composerModeEntriesForProvider = useMemo(
     () => composerModeEntries({
-      acpModeOptions: options.acpModeOptions.filter((option) => (
-        nativeAgentDiscoveryEnabled || option.value === 'build' || option.value === 'plan'
-      )),
+      acpModeOptions: visibleAcpModeOptions(options.acpModeOptions, nativeAgentDiscoveryEnabled),
       composerActions: options.provider?.composerActions ?? []
     }),
     [nativeAgentDiscoveryEnabled, options.acpModeOptions, options.provider]
@@ -268,10 +267,13 @@ export function ThreadCommandComposer({
   useEffect(() => {
     if (!threadId) return;
     const next = options.acpMode ?? executionModeRequested ?? 'agent';
-    if (!composerModeEntriesForProvider.some((entry) => entry.id === next)) return;
+    const matched = composerModeEntriesForProvider.find((entry) => (
+      entry.id === next || entry.nativeValue === next
+    ));
+    if (!matched) return;
     if (hydratedRequestedRef.current === next) return;
     hydratedRequestedRef.current = next;
-    setComposerMode(next);
+    setComposerMode(matched.id);
   }, [
     composerModeEntriesForProvider,
     executionModeRequested,

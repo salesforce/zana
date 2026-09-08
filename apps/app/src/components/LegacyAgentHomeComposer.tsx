@@ -35,6 +35,7 @@ import {
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
 import { consumeComposerModeCycle } from './thread/pickers/composer-mode.js';
+import { visibleAcpModeOptions } from '@zana-ai/zcc-domain/thread-runtime';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { PluginComposerAdvanced, PluginComposerMeta } from '../plugins/PluginComposerSlots.js';
 import {
@@ -226,9 +227,7 @@ export function LegacyAgentHomeComposer({
   }, [catalogEntry?.selectedOnlyModels, models, preferHostModels, selectedHarness?.targets?.models]);
   // OpenCode native roles = the ACP session-mode list (identical to Modern).
   const roleOptions = familyId === 'opencode'
-    ? (catalogEntry?.acpMode?.options ?? []).filter((option) => (
-      nativeAgentDiscoveryEnabled || option.value === 'build' || option.value === 'plan'
-    ))
+    ? visibleAcpModeOptions(catalogEntry?.acpMode?.options ?? [], nativeAgentDiscoveryEnabled)
     : [];
 
   useEffect(() => {

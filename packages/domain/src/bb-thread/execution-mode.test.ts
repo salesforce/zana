@@ -7,6 +7,7 @@ import {
   isPlanExecutionMode,
   nativeModeForComposerWorkMode,
   portableWorkIntent,
+  visibleAcpModeOptions,
 } from "./execution-mode.js";
 
 describe("classifyExecutionMode", () => {
@@ -103,5 +104,18 @@ describe("portableWorkIntent", () => {
     expect(
       portableWorkIntent({ acpModeOptions: [], composerActions: [] }).modes,
     ).toEqual(["agent"]);
+  });
+});
+
+describe("visibleAcpModeOptions", () => {
+  const options = [
+    { value: "build", name: "Build" },
+    { value: "plan", name: "Plan" },
+    { value: "reviewer", name: "Reviewer" },
+  ];
+
+  it("keeps portable modes until optional discovery is enabled", () => {
+    expect(visibleAcpModeOptions(options, false)).toEqual(options.slice(0, 2));
+    expect(visibleAcpModeOptions(options, true)).toBe(options);
   });
 });
