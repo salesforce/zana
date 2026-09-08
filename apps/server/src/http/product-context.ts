@@ -63,9 +63,56 @@ export interface ProductHttpContext {
   plugins?: PluginService;
   pluginHostArtifacts: PluginHostArtifactRegistry;
   pairingRelay?: import('./pairing-relay-controller.js').PairingRelayHandle;
+  /**
+   * Optional host-injected Team verbs. Product HTTP validates bounded wire
+   * shape; Electron main authorizes team/project/persona and mutations.
+   * Absent means 502 host_disconnected.
+   */
+  teamOps?: ProductTeamOps;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void;
+}
+
+export type TeamLaunchMode = 'structured' | 'freeform';
+
+export interface ProductTeamLaunchInput {
+  teamId: string;
+  projectId: string;
+  goal: string;
+  mode: TeamLaunchMode;
+  title?: string;
+  summary?: string;
+}
+
+export interface ProductTeamLaunchResult {
+  kind: 'job' | 'run';
+  id: string;
+  state?: string;
+}
+
+export interface ProductTeamStatus {
+  kind: 'job' | 'run';
+  id: string;
+  projectId?: string;
+  teamId?: string;
+  state: string;
+  stateVersion?: number;
+  goal?: string;
+  summary?: string;
+  blockers?: Array<{ id: string; question?: string; resolved?: boolean }>;
+}
+
+export interface ProductTeamOps {
+  launch(input: ProductTeamLaunchInput): Promise<{ ok: true; value: ProductTeamLaunchResult } | { ok: false; code: string; message: string }>;
+  status(id: string): Promise<{ ok: true; value: ProductTeamStatus } | { ok: false; code: string; message: string }>;
+  answer(input: {
+    id: string;
+    message: string;
+    blockerId?: string;
+    expectedStateVersion?: number;
+  }): Promise<{ ok: true; value: ProductTeamStatus } | { ok: false; code: string; message: string }>;
+  stop(id: string, expectedStateVersion?: number): Promise<{ ok: true; value: ProductTeamStatus | true } | { ok: false; code: string; message: string }>;
 }
 
 export interface CreateProductHttpContextOptions {

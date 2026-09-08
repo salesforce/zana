@@ -329,8 +329,9 @@ export interface PluginAgentToolRegistration {
 export function enforcePluginCliOutputLimit(result: PluginCliResult): PluginCliExecutionResult {
   const stdout = result.stdout ?? '';
   const stderr = result.stderr ?? '';
-  const stdoutBytes = Buffer.byteLength(stdout, 'utf8');
-  const stderrBytes = Buffer.byteLength(stderr, 'utf8');
+  const encoder = new TextEncoder();
+  const stdoutBytes = encoder.encode(stdout).byteLength;
+  const stderrBytes = encoder.encode(stderr).byteLength;
   const totalBytes = stdoutBytes + stderrBytes;
   if (totalBytes <= PLUGIN_CLI_OUTPUT_MAX_BYTES) {
     return { exitCode: result.exitCode, stdout, stderr };

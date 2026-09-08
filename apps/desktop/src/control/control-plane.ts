@@ -53,6 +53,7 @@ import type {
 import type { CreateTerminalRequest } from '@zana-ai/zcc-domain/product';
 import { parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
+import type { ProductTeamOps } from '@zana-ai/zcc-server/http/product-context';
 
 /** Caps a single request line so a malformed/hostile client can't balloon memory. */
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -177,6 +178,8 @@ export interface ControlPlaneDeps {
   listSchedules: () => ScheduledTask[];
   runScheduleNow: (id: string) => Result<ScheduledTask>;
   setScheduleEnabled: (id: string, enabled: boolean) => Result<ScheduledTask>;
+  /** Team operations remain owned and authorized by Electron main. */
+  teamOps?: ProductTeamOps;
   /**
    * Optional live plugin host. When present, CLI plugin/marketplace ops go
    * through the running server PluginService (so `plugin.dev` remounts panels).
@@ -236,6 +239,7 @@ const AGENT_ALLOWED_OPS = new Set<string>([
   'project.list',
   'persona.list',
   'team.list',
+  'team.status',
   'agent.list',
   'term.list',
   'sched.list'
@@ -296,7 +300,11 @@ const KNOWN_OPS = new Set<string>([
   'agent.send',
   'session.status',
   'sched.runNow',
-  'sched.setEnabled'
+  'sched.setEnabled',
+  'team.launch',
+  'team.status',
+  'team.answer',
+  'team.stop'
 ]);
 
 /**
@@ -437,6 +445,9 @@ export async function dispatchOp(
   // into a pty write is a nuisance/escape vector; keep these well under it.
   const MAX_PROMPT = 32_000;
   const MAX_REPLY = 16_000;
+  const MAX_TEAM_ID = 256;
+  const MAX_TEAM_GOAL = 4_000;
+  const MAX_TEAM_TITLE = 256;
   if (caller.class === 'orchestrator' && caller.sessionId && (
     op === 'term.create' || op === 'term.close' || op === 'term.close-summary'
   )) {
@@ -589,6 +600,57 @@ export async function dispatchOp(
         return { ok: false, code: 'BAD_ARGS', message: 'id and enabled required' };
       }
       return deps.setScheduleEnabled(id, args.enabled);
+    }
+    case 'team.launch': {
+      const teamId = str(args.teamId);
+      const projectId = str(args.projectId);
+      const goal = str(args.goal);
+      const mode = args.mode === 'structured' || args.mode === 'freeform' ? args.mode : undefined;
+      const title = str(args.title);
+      const summary = str(args.summary);
+      if (!teamId || teamId.length > MAX_TEAM_ID || !projectId || projectId.length > MAX_TEAM_ID || !goal || !mode) {
+        return { ok: false, code: 'BAD_ARGS', message: 'teamId, projectId, goal, and mode are required' };
+      }
+      if (goal.length > MAX_TEAM_GOAL || (title?.length ?? 0) > MAX_TEAM_TITLE || (summary?.length ?? 0) > MAX_TEAM_GOAL) {
+        return { ok: false, code: 'BAD_ARGS', message: 'Team launch input exceeds size limits' };
+      }
+      if (!deps.teamOps) return { ok: false, code: 'host_disconnected', message: 'Host is not connected' };
+      return deps.teamOps.launch({ teamId, projectId, goal, mode, ...(title ? { title } : {}), ...(summary ? { summary } : {}) });
+    }
+    case 'team.status': {
+      const id = str(args.id);
+      if (!id || id.length > MAX_TEAM_ID) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+      if (!deps.teamOps) return { ok: false, code: 'host_disconnected', message: 'Host is not connected' };
+      return deps.teamOps.status(id);
+    }
+    case 'team.answer': {
+      const id = str(args.id);
+      const message = str(args.message);
+      const blockerId = str(args.blockerId);
+      const expectedStateVersion = args.expectedStateVersion;
+      if (!id || id.length > MAX_TEAM_ID || !message || message.length > MAX_REPLY || (blockerId?.length ?? 0) > MAX_TEAM_ID) {
+        return { ok: false, code: 'BAD_ARGS', message: 'valid id and message required' };
+      }
+      if (expectedStateVersion !== undefined && (!Number.isInteger(expectedStateVersion) || (expectedStateVersion as number) < 0)) {
+        return { ok: false, code: 'BAD_ARGS', message: 'expectedStateVersion must be a nonnegative integer' };
+      }
+      if (!deps.teamOps) return { ok: false, code: 'host_disconnected', message: 'Host is not connected' };
+      return deps.teamOps.answer({
+        id,
+        message,
+        ...(blockerId ? { blockerId } : {}),
+        ...(typeof expectedStateVersion === 'number' ? { expectedStateVersion } : {})
+      });
+    }
+    case 'team.stop': {
+      const id = str(args.id);
+      const expectedStateVersion = args.expectedStateVersion;
+      if (!id || id.length > MAX_TEAM_ID) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+      if (expectedStateVersion !== undefined && (!Number.isInteger(expectedStateVersion) || (expectedStateVersion as number) < 0)) {
+        return { ok: false, code: 'BAD_ARGS', message: 'expectedStateVersion must be a nonnegative integer' };
+      }
+      if (!deps.teamOps) return { ok: false, code: 'host_disconnected', message: 'Host is not connected' };
+      return deps.teamOps.stop(id, typeof expectedStateVersion === 'number' ? expectedStateVersion : undefined);
     }
     case 'plugin.install':
     case 'plugin.enable':

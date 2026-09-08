@@ -14,6 +14,7 @@ describe('JobTeamComposer', () => {
     expect(source).toContain('Describe a goal for the team');
     expect(source).toContain('disabled={!canLaunch}');
     expect(source).toContain('goalReady');
+    expect(source).toContain('field.text.trim().length > 0');
     expect(source).toContain('data-testid="job-team-command-send"');
     expect(source).toContain('<ComposerProjectPicker');
     expect(source).toContain('PluginComposerChrome');

@@ -33,6 +33,7 @@ import { isTrustedRendererUrl, productServerUrl, rendererUrl, setProductionRende
 import { refreshRemoteStartPathHosts, stampedProjectRemote } from './remote-workspace.js';
 import { resolveIconPath } from './resolve-icon-path.js';
 import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
+import { createTeamProductOps } from './team-product-ops.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
@@ -4875,6 +4876,26 @@ export function stopAutonomousRun(runId: string): Result<true> {
   return { ok: true, value: true };
 }
 
+function createMainTeamProductOps() {
+  return createTeamProductOps({
+    startTeamJobFromUi: (input) => startTeamJobFromUi(input),
+    launchAutonomousTeam: async (teamId, projectId, goal) => {
+      if (store.getConfig().teamLaunchEnabled !== true) {
+        return { ok: false, code: 'DISABLED', message: 'Autonomous team launch is disabled' };
+      }
+      return launchAutonomousTeam(teamId, projectId, goal);
+    },
+    stopAutonomousRun,
+    listAutonomousRuns: () => autonomousRuns.list(),
+    getExecution: (executionId) => executionStore.get(executionId),
+    snapshot: (owner, projectId, executionId) => squadExecutionService.snapshot(owner, projectId, executionId),
+    stopJob: (owner, projectId, executionId, expectedStateVersion) =>
+      squadExecutionService.stop(owner, projectId, executionId, expectedStateVersion),
+    respondToBlocker: (owner, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message) =>
+      squadExecutionService.respondToBlocker(owner, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message)
+  });
+}
+
 /**
  * Open an app window. With no `projectId` it's the full, unscoped shell (the
  * default window opened at boot and on dock-reactivate). With a `projectId` the
@@ -7072,6 +7093,7 @@ async function bootstrapNormal() {
         return { ok: false, code: 'SET_ENABLED_FAILED', message: String(err) };
       }
     },
+    teamOps: createMainTeamProductOps(),
     pluginHost: runtimeSupervisor
       ? {
           install: (source) => runtimeSupervisor!.installPlugin(source),

@@ -5,6 +5,7 @@ import { DEFAULT_DEV_APP_PORT } from './http/ports.js';
 import { SERVER_RUNTIME_PROTOCOL_VERSION, ServerRuntimeInboundSchema } from '@zana-ai/zcc-contracts/runtime';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { createTeamOpsViaControl } from './http/team-ops-via-control.js';
 import { createProjectStore, type ProjectStore } from './project-store.js';
 import { createProjectSettingsStore, type ProjectSettingsStore } from './project-settings-store.js';
 import { createTerminalExecutionService, type TerminalExecutionService } from './terminal-execution-service.js';
@@ -29,8 +30,9 @@ interface ParentPortLike {
   postMessage(message: unknown): void;
 }
 
-const parentPort = (process as unknown as { parentPort?: ParentPortLike }).parentPort;
-if (!parentPort) throw new Error('server utility entry requires an Electron utility process');
+const utilityParentPort = (process as unknown as { parentPort?: ParentPortLike }).parentPort;
+if (!utilityParentPort) throw new Error('server utility entry requires an Electron utility process');
+const parentPort: ParentPortLike = utilityParentPort;
 
 let close: (() => Promise<void>) | null = null;
 let version = '';
@@ -71,6 +73,7 @@ parentPort.on('message', async ({ data }) => {
         origins: { serverPort: 0, devAppPort: DEFAULT_DEV_APP_PORT },
         projects: projects ?? undefined
       });
+      product.teamOps = createTeamOpsViaControl(message.dataDir);
       threadDb = product.db;
       plugins = await attachProductPluginService(product, {
         bundledRoot: bundledPluginsRootFromDataDir(message.dataDir, message.bundledPluginsRoot),

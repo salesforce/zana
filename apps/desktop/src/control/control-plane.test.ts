@@ -65,7 +65,7 @@ describe('authorizeRequest', () => {
   });
 
   // Read-only ops (incl. the new persona.list) are allowed for agent-class callers.
-  it.each(['status', 'project.list', 'persona.list', 'agent.list', 'term.list', 'sched.list'])(
+  it.each(['status', 'project.list', 'persona.list', 'team.status', 'agent.list', 'term.list', 'sched.list'])(
     'allows agent-class caller for read op %s',
     (op) => {
       const r = authorizeRequest({ ...EXPECTED, op, callerSessionId: 'sess-1' }, EXPECTED);
@@ -74,7 +74,7 @@ describe('authorizeRequest', () => {
   );
 
   // The keystone guarantee: an agent shelling out to `zcc` cannot mutate.
-  it.each(['term.create', 'term.close', 'term.close-summary', 'term.reply', 'agent.send', 'sched.runNow', 'sched.setEnabled'])(
+  it.each(['term.create', 'term.close', 'term.close-summary', 'term.reply', 'agent.send', 'sched.runNow', 'sched.setEnabled', 'team.launch', 'team.answer', 'team.stop'])(
     'refuses agent-class caller for mutating op %s',
     (op) => {
       const r = authorizeRequest({ ...EXPECTED, op, callerSessionId: 'sess-1' }, EXPECTED);
@@ -98,7 +98,7 @@ describe('authorizeRequest', () => {
       expect(r).toMatchObject({ ok: true, caller: 'orchestrator' });
     }
   );
-  it.each(['status', 'project.list', 'persona.list', 'agent.list', 'term.list', 'sched.list'])(
+  it.each(['status', 'project.list', 'persona.list', 'team.status', 'agent.list', 'term.list', 'sched.list'])(
     'allows an orchestrator the read op %s',
     (op) => {
       const r = authorizeRequest(
@@ -130,7 +130,7 @@ describe('authorizeRequest', () => {
       expect(r).toMatchObject({ ok: true, caller: 'orchestrator' });
     }
   );
-  it.each(['term.reply', 'agent.send', 'sched.runNow', 'sched.setEnabled'])(
+  it.each(['term.reply', 'agent.send', 'sched.runNow', 'sched.setEnabled', 'team.launch', 'team.answer', 'team.stop'])(
     'still refuses an orchestrator the operator-only op %s',
     (op) => {
       const r = authorizeRequest(
@@ -168,6 +168,12 @@ function makeDeps(over: Partial<ControlPlaneDeps> = {}): ControlPlaneDeps {
     listSchedules: () => [],
     runScheduleNow: () => ({ ok: true, value: {} as any }),
     setScheduleEnabled: () => ({ ok: true, value: {} as any }),
+    teamOps: {
+      launch: vi.fn(async () => ({ ok: true as const, value: { kind: 'job' as const, id: 'ex-1' } })),
+      status: vi.fn(async (id: string) => ({ ok: true as const, value: { kind: 'job' as const, id, state: 'RUNNING' } })),
+      answer: vi.fn(async (input) => ({ ok: true as const, value: { kind: 'job' as const, id: input.id, state: 'RUNNING' } })),
+      stop: vi.fn(async (id: string) => ({ ok: true as const, value: { kind: 'job' as const, id, state: 'STOPPED' } }))
+    },
     ...over
   };
 }
@@ -331,6 +337,34 @@ describe('dispatchOp', () => {
     const r = await dispatchOp('agent.send', { to: 'ghost', message: 'hi' }, deps);
     expect(r).toMatchObject({ ok: false, code: 'SEND_FAILED', message: 'no peer' });
   });
+
+  it('routes bounded team operations to main-owned Team services', async () => {
+    const deps = makeDeps();
+    await expect(dispatchOp('team.launch', {
+      teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'structured'
+    }, deps)).resolves.toMatchObject({ ok: true, value: { id: 'ex-1' } });
+    await expect(dispatchOp('team.status', { id: 'ex-1' }, deps)).resolves.toMatchObject({ ok: true });
+    await expect(dispatchOp('team.answer', {
+      id: 'ex-1', message: 'yes', expectedStateVersion: 2
+    }, deps)).resolves.toMatchObject({ ok: true });
+    await expect(dispatchOp('team.stop', {
+      id: 'ex-1', expectedStateVersion: 3
+    }, deps)).resolves.toMatchObject({ ok: true });
+    expect(deps.teamOps?.answer).toHaveBeenCalledWith({ id: 'ex-1', message: 'yes', expectedStateVersion: 2 });
+    expect(deps.teamOps?.stop).toHaveBeenCalledWith('ex-1', 3);
+  });
+
+  it('rejects malformed team operations before invoking Team services', async () => {
+    const deps = makeDeps();
+    await expect(dispatchOp('team.launch', {
+      teamId: 't1', projectId: 'p1', goal: 'x'.repeat(4_001), mode: 'structured'
+    }, deps)).resolves.toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    await expect(dispatchOp('team.answer', {
+      id: 'ex-1', message: 'yes', expectedStateVersion: -1
+    }, deps)).resolves.toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    expect(deps.teamOps?.launch).not.toHaveBeenCalled();
+    expect(deps.teamOps?.answer).not.toHaveBeenCalled();
+  });
 });
 
 describe('token/nonce auth is constant-time but still correct', () => {
@@ -473,6 +507,23 @@ describe('startControlPlane (real socket)', () => {
     ]);
     expect(allowed).toMatchObject({ ok: true, value: true });
     expect(closeTerminal).toHaveBeenCalledWith('s1');
+  });
+
+  it('applies native confirmation to product-server Team mutations', async () => {
+    const launch = vi.fn(async () => ({ ok: true as const, value: { kind: 'job' as const, id: 'ex-1' } }));
+    const confirmOperatorMutation = vi.fn(async () => true);
+    const { socketPath, tokenPath } = await boot({
+      confirmOperatorMutation,
+      teamOps: { ...makeDeps().teamOps!, launch }
+    });
+    const tok = JSON.parse(readFileSync(tokenPath, 'utf8'));
+    const args = { teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'structured' };
+    const allowed = await rawRequest(socketPath, [
+      JSON.stringify({ token: tok.token, nonce: tok.nonce, op: 'team.launch', args }) + '\n'
+    ]);
+    expect(allowed).toMatchObject({ ok: true, value: { id: 'ex-1' } });
+    expect(confirmOperatorMutation).toHaveBeenCalledWith('team.launch', args);
+    expect(launch).toHaveBeenCalledWith(args);
   });
 
   it('runs plugin.reload without native confirmation', async () => {
