@@ -77,6 +77,7 @@ import {
   collectPluginSkillDirectoryRoots,
   writeInjectedSkillRootManifest
 } from './injected-skill-roots.js';
+import { applyBundledPosthogApiKey } from '../bundled-posthog-api-key.js';
 import type {
   PluginAgentToolContext,
   PluginCliExecutionResult,
@@ -413,6 +414,7 @@ function resolveBundledDir(bundledRoot: string, name: string): string {
 }
 
 export function createPluginService(opts: PluginServiceOptions): PluginService {
+  applyBundledPosthogApiKey();
   const store: PluginStore = createPluginStore({ file: pluginStorePath(opts.dataDir) });
   const uninstalled = createPluginUninstalledStore({ file: pluginUninstalledPath(opts.dataDir) });
   const marketplaces: MarketplaceStore = createMarketplaceStore({

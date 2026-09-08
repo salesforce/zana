@@ -2,16 +2,13 @@
 
 Usage analytics for Zana installs, event-only (never prompt/response content).
 
-> **Disclaimer — on by default.** This plugin ships **enabled by default**
-> and preconfigured with a shared community PostHog project's API key, so a
-> default Zana install starts sending the lifecycle events below as soon as
-> this plugin is installed. To opt out entirely, turn off **Send anonymous
-> usage events to PostHog** in the plugin's Configure page. To send your own
-> install's events to a *different* PostHog project instead of the shared
-> one, replace the **PostHog Project API Key** field with your own project's
-> key. The shipped key is a PostHog *project* API key — write-only by design
-> and meant to be public, the same kind of key PostHog's own client-side
-> snippet embeds in page source — not a personal or account-level secret.
+> **Disclaimer — on by default when a key is set.** This plugin ships **enabled
+> by default**. The default API key comes from `ZCC_POSTHOG_API_KEY` (local
+> `.env`, or the GitHub secret of the same name baked into official builds).
+> With no key, the master switch can be on and still send nothing. To opt out
+> entirely, turn off **Send anonymous usage events to PostHog**. To send events
+> to a different PostHog project, replace **PostHog Project API Key** with your
+> own project's write-only `phc_` key.
 
 ## What is sent
 
@@ -66,11 +63,12 @@ nothing. This toggle is independent and also off by default.
 
 1. Install the plugin (`zcc plugin install ./plugins/posthog-analytics` from
    a checkout, or via the Plugins hub once published). It is **enabled out of
-   the box**, reporting into the shared community project via the bundled key.
+   the box**. Official builds bake `ZCC_POSTHOG_API_KEY`; local `pnpm dev`
+   reads it from `.env`.
 2. Open its Configure page in the Plugins hub.
 3. To opt out entirely: turn off **Send anonymous usage events to PostHog**.
    This stops all outbound requests immediately.
-4. To send events to your *own* PostHog project instead of the shared one:
+4. To send events to your *own* PostHog project:
    replace **PostHog Project API Key** with your own project's key. This is
    the public, write-only key that starts with `phc_` — find it in PostHog
    under **Project Settings → Project API Key**. (It is *not* your numeric
@@ -81,8 +79,8 @@ nothing. This toggle is independent and also off by default.
    content-free click events (see above) — this toggle is independent and
    off by default even when the master switch is on.
 
-Nothing is sent unless the master toggle is on AND an API key is set — both
-are true out of the box, pointed at the shared community project.
+Nothing is sent unless the master toggle is on AND an API key is set. The
+key is empty until `ZCC_POSTHOG_API_KEY` (or the Settings field) provides one.
 
 ## Why no prompt/content tracking
 
@@ -95,10 +93,11 @@ rather than autocapture, to avoid ever reading user-generated text. If you need
 richer local insight, see **Settings → Usage** in the app itself, which computes
 a purely local, content-free usage summary that never leaves your device.
 
-## How it works (no core changes)
+## How it works
 
-The plugin lives entirely in this directory and touches no core files. It
-consumes the existing plugin surfaces:
+The plugin lives in this directory. The default API key is **not** hardcoded:
+`ZCC_POSTHOG_API_KEY` is read at runtime (and copied onto `process.env` from
+the official-build bake so packaged apps see it). It consumes:
 
 - `zcc.events.on('thread.*')` for lifecycle events (server side).
 - A renderer **content script** (`app.js`, via `app.contentScripts.register`)

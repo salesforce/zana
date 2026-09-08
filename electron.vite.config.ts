@@ -27,8 +27,8 @@ function bundledAppUrl(): string {
   return '';
 }
 
-function bundledRelayToken(): string {
-  return process.env.ZCC_RELAY_TOKEN?.trim() || pairingEnvFile().ZCC_RELAY_TOKEN?.trim() || '';
+function bundledPosthogApiKey(): string {
+  return process.env.ZCC_POSTHOG_API_KEY?.trim() || pairingEnvFile().ZCC_POSTHOG_API_KEY?.trim() || '';
 }
 
 // Resolve the extension SDK (`@zana-ai/zcc-extension-sdk` + subpaths) to its source
@@ -149,13 +149,15 @@ const mainOutput = {
 
 export default defineConfig({
   main: {
-    // Official releases set ZCC_APP_URL + ZCC_RELAY_TOKEN in the build env so
-    // packaged laptops can dial the Heroku pairing door without Settings.
-    // Local/dev falls back to .env then the repo public-app-url file.
-    // Runtime process.env still wins. Never define these on the renderer.
+    // Official releases set ZCC_APP_URL + ZCC_RELAY_TOKEN + ZCC_POSTHOG_API_KEY
+    // in the build env so packaged laptops can dial the Heroku pairing door and
+    // default PostHog without Settings. Local/dev falls back to .env then the
+    // repo public-app-url file. Runtime process.env still wins. Never define
+    // these on the renderer.
     define: {
       __ZCC_BUNDLED_APP_URL__: JSON.stringify(bundledAppUrl()),
-      __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify(bundledRelayToken())
+      __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify(bundledRelayToken()),
+      __ZCC_BUNDLED_POSTHOG_API_KEY__: JSON.stringify(bundledPosthogApiKey())
     },
     plugins: [externalizeDepsPlugin({ exclude: ['jiti'] })],
     resolve: { alias: sdkAlias, conditions: ['source'] },

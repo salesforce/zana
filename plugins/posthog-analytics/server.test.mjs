@@ -39,13 +39,18 @@ function makeZcc(values) {
 }
 
 describe('posthog-analytics plugin', () => {
+  const originalApiKey = process.env.ZCC_POSTHOG_API_KEY;
+
   beforeEach(() => {
+    delete process.env.ZCC_POSTHOG_API_KEY;
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true })));
     vi.stubGlobal('crypto', { randomUUID: () => 'fixed-uuid' });
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    if (originalApiKey === undefined) delete process.env.ZCC_POSTHOG_API_KEY;
+    else process.env.ZCC_POSTHOG_API_KEY = originalApiKey;
   });
 
   it('does not call fetch when disabled', async () => {
@@ -138,14 +143,20 @@ describe('posthog-analytics plugin', () => {
     expect(ids).toEqual(['uuid-1', 'uuid-1']);
   });
 
-  it('defaults enabled to true and apiKey to a non-empty shared key, per the on-by-default design', () => {
+  it('defaults enabled to true and apiKey from ZCC_POSTHOG_API_KEY', () => {
+    process.env.ZCC_POSTHOG_API_KEY = ' phc_from_env ';
     const zcc = makeZcc({ enabled: false, apiKey: '', host: DEFAULT_HOST });
     plugin(zcc);
     const descriptors = zcc._definedDescriptors;
     expect(descriptors.enabled.default).toBe(true);
-    expect(typeof descriptors.apiKey.default).toBe('string');
-    expect(descriptors.apiKey.default.startsWith('phc_')).toBe(true);
+    expect(descriptors.apiKey.default).toBe('phc_from_env');
     expect(descriptors.trackUiClicks.default).toBe(false);
+  });
+
+  it('defaults apiKey to empty when ZCC_POSTHOG_API_KEY is unset', () => {
+    const zcc = makeZcc({ enabled: true, apiKey: '', host: DEFAULT_HOST });
+    plugin(zcc);
+    expect(zcc._definedDescriptors.apiKey.default).toBe('');
   });
 
   it('registers a handler for every documented lifecycle event', () => {

@@ -154,6 +154,10 @@ export function prepareLocalDevEnv(processEnv = process.env, options = {}) {
     const relayToken = readDotenvKey('ZCC_RELAY_TOKEN');
     if (relayToken) env.ZCC_RELAY_TOKEN = relayToken;
   }
+  if (!processEnv.ZCC_POSTHOG_API_KEY) {
+    const posthogKey = readDotenvKey('ZCC_POSTHOG_API_KEY');
+    if (posthogKey) env.ZCC_POSTHOG_API_KEY = posthogKey;
+  }
 
   return {
     skipDesktop,

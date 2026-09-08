@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 export default defineConfig({
   define: {
     __ZCC_BUNDLED_APP_URL__: JSON.stringify(''),
-    __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify('')
+    __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify(''),
+    __ZCC_BUNDLED_POSTHOG_API_KEY__: JSON.stringify('')
   },
   resolve: {
     // Array form so host-daemon subpaths resolve via regex. A bare string alias

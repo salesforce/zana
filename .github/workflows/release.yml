@@ -102,6 +102,7 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
           ZCC_APP_URL: ${{ secrets.ZCC_APP_URL }}
           ZCC_RELAY_TOKEN: ${{ secrets.ZCC_RELAY_TOKEN }}
+          ZCC_POSTHOG_API_KEY: ${{ secrets.ZCC_POSTHOG_API_KEY }}
 
       # `pnpm run build` → prebuild → ensure-better-sqlite3 compiles SQLite for
       # Node (vitest / listen.ts). Unpackaged Electron forks a utilityProcess
@@ -219,6 +220,7 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
           ZCC_APP_URL: ${{ secrets.ZCC_APP_URL }}
           ZCC_RELAY_TOKEN: ${{ secrets.ZCC_RELAY_TOKEN }}
+          ZCC_POSTHOG_API_KEY: ${{ secrets.ZCC_POSTHOG_API_KEY }}
           # Passed in under *_SECRET names; the script promotes them to the real
           # env vars only when non-empty (see above). To enable signed +
           # notarized auto-updating builds, add these repo secrets:

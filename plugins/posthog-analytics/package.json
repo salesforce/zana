@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Usage analytics, on by default into a shared community PostHog project (bring your own key or opt out): agent lifecycle events plus optional content-free UI-click ids. Never sends prompt or response content.",
+  "description": "Usage analytics, on by default when ZCC_POSTHOG_API_KEY is set (bring your own key or opt out): agent lifecycle events plus optional content-free UI-click ids. Never sends prompt or response content.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
   "zcc": {
     "name": "PostHog Analytics",
-    "description": "Usage analytics, on by default into a shared community PostHog project (bring your own key or opt out): agent lifecycle events plus optional content-free UI-click ids. Never sends prompt or response content.",
+    "description": "Usage analytics, on by default when ZCC_POSTHOG_API_KEY is set (bring your own key or opt out): agent lifecycle events plus optional content-free UI-click ids. Never sends prompt or response content.",
     "branding": {
       "icon": "LineChart"
     },
