@@ -207,11 +207,7 @@ describe('parseOpenCodeAgentDescriptors', () => {
     ] }, [
       { id: 'build', label: 'Build', scope: ['local'] },
       { id: 'plan', label: 'Plan', scope: ['local'] }
-    ])).toEqual([
-      { id: 'build', label: 'Build', scope: ['local'] },
-      { id: 'plan', label: 'Plan', scope: ['local'] },
-      { id: 'general', label: 'general', scope: ['local', 'remote'] }
-    ]);
+    ])).toEqual([{ id: 'general', label: 'general', scope: ['local', 'remote'] }]);
   });
 
   it('keeps static fallback available to UI mapping after discovery failure', () => {

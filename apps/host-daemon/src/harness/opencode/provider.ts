@@ -561,10 +561,9 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     staticRoles: readonly HarnessRoleTarget[]
   ): readonly HarnessRoleTarget[] {
     if (result.status === 'failure') return staticRoles;
-    const discoveredRoles = result.descriptors.filter(({ directLaunchAllowed }) => directLaunchAllowed).map(({ id, label }) => ({
+    return result.descriptors.filter(({ directLaunchAllowed }) => directLaunchAllowed).map(({ id, label }) => ({
       id, label, scope: [...OPENCODE_VERIFIED_SCOPES]
     }));
-    return [...staticRoles, ...discoveredRoles.filter((role) => !staticRoles.some(({ id }) => id === role.id))];
   }
 
   static failureResult(error: unknown): OpenCodeAgentDiscoveryResult {
