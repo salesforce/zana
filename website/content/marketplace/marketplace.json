@@ -488,6 +488,29 @@
       }
     },
     {
+      "id": "posthog-analytics",
+      "displayName": "PostHog Analytics",
+      "description": "Usage analytics, on by default when ZCC_POSTHOG_API_KEY is set (bring your own key or opt out): agent lifecycle events plus optional content-free UI-click ids. Never sends prompt or response content.",
+      "icon": {
+        "lucide": "LineChart"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/posthog-analytics",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
       "id": "pr-monitor",
       "displayName": "PR Monitor",
       "description": "Keep your authored pull requests visible: CI, review, merge-readiness, and inbox alerts.",

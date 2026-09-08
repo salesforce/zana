@@ -27,6 +27,10 @@ function bundledAppUrl(): string {
   return '';
 }
 
+function bundledRelayToken(): string {
+  return process.env.ZCC_RELAY_TOKEN?.trim() || pairingEnvFile().ZCC_RELAY_TOKEN?.trim() || '';
+}
+
 function bundledPosthogApiKey(): string {
   return process.env.ZCC_POSTHOG_API_KEY?.trim() || pairingEnvFile().ZCC_POSTHOG_API_KEY?.trim() || '';
 }
