@@ -1,6 +1,7 @@
 /**
- * The pairing relay token is main/server-only (electron-vite `main` define).
- * Renderer code must never name the bake identifier or the env key.
+ * The pairing relay token and PostHog project key are main/server-only
+ * (electron-vite `main` define). Renderer code must never name the bake
+ * identifiers or the env keys.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -8,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { join, relative } from 'node:path';
 
 const RENDERER_ROOT = fileURLToPath(new URL('..', import.meta.url));
-const FORBIDDEN = /ZCC_RELAY_TOKEN|__ZCC_BUNDLED_RELAY_TOKEN__/;
+const FORBIDDEN = /ZCC_RELAY_TOKEN|__ZCC_BUNDLED_RELAY_TOKEN__|ZCC_POSTHOG_API_KEY|__ZCC_BUNDLED_POSTHOG_API_KEY__/;
 
 function collectSources(dir: string): string[] {
   const out: string[] = [];
@@ -21,8 +22,8 @@ function collectSources(dir: string): string[] {
   return out;
 }
 
-describe('pairing relay token stays out of the renderer', () => {
-  it('does not mention ZCC_RELAY_TOKEN or the bake identifier in apps/app/src', () => {
+describe('pairing relay token and PostHog key stay out of the renderer', () => {
+  it('does not mention relay/PostHog env keys or bake identifiers in apps/app/src', () => {
     const offenders: string[] = [];
     for (const file of collectSources(RENDERER_ROOT)) {
       const rel = relative(RENDERER_ROOT, file);

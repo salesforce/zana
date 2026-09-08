@@ -8,7 +8,8 @@ export default defineConfig({
   define: {
     __ZCC_DEV_WS_PORT__: 'undefined',
     __ZCC_BUNDLED_APP_URL__: JSON.stringify(''),
-    __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify('')
+    __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify(''),
+    __ZCC_BUNDLED_POSTHOG_API_KEY__: JSON.stringify('')
   },
   test: {
     // The default 5s per-test timeout is too tight for the full parallel run:
