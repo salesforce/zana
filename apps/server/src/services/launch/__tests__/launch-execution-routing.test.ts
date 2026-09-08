@@ -9,6 +9,7 @@ const config = (executionState?: 'plan' | 'interactive' | 'accept-edits' | 'auto
   version: 1,
   theme: 'dark',
   harnessOpenCodeEnabled: true,
+  nativeAgentDiscoveryEnabled: true,
   harnessRouting: executionState ? { schemaVersion: 1, byAdapter: { opencode: { executionState } } } : undefined
 } as AppConfig);
 

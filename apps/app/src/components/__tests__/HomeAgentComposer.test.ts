@@ -196,7 +196,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('That harness is not available for Modern threads');
     expect(source).toContain('permissionMode: permissionMode as');
     expect(source).toContain('permissionModeOptionsFor');
-    expect(source).toContain('acpMode: selectedComposerMode?.usesSlashPlan ? undefined : options.acpMode');
+    expect(source).toContain('acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue');
     expect(source).toContain('compactLabel: row.compactLabel');
     expect(source).toContain('description: row.description');
     expect(source).toContain('permissionOptions.length > 1');
@@ -257,7 +257,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('onCompact=');
     expect(source).toContain('promptHistory');
     expect(source).toContain('resolveThreadSubmitMode');
-    expect(source).toContain('onRefresh={options.refreshAcpModeOptions}');
+    expect(source).toContain('onRefresh={nativeAgentDiscoveryEnabled ? options.refreshAcpModeOptions : undefined}');
     expect(source).toContain('moreModelOptions={options.moreModelOptions}');
     expect(source).toContain('applyComposerWorkMode');
     expect(source).toContain("selectedComposerMode?.usesSlashPlan ? 'plan' : 'agent'");
