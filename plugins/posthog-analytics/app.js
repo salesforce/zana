@@ -17,7 +17,7 @@ const ACTIONABLE = new Set(['button', 'a', 'summary']);
 const ACTIONABLE_ROLES = new Set(['button', 'link', 'tab', 'menuitem', 'switch', 'checkbox', 'option']);
 
 /** Walk up from the clicked node to the nearest actionable element / testid. */
-function resolveTarget(start) {
+export function resolveTarget(start) {
   let el = start;
   let testid = null;
   let role = null;

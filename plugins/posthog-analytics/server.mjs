@@ -68,13 +68,26 @@ export default function plugin(zcc) {
     }
   });
 
+  // One in-flight init so concurrent first-use events share a single UUID.
+  let distinctIdPromise = null;
+
   async function distinctId() {
-    let id = await zcc.storage.kv.get(DISTINCT_ID_KEY);
-    if (!id) {
-      id = crypto.randomUUID();
-      await zcc.storage.kv.set(DISTINCT_ID_KEY, id);
+    if (!distinctIdPromise) {
+      distinctIdPromise = (async () => {
+        let id = await zcc.storage.kv.get(DISTINCT_ID_KEY);
+        if (!id) {
+          id = crypto.randomUUID();
+          await zcc.storage.kv.set(DISTINCT_ID_KEY, id);
+        }
+        return id;
+      })();
     }
-    return id;
+    try {
+      return await distinctIdPromise;
+    } catch (err) {
+      distinctIdPromise = null;
+      throw err;
+    }
   }
 
   /** POST one event to PostHog. Best-effort: never throws out to the caller. */
@@ -83,7 +96,7 @@ export default function plugin(zcc) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), CAPTURE_TIMEOUT_MS);
     try {
-      await fetch(`${host}/capture/`, {
+      const res = await fetch(`${host}/capture/`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         signal: controller.signal,
@@ -91,10 +104,14 @@ export default function plugin(zcc) {
           api_key: values.apiKey,
           event: eventName,
           distinct_id: await distinctId(),
-          properties,
-          timestamp: new Date().toISOString()
+          properties
         })
       });
+      if (!res.ok) {
+        zcc.log.warn(`posthog capture failed: HTTP ${res.status}`);
+      }
+    } catch (err) {
+      zcc.log.warn(`posthog capture failed: ${err}`);
     } finally {
       clearTimeout(timeout);
     }

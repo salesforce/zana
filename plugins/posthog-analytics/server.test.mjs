@@ -75,9 +75,9 @@ describe('posthog-analytics plugin', () => {
       api_key: 'k-123',
       event: 'zcc_thread_created',
       distinct_id: 'fixed-uuid',
-      properties: { projectId: 'p1' },
-      timestamp: body.timestamp
+      properties: { projectId: 'p1' }
     });
+    expect(body).not.toHaveProperty('timestamp');
     expect(JSON.stringify(body)).not.toContain('threadId');
   });
 
@@ -92,12 +92,50 @@ describe('posthog-analytics plugin', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down'); }));
     const zcc = makeZcc({ enabled: true, apiKey: 'k', host: 'https://us.posthog.com' });
     plugin(zcc);
-    await zcc._handlers.get('thread.failed')({ projectId: 'p1' });
-    // handler itself never throws (it's fire-and-forget inside plugin()); give the
-    // microtask queue a tick so the .catch() has run before asserting on the log.
-    await new Promise((r) => setTimeout(r, 0));
+    await expect(zcc._handlers.get('thread.failed')({ projectId: 'p1' })).resolves.toBeUndefined();
     expect(zcc.log.warn).toHaveBeenCalledTimes(1);
     expect(zcc.log.warn.mock.calls[0][0]).toContain('posthog capture failed');
+  });
+
+  it('logs a warning when PostHog returns a non-ok status', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 401 })));
+    const zcc = makeZcc({ enabled: true, apiKey: 'k', host: 'https://us.posthog.com' });
+    plugin(zcc);
+    await zcc._handlers.get('thread.created')({ projectId: 'p1' });
+    expect(zcc.log.warn).toHaveBeenCalledTimes(1);
+    expect(zcc.log.warn.mock.calls[0][0]).toContain('HTTP 401');
+  });
+
+  it('reuses one distinct id when two first-use events race', async () => {
+    let uuidCalls = 0;
+    vi.stubGlobal('crypto', {
+      randomUUID: () => {
+        uuidCalls += 1;
+        return `uuid-${uuidCalls}`;
+      }
+    });
+    const zcc = makeZcc({ enabled: true, apiKey: 'k', host: 'https://us.posthog.com' });
+    let releaseGet;
+    const getStarted = new Promise((resolve) => {
+      const originalGet = zcc.storage.kv.get.bind(zcc.storage.kv);
+      zcc.storage.kv.get = async (key) => {
+        resolve();
+        await new Promise((r) => {
+          releaseGet = r;
+        });
+        return originalGet(key);
+      };
+    });
+    plugin(zcc);
+    const first = zcc._handlers.get('thread.created')({ projectId: 'p1' });
+    const second = zcc._handlers.get('thread.active')({ projectId: 'p1' });
+    await getStarted;
+    releaseGet();
+    await Promise.all([first, second]);
+    expect(uuidCalls).toBe(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const ids = fetch.mock.calls.map(([, init]) => JSON.parse(init.body).distinct_id);
+    expect(ids).toEqual(['uuid-1', 'uuid-1']);
   });
 
   it('defaults enabled to true and apiKey to a non-empty shared key, per the on-by-default design', () => {
