@@ -7,6 +7,7 @@ function makeZcc(values) {
   const handlers = new Map();
   const rpc = new Map();
   const kv = new Map();
+  let definedDescriptors = null;
   return {
     events: {
       on: (name, handler) => handlers.set(name, handler)
@@ -15,7 +16,10 @@ function makeZcc(values) {
       method: (name, handler) => rpc.set(name, handler)
     },
     settings: {
-      define: () => ({ get: async () => values })
+      define: (descriptors) => {
+        definedDescriptors = descriptors;
+        return { get: async () => values };
+      }
     },
     storage: {
       kv: {
@@ -27,7 +31,10 @@ function makeZcc(values) {
     },
     log: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
     _handlers: handlers,
-    _rpc: rpc
+    _rpc: rpc,
+    get _definedDescriptors() {
+      return definedDescriptors;
+    }
   };
 }
 
@@ -91,6 +98,16 @@ describe('posthog-analytics plugin', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(zcc.log.warn).toHaveBeenCalledTimes(1);
     expect(zcc.log.warn.mock.calls[0][0]).toContain('posthog capture failed');
+  });
+
+  it('defaults enabled to true and apiKey to a non-empty shared key, per the on-by-default design', () => {
+    const zcc = makeZcc({ enabled: false, apiKey: '', host: DEFAULT_HOST });
+    plugin(zcc);
+    const descriptors = zcc._definedDescriptors;
+    expect(descriptors.enabled.default).toBe(true);
+    expect(typeof descriptors.apiKey.default).toBe('string');
+    expect(descriptors.apiKey.default.startsWith('phc_')).toBe(true);
+    expect(descriptors.trackUiClicks.default).toBe(false);
   });
 
   it('registers a handler for every documented lifecycle event', () => {

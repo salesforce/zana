@@ -1,5 +1,7 @@
 /**
- * Opt-in, event-only PostHog analytics. OFF by default.
+ * Event-only PostHog analytics. ON by default, reporting into the maintainer's
+ * shared community PostHog project — see README.md for how to point this at
+ * your own project instead, or turn it off entirely.
  *
  * Two kinds of signal, each behind its own toggle:
  *  1. Agent/thread lifecycle events (created/active/idle/failed/archived/deleted).
@@ -22,6 +24,12 @@ const EVENT_NAMES = [
 
 const DISTINCT_ID_KEY = 'distinctId';
 const DEFAULT_HOST = 'https://us.posthog.com';
+// Shared community project (591662) API key. This key is a PostHog *project*
+// key — write-only by design, meant to be public (the same key PostHog's own
+// client-side snippet embeds in page source). Set your own key in Settings to
+// send events to a different PostHog project instead, or disable the master
+// switch to send nothing.
+const DEFAULT_API_KEY = 'phc_oekSLXZr7sh7rRAJbFHAaiLkRamaC5FVBmEBs2m4T2qP';
 const CAPTURE_TIMEOUT_MS = 5000;
 
 /** Whitelist of scalar, content-free UI-click fields the renderer may report.
@@ -34,8 +42,8 @@ export default function plugin(zcc) {
       type: 'boolean',
       label: 'Send anonymous usage events to PostHog',
       description:
-        'Master switch, off by default. Nothing is sent unless this is on and an API key is set.',
-      default: false
+        'Master switch, ON by default — sends event-only lifecycle data (see README) to a shared community PostHog project. Turn off to send nothing, or replace the API key below to point at your own project instead.',
+      default: true
     },
     trackUiClicks: {
       type: 'boolean',
@@ -48,8 +56,9 @@ export default function plugin(zcc) {
       type: 'string',
       label: 'PostHog Project API Key',
       description:
-        'Your own PostHog project key (starts with phc_). Nothing is sent until this is set and the toggle above is on.',
-      secret: true
+        'Defaults to the shared community project key. Replace with your own PostHog project key to send events there instead — or clear it and turn the toggle above off to send nothing.',
+      secret: true,
+      default: DEFAULT_API_KEY
     },
     host: {
       type: 'string',

@@ -1,7 +1,17 @@
 # PostHog Analytics
 
-Opt-in usage analytics for your own install of Zana, sent to a PostHog
-project **you** configure. **Off by default.**
+Usage analytics for Zana installs, event-only (never prompt/response content).
+
+> **Disclaimer — on by default.** This plugin ships **enabled by default**
+> and preconfigured with a shared community PostHog project's API key, so a
+> default Zana install starts sending the lifecycle events below as soon as
+> this plugin is installed. To opt out entirely, turn off **Send anonymous
+> usage events to PostHog** in the plugin's Configure page. To send your own
+> install's events to a *different* PostHog project instead of the shared
+> one, replace the **PostHog Project API Key** field with your own project's
+> key. The shipped key is a PostHog *project* API key — write-only by design
+> and meant to be public, the same kind of key PostHog's own client-side
+> snippet embeds in page source — not a personal or account-level secret.
 
 ## What is sent
 
@@ -52,24 +62,27 @@ re-validates them (dropping anything else, non-strings, or over-long values)
 before sending. A click with no `data-testid` and no actionable role sends
 nothing. This toggle is independent and also off by default.
 
-## Enabling it
+## Enabling it / opting out / pointing at your own project
 
 1. Install the plugin (`zcc plugin install ./plugins/posthog-analytics` from
-   a checkout, or via the Plugins hub once published).
+   a checkout, or via the Plugins hub once published). It is **enabled out of
+   the box**, reporting into the shared community project via the bundled key.
 2. Open its Configure page in the Plugins hub.
-3. Set **PostHog Project API Key** to your own project's key. This is the
-   public, write-only key that starts with `phc_` — find it in PostHog under
-   **Project Settings → Project API Key**. (It is *not* your numeric project
-   id, and *not* a personal API key.)
-4. Optionally change **PostHog Host** if you run a self-hosted PostHog
+3. To opt out entirely: turn off **Send anonymous usage events to PostHog**.
+   This stops all outbound requests immediately.
+4. To send events to your *own* PostHog project instead of the shared one:
+   replace **PostHog Project API Key** with your own project's key. This is
+   the public, write-only key that starts with `phc_` — find it in PostHog
+   under **Project Settings → Project API Key**. (It is *not* your numeric
+   project id, and *not* a personal API key.)
+5. Optionally change **PostHog Host** if you run a self-hosted PostHog
    (defaults to `https://us.posthog.com`).
-5. Turn on **Send anonymous usage events to PostHog**.
 6. Optionally turn on **Also track UI clicks (button ids only)** for
-   content-free click events (see above).
+   content-free click events (see above) — this toggle is independent and
+   off by default even when the master switch is on.
 
-Nothing is sent until both the toggle is on AND an API key is set. Turning
-the toggle off stops all outbound requests immediately. UI-click tracking has
-its own separate toggle and is likewise off by default.
+Nothing is sent unless the master toggle is on AND an API key is set — both
+are true out of the box, pointed at the shared community project.
 
 ## Why no prompt/content tracking
 
