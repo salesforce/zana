@@ -459,7 +459,7 @@ export function AppShellWireframe(): ReactNode {
                 <span className="plugin-guide-ws-head-actions">
                   <Mark
                     id="experimental_projectMenuAction"
-                    label="Project / workspace menu"
+                    label="Project menu"
                     chip="side"
                     className="plugin-guide-icon-hit"
                     title="Organize projects"
@@ -641,7 +641,7 @@ export function ProjectShellWireframe(): ReactNode {
               <div className="plugin-guide-fx-canvas">
                 <div className="plugin-guide-fx-card">
                   <strong>Library</strong>
-                  <p>A project-scoped plugin tab on this workspace rail. Fill the slot; keep reading width on an inner wrapper.</p>
+                  <p>A project-scoped plugin tab on this project rail. Fill the slot; keep reading width on an inner wrapper.</p>
                 </div>
                 <div className="plugin-guide-fx-skel" />
                 <div className="plugin-guide-fx-skel is-short" />

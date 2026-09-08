@@ -812,17 +812,17 @@ export function FeaturesWireframe(): ReactNode {
           <div className="product-tour-launch" role="group" aria-label="Launch mode">
             <button
               type="button"
-              className={classNames(mode === 'thread' && 'is-active')}
-              onClick={() => setMode('thread')}
-            >
-              Modern <span className="product-tour-new">NEW</span>
-            </button>
-            <button
-              type="button"
               className={classNames(mode === 'cli' && 'is-active')}
               onClick={() => setMode('cli')}
             >
               CLI Agent
+            </button>
+            <button
+              type="button"
+              className={classNames(mode === 'thread' && 'is-active')}
+              onClick={() => setMode('thread')}
+            >
+              Modern <span className="product-tour-new">NEW</span>
             </button>
           </div>
           <ComposerCard
@@ -1028,7 +1028,7 @@ export function PluginsWireframe(): ReactNode {
             </span>
             <span>
               <strong>Docs</strong>
-              <p>Project library on the workspace rail.</p>
+              <p>Project library on the project rail.</p>
             </span>
             <span className="product-tour-plugin-status">On</span>
           </div>
@@ -1154,10 +1154,10 @@ export function HomeFlowWireframe({ scene }: { scene: FlowScene }): ReactNode {
         {home ? (
           <div className={classNames('product-tour-home', scene.loading && 'is-dim')}>
             <div className="product-tour-launch" role="group" aria-label="Launch mode">
+              <span>CLI Agent</span>
               <span className="is-active">
                 Modern <span className="product-tour-new">NEW</span>
               </span>
-              <span>CLI Agent</span>
             </div>
             <ComposerCard
               variant="home"

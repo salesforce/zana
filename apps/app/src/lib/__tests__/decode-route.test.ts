@@ -19,6 +19,8 @@ describe('decodeRoutePath', () => {
     ['/settings/terminal', { nav: 'settings', settingsTab: 'terminal' }],
     ['/settings/connectivity', { nav: 'settings', settingsTab: 'connectivity' }],
     ['/settings/inbox', { nav: 'settings', settingsTab: 'inbox' }],
+    ['/settings/keyboard', { nav: 'settings', settingsTab: 'keyboard' }],
+    ['/settings/composer', { nav: 'settings', settingsTab: 'composer' }],
     ['/settings/project', { nav: 'settings', settingsTab: 'project' }],
     ['/extensions', { nav: 'extensions', extensionsTab: 'installed' }],
     ['/extensions/plugins', { nav: 'extensions', extensionsTab: 'installed' }],

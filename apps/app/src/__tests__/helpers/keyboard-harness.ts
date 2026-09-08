@@ -61,6 +61,7 @@ export function installKeyboardHarness(): KeyboardHarness {
       metaKey: !!chord.meta,
       ctrlKey: !!chord.ctrl,
       shiftKey: !!chord.shift,
+      altKey: false,
       preventDefault
     } as unknown as KeyboardEvent;
     for (const fn of [...listeners]) fn(e);

@@ -24,7 +24,9 @@ describe('HomeAgentComposer layout', () => {
     expect(source).toContain('is-walkthrough-spotlight');
     expect(source).toContain('walkthroughHomeMode');
     expect(source).toContain('<ThreadCommandComposer');
-    expect(source).toContain('allowLegacyAgent');
+    expect(source).toContain('useLaunchModePreference');
+    expect(source).toContain('resolveAvailableLaunchMode');
+    expect(source).toContain('setStoredMode');
     expect(source).toContain('<LaunchModeSegmented');
     expect(source).toContain('<LegacyAgentHomeComposer');
     expect(source).toContain('<AutonomousTeamComposer');
@@ -34,6 +36,10 @@ describe('HomeAgentComposer layout', () => {
     expect(source).toContain("kind === 'job'");
     expect(source).toContain('showAutonomousTeam={showAutonomousTeam}');
     expect(source).toContain('showJobTeam={showJobTeam}');
+    expect(source).toContain('visibleComposerLaunchModes');
+    expect(source).toContain('showLaunchSwitcher');
+    expect(source).toContain('showCliAgent={available.showCliAgent}');
+    expect(source).toContain('showModern={available.showModern}');
     expect(source).not.toContain('HomeAutonomousComposer');
     expect(source).not.toContain('onSelectLegacyAgent');
     expect(source).not.toContain('consumeComposerModeCycle');
@@ -58,7 +64,7 @@ describe('HomeAgentComposer layout', () => {
   it('spotlights the composer while the walkthrough is on Modern or CLI Agent', () => {
     const source = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain("walkthroughHomeMode === 'thread' || walkthroughHomeMode === 'agent'");
-    expect(source).toContain('setKind(walkthroughHomeMode)');
+    expect(source).toContain('walkthroughHomeMode');
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
     expect(css).toContain('.home-agent-composer.is-walkthrough-spotlight');
     expect(css).toContain('.walkthrough-backdrop--composer');

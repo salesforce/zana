@@ -48,6 +48,9 @@ export default function ExtensionSdkPage() {
               </article>
             ))}
           </div>
+          <p style={{ marginTop: 16 }} data-reveal>
+            <Link className="text-link" href="/extensions/#plugin-guide">Open the Plugin Guide map →</Link>
+          </p>
         </div>
       </section>
 

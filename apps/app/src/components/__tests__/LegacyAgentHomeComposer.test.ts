@@ -158,6 +158,13 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('project?.remote');
     expect(source).toContain('defaultWorkspaceChoice');
     expect(source).not.toContain('Isolate in a git worktree');
+    const metaStart = source.indexOf('thread-command-composer-meta-start');
+    const metaEnd = source.indexOf('thread-command-composer-meta-end');
+    const envIdx = source.indexOf('<EnvironmentPicker');
+    const customizeIdx = source.indexOf('legacy-agent-customize-launch');
+    expect(envIdx).toBeGreaterThan(metaStart);
+    expect(customizeIdx).toBeGreaterThan(envIdx);
+    expect(customizeIdx).toBeLessThan(metaEnd);
   });
 
   it('marks an SSH project as Remote host', () => {

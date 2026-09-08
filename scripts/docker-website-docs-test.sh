@@ -33,7 +33,7 @@ if [[ ! -f "$html_src" ]]; then
   html_src=.next/server/app/extensions/page.js
 fi
 if [[ ! -f "$html_src" ]]; then
-  printf 'next build did not emit the extensions page\n' >&2
+  printf 'next build did not emit the Plugin Guide extensions page\n' >&2
   exit 1
 fi
 
@@ -41,8 +41,6 @@ mkdir -p "$STAGE/extensions"
 if [[ "$html_src" == *.html ]]; then
   cp "$html_src" "$STAGE/extensions/index.html"
 else
-  # App Router may emit a JS server module; extract a readable HTML fallback
-  # by copying the RSC payload is not useful here — require the HTML artifact.
   printf 'next build did not emit %s\n' '.next/server/app/extensions.html' >&2
   exit 1
 fi
@@ -68,6 +66,8 @@ done
 html=$(curl -sfL "http://127.0.0.1:${PORT}/extensions/")
 grep -Fq 'Plugin Guide' <<<"$html"
 grep -Fq 'Every surface a plugin can own' <<<"$html"
-grep -Fq 'plugin-guide' <<<"$html"
+grep -Fq 'aria-label="Plugin surfaces"' <<<"$html"
+grep -Fq 'App shell' <<<"$html"
+grep -Fq 'Platform' <<<"$html"
 
 printf 'website docker plugin guide ok: /extensions/ served from %s\n' "$IMAGE"

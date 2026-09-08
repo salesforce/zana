@@ -5,7 +5,7 @@ There are two separate ways to use another computer with Zana:
 - **Enrolled machines** run a host daemon. The other box outbound-connects to
   this app. Add a folder on that machine from **Settings → Machines** (or the
   host picker when adding a local project). Threads then execute there.
-- **SSH remotes** are a workspace on a host from `~/.ssh/config`. Threads run
+- **SSH remotes** are a project folder on a host from `~/.ssh/config`. Threads run
   on a host daemon installed on that box (**Add remote** or composer
   **Install**). Composer Send waits until the daemon is bound and online.
   The env chip shows `user@host · path · Online`. This machine's host daemon
@@ -84,7 +84,7 @@ curl -fL ${publicAppUrl}/install.sh | sh -s -- \
    **15 minutes** and can be redeemed once. The Machines list turns the new row
    online when the daemon's websocket is open.
 
-If the machine is an SSH workspace (for example `limited-pony`) and you have
+If the machine is an SSH host (for example `limited-pony`) and you have
 not set a public app URL, Add machine copies a **laptop-side** command instead:
 
 ```bash
@@ -93,7 +93,7 @@ ssh -o ExitOnForwardFailure=yes -R 18782:127.0.0.1:<zcc-port> limited-pony \
 ```
 
 Paste that in a terminal **on this computer**. It reverse-tunnels product HTTP
-to the workspace and runs the installer there. Leave the SSH session open so
+to the remote host and runs the installer there. Leave the SSH session open so
 the daemon can keep that tunnel. The installer looks for **Node 22+** on PATH,
 then nix / nvm / fnm / volta (a Node 20 PATH entry is skipped). Override with
 `ZCC_NODE=/path/to/node`.
@@ -128,7 +128,7 @@ Settings, or the repo `public-app-url` file), not loopback. This machine's
 host daemon must be connected — it owns `~/.ssh` and performs the SSH. If SSH
 cannot run, copy the Settings → Add machine join command.
 
-**Add remote project** registers the SSH workspace and installs a host daemon
+**Add remote project** registers the SSH project and installs a host daemon
 over SSH. Composer **Install** stays available until a daemon is bound. Send
 is blocked until that daemon is online. If SSH cannot complete the install,
 retry from the composer or copy the reverse-tunnel command.

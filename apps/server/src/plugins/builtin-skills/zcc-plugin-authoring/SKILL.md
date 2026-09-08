@@ -215,7 +215,7 @@ runs a headless same-origin script with an `AbortSignal` on unload.
 - `sidebarFooterAction` — `id`, `title`, `icon`, `run`. `run` receives
   `{ openSettings(), toPluginPanel(path) }`. `openSettings()` opens this plugin’s
   Plugins hub detail. `toPluginPanel` opens a `navPanel` route.
-- `projectStatusbarItem` — a chip on the project workspace footer (path/git
+- `projectStatusbarItem` — a chip on the project statusbar (path/git
   strip). Registration: `id`, `align` (`"left"` | `"right"`, default `"right"`;
   `PLUGIN_PROJECT_STATUSBAR_ALIGNS`), `order`, `tooltip`, `icon`, `label`
   (required unless `item` is set), `item` (live React chrome), `component`
@@ -275,7 +275,8 @@ app.slots.projectStatusbarItem({
   `threadId`, `projectId`, `openPanel`, `toPluginPanel`.
 - `experimental_projectMenuAction` — `id`, `title`, `icon`, `placement`
   (`project` | `workspace`), `run`. `run` receives `{ projectId }` (`null`
-  for workspace placement) and `toProject`.
+  for `placement: "workspace"`, the Projects header with no project selected)
+  and `toProject`.
 - `experimental_createProjectAction` — `id`, `title`, `icon`, `component`,
   `run`. `run` receives `pickDirectory()`, `addProject(path)`, `cloneRoot()`,
   `toProject`, and `openDialog({ title?, params? })`. Optional `component`

@@ -135,6 +135,12 @@ describe('shortcuts: round-trip and dashboard chords', () => {
     expect(uiState.setNav).toHaveBeenCalledWith('home');
   });
 
+  it('⌘N opens New Chat', () => {
+    const { preventDefault } = kb.press('n', { meta: true });
+    expect(uiState.setNav).toHaveBeenCalledWith('home');
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+
   it('⌘R does not open the Claude resume picker', () => {
     uiState.setResumeOpen.mockClear();
     const { preventDefault } = kb.press('r', { meta: true });

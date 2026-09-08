@@ -41,28 +41,64 @@ org credentials. Reuse + extraction map: `plugins/salesforce/SDK.md`.
 
 ## App — `definePluginApp`
 
-Slots (also mapped in the in-app Plugin Guide):
+Slots are grouped the same way as the in-app **Plugin Guide** (Plugins hub).
+When you add or rename a surface, update `plugins/plugin-guide/src/surfaces.ts`,
+this page, and run `node website/scripts/sync-plugin-guide.mjs` (copies the map
+into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
-- `navPanel` — sidebar entry + full view, `placement: "extensions"` under Plugins, or `placement: "unlisted"` (no rail row; open via `toPluginPanel`)
-- `settingsSection` — plugin settings on the Plugins hub detail (Configure)
-- `homepageSection` — Home dashboard
-- `projectTab` — per-project tab (`global: false` hides the sidebar entry)
-- `experimental_projectMenuAction` — project row overflow or workspace organize menu (`toProject` opens a `projectTab`)
+### App shell
+
+- `navPanel` — sidebar entry + full view. `placement: "extensions"` lists under Plugins; `placement: "unlisted"` is a full `/plugins/<id>/<path>` page with no rail row (open via `toPluginPanel`)
+- `experimental_projectMenuAction` — project-row overflow, or the Projects Organize menu (`placement: "workspace"` means no project is selected; `projectId` is `null`). `toProject` opens a `projectTab`
 - `experimental_createProjectAction` — Add project (+) menu (`openDialog` mounts an optional create wizard; `addProject` registers the folder)
 - `sidebarFooterAction` — host-rendered footer icon (`openSettings` / `toPluginPanel`)
-- `projectStatusbarItem` — project workspace footer chip (`align` left/right;
-  `run` may `toProject` / `toPluginPanel` / `openDialog` / `openMenu`)
-- `pendingInteraction` / `threadPanelAction` (thread side-panel tabs; optional
-  `scopes` include `"agent-session"` for the CLI-agent inspector) /
-  `experimental_newThreadPanelAction` /
-  `experimental_threadList` / `experimental_threadHeaderAction` — thread chrome
-- `fileOpener` / `messageDirective` / `messageAction` / `experimental_timelineRenderer`
-- `experimental_agentCardAction` / `experimental_agentsBoardAction`
-- `commandPaletteAction` / `experimental_providerIcon`
-- `composer.customize` / `contentScripts.register` — `meta` / `advanced` placements, `cli-agent` scope, `experimental_setLaunchPatch`
 
-Headless (no pixels): `zcc.skills` / `contributeSkills`, `zcc.cli`, `zcc.mcpServers`,
-`zcc.settings.define`, `zcc.background`.
+### Project shell
+
+- `projectTab` — per-project rail tab (`global: false` hides the sidebar entry)
+- `experimental_agentsBoardAction` — toolbar control on the Agents board (`projectId` is `null` on the cross-project Agents nav)
+- `experimental_agentCardAction` — right-click item on an Agents board card
+- `projectStatusbarItem` — project statusbar chip (`align` left/right; `run` may `toProject` / `toPluginPanel` / `openDialog` / `openMenu`)
+
+### Home
+
+- `homepageSection` — card on the Home compose surface
+- `experimental_newThreadPanelAction` — CTA under New Chat compose (can open a compose-time side panel)
+
+### Composer
+
+- `composer` — `composer.customize`: actions, banners, plus-menu items, meta chips, advanced fields, and rich-text effects. Scope to `thread`, `new-thread`, `cli-agent`, `queued-message`, or `side-chat`. `useComposer().experimental_setLaunchPatch` overlays spawn extraArgs / profile / routing
+
+### Thread
+
+- `threadPanelAction` — thread side-panel tabs; optional `scopes` include `"agent-session"` for the CLI-agent inspector
+- `pendingInteraction` — custom in-thread prompt UI (`id` must match `zcc.ui.requestInput` `rendererId`)
+- `experimental_threadHeaderAction` — action in the thread detail header
+- `experimental_threadList` — replace the Agents list pane (exclusive; last registered wins Appearance pin)
+- `experimental_timelineRenderer` — custom body for a timeline row kind
+- `messageDirective` — render `::name{attr}` leaves in markdown
+- `messageAction` — per-message menu item on the timeline
+- `fileOpener` — open a previewed file by extension
+
+### Command palette
+
+- `commandPaletteAction` — a row in ⌘P Extensions (`toPluginPanel` / `toProject` / `openPanel`)
+
+### Configure
+
+- `settingsSection` — React settings UI on the plugin’s Plugins hub detail (Configure)
+
+### Platform
+
+Headless (no pixels), plus picker chrome:
+
+- `skills` — `zcc.skills` / `contributeSkills`
+- `cli` — `zcc.cli.register`
+- `mcp` — `zcc.mcpServers`
+- `settings-define` — `zcc.settings.define`
+- `background` — `zcc.background.service` / `schedule`
+- `contentScripts` — `contentScripts.register`
+- `experimental_providerIcon` — picker glyph for a provider id
 
 Registrations replace wholesale per plugin id. Each carries a `generation` used
 as the React remount key. Wrap UI in `PluginSlotBoundary`. Live-reload with

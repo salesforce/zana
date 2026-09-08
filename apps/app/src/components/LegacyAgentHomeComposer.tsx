@@ -769,6 +769,20 @@ export function LegacyAgentHomeComposer({
               disabled={launching}
             />
           ) : null}
+          <button
+            type="button"
+            className="launch-advanced-toggle"
+            aria-expanded={advancedOpen}
+            data-testid="legacy-agent-customize-launch"
+            onClick={() => setAdvancedOpen((open) => !open)}
+          >
+            Customize launch
+            {(extraArgs.length > 0 || personaId) ? (
+              <span className="launch-advanced-badge">
+                {(extraArgs.length > 0 ? 1 : 0) + (personaId ? 1 : 0)}
+              </span>
+            ) : null}
+          </button>
         </div>
         <div className="thread-command-composer-meta-end">
           {permissionOptions.length > 1 && (
@@ -790,22 +804,8 @@ export function LegacyAgentHomeComposer({
           <PluginComposerMeta scope={{ kind: 'cli-agent', projectId: projectId || null }} />
         </div>
       </div>
-      <div className="launch-advanced-wrap">
-        <button
-          type="button"
-          className="launch-advanced-toggle"
-          aria-expanded={advancedOpen}
-          data-testid="legacy-agent-customize-launch"
-          onClick={() => setAdvancedOpen((open) => !open)}
-        >
-          Customize launch
-          {(extraArgs.length > 0 || personaId) ? (
-            <span className="launch-advanced-badge">
-              {(extraArgs.length > 0 ? 1 : 0) + (personaId ? 1 : 0)}
-            </span>
-          ) : null}
-        </button>
-        {advancedOpen ? (
+      {advancedOpen ? (
+        <div className="launch-advanced-wrap">
           <div className="launch-advanced launch-advanced-card" data-testid="legacy-agent-advanced">
             <div className="launch-extra-args">
               <TextArgsField
@@ -834,8 +834,8 @@ export function LegacyAgentHomeComposer({
             </div>
             <PluginComposerAdvanced scope={{ kind: 'cli-agent', projectId: projectId || null }} />
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
     </PluginComposerChrome>
   );

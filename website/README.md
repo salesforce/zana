@@ -26,6 +26,8 @@ npm run build        # production standalone build in .next/
 | `/marketplace` | Same-origin `GET /marketplace/v1/marketplace.json` — official first-party plugin pointers (`schemaVersion: 1`). Generated from repo `plugins/*/package.json`. |
 | `/marketplace/v1/marketplace.json` | Public catalog for `zcc marketplace add` (CORS `*`). Alias: `/plugins/index.json`. |
 | `/docs/*` | Rendered at build time from allowlisted `docs/*.md` via `scripts/sync-docs.mjs` (internal audits, architecture notes, and the root README are NOT published) |
+| `/extensions` | In-app Plugin Guide `ProductMap` synced from `plugins/plugin-guide/` via `scripts/sync-plugin-guide.mjs` |
+| `/extensions/sdk` | SDK overview — four layers and a link to the Plugin Guide map |
 | `/download` | Parses `latest-mac.yml` from `NEXT_PUBLIC_UPDATE_FEED_URL`; links to GitHub Releases |
 
 ## Configure
@@ -84,6 +86,16 @@ Edit the `DOCS` allowlist in `scripts/sync-docs.mjs`, then run
 `npm run sync-docs` (also a `predev` / `prebuild` hook). Only listed files are
 published; this is deliberate so internal `docs/*` (audits, plans, reviews)
 stay private. `lib/docs.ts` reads the generated `content/docs/_manifest.json`.
+
+## Plugin Guide map
+
+The in-app Plugin Guide (`plugins/plugin-guide/src`) is the source of truth.
+`scripts/sync-plugin-guide.mjs` copies `ProductMap` sources and `plugin-guide.css`
+into `lib/plugin-guide/` for `/extensions`. Edit the plugin sources, then
+run `npm run sync-plugin-guide` (also a `predev` / `prebuild` hook). Do not
+hand-edit `lib/plugin-guide/`. The copy drops `.js` from relative imports so
+Next can resolve the TypeScript files. `plugins/plugin-guide/src/api-sync.test.ts`
+fails if the synced files or `docs/extensions-sdk-reference.md` drift.
 
 ## Official plugin marketplace
 

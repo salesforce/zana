@@ -1,6 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { PluginAppSlots } from '@zana-ai/zcc-plugin-sdk';
-import { SURFACES } from './surfaces.js';
+import { SURFACE_GROUPS, SURFACES } from './surfaces.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, '../../..');
 
 const SLOT_SURFACE_IDS = [
   'navPanel',
@@ -61,5 +67,51 @@ describe('plugin guide surfaces', () => {
     const footer = SURFACES.find((row) => row.id === 'sidebarFooterAction');
     expect(footer?.bullets.some((line) => line.includes('toPluginPanel'))).toBe(true);
     expect(footer?.firstParty).toEqual(['Connect', 'Salesforce']);
+  });
+});
+
+const PLUGIN_GUIDE_SYNC_FILES = [
+  'annotation.ts',
+  'chip-position.ts',
+  'product-map.tsx',
+  'surface-card.tsx',
+  'surfaces.ts',
+  'wireframes.tsx'
+] as const;
+
+describe('plugin guide public docs', () => {
+  const sdkReference = readFileSync(join(repoRoot, 'docs/extensions-sdk-reference.md'), 'utf8');
+  const websiteHub = readFileSync(join(repoRoot, 'website/app/extensions/page.tsx'), 'utf8');
+  const websiteSdk = readFileSync(join(repoRoot, 'website/app/extensions/sdk/page.tsx'), 'utf8');
+  const pluginSrc = join(repoRoot, 'plugins/plugin-guide/src');
+  const websiteCopy = join(repoRoot, 'website/lib/plugin-guide');
+
+  it('lists every Plugin Guide group and surface in the public SDK reference', () => {
+    for (const group of SURFACE_GROUPS) {
+      expect(sdkReference, `docs/extensions-sdk-reference.md is missing group "${group.title}"`).toContain(
+        `### ${group.title}`
+      );
+      for (const surface of group.surfaces) {
+        expect(sdkReference, `docs/extensions-sdk-reference.md is missing \`${surface.id}\``).toContain(
+          `\`${surface.id}\``
+        );
+      }
+    }
+  });
+
+  it('keeps the website Plugin Guide map identical to plugin sources', () => {
+    expect(websiteHub).toContain('PluginGuideMap');
+    expect(websiteSdk).not.toContain('PluginGuideMap');
+    expect(websiteHub).not.toContain('plugin-guide-catalog');
+    const websiteImports = (source: string) =>
+      source.replace(/(from\s+['"])(\.[^'"]+)\.js(['"])/g, '$1$2$3');
+    for (const name of PLUGIN_GUIDE_SYNC_FILES) {
+      expect(readFileSync(join(websiteCopy, name), 'utf8'), name).toBe(
+        websiteImports(readFileSync(join(pluginSrc, name), 'utf8'))
+      );
+    }
+    expect(readFileSync(join(websiteCopy, 'plugin-guide.css'), 'utf8')).toBe(
+      readFileSync(join(repoRoot, 'plugins/plugin-guide/plugin-guide.css'), 'utf8')
+    );
   });
 });
