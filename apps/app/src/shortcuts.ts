@@ -35,7 +35,7 @@ export function installShortcuts(): () => void {
     const activeIdx = activeTabId ? tabs.findIndex((t) => t.id === activeTabId) : -1;
 
     // cmd+b — toggle terminals/explorer mode (flips between the two
-    // text-editing modes). Remappable in Settings → Keyboard.
+    // text-editing modes). Remappable in Settings → Shortcuts.
     if (shortcutForCommand('sidebar.toggle', e)) {
       if (!projectId) return;
       e.preventDefault();
@@ -43,13 +43,13 @@ export function installShortcuts(): () => void {
       ui.setProjectView(projectId, cur === 'explorer' ? 'terminals' : 'explorer');
       return;
     }
-    // cmd+p — project switcher / command palette. Remappable in Settings → Keyboard.
+    // cmd+p — project switcher / command palette. Remappable in Settings → Shortcuts.
     if (shortcutForCommand('thread.search', e)) {
       e.preventDefault();
       ui.setPaletteOpen(true);
       return;
     }
-    // cmd+e — quick open file in selected project. Remappable in Settings → Keyboard.
+    // cmd+e — quick open file in selected project. Remappable in Settings → Shortcuts.
     if (shortcutForCommand('file.quickOpen', e)) {
       if (!projectId) return;
       e.preventDefault();
@@ -69,10 +69,18 @@ export function installShortcuts(): () => void {
       data.restartTerminal(activeTabId, projectId).catch(() => {});
       return;
     }
-    // cmd+, — toggle Settings. Remappable in Settings → Keyboard.
+    // cmd+, — toggle Settings. Remappable in Settings → Shortcuts.
     if (shortcutForCommand('settings.open', e)) {
       e.preventDefault();
       ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
+      return;
+    }
+    // cmd+n — New Chat (Home composer in the user's default launch mode).
+    // Remappable in Settings → Shortcuts. Distinct from cmd+t, which still
+    // spawns a CLI terminal tab in the selected project.
+    if (shortcutForCommand('thread.new', e)) {
+      e.preventDefault();
+      ui.setNav('home');
       return;
     }
     // cmd+. — close the agent or thread inspector modal. Escape is reserved

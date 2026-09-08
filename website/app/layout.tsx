@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import './components/product-tour/product-tour.css';
+import '@/lib/plugin-guide/plugin-guide.css';
+import './components/plugin-guide/plugin-guide-site.css';
 import { Nav, Footer } from './components/Nav';
 import { Reveal } from './components/Reveal';
 import { site } from '@/lib/site';

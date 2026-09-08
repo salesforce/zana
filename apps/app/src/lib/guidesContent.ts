@@ -111,7 +111,7 @@ handful of shortcuts that matter most day to day.
 - **⌘P** — command palette / project switcher.
 - **⌘⇧1…9** — jump straight to project 1–9; **⌘⇧]/[** to step through them.
 - **⌘I** — toggle the Inbox. **⌘J** — toggle the Scheduler. **⌘,** — Settings.
-- **⌘O** — toggle the workspaces Overview.
+- **⌘O** — show all agents (exits project focus).
 
 ## Tabs & terminals
 
@@ -123,8 +123,9 @@ handful of shortcuts that matter most day to day.
 
 ## Full list
 
-Press **⌘?** any time (or open it from this Guides card) for the complete
-reference, including Explorer and tab-context-menu actions.
+Press **⌘?** any time (or **Settings → Shortcuts**, or this Guides card) for the complete
+reference, including Explorer and tab-context-menu actions. You can remap New Chat
+and a few other chords on that Settings page.
 `,
   walkthrough: `
 The first-run walkthrough is a four-step tour of the core loop: starting a

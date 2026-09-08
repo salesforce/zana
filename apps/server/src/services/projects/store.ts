@@ -972,6 +972,15 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.teamJobLaunchEnabled === 'boolean') {
     normalized.teamJobLaunchEnabled = input.teamJobLaunchEnabled;
   }
+  if (typeof input.composerShowCliAgent === 'boolean') {
+    normalized.composerShowCliAgent = input.composerShowCliAgent;
+  }
+  if (typeof input.composerShowModern === 'boolean') {
+    normalized.composerShowModern = input.composerShowModern;
+  }
+  if (typeof input.composerShowAutonomousTeam === 'boolean') {
+    normalized.composerShowAutonomousTeam = input.composerShowAutonomousTeam;
+  }
   if (typeof input.goalsEnabled === 'boolean') {
     normalized.goalsEnabled = input.goalsEnabled;
   }

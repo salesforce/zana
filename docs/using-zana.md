@@ -6,7 +6,7 @@ ones you'll live in as you scale from one session to a fleet.
 
 ZCC uses a **three-column layout**: the **sidebar** (projects and global
 surfaces) → a **list pane** (what's inside the selected surface) → the
-**workspace** (threads, terminals, and panels). Everything below is reachable
+**main pane** (threads, terminals, and panels). Everything below is reachable
 from the sidebar.
 
 ---
@@ -22,8 +22,8 @@ from the sidebar.
 - **Autonomous Team** — launch a saved team of personas against the project when
   the work benefits from parallel roles.
 
-The composer also picks the workspace (this checkout, a new worktree, or
-personal scratch). See [Environments](#environments).
+The composer also picks the environment (Work locally, a new or existing
+worktree, or personal scratch). See [Environments](#environments).
 
 ---
 
@@ -47,20 +47,20 @@ the default conversation surface from New Chat.
 
 ### Environments
 
-A launch picks a **workspace** — the directory the agent actually writes in.
+A launch picks an **environment** — the directory the agent actually writes in.
 The composer picker on a local git project offers:
 
-- **This checkout** — the registered project folder. Palette, Inbox, scheduler,
+- **Work locally** — the registered project folder. Palette, Inbox, scheduler,
   shell, team, and remote launches always use this default.
 - **New worktree** — a managed git worktree on `zcc/<name>-<id>`, created under
   `~/.zcc/worktrees/<environmentId>/<repoName>`. Optional **Base branch**
   defaults to the server's policy (usually `main`/`master`). The main checkout
   is left untouched.
-- **Reuse** — attach another agent to an existing ready worktree.
+- **Existing worktree** — attach another agent to an existing ready worktree.
 - **Personal scratch** — a non-git folder under
   `~/.zcc/personal-workspaces/<environmentId>`.
 
-Remote SSH projects can only use **This checkout**. This slice does not create
+Remote SSH projects can only use **Work locally**. This slice does not create
 managed worktrees over SSH.
 
 Leftover folders under `~/zcc-worktrees` (the previous desktop mint path) stay

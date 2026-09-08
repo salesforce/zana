@@ -13,7 +13,13 @@ import { AutonomousTeamComposer } from './AutonomousTeamComposer.js';
 import { JobTeamComposer } from './JobTeamComposer.js';
 import { ThreadCommandComposer } from './ThreadCommandComposer.js';
 import { LegacyAgentHomeComposer } from './LegacyAgentHomeComposer.js';
-import { LaunchModeSegmented, type LaunchMode } from './LaunchModeSegmented.js';
+import { LaunchModeSegmented } from './LaunchModeSegmented.js';
+import {
+  resolveAvailableLaunchMode,
+  visibleComposerLaunchModes,
+  visibleLaunchModeCount
+} from '../lib/launch-mode-preference.js';
+import { useLaunchModePreference } from '../lib/use-launch-mode-preference.js';
 import { AgentConversationHistory } from './AgentConversationHistory.js';
 import { titleFromPrompt } from '../lib/promptTitle.js';
 import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap.js';
@@ -110,14 +116,23 @@ export const AgentLauncher = memo(function AgentLauncher({
   // workspace (the default). Unused in project mode (the target is fixed).
   const [targetProjectId] = useState<string | null>(null);
   // Launch mode: Modern thread (HTTP), CLI Agent (PTY spawn), or an autonomous
-  // team run. Each mode mounts its own composer below.
-  const [mode, setMode] = useState<LaunchMode>('thread');
+  // team run. Each mode mounts its own composer below. Last-used is the default.
+  const [storedMode, setStoredMode] = useLaunchModePreference();
   const teams = useTeams(useShallow((s) => s.teams));
+  const composerShowCliAgent = useData((s) => s.composerShowCliAgent);
+  const composerShowModern = useData((s) => s.composerShowModern);
+  const composerShowAutonomousTeam = useData((s) => s.composerShowAutonomousTeam);
   const teamJobLaunchEnabled = useData((s) => s.teamJobLaunchEnabled);
-  useEffect(() => {
-    if (mode === 'autonomous' && teams.length === 0) setMode('thread');
-    if (mode === 'job' && (teams.length === 0 || !teamJobLaunchEnabled)) setMode('thread');
-  }, [mode, teams.length, teamJobLaunchEnabled]);
+  const available = visibleComposerLaunchModes({
+    showCliAgent: composerShowCliAgent,
+    showModern: composerShowModern,
+    showAutonomousTeam: composerShowAutonomousTeam,
+    showJobTeam: teamJobLaunchEnabled
+  }, { hasTeams: teams.length > 0 });
+  const showAutonomousTeam = available.showAutonomousTeam;
+  const showJobTeam = available.showJobTeam;
+  const mode = resolveAvailableLaunchMode(storedMode, available);
+  const showLaunchSwitcher = visibleLaunchModeCount(available) > 1;
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Project mode is pinned to one project; scratch mode offers the picker.
@@ -217,15 +232,20 @@ export const AgentLauncher = memo(function AgentLauncher({
               section or extra-args panel can never push Send off-screen. */}
           <div className="launch-scroll">
           {/* Launch mode: Modern (HTTP conversation) and CLI Agent (PTY) are
-              always offered. Autonomous Team only appears when teams exist. */}
+              offered unless Settings hides one. Autonomous Team / Job Team
+              only appear when enabled and teams exist. */}
+          {showLaunchSwitcher && (
           <div className="launch-row">
             <LaunchModeSegmented
               value={mode}
-              onChange={setMode}
-              showAutonomousTeam={teams.length > 0}
-              showJobTeam={teamJobLaunchEnabled && teams.length > 0}
+              onChange={setStoredMode}
+              showCliAgent={available.showCliAgent}
+              showModern={available.showModern}
+              showAutonomousTeam={showAutonomousTeam}
+              showJobTeam={showJobTeam}
             />
           </div>
+          )}
 
           {mode === 'thread' && (
             <div className="launch-thread-composer">

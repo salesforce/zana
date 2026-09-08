@@ -214,11 +214,12 @@ describe('ProductGallery', () => {
 });
 
 describe('fixtures', () => {
-  it('shows New Chat with Modern and CLI Agent launch modes', () => {
+  it('shows New Chat with CLI Agent first, then Modern', () => {
     const markup = renderToStaticMarkup(createElement(FeaturesWireframe));
     expect(markup).toContain('Describe the task…');
-    expect(markup).toContain('Modern');
-    expect(markup).toContain('CLI Agent');
+    const launch = markup.indexOf('aria-label="Launch mode"');
+    expect(launch).toBeGreaterThan(-1);
+    expect(markup.indexOf('CLI Agent', launch)).toBeLessThan(markup.indexOf('Modern', launch));
     expect(markup).toContain('width="16"');
     expect(markup).toContain('viewBox="0 0 16 16"');
   });

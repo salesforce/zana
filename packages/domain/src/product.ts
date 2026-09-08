@@ -2199,6 +2199,21 @@ export interface AppConfig {
    */
   teamJobLaunchEnabled?: boolean;
   /**
+   * Show CLI Agent in the New Chat / New agent launch switcher. Default ON.
+   * At least one of this and {@link composerShowModern} must stay on.
+   */
+  composerShowCliAgent?: boolean;
+  /**
+   * Show Modern in the New Chat / New agent launch switcher. Default ON.
+   * At least one of this and {@link composerShowCliAgent} must stay on.
+   */
+  composerShowModern?: boolean;
+  /**
+   * Show Autonomous Team in the New Chat / New agent launch switcher. Default
+   * ON; the button still only appears when at least one team exists.
+   */
+  composerShowAutonomousTeam?: boolean;
+  /**
    * Master switch for the EXPERIMENTAL Goals feature: when ON, the "Goals"
    * project-scoped nav tab appears (persistent objectives with falsifiable
    * success criteria that spawn worker sessions and self-evaluate). Under

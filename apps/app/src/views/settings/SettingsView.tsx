@@ -15,6 +15,8 @@ import {
   Laptop,
   Network,
   Inbox,
+  Keyboard,
+  PenLine,
   type LucideIcon
 } from 'lucide-react';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
@@ -32,6 +34,8 @@ import { AboutTab } from '@/views/settings/AboutView';
 import { MachinesTab } from '@/views/settings/MachinesSettingsView';
 import { ConnectivityTab } from '@/views/settings/ConnectivityView';
 import { InboxSettingsTab } from '@/views/settings/InboxSettingsView';
+import { KeyboardSettingsSection } from '@/views/settings/KeyboardSettingsSection';
+import { ComposerSettingsView } from '@/views/settings/ComposerSettingsView';
 import { ProjectTab } from '@/views/settings/ProjectSettingsView';
 import { PersonasPanel } from '@/views/settings/PersonasView';
 import { SquadsPanel } from '@/views/settings/SquadsView';
@@ -72,6 +76,8 @@ export const SETTINGS_SECTIONS: Array<{
   projectScoped?: boolean;
 }> = [
   { id: 'global', label: 'Global', icon: Settings2, desc: 'App-wide defaults', group: 'config' },
+  { id: 'composer', label: 'Composer', icon: PenLine, desc: 'Launch surfaces, send mode, and prompt box', group: 'config' },
+  { id: 'keyboard', label: 'Shortcuts', icon: Keyboard, desc: 'Remap chords and view all shortcuts', group: 'config' },
   { id: 'inbox', label: 'Inbox', icon: Inbox, desc: 'Guidance, tool trust, and PDF export', group: 'config' },
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare, desc: 'Appearance, shell & tmux', group: 'config' },
   { id: 'harness', label: 'Code Harness', icon: Bot, desc: 'Verify & enable Claude Code, Cursor, Codex & PI', group: 'config' },
@@ -110,10 +116,15 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   ],
   global: [
     { id: 'appearance', label: 'Appearance' },
-    { id: 'threads', label: 'Composer' },
-    { id: 'keyboard', label: 'Keyboard' },
     { id: 'cli-skills', label: 'CLI skills' },
     { id: 'debug', label: 'Debug' }
+  ],
+  composer: [
+    { id: 'launch-surfaces', label: 'Launch surfaces' },
+    { id: 'composer', label: 'Composer' }
+  ],
+  keyboard: [
+    { id: 'keyboard', label: 'Shortcuts' }
   ],
   terminal: [
     { id: 'terminal-appearance', label: 'Appearance' },
@@ -291,6 +302,18 @@ export function SettingsView() {
       if (typeof patch.microVmEnabled === 'boolean') {
         useData.getState().setMicroVmEnabled(patch.microVmEnabled);
       }
+      if (typeof patch.teamJobLaunchEnabled === 'boolean') {
+        useData.getState().setTeamJobLaunchEnabled(patch.teamJobLaunchEnabled);
+      }
+      if (typeof patch.composerShowCliAgent === 'boolean') {
+        useData.getState().setComposerShowCliAgent(patch.composerShowCliAgent);
+      }
+      if (typeof patch.composerShowModern === 'boolean') {
+        useData.getState().setComposerShowModern(patch.composerShowModern);
+      }
+      if (typeof patch.composerShowAutonomousTeam === 'boolean') {
+        useData.getState().setComposerShowAutonomousTeam(patch.composerShowAutonomousTeam);
+      }
       if (Array.isArray(patch.openerHiddenTargets)) {
         useData.getState().setOpenerHiddenTargets(patch.openerHiddenTargets);
       }
@@ -333,6 +356,13 @@ export function SettingsView() {
             onConfigDraft={setConfig}
             onUpdate={update}
           />
+        ) : tab === 'composer' ? (
+          <ComposerSettingsView
+            config={config}
+            onUpdate={update}
+          />
+        ) : tab === 'keyboard' ? (
+          <KeyboardSettingsSection />
         ) : tab === 'terminal' ? (
           <TerminalTab config={config} onConfigDraft={setConfig} onUpdate={update} />
         ) : tab === 'agents' ? (

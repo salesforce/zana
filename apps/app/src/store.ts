@@ -170,6 +170,8 @@ export type NavId = CoreNavId | (string & {});
  */
 export type SettingsTab =
   | 'global'
+  | 'composer'
+  | 'keyboard'
   | 'terminal'
   | 'agents'
   | 'harness'
@@ -789,7 +791,10 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessPiEnabled: config.harnessPiEnabled ?? false,
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
-    teamJobLaunchEnabled: config.teamJobLaunchEnabled ?? false,
+    teamJobLaunchEnabled: config.teamJobLaunchEnabled === true,
+    composerShowCliAgent: config.composerShowCliAgent !== false,
+    composerShowModern: config.composerShowModern !== false,
+    composerShowAutonomousTeam: config.composerShowAutonomousTeam !== false,
     openerHiddenTargets: config.openerHiddenTargets ?? [],
     lastProjectId: config.lastProjectId ?? null,
   };
@@ -1555,6 +1560,16 @@ interface DataState {
   microVmEnabled: boolean;
   /** Mirror of AppConfig.teamJobLaunchEnabled — gates durable Team job launch. */
   teamJobLaunchEnabled: boolean;
+  setTeamJobLaunchEnabled: (on: boolean) => void;
+  /** Mirror of AppConfig.composerShowCliAgent — CLI Agent in the launch switcher. */
+  composerShowCliAgent: boolean;
+  setComposerShowCliAgent: (on: boolean) => void;
+  /** Mirror of AppConfig.composerShowModern — Modern in the launch switcher. */
+  composerShowModern: boolean;
+  setComposerShowModern: (on: boolean) => void;
+  /** Mirror of AppConfig.composerShowAutonomousTeam — Autonomous Team in the switcher. */
+  composerShowAutonomousTeam: boolean;
+  setComposerShowAutonomousTeam: (on: boolean) => void;
   /** Mirror of AppConfig.worktreeIsolationDefault — the default workspace
    *  picker selection (new worktree vs this checkout), not a hidden mode.
    *  A per-project ProjectSettings.worktreeIsolation overrides it. */
@@ -1936,6 +1951,9 @@ export const useData = create<DataState>((set, get) => ({
   openerHiddenTargets: [],
   microVmEnabled: false,
   teamJobLaunchEnabled: false,
+  composerShowCliAgent: true,
+  composerShowModern: true,
+  composerShowAutonomousTeam: true,
   worktreeIsolationDefault: false,
 
   setFontSize(n) {
@@ -2040,6 +2058,22 @@ export const useData = create<DataState>((set, get) => ({
 
   setMicroVmEnabled(on) {
     set({ microVmEnabled: on });
+  },
+
+  setTeamJobLaunchEnabled(on) {
+    set({ teamJobLaunchEnabled: on });
+  },
+
+  setComposerShowCliAgent(on) {
+    set({ composerShowCliAgent: on });
+  },
+
+  setComposerShowModern(on) {
+    set({ composerShowModern: on });
+  },
+
+  setComposerShowAutonomousTeam(on) {
+    set({ composerShowAutonomousTeam: on });
   },
 
   setWorktreeIsolationDefault(on) {

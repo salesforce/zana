@@ -344,6 +344,23 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ cliRemoteHostCatalogEnabled: 'yes' }).cliRemoteHostCatalogEnabled).toBeUndefined();
   });
 
+  it('passes through boolean composer launch-surface flags, drops non-booleans', () => {
+    expect(normalizeConfig({ composerShowCliAgent: true }).composerShowCliAgent).toBe(true);
+    expect(normalizeConfig({ composerShowCliAgent: false }).composerShowCliAgent).toBe(false);
+    expect(normalizeConfig({ composerShowModern: true }).composerShowModern).toBe(true);
+    expect(normalizeConfig({ composerShowModern: false }).composerShowModern).toBe(false);
+    expect(normalizeConfig({ composerShowAutonomousTeam: true }).composerShowAutonomousTeam).toBe(true);
+    expect(normalizeConfig({ composerShowAutonomousTeam: false }).composerShowAutonomousTeam).toBe(false);
+    expect(normalizeConfig({ teamJobLaunchEnabled: true }).teamJobLaunchEnabled).toBe(true);
+    expect(normalizeConfig({ teamJobLaunchEnabled: false }).teamJobLaunchEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ composerShowCliAgent: 'yes' }).composerShowCliAgent).toBeUndefined();
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ composerShowModern: 1 }).composerShowModern).toBeUndefined();
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ composerShowAutonomousTeam: 'yes' }).composerShowAutonomousTeam).toBeUndefined();
+  });
+
   it('passes through a boolean suggestionsEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ suggestionsEnabled: true }).suggestionsEnabled).toBe(true);
     expect(normalizeConfig({ suggestionsEnabled: false }).suggestionsEnabled).toBe(false);

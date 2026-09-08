@@ -167,12 +167,6 @@ export function AgentsSettingsView({
           checked={config.teamLaunchEnabled ?? false}
           onChange={(v) => onUpdate({ teamLaunchEnabled: v })}
         />
-        <CheckboxField
-          label="Team jobs"
-          help="Show durable Job Team mode in New agent. Jobs persist on Agents board after closing launcher. Off by default."
-          checked={config.teamJobLaunchEnabled === true}
-          onChange={(v) => onUpdate({ teamJobLaunchEnabled: v })}
-        />
       </Section>
 
       {/* Agent heartbeat — auto-nudge a stalled agent. Its tuning sub-fields

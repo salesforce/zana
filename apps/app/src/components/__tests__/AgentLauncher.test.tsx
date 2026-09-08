@@ -56,10 +56,16 @@ describe('launcher attachments', () => {
 describe('launch mode', () => {
   it('offers Modern, CLI Agent, and Autonomous Team without gating the whole control on teams', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain("useState<LaunchMode>('thread')");
+    expect(source).toContain('useLaunchModePreference');
+    expect(source).toContain('resolveAvailableLaunchMode');
+    expect(source).toContain('setStoredMode');
     expect(source).toContain('<LaunchModeSegmented');
-    expect(source).toContain('showAutonomousTeam={teams.length > 0}');
-    expect(source).toContain('showJobTeam={teamJobLaunchEnabled && teams.length > 0}');
+    expect(source).toContain('showAutonomousTeam={showAutonomousTeam}');
+    expect(source).toContain('showJobTeam={showJobTeam}');
+    expect(source).toContain('visibleComposerLaunchModes');
+    expect(source).toContain('showLaunchSwitcher');
+    expect(source).toContain('showCliAgent={available.showCliAgent}');
+    expect(source).toContain('showModern={available.showModern}');
     expect(source).not.toContain('Single agent');
     expect(source).toContain('<ThreadCommandComposer');
     expect(source).toContain('<LegacyAgentHomeComposer');

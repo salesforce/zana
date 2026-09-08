@@ -106,7 +106,9 @@ export default definePluginApp((app) => {
     id: 'new',
     title: 'New task',
     icon: 'Plus',
-    run: () => {}
+    run: ({ toPluginPanel }) => {
+      toPluginPanel('main');
+    }
   });
   app.slots.projectStatusbarItem({
     id: 'orgs',

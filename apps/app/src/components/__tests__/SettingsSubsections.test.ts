@@ -12,12 +12,61 @@ describe('Settings subsection navigation', () => {
     ]);
   });
 
-  it('lists Composer, CLI skills, and Debug under Global', () => {
+  it('lists CLI skills and Debug under Global, not Composer', () => {
     expect(SETTINGS_SUBSECTIONS.global).toEqual(expect.arrayContaining([
-      { id: 'threads', label: 'Composer' },
       { id: 'cli-skills', label: 'CLI skills' },
       { id: 'debug', label: 'Debug' }
     ]));
+    expect(SETTINGS_SUBSECTIONS.global?.map((section) => section.id)).not.toContain('keyboard');
+    expect(SETTINGS_SUBSECTIONS.global?.map((section) => section.id)).not.toContain('threads');
+  });
+
+  it('lists Composer as its own Settings section, after Global and before Shortcuts', () => {
+    const ids = SETTINGS_SECTIONS.map((section) => section.id);
+    expect(ids).toContain('composer');
+    expect(ids.indexOf('global')).toBeLessThan(ids.indexOf('composer'));
+    expect(ids.indexOf('composer')).toBeLessThan(ids.indexOf('keyboard'));
+    expect(SETTINGS_SECTIONS.find((section) => section.id === 'composer')).toMatchObject({
+      label: 'Composer',
+      group: 'config'
+    });
+    expect(SETTINGS_SUBSECTIONS.composer).toEqual([
+      { id: 'launch-surfaces', label: 'Launch surfaces' },
+      { id: 'composer', label: 'Composer' }
+    ]);
+    const panel = readFileSync(
+      fileURLToPath(new URL('../../views/settings/SettingsView.tsx', import.meta.url)),
+      'utf8'
+    );
+    expect(panel).toContain("import { ComposerSettingsView } from '@/views/settings/ComposerSettingsView'");
+    expect(panel).toContain("tab === 'composer'");
+    expect(panel).toContain('<ComposerSettingsView');
+    const agents = readFileSync(
+      fileURLToPath(new URL('../../views/settings/AgentsSettingsView.tsx', import.meta.url)),
+      'utf8'
+    );
+    expect(agents).not.toContain('label="Team jobs"');
+  });
+
+  it('lists Shortcuts as its own Settings section, after Global', () => {
+    const ids = SETTINGS_SECTIONS.map((section) => section.id);
+    expect(ids).toContain('keyboard');
+    expect(ids.indexOf('global')).toBeLessThan(ids.indexOf('keyboard'));
+    expect(ids.indexOf('keyboard')).toBeLessThan(ids.indexOf('inbox'));
+    expect(SETTINGS_SECTIONS.find((section) => section.id === 'keyboard')).toMatchObject({
+      label: 'Shortcuts',
+      group: 'config'
+    });
+    expect(SETTINGS_SUBSECTIONS.keyboard).toEqual([
+      { id: 'keyboard', label: 'Shortcuts' }
+    ]);
+    const panel = readFileSync(
+      fileURLToPath(new URL('../../views/settings/SettingsView.tsx', import.meta.url)),
+      'utf8'
+    );
+    expect(panel).toContain("import { KeyboardSettingsSection } from '@/views/settings/KeyboardSettingsSection'");
+    expect(panel).toContain("tab === 'keyboard'");
+    expect(panel).toContain('<KeyboardSettingsSection />');
   });
 
   it('does not expose Authorizations, Files, or Projects clone-root on Global', () => {
@@ -28,6 +77,7 @@ describe('Settings subsection navigation', () => {
     expect(ids).not.toContain('connectivity');
     expect(ids).not.toContain('inbox');
     expect(ids).not.toContain('performance');
+    expect(ids).not.toContain('keyboard');
     const source = readFileSync(
       fileURLToPath(new URL('../../views/settings/GlobalView.tsx', import.meta.url)),
       'utf8'
@@ -130,8 +180,11 @@ describe('Settings subsection navigation', () => {
       fileURLToPath(new URL('../listpane/SettingsPane.tsx', import.meta.url)),
       'utf8'
     );
-    expect(source).toContain('data-testid={`settings-nav-${id}`}');
-    expect(source).not.toContain('settings-subsection-list');
+    expect(source).toContain('data-testid={`settings-nav-${section.id}`}');
+    expect(source).toContain('settings-search');
+    expect(source).toContain('filterSettingsNav');
+    expect(source).toContain('settings-subsection-list');
+    expect(source).toContain('setSettingsAnchor(sub.id)');
     expect(source).not.toContain('selectSettingsExtension');
   });
 
@@ -142,9 +195,12 @@ describe('Settings subsection navigation', () => {
     );
     expect(source).not.toContain('PluginSettingsSections');
     expect(source).toContain("import { CliSkillsSettings } from './CliSkillsSettings'");
-    expect(source).toContain("import { KeyboardSettingsSection } from './KeyboardSettingsSection'");
-    expect(source).toContain('reloadComposerCommandCatalog');
-    expect(source).toContain('Reload slash commands');
+    expect(source).not.toContain("import { KeyboardSettingsSection } from './KeyboardSettingsSection'");
+    expect(source).not.toContain('<KeyboardSettingsSection');
+    expect(source).not.toContain('reloadComposerCommandCatalog');
+    expect(source).not.toContain('Reload slash commands');
+    expect(source).not.toContain('Default launch mode');
+    expect(source).not.toContain('LAUNCH_MODE_PICKLIST_OPTIONS');
     expect(source).toContain('Record provider traffic');
     expect(source).toContain('providerBridgeRecordingEnabled');
     expect(SETTINGS_SECTIONS.map((section) => section.id)).not.toContain('plugins');

@@ -19,6 +19,7 @@ const SECTIONS: Section[] = [
   {
     title: 'Navigation',
     rows: [
+      { keys: ['⌘', 'N'], label: 'New Chat' },
       { keys: ['⌘', 'P'], label: 'Command palette / project switcher' },
       { keys: ['⌘', '⇧', '1'], label: 'Switch to project 1 (… up to ⌘⇧9)' },
       { keys: ['⌘', '⇧', ']'], label: 'Next project' },

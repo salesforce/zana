@@ -8,7 +8,8 @@ import {
   resolvedKeyboardBindings,
   setCommandShortcutOverride
 } from '@/lib/keyboard-shortcut-settings';
-import { Field, Section } from '@/components/settings/FormFields';
+import { Field, Section, SettingsActionRow } from '@/components/settings/FormFields';
+import { useUi } from '@/store';
 
 export function KeyboardSettingsSection() {
   const [, setTick] = useState(0);
@@ -23,8 +24,8 @@ export function KeyboardSettingsSection() {
   return (
     <Section
       anchorId="keyboard"
-      title="Keyboard"
-      help="Remap the chords that open the palette, Quick Open, the explorer, and Settings. Other shortcuts stay as listed in Keyboard shortcuts (⌘/)."
+      title="Shortcuts"
+      help="Remap New Chat, the palette, Quick Open, the explorer, and Settings. Press ⌘/ to see every shortcut."
     >
       {REMAPPABLE_COMMANDS.map((command) => {
         const binding = bindings.find((row) => row.command === command.command);
@@ -66,6 +67,19 @@ export function KeyboardSettingsSection() {
           </Field>
         );
       })}
+      <SettingsActionRow
+        label="All shortcuts"
+        help="The full list, including chords that are not remappable here. Press ⌘/ from anywhere."
+      >
+        <button
+          type="button"
+          className="settings-btn"
+          data-testid="show-all-shortcuts"
+          onClick={() => useUi.getState().setShortcutsOpen(true)}
+        >
+          Show
+        </button>
+      </SettingsActionRow>
     </Section>
   );
 }

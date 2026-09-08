@@ -1,0 +1,7 @@
+/* Document page: grow with the wireframe and scroll the site, not an inner pane. */
+.plugin-guide-scroll[data-guide-stage-viewport] {
+  height: auto;
+  max-height: none;
+  min-height: 0;
+  overflow: visible;
+}

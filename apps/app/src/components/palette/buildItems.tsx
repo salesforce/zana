@@ -186,6 +186,18 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
 
   const actions: PaletteItem[] = [
     {
+      key: 'action:new-chat',
+      icon: <Sparkles size={14} />,
+      label: 'New Chat',
+      hint: '⌘N',
+      category: 'Actions',
+      source: 'core',
+      run: () => {
+        setNav('home');
+        onClose();
+      }
+    },
+    {
       key: 'action:add-project',
       icon: <Plus size={14} />,
       label: 'Add project…',
