@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Brain, Check } from 'lucide-react';
+import { Brain } from 'lucide-react';
 import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import { placePopoverMenu, useExclusivePopover } from '../../ui/PopoverPicklist.js';
 import type { PickerOption } from './model-picker-option.js';
@@ -119,7 +119,7 @@ export function ReasoningEffortPicker({
       {open && createPortal(
         <div
           ref={menuRef}
-          className="model-reasoning-picker-menu"
+          className="reasoning-effort-picker-menu"
           role="listbox"
           aria-label="Thinking effort"
           data-testid="reasoning-effort-picker-menu"
@@ -132,18 +132,18 @@ export function ReasoningEffortPicker({
                 type="button"
                 role="option"
                 aria-selected={isSelected}
-                className={`model-reasoning-picker-row${isSelected ? ' is-selected' : ''}`}
+                aria-pressed={isSelected}
+                className={`reasoning-effort-pill${isSelected ? ' is-selected' : ''}`}
                 data-testid={`reasoning-effort-${option.value}`}
                 onClick={() => {
                   onChange(option.value);
                   setOpen(false);
                 }}
               >
-                <span className="reasoning-effort-picker-row-label">
-                  <EffortBars filled={reasoningEffortFill(option.value)} />
-                  {option.label}
+                <EffortBars filled={reasoningEffortFill(option.value)} />
+                <span className="reasoning-effort-picker-label">
+                  {REASONING_LABELS[option.value] ?? option.label}
                 </span>
-                {isSelected ? <Check size={14} aria-hidden="true" /> : null}
               </button>
             );
           })}

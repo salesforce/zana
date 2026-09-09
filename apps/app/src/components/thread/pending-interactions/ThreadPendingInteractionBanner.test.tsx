@@ -74,6 +74,30 @@ describe('ThreadPendingInteractionBanner', () => {
     expect(html).toContain('is-ghost');
   });
 
+  it('wraps native prompts in a collapsible pending-interaction shell', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={commandInteraction()} threadId="thr-1" />
+      </MemoryRouter>
+    );
+    expect(html).toContain('thread-pending-shell');
+    expect(html).toContain('thread-pending-attention-dot');
+    expect(html).toContain('data-testid="thread-pending-shell-toggle"');
+    expect(html).toContain('Collapse');
+  });
+
+  it('collapses the pending-interaction body', () => {
+    render(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={commandInteraction()} threadId="thr-1" />
+      </MemoryRouter>
+    );
+    expect(screen.getByText('$ git push')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('thread-pending-shell-toggle'));
+    expect(screen.queryByText('$ git push')).toBeNull();
+    expect(screen.getByText('Expand')).toBeTruthy();
+  });
+
   it('renders a source-thread link and a question form', () => {
     const question = {
       ...commandInteraction(),

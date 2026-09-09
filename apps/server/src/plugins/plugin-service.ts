@@ -73,8 +73,8 @@ import {
 } from './plugin-commands-skill.js';
 import { syncPluginInstructionsSkill } from './plugin-instructions-skill.js';
 import {
-  builtinSkillsRootPath,
   collectPluginSkillDirectoryRoots,
+  selectBuiltinSkillDirectoryRoots,
   writeInjectedSkillRootManifest
 } from './injected-skill-roots.js';
 import { applyBundledPosthogApiKey } from '../bundled-posthog-api-key.js';
@@ -164,6 +164,8 @@ export interface PluginService {
   dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
   readLogs(id: string, tail?: number): Promise<string[]>;
+  /** Rewrite injected-skill-roots.json for the current bundled-skill opt-outs. */
+  syncInjectedSkillRoots(): Promise<void>;
 }
 
 export interface PluginUiSnapshot {
@@ -322,6 +324,11 @@ export interface PluginServiceOptions {
    * forwarder, whose tools reach Electron-main's loopback MCP route.
    */
   hostAgentToolSource?: PluginAgentToolSource;
+  /** Live AppConfig so bundled-skill injection can honor operator opt-outs. */
+  getAppConfig?: () => {
+    injectBundledSkills?: boolean;
+    disabledBundledSkills?: string[];
+  };
 }
 
 interface LivePlugin {
@@ -643,7 +650,15 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         ...instructionContributions(),
         ...(await configuredInstructions())
       ]);
-      const directoryRoots = [builtinSkillsRootPath(), generatedSkillsRootPath(opts.dataDir)];
+      const config = opts.getAppConfig?.() ?? {};
+      const directoryRoots = [
+        ...selectBuiltinSkillDirectoryRoots({
+          dataDir: opts.dataDir,
+          injectBundledSkills: config.injectBundledSkills,
+          disabledBundledSkills: config.disabledBundledSkills
+        }),
+        generatedSkillsRootPath(opts.dataDir)
+      ];
       for (const row of store.list()) {
         if (!row.enabled) continue;
         try {
@@ -1430,6 +1445,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     async readLogs(id, tail = 100) {
       return readPluginLogTail(opts.dataDir, id, tail);
     },
+    syncInjectedSkillRoots: syncCliSkill,
     async callRpc(pluginId, method, args) {
       const current = live.get(pluginId);
       const handler = current?.rpc.get(method);

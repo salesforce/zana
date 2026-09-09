@@ -827,6 +827,7 @@ describe('expandable row and chips', () => {
     expect(columnCss).toContain('height: 100%;');
     expect(columnCss).toContain('overflow: hidden;');
     expect(css).toContain('.thread-composer-dock {');
+    expect(css).toContain('grid-template-columns: minmax(0, 1fr)');
     expect(css).toContain('.thread-composer-stack-card');
     expect(css).toContain('.thread-prompt-mode-card');
     expect(css).toContain('.thread-pending-banner-plan');

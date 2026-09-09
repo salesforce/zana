@@ -1048,8 +1048,27 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   ) {
     normalized.composerSendMode = input.composerSendMode;
   }
-  if (typeof input.showUnhandledProviderEvents === 'boolean') {
+  if (typeof input.showDiagnosticEvents === 'boolean') {
+    normalized.showDiagnosticEvents = input.showDiagnosticEvents;
+    normalized.showUnhandledProviderEvents = input.showDiagnosticEvents;
+  } else if (typeof input.showUnhandledProviderEvents === 'boolean') {
     normalized.showUnhandledProviderEvents = input.showUnhandledProviderEvents;
+    normalized.showDiagnosticEvents = input.showUnhandledProviderEvents;
+  }
+  if (typeof input.injectProductGuidance === 'boolean') {
+    normalized.injectProductGuidance = input.injectProductGuidance;
+  }
+  if (typeof input.injectRemoteInstructions === 'boolean') {
+    normalized.injectRemoteInstructions = input.injectRemoteInstructions;
+  }
+  if (typeof input.injectBundledSkills === 'boolean') {
+    normalized.injectBundledSkills = input.injectBundledSkills;
+  }
+  if (Array.isArray(input.disabledBundledSkills)) {
+    const names = input.disabledBundledSkills.filter(
+      (name): name is string => typeof name === 'string' && name.trim().length > 0
+    ).map((name) => name.trim());
+    normalized.disabledBundledSkills = [...new Set(names)];
   }
   if (typeof input.providerBridgeRecordingEnabled === 'boolean') {
     normalized.providerBridgeRecordingEnabled = input.providerBridgeRecordingEnabled;

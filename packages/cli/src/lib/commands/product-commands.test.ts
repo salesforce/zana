@@ -329,6 +329,22 @@ describe('product API command groups', () => {
     expect((await runCli(['node', 'zcc', 'environment', 'pull-request', 'e1', '--json'], { fetchImpl })).exitCode).toBe(0);
   });
 
+  it('parses JSON arrays for settings general writes', async () => {
+    let body: unknown;
+    const fetchImpl = router({
+      'PATCH /api/v1/config': (_url, init) => {
+        body = JSON.parse(String(init?.body));
+        return { config: body };
+      }
+    });
+    const result = await runCli(
+      ['node', 'zcc', 'settings', 'general', 'disabledBundledSkills', '["zcc-cli"]', '--json'],
+      { fetchImpl }
+    );
+    expect(result.exitCode).toBe(0);
+    expect(body).toEqual({ disabledBundledSkills: ['zcc-cli'] });
+  });
+
   it('returns usage errors for missing ids', async () => {
     const fetchImpl = router({});
     expect((await runCli(['node', 'zcc', 'thread', 'show'], { fetchImpl })).exitCode).toBe(2);

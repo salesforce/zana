@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { Check } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import {
   isApprovalPendingInteractionPayload,
   isPluginPendingInteraction,
@@ -36,6 +35,7 @@ import {
   toUserAnswerResolution,
   type QuestionAnswerDraft
 } from './pending-interaction-question-form.js';
+import { PendingInteractionShell } from './PendingInteractionShell.js';
 
 interface SourceThread {
   href: string;
@@ -98,27 +98,16 @@ function BannerShell({
   children?: ReactNode;
 }) {
   return (
-    <div className="thread-pending-banner thread-composer-stack-card" data-testid="thread-pending-banner">
-      {sourceThread ? (
-        <Link className="thread-pending-banner-source" to={sourceThread.href}>
-          From child agent: {sourceThread.title}
-        </Link>
-      ) : null}
-      {title ? <h3 className="thread-pending-banner-title">{title}</h3> : null}
+    <PendingInteractionShell
+      title={title}
+      sourceThread={sourceThread}
+      errorMessage={errorMessage}
+      footer={footer}
+      footerAriaLabel={footerAriaLabel}
+      onFooterKeyDown={onFooterKeyDown}
+    >
       {children}
-      {footer ? (
-        <div
-          className="thread-pending-banner-actions"
-          role={footerAriaLabel ? 'toolbar' : undefined}
-          aria-label={footerAriaLabel}
-          data-testid={footerAriaLabel ? 'thread-pending-decision-toolbar' : undefined}
-          onKeyDown={onFooterKeyDown}
-        >
-          {footer}
-        </div>
-      ) : null}
-      {errorMessage ? <p className="thread-pending-banner-error">{errorMessage}</p> : null}
-    </div>
+    </PendingInteractionShell>
   );
 }
 

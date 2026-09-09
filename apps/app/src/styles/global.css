@@ -30406,8 +30406,8 @@ textarea.ui-command-composer-input {
 .thread-composer-dock {
   position: relative;
   z-index: 8;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   overflow: visible;
 }
@@ -30416,12 +30416,66 @@ textarea.ui-command-composer-input {
   margin: 0 0 8px;
   min-width: 0;
   padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--accent-blue) 42%, var(--border));
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--accent-blue) 9%, var(--bg-elevated, var(--bg-background)));
-  box-shadow: inset 3px 0 0 var(--accent-blue);
+  background: var(--bg-elevated, var(--bg-background));
   color: var(--text-secondary, var(--ink-muted));
   font-size: 14px;
+  container-type: inline-size;
+}
+
+.thread-pending-shell-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.thread-pending-attention-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent-blue);
+}
+
+.thread-pending-shell-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.thread-pending-shell-toggle:hover,
+.thread-pending-shell-toggle:focus-visible {
+  background: color-mix(in srgb, var(--bg-hover, var(--bg-2)) 80%, transparent);
+}
+
+@container (max-width: 420px) {
+  .thread-pending-shell-header {
+    flex-wrap: nowrap;
+  }
+
+  .thread-pending-banner-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .thread-pending-shell:not(.is-collapsed) .thread-pending-banner-details,
+  .thread-pending-shell:not(.is-collapsed) .thread-pending-banner-reason {
+    display: none;
+  }
 }
 
 .thread-composer-stack-card {
@@ -30961,6 +31015,56 @@ textarea.ui-command-composer-input {
 .thread-command-footer-start {
   flex: 1 1 auto;
   gap: 4px;
+}
+
+.reasoning-effort-picker-menu {
+  position: fixed;
+  z-index: 400;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: min(100vw - 16px, 280px);
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 10px;
+  background: var(--bg-elevated, var(--bg-panel));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+}
+
+.reasoning-effort-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px 0 6px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted, var(--ink-muted));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.reasoning-effort-pill:hover:not(:disabled),
+.reasoning-effort-pill:focus-visible {
+  background: color-mix(in srgb, var(--bg-hover, var(--bg-2)) 80%, transparent);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.reasoning-effort-pill.is-selected {
+  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
+  color: var(--text-primary);
+}
+
+.reasoning-effort-pill:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .model-reasoning-picker-trigger,
@@ -32427,6 +32531,9 @@ textarea.thread-command-editor {
 .new-thread-view .home-agent-composer {
   width: min(820px, 100%);
   margin: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .project-body > .new-thread-view,

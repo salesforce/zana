@@ -52,6 +52,11 @@ import {
 } from "../session-params.js";
 import { BB_PI_EXTENSION_SOURCE } from "./bb-pi-extension.js";
 import {
+  createExtensionUiCoordinator,
+  type ExtensionUiCoordinator,
+} from "./extension-ui.js";
+import { type InteractionUiRequest } from "../extension-ui-contract.js";
+import {
   getPiInstallGate,
   getPiProviderInstallationRun,
   getPiProviderInstallationStatus,
@@ -200,13 +205,17 @@ let sessionSerialCounter = 0;
 const THREAD_STOP_CLOSE_TIMEOUT_MS = 8_000;
 
 const { send, sendResult, sendError } = createBridgeIo<
-  BridgeEventNotification | BridgeToolCallRequest
+  BridgeEventNotification | BridgeToolCallRequest | InteractionUiRequest
 >();
 
 const sessions = new Map<string, ThreadSession>();
 const closingSessions = new Map<string, Promise<string | undefined>>();
 const { forwardToolCall, handleToolCallResponse, resolvePendingToolCalls } =
   createPendingToolCallTracker({ sendToolCall: send });
+
+const extensionUi: ExtensionUiCoordinator = createExtensionUiCoordinator({
+  sendInteractionRequest: send,
+});
 
 let configuredSkillPaths: string[] | null = null;
 
@@ -274,6 +283,7 @@ async function closeThreadSession(args: {
   }
   threadSession.closing = true;
   resolvePendingToolCalls(threadSession, args.message);
+  extensionUi.cancelPendingForScope(threadSession);
   const closePromise = Promise.resolve()
     .then(() =>
       threadSession.session.closeGracefully(THREAD_STOP_CLOSE_TIMEOUT_MS),
@@ -419,6 +429,23 @@ function createOnPiEvent(
   };
 }
 
+function createOnExtensionUiRequest(
+  args: CurrentThreadSessionArgs,
+): (request: Record<string, unknown>) => void {
+  return (request) => {
+    const threadSession = getCurrentThreadSession(args);
+    if (!threadSession || threadSession.closing) return;
+    extensionUi.handle({
+      scope: threadSession,
+      request,
+      threadId: args.threadId,
+      providerThreadId: threadSession.providerThreadId,
+      respond: (requestId, fields) =>
+        threadSession.session.respondToExtensionUi(requestId, fields),
+    });
+  };
+}
+
 function createOnSessionDone(
   args: CurrentThreadSessionArgs,
 ): (error?: unknown) => void {
@@ -532,7 +559,11 @@ async function handleRequest(
       const missingCwd = resumedSessionMissingCwd(
         request.params.providerThreadId,
       );
-      if (missingCwd !== null) {
+      const requestedCwd = request.params.cwd;
+      // The persisted cwd is stale when the thread already moved to a
+      // new environment directory and the old one was removed; resume at
+      // the requested, existing cwd instead of failing the whole turn.
+      if (missingCwd !== null && !existsSync(requestedCwd ?? "")) {
         sendError(
           request.id,
           -32000,
@@ -699,6 +730,7 @@ async function buildSessionOptions(args: {
   params: PiSessionParams;
   providerThreadId: string;
   threadId: string;
+  sessionSerial: number;
 }): Promise<PiRpcSessionOptions> {
   return {
     cwd: args.params.cwd,
@@ -725,6 +757,10 @@ async function buildSessionOptions(args: {
     scratchDir: requireScratchDir(),
     extensionPath: requireExtensionPath(),
     recordThreadId: args.threadId,
+    onExtensionUiRequest: createOnExtensionUiRequest({
+      sessionSerial: args.sessionSerial,
+      threadId: args.threadId,
+    }),
   };
 }
 
@@ -738,6 +774,7 @@ async function constructPiThreadSession(
     params,
     providerThreadId,
     threadId,
+    sessionSerial,
   });
   const session = new PiRpcSession(
     sessionOptions,
@@ -750,7 +787,7 @@ async function constructPiThreadSession(
     sessionSerial,
     closing: false,
     providerThreadId,
-    cwd: persistedSessionCwd(providerThreadId) ?? params.cwd,
+    cwd: usablePersistedSessionCwd(providerThreadId) ?? params.cwd,
     construction: params,
     constructionModel: sessionOptions.model,
   };
@@ -802,6 +839,7 @@ function retireReplacedPiChild(replaced: ThreadSession): void {
     replaced,
     "Pi thread session replaced while tool call was pending",
   );
+  extensionUi.cancelPendingForScope(replaced);
   void replaced.session
     .closeGracefully(THREAD_STOP_CLOSE_TIMEOUT_MS)
     .catch(() => undefined);
@@ -857,6 +895,11 @@ async function handleThreadConstruction(
 function resumedSessionMissingCwd(providerThreadId: string): string | null {
   const cwd = persistedSessionCwd(providerThreadId);
   return cwd !== null && !existsSync(cwd) ? cwd : null;
+}
+
+function usablePersistedSessionCwd(providerThreadId: string): string | null {
+  const cwd = persistedSessionCwd(providerThreadId);
+  return cwd !== null && existsSync(cwd) ? cwd : null;
 }
 
 function persistedSessionCwd(providerThreadId: string): string | null {
@@ -1161,9 +1204,17 @@ interface ExtractedInput {
   images: ImageContent[];
 }
 
+interface SelectedPiSkill {
+  chunkIndex: number;
+  end: number;
+  name: string;
+  start: number;
+}
+
 function extractInput(input: TurnStartParams["input"]): ExtractedInput {
   const chunks: string[] = [];
   const images: ImageContent[] = [];
+  const skills: SelectedPiSkill[] = [];
   for (const item of input) {
     if (!item || typeof item !== "object") continue;
     const typed = item as {
@@ -1171,9 +1222,40 @@ function extractInput(input: TurnStartParams["input"]): ExtractedInput {
       text?: string;
       path?: string;
       mimeType?: string;
+      mentions?: readonly {
+        start: number;
+        end: number;
+        resource: {
+          kind?: string;
+          source?: string;
+          trigger?: string;
+          name?: string;
+        };
+      }[];
     };
     if (typed.type === "text" && typeof typed.text === "string") {
-      chunks.push(typed.text);
+      const chunkIndex = chunks.push(typed.text) - 1;
+      for (const mention of typed.mentions ?? []) {
+        const resource = mention.resource;
+        if (
+          resource.kind === "command" &&
+          resource.source === "skill" &&
+          resource.trigger === "/" &&
+          typeof resource.name === "string" &&
+          mention.start >= 0 &&
+          mention.start < mention.end &&
+          mention.end <= typed.text.length &&
+          typed.text.slice(mention.start, mention.end) ===
+            `${resource.trigger}${resource.name}`
+        ) {
+          skills.push({
+            chunkIndex,
+            end: mention.end,
+            name: resource.name,
+            start: mention.start,
+          });
+        }
+      }
     } else if (typed.type === "localImage" && typeof typed.path === "string") {
       try {
         const data = readFileSync(typed.path).toString("base64");
@@ -1184,13 +1266,32 @@ function extractInput(input: TurnStartParams["input"]): ExtractedInput {
       chunks.push(`[Attached file: ${typed.path}]`);
     }
   }
+  const [skill] = skills;
+  if (skills.length === 1 && skill) {
+    const chunk = chunks[skill.chunkIndex];
+    if (chunk !== undefined) {
+      chunks[skill.chunkIndex] =
+        `${chunk.slice(0, skill.start)}${chunk.slice(skill.end)}`;
+      const argumentsText = chunks.join("\n");
+      const separator = argumentsText.startsWith(" ") ? "" : " ";
+      return {
+        text: `/skill:${skill.name}${argumentsText ? `${separator}${argumentsText}` : ""}`,
+        images,
+      };
+    }
+  }
   return { text: chunks.length > 0 ? chunks.join("\n") : undefined, images };
 }
 
 function handleParsedMessage(parsed: unknown): void {
   const response = decodeBridgeJsonRpcResponse(parsed);
-  if (response && handleToolCallResponse(response)) {
-    return;
+  if (response) {
+    if (extensionUi.handleRuntimeResponse(response)) {
+      return;
+    }
+    if (handleToolCallResponse(response)) {
+      return;
+    }
   }
   const decoded = decodePiJsonRpcRequest(parsed);
   if (decoded.kind === "ignored") {

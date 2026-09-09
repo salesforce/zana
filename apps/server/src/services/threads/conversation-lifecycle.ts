@@ -6,7 +6,6 @@ import {
   getEnvironment,
   getThreadExecutionState,
   listConversationThreadEvents,
-  listConversationThreadsByProject,
   listDueDeferredThreadMessages,
   listLiveConversationThreadsForHost,
   setConversationProviderThreadId,
@@ -54,6 +53,7 @@ import {
 import { startLiveTurnCommand } from './conversation-live-turn.js';
 import { LIVE_TURN_COMMAND_TIMEOUT_MS } from '../../http/host-hub.js';
 import { archiveConversationOnHost, unarchiveConversationOnHost } from './thread-host-commands.js';
+import { collectConversationArchiveDescendants } from './conversation-child-ops.js';
 import { bridgeLaunchForProvider, getThreadProvider, permissionModeForLaunchProfile } from './thread-provider-catalog.js';
 import { clampPermissionModeToHost } from '../hosts/permission-ceiling.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
@@ -476,13 +476,8 @@ export async function archiveConversation(
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) return false;
   if (!options.skipEnvironmentCleanup) {
-    const hiddenChildren = listConversationThreadsByProject(ctx.db, thread.projectId, true, { includeHidden: true })
-      .filter((row) => (
-        row.parentThreadId === thread.id
-        && row.visibility === 'hidden'
-        && row.archivedAt === null
-      ));
-    for (const child of hiddenChildren) {
+    const descendants = collectConversationArchiveDescendants(ctx, thread);
+    for (const child of descendants) {
       await archiveConversation(ctx, child.id, { skipEnvironmentCleanup: true });
     }
   }

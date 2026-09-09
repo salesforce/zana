@@ -25,6 +25,7 @@ const catalog: SettingsNavCatalog = appSettingsNavCatalog({
       { id: 'composer', label: 'Composer' }
     ],
     agents: [
+      { id: 'agent-guidance', label: 'Agent guidance' },
       { id: 'overseer', label: 'Overseer' },
       { id: 'auto-close-idle', label: 'Idle handling & follow-ups' }
     ]
@@ -91,6 +92,12 @@ describe('filterSettingsNav', () => {
     const launch = filterSettingsNav('launch mode', catalog);
     expect(launch[0]?.sections[0]?.id).toBe('composer');
     expect(launch[0]?.sections[0]?.subsections.map((row) => row.id)).toEqual(['launch-surfaces']);
+    const guidance = filterSettingsNav('RULES', catalog);
+    expect(guidance[0]?.sections[0]).toEqual({
+      id: 'agents',
+      label: 'Agents',
+      subsections: [{ id: 'agent-guidance', label: 'Agent guidance' }]
+    });
   });
 
   it('matches Project settings', () => {

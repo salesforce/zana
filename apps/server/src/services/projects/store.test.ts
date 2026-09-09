@@ -84,7 +84,11 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'remoteMcpEnabled',
     'steerActiveThreadOnEnter',
     'showUnhandledProviderEvents',
+    'showDiagnosticEvents',
     'providerBridgeRecordingEnabled',
+    'injectProductGuidance',
+    'injectRemoteInstructions',
+    'injectBundledSkills',
     'enableUpdateSimulation',
     'microVmEnabled',
     'followupsFromIdle',
@@ -119,6 +123,25 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     expect(store.getConfig().trustZccToolsEnabled).toBe(true);
     store.setConfig({ trustZccToolsEnabled: false });
     expect(store.getConfig().trustZccToolsEnabled).toBe(false);
+  });
+
+  it('defaults injectProductGuidance, injectRemoteInstructions, and injectBundledSkills on', () => {
+    expect(store.getConfig().injectProductGuidance).toBe(true);
+    expect(store.getConfig().injectRemoteInstructions).toBe(true);
+    expect(store.getConfig().injectBundledSkills).toBe(true);
+    store.setConfig({
+      injectProductGuidance: false,
+      injectRemoteInstructions: false,
+      injectBundledSkills: false
+    });
+    expect(store.getConfig().injectProductGuidance).toBe(false);
+    expect(store.getConfig().injectRemoteInstructions).toBe(false);
+    expect(store.getConfig().injectBundledSkills).toBe(false);
+  });
+
+  it('round-trips disabledBundledSkills', () => {
+    store.setConfig({ disabledBundledSkills: ['zcc-cli', 'zcc-inbox'] });
+    expect(store.getConfig().disabledBundledSkills).toEqual(['zcc-cli', 'zcc-inbox']);
   });
 
   // tmuxScope (tri-state, mirrors overseerMode) defaults to 'all' — absent-in-

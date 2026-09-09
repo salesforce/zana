@@ -808,7 +808,8 @@ describe("timeline CLI rendering snapshots", () => {
       target: { kind: "thread-start" },
       text: "Start the workspace",
     });
-    const timeline = renderActiveTimeline([
+    const timeline = renderTimelineFixture({
+      events: [
       initialRequest,
       event.threadProvisioning({
         status: "active",
@@ -833,7 +834,13 @@ describe("timeline CLI rendering snapshots", () => {
         itemId: "assistant-1",
         text: "I can work now.",
       }),
-    ]);
+      ],
+      projectionOptions: {
+        threadStatus: "active",
+        turnMessageDetail: "summary",
+        includeProviderUnhandledOperations: true,
+      },
+    });
 
     expect(
       timeline.rows.map((row) => {
@@ -893,6 +900,7 @@ describe("timeline CLI rendering snapshots", () => {
       projectionOptions: {
         threadStatus: "error",
         turnMessageDetail: "summary",
+        includeProviderUnhandledOperations: true,
       },
     });
 

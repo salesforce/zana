@@ -836,6 +836,8 @@ export function onCompactionBegin(
     existing.status = "pending";
     existing.title = "Compacting context";
     existing.detail = payload.detail ?? existing.detail;
+    existing.parentToolCallId =
+      payload.parentToolCallId ?? existing.parentToolCallId;
     return;
   }
 
@@ -854,6 +856,9 @@ export function onCompactionBegin(
     opType: "compaction",
     title: "Compacting context",
     detail: payload.detail,
+    ...(payload.parentToolCallId
+      ? { parentToolCallId: payload.parentToolCallId }
+      : {}),
     status: "pending",
   };
   state.openCompactionsByKey.set(payload.key, message);
@@ -875,6 +880,8 @@ export function onCompactionEnd(
     existing.status = "completed";
     existing.title = "Context compacted";
     existing.detail = payload.detail ?? existing.detail;
+    existing.parentToolCallId =
+      payload.parentToolCallId ?? existing.parentToolCallId;
     state.openCompactionsByKey.delete(payload.key);
     state.finalizedCompactionKeys.add(payload.key);
     return;
@@ -899,6 +906,9 @@ export function onCompactionEnd(
     opType: "compaction",
     title: "Context compacted",
     detail: payload.detail,
+    ...(payload.parentToolCallId
+      ? { parentToolCallId: payload.parentToolCallId }
+      : {}),
     status: "completed",
   });
   state.finalizedCompactionKeys.add(payload.key);

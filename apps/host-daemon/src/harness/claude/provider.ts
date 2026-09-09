@@ -475,7 +475,7 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
     // knows the inbox / mesh / follow-up / library tools exist and when to use
     // them — the remote twin of the local `create()` `--append-system-prompt`. Only
     // when MCP is actually wired (otherwise the tools aren't reachable).
-    const guidanceArgs = mcpEnabled
+    const guidanceArgs = mcpEnabled && input.config.injectProductGuidance !== false
       ? ['--append-system-prompt', buildSystemPromptGuidance(input.scheduled ?? false)]
       : [];
     // The inbox allowlist, folded into the single `--allowedTools` flag below so a

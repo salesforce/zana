@@ -17,6 +17,7 @@ describe('Settings subsection navigation', () => {
       { id: 'cli-skills', label: 'CLI skills' },
       { id: 'debug', label: 'Debug' }
     ]));
+    expect(SETTINGS_SUBSECTIONS.global?.map((section) => section.id)).not.toContain('agent-guidance');
     expect(SETTINGS_SUBSECTIONS.global?.map((section) => section.id)).not.toContain('keyboard');
     expect(SETTINGS_SUBSECTIONS.global?.map((section) => section.id)).not.toContain('threads');
   });
@@ -82,6 +83,8 @@ describe('Settings subsection navigation', () => {
       fileURLToPath(new URL('../../views/settings/GlobalView.tsx', import.meta.url)),
       'utf8'
     );
+    expect(source).toContain('Show diagnostic events');
+    expect(source).not.toContain('AgentGuidanceSettings');
     expect(source).not.toContain('AuthorizationsSection');
     expect(source).not.toContain('PluginFileOpenerSettings');
     expect(source).not.toContain('Clone root');
@@ -140,6 +143,20 @@ describe('Settings subsection navigation', () => {
     expect(ids.indexOf('scheduled')).toBeLessThan(ids.indexOf('agent-automation'));
   });
 
+  it('lists Agent guidance first under Agent settings', () => {
+    expect(SETTINGS_SUBSECTIONS.agents?.[0]).toEqual({
+      id: 'agent-guidance',
+      label: 'Agent guidance'
+    });
+    expect(SETTINGS_SUBSECTIONS.global?.map((section) => section.id)).not.toContain('agent-guidance');
+    const agents = readFileSync(
+      fileURLToPath(new URL('../../views/settings/AgentsSettingsView.tsx', import.meta.url)),
+      'utf8'
+    );
+    expect(agents).toContain('AgentGuidanceSettings');
+    expect(agents.indexOf('AgentGuidanceSettings')).toBeLessThan(agents.indexOf('git-worktrees'));
+  });
+
   it('lists Git worktrees under global Agent settings', () => {
     expect(SETTINGS_SUBSECTIONS.agents).toContainEqual({
       id: 'git-worktrees',
@@ -150,6 +167,7 @@ describe('Settings subsection navigation', () => {
   it('puts the CLI Agent cluster last on Agent settings, with Auto mode last', () => {
     const ids = SETTINGS_SUBSECTIONS.agents?.map((section) => section.id) ?? [];
     expect(ids).toEqual([
+      'agent-guidance',
       'git-worktrees',
       'agent-tabs',
       'agent-attention',

@@ -2378,6 +2378,35 @@ export interface AppConfig {
    */
   showUnhandledProviderEvents?: boolean;
   /**
+   * Preferred alias of {@link showUnhandledProviderEvents}. Surface provider
+   * diagnostics and routine environment-provisioning rows. Default off.
+   * Writing either flag updates both so older configs keep working.
+   */
+  showDiagnosticEvents?: boolean;
+  /**
+   * Inject the product introduction (inbox/mesh/library guidance) and layered
+   * `RULES.md` into subsequent launches. Default ON (absent ⇒ true). Subsequent
+   * launches only — already-running sessions keep their current prompt.
+   */
+  injectProductGuidance?: boolean;
+  /**
+   * Inject the remote-access / Connect instruction blob when a launch uses
+   * the CLI remote tool proxy. Default ON (absent ⇒ true). Independent of
+   * {@link injectProductGuidance}. Subsequent launches only.
+   */
+  injectRemoteInstructions?: boolean;
+  /**
+   * Inject the shipped builtin-skills roster into subsequent launches.
+   * Default ON (absent ⇒ true). Master switch — turning it off does not
+   * clear {@link disabledBundledSkills}, so per-skill picks survive.
+   */
+  injectBundledSkills?: boolean;
+  /**
+   * Per-skill opt-outs from the shipped builtin roster. Absent/empty ⇒ every
+   * bundled skill is injected (when {@link injectBundledSkills} is on).
+   */
+  disabledBundledSkills?: string[];
+  /**
    * Tee provider-bridge runtime/ACP wires to NDJSON under the data dir
    * (`provider-recordings/raw`). Default off. A non-empty
    * `ZCC_PROVIDER_BRIDGE_RECORD_DIR` in the host-daemon environment still

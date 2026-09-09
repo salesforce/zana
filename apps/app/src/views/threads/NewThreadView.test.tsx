@@ -34,6 +34,8 @@ describe('NewThreadView', () => {
     const start = css.indexOf('.new-thread-view .home-agent-composer {');
     const block = css.slice(start, css.indexOf('}', start));
     expect(block).toContain('width: min(820px, 100%);');
+    expect(block).toContain('min-width: 0');
+    expect(block).toContain('minmax(0, 1fr)');
     expect(css).toContain('.new-thread-view-inner {');
     const innerStart = css.indexOf('.new-thread-view-inner {');
     const inner = css.slice(innerStart, css.indexOf('}', innerStart));

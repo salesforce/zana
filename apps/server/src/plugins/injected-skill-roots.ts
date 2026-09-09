@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generatedSkillsRootPath } from './plugin-commands-skill.js';
@@ -29,6 +38,62 @@ export function builtinSkillsRootPath(): string {
     resourcesPath ? join(resourcesPath, 'builtin-skills') : null
   ].filter((dir): dir is string => !!dir);
   return candidates.find((dir) => existsSync(dir)) ?? candidates[0]!;
+}
+
+export function injectedBuiltinSkillsStagingPath(dataDir: string): string {
+  return join(dataDir, 'injected-builtin-skills');
+}
+
+/**
+ * Builtin skill folders to inject for the current operator opt-outs.
+ * Master-off returns nothing. A partial per-skill opt-out stages a filtered
+ * copy (symlink, copy fallback) so host-daemon discovery still sees
+ * `<root>/<name>/SKILL.md`. Subsequent launches only — callers rewrite the
+ * injected-skill-roots manifest after config changes.
+ */
+export function selectBuiltinSkillDirectoryRoots(args: {
+  dataDir: string;
+  injectBundledSkills?: boolean;
+  disabledBundledSkills?: readonly string[];
+}): string[] {
+  const staging = injectedBuiltinSkillsStagingPath(args.dataDir);
+  const clearStaging = () => {
+    if (existsSync(staging)) rmSync(staging, { recursive: true, force: true });
+  };
+  if (args.injectBundledSkills === false) {
+    clearStaging();
+    return [];
+  }
+  const src = builtinSkillsRootPath();
+  if (!existsSync(src)) {
+    clearStaging();
+    return [];
+  }
+  const discovered = discoverSkillsInRoot(src);
+  const disabled = new Set(
+    (args.disabledBundledSkills ?? []).filter((name) => typeof name === 'string' && name.length > 0)
+  );
+  const enabled = discovered.filter((skill) => !disabled.has(skill.name));
+  if (enabled.length === 0) {
+    clearStaging();
+    return [];
+  }
+  if (enabled.length === discovered.length) {
+    clearStaging();
+    return [src];
+  }
+  clearStaging();
+  mkdirSync(staging, { recursive: true });
+  for (const skill of enabled) {
+    const from = join(src, skill.name);
+    const to = join(staging, skill.name);
+    try {
+      symlinkSync(from, to, 'dir');
+    } catch {
+      cpSync(from, to, { recursive: true });
+    }
+  }
+  return [staging];
 }
 
 export function injectedSkillRootsPath(dataDir: string): string {
@@ -65,8 +130,6 @@ export function writeInjectedSkillRootManifest(
 
 export function readInjectedSkillDirectoryRoots(dataDir: string): string[] {
   const roots = new Set<string>();
-  const builtin = builtinSkillsRootPath();
-  if (existsSync(builtin)) roots.add(builtin);
   const generated = generatedSkillsRootPath(dataDir);
   if (existsSync(generated)) roots.add(generated);
   try {
@@ -77,10 +140,13 @@ export function readInjectedSkillDirectoryRoots(dataDir: string): string[] {
       for (const root of parsed.directoryRoots) {
         if (typeof root === 'string' && existsSync(root)) roots.add(root);
       }
+      return [...roots];
     }
   } catch {
-    /* missing or malformed manifest is fine — use well-known dirs */
+    /* missing or malformed manifest falls back to the full builtin tree */
   }
+  const builtin = builtinSkillsRootPath();
+  if (existsSync(builtin)) roots.add(builtin);
   return [...roots];
 }
 

@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   builtinSkillsRootPath,
   collectPluginSkillDirectoryRoots,
+  discoverSkillsInRoot,
   readInjectedSkillDirectoryRoots,
+  selectBuiltinSkillDirectoryRoots,
   writeInjectedSkillRootManifest
 } from './injected-skill-roots.js';
 
@@ -29,6 +31,13 @@ describe('builtinSkillsRootPath', () => {
 });
 
 describe('injected skill root manifest', () => {
+  it('does not fall back to builtin skills when the manifest lists empty roots', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-injected-empty-'));
+    dirs.push(dataDir);
+    writeInjectedSkillRootManifest(dataDir, []);
+    expect(readInjectedSkillDirectoryRoots(dataDir)).not.toContain(builtinSkillsRootPath());
+  });
+
   it('includes the builtin tree when writing and reading the manifest', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-injected-server-'));
     dirs.push(dataDir);
@@ -53,5 +62,41 @@ describe('injected skill root manifest', () => {
     });
     expect(collected).toHaveLength(1);
     expect(collected[0]).toBe(join(realpathSync(root), 'skills'));
+  });
+});
+
+describe('selectBuiltinSkillDirectoryRoots', () => {
+  it('returns the full builtin tree by default', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-injected-filter-'));
+    dirs.push(dataDir);
+    expect(selectBuiltinSkillDirectoryRoots({ dataDir })).toEqual([builtinSkillsRootPath()]);
+  });
+
+  it('omits builtin skills when the master switch is off', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-injected-off-'));
+    dirs.push(dataDir);
+    expect(selectBuiltinSkillDirectoryRoots({
+      dataDir,
+      injectBundledSkills: false
+    })).toEqual([]);
+  });
+
+  it('stages only enabled skills when some are opted out', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-injected-partial-'));
+    dirs.push(dataDir);
+    const roots = selectBuiltinSkillDirectoryRoots({
+      dataDir,
+      disabledBundledSkills: ['zcc-cli']
+    });
+    expect(roots).toHaveLength(1);
+    expect(roots[0]).not.toBe(builtinSkillsRootPath());
+    expect(existsSync(join(roots[0]!, 'zcc-inbox', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(roots[0]!, 'zcc-cli', 'SKILL.md'))).toBe(false);
+  });
+
+  it('lists the same slugs as BUNDLED_PRODUCT_SKILL_IDS', async () => {
+    const { BUNDLED_PRODUCT_SKILL_IDS } = await import('@zana-ai/zcc-domain');
+    const names = discoverSkillsInRoot(builtinSkillsRootPath()).map((skill) => skill.name).sort();
+    expect(names).toEqual([...BUNDLED_PRODUCT_SKILL_IDS].slice().sort());
   });
 });
