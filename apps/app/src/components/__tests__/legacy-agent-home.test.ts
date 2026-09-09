@@ -1,21 +1,29 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { PromptTextMention } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   absolutePathMentions,
   applyLaunchPatch,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
+  composerDropProjectRoot,
+  availableModelsToPickerOptions,
   cliAgentCatalogProviders,
   cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
   cliAgentMoreModelOptions,
+  cliComposerModeChip,
+  cliLaunchExecutionState,
   cliLaunchFromPermissionMode,
   cliPermissionModesFor,
+  CLI_WORK_MODES,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
   readCliExtraArgs,
   resolveCliAgentFamily,
   resolveCliLaunchProfile,
   rewritePromptPaths,
+  stageRemoteComposerAttachments,
+  type StageRemoteComposerAttachmentsInput,
   threadProviderIdForFamily,
   unrestrictedProfileId,
   withExecutionState,
@@ -40,7 +48,8 @@ describe('PROFILE_BY_FAMILY', () => {
       cursor: 'cursor',
       codex: 'codex',
       pi: 'pi',
-      opencode: 'opencode'
+      opencode: 'opencode',
+      grok: 'grok'
     });
   });
 });
@@ -52,11 +61,13 @@ describe('thread provider id mapping', () => {
     expect(threadProviderIdForFamily('opencode')).toBe('acp-opencode');
     expect(threadProviderIdForFamily('codex')).toBe('codex');
     expect(threadProviderIdForFamily('pi')).toBe('pi');
+    expect(threadProviderIdForFamily('grok')).toBe('acp-grok');
     expect(threadProviderIdForFamily('shell')).toBeNull();
     expect(familyForThreadProviderId('claude-code')).toBe('claude');
     expect(familyForThreadProviderId('acp-cursor')).toBe('cursor');
     expect(familyForThreadProviderId('acp-opencode')).toBe('opencode');
     expect(familyForThreadProviderId('codex')).toBe('codex');
+    expect(familyForThreadProviderId('acp-grok')).toBe('grok');
     expect(familyForThreadProviderId('unknown')).toBeNull();
   });
 });
@@ -116,7 +127,7 @@ describe('cliAgentModelOptions', () => {
     expect(cliAgentModelOptions({
       adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
       catalogModels: [{ model: 'claude-sonnet-5', displayName: 'Sonnet 5' }]
-    })).toEqual([{ id: 'sonnet', label: 'Sonnet (latest)' }]);
+    })).toEqual([{ model: 'sonnet', displayName: 'Sonnet (latest)' }]);
   });
 
   it('uses the live thread catalog when the adapter has no models (Pi)', () => {
@@ -127,8 +138,8 @@ describe('cliAgentModelOptions', () => {
         { model: 'anthropic/claude-opus-4-8', displayName: 'Opus 4.8' }
       ]
     })).toEqual([
-      { id: 'openai/gpt-5.2', label: 'GPT-5.2' },
-      { id: 'anthropic/claude-opus-4-8', label: 'Opus 4.8' }
+      { model: 'openai/gpt-5.2', displayName: 'GPT-5.2' },
+      { model: 'anthropic/claude-opus-4-8', displayName: 'Opus 4.8' }
     ]);
   });
 
@@ -138,7 +149,7 @@ describe('cliAgentModelOptions', () => {
       catalogModels: [{ model: 'claude-sonnet-5', displayName: 'Sonnet 5' }],
       preferCatalog: true,
       catalogReady: true
-    })).toEqual([{ id: 'claude-sonnet-5', label: 'Sonnet 5' }]);
+    })).toEqual([{ model: 'claude-sonnet-5', displayName: 'Sonnet 5' }]);
     expect(cliAgentModelOptions({
       adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
       catalogModels: [],
@@ -153,7 +164,64 @@ describe('cliAgentModelOptions', () => {
       catalogModels: [],
       preferCatalog: true,
       catalogReady: false
-    })).toEqual([{ id: 'sonnet', label: 'Sonnet (latest)' }]);
+    })).toEqual([{ model: 'sonnet', displayName: 'Sonnet (latest)' }]);
+  });
+
+  it('never mixes PTY snapshot ids into a preferCatalog CLI Agent list', () => {
+    expect(cliAgentModelOptions({
+      adapterModels: [
+        { id: 'auto', label: 'Auto' },
+        { id: 'cursor-grok-4.6-high', label: 'Cursor Grok 4.6' }
+      ],
+      catalogModels: [
+        { model: 'default', displayName: 'Default' },
+        { model: 'grok-4.6', displayName: 'Grok 4.6' }
+      ],
+      preferCatalog: true,
+      catalogReady: true
+    }).map((row) => row.model)).toEqual(['default', 'grok-4.6']);
+    expect(cliAgentModelOptions({
+      adapterModels: [
+        { id: 'gpt-4o', label: 'GPT-4o' },
+        { id: 'o1', label: 'o1' }
+      ],
+      catalogModels: [
+        { model: 'gpt-5.5', displayName: 'GPT-5.5' },
+        { model: 'gpt-5.4', displayName: 'GPT-5.4' }
+      ],
+      preferCatalog: true,
+      catalogReady: true
+    }).map((row) => row.model)).toEqual(['gpt-5.5', 'gpt-5.4']);
+  });
+
+  it('does not keep PTY moving aliases in the primary list once the host catalog is ready', () => {
+    const adapterModels = [
+      { id: 'haiku', label: 'Haiku (latest)' },
+      { id: 'sonnet', label: 'Sonnet (latest)' },
+      { id: 'opus', label: 'Opus (latest)' },
+      { id: 'fable', label: 'Fable (latest)' }
+    ];
+    const catalogModels = [
+      { model: 'claude-sonnet-5', displayName: 'Sonnet 5' },
+      { model: 'claude-opus-5[1m]', displayName: 'Opus 5 (1M)' }
+    ];
+    const catalogMoreModels = [
+      { model: 'haiku', displayName: 'Haiku Alias (Legacy)' },
+      { model: 'sonnet', displayName: 'Sonnet Alias (Legacy)' }
+    ];
+    const primary = cliAgentModelOptions({
+      adapterModels,
+      catalogModels,
+      preferCatalog: true,
+      catalogReady: true
+    });
+    expect(primary.map((row) => row.model)).toEqual(['claude-sonnet-5', 'claude-opus-5[1m]']);
+    expect(primary.map((row) => row.displayName).join(' ')).not.toMatch(/\(latest\)/);
+    expect(cliAgentMoreModelOptions({
+      adapterModelCount: adapterModels.length,
+      catalogMoreModels,
+      preferCatalog: true
+    })).toEqual(catalogMoreModels);
   });
 });
 
@@ -171,7 +239,46 @@ describe('cliAgentMoreModelOptions', () => {
       adapterModelCount: 2,
       catalogMoreModels: [{ model: 'opus', displayName: 'Opus' }],
       preferCatalog: true
-    })).toEqual([{ value: 'opus', label: 'Opus' }]);
+    })).toEqual([{ model: 'opus', displayName: 'Opus' }]);
+  });
+
+  it('passes routeProviderId through from the thread catalog', () => {
+    expect(cliAgentModelOptions({
+      adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
+      catalogModels: [{
+        model: 'openai/gpt-5.2',
+        displayName: 'GPT-5.2',
+        routeProviderId: 'openai'
+      }],
+      preferCatalog: true,
+      catalogReady: true
+    })).toEqual([{
+      model: 'openai/gpt-5.2',
+      displayName: 'GPT-5.2',
+      routeProviderId: 'openai'
+    }]);
+    expect(availableModelsToPickerOptions([{
+      model: 'openai/gpt-5.2',
+      displayName: 'GPT-5.2',
+      routeProviderId: 'openai'
+    }])).toEqual([{
+      value: 'openai/gpt-5.2',
+      label: 'GPT-5.2',
+      routeProviderId: 'openai'
+    }]);
+    expect(cliAgentMoreModelOptions({
+      adapterModelCount: 2,
+      catalogMoreModels: [{
+        model: 'haiku',
+        displayName: 'Haiku Alias (Legacy)',
+        routeProviderId: 'anthropic'
+      }],
+      preferCatalog: true
+    })).toEqual([{
+      model: 'haiku',
+      displayName: 'Haiku Alias (Legacy)',
+      routeProviderId: 'anthropic'
+    }]);
   });
 });
 
@@ -270,7 +377,9 @@ describe('CLI permission modes', () => {
       { family: 'codex', mode: 'full', unrestrictedId: 'codex-yolo', expected: { profileId: 'codex-yolo' } },
       { family: 'pi', mode: 'full', expected: {} },
       { family: 'opencode', mode: 'accept-edits', unrestrictedId: 'opencode-yolo', expected: { executionState: 'accept-edits' } },
-      { family: 'opencode', mode: 'full', unrestrictedId: 'opencode-yolo', expected: { profileId: 'opencode-yolo' } }
+      { family: 'opencode', mode: 'full', unrestrictedId: 'opencode-yolo', expected: { profileId: 'opencode-yolo' } },
+      { family: 'grok', mode: 'accept-edits', unrestrictedId: 'grok-yolo', expected: { executionState: 'accept-edits' } },
+      { family: 'grok', mode: 'full', unrestrictedId: 'grok-yolo', expected: { profileId: 'grok-yolo' } }
     ];
     for (const row of rows) {
       expect(
@@ -381,6 +490,131 @@ describe('CLI launch prompt from mention pills', () => {
   });
 });
 
+describe('composerDropProjectRoot', () => {
+  it('keeps local project paths and skips relativization on SSH remotes', () => {
+    expect(composerDropProjectRoot(undefined)).toBeNull();
+    expect(composerDropProjectRoot({ path: '/repo' })).toBe('/repo');
+    expect(composerDropProjectRoot({ path: '/Users/me/zcc-workspace/remotes/dev', remote: { host: 'devbox' } })).toBeNull();
+  });
+});
+
+describe('stageRemoteComposerAttachments', () => {
+  const pathMention = (path: string): PromptTextMention => ({
+    start: 0,
+    end: path.length + 1,
+    resource: { kind: 'path', source: 'workspace', entryKind: 'file', path, label: path.split('/').pop() ?? path }
+  });
+  const imageFile = { name: 'shot.png' } as File;
+
+  function stagingDeps(
+    overrides: Partial<StageRemoteComposerAttachmentsInput> = {}
+  ): StageRemoteComposerAttachmentsInput {
+    const uploadLocalPath = vi.fn(async (localPath: string) => ({
+      ok: true as const,
+      path: `/remote/.zcc-uploads/${localPath.split('/').pop()}`
+    }));
+    const persistImages = vi.fn(async () => ['clip-1.png']);
+    const uploadPersistedAttachment = vi.fn(async (relative: string) => ({
+      ok: true as const,
+      path: `/remote/.zcc-uploads/${relative}`
+    }));
+    return {
+      promptText: 'See @/Users/me/a.ts please',
+      mentions: [pathMention('/Users/me/a.ts')],
+      images: [] as Array<{ path: string | null; file: File }>,
+      projectId: 'p1',
+      uploadLocalPath,
+      persistImages,
+      uploadPersistedAttachment,
+      quoteRemotePath: (path: string) => path,
+      ...overrides
+    };
+  }
+
+  it('uploads absolute local mentions and rewrites the prompt', async () => {
+    const deps = stagingDeps();
+    const staged = await stageRemoteComposerAttachments(deps);
+    expect(staged).toMatchObject({
+      ok: true,
+      promptText: 'See @/remote/.zcc-uploads/a.ts please',
+      imagePaths: []
+    });
+    expect(deps.uploadLocalPath).toHaveBeenCalledWith('/Users/me/a.ts');
+    expect(deps.persistImages).not.toHaveBeenCalled();
+  });
+
+  it('uploads an image disk path and does not persist it locally', async () => {
+    const deps = stagingDeps({
+      promptText: 'look',
+      mentions: [],
+      images: [{ path: '/Users/me/shot.png', file: imageFile }]
+    });
+    const staged = await stageRemoteComposerAttachments(deps);
+    expect(staged).toEqual({
+      ok: true,
+      promptText: 'look',
+      imagePaths: ['/remote/.zcc-uploads/shot.png'],
+      uploaded: [{ localPath: '/Users/me/shot.png', remotePath: '/remote/.zcc-uploads/shot.png' }]
+    });
+    expect(deps.uploadLocalPath).toHaveBeenCalledWith('/Users/me/shot.png');
+    expect(deps.persistImages).not.toHaveBeenCalled();
+    expect(deps.uploadPersistedAttachment).not.toHaveBeenCalled();
+  });
+
+  it('skips relative typeahead paths', async () => {
+    const deps = stagingDeps({
+      promptText: 'See @src/foo.ts',
+      mentions: [pathMention('src/foo.ts')]
+    });
+    const staged = await stageRemoteComposerAttachments(deps);
+    expect(staged).toMatchObject({ ok: true, promptText: 'See @src/foo.ts', imagePaths: [] });
+    expect(deps.uploadLocalPath).not.toHaveBeenCalled();
+  });
+
+  it('skips absolute paths that are not local files so launch continues', async () => {
+    const deps = stagingDeps({
+      uploadLocalPath: vi.fn(async () => ({
+        ok: false as const,
+        message: 'ENOENT: no such file or directory, stat \'/home/dev/src/foo.ts\''
+      }))
+    });
+    const staged = await stageRemoteComposerAttachments(deps);
+    expect(staged).toMatchObject({
+      ok: true,
+      promptText: 'See @/Users/me/a.ts please',
+      uploaded: []
+    });
+  });
+
+  it('aborts when a local file fails to upload', async () => {
+    const deps = stagingDeps({
+      uploadLocalPath: vi.fn(async () => ({ ok: false as const, message: 'Permission denied' }))
+    });
+    await expect(stageRemoteComposerAttachments(deps)).resolves.toEqual({
+      ok: false,
+      localPath: '/Users/me/a.ts',
+      message: 'Permission denied'
+    });
+  });
+
+  it('persists clipboard images then uploads the stored attachment', async () => {
+    const deps = stagingDeps({
+      promptText: 'look',
+      mentions: [],
+      images: [{ path: null, file: imageFile }]
+    });
+    const staged = await stageRemoteComposerAttachments(deps);
+    expect(staged).toMatchObject({
+      ok: true,
+      promptText: 'look',
+      imagePaths: ['/remote/.zcc-uploads/clip-1.png']
+    });
+    expect(deps.persistImages).toHaveBeenCalledWith('p1', [{ path: null, file: imageFile }]);
+    expect(deps.uploadPersistedAttachment).toHaveBeenCalledWith('clip-1.png');
+    expect(deps.uploadLocalPath).not.toHaveBeenCalled();
+  });
+});
+
 describe('CLI launch overlay helpers', () => {
   it('lets a plugin profile override the base profile', () => {
     expect(resolveCliLaunchProfile({ baseProfile: 'claude' })).toBe('claude');
@@ -428,5 +662,117 @@ describe('CLI launch overlay helpers', () => {
     expect(readCliExtraArgs('codex')).toEqual([]);
     writeCliExtraArgs('claude', []);
     expect(readCliExtraArgs('claude')).toEqual([]);
+  });
+});
+
+describe('cliComposerModeChip', () => {
+  it('keeps OpenCode on native roles and offers Agent/Plan for plan-capable PTY families', () => {
+    expect(CLI_WORK_MODES).toEqual(['agent', 'plan']);
+    expect(cliComposerModeChip('opencode')).toBe('native-role');
+    expect(cliComposerModeChip('claude')).toBe('work-mode');
+    expect(cliComposerModeChip('cursor')).toBe('work-mode');
+    expect(cliComposerModeChip('codex')).toBe('work-mode');
+    expect(cliComposerModeChip('pi')).toBe('none');
+    expect(cliComposerModeChip('grok')).toBe('none');
+    expect(cliComposerModeChip('')).toBe('none');
+  });
+});
+
+describe('cliLaunchExecutionState', () => {
+  const base = {
+    permissionExecutionState: 'accept-edits' as const,
+    hasNativeRole: false,
+    unrestrictedProfileSelected: false
+  };
+
+  it('emits no extra routing on default Agent so current launches stay identical', () => {
+    expect(cliLaunchExecutionState({
+      ...base,
+      familyId: 'claude',
+      workMode: 'agent'
+    })).toBe('accept-edits');
+    expect(cliLaunchExecutionState({
+      familyId: 'claude',
+      workMode: 'agent',
+      hasNativeRole: false,
+      unrestrictedProfileSelected: false
+    })).toBeUndefined();
+    expect(cliLaunchExecutionState({
+      familyId: 'pi',
+      workMode: 'plan',
+      hasNativeRole: false,
+      unrestrictedProfileSelected: false
+    })).toBeUndefined();
+  });
+
+  it('sets plan and never a roleTargetId for Claude, Cursor, and Codex', () => {
+    for (const familyId of ['claude', 'cursor', 'codex'] as const) {
+      expect(cliLaunchExecutionState({
+        ...base,
+        familyId,
+        workMode: 'plan'
+      }), familyId).toBe('plan');
+    }
+  });
+
+  it('XORs Plan against Edits and skips Plan on Full/yolo or an OpenCode native role', () => {
+    expect(cliLaunchExecutionState({
+      ...base,
+      familyId: 'claude',
+      workMode: 'plan'
+    })).toBe('plan');
+    expect(cliLaunchExecutionState({
+      familyId: 'claude',
+      workMode: 'plan',
+      permissionExecutionState: 'accept-edits',
+      hasNativeRole: false,
+      unrestrictedProfileSelected: true
+    })).toBeUndefined();
+    expect(cliLaunchExecutionState({
+      familyId: 'opencode',
+      workMode: 'plan',
+      permissionExecutionState: 'accept-edits',
+      hasNativeRole: true,
+      unrestrictedProfileSelected: false
+    })).toBeUndefined();
+    expect(cliLaunchExecutionState({
+      familyId: 'opencode',
+      workMode: 'agent',
+      permissionExecutionState: 'accept-edits',
+      hasNativeRole: true,
+      unrestrictedProfileSelected: false
+    })).toBeUndefined();
+  });
+
+  it('lets applyLaunchPatch still merge plugin extra args and routing on top of Plan', () => {
+    const routing = withExecutionState(
+      undefined,
+      'claude',
+      cliLaunchExecutionState({
+        familyId: 'claude',
+        workMode: 'plan',
+        permissionExecutionState: 'accept-edits',
+        hasNativeRole: false,
+        unrestrictedProfileSelected: false
+      }) ?? ''
+    );
+    const merged = applyLaunchPatch({
+      baseProfile: 'claude',
+      extraArgs: ['--verbose'],
+      harnessRouting: routing,
+      patch: {
+        extraArgs: ['--plugin-dir', '/tmp/p'],
+        harnessRouting: {
+          schemaVersion: 1,
+          byAdapter: { claude: { modelTargetId: 'sonnet' } }
+        }
+      }
+    });
+    expect(merged.extraArgs).toEqual(['--verbose', '--plugin-dir', '/tmp/p']);
+    expect(merged.harnessRouting?.byAdapter.claude).toMatchObject({
+      executionState: 'plan',
+      modelTargetId: 'sonnet'
+    });
+    expect(merged.harnessRouting?.byAdapter.claude).not.toHaveProperty('roleTargetId');
   });
 });

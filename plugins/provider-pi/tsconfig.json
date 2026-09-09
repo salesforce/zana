@@ -22,6 +22,7 @@
   },
   "include": [
     "server.ts",
-    "app.tsx"
+    "app.tsx",
+    "src/extension-ui-contract.ts"
   ]
 }

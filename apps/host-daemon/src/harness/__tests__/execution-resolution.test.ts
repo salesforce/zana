@@ -54,9 +54,9 @@ describe('execution-state resolution', () => {
     });
     expect(portable).toMatchObject({
       origin: 'portable-mapped', source: 'Persona', targetId: 'opencode.execution.accept-edits',
-      equivalence: 'closest', consentRequired: true,
-      contribution: { args: ['--agent', 'build', '--auto'] }
+      equivalence: 'exact', consentRequired: true
     });
+    expect(portable.contribution).toEqual({});
 
     const pinned = resolveExecutionState(providerFor('opencode'), {
       config: config(), profile: 'opencode', extraArgs: [],
@@ -64,7 +64,7 @@ describe('execution-state resolution', () => {
     });
     expect(pinned).toMatchObject({
       origin: 'explicit-native', source: 'Agent', targetId: 'opencode.execution.accept-edits',
-      equivalence: 'closest', consentRequired: false
+      equivalence: 'exact', consentRequired: false
     });
 
     expect(resolveExecutionState(providerFor('opencode'), {
@@ -83,7 +83,7 @@ describe('execution-state resolution', () => {
       projectSettings: { executionState: 'autonomous' }
     });
     expect(resolved.source).toBe('Persona');
-    expect(resolved.contribution.args).toEqual(['--permission-mode', 'acceptEdits']);
+    expect(resolved.contribution).toEqual({});
   });
 
   it('uses concrete persona harness execution state before portable intent', () => {
@@ -105,7 +105,7 @@ describe('execution-state resolution', () => {
 
     expect(resolved.source).toBe('Persona');
     expect(resolved.state).toBe('accept-edits');
-    expect(resolved.contribution.args).toEqual(['--permission-mode', 'acceptEdits']);
+    expect(resolved.contribution).toEqual({});
   });
 
   it('prefers harness-specific project execution state over interim generic state', () => {
@@ -121,16 +121,17 @@ describe('execution-state resolution', () => {
         }
       }
     });
-    expect(resolved.contribution.args).toEqual(['--permission-mode', 'acceptEdits']);
+    expect(resolved.contribution).toEqual({});
   });
 
-  it('maps OpenCode accept-edits to build plus auto-approve', () => {
+  it('maps OpenCode accept-edits to native default with no extra flags', () => {
     const resolved = resolveExecutionState(providerFor('opencode'), {
       config: config({ defaultExecutionState: 'accept-edits' }),
       profile: 'opencode',
       extraArgs: []
     });
-    expect(resolved.contribution.args).toEqual(['--agent', 'build', '--auto']);
+    expect(resolved.equivalence).toBe('exact');
+    expect(resolved.contribution).toEqual({});
   });
 
   it('maps Cursor autonomous to force', () => {
@@ -140,6 +141,38 @@ describe('execution-state resolution', () => {
       extraArgs: []
     });
     expect(resolved.contribution.args).toEqual(['--force']);
+  });
+
+  it('maps Cursor accept-edits to native default with no extra flags', () => {
+    const resolved = resolveExecutionState(providerFor('cursor'), {
+      config: config({ defaultExecutionState: 'accept-edits' }),
+      profile: 'cursor',
+      extraArgs: []
+    });
+    expect(resolved.equivalence).toBe('exact');
+    expect(resolved.contribution).toEqual({});
+  });
+
+  it('maps Grok accept-edits onto the native TUI and still rejects Plan', () => {
+    expect(resolveExecutionState(providerFor('grok'), {
+      config: config({ defaultExecutionState: 'accept-edits' }),
+      profile: 'grok',
+      extraArgs: []
+    })).toMatchObject({
+      state: 'accept-edits',
+      origin: 'portable-mapped',
+      contribution: {}
+    });
+    expect(resolveExecutionState(providerFor('grok'), {
+      config: config({ defaultExecutionState: 'accept-edits' }),
+      profile: 'grok',
+      extraArgs: []
+    }).contribution).toEqual({});
+    expect(() => resolveExecutionState(providerFor('grok'), {
+      config: config({ defaultExecutionState: 'plan' }),
+      profile: 'grok',
+      extraArgs: []
+    })).toThrow('Grok Build does not support plan execution state.');
   });
 
   it('blocks unsupported explicit Persona and Global execution state', () => {
@@ -236,8 +269,14 @@ describe('execution-state resolution', () => {
   });
 
   it('ignores inherited execution on unrestricted profiles but rejects same-request Agent execution', () => {
-    for (const profile of ['claude-yolo', 'codex-yolo', 'opencode-yolo'] as const) {
-      const family = profile === 'claude-yolo' ? 'claude' : profile === 'codex-yolo' ? 'codex' : 'opencode';
+    for (const profile of ['claude-yolo', 'codex-yolo', 'opencode-yolo', 'grok-yolo'] as const) {
+      const family = profile === 'claude-yolo'
+        ? 'claude'
+        : profile === 'codex-yolo'
+          ? 'codex'
+          : profile === 'grok-yolo'
+            ? 'grok'
+            : 'opencode';
       expect(resolveExecutionState(providerFor(profile), {
         config: config({ defaultExecutionState: 'plan' }), profile, extraArgs: [],
         persona: { id: 'p', name: 'P', executionState: 'interactive' },
@@ -285,6 +324,18 @@ describe('execution-state resolution', () => {
       perTabRouting: {
         schemaVersion: 1,
         byAdapter: { [family]: { executionState: 'plan' } }
+      }
+    })).toThrow('Structured execution state conflicts with raw execution arguments.');
+  });
+
+  it('blocks Grok accept-edits colliding with --always-approve', () => {
+    expect(() => resolveExecutionState(providerFor('grok'), {
+      config: config(),
+      profile: 'grok',
+      extraArgs: ['--always-approve'],
+      perTabRouting: {
+        schemaVersion: 1,
+        byAdapter: { grok: { executionState: 'accept-edits' } }
       }
     })).toThrow('Structured execution state conflicts with raw execution arguments.');
   });

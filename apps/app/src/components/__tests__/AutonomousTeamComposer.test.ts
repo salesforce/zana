@@ -8,7 +8,8 @@ describe('AutonomousTeamComposer', () => {
     expect(source).toContain('useComposerPromptField');
     expect(source).toContain("kind: 'cli'");
     expect(source).toContain('assembleCliLaunchPrompt');
-    expect(source).toContain('absolutePathMentions');
+    expect(source).toContain('stageRemoteComposerAttachments');
+    expect(source).toContain('composerDropProjectRoot');
     expect(source).toContain('PopoverPicklist');
     expect(source).toContain('ariaLabel="Team"');
     expect(source).toContain('Describe a goal for the team');
@@ -16,6 +17,7 @@ describe('AutonomousTeamComposer', () => {
     expect(source).toContain('goalReady');
     expect(source).toContain('data-testid="autonomous-team-command-send"');
     expect(source).toContain('<ComposerProjectPicker');
+    expect(source).toContain('preferredComposerProjectId');
     expect(source).toContain('PluginComposerChrome');
     expect(source).toContain("kind: 'new-thread'");
     expect(source).toContain('initialText');

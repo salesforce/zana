@@ -58,6 +58,9 @@ export function createConfigStore(
     menubarPopoverEnabled: true,
     localExtensionHotReloadEnabled: true,
     trustZccToolsEnabled: true,
+    injectProductGuidance: true,
+    injectRemoteInstructions: true,
+    injectBundledSkills: true,
     remoteDefaultPath: ''
   });
 

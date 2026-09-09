@@ -30,6 +30,7 @@ export function ComposerProjectPicker({
 }) {
   const addProject = useData((s) => s.addProject);
   const addProjectByPath = useData((s) => s.addProjectByPath);
+  const rememberLastProjectId = useData((s) => s.rememberLastProjectId);
   const [showLocalDialog, setShowLocalDialog] = useState(false);
   const rows = useMemo(() => composerProjectPickerRows(projects), [projects]);
   const selectedProject = projects.find((project) => project.id === value);
@@ -37,6 +38,7 @@ export function ComposerProjectPicker({
 
   const selectProject = (projectId: string) => {
     if (projectId === value) return;
+    if (projectId) rememberLastProjectId(projectId);
     onChange(projectId);
   };
 

@@ -15,16 +15,16 @@ import { posixQuote } from '../lib/quote.js';
 import { attachmentName } from '../lib/attachments.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
-import { composerProjectOptions, resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
+import { composerProjectOptions, preferredComposerProjectId, resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { defaultAutonomousTeamId } from './autonomous-team-composer.js';
 import {
-  absolutePathMentions,
   assembleCliLaunchPrompt,
-  rewritePromptPaths
+  composerDropProjectRoot,
+  stageRemoteComposerAttachments
 } from './legacy-agent-home.js';
 
 /**
@@ -59,7 +59,7 @@ export function AutonomousTeamComposer({
     if (!onComposerProjectIdChange) setInternalProjectId(resolved);
     onComposerProjectIdChange?.(resolved);
   };
-  const preferredProjectId = selectedProjectId ?? lastProjectId;
+  const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
   const [teamId, setTeamId] = useState('');
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +75,7 @@ export function AutonomousTeamComposer({
     testId: 'autonomous-team-command-input',
     ariaLabel: 'Goal for the autonomous team',
     projectId,
-    projectRoot: project?.path,
+    projectRoot: composerDropProjectRoot(project),
     projects,
     disabled: launching,
     initialText,
@@ -133,22 +133,31 @@ export function AutonomousTeamComposer({
     try {
       const serialized = field.serialize();
       let promptText = serialized.text;
+      let imagePaths: string[] = [];
       if (project.remote) {
-        const uploaded: Array<{ from: string; to: string }> = [];
-        for (const localPath of absolutePathMentions(serialized.mentions)) {
-          const result = await product.fs.uploadToRemote(project.id, localPath, '.');
-          if (!result.ok || !result.path) {
-            pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
-            return;
-          }
-          uploaded.push({ from: localPath, to: posixQuote(result.path) });
-          pushToast(`Uploaded ${attachmentName(localPath)} to ${project.remote.host}`);
+        const staged = await stageRemoteComposerAttachments({
+          promptText,
+          mentions: serialized.mentions,
+          images: field.images,
+          projectId: project.id,
+          uploadLocalPath: (localPath) => product.fs.uploadToRemote(project.id, localPath, '.'),
+          persistImages: persistComposerImages,
+          uploadPersistedAttachment: (relativePath) =>
+            product.fs.uploadProjectAttachmentToRemote(project.id, relativePath),
+          quoteRemotePath: posixQuote
+        });
+        if (!staged.ok) {
+          pushToast(staged.message ?? `Failed to upload ${attachmentName(staged.localPath)}`, 'error');
+          return;
         }
-        promptText = rewritePromptPaths(promptText, uploaded);
+        for (const row of staged.uploaded) {
+          pushToast(`Uploaded ${attachmentName(row.localPath)} to ${project.remote.host}`);
+        }
+        promptText = staged.promptText;
+        imagePaths = staged.imagePaths;
+      } else if (field.images.length > 0) {
+        imagePaths = await persistComposerImages(project.id, field.images);
       }
-      const imagePaths = field.images.length === 0
-        ? []
-        : await persistComposerImages(project.id, field.images);
       const goal = assembleCliLaunchPrompt({ text: promptText, imagePaths });
       if (!goal) {
         setError('Describe a goal for the team');

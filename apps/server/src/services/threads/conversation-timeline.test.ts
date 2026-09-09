@@ -295,6 +295,17 @@ describe('provider/unhandled timeline flag', () => {
     } as ProductHttpContext, threadId);
     expect(JSON.stringify(timeline.rows)).toMatch(/provider-unhandled/);
   });
+
+  it('honors showDiagnosticEvents as an alias of the unhandled-events flag', () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([unhandled]);
+    const timeline = conversationTimeline({
+      db: {},
+      dataDir: '/tmp',
+      config: { getConfig: () => ({ showDiagnosticEvents: true }) }
+    } as ProductHttpContext, threadId);
+    expect(JSON.stringify(timeline.rows)).toMatch(/provider-unhandled/);
+  });
 });
 
 describe('activePromptMode plan detection', () => {

@@ -112,9 +112,14 @@ export const AgentLauncher = memo(function AgentLauncher({
   const harnessCursorEnabled = useData((s) => s.harnessCursorEnabled);
   const harnessCodexEnabled = useData((s) => s.harnessCodexEnabled);
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
+  const harnessGrokEnabled = useData((s) => s.harnessGrokEnabled);
   // Target project for a SCRATCH-mode launch. `null` = the built-in scratch
   // workspace (the default). Unused in project mode (the target is fixed).
   const [targetProjectId] = useState<string | null>(null);
+  const [composerProjectId, setComposerProjectId] = useState(project?.id ?? '');
+  useEffect(() => {
+    if (project?.id) setComposerProjectId(project.id);
+  }, [project?.id]);
   // Launch mode: Modern thread (HTTP), CLI Agent (PTY spawn), or an autonomous
   // team run. Each mode mounts its own composer below. Last-used is the default.
   const [storedMode, setStoredMode] = useLaunchModePreference();
@@ -140,7 +145,8 @@ export const AgentLauncher = memo(function AgentLauncher({
   const unavailableHistoryProviders = [
     harnessCursorEnabled ? 'Cursor' : null,
     harnessCodexEnabled ? 'Codex' : null,
-    harnessPiEnabled ? 'PI' : null
+    harnessPiEnabled ? 'PI' : null,
+    harnessGrokEnabled ? 'Grok Build' : null
   ].filter((provider): provider is string => provider !== null);
   // Resolve scratch-mode project selection.
   const target = projectMode
@@ -251,6 +257,8 @@ export const AgentLauncher = memo(function AgentLauncher({
             <div className="launch-thread-composer">
               <ThreadCommandComposer
                 project={project}
+                composerProjectId={composerProjectId}
+                onComposerProjectIdChange={setComposerProjectId}
                 initialText={initialPrompt}
                 onCreated={onClose}
               />
@@ -261,6 +269,8 @@ export const AgentLauncher = memo(function AgentLauncher({
             <div className="launch-thread-composer">
               <LegacyAgentHomeComposer
                 project={project}
+                composerProjectId={composerProjectId}
+                onComposerProjectIdChange={setComposerProjectId}
                 initialText={initialPrompt}
                 onLaunched={onLaunched}
                 onClose={onClose}
@@ -272,6 +282,8 @@ export const AgentLauncher = memo(function AgentLauncher({
           <div className="launch-thread-composer">
             <AutonomousTeamComposer
               project={project}
+              composerProjectId={composerProjectId}
+              onComposerProjectIdChange={setComposerProjectId}
               initialText={initialPrompt}
               onClose={onClose}
             />

@@ -11,7 +11,8 @@ import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, Proj
 import { SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
 import { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
-import { isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
+import { harnessFamilyOf, isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
+import { cliPlanIntentForLaunch } from './harness/cli-plan-files.js';
 import { ensureMcpConfigForProjectSync } from './mcp-config.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv } from './env.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName } from './tmux.js';
@@ -790,6 +791,11 @@ export class PtyManager extends EventEmitter {
       executionTargetId: execution.targetId
     });
     if (combinationError) throw new Error(`${combinationError}.`);
+    const cliPlanIntent = cliPlanIntentForLaunch({
+      familyId: harnessFamilyOf(effectiveProfile),
+      executionState: execution.state,
+      roleTargetId: roleTarget.targetId
+    }) || undefined;
 
     const { command, args } = provider.resolveLaunch(
       effectiveProfile,
@@ -839,15 +845,19 @@ export class PtyManager extends EventEmitter {
     // opened tabs get only the inbox guidance. Built once so the claude
     // `--append-system-prompt` path and the codex `-c developer_instructions`
     // path (guidanceArgs) deliver IDENTICAL guidance.
-    const guidanceText = opts.remoteToolProxy
-      ? `${buildSystemPromptGuidance(Boolean(opts.scheduled), opts.coordinationMode)}\n\n${CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS}`
-      : buildSystemPromptGuidance(Boolean(opts.scheduled), opts.coordinationMode);
-    // Operator RULES.md (WARP-C5): the composed global + project standing
-    // instructions, or null when neither file exists. Resolved via the injected
-    // resolver (file I/O + Rule-2 confinement live in `rules-file.ts` + the boot
-    // wiring). Layered as its own additive --append-system-prompt block below;
-    // absent on every launch with no rules files, so the argv stays byte-identical.
-    const rulesText = this.rulesResolver ? this.rulesResolver(opts.projectId) : null;
+    const injectProductGuidance = opts.config.injectProductGuidance !== false;
+    const injectRemoteInstructions = opts.config.injectRemoteInstructions !== false;
+    const guidanceText = injectProductGuidance
+      ? buildSystemPromptGuidance(Boolean(opts.scheduled), opts.coordinationMode)
+      : '';
+    const remoteInstructions =
+      opts.remoteToolProxy && injectRemoteInstructions ? CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS : '';
+    const systemPromptText = [guidanceText, remoteInstructions]
+      .filter((part) => part.length > 0)
+      .join('\n\n');
+    const rulesText = injectProductGuidance && this.rulesResolver
+      ? this.rulesResolver(opts.projectId)
+      : null;
     const claudeMcpArgs = mcpConfigPath
       ? [
           '--mcp-config',
@@ -855,8 +865,7 @@ export class PtyManager extends EventEmitter {
           // Appended to the system prompt at spawn so it doesn't pollute the
           // user's global claude config — the guidance only applies to
           // launcher-spawned tabs.
-          '--append-system-prompt',
-          guidanceText,
+          ...(systemPromptText ? ['--append-system-prompt', systemPromptText] : []),
           // An isolated-worktree launch layers a SECOND --append-system-prompt
           // block (additive: claude concatenates them) teaching the agent it's
           // on its own branch/checkout. Only when `worktree` is set — a normal
@@ -908,7 +917,7 @@ export class PtyManager extends EventEmitter {
       guidanceText,
       ...(opts.worktree ? [buildWorktreeGuidance(opts.worktree)] : []),
       ...(rulesText ? [rulesText] : [])
-    ].join('\n\n');
+    ].filter((part) => part.length > 0).join('\n\n');
     // HOOK wiring for providers whose CLI carries lifecycle hooks as ARGS (codex
     // takes `-c hooks.<Event>=[…]` + the global `--dangerously-bypass-hook-trust`
     // flag). The lifecycle counterpart to providerMcpArgs/providerGuidanceArgs: it
@@ -1427,6 +1436,7 @@ export class PtyManager extends EventEmitter {
       extraArgs: opts.extraArgs,
       metadata,
       claudeSessionId,
+      cliPlanIntent,
       ...nativeSessionFields(
         opts.resumeSessionId
           ? registrationFor(opts.profile)?.nativeSessionPatch?.(opts.resumeSessionId)

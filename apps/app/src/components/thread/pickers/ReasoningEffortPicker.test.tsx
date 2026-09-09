@@ -93,6 +93,7 @@ describe('ReasoningEffortPicker', () => {
     expect(html).toContain('reasoning-effort-bars');
     expect(html).toContain('reasoning-effort-picker-label');
     expect(html).toContain('Low</span>');
+    expect(html).not.toContain('data-testid="reasoning-effort-medium"');
   });
 
   it('increments thinking on click instead of opening the menu', () => {
@@ -100,6 +101,14 @@ describe('ReasoningEffortPicker', () => {
     expect(source).toContain('onClick={increment}');
     expect(source).toContain('nextComposerReasoningLevel');
     expect(source).not.toContain('onClick={() => setOpen((current) => !current)}');
+  });
+
+  it('opens wrapping effort pills from the compact trigger menu', () => {
+    const source = readFileSync(new URL('./ReasoningEffortPicker.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('reasoning-effort-picker-menu');
+    expect(source).toContain('reasoning-effort-pill');
+    expect(source).toContain('onContextMenu');
+    expect(source).not.toContain('model-reasoning-picker-row');
   });
 
   it('treats Max as X-High and does not keep Ultracode or Max as picker values', () => {

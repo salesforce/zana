@@ -72,13 +72,15 @@ function entryFor(
 ): ThreadModelCatalogEntry {
   const models = (body?.models ?? []) as AvailableModel[];
   const selectedOnlyModels = (body?.selectedOnlyModels ?? []) as AvailableModel[];
+  const modelLoadError = body?.modelLoadError?.code ?? (body ? null : 'failed');
+  const useFallbacks = modelLoadError == null;
   return {
-    models: models.length > 0 ? models : fallbackModelsForProvider(providerId),
+    models: models.length > 0 ? models : (useFallbacks ? fallbackModelsForProvider(providerId) : []),
     selectedOnlyModels:
       selectedOnlyModels.length > 0
         ? selectedOnlyModels
-        : fallbackMoreModelsForProvider(providerId),
-    modelLoadError: body?.modelLoadError?.code ?? (body ? null : 'failed'),
+        : (useFallbacks ? fallbackMoreModelsForProvider(providerId) : []),
+    modelLoadError,
     ...(body?.acpMode ? { acpMode: body.acpMode } : {})
   };
 }

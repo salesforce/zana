@@ -147,12 +147,20 @@ describe('execution evidence', () => {
 
   it('keeps target scopes and execution equivalence adapter-owned', () => {
     expect(executionTargetFor(registeredAdapters()[1], 'accept-edits')).toMatchObject({
-      equivalence: 'closest',
+      equivalence: 'exact',
       scopes: ['local']
     });
     expect(executionTargetFor(registeredAdapters()[4], 'autonomous')).toMatchObject({
       equivalence: 'exact',
       scopes: ['local', 'remote']
+    });
+    expect(executionTargetFor(
+      registeredAdapters().find(({ adapter }) => adapter.descriptor.id === 'grok')!,
+      'accept-edits'
+    )).toMatchObject({
+      equivalence: 'exact',
+      scopes: ['local', 'remote'],
+      evidenceStatus: 'approved'
     });
 
     const descriptors = harnessAdapterDescriptors(new Map());

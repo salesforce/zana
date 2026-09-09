@@ -147,6 +147,15 @@ zcc skill install-cli-skills [--machine <id>]
 zcc settings show
 zcc settings general|experiment|appearance <key> <value>
 
+Guidance and bundled-skill opt-outs (subsequent launches only; defaults on):
+
+```bash
+zcc settings general injectProductGuidance false
+zcc settings general injectRemoteInstructions false
+zcc settings general injectBundledSkills false
+zcc settings general disabledBundledSkills '["zcc-cli","zcc-inbox"]'
+```
+
 zcc terminal list [--project <id>]
 zcc terminal create --project <id> [--title …] [--command …]
 zcc terminal show|output|wait <id>

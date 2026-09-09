@@ -81,6 +81,16 @@ describe('structured providers final local argv', () => {
     });
   });
 
+  it('omits Codex sandbox flags for accept-edits', () => {
+    expect(spawn('codex', routing('codex', {
+      modelTargetId: 'gpt-4o',
+      executionState: 'accept-edits'
+    }))).toEqual({
+      command: 'codex',
+      args: ['-m', 'gpt-4o']
+    });
+  });
+
   it('emits Cursor model and execution policy once in final order', () => {
     expect(spawn('cursor', routing('cursor', {
       modelTargetId: 'gpt-5.6-sol-medium',
@@ -89,6 +99,31 @@ describe('structured providers final local argv', () => {
       command: 'cursor-agent',
       args: ['--model', 'gpt-5.6-sol-medium', '--force']
     });
+  });
+
+  it('does not inject --force for Cursor CLI Agent Edits', () => {
+    expect(spawn('cursor', routing('cursor', {
+      modelTargetId: 'gpt-5.6-sol-medium',
+      executionState: 'accept-edits'
+    }))).toEqual({
+      command: 'cursor-agent',
+      args: ['--model', 'gpt-5.6-sol-medium']
+    });
+  });
+
+  it.each([
+    ['claude', { executionState: 'plan' as const }, ['--permission-mode', 'plan']],
+    ['cursor', { executionState: 'plan' as const }, ['--mode', 'plan']],
+    ['codex', { executionState: 'plan' as const }, ['-s', 'read-only', '-a', 'on-request']]
+  ] as const)('spawns %s Plan without crashing', (profile, target, flags) => {
+    const result = spawn(profile, routing(profile, { ...target }));
+    expect(result.args).toEqual(expect.arrayContaining([...flags]));
+  });
+
+  it('keeps default Agent launches off the Plan flags', () => {
+    expect(spawn('claude').args.join(' ')).not.toMatch(/--permission-mode plan/);
+    expect(spawn('cursor').args).not.toContain('--mode');
+    expect(spawn('codex').args).not.toEqual(expect.arrayContaining(['-s', 'read-only', '-a', 'on-request']));
   });
 
   it('omits --model when Cursor Auto sentinels are selected', () => {
@@ -100,16 +135,36 @@ describe('structured providers final local argv', () => {
     });
   });
 
-  it('emits OpenCode model and execution policy in final order', () => {
+  it('emits OpenCode model without auto-approve for accept-edits', () => {
     expect(spawn('opencode', routing('opencode', {
       modelTargetId: 'llmgw/gpt-5.6-sol-1M',
       executionState: 'accept-edits'
+    }))).toEqual({
+      command: 'opencode',
+      args: ['--model', 'llmgw/gpt-5.6-sol-1M']
+    });
+  });
+
+  it('emits OpenCode auto-approve only for autonomous', () => {
+    expect(spawn('opencode', routing('opencode', {
+      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
+      executionState: 'autonomous'
     }))).toEqual({
       command: 'opencode',
       args: [
         '--model', 'llmgw/gpt-5.6-sol-1M',
         '--agent', 'build', '--auto'
       ]
+    });
+  });
+
+  it('emits Grok catalog model without extra execution flags for Edits', () => {
+    expect(spawn('grok', routing('grok', {
+      modelTargetId: 'grok-4.5',
+      executionState: 'accept-edits'
+    }))).toEqual({
+      command: 'grok',
+      args: ['--model', 'grok-4.5']
     });
   });
 
@@ -193,5 +248,69 @@ describe('structured providers remote blocking', () => {
       harnessRouting: routing('pi', { executionState: 'plan' })
     })).toThrow('PI does not support plan execution state.');
     expect(spawns).toHaveLength(0);
+  });
+});
+
+describe('cliPlanIntent session stamp', () => {
+  beforeEach(() => {
+    spawns.length = 0;
+  });
+
+  it('stamps local Claude Plan without changing Plan argv', () => {
+    const manager = new PtyManager();
+    const session = manager.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      harnessRouting: routing('claude', { executionState: 'plan' })
+    });
+    expect(session.cliPlanIntent).toBe(true);
+    expect(spawns.at(-1)!.args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+  });
+
+  it('stamps local Cursor Plan and OpenCode --agent plan', () => {
+    const manager = new PtyManager();
+    expect(manager.create({
+      projectId: 'proj1',
+      profile: 'cursor',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      harnessRouting: routing('cursor', { executionState: 'plan' })
+    }).cliPlanIntent).toBe(true);
+    expect(manager.create({
+      projectId: 'proj1',
+      profile: 'opencode',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      harnessRouting: routing('opencode', { roleTargetId: 'plan' })
+    }).cliPlanIntent).toBe(true);
+  });
+
+  it('does not stamp default Agent or Codex Plan', () => {
+    const manager = new PtyManager();
+    expect(manager.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: CONFIG
+    }).cliPlanIntent).toBeUndefined();
+    expect(manager.create({
+      projectId: 'proj1',
+      profile: 'codex',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      harnessRouting: routing('codex', { executionState: 'plan' })
+    }).cliPlanIntent).toBeUndefined();
   });
 });

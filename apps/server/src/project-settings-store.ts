@@ -7,7 +7,7 @@ import { atomicDurableWrite, createSerializedTransactionQueue } from './durable-
 type StoredProjectSettings = Record<string, unknown>;
 type SettingsByProject = Record<string, StoredProjectSettings>;
 
-const HARNESS_FAMILIES = ['claude', 'cursor', 'codex', 'pi', 'opencode'] as const;
+const HARNESS_FAMILIES = ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok'] as const;
 const RETIRED_PROJECT_SETTINGS_KEYS = [
   'model', 'permissionMode', 'appendSystemPrompt', 'extraArgs', 'addDirs', 'allowedTools',
   'deniedTools', 'codexSandbox', 'codexApproval', 'piProvider', 'piModel', 'piThinking'

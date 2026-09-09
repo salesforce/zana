@@ -594,6 +594,72 @@ describe('conversation lifecycle', () => {
     expect(archiveConversationThread).toHaveBeenCalledWith(expect.anything(), thread.id);
   });
 
+  it('archives nested descendants before the parent and leaves visible forks live', async () => {
+    vi.mocked(archiveConversationThread).mockClear();
+    const child = {
+      ...thread,
+      id: 'child-1',
+      parentThreadId: thread.id,
+      originKind: null,
+      visibility: 'visible' as const
+    };
+    const grandchild = {
+      ...thread,
+      id: 'grandchild-1',
+      parentThreadId: child.id,
+      originKind: null,
+      visibility: 'visible' as const
+    };
+    const hiddenFork = {
+      ...thread,
+      id: 'hidden-fork-1',
+      parentThreadId: child.id,
+      originKind: 'fork' as const,
+      visibility: 'hidden' as const
+    };
+    const forkChild = {
+      ...thread,
+      id: 'fork-child-1',
+      parentThreadId: hiddenFork.id,
+      originKind: null,
+      visibility: 'visible' as const
+    };
+    const visibleFork = {
+      ...thread,
+      id: 'visible-fork-1',
+      parentThreadId: child.id,
+      originKind: 'fork' as const,
+      visibility: 'visible' as const
+    };
+    const byId = new Map([
+      [thread.id, thread],
+      [child.id, child],
+      [grandchild.id, grandchild],
+      [hiddenFork.id, hiddenFork],
+      [forkChild.id, forkChild],
+      [visibleFork.id, visibleFork]
+    ]);
+    vi.mocked(getConversationThread).mockImplementation((_db, id) => byId.get(id) ?? null);
+    vi.mocked(listConversationThreadsByProject).mockReturnValue([
+      child,
+      grandchild,
+      hiddenFork,
+      forkChild,
+      visibleFork
+    ]);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, stopped: true }));
+    await archiveConversation(ctx(callHostOnlineRpc), thread.id);
+    const archivedIds = vi.mocked(archiveConversationThread).mock.calls.map((call) => call[1]);
+    expect(archivedIds).toEqual([
+      grandchild.id,
+      forkChild.id,
+      hiddenFork.id,
+      child.id,
+      thread.id
+    ]);
+    expect(archivedIds).not.toContain(visibleFork.id);
+  });
+
   it('copies completed source history into a fork and leaves the source untouched', async () => {
     const sourceEvents = [
       {

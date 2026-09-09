@@ -124,6 +124,8 @@ describe('ComposerProjectPicker', () => {
     expect(source).toContain('emptyHint="No matching projects"');
     expect(source).toContain('sticky: row.sticky');
     expect(source).toContain("ariaLabel=\"Project\"");
+    expect(source).toContain('rememberLastProjectId');
+    expect(source).toContain('if (projectId) rememberLastProjectId(projectId)');
     expect(source).not.toContain('showOpenDialog');
     expect(source).not.toContain('composer-project-action-start');
 

@@ -21,9 +21,13 @@ function factory() {
   return createTimelineEventFactory({ threadId: THREAD_ID });
 }
 
-function operationTitleFor(row: ThreadEventRow, threadName: string): string {
+function operationTitleFor(
+  row: ThreadEventRow,
+  threadName: string,
+  extra?: { includeProviderUnhandledOperations?: boolean },
+): string {
   const { event, meta } = decodeThreadEventRow(row);
-  const message = parseOperationMessage(event, meta, { threadName });
+  const message = parseOperationMessage(event, meta, { threadName, ...extra });
   if (message === null || message.kind !== "operation") {
     throw new Error(`expected operation message, got ${message?.kind ?? null}`);
   }
@@ -35,7 +39,9 @@ function provisioningTitle(
   threadName: string,
 ): string {
   const row = factory().threadProvisioning({ status, entries: [] });
-  return operationTitleFor(row, threadName);
+  return operationTitleFor(row, threadName, {
+    includeProviderUnhandledOperations: true,
+  });
 }
 
 function interruptedTitle(
@@ -108,6 +114,15 @@ describe("parseOperationMessage operation titles", () => {
   });
 
   describe("thread-provisioning", () => {
+    it("hides environment-resolution rows unless diagnostic events are on", () => {
+      const row = factory().threadProvisioning({
+        status: "active",
+        entries: [],
+      });
+      const { event, meta } = decodeThreadEventRow(row);
+      expect(parseOperationMessage(event, meta, { threadName: THREAD_NAME })).toBeNull();
+    });
+
     it("keeps self-scoped lifecycle titles free of the current thread name", () => {
       expect(provisioningTitle("active", THREAD_NAME)).toBe(
         "Provisioning thread",
@@ -194,6 +209,7 @@ describe("parseOperationMessage operation titles", () => {
       const { event, meta } = decodeThreadEventRow(row);
       const message = parseOperationMessage(event, meta, {
         threadName: THREAD_NAME,
+        includeProviderUnhandledOperations: true,
       });
       if (message === null || message.kind !== "operation") {
         throw new Error("expected operation message");

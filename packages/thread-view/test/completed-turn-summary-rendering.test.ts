@@ -15,6 +15,7 @@ type TimelineWorkRow = Extract<TimelineRow, { kind: "work" }>;
 interface RenderCompletedTimelineArgs {
   events: TimelineFixtureEvent[];
   includeDebugRawEvents?: boolean;
+  includeProviderUnhandledOperations?: boolean;
 }
 
 function renderCompletedTimeline(args: RenderCompletedTimelineArgs) {
@@ -22,6 +23,7 @@ function renderCompletedTimeline(args: RenderCompletedTimelineArgs) {
     events: args.events,
     projectionOptions: {
       includeDebugRawEvents: args.includeDebugRawEvents,
+      includeProviderUnhandledOperations: args.includeProviderUnhandledOperations,
       threadStatus: "idle",
       turnMessageDetail: "summary",
     },
@@ -480,6 +482,7 @@ describe("completed turn summary rendering", () => {
         }),
         event.turnCompleted({ turnId: "turn-1" }),
       ],
+      includeProviderUnhandledOperations: true,
     });
 
     expect(rowSignatures(timeline.rows)).toEqual([

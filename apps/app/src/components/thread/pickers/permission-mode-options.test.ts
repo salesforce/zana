@@ -14,7 +14,7 @@ describe('permissionModeOptionsFor', () => {
     expect(PERMISSION_MODE_OPTIONS[0]).toMatchObject({
       label: 'Accept Edits',
       compactLabel: 'Edits',
-      description: 'Applies edits inside the workspace automatically. Anything beyond the workspace asks you first.'
+      description: 'Use the CLI’s own permission policy. No extra launch flags.'
     });
     expect(PERMISSION_MODE_OPTIONS[1]).toMatchObject({
       label: 'Approve for me',

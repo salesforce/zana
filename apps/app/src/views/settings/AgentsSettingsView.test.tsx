@@ -73,12 +73,14 @@ describe('AgentsTab worktree isolation', () => {
         onUpdate={vi.fn().mockResolvedValue(undefined)}
       />
     );
+    const guidance = html.indexOf('settings-anchor-agent-guidance');
     const worktrees = html.indexOf('settings-anchor-git-worktrees');
     const idle = html.indexOf('settings-anchor-auto-close-idle');
     const cli = html.indexOf('settings-anchor-legacy-agent');
     const overseer = html.indexOf('settings-anchor-overseer');
     const autoMode = html.indexOf('settings-anchor-auto-mode');
-    expect(worktrees).toBeGreaterThan(-1);
+    expect(guidance).toBeGreaterThan(-1);
+    expect(worktrees).toBeGreaterThan(guidance);
     expect(idle).toBeGreaterThan(worktrees);
     expect(cli).toBeGreaterThan(idle);
     expect(overseer).toBeGreaterThan(cli);

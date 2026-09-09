@@ -21,8 +21,8 @@ export interface HarnessRoutingMigrationResult {
 type JsonObject = Record<string, any>;
 
 const LEGACY_CONFIG_KEYS = [
-  'claudeBinary', 'cursorBinary', 'codexBinary', 'piBinary', 'opencodeBinary',
-  'harnessCursorEnabled', 'harnessCodexEnabled', 'harnessPiEnabled', 'harnessOpenCodeEnabled',
+  'claudeBinary', 'cursorBinary', 'codexBinary', 'piBinary', 'opencodeBinary', 'grokBinary',
+  'harnessCursorEnabled', 'harnessCodexEnabled', 'harnessPiEnabled', 'harnessOpenCodeEnabled', 'harnessGrokEnabled',
   'defaultModel', 'defaultPermissionMode', 'claudeAppendSystemPrompt', 'claudeExtraArgs',
   'claudeAddDirs', 'claudeAllowedTools', 'claudeDeniedTools', 'defaultCodexSandbox',
   'defaultCodexApproval', 'autoModeEnabled', 'autoModeEnvironment', 'autoModeAllow',
@@ -54,7 +54,8 @@ function projectConfig(raw: JsonObject): JsonObject {
     ['cursor', 'cursorBinary', 'harnessCursorEnabled'],
     ['codex', 'codexBinary', 'harnessCodexEnabled'],
     ['pi', 'piBinary', 'harnessPiEnabled'],
-    ['opencode', 'opencodeBinary', 'harnessOpenCodeEnabled']
+    ['opencode', 'opencodeBinary', 'harnessOpenCodeEnabled'],
+    ['grok', 'grokBinary', 'harnessGrokEnabled']
   ] as const;
   for (const [id, binaryKey, enabledKey] of adapters) {
     if (own(next, binaryKey) || (enabledKey && own(next, enabledKey))) {

@@ -4,6 +4,7 @@ import { Section, Field, CheckboxField } from '@/components/settings/FormFields'
 import { OverseerRecentPane } from '@/components/settings/OverseerRecentPane';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
+import { AgentGuidanceSettings } from './AgentGuidanceSettings.js';
 
 export function AgentsSettingsView({
   config,
@@ -19,6 +20,8 @@ export function AgentsSettingsView({
   const autoModeOn = config.autoModeEnabled ?? true;
   return (
     <>
+      <AgentGuidanceSettings config={config} onUpdate={onUpdate} />
+
       <Section
         anchorId="git-worktrees"
         title="Git worktrees"

@@ -8,7 +8,8 @@ describe('JobTeamComposer', () => {
     expect(source).toContain('useComposerPromptField');
     expect(source).toContain("kind: 'cli'");
     expect(source).toContain('assembleCliLaunchPrompt');
-    expect(source).toContain('absolutePathMentions');
+    expect(source).toContain('stageRemoteComposerAttachments');
+    expect(source).toContain('composerDropProjectRoot');
     expect(source).toContain('PopoverPicklist');
     expect(source).toContain('ariaLabel="Team"');
     expect(source).toContain('Describe a goal for the team');

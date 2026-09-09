@@ -4,6 +4,7 @@ import {
   composerProjectOptions,
   DEFAULT_COMPOSER_WORKSPACE_LABEL,
   isRemoteWorkspaceProject,
+  preferredComposerProjectId,
   resolveComposerProjectId,
   scratchWorkspaceProject,
   SCRATCH_WORKSPACE_NAME
@@ -85,5 +86,41 @@ describe('resolveComposerProjectId', () => {
 
   it('keeps the current pick ahead of a preferred id', () => {
     expect(resolveComposerProjectId([scratch, coreRepo, alpha], 'core-repo', undefined, 'alpha')).toBe('core-repo');
+  });
+
+  it('keeps a pinned project ahead of last-used and sidebar ids', () => {
+    expect(resolveComposerProjectId(
+      [scratch, coreRepo, alpha],
+      '',
+      'core-repo',
+      preferredComposerProjectId({ lastProjectId: 'alpha', selectedProjectId: scratch.id })
+    )).toBe('core-repo');
+  });
+});
+
+describe('preferredComposerProjectId', () => {
+  it('prefers last-used over a leftover sidebar selection', () => {
+    expect(preferredComposerProjectId({
+      lastProjectId: 'alpha',
+      selectedProjectId: 'pony'
+    })).toBe('alpha');
+  });
+
+  it('falls back to the sidebar when nothing was last used', () => {
+    expect(preferredComposerProjectId({
+      lastProjectId: null,
+      selectedProjectId: 'pony'
+    })).toBe('pony');
+  });
+
+  it('treats empty strings as missing', () => {
+    expect(preferredComposerProjectId({
+      lastProjectId: '',
+      selectedProjectId: 'alpha'
+    })).toBe('alpha');
+    expect(preferredComposerProjectId({
+      lastProjectId: null,
+      selectedProjectId: null
+    })).toBeUndefined();
   });
 });

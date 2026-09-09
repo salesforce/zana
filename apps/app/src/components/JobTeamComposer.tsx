@@ -23,9 +23,9 @@ import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { defaultAutonomousTeamId } from './autonomous-team-composer.js';
 import { titleFromPrompt } from '../lib/promptTitle.js';
 import {
-  absolutePathMentions,
   assembleCliLaunchPrompt,
-  rewritePromptPaths
+  composerDropProjectRoot,
+  stageRemoteComposerAttachments
 } from './legacy-agent-home.js';
 
 /**
@@ -69,7 +69,7 @@ export function JobTeamComposer({
     testId: 'job-team-command-input',
     ariaLabel: 'Goal for the job team',
     projectId,
-    projectRoot: project?.path,
+    projectRoot: composerDropProjectRoot(project),
     projects,
     disabled: launching,
     initialText,
@@ -160,36 +160,31 @@ export function JobTeamComposer({
     try {
       const serialized = field.serialize();
       let promptText = serialized.text;
+      let imagePaths: string[] = [];
       if (project.remote) {
-        // Upload concurrently — the awaits are independent per file. Each
-        // file still reports its own success/failure via its own toast
-        // (order preserved), but we preserve the original semantics of
-        // aborting the launch if any upload failed, since a partially
-        // uploaded mention set is not safe to submit as a job goal.
-        const remoteHost = project.remote.host;
-        const uploads = await Promise.all(
-          absolutePathMentions(serialized.mentions).map(async (localPath) => ({
-            localPath,
-            result: await product.fs.uploadToRemote(project.id, localPath, '.')
-          }))
-        );
-        const uploaded: Array<{ from: string; to: string }> = [];
-        let uploadFailed = false;
-        for (const { localPath, result } of uploads) {
-          if (!result.ok || !result.path) {
-            pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
-            uploadFailed = true;
-            continue;
-          }
-          uploaded.push({ from: localPath, to: posixQuote(result.path) });
-          pushToast(`Uploaded ${attachmentName(localPath)} to ${remoteHost}`);
+        const staged = await stageRemoteComposerAttachments({
+          promptText,
+          mentions: serialized.mentions,
+          images: field.images,
+          projectId: project.id,
+          uploadLocalPath: (localPath) => product.fs.uploadToRemote(project.id, localPath, '.'),
+          persistImages: persistComposerImages,
+          uploadPersistedAttachment: (relativePath) =>
+            product.fs.uploadProjectAttachmentToRemote(project.id, relativePath),
+          quoteRemotePath: posixQuote
+        });
+        if (!staged.ok) {
+          pushToast(staged.message ?? `Failed to upload ${attachmentName(staged.localPath)}`, 'error');
+          return;
         }
-        if (uploadFailed) return;
-        promptText = rewritePromptPaths(promptText, uploaded);
+        for (const row of staged.uploaded) {
+          pushToast(`Uploaded ${attachmentName(row.localPath)} to ${project.remote.host}`);
+        }
+        promptText = staged.promptText;
+        imagePaths = staged.imagePaths;
+      } else if (field.images.length > 0) {
+        imagePaths = await persistComposerImages(project.id, field.images);
       }
-      const imagePaths = field.images.length === 0
-        ? []
-        : await persistComposerImages(project.id, field.images);
       const goal = assembleCliLaunchPrompt({ text: promptText, imagePaths });
       if (!goal) {
         setError('Describe a goal for the team');

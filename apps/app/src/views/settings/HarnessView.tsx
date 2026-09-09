@@ -1,11 +1,25 @@
-import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
-import { AlertTriangle, Bot, CheckCircle2, ChevronRight, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, ChevronRight, Download, RefreshCw, XCircle } from 'lucide-react';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
+import type { ProviderCliInstallActionKind, ProviderCliKey, ProviderCliStatusResponse } from '@zana-ai/zcc-contracts/host-rpc';
 import { useData, useUi } from '@/store';
 import { profileIcon } from '@/lib/profileIcon';
+import { useHosts, primaryHost } from '../../hooks/useHosts.js';
+import { getSettingsRoutePath } from '../../lib/route-paths.js';
+import {
+  actionableProviderCliRows,
+  dismissInstallLogOnSuccess,
+  installProviderCliOnMachine,
+  orderedProviderCliRows,
+  providerCliBusyLabel,
+  providerCliInstallLogLines,
+  providerCliKeyForFamily,
+  providerCliStartLog
+} from './machine-provider-clis.js';
+import { ProviderCliUpdateHint } from './ProviderCliUpdateHint.js';
 import { providerIconForId } from '@/components/thread/pickers/provider-icon';
 import { Section, Field, ToggleSwitch, ChipField, TextArgsField } from '@/components/settings/FormFields';
 import { HarnessOptionSelect } from '@/components/HarnessOptionSelect';
@@ -41,7 +55,7 @@ const CODEX_UI = providerUiSchema('codex');
  * switch is an explicit hide, not a required opt-in.
  *
  * NOTE: these are the coding-CLI harnesses (`cursor-agent`/`codex`/`pi`/
- * `opencode`) — DISTINCT from the GUI-launch editors (`cursor`/`code`/`idea`)
+ * `opencode`/`grok`) — DISTINCT from the GUI-launch editors (`cursor`/`code`/`idea`)
  * under the Editor tab. Provider API keys live under the LLM Providers tab; each
  * harness authenticates via its own login flow.
  */
@@ -53,7 +67,8 @@ const FAMILY_PROFILE: Record<HarnessFamily, LaunchProfileId> = {
   cursor: 'cursor',
   codex: 'codex',
   pi: 'pi',
-  opencode: 'opencode'
+  opencode: 'opencode',
+  grok: 'grok'
 };
 
 /** One-line blurb per family, shown under the name in the row. */
@@ -62,7 +77,8 @@ const FAMILY_BLURB: Record<HarnessFamily, string> = {
   cursor: 'The ‘cursor-agent’ coding CLI. Authenticates via its own login.',
   codex: 'OpenAI’s ‘codex’ coding CLI. Authenticates via its own login.',
   pi: 'The multi-provider ‘pi’ coding-agent CLI (~40 providers).',
-  opencode: 'The ‘opencode’ terminal agent (npm ‘opencode-ai’). zcc-inbox is wired in automatically.'
+  opencode: 'The ‘opencode’ terminal agent (npm ‘opencode-ai’). zcc-inbox is wired in automatically.',
+  grok: 'xAI’s ‘grok’ coding CLI (Grok Build). Authenticates via its own login.'
 };
 
 /** The `AppConfig` enable flag per family (`claude` has none — always on). */
@@ -70,7 +86,8 @@ const ENABLE_KEY: Partial<Record<HarnessFamily, keyof AppConfig>> = {
   cursor: 'harnessCursorEnabled',
   codex: 'harnessCodexEnabled',
   pi: 'harnessPiEnabled',
-  opencode: 'harnessOpenCodeEnabled'
+  opencode: 'harnessOpenCodeEnabled',
+  grok: 'harnessGrokEnabled'
 };
 
 export function familyEnabled(family: HarnessFamily, config: AppConfig, fallback: boolean): boolean {
@@ -109,7 +126,8 @@ const BINARY_KEY: Record<HarnessFamily, keyof AppConfig> = {
   cursor: 'cursorBinary',
   codex: 'codexBinary',
   pi: 'piBinary',
-  opencode: 'opencodeBinary'
+  opencode: 'opencodeBinary',
+  grok: 'grokBinary'
 };
 
 /** Default binary name (the `--version` probe target) shown as the input placeholder. */
@@ -118,7 +136,8 @@ const BINARY_PLACEHOLDER: Record<HarnessFamily, string> = {
   cursor: 'cursor-agent',
   codex: 'codex',
   pi: 'pi',
-  opencode: 'opencode'
+  opencode: 'opencode',
+  grok: 'grok'
 };
 
 function StatusBadge({ h, enabled }: { h: HarnessVerifyResult; enabled: boolean }) {
@@ -186,7 +205,14 @@ function HarnessRow({
   descriptor,
   advanced,
   mode,
-  login
+  login,
+  cliAction,
+  cliBusy,
+  cliDisabled,
+  cliLog,
+  cliError,
+  cliHint,
+  onCliInstall
 }: {
   h: HarnessVerifyResult;
   config: AppConfig;
@@ -196,6 +222,13 @@ function HarnessRow({
   advanced?: React.ReactNode;
   mode: 'status' | 'settings';
   login?: HarnessLoginStatus | null;
+  cliAction?: { kind: ProviderCliInstallActionKind; label: string } | null;
+  cliBusy?: boolean;
+  cliDisabled?: boolean;
+  cliLog?: string;
+  cliError?: string;
+  cliHint?: string;
+  onCliInstall?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const enableKey = ENABLE_KEY[h.family];
@@ -381,6 +414,18 @@ function HarnessRow({
           </span>
         ) : null}
 
+        {mode === 'status' && cliAction ? (
+          <button
+            type="button"
+            className="settings-btn"
+            disabled={cliDisabled}
+            onClick={onCliInstall}
+            data-testid={`harness-cli-update-${h.family}`}
+          >
+            {cliBusy ? providerCliBusyLabel(cliAction.kind) : cliAction.label}
+          </button>
+        ) : null}
+
         {mode === 'status' ? (
           enableKey ? (
             <ToggleSwitch
@@ -399,6 +444,20 @@ function HarnessRow({
           )
         ) : null}
       </div>
+      {mode === 'status' && cliError ? (
+        <p className="machine-cli-row-error" role="alert" data-testid={`harness-cli-error-${h.family}`}>
+          {cliError}
+        </p>
+      ) : mode === 'status' && cliLog ? (
+        <p className="machine-cli-row-progress" data-testid={`harness-cli-progress-${h.family}`}>
+          {cliLog}
+        </p>
+      ) : mode === 'status' && cliHint ? (
+        <ProviderCliUpdateHint
+          reason={cliHint}
+          testId={`harness-cli-hint-${h.family}`}
+        />
+      ) : null}
 
       {mode === 'settings' && open ? (
         <div className="opener-row-advanced">
@@ -444,6 +503,8 @@ const THREAD_PROVIDER_PROFILE: Record<string, LaunchProfileId> = {
   cursor: 'cursor',
   'acp-opencode': 'opencode',
   opencode: 'opencode',
+  'acp-grok': 'grok',
+  grok: 'grok',
   codex: 'codex',
   pi: 'pi'
 };
@@ -639,6 +700,13 @@ export function HarnessView({
   const [pane, setPane] = useState<'thread' | 'legacy'>('thread');
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[] | null>(null);
   const settingsAnchor = useUi((s) => s.settingsAnchor);
+  const hosts = useHosts();
+  const thisMachine = primaryHost(hosts);
+  const thisMachineId = thisMachine?.status === 'connected' ? thisMachine.id : undefined;
+  const [cliStatus, setCliStatus] = useState<ProviderCliStatusResponse>({});
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
+  const [installLogs, setInstallLogs] = useState<Record<string, string>>({});
 
   useLayoutEffect(() => {
     if (settingsAnchor === 'harness-legacy') setPane('legacy');
@@ -650,12 +718,33 @@ export function HarnessView({
     Promise.resolve(refresh()).finally(() => setChecking(false));
   };
 
+  const refreshCliStatus = useCallback(async () => {
+    if (!thisMachineId) {
+      setCliStatus({});
+      return;
+    }
+    try {
+      setCliStatus(await product.hosts.providerCliStatus(thisMachineId));
+    } catch {
+      setCliStatus({});
+    }
+  }, [thisMachineId]);
+
   // Re-probe whenever the Code Harness tab mounts so a CLI installed since boot
   // (or a changed binary path) is reflected without a full app restart.
   useEffect(() => {
     runCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
+
+  useEffect(() => {
+    void refreshCliStatus();
+  }, [refreshCliStatus]);
+
+  const actionable = useMemo(
+    () => (thisMachineId ? actionableProviderCliRows({ [thisMachineId]: cliStatus }) : []),
+    [thisMachineId, cliStatus]
+  );
 
   useEffect(() => {
     const descriptors = hasDesktopBridge() ? product.harness.descriptors : undefined;
@@ -824,6 +913,50 @@ export function HarnessView({
   const optionAvailability = new Map(status.map((entry) => [entry.family, entry]));
   const health = summarizeHarnessHealth(status, config);
 
+  async function runInstall(
+    provider: ProviderCliKey,
+    actionKind: ProviderCliInstallActionKind,
+    command?: string
+  ): Promise<void> {
+    if (!thisMachineId) return;
+    const key = `${thisMachineId}:${provider}`;
+    setBusyKey(key);
+    setInstallErrors((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    const events: Parameters<typeof providerCliInstallLogLines>[0] = [];
+    setInstallLogs((prev) => ({
+      ...prev,
+      [key]: command ? providerCliStartLog(command) : 'Starting… This can take a few minutes.'
+    }));
+    try {
+      const outcome = await installProviderCliOnMachine({
+        hostId: thisMachineId,
+        provider,
+        actionKind,
+        onEvent: (event) => {
+          events.push(event);
+          const lines = providerCliInstallLogLines(events);
+          if (lines.length > 0) {
+            setInstallLogs((prev) => ({ ...prev, [key]: lines.join('\n') }));
+          }
+        },
+        install: product.hosts.installProviderCli
+      });
+      if (!outcome.ok) {
+        setInstallErrors((prev) => ({ ...prev, [key]: outcome.message }));
+      }
+      setInstallLogs((prev) => dismissInstallLogOnSuccess(prev, key, outcome.ok));
+      await refreshCliStatus();
+      await refresh();
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   const settingsRows = status.length === 0 ? (
     <p className="settings-help">Checking…</p>
   ) : (
@@ -859,31 +992,84 @@ export function HarnessView({
     <Section
       anchorId="harness-status"
       title="Install status"
-      help="Coding CLIs used by Modern and CLI agents. Enable a family here to show it in launch UIs. Check re-probes each binary and whether Cursor, Codex, Pi, and OpenCode are signed in — a successful check also refreshes their model lists."
+      help={
+        <>
+          Coding CLIs used by Modern and CLI agents. Enable a family here to show it in launch UIs.
+          Check re-probes each binary and whether Cursor, Codex, Pi, and OpenCode are signed in — a
+          successful check also refreshes their model lists. Install or update a CLI from the row,
+          or manage every paired box on{' '}
+          <a href={getSettingsRoutePath('machines')} data-testid="harness-machines-link">
+            Machines
+          </a>
+          .
+        </>
+      }
     >
       <div className={`harness-health harness-health--${health.ok ? 'ok' : 'warn'}`} role="status">
         {health.ok ? <CheckCircle2 size={16} aria-hidden /> : <AlertTriangle size={16} aria-hidden />}
         <span className="harness-health-msg">{health.message}</span>
-        <button type="button" className="cred-btn" onClick={runCheck} disabled={checking}>
-          <RefreshCw size={14} className={checking ? 'harness-recheck-spin' : undefined} aria-hidden />
-          {checking ? 'Checking…' : 'Check, Install or Fix'}
-        </button>
+        <div className="harness-health-actions">
+          {actionable.length > 0 ? (
+            <button
+              type="button"
+              className="settings-btn primary"
+              disabled={busyKey !== null}
+              data-testid="harness-update-all"
+              onClick={() => {
+                void (async () => {
+                  for (const item of actionable) {
+                    await runInstall(item.provider, item.action.kind, item.action.command);
+                  }
+                })();
+              }}
+            >
+              <Download size={13} aria-hidden="true" />
+              Update all ({actionable.length})
+            </button>
+          ) : null}
+          <button type="button" className="cred-btn" onClick={runCheck} disabled={checking}>
+            <RefreshCw size={14} className={checking ? 'harness-recheck-spin' : undefined} aria-hidden />
+            {checking ? 'Checking…' : 'Check, Install or Fix'}
+          </button>
+        </div>
       </div>
       <div className="opener-list" data-testid="harness-status-list">
         {status.length === 0 ? (
           <p className="settings-help">Checking…</p>
         ) : (
-          status.map((h) => (
-            <HarnessRow
-              key={h.family}
-              h={h}
-              config={config}
-              onConfigDraft={onConfigDraft}
-              onUpdate={onUpdate}
-              mode="status"
-              login={harnessLoginStatus(h.family, modelCatalog, h.installed)}
-            />
-          ))
+          status.map((h) => {
+            const provider = providerCliKeyForFamily(h.family);
+            const row = provider
+              ? orderedProviderCliRows(cliStatus).find((entry) => entry.provider === provider)
+              : undefined;
+            const key = thisMachineId && provider ? `${thisMachineId}:${provider}` : null;
+            return (
+              <HarnessRow
+                key={h.family}
+                h={h}
+                config={config}
+                onConfigDraft={onConfigDraft}
+                onUpdate={onUpdate}
+                mode="status"
+                login={harnessLoginStatus(h.family, modelCatalog, h.installed)}
+                cliAction={row?.status.installAction ?? null}
+                cliBusy={key !== null && busyKey === key}
+                cliDisabled={busyKey !== null || !thisMachineId}
+                cliLog={key ? installLogs[key] : undefined}
+                cliError={key ? installErrors[key] : undefined}
+                cliHint={row?.status.updateUnavailableReason ?? undefined}
+                onCliInstall={
+                  row?.status.installAction && provider
+                    ? () => void runInstall(
+                      provider,
+                      row.status.installAction!.kind,
+                      row.status.installAction!.command
+                    )
+                    : undefined
+                }
+              />
+            );
+          })
         )}
       </div>
     </Section>

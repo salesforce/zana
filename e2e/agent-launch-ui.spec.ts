@@ -8,6 +8,7 @@
  *   Codex   → Edits, Auto, Full Access (yolo / codex-yolo)
  *   Pi      → picker hidden (no unrestricted profile)
  *   OpenCode→ Edits, Full Access (yolo / opencode-yolo); no Auto in catalog
+ *   Grok    → Edits, Full Access (yolo / grok-yolo); no Auto in catalog
  *
  *   Agents nav (data-testid="nav-agents")
  *     → "New agent" (data-testid="agents-board-new-thread")
@@ -36,9 +37,9 @@ import { basename, join } from 'node:path';
 
 test.use({ e2e: true });
 
-type BinaryKey = 'claudeBinary' | 'cursorBinary' | 'codexBinary' | 'piBinary' | 'opencodeBinary';
-type EnableKey = 'harnessCursorEnabled' | 'harnessCodexEnabled' | 'harnessPiEnabled' | 'harnessOpenCodeEnabled';
-type Family = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode';
+type BinaryKey = 'claudeBinary' | 'cursorBinary' | 'codexBinary' | 'piBinary' | 'opencodeBinary' | 'grokBinary';
+type EnableKey = 'harnessCursorEnabled' | 'harnessCodexEnabled' | 'harnessPiEnabled' | 'harnessOpenCodeEnabled' | 'harnessGrokEnabled';
+type Family = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok';
 
 type PermissionPick = {
   optionLabel: string;
@@ -100,6 +101,15 @@ const CLI_FAMILIES: readonly FamilySpec[] = [
     providerId: 'acp-opencode',
     binaryKey: 'opencodeBinary',
     enableKey: 'harnessOpenCodeEnabled',
+    expectWorking: false,
+    pickerOptions: ['Accept Edits', 'Full Access'],
+    modes: [ACCEPT_EDITS, FULL_ACCESS]
+  },
+  {
+    family: 'grok',
+    providerId: 'acp-grok',
+    binaryKey: 'grokBinary',
+    enableKey: 'harnessGrokEnabled',
     expectWorking: false,
     pickerOptions: ['Accept Edits', 'Full Access'],
     modes: [ACCEPT_EDITS, FULL_ACCESS]
@@ -198,6 +208,18 @@ async function cleanupLaunch(window: Page, projectId: string | null, projectDir:
   }
 }
 
+async function selectWorkMode(window: Page, modal: Locator, mode: 'agent' | 'plan') {
+  const trigger = modal.getByTestId('composer-mode-picker-trigger');
+  await expect(trigger).toBeVisible({ timeout: 15_000 });
+  await trigger.click();
+  const menu = window.getByTestId('composer-mode-picker-menu');
+  await expect(menu).toBeVisible();
+  await expect(menu.getByTestId('composer-mode-agent')).toBeVisible();
+  await expect(menu.getByTestId('composer-mode-plan')).toBeVisible();
+  await window.getByTestId(`composer-mode-${mode}`).click();
+  await expect(menu).toBeHidden();
+}
+
 for (const row of CLI_CASES) {
   test(`launching a ${row.title} CLI Agent through the real UI opens its terminal`, {
     timeout: 60_000
@@ -206,8 +228,8 @@ for (const row of CLI_CASES) {
     events
   }) => {
     const { window } = app;
-    // Cursor/OpenCode Edits map to a closest-equivalence native policy, which
-    // raises a main-process consent box before spawn. Stub "Allow once".
+    // Edits is native/basic (no extra execution flags). Keep a Cancel stub for
+    // any other native boxes that may appear during spawn.
     await stubNativeDialogs(app.electron, [0]);
     const agent = row.expectWorking
       ? makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' })
@@ -229,7 +251,7 @@ for (const row of CLI_CASES) {
       await probeHarness(
         window,
         row.family,
-        row.expectWorking ? /2\.1\.209/ : /^2026\.09\.02$/
+          row.expectWorking ? /2\.1\.220/ : /^2026\.09\.02$/
       );
 
       projectId = await window.evaluate(async (path) => {
@@ -261,6 +283,17 @@ for (const row of CLI_CASES) {
       await expect(targetProject).toContainText(projectName);
 
       await selectHarness(window, modal, row.providerId);
+
+      if (row.family === 'claude' || row.family === 'cursor' || row.family === 'codex') {
+        await expect(modal.getByTestId('composer-mode-picker-trigger')).toBeVisible({ timeout: 15_000 });
+        await expect(modal.getByTestId('composer-mode-picker-trigger')).toContainText('Agent');
+        await expect(modal.getByTestId('native-role-picker-trigger')).toHaveCount(0);
+      } else if (row.family === 'pi') {
+        await expect(modal.getByTestId('composer-mode-picker-trigger')).toHaveCount(0);
+        await expect(modal.getByTestId('native-role-picker-trigger')).toHaveCount(0);
+      } else {
+        await expect(modal.getByTestId('composer-mode-picker-trigger')).toHaveCount(0);
+      }
 
       const send = modal.getByTestId('legacy-agent-command-send');
       await expect(send).toBeEnabled({ timeout: 15_000 });
@@ -307,6 +340,92 @@ for (const row of CLI_CASES) {
         await expect(window.locator('.app-shell')).toHaveClass(/scoped-no-list/);
         await expect(window.locator('.agents-list-pane')).toHaveCount(0);
         await expect(window.locator('.agent-monitor-list')).toBeVisible();
+      }
+    } finally {
+      await cleanupLaunch(window, projectId, projectDir);
+      agent.cleanup();
+    }
+  });
+}
+
+const PLAN_FAMILIES = CLI_FAMILIES.filter((row) =>
+  row.family === 'claude' || row.family === 'cursor' || row.family === 'codex'
+);
+
+for (const row of PLAN_FAMILIES) {
+  test(`launching a ${row.family} CLI Agent in Plan opens its terminal`, {
+    timeout: 60_000
+  }, async ({ app }) => {
+    const { window } = app;
+    await stubNativeDialogs(app.electron, [0]);
+    const agent = makeFakeGenericHoldBinary();
+    const projectDir = mkdtempSync(join(tmpdir(), `zcc-launch-ui-plan-${row.family}-`));
+    const projectName = basename(projectDir);
+    let projectId: string | null = null;
+
+    try {
+      const patch: Record<string, unknown> = {
+        [row.binaryKey]: agent.path,
+        defaultHarness: row.family
+      };
+      if (row.enableKey) patch[row.enableKey] = true;
+      await window.evaluate(async (cfg) => {
+        await window.cc.config.set(cfg);
+      }, patch);
+      await probeHarness(window, row.family, /^2026\.09\.02$/);
+
+      projectId = await window.evaluate(async (path) => {
+        const res = await window.cc.projects.add(path);
+        const proj = (res && 'ok' in res ? (res as { value: { id: string } }).value : res) as {
+          id: string;
+        };
+        return proj.id;
+      }, projectDir);
+      expect(projectId).toBeTruthy();
+
+      await window.locator('[data-testid="nav-agents"]').click();
+      await window.locator('[data-testid="agents-board-new-thread"]').first().click();
+      const modal = window.locator('[data-testid="launch-modal"]');
+      await expect(modal).toBeVisible();
+      await modal.getByRole('button', { name: 'CLI Agent' }).click();
+
+      const instruction = modal.getByTestId('legacy-agent-command-input');
+      await instruction.click();
+      await instruction.fill('draft a plan for the smoke check');
+      await expect(instruction).toContainText('draft a plan for the smoke check');
+
+      const targetProject = modal.getByRole('button', { name: 'Project' });
+      await targetProject.click();
+      await window
+        .getByRole('listbox', { name: 'Project' })
+        .getByRole('option', { name: projectName, exact: true })
+        .click();
+      await expect(targetProject).toContainText(projectName);
+
+      await selectHarness(window, modal, row.providerId);
+      await expect(modal.getByTestId('composer-mode-picker-trigger')).toContainText('Agent');
+      await selectWorkMode(window, modal, 'plan');
+      await expect(modal.getByTestId('composer-mode-picker-trigger')).toContainText('Plan');
+
+      const send = modal.getByTestId('legacy-agent-command-send');
+      await expect(send).toBeEnabled({ timeout: 15_000 });
+      await send.click();
+
+      await expect(modal).toBeHidden({ timeout: 30_000 });
+      const agentModal = window.locator('[data-testid="agent-terminal-modal"]');
+      await expect(agentModal).toBeVisible({ timeout: 15_000 });
+      await expect(agentModal.getByTestId('agent-modal-header')).toBeVisible();
+      await expect(agentModal.getByTestId('agent-session-view')).toBeVisible();
+      await agentModal.getByTestId('thread-secondary-show').click();
+      if (row.family === 'codex') {
+        await expect(agentModal.getByTestId('thread-plan-pin')).toHaveCount(0);
+      } else {
+        await expect(agentModal.getByTestId('thread-plan-pin')).toBeVisible();
+        await agentModal.getByTestId('thread-plan-pin').click();
+        await expect(agentModal.getByTestId('thread-plan-empty')).toBeVisible();
+        await expect(agentModal.getByTestId('thread-plan-empty')).toHaveText(
+          'Waiting for the CLI to write a plan…'
+        );
       }
     } finally {
       await cleanupLaunch(window, projectId, projectDir);

@@ -26,6 +26,9 @@ export const VALID_PROFILES = [
   'opencode',
   'opencode-resume',
   'opencode-yolo',
+  'grok',
+  'grok-resume',
+  'grok-yolo',
   'shell'
 ] as const satisfies readonly LaunchProfileId[];
 
@@ -76,6 +79,12 @@ export function profileLabel(p: LaunchProfileId): string {
       return 'OpenCode Resume';
     case 'opencode-yolo':
       return 'OpenCode YOLO';
+    case 'grok':
+      return 'Grok Build';
+    case 'grok-resume':
+      return 'Grok Build Resume';
+    case 'grok-yolo':
+      return 'Grok Build YOLO';
     case 'shell':
       return 'Shell';
     default:
@@ -111,6 +120,11 @@ export function isOpenCodeProfile(p: LaunchProfileId): boolean {
   return p === 'opencode' || p === 'opencode-resume' || p === 'opencode-yolo';
 }
 
+/** True for the Grok Build-family profiles (`grok` CLI TUI). */
+export function isGrokProfile(p: LaunchProfileId): boolean {
+  return p === 'grok' || p === 'grok-resume' || p === 'grok-yolo';
+}
+
 /**
  * True for any profile we treat as an "agent" (a coding CLI with a conversation)
  * as opposed to a plain interactive shell. This is the single predicate the
@@ -122,7 +136,8 @@ export function isAgentProfile(p: LaunchProfileId): boolean {
     isCursorProfile(p) ||
     isCodexProfile(p) ||
     isPiProfile(p) ||
-    isOpenCodeProfile(p)
+    isOpenCodeProfile(p) ||
+    isGrokProfile(p)
   );
 }
 
@@ -138,6 +153,7 @@ export function harnessFamilyOf(p: LaunchProfileId): HarnessFamily | null {
   if (isCodexProfile(p)) return 'codex';
   if (isPiProfile(p)) return 'pi';
   if (isOpenCodeProfile(p)) return 'opencode';
+  if (isGrokProfile(p)) return 'grok';
   return null;
 }
 
@@ -414,6 +430,24 @@ export function providerCapabilities(profile: LaunchProfileId): ProviderCapabili
     };
   }
 
+  if (isGrokProfile(profile)) {
+    return {
+      // v1: Grok Build (`grok`) is a Pi/Cursor-shaped TUI — positional seed
+      // prompt, `--continue` resume, `--always-approve` unrestricted — and
+      // NONE of Claude's launcher-injected flags. Thread already speaks ACP
+      // (`grok agent stdio`); this family is the interactive terminal.
+      hasTranscript: false,
+      injectsClaudeMcpConfig: false,
+      acceptsPermissionMode: false,
+      acceptsPromptArgv: true,
+      supportsHooks: false,
+      isAgent: true,
+      acceptsSessionId: false,
+      emitsOscStatus: false,
+      canAutoCloseOnFinish: false
+    };
+  }
+
   if (profile === 'shell') {
     // A plain interactive shell: none of the above. Shell's floor happens to be
     // byte-identical to LEAST_CAPABLE, but we return a fresh (mutable) object
@@ -460,8 +494,8 @@ export function seedPromptArgs(profile: LaunchProfileId, prompt: string): string
   if (!providerCapabilities(profile).acceptsPromptArgv) return [];
   // OpenCode: the positional is the project dir, so the seed prompt is a flag.
   if (isOpenCodeProfile(profile)) return ['--prompt', body];
-  // Positional seed prompt (claude/cursor/codex/pi): escape a dash-leading body
-  // with `--` so the CLI treats it as the prompt, not an unknown flag.
+  // Positional seed prompt (claude/cursor/codex/pi/grok): escape a dash-leading
+  // body with `--` so the CLI treats it as the prompt, not an unknown flag.
   return body.startsWith('-') ? ['--', body] : [body];
 }
 

@@ -15,6 +15,11 @@ export const appSettingsSchema = z
     steerActiveThreadOnEnter: z.boolean(),
     /** Show raw provider events that bb does not yet understand. */
     showUnhandledProviderEvents: z.boolean(),
+    /**
+     * Alias of showUnhandledProviderEvents. Kept so older persisted
+     * settings continue to parse; prefer this name in new UI copy.
+     */
+    showDiagnosticEvents: z.boolean().optional(),
     /** Enable Codex's native memory recall and generation for bb threads. */
     codexMemoryEnabled: z.boolean(),
     /** Enable Claude Code's native auto-memory reads and writes for bb threads. */

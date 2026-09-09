@@ -178,8 +178,8 @@ function presetBody(opts: FakeAgentOptions): string {
 
   // Report a Claude version at the reviewed evidence floor so model-target
   // preflight (Haiku, etc.) does not block e2e launches as "CLI version below
-  // reviewed floor (installed 1.0.0, requires >= 2.1.209)".
-  const versionIntercept = 'if [ "$1" = "--version" ]; then echo "2.1.209 (Claude Code)"; exit 0; fi\n';
+  // reviewed floor (installed 1.0.0, requires >= 2.1.220)".
+  const versionIntercept = 'if [ "$1" = "--version" ]; then echo "2.1.220 (Claude Code)"; exit 0; fi\n';
 
   switch (seq) {
     case 'working-hold':

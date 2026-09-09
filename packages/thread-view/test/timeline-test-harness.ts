@@ -725,6 +725,9 @@ export function createTimelineEventFactory(
           item: {
             type: "contextCompaction",
             id: args.itemId ?? "compact-1",
+            ...(args.parentToolCallId
+              ? { parentToolCallId: args.parentToolCallId }
+              : {}),
           },
         },
       };
@@ -742,6 +745,9 @@ export function createTimelineEventFactory(
           item: {
             type: "contextCompaction",
             id: args.itemId ?? "compact-1",
+            ...(args.parentToolCallId
+              ? { parentToolCallId: args.parentToolCallId }
+              : {}),
           },
         },
       };

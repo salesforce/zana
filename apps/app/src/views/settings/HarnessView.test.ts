@@ -75,5 +75,11 @@ describe('Install status login check copy', () => {
       'whether Cursor, Codex, Pi, and OpenCode are signed in'
     );
     expect(source).toContain('login={harnessLoginStatus(h.family, modelCatalog, h.installed)}');
+    expect(source).toContain('data-testid="harness-machines-link"');
+    expect(source).toContain('getSettingsRoutePath(\'machines\')');
+    expect(source).toContain('data-testid="harness-update-all"');
+    expect(source).toContain('data-testid={`harness-cli-update-${h.family}`}');
+    expect(source).toContain('cliHint={row?.status.updateUnavailableReason ?? undefined}');
+    expect(source).toContain('testId={`harness-cli-hint-${h.family}`}');
   });
 });

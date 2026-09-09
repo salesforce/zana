@@ -35,6 +35,17 @@ describe('ThreadPlanPanel', () => {
     expect(html).not.toContain('data-testid="thread-plan-body"');
   });
 
+  it('accepts CLI waiting copy via emptyLabel', () => {
+    const html = renderToStaticMarkup(
+      <ThreadPlanPanel
+        document={{ markdown: null, filePath: null, prompt: null, source: 'empty' }}
+        emptyLabel="Waiting for the CLI to write a plan…"
+      />
+    );
+    expect(html).toContain('Waiting for the CLI to write a plan…');
+    expect(html).not.toContain('The agent has not written a plan yet.');
+  });
+
   it('hides the empty copy when durable tasks exist without markdown', () => {
     const html = renderToStaticMarkup(
       <ThreadPlanPanel

@@ -5,6 +5,7 @@ import {
   isCursorProfile,
   isOpenCodeProfile,
   isPiProfile,
+  isGrokProfile,
   parseProfile
 } from '@zana-ai/zcc-domain/launch-provider';
 import type { AgentCard, LaneKey } from './AgentBoard.js';
@@ -268,6 +269,7 @@ export function cliHarnessLabel(profile: string): string {
   if (parsed && isCodexProfile(parsed)) return 'Codex';
   if (parsed && isPiProfile(parsed)) return 'Pi';
   if (parsed && isOpenCodeProfile(parsed)) return 'OpenCode';
+  if (parsed && isGrokProfile(parsed)) return 'Grok Build';
   if (parsed === 'shell') return 'Shell';
   return threadHarnessLabel(profile);
 }

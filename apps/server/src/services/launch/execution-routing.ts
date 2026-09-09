@@ -7,8 +7,13 @@ import type { ExecutionConsentScope, createExecutionConsentStore } from '@zana-a
 import type { LaunchProvider } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
 import { providerFor, registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { harnessEnabledFromProbe } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
-import { resolveExecutionState } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
-import { allowsLiveListedModelTarget, resolveModelTarget, resolveRoleTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
+import {
+  acceptsUnlistedModelTarget,
+  allowsLiveListedModelTarget,
+  resolveExecutionState,
+  resolveModelTarget,
+  resolveRoleTarget
+} from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { evaluateFacetEvidence, evaluateTargetEvidence } from '@zana-ai/zcc-host-daemon/harness/routing-evidence';
 import type { ExecutionAuthorizationInput, ExecutionPreflightDecision } from './preflight.js';
 import { preflightExecutionAuthorization } from './preflight.js';
@@ -181,7 +186,10 @@ async function preflightStructuredRouting(
     } else if (snapshotTarget) {
       const evaluated = evaluateTargetEvidence(provider, snapshotTarget, input.scope, installedVersion);
       if (evaluated.classification === 'unavailable') return `model target: ${evaluated.reason}`;
-    } else if (!allowsLiveListedModelTarget(provider, model.targetId)) {
+    } else if (
+      !allowsLiveListedModelTarget(provider, model.targetId)
+      && !acceptsUnlistedModelTarget(provider, model.targetId)
+    ) {
       return 'model target unavailable';
     }
   }

@@ -116,4 +116,52 @@ describe('pty create() — RULES.md injection (WARP-C5)', () => {
     const call = spawns[0];
     expect(call.args).not.toContain('--append-system-prompt');
   });
+
+  it('injects remote-access instructions when remoteToolProxy is on', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: BASE_CONFIG,
+      remoteToolProxy: true
+    });
+    expect(appendBlocksMatching(spawns[0].args, 'mcp__zcc-inbox__remote_read')).toBe(1);
+  });
+
+  it('omits remote-access instructions when injectRemoteInstructions is off', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: { ...BASE_CONFIG, injectRemoteInstructions: false },
+      remoteToolProxy: true
+    });
+    expect(appendBlocksMatching(spawns[0].args, 'mcp__zcc-inbox__remote_read')).toBe(0);
+    expect(appendBlocksMatching(spawns[0].args, 'inbox_push')).toBe(1);
+  });
+
+  it('omits introduction and RULES.md when injectProductGuidance is off', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.setRulesResolver(() => 'OPERATOR RULES: SENTINEL-RULE-TEXT');
+    mgr.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: { ...BASE_CONFIG, injectProductGuidance: false }
+    });
+    const call = spawns[0];
+    expect(appendBlocksMatching(call.args, 'SENTINEL-RULE-TEXT')).toBe(0);
+    expect(appendBlocksMatching(call.args, 'inbox_push')).toBe(0);
+  });
 });

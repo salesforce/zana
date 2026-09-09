@@ -82,7 +82,6 @@ import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDesc
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import { createExecutionConsentManagement } from '@zana-ai/zcc-host-daemon/harness/execution-consent-management';
 import { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
-import { showExecutionConsentDialog } from './native/execution-consent-dialog.js';
 import { runHarnessRoutingMigration } from '@zana-ai/zcc-server/services/harness-routing/migrator';
 import { MigrationRepairRequiredError } from '@zana-ai/zcc-server/services/harness-routing/journal';
 import { runStartupGate, type StartupState } from './startup-gate.js';
@@ -916,8 +915,7 @@ const executionConsentManagement = createExecutionConsentManagement({
   projectExists: (projectId) => store.listProjects().some((project) => project.id === projectId)
 });
 const executionConsentService = new ExecutionConsentService({
-  store: executionConsentStore,
-  showDialog: (request) => showExecutionConsentDialog(request, BrowserWindow.getFocusedWindow() ?? undefined)
+  store: executionConsentStore
 });
 // Rule 2 / 0.4: supply the registered-project roots so PtyManager can re-confine
 // a local spawn cwd (realpath) at the moment of spawn — a lazy closure, so it

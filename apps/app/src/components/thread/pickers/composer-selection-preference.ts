@@ -89,6 +89,29 @@ export function rememberedSelectionFor(providerId: string): ComposerProviderSele
 }
 
 /**
+ * CLI used to remember moving family aliases (`haiku` / `sonnet` / `opus` /
+ * `fable`). The thread catalog offers pinned ids as the primary list and keeps
+ * those aliases under More as "… Alias (Legacy)". When the pinned id is
+ * offered, prefer it so CLI↔Modern does not land on the legacy row.
+ */
+const MOVING_ALIAS_TO_PINNED: Readonly<Record<string, string>> = {
+  haiku: 'claude-haiku-4-5',
+  sonnet: 'claude-sonnet-5',
+  opus: 'claude-opus-5[1m]',
+  'opus[1m]': 'claude-opus-5[1m]',
+  fable: 'claude-fable-5-1'
+};
+
+export function remapMovingAlias(
+  model: string,
+  offeredModels: readonly string[]
+): string {
+  const canonical = MOVING_ALIAS_TO_PINNED[model];
+  if (canonical && offeredModels.includes(canonical)) return canonical;
+  return model;
+}
+
+/**
  * Once a harness has a non-empty model list, always return one of those ids.
  * Remembered last-used wins when it is still offered, then the current pick,
  * then the catalog default / first row. Empty catalogs stay empty.
@@ -101,8 +124,12 @@ export function pickOfferedComposerModel(input: {
 }): string {
   const offered = input.offeredModels.filter((model) => model.trim().length > 0);
   if (offered.length === 0) return '';
-  if (input.rememberedModel && offered.includes(input.rememberedModel)) return input.rememberedModel;
-  if (input.currentModel && offered.includes(input.currentModel)) return input.currentModel;
+  const remembered = input.rememberedModel
+    ? remapMovingAlias(input.rememberedModel, offered)
+    : undefined;
+  const current = remapMovingAlias(input.currentModel, offered);
+  if (remembered && offered.includes(remembered)) return remembered;
+  if (current && offered.includes(current)) return current;
   if (input.fallbackModel && offered.includes(input.fallbackModel)) return input.fallbackModel;
   return offered[0]!;
 }

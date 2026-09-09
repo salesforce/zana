@@ -28,7 +28,7 @@ const openCodeExecutionEvidence = (
 });
 
 const exactExecutionEvidence = (
-  adapterId: 'claude' | 'cursor' | 'codex',
+  adapterId: 'claude' | 'cursor' | 'codex' | 'grok',
   state: ExecutionState,
   cliVersion: string,
   scopes: readonly ('local' | 'remote')[],
@@ -66,9 +66,13 @@ const APPROVED_EXECUTION_EVIDENCE: Readonly<Record<string, ExecutionEvidenceFixt
   ])),
   'cursor.execution.plan': exactExecutionEvidence('cursor', 'plan', '2026.01.23', ['local'], exactObserved('Cursor plan mode')),
   'cursor.execution.interactive': exactExecutionEvidence('cursor', 'interactive', '2026.01.23', ['local'], exactObserved('Cursor native configured policy')),
-  'cursor.execution.accept-edits': exactExecutionEvidence('cursor', 'accept-edits', '2026.01.23', ['local'], {
-    ...exactObserved('Cursor force mode'), approvalPrompts: 'broader than portable accept-edits; interactive consent required'
-  }),
+  'cursor.execution.accept-edits': exactExecutionEvidence(
+    'cursor',
+    'accept-edits',
+    '2026.01.23',
+    ['local'],
+    exactObserved('Cursor native TUI prompts before tool execution')
+  ),
   'cursor.execution.autonomous': exactExecutionEvidence('cursor', 'autonomous', '2026.01.23', ['local'], exactObserved('Cursor force mode')),
   'opencode.execution.plan': openCodeExecutionEvidence('plan', {
     filesystem: 'built-in plan agent denies edit tools',
@@ -85,10 +89,10 @@ const APPROVED_EXECUTION_EVIDENCE: Readonly<Record<string, ExecutionEvidenceFixt
     explicitDenialsRetained: true
   }),
   'opencode.execution.accept-edits': openCodeExecutionEvidence('accept-edits', {
-    filesystem: 'build agent with --auto approves edits',
-    commands: '--auto also approves commands not explicitly denied',
-    network: '--auto also approves network-capable tools not explicitly denied',
-    approvalPrompts: 'broader than portable accept-edits; interactive consent required',
+    filesystem: 'native configured policy remains authoritative',
+    commands: 'native configured policy remains authoritative',
+    network: 'native configured policy remains authoritative',
+    approvalPrompts: 'native configured policy remains authoritative',
     explicitDenialsRetained: true
   }),
   'opencode.execution.autonomous': openCodeExecutionEvidence('autonomous', {
@@ -97,7 +101,21 @@ const APPROVED_EXECUTION_EVIDENCE: Readonly<Record<string, ExecutionEvidenceFixt
     network: '--auto approves network-capable tools not explicitly denied',
     approvalPrompts: 'no prompt for permissions not explicitly denied',
     explicitDenialsRetained: true
-  })
+  }),
+  'grok.execution.interactive': exactExecutionEvidence(
+    'grok',
+    'interactive',
+    '1.0.24',
+    ['local', 'remote'],
+    exactObserved('Grok native TUI prompts before tool execution')
+  ),
+  'grok.execution.accept-edits': exactExecutionEvidence(
+    'grok',
+    'accept-edits',
+    '1.0.24',
+    ['local', 'remote'],
+    exactObserved('Grok native TUI prompts before tool execution')
+  )
 });
 
 export function executionEvidenceFor(targetId: string): ExecutionEvidenceFixture | undefined {

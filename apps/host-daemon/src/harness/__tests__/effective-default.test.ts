@@ -17,7 +17,7 @@ const project = (patch: Partial<Project> = {}): Project => ({
 });
 
 const available = (...families: HarnessVerifyResult['family'][]): HarnessVerifyResult[] =>
-  (['claude', 'cursor', 'codex', 'pi', 'opencode'] as const).map((family) => ({
+  (['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok'] as const).map((family) => ({
     family,
     label: family,
     binary: family,

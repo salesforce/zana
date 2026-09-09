@@ -47,8 +47,9 @@ export interface ExecutionResolution {
 
 import type { LaunchProvider } from './launch-provider.js';
 
-/** Pi (and similar) list models at runtime; the static adapter catalog is empty. */
-const LIVE_LISTED_MODEL_TARGET_ID = /^[A-Za-z0-9][\w./:+@-]{0,255}$/;
+/** Pi (and similar) list models at runtime; the static adapter catalog is empty.
+ * Claude versioned ids carry a `[1m]` 1M-context suffix (`claude-opus-5[1m]`). */
+const LIVE_LISTED_MODEL_TARGET_ID = /^[A-Za-z0-9][\w./:+@-]{0,255}(?:\[1m\])?$/;
 
 export function isLiveListedModelTargetId(id: string): boolean {
   return !id.startsWith('-') && LIVE_LISTED_MODEL_TARGET_ID.test(id);
@@ -58,6 +59,18 @@ export function isLiveListedModelTargetId(id: string): boolean {
 export function allowsLiveListedModelTarget(provider: LaunchProvider, targetId: string): boolean {
   const catalog = provider.adapter.descriptor.targets?.models ?? [];
   return catalog.length === 0 && isLiveListedModelTargetId(targetId) && !!provider.modelContribution;
+}
+
+/**
+ * Adapters that share the Modern thread catalog (Claude, Cursor, Codex, Grok)
+ * opt into well-formed ids that are not in the PTY snapshot. CLI Agent and
+ * Modern pick from the same execution-options list; launch must not reject
+ * those ids. Not a global any-id hole — the provider must set the flag.
+ */
+export function acceptsUnlistedModelTarget(provider: LaunchProvider, targetId: string): boolean {
+  return Boolean(provider.acceptsUnlistedModelTargets)
+    && isLiveListedModelTargetId(targetId)
+    && !!provider.modelContribution;
 }
 
 /**
@@ -86,7 +99,7 @@ function validatePerTabRouting(routing: HarnessModelRoutingV1 | undefined): void
     throw new Error('Invalid structured model routing request.');
   }
   for (const [family, value] of Object.entries(routing.byAdapter)) {
-    if (!['claude', 'cursor', 'codex', 'pi', 'opencode'].includes(family) || !value || typeof value !== 'object') {
+    if (!['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok'].includes(family) || !value || typeof value !== 'object') {
       throw new Error('Invalid structured model routing request.');
     }
     const intent = value as {
@@ -238,7 +251,11 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
     const catalogModels = provider.adapter.descriptor.targets?.models ?? [];
     const target = catalogModels.find((candidate) => candidate.id === targetId);
     if (!target) {
-      if (!allowsLiveListedModelTarget(provider, targetId) && !acceptsDriftedModelTarget(provider, targetId)) {
+      if (
+        !allowsLiveListedModelTarget(provider, targetId)
+        && !acceptsDriftedModelTarget(provider, targetId)
+        && !acceptsUnlistedModelTarget(provider, targetId)
+      ) {
         throw new Error(`Unknown model target for ${provider.adapter.descriptor.label}.`);
       }
     } else if (input.scope && !target.scope.includes(input.scope)) {

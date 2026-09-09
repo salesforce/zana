@@ -22,6 +22,17 @@ export async function runSettingsCommand(
     if (raw === 'true') parsed = true;
     else if (raw === 'false') parsed = false;
     else if (/^-?\d+(\.\d+)?$/.test(raw)) parsed = Number(raw);
+    else if (
+      (raw.startsWith('[') && raw.endsWith(']'))
+      || (raw.startsWith('{') && raw.endsWith('}'))
+      || (raw.startsWith('"') && raw.endsWith('"'))
+    ) {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        /* keep the raw string */
+      }
+    }
     const patched = await productRequest<{ config?: unknown }>('PATCH', '/api/v1/config', {
       deps,
       body: { [key]: parsed }

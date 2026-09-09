@@ -8,7 +8,8 @@ import {
   readComposerSelectionPreference,
   rememberComposerSelection,
   rememberedProviderId,
-  rememberedSelectionFor
+  rememberedSelectionFor,
+  remapMovingAlias
 } from './composer-selection-preference.js';
 
 function installLocalStorage(): void {
@@ -182,6 +183,46 @@ describe('pickOfferedComposerModel', () => {
       currentModel: '',
       offeredModels: []
     })).toBe('');
+  });
+});
+
+describe('remapMovingAlias', () => {
+  const offered = [
+    'claude-fable-5-1',
+    'claude-opus-5[1m]',
+    'claude-sonnet-5',
+    'claude-haiku-4-5',
+    'haiku',
+    'sonnet',
+    'opus',
+    'fable'
+  ];
+
+  it('maps moving aliases onto pinned catalog ids when those ids are offered', () => {
+    expect(remapMovingAlias('haiku', offered)).toBe('claude-haiku-4-5');
+    expect(remapMovingAlias('sonnet', offered)).toBe('claude-sonnet-5');
+    expect(remapMovingAlias('opus', offered)).toBe('claude-opus-5[1m]');
+    expect(remapMovingAlias('opus[1m]', offered)).toBe('claude-opus-5[1m]');
+    expect(remapMovingAlias('fable', offered)).toBe('claude-fable-5-1');
+  });
+
+  it('leaves the alias when the pinned id is not offered', () => {
+    expect(remapMovingAlias('haiku', ['haiku', 'sonnet'])).toBe('haiku');
+    expect(remapMovingAlias('claude-sonnet-5', offered)).toBe('claude-sonnet-5');
+  });
+
+  it('picks the pinned id over a remembered moving alias', () => {
+    expect(pickOfferedComposerModel({
+      rememberedModel: 'haiku',
+      currentModel: 'haiku',
+      offeredModels: offered
+    })).toBe('claude-haiku-4-5');
+    expect(pickOfferedComposerModel({
+      rememberedModel: 'sonnet',
+      currentModel: '',
+      offeredModels: offered,
+      fallbackModel: 'claude-opus-5[1m]'
+    })).toBe('claude-sonnet-5');
   });
 });
 

@@ -60,13 +60,15 @@ export function ThreadPlanPanel({
   todos,
   durablePlan,
   onOpenFile,
-  showStatusBadge = true
+  showStatusBadge = true,
+  emptyLabel = 'The agent has not written a plan yet.'
 }: {
   document: ThreadPlanDocument;
   todos?: ThreadTimelinePendingTodos | null;
   durablePlan?: DurablePlanPanelView | null;
   onOpenFile?: (path: string) => void;
   showStatusBadge?: boolean;
+  emptyLabel?: string;
 }) {
   const items = durablePlan?.tasks.length
     ? durablePlan.tasks
@@ -110,7 +112,7 @@ export function ThreadPlanPanel({
         </div>
       ) : items.length > 0 ? null : (
         <p className="thread-plan-panel-empty" data-testid="thread-plan-empty">
-          The agent has not written a plan yet.
+          {emptyLabel}
         </p>
       )}
       {items.length > 0 ? (

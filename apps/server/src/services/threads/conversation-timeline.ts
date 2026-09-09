@@ -96,7 +96,9 @@ export function storedEventsToMeta(rows: ConversationThreadEventRow[]): ThreadEv
 }
 
 function includeProviderUnhandledOperations(ctx: ProductHttpContext): boolean {
-  return ctx.config?.getConfig?.().showUnhandledProviderEvents === true
+  const cfg = ctx.config?.getConfig?.();
+  return cfg?.showDiagnosticEvents === true
+    || cfg?.showUnhandledProviderEvents === true
     || process.env.NODE_ENV === 'development';
 }
 

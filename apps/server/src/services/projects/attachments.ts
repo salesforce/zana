@@ -95,6 +95,27 @@ export function resolvePromptAttachmentPath(
   return resolveAttachmentPath(projectAttachmentDir(dataDir, projectId), rawPath);
 }
 
+/**
+ * Resolve a renderer-supplied stored attachment name under the project
+ * attachment dir. Unlike {@link resolvePromptAttachmentPath}, absolute / URI
+ * paths are rejected — a CLI remote upload must not treat a renderer path as a
+ * trust anchor (Rule 1).
+ */
+export function resolveStoredAttachmentPath(
+  dataDir: string,
+  projectId: string,
+  relativePath: string
+): string {
+  if (!relativePath || pathLooksRuntimeReadable(relativePath)) {
+    throw new ProjectAttachmentError(
+      400,
+      'invalid_request',
+      'Attachment path must refer to a file inside the project directory'
+    );
+  }
+  return resolveAttachmentPath(projectAttachmentDir(dataDir, projectId), relativePath);
+}
+
 function isHeifImageUpload(mimeType: string): boolean {
   return HEIF_IMAGE_MIME_TYPES.has(mimeType.split(';')[0]?.trim().toLowerCase() ?? '');
 }

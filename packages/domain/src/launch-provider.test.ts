@@ -6,6 +6,7 @@ import {
   isClaudeProfile,
   isCursorProfile,
   isCodexProfile,
+  isGrokProfile,
   isAgentProfile,
   providerCapabilities,
   providerUiSchema,
@@ -74,6 +75,13 @@ describe('launch-provider', () => {
       expect(isCodexProfile('codex')).toBe(true);
       expect(isCodexProfile('codex-resume')).toBe(true);
       expect(isCodexProfile('cursor')).toBe(false);
+    });
+
+    it('isGrokProfile matches only the grok family', () => {
+      expect(isGrokProfile('grok')).toBe(true);
+      expect(isGrokProfile('grok-resume')).toBe(true);
+      expect(isGrokProfile('grok-yolo')).toBe(true);
+      expect(isGrokProfile('opencode')).toBe(false);
     });
 
     it('isAgentProfile is true for every non-shell profile', () => {
@@ -314,6 +322,39 @@ describe('launch-provider', () => {
             "isAgent": true,
             "supportsHooks": false,
           },
+          "grok": {
+            "acceptsPermissionMode": false,
+            "acceptsPromptArgv": true,
+            "acceptsSessionId": false,
+            "canAutoCloseOnFinish": false,
+            "emitsOscStatus": false,
+            "hasTranscript": false,
+            "injectsClaudeMcpConfig": false,
+            "isAgent": true,
+            "supportsHooks": false,
+          },
+          "grok-resume": {
+            "acceptsPermissionMode": false,
+            "acceptsPromptArgv": true,
+            "acceptsSessionId": false,
+            "canAutoCloseOnFinish": false,
+            "emitsOscStatus": false,
+            "hasTranscript": false,
+            "injectsClaudeMcpConfig": false,
+            "isAgent": true,
+            "supportsHooks": false,
+          },
+          "grok-yolo": {
+            "acceptsPermissionMode": false,
+            "acceptsPromptArgv": true,
+            "acceptsSessionId": false,
+            "canAutoCloseOnFinish": false,
+            "emitsOscStatus": false,
+            "hasTranscript": false,
+            "injectsClaudeMcpConfig": false,
+            "isAgent": true,
+            "supportsHooks": false,
+          },
           "opencode": {
             "acceptsPermissionMode": false,
             "acceptsPromptArgv": true,
@@ -508,7 +549,7 @@ describe('launch-provider', () => {
   });
 
   describe('seedPromptArgs', () => {
-    it('seeds a positional prompt for the claude/cursor/codex/pi families', () => {
+    it('seeds a positional prompt for the claude/cursor/codex/pi/grok families', () => {
       for (const p of [
         'claude',
         'claude-resume',
@@ -520,7 +561,10 @@ describe('launch-provider', () => {
         'codex-resume',
         'codex-yolo',
         'pi',
-        'pi-resume'
+        'pi-resume',
+        'grok',
+        'grok-resume',
+        'grok-yolo'
       ] as const) {
         expect(seedPromptArgs(p, 'do the thing'), p).toEqual(['do the thing']);
       }
