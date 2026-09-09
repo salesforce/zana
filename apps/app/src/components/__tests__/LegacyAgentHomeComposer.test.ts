@@ -36,7 +36,9 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('assembleCliLaunchPrompt');
     expect(source).toContain('absolutePathMentions');
     expect(source).not.toContain('product.threads.create');
-    expect(source).not.toContain('ComposerModePicker');
+    expect(source).toContain('ComposerModePicker');
+    expect(source).toContain('cliComposerModeChip');
+    expect(source).toContain('cliLaunchExecutionState');
     expect(source).not.toContain('LauncherModelPicker');
     expect(source).not.toContain('AttachmentPills');
     expect(source).not.toContain('<textarea');
@@ -112,7 +114,9 @@ describe('LegacyAgentHomeComposer', () => {
     // The old shape spread BOTH selectors into the adapter entry.
     expect(source).not.toContain('...(validRoleId ? { roleTargetId: validRoleId } : {})');
     // Edits → executionState must not ride with a native role (OpenCode preflight).
-    expect(source).toContain('const withState = permLaunch.executionState && !validRoleId');
+    expect(source).toContain('cliLaunchExecutionState');
+    expect(source).toContain('hasNativeRole: Boolean(validRoleId)');
+    expect(source).toContain('unrestrictedProfileSelected: Boolean(permLaunch.profileId)');
   });
 
   it('offers the OpenCode native role via a popover picker only for the opencode family', () => {
@@ -126,6 +130,18 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain("kind: 'native'");
     expect(source).toContain('options: roleOptions');
     expect(source).toContain('onChange: setRoleTargetId');
+  });
+
+  it('offers ComposerModePicker Agent/Plan only for Claude, Cursor, and Codex', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('<ComposerModePicker');
+    expect(source).toContain("modeChip === 'work-mode'");
+    expect(source).toContain('modes={CLI_WORK_MODES}');
+    expect(source).toContain('cliComposerModeChip');
+    expect(source).toContain("kind: 'work'");
+    expect(source).not.toContain("kind: 'new-thread'");
+    expect(source).toContain("familyId === 'opencode' ? (");
+    expect(source).toContain('<NativeRolePicker');
   });
 
   it('defaults the harness like Modern via resolveCliAgentFamily (current → remembered → effectiveDefault)', () => {

@@ -342,4 +342,37 @@ describe('production execution routing preflight', () => {
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
     expect(services.installedVersion).not.toHaveBeenCalled();
   });
+
+  it.each(['claude', 'cursor', 'codex'] as const)('allows default CLI Agent (Agent mode) for %s without structured routing', async (profile) => {
+    const services = deps();
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark' } as AppConfig,
+      profile,
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: `cli-agent-${profile}`
+    }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+    expect(services.installedVersion).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['claude', '2.1.220', { claude: { executionState: 'plan' as const } }],
+    ['cursor', '2026.01.23', { cursor: { executionState: 'plan' as const } }],
+    ['codex', '0.140.0', { codex: { executionState: 'plan' as const } }]
+  ] as const)('allows CLI Agent Plan routing for %s without blocking', async (profile, version, byAdapter) => {
+    const services = {
+      consentStore: { reserve: vi.fn(async () => ({ outcome: 'denied' as const })) },
+      installedVersion: vi.fn(async () => version)
+    };
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark' } as AppConfig,
+      profile,
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: `cli-plan-${profile}`,
+      harnessRouting: { schemaVersion: 1, byAdapter }
+    }, services)).resolves.toMatchObject({ decision: 'allowed', scope: 'local' });
+  });
 });

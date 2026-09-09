@@ -34,7 +34,8 @@ import {
 } from './composer-project-default.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
-import { consumeComposerModeCycle } from './thread/pickers/composer-mode.js';
+import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
+import { consumeComposerModeCycle, type ComposerWorkMode } from './thread/pickers/composer-mode.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { PluginComposerAdvanced, PluginComposerMeta } from '../plugins/PluginComposerSlots.js';
 import {
@@ -56,6 +57,9 @@ import {
   cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
   cliAgentMoreModelOptions,
+  CLI_WORK_MODES,
+  cliComposerModeChip,
+  cliLaunchExecutionState,
   cliLaunchFromPermissionMode,
   cliPermissionModesFor,
   familyForThreadProviderId,
@@ -151,6 +155,7 @@ export function LegacyAgentHomeComposer({
   const [extraArgs, setExtraArgs] = useState<string[]>([]);
   const [personaId, setPersonaId] = useState('');
   const [permissionMode, setPermissionMode] = useState('accept-edits');
+  const [workMode, setWorkMode] = useState<ComposerWorkMode>('agent');
   const launchPatch = useSyncExternalStore(
     subscribeLaunchPatches,
     getMergedLaunchPatch,
@@ -174,6 +179,7 @@ export function LegacyAgentHomeComposer({
 
   useEffect(() => {
     setExtraArgs(readCliExtraArgs(familyId));
+    setWorkMode('agent');
   }, [familyId]);
   const cliRuntimeProfile = automaticProfile
     ?? selectedHarness?.defaultProfileId
@@ -227,6 +233,7 @@ export function LegacyAgentHomeComposer({
   const roleOptions = familyId === 'opencode'
     ? catalogEntry?.acpMode?.options ?? []
     : [];
+  const modeChip = cliComposerModeChip(familyId);
 
   const field = useComposerPromptField({
     placeholder: 'Describe the task… Leave empty to open an interactive session',
@@ -241,12 +248,25 @@ export function LegacyAgentHomeComposer({
     onSubmit: () => {
       launchRef.current();
     },
-    interceptKeyDown: (event) => consumeComposerModeCycle(event, {
-      kind: 'native',
-      options: roleOptions,
-      current: roleTargetId,
-      onChange: setRoleTargetId
-    }),
+    interceptKeyDown: (event) => {
+      if (modeChip === 'native-role') {
+        return consumeComposerModeCycle(event, {
+          kind: 'native',
+          options: roleOptions,
+          current: roleTargetId,
+          onChange: setRoleTargetId
+        });
+      }
+      if (modeChip === 'work-mode') {
+        return consumeComposerModeCycle(event, {
+          kind: 'work',
+          modes: CLI_WORK_MODES,
+          current: workMode,
+          onChange: setWorkMode
+        });
+      }
+      return false;
+    },
     onError: setError
   });
   const voice = useVoiceInput({ onTranscript: field.insertText });
@@ -523,9 +543,17 @@ export function LegacyAgentHomeComposer({
         : {};
       // OpenCode treats a native `--agent` role as the execution policy. Sending
       // Edits (`accept-edits`) alongside a role fails preflight with "require
-      // one compatible role policy". Same XOR as role-vs-model above.
-      const withState = permLaunch.executionState && !validRoleId
-        ? withExecutionState(coreRouting, familyId, permLaunch.executionState)
+      // one compatible role policy". Same XOR as role-vs-model above. Plan for
+      // Claude/Cursor/Codex also XOR's Edits via cliLaunchExecutionState.
+      const executionState = cliLaunchExecutionState({
+        familyId,
+        workMode: workMode === 'plan' ? 'plan' : 'agent',
+        permissionExecutionState: permLaunch.executionState,
+        hasNativeRole: Boolean(validRoleId),
+        unrestrictedProfileSelected: Boolean(permLaunch.profileId)
+      });
+      const withState = executionState
+        ? withExecutionState(coreRouting, familyId, executionState)
         : coreRouting;
       const merged = applyLaunchPatch({
         baseProfile: resolveCliLaunchProfile({
@@ -656,6 +684,7 @@ export function LegacyAgentHomeComposer({
                       rememberComposerSelection({ providerId: nextProviderId, model: restored });
                     }
                     setRoleTargetId(undefined);
+                    setWorkMode('agent');
                     setSelectionProvenance('explicit');
                     setSelectionState('resolved');
                     setResolvedProjectId(projectId);
@@ -686,6 +715,12 @@ export function LegacyAgentHomeComposer({
                     onRefresh={() => {
                       if (selectedProviderId) void reloadThreadProviderModels(selectedProviderId);
                     }}
+                  />
+                ) : modeChip === 'work-mode' ? (
+                  <ComposerModePicker
+                    value={workMode === 'plan' ? 'plan' : 'agent'}
+                    modes={CLI_WORK_MODES}
+                    onChange={setWorkMode}
                   />
                 ) : null}
               </div>

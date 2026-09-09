@@ -8,8 +8,11 @@ import {
   cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
   cliAgentMoreModelOptions,
+  cliComposerModeChip,
+  cliLaunchExecutionState,
   cliLaunchFromPermissionMode,
   cliPermissionModesFor,
+  CLI_WORK_MODES,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
   readCliExtraArgs,
@@ -428,5 +431,116 @@ describe('CLI launch overlay helpers', () => {
     expect(readCliExtraArgs('codex')).toEqual([]);
     writeCliExtraArgs('claude', []);
     expect(readCliExtraArgs('claude')).toEqual([]);
+  });
+});
+
+describe('cliComposerModeChip', () => {
+  it('keeps OpenCode on native roles and offers Agent/Plan for plan-capable PTY families', () => {
+    expect(CLI_WORK_MODES).toEqual(['agent', 'plan']);
+    expect(cliComposerModeChip('opencode')).toBe('native-role');
+    expect(cliComposerModeChip('claude')).toBe('work-mode');
+    expect(cliComposerModeChip('cursor')).toBe('work-mode');
+    expect(cliComposerModeChip('codex')).toBe('work-mode');
+    expect(cliComposerModeChip('pi')).toBe('none');
+    expect(cliComposerModeChip('')).toBe('none');
+  });
+});
+
+describe('cliLaunchExecutionState', () => {
+  const base = {
+    permissionExecutionState: 'accept-edits' as const,
+    hasNativeRole: false,
+    unrestrictedProfileSelected: false
+  };
+
+  it('emits no extra routing on default Agent so current launches stay identical', () => {
+    expect(cliLaunchExecutionState({
+      ...base,
+      familyId: 'claude',
+      workMode: 'agent'
+    })).toBe('accept-edits');
+    expect(cliLaunchExecutionState({
+      familyId: 'claude',
+      workMode: 'agent',
+      hasNativeRole: false,
+      unrestrictedProfileSelected: false
+    })).toBeUndefined();
+    expect(cliLaunchExecutionState({
+      familyId: 'pi',
+      workMode: 'plan',
+      hasNativeRole: false,
+      unrestrictedProfileSelected: false
+    })).toBeUndefined();
+  });
+
+  it('sets plan and never a roleTargetId for Claude, Cursor, and Codex', () => {
+    for (const familyId of ['claude', 'cursor', 'codex'] as const) {
+      expect(cliLaunchExecutionState({
+        ...base,
+        familyId,
+        workMode: 'plan'
+      }), familyId).toBe('plan');
+    }
+  });
+
+  it('XORs Plan against Edits and skips Plan on Full/yolo or an OpenCode native role', () => {
+    expect(cliLaunchExecutionState({
+      ...base,
+      familyId: 'claude',
+      workMode: 'plan'
+    })).toBe('plan');
+    expect(cliLaunchExecutionState({
+      familyId: 'claude',
+      workMode: 'plan',
+      permissionExecutionState: 'accept-edits',
+      hasNativeRole: false,
+      unrestrictedProfileSelected: true
+    })).toBeUndefined();
+    expect(cliLaunchExecutionState({
+      familyId: 'opencode',
+      workMode: 'plan',
+      permissionExecutionState: 'accept-edits',
+      hasNativeRole: true,
+      unrestrictedProfileSelected: false
+    })).toBeUndefined();
+    expect(cliLaunchExecutionState({
+      familyId: 'opencode',
+      workMode: 'agent',
+      permissionExecutionState: 'accept-edits',
+      hasNativeRole: true,
+      unrestrictedProfileSelected: false
+    })).toBeUndefined();
+  });
+
+  it('lets applyLaunchPatch still merge plugin extra args and routing on top of Plan', () => {
+    const routing = withExecutionState(
+      undefined,
+      'claude',
+      cliLaunchExecutionState({
+        familyId: 'claude',
+        workMode: 'plan',
+        permissionExecutionState: 'accept-edits',
+        hasNativeRole: false,
+        unrestrictedProfileSelected: false
+      }) ?? ''
+    );
+    const merged = applyLaunchPatch({
+      baseProfile: 'claude',
+      extraArgs: ['--verbose'],
+      harnessRouting: routing,
+      patch: {
+        extraArgs: ['--plugin-dir', '/tmp/p'],
+        harnessRouting: {
+          schemaVersion: 1,
+          byAdapter: { claude: { modelTargetId: 'sonnet' } }
+        }
+      }
+    });
+    expect(merged.extraArgs).toEqual(['--verbose', '--plugin-dir', '/tmp/p']);
+    expect(merged.harnessRouting?.byAdapter.claude).toMatchObject({
+      executionState: 'plan',
+      modelTargetId: 'sonnet'
+    });
+    expect(merged.harnessRouting?.byAdapter.claude).not.toHaveProperty('roleTargetId');
   });
 });

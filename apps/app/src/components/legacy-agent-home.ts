@@ -262,6 +262,36 @@ export function withExecutionState(
   return { schemaVersion: 1, byAdapter };
 }
 
+/** First-slot chip for CLI Agent. OpenCode keeps native `--agent` roles. */
+export type CliComposerModeChip = 'native-role' | 'work-mode' | 'none';
+
+export const CLI_WORK_MODES = ['agent', 'plan'] as const;
+
+export function cliComposerModeChip(familyId: string): CliComposerModeChip {
+  if (familyId === 'opencode') return 'native-role';
+  if (familyId === 'claude' || familyId === 'cursor' || familyId === 'codex') return 'work-mode';
+  return 'none';
+}
+
+/**
+ * Fold Plan into the existing executionState merge. Default Agent emits nothing
+ * extra so Claude/Cursor/Codex launches stay byte-identical. Plan XOR Edits;
+ * a native OpenCode role or Full/yolo profile skips structured executionState.
+ */
+export function cliLaunchExecutionState(input: {
+  familyId: string;
+  workMode: (typeof CLI_WORK_MODES)[number];
+  permissionExecutionState?: 'accept-edits';
+  hasNativeRole: boolean;
+  unrestrictedProfileSelected: boolean;
+}): 'plan' | 'accept-edits' | undefined {
+  if (input.hasNativeRole || input.unrestrictedProfileSelected) return undefined;
+  if (cliComposerModeChip(input.familyId) === 'work-mode' && input.workMode === 'plan') {
+    return 'plan';
+  }
+  return input.permissionExecutionState;
+}
+
 export function applyLaunchPatch(input: {
   baseProfile: LaunchProfileId;
   extraArgs?: readonly string[];

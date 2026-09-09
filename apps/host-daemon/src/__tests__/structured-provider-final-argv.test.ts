@@ -91,6 +91,21 @@ describe('structured providers final local argv', () => {
     });
   });
 
+  it.each([
+    ['claude', { executionState: 'plan' as const }, ['--permission-mode', 'plan']],
+    ['cursor', { executionState: 'plan' as const }, ['--mode', 'plan']],
+    ['codex', { executionState: 'plan' as const }, ['-s', 'read-only', '-a', 'on-request']]
+  ] as const)('spawns %s Plan without crashing', (profile, target, flags) => {
+    const result = spawn(profile, routing(profile, { ...target }));
+    expect(result.args).toEqual(expect.arrayContaining([...flags]));
+  });
+
+  it('keeps default Agent launches off the Plan flags', () => {
+    expect(spawn('claude').args.join(' ')).not.toMatch(/--permission-mode plan/);
+    expect(spawn('cursor').args).not.toContain('--mode');
+    expect(spawn('codex').args).not.toEqual(expect.arrayContaining(['-s', 'read-only', '-a', 'on-request']));
+  });
+
   it('omits --model when Cursor Auto sentinels are selected', () => {
     expect(spawn('cursor', routing('cursor', {
       modelTargetId: 'auto'
