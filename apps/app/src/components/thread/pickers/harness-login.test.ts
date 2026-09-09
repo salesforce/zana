@@ -24,11 +24,14 @@ describe('harness login status', () => {
     expect(loginCommandForProvider('pi')).toBe('pi');
     expect(loginCommandForProvider('acp-opencode')).toBe('opencode auth login');
     expect(loginCommandForProvider('opencode')).toBe('opencode auth login');
+    expect(loginCommandForProvider('acp-grok')).toBe('grok login');
+    expect(loginCommandForProvider('grok')).toBe('grok login');
     expect(loginCommandForProvider('claude-code')).toBeNull();
     expect(harnessLoginStatus('claude', catalog(), true)).toBeNull();
     expect(harnessLoginStatus('cursor', catalog(), false)).toBeNull();
     expect(harnessLoginStatus('pi', catalog(), false)).toBeNull();
     expect(harnessLoginStatus('opencode', catalog(), false)).toBeNull();
+    expect(harnessLoginStatus('grok', catalog(), false)).toBeNull();
   });
 
   it('treats a missing or in-flight catalog as still checking', () => {
@@ -36,6 +39,7 @@ describe('harness login status', () => {
     expect(harnessLoginStatus('codex', catalog({ inflight: new Set(['codex']) }), true)?.state).toBe('checking');
     expect(harnessLoginStatus('pi', catalog(), true)?.state).toBe('checking');
     expect(harnessLoginStatus('opencode', catalog(), true)?.state).toBe('checking');
+    expect(harnessLoginStatus('grok', catalog(), true)?.state).toBe('checking');
   });
 
   it('surfaces sign-in required from auth_required and signed in when listing succeeded', () => {
@@ -105,10 +109,20 @@ describe('harness login status', () => {
     }), true)?.state).toBe('signed_in');
   });
 
+  it('does not treat an empty Grok catalog as signed in', () => {
+    expect(harnessLoginStatus('grok', catalog({
+      byProvider: { 'acp-grok': { models: [], selectedOnlyModels: [], modelLoadError: 'auth_required' } }
+    }), true)).toEqual({ state: 'sign_in_required', loginCommand: 'grok login' });
+    expect(harnessLoginStatus('grok', catalog({
+      byProvider: { 'acp-grok': { models: [], selectedOnlyModels: [], modelLoadError: null } }
+    }), true)?.state).toBe('unverified');
+  });
+
   it('tells the model picker how to recover from a Cursor login miss', () => {
     expect(emptyModelsHint('acp-cursor', 'auth_required')).toBe('Sign in with cursor-agent login');
     expect(emptyModelsHint('codex', 'auth_required')).toBe('Sign in with codex login');
     expect(emptyModelsHint('acp-opencode', 'auth_required')).toBe('Sign in with opencode auth login');
+    expect(emptyModelsHint('acp-grok', 'auth_required')).toBe('Sign in with grok login');
     expect(emptyModelsHint('acp-cursor', null)).toBe('No models available');
   });
 

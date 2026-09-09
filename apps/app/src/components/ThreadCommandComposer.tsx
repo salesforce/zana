@@ -59,7 +59,7 @@ import { resolveThreadSubmitMode } from './thread/thread-submit-mode.js';
 import { promptHistoryTexts, stepPromptHistory } from './thread/prompt-history-step.js';
 import { ThreadContextMeter } from './thread/ThreadContextMeter.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
-import { resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
+import { preferredComposerProjectId, resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
 import { useBooleanPreference } from '../lib/use-boolean-preference.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { PluginComposerAdvanced, PluginComposerMeta } from '../plugins/PluginComposerSlots.js';
@@ -133,20 +133,22 @@ export function ThreadCommandComposer({
     if (!onComposerProjectIdChange) setInternalProjectId(resolved);
     onComposerProjectIdChange?.(resolved);
   };
-  const preferredProjectId = selectedProjectId ?? lastProjectId;
+  const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
   const ensureScratchRef = useRef(false);
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
   const hosts = useHosts();
   const threads = useThreads((s) => s.threads);
   const currentThread = threadId ? threads.find((row) => row.id === threadId) : undefined;
   const [hostId, setHostId] = useState(() => defaultHostId(hosts, pinnedProject));
+  const catalogHostId = currentThread?.hostId ?? selectedProject?.hostId ?? hostId;
   const options = useThreadComposerOptions({
     threadId,
     lockedProviderId,
     initialModel,
     initialReasoningLevel,
     initialAcpMode: executionModeRequested ?? initialAcpMode,
-    hostId: currentThread?.hostId ?? selectedProject?.hostId ?? hostId
+    hostId: catalogHostId,
+    hostPending: !catalogHostId && hosts.length === 0
   });
   const [permissionMode, setPermissionMode] = useState('accept-edits');
   const [composerMode, setComposerMode] = useState<PortableWorkMode>('agent');

@@ -144,6 +144,7 @@ describe('ThreadCommandComposer pinning', () => {
     expect(source).toContain('disabled={Boolean(pinnedProject)}');
     expect(source).toContain('ensureQuickAgent');
     expect(source).toContain('resolveComposerProjectId');
+    expect(source).toContain('preferredComposerProjectId');
     expect(source).toContain('<ComposerProjectPicker');
     expect(source).not.toContain('{!pinnedProject && (');
     expect(source).not.toContain('projects[0]!');
@@ -183,7 +184,9 @@ describe('ThreadCommandComposer submit path', () => {
   it('creates and follows up through the Thread HTTP API', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('product.threads.create');
-    expect(source).toContain('hostId: currentThread?.hostId ?? selectedProject?.hostId ?? hostId');
+    expect(source).toContain('hostId: catalogHostId');
+    expect(source).toContain('const catalogHostId = currentThread?.hostId ?? selectedProject?.hostId ?? hostId');
+    expect(source).toContain('hostPending: !catalogHostId && hosts.length === 0');
     expect(source).toContain('isForeignExecutionHost');
     expect(source).toContain("kind: 'personal'");
     expect(source).toContain('cwd: foreignHost ? undefined : selected!.path');

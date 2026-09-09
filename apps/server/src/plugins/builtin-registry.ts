@@ -88,6 +88,13 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     category: 'Agent interaction'
   },
   {
+    name: 'harness-grok',
+    pluginId: 'harness-grok',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
     name: 'custom-instructions',
     pluginId: 'custom-instructions',
     autoInstall: true,

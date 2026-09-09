@@ -55,14 +55,17 @@ export type LaunchProfileId =
   | 'pi-resume'
   | 'opencode'
   | 'opencode-resume'
-  | 'opencode-yolo';
+  | 'opencode-yolo'
+  | 'grok'
+  | 'grok-resume'
+  | 'grok-yolo';
 
 /**
  * A verifiable code-harness FAMILY — the coarse grouping the Settings → Code
  * Harness category and the launcher's profile gate reason about (one family can
  * back several `LaunchProfileId`s, e.g. `claude`/`claude-resume`/`claude-yolo`).
  */
-export type HarnessFamily = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode';
+export type HarnessFamily = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok';
 
 /** Why a launch profile was supplied. Only an explicit choice may override a persona pin. */
 export type LaunchProfileSource = 'explicit' | 'seeded-default';
@@ -1666,6 +1669,12 @@ export interface AppConfig {
    */
   opencodeBinary?: string;
   /**
+   * Path/name of the `grok` CLI (the Grok Build TUI harness). Optional: absent
+   * ⇒ the provider falls back to the bare `grok` on PATH. Thread already speaks
+   * this binary over ACP (`grok agent stdio`); this slot is the interactive TUI.
+   */
+  grokBinary?: string;
+  /**
    * Hide the Cursor harness from agent-launch UIs. Absent/undefined ⇒ auto-on
    * when the CLI is installed. `false` is an explicit hide.
    */
@@ -1685,6 +1694,11 @@ export interface AppConfig {
    * when the CLI is installed. `false` is an explicit hide.
    */
   harnessOpenCodeEnabled?: boolean;
+  /**
+   * Hide the Grok Build TUI harness from agent-launch UIs. Absent/undefined ⇒
+   * auto-on when the CLI is installed. `false` is an explicit hide.
+   */
+  harnessGrokEnabled?: boolean;
   /**
    * Default PI provider (`pi --provider <name>`) for new PI tabs — PI is
    * multi-provider (anthropic / openai / google / …). Free text: PI accepts any

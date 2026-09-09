@@ -1,0 +1,30 @@
+{
+  "name": "@zcc-ext/harness-grok",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CLI Agent TUI for the native grok Build coding CLI.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-plugin-sdk": "workspace:*",
+    "typescript": "^7.0.2"
+  },
+  "zcc": {
+    "name": "Grok Build CLI Agent",
+    "description": "CLI Agent TUI for the native grok Build coding CLI.",
+    "branding": {
+      "icon": "./icons/grok.svg"
+    },
+    "server": "./server.mjs",
+    "pty": "./pty.ts",
+    "extra": {
+      "ptyHarness": true
+    }
+  }
+}

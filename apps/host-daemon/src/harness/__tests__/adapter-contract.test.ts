@@ -1,3 +1,4 @@
+import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { describe, expect, it } from 'vitest';
 import { availabilityFromVerify } from '@zana-ai/zcc-domain/harness-adapter';
 import { HARNESS_SETTINGS_CONTRIBUTIONS, hasNativeOption, validateConfigFiles } from '../adapter-contract.js';
@@ -13,7 +14,7 @@ describe('trusted harness adapter contract', () => {
         expect(profile.posture).toBeTruthy();
       }
     }
-    expect(seen.size).toBe(15);
+    expect(seen.size).toBe(VALID_PROFILES.length);
   });
 
   it('keeps shell terminal-only and every agent-default adapter profile-backed', () => {

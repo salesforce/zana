@@ -50,7 +50,10 @@ const PROFILE_LABEL: Record<LaunchProfileId, string> = {
   'pi-resume': 'pi --continue',
   opencode: 'opencode',
   'opencode-resume': 'opencode --continue',
-  'opencode-yolo': 'opencode --auto'
+  'opencode-yolo': 'opencode --auto',
+  grok: 'grok',
+  'grok-resume': 'grok --continue',
+  'grok-yolo': 'grok --always-approve'
 };
 
 /** Status → pill label / class suffix. Reuses the scheduler pill palette. */

@@ -489,7 +489,7 @@ function httpProduct(): Pick<
         `/hosts/${encodeURIComponent(id)}/clone-default-path?projectId=${encodeURIComponent(projectId)}`
       ),
       providerCliStatus: async (id) => apiJson(`/hosts/${encodeURIComponent(id)}/provider-clis/status`),
-      installProviderCli: async (id, request) => {
+      installProviderCli: async (id, request, onEvent) => {
         const response = await fetchWithAppSurface(
           `/api/v1/hosts/${encodeURIComponent(id)}/provider-clis/install`,
           {
@@ -498,22 +498,7 @@ function httpProduct(): Pick<
             body: JSON.stringify(request)
           }
         );
-        if (!response.ok) {
-          let detail = `${response.status}`;
-          try {
-            const body = (await response.json()) as { error?: string; message?: string };
-            detail = body.message ?? body.error ?? detail;
-          } catch {
-            /* keep status */
-          }
-          throw new Error(detail);
-        }
-        const text = await response.text();
-        return text
-          .split('\n')
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0)
-          .map((line) => JSON.parse(line) as Awaited<ReturnType<CcApi['hosts']['installProviderCli']>>[number]);
+        return requireOkNdjson(response, onEvent);
       },
       bootstrap: async (projectId, onEvent) => {
         const response = await fetchWithAppSurface('/api/v1/hosts/bootstrap', {

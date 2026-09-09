@@ -233,6 +233,43 @@ describe('production execution routing preflight', () => {
     }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 
+  it('allows a Codex thread-catalog id without waiting for model/list overlay', async () => {
+    const services = deps();
+    services.installedVersion = vi.fn(async () => '0.140.0');
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark', harnessCodexEnabled: true } as AppConfig,
+      profile: 'codex',
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'codex-thread-model',
+      harnessRouting: { schemaVersion: 1, byAdapter: { codex: { modelTargetId: 'gpt-5.5' } } }
+    }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+  });
+
+  it('allows a Cursor thread-catalog id without waiting for --list-models overlay', async () => {
+    const services = deps();
+    services.installedVersion = vi.fn(async () => '2026.08.15');
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark', harnessCursorEnabled: true } as AppConfig,
+      profile: 'cursor',
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'cursor-thread-model',
+      harnessRouting: { schemaVersion: 1, byAdapter: { cursor: { modelTargetId: 'default' } } }
+    }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark', harnessCursorEnabled: true } as AppConfig,
+      profile: 'cursor',
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'cursor-thread-grok',
+      harnessRouting: { schemaVersion: 1, byAdapter: { cursor: { modelTargetId: 'grok-4.6' } } }
+    }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+  });
+
   it('blocks a Cursor model target on Remote host launches and allows it on local scope', async () => {
     const services = deps();
     services.installedVersion = vi.fn(async () => '2026.08.15');
@@ -343,7 +380,29 @@ describe('production execution routing preflight', () => {
     expect(services.installedVersion).not.toHaveBeenCalled();
   });
 
-  it.each(['claude', 'cursor', 'codex'] as const)('allows default CLI Agent (Agent mode) for %s without structured routing', async (profile) => {
+  it('allows a thread-catalog Claude model id absent from the 4-alias snapshot', async () => {
+    const services = deps();
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark' } as AppConfig,
+      profile: 'claude',
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'claude-thread-model',
+      harnessRouting: { schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'claude-opus-5[1m]' } } }
+    }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark' } as AppConfig,
+      profile: 'claude',
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'claude-sonnet-5',
+      harnessRouting: { schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'claude-sonnet-5' } } }
+    }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+  });
+
+  it.each(['claude', 'cursor', 'codex', 'grok'] as const)('allows default CLI Agent (Agent mode) for %s without structured routing', async (profile) => {
     const services = deps();
     await expect(preflightTerminalExecution({
       config: { version: 1, theme: 'dark' } as AppConfig,
@@ -374,5 +433,39 @@ describe('production execution routing preflight', () => {
       idempotencyKey: `cli-plan-${profile}`,
       harnessRouting: { schemaVersion: 1, byAdapter }
     }, services)).resolves.toMatchObject({ decision: 'allowed', scope: 'local' });
+  });
+
+  it('allows CLI Agent Edits routing for Cursor without --force or consent', async () => {
+    const services = {
+      consentStore: { reserve: vi.fn(async () => ({ outcome: 'denied' as const })) },
+      installedVersion: vi.fn(async () => '2026.01.23')
+    };
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark' } as AppConfig,
+      profile: 'cursor',
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'cli-edits-cursor',
+      harnessRouting: { schemaVersion: 1, byAdapter: { cursor: { executionState: 'accept-edits' } } }
+    }, services)).resolves.toMatchObject({ decision: 'allowed', scope: 'local' });
+    expect(services.consentStore.reserve).not.toHaveBeenCalled();
+  });
+
+  it('allows CLI Agent Edits routing for Grok as the native TUI', async () => {
+    const services = {
+      consentStore: { reserve: vi.fn(async () => ({ outcome: 'denied' as const })) },
+      installedVersion: vi.fn(async () => '1.0.24')
+    };
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark' } as AppConfig,
+      profile: 'grok',
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'cli-edits-grok',
+      harnessRouting: { schemaVersion: 1, byAdapter: { grok: { executionState: 'accept-edits' } } }
+    }, services)).resolves.toMatchObject({ decision: 'allowed', scope: 'local' });
+    expect(services.consentStore.reserve).not.toHaveBeenCalled();
   });
 });

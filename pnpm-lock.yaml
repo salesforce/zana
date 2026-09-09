@@ -1113,6 +1113,15 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  plugins/harness-grok:
+    devDependencies:
+      '@zana-ai/zcc-plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   plugins/harness-opencode:
     devDependencies:
       '@zana-ai/zcc-plugin-sdk':

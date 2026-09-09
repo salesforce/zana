@@ -146,7 +146,7 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       executionStateMapping: {
         plan: 'plan',
         interactive: 'default',
-        'accept-edits': 'build + auto-approve',
+        'accept-edits': 'default',
         autonomous: 'build + auto-approve'
       }
     },
@@ -155,7 +155,7 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
   executionTargetMetadata: {
     plan: { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] },
     interactive: { equivalence: 'conditional', scopes: [...OPENCODE_VERIFIED_SCOPES] },
-    'accept-edits': { equivalence: 'closest', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    'accept-edits': { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] },
     autonomous: { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] }
   },
   collision: {
@@ -638,7 +638,7 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   executionContribution(targetId: string) {
     const state = targetId.replace('opencode.execution.', '');
     if (state === 'plan') return { args: ['--agent', 'plan'] };
-    if (state === 'accept-edits' || state === 'autonomous') {
+    if (state === 'autonomous') {
       return { args: ['--agent', 'build', '--auto'] };
     }
     return {};

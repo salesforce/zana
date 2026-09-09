@@ -72,6 +72,8 @@ describe('launch mode', () => {
     expect(source).toContain('<AutonomousTeamComposer');
     expect(source).toContain('<JobTeamComposer');
     expect(source).toContain('initialText={initialPrompt}');
+    expect(source).toContain('composerProjectId={composerProjectId}');
+    expect(source).toContain('onComposerProjectIdChange={setComposerProjectId}');
     expect(source).toContain('onCreated={onClose}');
     expect(source).toContain("{mode === 'autonomous' && (");
     expect(source).toContain("{mode === 'job' && (");
@@ -125,13 +127,13 @@ describe('execution mapping options', () => {
     expect(executionMappingOptions({
       plan: 'plan',
       interactive: 'default',
-      'accept-edits': 'force',
+      'accept-edits': 'default',
       autonomous: 'force'
     })).toEqual([
       { id: 'plan', native: 'plan', states: ['plan'] },
-      { id: 'interactive', native: 'default', states: ['interactive'] },
-      { id: 'accept-edits', native: 'force', states: ['accept-edits', 'autonomous'] },
-      { id: 'autonomous', native: 'force', states: ['accept-edits', 'autonomous'] }
+      { id: 'interactive', native: 'default', states: ['interactive', 'accept-edits'] },
+      { id: 'accept-edits', native: 'default', states: ['interactive', 'accept-edits'] },
+      { id: 'autonomous', native: 'force', states: ['autonomous'] }
     ]);
   });
 });
@@ -141,6 +143,18 @@ describe('project-scoped conversation history', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />');
     expect(source).not.toContain('conversationHistoryEnabled');
+  });
+});
+
+describe('launcher composer project', () => {
+  it('lifts the unpinned pick across Modern / CLI Agent / Autonomous', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('const [composerProjectId, setComposerProjectId] = useState(project?.id ?? \'\')');
+    expect(source).toContain('composerProjectId={composerProjectId}');
+    expect(source).toContain('onComposerProjectIdChange={setComposerProjectId}');
+    const jobStart = source.indexOf('<JobTeamComposer');
+    const jobBlock = source.slice(jobStart, source.indexOf('/>', jobStart));
+    expect(jobBlock).not.toContain('composerProjectId');
   });
 });
 

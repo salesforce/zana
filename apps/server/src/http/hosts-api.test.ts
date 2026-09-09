@@ -346,6 +346,21 @@ createServer((_req, res) => {
     const lines = (await installed.text()).trim().split('\n');
     expect(JSON.parse(lines[0]!)).toMatchObject({ type: 'started', provider: 'codex' });
     expect(JSON.parse(lines[1]!)).toMatchObject({ type: 'completed', success: true });
+
+    server!.ctx.hostHub.callHostOnlineRpc = async () => {
+      throw new Error('host rpc timed out: provider.cli_install');
+    };
+    const timedOut = await fetch(`${server!.url}api/v1/hosts/${host.hostId}/provider-clis/install`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'codex', actionKind: 'update' })
+    });
+    expect(timedOut.status).toBe(200);
+    expect(JSON.parse((await timedOut.text()).trim())).toMatchObject({
+      type: 'error',
+      provider: 'codex',
+      message: 'host rpc timed out: provider.cli_install'
+    });
   });
 
   it('refuses bootstrap without a public URL or when the primary daemon is offline', async () => {

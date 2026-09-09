@@ -18,7 +18,7 @@ export const PERMISSION_MODE_OPTIONS: readonly PermissionModeOption[] = [
     label: 'Accept Edits',
     compactLabel: 'Edits',
     description:
-      'Applies edits inside the workspace automatically. Anything beyond the workspace asks you first.'
+      'Use the CLI’s own permission policy. No extra launch flags.'
   },
   {
     value: 'auto',

@@ -54,10 +54,21 @@ describe('fallback thread catalogs', () => {
       'GPT-5.4 Mini',
       'GPT-5.6 Sol'
     ]);
+    expect(fallbackModelsForProvider('acp-cursor').map((row) => row.model)).toEqual([
+      'default',
+      'grok-4.6',
+      'gpt-5.6-sol',
+      'claude-opus-5',
+      'claude-fable-5',
+      'composer-2.5'
+    ]);
+    expect(fallbackModelsForProvider('acp-cursor').find((row) => row.isDefault)?.model).toBe('default');
     expect(fallbackModelsForProvider('pi')).toEqual([]);
-    expect(fallbackModelsForProvider('acp-cursor')).toEqual([]);
     expect(fallbackModelsForProvider('acp-opencode')).toEqual([]);
+    expect(fallbackModelsForProvider('acp-grok')).toEqual([]);
     expect(fallbackProviderOption('acp-opencode').displayName).toBe('OpenCode');
+    expect(fallbackProviderOption('acp-grok').displayName).toBe('Grok Build');
+    expect(fallbackProviderOption('acp-grok').permissionModes).toEqual(['accept-edits', 'full']);
   });
 
   it('seeds every builtin harness on a new thread and locks to one on an existing thread', () => {

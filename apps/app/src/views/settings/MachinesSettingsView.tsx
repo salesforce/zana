@@ -22,8 +22,11 @@ import { reconnectMachine } from './machine-reconnect.js';
 import { runHostInstallWithDrawer } from '../../lib/host-install-run.js';
 import {
   actionableProviderCliRows,
+  dismissInstallLogOnSuccess,
   installProviderCliOnMachine,
-  orderedProviderCliRows
+  orderedProviderCliRows,
+  providerCliInstallLogLines,
+  providerCliStartLog
 } from './machine-provider-clis.js';
 
 interface MachinesTabProps {
@@ -45,6 +48,7 @@ export function MachinesSettingsView({
   const [cliByHost, setCliByHost] = useState<Record<string, ProviderCliStatusResponse>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
+  const [installLogs, setInstallLogs] = useState<Record<string, string>>({});
   const [repairingId, setRepairingId] = useState<string | null>(null);
   const [repairError, setRepairError] = useState<{ hostId: string; message: string } | null>(null);
   const [relaunchingId, setRelaunchingId] = useState<string | null>(null);
@@ -144,7 +148,8 @@ export function MachinesSettingsView({
   async function runInstall(
     hostId: string,
     provider: ProviderCliKey,
-    actionKind: ProviderCliInstallActionKind
+    actionKind: ProviderCliInstallActionKind,
+    command?: string
   ): Promise<void> {
     const key = `${hostId}:${provider}`;
     setBusyKey(key);
@@ -154,16 +159,31 @@ export function MachinesSettingsView({
       delete next[key];
       return next;
     });
+    const events: Parameters<typeof providerCliInstallLogLines>[0] = [];
+    const started = command
+      ?? orderedProviderCliRows(cliByHost[hostId]).find((row) => row.provider === provider)?.status.installAction?.command;
+    setInstallLogs((prev) => ({
+      ...prev,
+      [key]: started ? providerCliStartLog(started) : 'Starting… This can take a few minutes.'
+    }));
     try {
       const outcome = await installProviderCliOnMachine({
         hostId,
         provider,
         actionKind,
+        onEvent: (event) => {
+          events.push(event);
+          const lines = providerCliInstallLogLines(events);
+          if (lines.length > 0) {
+            setInstallLogs((prev) => ({ ...prev, [key]: lines.join('\n') }));
+          }
+        },
         install: product.hosts.installProviderCli
       });
       if (!outcome.ok) {
         setInstallErrors((prev) => ({ ...prev, [key]: outcome.message }));
       }
+      setInstallLogs((prev) => dismissInstallLogOnSuccess(prev, key, outcome.ok));
       await refreshCliStatus();
     } finally {
       setBusyKey(null);
@@ -175,7 +195,7 @@ export function MachinesSettingsView({
       <Section
         anchorId="machines"
         title="Machines"
-        help="Pair another computer so projects and agents can run there. SSH remotes stay a separate path — they use this machine’s daemon to ssh in. Connected machines follow the server version automatically; Codex, Claude Code, and the other harness CLIs update from the rows below."
+        help="Pair another computer so projects and agents can run there. SSH remotes stay a separate path — they use this machine’s daemon to ssh in. Connected machines follow the server version automatically; Codex, Claude Code, and the other harness CLIs update from the rows below (npm installs can take a few minutes)."
       >
         <Field
           label="Public app URL"
@@ -205,7 +225,7 @@ export function MachinesSettingsView({
               onClick={() => {
                 void (async () => {
                   for (const item of actionable) {
-                    await runInstall(item.hostId, item.provider, item.action.kind);
+                    await runInstall(item.hostId, item.provider, item.action.kind, item.action.command);
                   }
                 })();
               }}
@@ -225,6 +245,7 @@ export function MachinesSettingsView({
               cliRows={orderedProviderCliRows(cliByHost[host.id])}
               busyKey={busyKey}
               installErrors={installErrors}
+              installLogs={installLogs}
               renaming={renameId === host.id}
               renameValue={renameValue}
               onRenameValue={setRenameValue}

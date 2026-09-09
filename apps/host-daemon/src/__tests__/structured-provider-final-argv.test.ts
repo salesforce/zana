@@ -81,6 +81,16 @@ describe('structured providers final local argv', () => {
     });
   });
 
+  it('omits Codex sandbox flags for accept-edits', () => {
+    expect(spawn('codex', routing('codex', {
+      modelTargetId: 'gpt-4o',
+      executionState: 'accept-edits'
+    }))).toEqual({
+      command: 'codex',
+      args: ['-m', 'gpt-4o']
+    });
+  });
+
   it('emits Cursor model and execution policy once in final order', () => {
     expect(spawn('cursor', routing('cursor', {
       modelTargetId: 'gpt-5.6-sol-medium',
@@ -88,6 +98,16 @@ describe('structured providers final local argv', () => {
     }))).toEqual({
       command: 'cursor-agent',
       args: ['--model', 'gpt-5.6-sol-medium', '--force']
+    });
+  });
+
+  it('does not inject --force for Cursor CLI Agent Edits', () => {
+    expect(spawn('cursor', routing('cursor', {
+      modelTargetId: 'gpt-5.6-sol-medium',
+      executionState: 'accept-edits'
+    }))).toEqual({
+      command: 'cursor-agent',
+      args: ['--model', 'gpt-5.6-sol-medium']
     });
   });
 
@@ -115,16 +135,36 @@ describe('structured providers final local argv', () => {
     });
   });
 
-  it('emits OpenCode model and execution policy in final order', () => {
+  it('emits OpenCode model without auto-approve for accept-edits', () => {
     expect(spawn('opencode', routing('opencode', {
       modelTargetId: 'llmgw/gpt-5.6-sol-1M',
       executionState: 'accept-edits'
+    }))).toEqual({
+      command: 'opencode',
+      args: ['--model', 'llmgw/gpt-5.6-sol-1M']
+    });
+  });
+
+  it('emits OpenCode auto-approve only for autonomous', () => {
+    expect(spawn('opencode', routing('opencode', {
+      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
+      executionState: 'autonomous'
     }))).toEqual({
       command: 'opencode',
       args: [
         '--model', 'llmgw/gpt-5.6-sol-1M',
         '--agent', 'build', '--auto'
       ]
+    });
+  });
+
+  it('emits Grok catalog model without extra execution flags for Edits', () => {
+    expect(spawn('grok', routing('grok', {
+      modelTargetId: 'grok-4.5',
+      executionState: 'accept-edits'
+    }))).toEqual({
+      command: 'grok',
+      args: ['--model', 'grok-4.5']
     });
   });
 

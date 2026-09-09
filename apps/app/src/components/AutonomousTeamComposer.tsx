@@ -15,7 +15,7 @@ import { posixQuote } from '../lib/quote.js';
 import { attachmentName } from '../lib/attachments.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
-import { composerProjectOptions, resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
+import { composerProjectOptions, preferredComposerProjectId, resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
@@ -59,7 +59,7 @@ export function AutonomousTeamComposer({
     if (!onComposerProjectIdChange) setInternalProjectId(resolved);
     onComposerProjectIdChange?.(resolved);
   };
-  const preferredProjectId = selectedProjectId ?? lastProjectId;
+  const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
   const [teamId, setTeamId] = useState('');
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);

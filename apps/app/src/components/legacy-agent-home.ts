@@ -11,6 +11,10 @@ import {
   mergeHarnessRouting,
   mergeLaunchPatches
 } from '../plugins/plugin-composer-api.js';
+import {
+  availableModelsToPickerOptions,
+  type CatalogModelPickerRow
+} from './thread/pickers/model-picker-option.js';
 import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
 
 export const PROFILE_BY_FAMILY: Record<HarnessFamily, LaunchProfileId> = {
@@ -18,7 +22,8 @@ export const PROFILE_BY_FAMILY: Record<HarnessFamily, LaunchProfileId> = {
   cursor: 'cursor',
   codex: 'codex',
   pi: 'pi',
-  opencode: 'opencode'
+  opencode: 'opencode',
+  grok: 'grok'
 };
 
 const THREAD_PROVIDER_BY_FAMILY: Record<HarnessFamily, string> = {
@@ -26,43 +31,42 @@ const THREAD_PROVIDER_BY_FAMILY: Record<HarnessFamily, string> = {
   cursor: 'acp-cursor',
   codex: 'codex',
   pi: 'pi',
-  opencode: 'acp-opencode'
+  opencode: 'acp-opencode',
+  grok: 'acp-grok'
 };
 
-export type CliAgentModelOption = { id: string; label: string };
+export type CliAgentModelOption = CatalogModelPickerRow;
+
+export { availableModelsToPickerOptions };
 
 /**
- * Claude/Codex/Cursor/OpenCode keep their trusted PTY adapter catalogs.
- * Pi's adapter catalog is empty, so the CLI Agent picker uses the live
- * thread model list (`provider.list_models`) instead of "No models available".
- * When `preferCatalog` is set (remote host catalog experiment), the live
- * host list wins once it has loaded — including an empty list.
+ * CLI Agent prefers the thread `AvailableModel` catalog (same execution-options
+ * list Modern uses) once it has loaded — local and remote. The PTY adapter
+ * snapshot is only a loading placeholder. Pi's adapter catalog is empty, so it
+ * always uses the live thread list.
  */
 export function cliAgentModelOptions(input: {
   adapterModels: ReadonlyArray<{ id: string; label: string }>;
-  catalogModels: ReadonlyArray<{ model: string; displayName: string }>;
+  catalogModels: ReadonlyArray<CatalogModelPickerRow>;
   preferCatalog?: boolean;
   catalogReady?: boolean;
 }): CliAgentModelOption[] {
   if (input.preferCatalog && (input.catalogReady || input.catalogModels.length > 0)) {
-    return input.catalogModels.map((row) => ({ id: row.model, label: row.displayName }));
+    return [...input.catalogModels];
   }
   if (input.adapterModels.length > 0) {
-    return input.adapterModels.map((row) => ({ id: row.id, label: row.label }));
+    return input.adapterModels.map((row) => ({ model: row.id, displayName: row.label }));
   }
-  return input.catalogModels.map((row) => ({ id: row.model, label: row.displayName }));
+  return [...input.catalogModels];
 }
 
 export function cliAgentMoreModelOptions(input: {
   adapterModelCount: number;
-  catalogMoreModels: ReadonlyArray<{ model: string; displayName: string }>;
+  catalogMoreModels: ReadonlyArray<CatalogModelPickerRow>;
   preferCatalog: boolean;
-}): Array<{ value: string; label: string }> {
+}): CliAgentModelOption[] {
   if (!input.preferCatalog && input.adapterModelCount > 0) return [];
-  return input.catalogMoreModels.map((row) => ({
-    value: row.model,
-    label: row.displayName
-  }));
+  return [...input.catalogMoreModels];
 }
 
 /** PTY-capable providers from the host execution-options roster. */

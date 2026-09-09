@@ -25,6 +25,39 @@ export interface ProviderCliPresentation {
   badge: string;
   currentLabel: string;
   latestLabel: string | null;
+  hint: string | null;
+}
+
+export type ProviderCliUpdateHintView =
+  | { kind: 'homebrew'; formula: string }
+  | { kind: 'external'; path: string; resolvedPath: string | null }
+  | { kind: 'plain'; text: string };
+
+const EXTERNAL_UPDATE_HINT = /^ZCC cannot update this CLI\. PATH is (.+)\.$/u;
+const RESOLVES_TO_HINT = /^(.+) \(resolves to (.+)\)$/u;
+
+function homebrewFormulaFromHint(reason: string): string | null {
+  if (!reason.startsWith('Managed by Homebrew.')) return null;
+  const tick = reason.indexOf('`');
+  const end = reason.lastIndexOf('`');
+  if (tick < 0 || end <= tick) return null;
+  const command = reason.slice(tick + 1, end).trim();
+  const formula = command.replace(/^brew\s+\S+\s+/u, '').trim();
+  return formula.length > 0 ? formula : null;
+}
+
+export function parseProviderCliUpdateHint(reason: string): ProviderCliUpdateHintView {
+  const formula = homebrewFormulaFromHint(reason);
+  if (formula) return { kind: 'homebrew', formula };
+  const external = EXTERNAL_UPDATE_HINT.exec(reason);
+  if (external?.[1]) {
+    const resolved = RESOLVES_TO_HINT.exec(external[1]);
+    if (resolved?.[1] && resolved[2]) {
+      return { kind: 'external', path: resolved[1], resolvedPath: resolved[2] };
+    }
+    return { kind: 'external', path: external[1], resolvedPath: null };
+  }
+  return { kind: 'plain', text: reason };
 }
 
 export function orderedProviderCliRows(status: ProviderCliStatusResponse | undefined): MachineProviderCliRow[] {
@@ -50,12 +83,14 @@ export function actionableProviderCliRows(
 }
 
 export function providerCliPresentation(status: ProviderCliStatus): ProviderCliPresentation {
+  const hint = status.updateUnavailableReason ?? null;
   if (!status.installed) {
     return {
       tone: 'warn',
       badge: 'Not installed',
       currentLabel: 'Not installed',
-      latestLabel: null
+      latestLabel: null,
+      hint: null
     };
   }
   const currentLabel = status.currentVersion ?? 'Installed';
@@ -64,7 +99,17 @@ export function providerCliPresentation(status: ProviderCliStatus): ProviderCliP
       tone: 'warn',
       badge: 'Unsupported',
       currentLabel,
-      latestLabel: status.latestVersion
+      latestLabel: status.latestVersion,
+      hint
+    };
+  }
+  if (hint) {
+    return {
+      tone: 'warn',
+      badge: hint.startsWith('Managed by Homebrew') ? 'Homebrew' : 'External',
+      currentLabel,
+      latestLabel: status.latestVersion,
+      hint
     };
   }
   if (status.needsUpdate) {
@@ -72,22 +117,69 @@ export function providerCliPresentation(status: ProviderCliStatus): ProviderCliP
       tone: 'warn',
       badge: 'Update',
       currentLabel,
-      latestLabel: status.latestVersion
+      latestLabel: status.latestVersion,
+      hint: null
     };
   }
   return {
     tone: 'ok',
     badge: 'Current',
     currentLabel,
-    latestLabel: null
+    latestLabel: null,
+    hint: null
   };
 }
+
+const OUTPUT_SNIPPET_LINES = 8;
+const OUTPUT_SNIPPET_CHARS = 600;
 
 export function machineCliInventorySummary(rows: MachineProviderCliRow[]): string | null {
   if (rows.length === 0) return null;
   const pending = rows.filter((row) => row.status.installAction).length;
-  if (pending === 0) return 'Up to date';
+  const blocked = rows.filter((row) => row.status.updateUnavailableReason && !row.status.installAction).length;
+  if (pending === 0) return blocked > 0 ? null : 'Up to date';
   return pending === 1 ? '1 update' : `${pending} updates`;
+}
+
+export function providerCliBusyLabel(kind: ProviderCliInstallActionKind): string {
+  return kind === 'update' ? 'Updating…' : 'Installing…';
+}
+
+export function providerCliStartLog(command: string): string {
+  return `Running \`${command}\`. This can take a few minutes.`;
+}
+
+export function providerCliKeyForFamily(family: string): ProviderCliKey | null {
+  if (family === 'claude') return 'claudeCode';
+  if (family === 'cursor' || family === 'codex' || family === 'pi' || family === 'opencode') {
+    return family;
+  }
+  return null;
+}
+
+export function providerCliInstallLogLines(events: ProviderCliInstallEvent[]): string[] {
+  const lines: string[] = [];
+  for (const event of events) {
+    if (event.type === 'started') {
+      lines.push(providerCliStartLog(event.command));
+      continue;
+    }
+    if (event.type === 'output') {
+      for (const line of event.text.split(/\r?\n/u)) {
+        const trimmed = line.trimEnd();
+        if (trimmed.trim().length > 0) lines.push(trimmed);
+      }
+      continue;
+    }
+    if (event.type === 'error') {
+      lines.push(event.message);
+      continue;
+    }
+    if (event.type === 'completed' && event.success) {
+      lines.push('Finished.');
+    }
+  }
+  return lines.slice(-OUTPUT_SNIPPET_LINES);
 }
 
 export function providerCliBadge(status: ProviderCliStatus): string | null {
@@ -95,12 +187,20 @@ export function providerCliBadge(status: ProviderCliStatus): string | null {
   return copy.tone === 'ok' ? null : copy.badge;
 }
 
+export function dismissInstallLogOnSuccess(
+  logs: Record<string, string>,
+  key: string,
+  ok: boolean
+): Record<string, string> {
+  if (!ok || !(key in logs)) return logs;
+  const next = { ...logs };
+  delete next[key];
+  return next;
+}
+
 export type ProviderCliInstallOutcome =
   | { ok: true }
   | { ok: false; message: string };
-
-const OUTPUT_SNIPPET_LINES = 8;
-const OUTPUT_SNIPPET_CHARS = 600;
 
 function streamText(events: ProviderCliInstallEvent[], stream: 'stderr' | 'stdout'): string {
   return events
@@ -161,17 +261,23 @@ export async function installProviderCliOnMachine(input: {
   hostId: string;
   provider: ProviderCliKey;
   actionKind: ProviderCliInstallActionKind;
+  onEvent?: (event: ProviderCliInstallEvent) => void;
   install: (
     hostId: string,
-    request: { provider: ProviderCliKey; actionKind: ProviderCliInstallActionKind }
+    request: { provider: ProviderCliKey; actionKind: ProviderCliInstallActionKind },
+    onEvent?: (event: ProviderCliInstallEvent) => void
   ) => Promise<ProviderCliInstallEvent[]>;
 }): Promise<ProviderCliInstallOutcome> {
   try {
     return providerCliInstallOutcome(
-      await input.install(input.hostId, {
-        provider: input.provider,
-        actionKind: input.actionKind
-      })
+      await input.install(
+        input.hostId,
+        {
+          provider: input.provider,
+          actionKind: input.actionKind
+        },
+        input.onEvent
+      )
     );
   } catch (error) {
     return {

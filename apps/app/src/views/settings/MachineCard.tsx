@@ -12,10 +12,12 @@ import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProviderCliInstallActionKind, ProviderCliKey } from '@zana-ai/zcc-contracts/host-rpc';
 import {
   machineCliInventorySummary,
+  providerCliBusyLabel,
   providerCliPresentation,
   type MachineProviderCliRow,
   type ProviderCliTone
 } from './machine-provider-clis.js';
+import { ProviderCliUpdateHint } from './ProviderCliUpdateHint.js';
 import { machineCanReconnect, machineCanRelaunchLocal } from './machine-reconnect.js';
 import { machineConnectionCopy, permissionLabel } from './machine-status.js';
 
@@ -29,12 +31,14 @@ export function MachineCliInventory({
   rows,
   busyKey,
   installErrors = {},
+  installLogs = {},
   onInstall
 }: {
   hostId: string;
   rows: MachineProviderCliRow[];
   busyKey: string | null;
   installErrors?: Record<string, string>;
+  installLogs?: Record<string, string>;
   onInstall: (provider: ProviderCliKey, actionKind: ProviderCliInstallActionKind) => void;
 }) {
   const summary = machineCliInventorySummary(rows);
@@ -53,6 +57,7 @@ export function MachineCliInventory({
             const key = `${hostId}:${row.provider}`;
             const busy = busyKey === key;
             const error = installErrors[key];
+            const log = installLogs[key];
             const tone = error ? 'error' : copy.tone;
             return (
               <li
@@ -82,7 +87,7 @@ export function MachineCliInventory({
                       disabled={busyKey !== null}
                       onClick={() => onInstall(row.provider, row.status.installAction!.kind)}
                     >
-                      {busy ? 'Working…' : row.status.installAction.label}
+                      {busy ? providerCliBusyLabel(row.status.installAction.kind) : row.status.installAction.label}
                     </button>
                   ) : (
                     <span
@@ -100,6 +105,18 @@ export function MachineCliInventory({
                   >
                     {error}
                   </p>
+                ) : log ? (
+                  <p
+                    className="machine-cli-row-progress"
+                    data-testid={`machine-cli-progress-${hostId}-${row.provider}`}
+                  >
+                    {log}
+                  </p>
+                ) : copy.hint ? (
+                  <ProviderCliUpdateHint
+                    reason={copy.hint}
+                    testId={`machine-cli-hint-${hostId}-${row.provider}`}
+                  />
                 ) : null}
               </li>
             );
@@ -117,6 +134,7 @@ export function MachineCard({
   cliRows,
   busyKey,
   installErrors = {},
+  installLogs = {},
   renaming,
   renameValue,
   reconnecting,
@@ -140,6 +158,7 @@ export function MachineCard({
   cliRows: MachineProviderCliRow[];
   busyKey: string | null;
   installErrors?: Record<string, string>;
+  installLogs?: Record<string, string>;
   renaming: boolean;
   renameValue: string;
   reconnecting: boolean;
@@ -298,6 +317,7 @@ export function MachineCard({
             rows={cliRows}
             busyKey={busyKey}
             installErrors={installErrors}
+            installLogs={installLogs}
             onInstall={onInstall}
           />
           {relaunchError ? (

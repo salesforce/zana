@@ -14,7 +14,7 @@ import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import type { HarnessAdapterDescriptor, HarnessAgentDiscoveryResult } from '@zana-ai/zcc-domain/harness-adapter';
 import { HostUnavailableError, type HostHub } from './host-hub.js';
 
-const FAMILIES = new Set<HarnessFamily>(['claude', 'cursor', 'codex', 'pi', 'opencode']);
+const FAMILIES = new Set<HarnessFamily>(['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok']);
 
 function asVerifyResults(result: ProviderStatusResult): HarnessVerifyResult[] {
   return result.providers.flatMap((entry) => {

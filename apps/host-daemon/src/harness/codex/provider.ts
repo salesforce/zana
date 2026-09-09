@@ -86,6 +86,10 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
       providers: [{ id: 'openai', label: 'OpenAI' }],
       providerModelRelationship: 'fixed-provider',
       models: [
+        { id: 'gpt-5.5', label: 'GPT-5.5', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION },
+        { id: 'gpt-5.4', label: 'GPT-5.4', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION },
+        { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION },
+        { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION },
         { id: 'gpt-4o', label: 'GPT-4o', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION },
         { id: 'gpt-4o-mini', label: 'GPT-4o Mini', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION },
         { id: 'o1', label: 'o1', scope: ['local', 'remote'], evidenceVersion: CODEX_EVIDENCE_VERSION },
@@ -96,7 +100,7 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
       executionStateMapping: {
         plan: 'read-only + on-request',
         interactive: 'workspace-write + untrusted',
-        'accept-edits': 'workspace-write + on-request',
+        'accept-edits': 'default',
         autonomous: 'danger-full-access + never'
       }
     },
@@ -121,7 +125,7 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
   evidence: [
     codexEvidence('codex.facet.opening-prompt', 'local', 'CLI binds opening prompt at spawn.'),
     codexEvidence('codex.facet.opening-prompt', 'remote', 'Remote command binds opening prompt at spawn.'),
-    ...['gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini', 'claude-3-5-sonnet-20241022'].flatMap((id) => [
+    ...['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.6-sol', 'gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini', 'claude-3-5-sonnet-20241022'].flatMap((id) => [
       codexEvidence(id, 'local', 'Codex model selector verified by provider contract.'),
       codexEvidence(id, 'remote', 'Codex remote model selector verified by remote command contract.')
     ])
@@ -182,6 +186,8 @@ function codexHookOverride(event: string, command: string): string[] {
 
 export class CodexProvider extends BaseLaunchProvider {
   readonly id = 'codex';
+  /** Same as Claude: CLI Agent / Modern send thread-catalog ids (`gpt-5.5`, …). */
+  readonly acceptsUnlistedModelTargets = true;
   private discoveredModels: readonly HarnessModelTarget[] = [];
 
   get adapter(): TrustedHarnessAdapter {
@@ -222,10 +228,10 @@ export class CodexProvider extends BaseLaunchProvider {
 
   executionContribution(targetId: string) {
     const state = targetId.replace('codex.execution.', '') as 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
+    if (state === 'accept-edits') return {};
     const policies = {
       plan: ['read-only', 'on-request'],
       interactive: ['workspace-write', 'untrusted'],
-      'accept-edits': ['workspace-write', 'on-request'],
       autonomous: ['danger-full-access', 'never']
     } as const;
     const [sandbox, approval] = policies[state];

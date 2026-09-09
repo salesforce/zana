@@ -8,6 +8,7 @@
  *   Codex   → Edits, Auto, Full Access (yolo / codex-yolo)
  *   Pi      → picker hidden (no unrestricted profile)
  *   OpenCode→ Edits, Full Access (yolo / opencode-yolo); no Auto in catalog
+ *   Grok    → Edits, Full Access (yolo / grok-yolo); no Auto in catalog
  *
  *   Agents nav (data-testid="nav-agents")
  *     → "New agent" (data-testid="agents-board-new-thread")
@@ -36,9 +37,9 @@ import { basename, join } from 'node:path';
 
 test.use({ e2e: true });
 
-type BinaryKey = 'claudeBinary' | 'cursorBinary' | 'codexBinary' | 'piBinary' | 'opencodeBinary';
-type EnableKey = 'harnessCursorEnabled' | 'harnessCodexEnabled' | 'harnessPiEnabled' | 'harnessOpenCodeEnabled';
-type Family = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode';
+type BinaryKey = 'claudeBinary' | 'cursorBinary' | 'codexBinary' | 'piBinary' | 'opencodeBinary' | 'grokBinary';
+type EnableKey = 'harnessCursorEnabled' | 'harnessCodexEnabled' | 'harnessPiEnabled' | 'harnessOpenCodeEnabled' | 'harnessGrokEnabled';
+type Family = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok';
 
 type PermissionPick = {
   optionLabel: string;
@@ -100,6 +101,15 @@ const CLI_FAMILIES: readonly FamilySpec[] = [
     providerId: 'acp-opencode',
     binaryKey: 'opencodeBinary',
     enableKey: 'harnessOpenCodeEnabled',
+    expectWorking: false,
+    pickerOptions: ['Accept Edits', 'Full Access'],
+    modes: [ACCEPT_EDITS, FULL_ACCESS]
+  },
+  {
+    family: 'grok',
+    providerId: 'acp-grok',
+    binaryKey: 'grokBinary',
+    enableKey: 'harnessGrokEnabled',
     expectWorking: false,
     pickerOptions: ['Accept Edits', 'Full Access'],
     modes: [ACCEPT_EDITS, FULL_ACCESS]
@@ -218,8 +228,8 @@ for (const row of CLI_CASES) {
     events
   }) => {
     const { window } = app;
-    // Cursor/OpenCode Edits map to a closest-equivalence native policy, which
-    // raises a main-process consent box before spawn. Stub "Allow once".
+    // Edits is native/basic (no extra execution flags). Keep a Cancel stub for
+    // any other native boxes that may appear during spawn.
     await stubNativeDialogs(app.electron, [0]);
     const agent = row.expectWorking
       ? makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' })

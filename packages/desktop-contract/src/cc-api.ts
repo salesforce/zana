@@ -364,7 +364,8 @@ export interface CcApi {
     providerCliStatus(id: string): Promise<ProviderCliStatusResponse>;
     installProviderCli(
       id: string,
-      request: { provider: ProviderCliKey; actionKind: ProviderCliInstallActionKind }
+      request: { provider: ProviderCliKey; actionKind: ProviderCliInstallActionKind },
+      onEvent?: (event: ProviderCliInstallEvent) => void
     ): Promise<ProviderCliInstallEvent[]>;
     onChanged(cb: (hosts: Host[] | undefined) => void): () => void;
     /**

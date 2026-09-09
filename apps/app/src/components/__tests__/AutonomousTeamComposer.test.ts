@@ -17,6 +17,7 @@ describe('AutonomousTeamComposer', () => {
     expect(source).toContain('goalReady');
     expect(source).toContain('data-testid="autonomous-team-command-send"');
     expect(source).toContain('<ComposerProjectPicker');
+    expect(source).toContain('preferredComposerProjectId');
     expect(source).toContain('PluginComposerChrome');
     expect(source).toContain("kind: 'new-thread'");
     expect(source).toContain('initialText');

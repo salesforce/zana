@@ -42,8 +42,8 @@ const entries = (
 
 export const HARNESS_ROUTING_MIGRATION_INVENTORY: readonly HarnessRoutingMigrationInventoryEntry[] = [
   ...entries('app-config', 'exact-canonical', 'Move adapter-owned binary and enablement exactly', [
-    'claudeBinary', 'cursorBinary', 'codexBinary', 'piBinary', 'opencodeBinary',
-    'harnessCursorEnabled', 'harnessCodexEnabled', 'harnessPiEnabled', 'harnessOpenCodeEnabled'
+    'claudeBinary', 'cursorBinary', 'codexBinary', 'piBinary', 'opencodeBinary', 'grokBinary',
+    'harnessCursorEnabled', 'harnessCodexEnabled', 'harnessPiEnabled', 'harnessOpenCodeEnabled', 'harnessGrokEnabled'
   ]),
   ...entries('app-config', 'exact-canonical', 'Move Claude model and execution policy as one exact adapter-owned projection', [
     'defaultModel', 'defaultPermissionMode'

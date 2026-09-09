@@ -5,7 +5,7 @@ import {
   type AvailableModel,
   type ReasoningLevel
 } from '@zana-ai/zcc-domain/thread-runtime';
-import type { ModelPickerOption, PickerOption } from './model-picker-option.js';
+import { availableModelsToPickerOptions, type ModelPickerOption, type PickerOption } from './model-picker-option.js';
 import { REASONING_LABELS, visibleComposerReasoningLevels } from './reasoning-labels.js';
 import {
   composerProvidersFromCatalog,
@@ -64,6 +64,8 @@ export function useThreadComposerOptions(input: {
   initialReasoningLevel?: string | null;
   initialAcpMode?: string | null;
   hostId?: string;
+  /** True while the host roster is still hydrating — do not treat missing hostId as a machine change. */
+  hostPending?: boolean;
 }) {
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
@@ -143,8 +145,9 @@ export function useThreadComposerOptions(input: {
   }, [input.initialAcpMode]);
 
   useEffect(() => {
+    if (input.hostPending) return;
     void setThreadModelCatalogHost(input.hostId);
-  }, [input.hostId]);
+  }, [input.hostId, input.hostPending]);
 
   const providers = composerProvidersFromCatalog(
     catalog.providers,
@@ -260,16 +263,8 @@ export function useThreadComposerOptions(input: {
     value: row.id,
     label: row.displayName
   }));
-  const modelOptions: ModelPickerOption[] = models.map((row) => ({
-    value: row.model,
-    label: row.displayName,
-    ...(row.routeProviderId ? { routeProviderId: row.routeProviderId } : {})
-  }));
-  const moreModelOptions: ModelPickerOption[] = moreModels.map((row) => ({
-    value: row.model,
-    label: row.displayName,
-    ...(row.routeProviderId ? { routeProviderId: row.routeProviderId } : {})
-  }));
+  const modelOptions: ModelPickerOption[] = availableModelsToPickerOptions(models);
+  const moreModelOptions: ModelPickerOption[] = availableModelsToPickerOptions(moreModels);
   const reasoningOptions: PickerOption<ReasoningLevel>[] = visibleComposerReasoningLevels(
     (activeModel?.supportedReasoningEfforts ?? []).map((effort) => effort.reasoningEffort)
   ).map((level) => ({

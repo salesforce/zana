@@ -17,14 +17,18 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('onClose');
     expect(source).toContain('data-testid="legacy-agent-command-send"');
     expect(source).toContain('cliAgentModelOptions');
+    expect(source).toContain('availableModelsToPickerOptions');
+    expect(source).toContain('modelOptions={availableModelsToPickerOptions(models)}');
+    expect(source).toContain('moreModelOptions={availableModelsToPickerOptions(moreModelOptions)}');
+    expect(source).toContain('const preferHostModels = true');
+    expect(source).toContain('const catalogHostId = project?.hostId ?? executionHostId');
     expect(source).toContain('ensureThreadProviderModels');
-    expect(source).toContain('prefetchThreadModelCatalog');
     expect(source).toContain('setThreadModelCatalogHost');
+    expect(source).not.toContain('prefetchThreadModelCatalog');
     expect(source).toContain('cliRemoteHostCatalogEnabled');
     expect(source).toContain('cliAgentCatalogProviders');
     expect(source).toContain('cliAgentFamilyIdsFromCatalog');
     expect(source).toContain('preferHostModels');
-    expect(source).toContain('isRemoteWorkspaceProject');
     expect(source).toContain('defaultHostId');
     expect(source).toContain('useHosts');
     expect(source).toContain('pickOfferedComposerModel');
@@ -46,6 +50,7 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).not.toContain('onSelectThread');
     expect(source).not.toContain('legacyAgentSelected');
     expect(source).toContain('<ComposerProjectPicker');
+    expect(source).toContain('preferredComposerProjectId');
     expect(source).toContain('PluginComposerChrome');
     expect(source).toContain("kind: 'cli-agent'");
     expect(source).toContain('PluginComposerMeta');
@@ -146,6 +151,13 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('<NativeRolePicker');
   });
 
+  it('puts mode before the harness picker, matching Thread', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const footer = source.slice(source.indexOf('thread-command-footer-start'));
+    expect(footer.indexOf('<ComposerModePicker')).toBeLessThan(footer.indexOf('<ModelReasoningPicker'));
+    expect(footer.indexOf('<NativeRolePicker')).toBeLessThan(footer.indexOf('<ModelReasoningPicker'));
+  });
+
   it('defaults the harness like Modern via resolveCliAgentFamily (current → remembered → effectiveDefault)', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
     // Family precedence is delegated to the shared helper: keep the current pick,
@@ -198,12 +210,38 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).not.toContain('remote: project.remote');
   });
 
-  it('scopes the model catalog to the project host only when the experimental flag is on', () => {
+  it('scopes the model catalog to the project host like Modern, including remote machines', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('if (cliRemoteHostCatalogEnabled) {\n      void setThreadModelCatalogHost(executionHostId);\n      return;\n    }\n    void prefetchThreadModelCatalog();');
-    expect(source).toContain('[cliRemoteHostCatalogEnabled, executionHostId]');
+    expect(source).toContain('void setThreadModelCatalogHost(catalogHostId)');
+    expect(source).toContain('[catalogHostId, hosts.length]');
+    expect(source).toContain('if (!catalogHostId && hosts.length === 0) return');
+    expect(source).toContain('const catalogHostId = project?.hostId ?? executionHostId');
     expect(source).not.toContain('setThreadModelCatalogHost(undefined)');
+    expect(source).not.toContain('prefetchThreadModelCatalog');
     expect(source).toContain('cliRemoteHostCatalogEnabled\n      ? cliAgentCatalogProviders(catalog.providers)');
-    expect(source).toContain('cliRemoteHostCatalogEnabled && isRemoteWorkspaceProject(project)');
+    expect(source).not.toContain('cliRemoteHostCatalogEnabled && isRemoteWorkspaceProject(project)');
+    expect(source).not.toContain('!isRemoteWorkspaceProject(project) || cliRemoteHostCatalogEnabled');
+  });
+
+  it('feeds Thread selectedOnlyModels into the shared ModelReasoningPicker More list', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('catalogMoreModels: catalogEntry?.selectedOnlyModels');
+    expect(source).toContain('fallbackMoreModelsForProvider');
+    expect(source).toContain('fallbackModelsForProvider');
+    expect(source).toContain('moreModelOptions={availableModelsToPickerOptions(moreModelOptions)}');
+    expect(source).toContain('<ModelReasoningPicker');
+    expect(source).not.toContain('cliAgentPickerOptions');
+  });
+
+  it('does not skeleton the model picker while harness default is still resolving', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('modelIsLoading={catalogModelsLoading}');
+    expect(source).not.toContain("selectionState === 'loading' || catalogModelsLoading");
+    expect(source).toContain('&& !catalogEntry');
+    expect(source).toContain('catalog.inflight.has(selectedProviderId)');
+    expect(source).toContain('if (!selectedProviderId || catalogEntry) return');
+    expect(source).toContain("familyForThreadProviderId(rememberedProviderId() ?? 'claude-code') ?? 'claude'");
+    expect(source).toContain('if (catalogModelsLoading) return');
+    expect(source).not.toContain("selectionState !== 'resolved' || catalogModelsLoading");
   });
 });

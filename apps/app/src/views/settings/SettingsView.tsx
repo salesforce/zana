@@ -140,7 +140,8 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'harness-cursor', label: 'Cursor' },
     { id: 'harness-codex', label: 'Codex' },
     { id: 'harness-pi', label: 'PI' },
-    { id: 'harness-opencode', label: 'OpenCode' }
+    { id: 'harness-opencode', label: 'OpenCode' },
+    { id: 'harness-grok', label: 'Grok Build' }
   ],
   editor: [
     { id: 'editor-status', label: 'Installed editors' },
@@ -299,6 +300,9 @@ export function SettingsView() {
       }
       if (typeof patch.harnessOpenCodeEnabled === 'boolean') {
         useData.getState().setHarnessOpenCodeEnabled(patch.harnessOpenCodeEnabled);
+      }
+      if (typeof patch.harnessGrokEnabled === 'boolean') {
+        useData.getState().setHarnessGrokEnabled(patch.harnessGrokEnabled);
       }
       if (typeof patch.microVmEnabled === 'boolean') {
         useData.getState().setMicroVmEnabled(patch.microVmEnabled);

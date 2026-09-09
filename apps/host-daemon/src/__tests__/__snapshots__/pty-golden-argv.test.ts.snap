@@ -2269,6 +2269,294 @@ exports[`golden argv — local create() matrix > cursor-yolo · projectSettings 
 }
 `;
 
+exports[`golden argv — local create() matrix > grok · persona · interactive 1`] = `
+{
+  "args": [],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok · persona · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok · persona+projectSettings · interactive 1`] = `
+{
+  "args": [],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok · persona+projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok · plain · interactive 1`] = `
+{
+  "args": [],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok · plain · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok · projectSettings · interactive 1`] = `
+{
+  "args": [],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok · projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-resume · persona · interactive 1`] = `
+{
+  "args": [
+    "--continue",
+  ],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-resume · persona · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+    "--continue",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-resume · persona+projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--continue",
+  ],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-resume · persona+projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+    "--continue",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-resume · plain · interactive 1`] = `
+{
+  "args": [
+    "--continue",
+  ],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-resume · plain · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+    "--continue",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-resume · projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--continue",
+  ],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-resume · projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+    "--continue",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-yolo · persona · interactive 1`] = `
+{
+  "args": [
+    "--always-approve",
+  ],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-yolo · persona · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+    "--always-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-yolo · persona+projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--always-approve",
+  ],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-yolo · persona+projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+    "--always-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-yolo · plain · interactive 1`] = `
+{
+  "args": [
+    "--always-approve",
+  ],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-yolo · plain · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+    "--always-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-yolo · projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--always-approve",
+  ],
+  "command": "grok",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > grok-yolo · projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "grok",
+    "--always-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
 exports[`golden argv — local create() matrix > opencode · persona · interactive 1`] = `
 {
   "args": [],
@@ -3453,6 +3741,198 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor-yolo ·
     "-t",
     "sfwork@devbox",
     "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--force'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok · persona 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok · persona+projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok · plain 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok · projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok-resume · persona 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok-resume · persona+projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok-resume · plain 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok-resume · projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok-yolo · persona 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok-yolo · persona+projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok-yolo · plain 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote grok-yolo · projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'''",
   ],
 }
 `;

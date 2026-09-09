@@ -217,16 +217,19 @@ describe('MachineCliInventory', () => {
     expect(html).not.toContain('machine-cli-list-h1');
   });
 
-  it('shows Working… on the busy row', () => {
+  it('shows Updating… on the busy row and surfaces live progress', () => {
     const html = renderToStaticMarkup(
       <MachineCliInventory
         hostId="h1"
         rows={[{ provider: 'codex', status: cli() }]}
         busyKey="h1:codex"
+        installLogs={{ 'h1:codex': 'Running `codex update`. This can take a few minutes.' }}
         onInstall={vi.fn()}
       />
     );
-    expect(html).toContain('Working…');
+    expect(html).toContain('Updating…');
+    expect(html).toContain('data-testid="machine-cli-progress-h1-codex"');
+    expect(html).toContain('Running `codex update`');
   });
 
   it('shows the install failure on the CLI that failed', () => {
@@ -243,6 +246,55 @@ describe('MachineCliInventory', () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain('data-testid="machine-cli-error-h1-codex"');
     expect(html).toContain('machine-cli-row--error');
+  });
+
+  it('explains a Homebrew-managed CLI instead of offering Update', () => {
+    const html = renderToStaticMarkup(
+      <MachineCliInventory
+        hostId="h1"
+        rows={[{
+          provider: 'codex',
+          status: cli({
+            installAction: null,
+            updateUnavailableReason: 'Managed by Homebrew. Update with `brew upgrade codex`.'
+          })
+        }]}
+        busyKey={null}
+        onInstall={vi.fn()}
+      />
+    );
+    expect(html).toContain('Homebrew');
+    expect(html).toContain('Managed by Homebrew');
+    expect(html).toContain('brew upgrade codex');
+    expect(html).toContain('machine-cli-row-hint-code');
+    expect(html).toContain('data-testid="machine-cli-hint-h1-codex"');
+    expect(html).not.toContain('>Update<');
+  });
+
+  it('shows PATH and resolved target on separate lines for an external CLI', () => {
+    const html = renderToStaticMarkup(
+      <MachineCliInventory
+        hostId="h1"
+        rows={[{
+          provider: 'opencode',
+          status: cli({
+            displayName: 'OpenCode',
+            executableName: 'opencode',
+            installAction: null,
+            updateUnavailableReason:
+              'ZCC cannot update this CLI. PATH is /Users/me/.local/bin/opencode (resolves to /opt/vendor/pkgs/opencode/1.18.4/opencode).'
+          })
+        }]}
+        busyKey={null}
+        onInstall={vi.fn()}
+      />
+    );
+    expect(html).toContain('ZCC cannot update this CLI');
+    expect(html).toContain('PATH');
+    expect(html).toContain('/Users/me/.local/bin/opencode');
+    expect(html).toContain('Resolves to');
+    expect(html).toContain('/opt/vendor/pkgs/opencode/1.18.4/opencode');
+    expect(html).toContain('machine-cli-row-hint-code');
   });
 });
 

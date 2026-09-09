@@ -83,7 +83,7 @@ const CLAUDE_ADAPTER: TrustedHarnessAdapter = {
       executionStateMapping: {
         plan: 'plan',
         interactive: 'default',
-        'accept-edits': 'accept-edits',
+        'accept-edits': 'default',
         autonomous: 'bypassPermissions'
       }
     },
@@ -269,6 +269,7 @@ function withLayerModel(args: string[], model: string | undefined, trailingArgs 
 export class ClaudeCodeProvider extends BaseLaunchProvider {
   readonly id = 'claude-code';
   readonly adapter = CLAUDE_ADAPTER;
+  readonly acceptsUnlistedModelTargets = true;
 
   launchMetadata(_input: {
     model: import('../target-resolution.js').ModelResolution;
@@ -295,7 +296,7 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
     const mode = {
       plan: 'plan',
       interactive: 'default',
-      'accept-edits': 'acceptEdits',
+      'accept-edits': 'default',
       autonomous: 'bypassPermissions'
     }[state];
     return mode === 'default' ? {} : { args: ['--permission-mode', mode] };

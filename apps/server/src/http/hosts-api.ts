@@ -17,7 +17,7 @@ import {
   updateHostPermissionCeiling,
   updateHostSshIdentity
 } from '@zana-ai/zcc-db';
-import { readJsonBody, sendJson, sendNdjson, beginNdjson } from './json.js';
+import { readJsonBody, sendJson, beginNdjson } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
 import { listPublicHosts, parseHostUpdate, toPublicHost } from '../services/hosts/host-public.js';
 import { relaunchLocalHostDaemon } from '../services/hosts/host-relaunch.js';
@@ -404,6 +404,16 @@ export async function handleHostsApi(
     }
     try {
       ctx.hostHub.ensureHostSessionReady(host.id);
+    } catch (error) {
+      if (error instanceof HostUnavailableError) {
+        sendJson(response, 503, { error: error.message });
+        return true;
+      }
+      sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) });
+      return true;
+    }
+    const stream = beginNdjson(response);
+    try {
       const result = await ctx.hostHub.callHostOnlineRpc<{ events: unknown[] }>({
         hostId: host.id,
         command: {
@@ -413,13 +423,15 @@ export async function handleHostsApi(
         },
         timeoutMs: 11 * 60_000
       });
-      sendNdjson(response, result.events);
+      for (const event of result.events ?? []) stream.write(event);
     } catch (error) {
-      if (error instanceof HostUnavailableError) {
-        sendJson(response, 503, { error: error.message });
-        return true;
-      }
-      sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) });
+      stream.write({
+        type: 'error',
+        provider: parsed.data.provider,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      stream.end();
     }
     return true;
   }

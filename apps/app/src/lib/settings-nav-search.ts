@@ -62,7 +62,7 @@ export const SETTINGS_SEARCH_KEYWORDS: Record<string, readonly string[]> = {
   'keyboard.keyboard': ['shortcut', 'shortcuts', 'hotkey', 'hotkeys', 'keybinding', 'remap'],
   inbox: ['guidance', 'pdf', 'trust'],
   terminal: ['shell', 'tmux', 'font', 'appearance'],
-  harness: ['claude', 'cursor', 'codex', 'pi', 'opencode', 'modern', 'cli agent'],
+  harness: ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'modern', 'cli agent', 'update', 'install', 'machines'],
   editor: ['vscode', 'cursor', 'intellij', 'finder', 'open in'],
   agents: ['overseer', 'heartbeat', 'idle', 'follow-up', 'automation', 'worktree', 'guidance', 'skills'],
   'agents.agent-guidance': ['skills', 'introduction', 'RULES', 'bundled', 'guidance'],

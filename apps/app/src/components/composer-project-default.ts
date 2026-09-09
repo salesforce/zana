@@ -38,9 +38,21 @@ export function composerProjectOptions<T extends Pick<Project, 'quickAgent'>>(pr
 }
 
 /**
+ * Unpinned composer default: last-used project, then leftover sidebar
+ * selection. A pinned project-view launch never consults this — it passes
+ * `pinnedId` into `resolveComposerProjectId` instead.
+ */
+export function preferredComposerProjectId(input: {
+  lastProjectId?: string | null;
+  selectedProjectId?: string | null;
+}): string | undefined {
+  return input.lastProjectId || input.selectedProjectId || undefined;
+}
+
+/**
  * Default project for a new-thread composer. A pinned project always wins.
- * Otherwise keep a valid current pick, then a preferred id (sidebar selection
- * or last-used project), then the scratch workspace so an unselected composer
+ * Otherwise keep a valid current pick, then a preferred id (last-used, then
+ * sidebar selection), then the scratch workspace so an unselected composer
  * still has `zcc-workspace`.
  */
 export function resolveComposerProjectId(

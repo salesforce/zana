@@ -7,6 +7,7 @@ describe('CursorProvider model routing', () => {
   it('exposes current account models and emits Cursor model argv', () => {
     expect(provider.adapter.descriptor.targets?.models.map((model) => model.id)).toEqual([
       'auto',
+      'default',
       'cursor-grok-4.6-high',
       'cursor-grok-4.5-high',
       'claude-opus-5-high',
@@ -19,8 +20,10 @@ describe('CursorProvider model routing', () => {
     expect(provider.modelContribution('claude-sonnet-5-high')).toEqual({
       args: ['--model', 'claude-sonnet-5-high']
     });
+    expect(provider.acceptsUnlistedModelTargets).toBe(true);
     expect(provider.modelContribution('auto')).toEqual({});
     expect(provider.modelContribution('default')).toEqual({});
+    expect(provider.modelContribution('grok-4.6')).toEqual({ args: ['--model', 'grok-4.6'] });
     expect(provider.adapter.descriptor.targets?.modelLevelMapping).toEqual({
       low: undefined,
       medium: 'gpt-5.6-terra-medium',
@@ -50,8 +53,10 @@ describe('CursorProvider model routing', () => {
     expect(provider.adapter.descriptor.targets?.executionStateMapping).toEqual({
       plan: 'plan',
       interactive: 'default',
-      'accept-edits': 'force',
+      'accept-edits': 'default',
       autonomous: 'force'
     });
+    expect(provider.executionContribution('cursor.execution.accept-edits')).toEqual({});
+    expect(provider.executionContribution('cursor.execution.autonomous')).toEqual({ args: ['--force'] });
   });
 });

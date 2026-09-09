@@ -16,6 +16,7 @@
   --accent-gold: #d4a017;
   --accent-blue: #2f81f7;
   --accent: var(--accent-blue);
+  --settings-link: #58a6ff;
   --danger: #f85149;
   --success: #3fb950;
   --ink: var(--text-primary);
@@ -56,6 +57,7 @@
   --accent-gold: #b88512;
   --accent-blue: #0969da;
   --accent: var(--accent-blue);
+  --settings-link: #0969da;
   --danger: #cf222e;
   --success: #1a7f37;
 
@@ -4986,12 +4988,12 @@ body.resizing-col {
 }
 
 /* Two panel-body layouts, encoded per feature (not a user preference):
-   .settings-inner   — centered reading/config: 32px gutters + 1040px cap
+   .settings-inner   — centered reading/config: 40px gutters + 1040px cap
    .panel-body--full — workbench: no padding; the panel owns its chrome */
 .settings-inner {
   max-width: min(100%, 1040px);
   margin: 0 auto;
-  padding: 24px 32px 48px;
+  padding: 28px 40px 56px;
 }
 
 .panel-body--full {
@@ -5021,7 +5023,7 @@ body.resizing-col {
 
 .settings-section {
   margin-bottom: 28px;
-  padding: 16px 18px;
+  padding: 22px 24px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-panel);
@@ -5078,8 +5080,15 @@ body.resizing-col {
 
 .remote-machine-defaults {
   list-style: none;
-  margin: 0;
+  margin: 12px 0 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.remote-machine-defaults + .settings-help {
+  margin-top: 14px;
 }
 
 .remote-machine-defaults .settings-label {
@@ -5395,6 +5404,84 @@ body.resizing-col {
   background: color-mix(in srgb, var(--danger, #c0392b) 8%, var(--bg-panel));
 }
 
+.machine-cli-row-progress {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 8.5em;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+.machine-cli-row-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elevated) 70%, var(--bg-panel));
+}
+
+.machine-cli-row-hint-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.machine-cli-row-hint-pair {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: baseline;
+}
+
+.machine-cli-row-hint-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.machine-cli-row-hint-code {
+  min-width: 0;
+  margin: 0;
+  padding: 1px 6px;
+  font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
+.opener-row .machine-cli-row-error,
+.opener-row .machine-cli-row-progress {
+  margin: 0 12px 10px;
+  width: calc(100% - 24px);
+}
+
+.opener-row .machine-cli-row-hint {
+  margin: 0 12px 10px 44px;
+  width: auto;
+  max-width: 42rem;
+}
+
 .settings-badge--warn {
   background: color-mix(in srgb, var(--warn, #c27803) 18%, transparent);
   color: var(--warn, #c27803);
@@ -5653,7 +5740,7 @@ body.resizing-col {
 }
 
 .settings-section h3 {
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -5976,7 +6063,7 @@ body.resizing-col {
   line-height: 1.5;
 }
 .settings-note a {
-  color: var(--accent-blue);
+  color: var(--settings-link);
   text-decoration: none;
 }
 .settings-note a:hover {
@@ -6022,7 +6109,7 @@ body.resizing-col {
   line-height: 1.5;
 }
 .cred-card-desc a {
-  color: var(--accent-blue);
+  color: var(--settings-link);
   text-decoration: none;
 }
 .cred-card-desc a:hover {
@@ -6466,8 +6553,15 @@ body.resizing-col {
   min-width: 0;
   color: var(--text-secondary);
 }
-.harness-health .cred-btn {
+.harness-health-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
   margin-left: auto;
+}
+.harness-health .cred-btn {
+  margin-left: 0;
 }
 
 .cred-btn {
@@ -6961,7 +7055,7 @@ body.resizing-col {
 
 .settings-section-help {
   margin-top: 0;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .settings-help--muted {
@@ -6978,9 +7072,18 @@ body.resizing-col {
   padding: 0 4px;
 }
 
+/* Settings hyperlinks — lighter than UA navy / --accent-blue on dark cards. */
+.settings-panel a {
+  color: var(--settings-link);
+  text-decoration: none;
+}
+.settings-panel a:hover {
+  text-decoration: underline;
+}
+
 /* Themed inline link for help text (webhook/api.slack.com etc.). */
 .settings-link {
-  color: var(--accent-blue);
+  color: var(--settings-link);
   text-decoration: none;
 }
 .settings-link:hover {
@@ -29395,7 +29498,7 @@ body.resizing-col .library-split-resizer::after {
 .settings-inner {
   max-width: min(100%, 1040px);
   margin: 0 auto;
-  padding: 24px 32px 48px;
+  padding: 28px 40px 56px;
 }
 
 .settings-inner--wide {

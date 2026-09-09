@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { providerFor } from '../registry.js';
-import { resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
+import { isLiveListedModelTargetId, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 
 const config = (): AppConfig => ({
   version: 1,
@@ -119,6 +119,79 @@ describe('target-resolution main authorization', () => {
     });
     expect(resolved).toMatchObject({ targetId: 'llmgw/gpt-6.0-nova-1M', structuredSelected: true });
     expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-6.0-nova-1M']);
+  });
+
+  it('accepts a well-formed [1m] Claude thread-catalog id', () => {
+    expect(isLiveListedModelTargetId('claude-opus-5[1m]')).toBe(true);
+    expect(isLiveListedModelTargetId('opus[1m]')).toBe(true);
+    expect(isLiveListedModelTargetId('claude-sonnet-5')).toBe(true);
+    expect(isLiveListedModelTargetId('--model')).toBe(false);
+    expect(isLiveListedModelTargetId('bad model')).toBe(false);
+  });
+
+  it('emits --model for a thread-catalog Claude id absent from the 4-alias snapshot', () => {
+    const claude = providerFor('claude');
+    const resolved = resolveModelTarget(claude, {
+      config: config(),
+      profile: 'claude',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'claude-opus-5[1m]' } } },
+      scope: 'local'
+    });
+    expect(resolved).toMatchObject({ targetId: 'claude-opus-5[1m]', structuredSelected: true });
+    expect(resolved.contribution.args).toEqual(['--model', 'claude-opus-5[1m]']);
+    expect(resolveModelTarget(claude, {
+      config: config(),
+      profile: 'claude',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'claude-sonnet-5' } } },
+      scope: 'local'
+    }).contribution.args).toEqual(['--model', 'claude-sonnet-5']);
+  });
+
+  it('emits --model for a Grok catalog id absent from the empty adapter snapshot', () => {
+    const grok = providerFor('grok');
+    expect(resolveModelTarget(grok, {
+      config: config(),
+      profile: 'grok',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { grok: { modelTargetId: 'grok-4.5' } } },
+      scope: 'local'
+    }).contribution.args).toEqual(['--model', 'grok-4.5']);
+  });
+
+  it('lets Cursor and Codex pass through thread-catalog ids the same way Claude does', () => {
+    expect(resolveModelTarget(providerFor('cursor'), {
+      config: config(),
+      profile: 'cursor',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { cursor: { modelTargetId: 'default' } } },
+      scope: 'local'
+    })).toMatchObject({ targetId: 'default', structuredSelected: true, contribution: {} });
+    expect(resolveModelTarget(providerFor('cursor'), {
+      config: config(),
+      profile: 'cursor',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { cursor: { modelTargetId: 'grok-4.6' } } },
+      scope: 'local'
+    }).contribution.args).toEqual(['--model', 'grok-4.6']);
+    expect(resolveModelTarget(providerFor('codex'), {
+      config: config(),
+      profile: 'codex',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { codex: { modelTargetId: 'gpt-5.5' } } },
+      scope: 'local'
+    }).contribution.args).toEqual(['-m', 'gpt-5.5']);
+  });
+
+  it('still rejects a malformed model id on Cursor and Codex', () => {
+    expect(() => resolveModelTarget(providerFor('codex'), {
+      config: config(),
+      profile: 'codex',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { codex: { modelTargetId: '-sneaky' } } },
+      scope: 'local'
+    })).toThrow('Unknown model target');
   });
 
   it('validates provider target as a filter over the effective combined model target', () => {

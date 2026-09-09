@@ -6,6 +6,7 @@ import {
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
   composerDropProjectRoot,
+  availableModelsToPickerOptions,
   cliAgentCatalogProviders,
   cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
@@ -47,7 +48,8 @@ describe('PROFILE_BY_FAMILY', () => {
       cursor: 'cursor',
       codex: 'codex',
       pi: 'pi',
-      opencode: 'opencode'
+      opencode: 'opencode',
+      grok: 'grok'
     });
   });
 });
@@ -59,11 +61,13 @@ describe('thread provider id mapping', () => {
     expect(threadProviderIdForFamily('opencode')).toBe('acp-opencode');
     expect(threadProviderIdForFamily('codex')).toBe('codex');
     expect(threadProviderIdForFamily('pi')).toBe('pi');
+    expect(threadProviderIdForFamily('grok')).toBe('acp-grok');
     expect(threadProviderIdForFamily('shell')).toBeNull();
     expect(familyForThreadProviderId('claude-code')).toBe('claude');
     expect(familyForThreadProviderId('acp-cursor')).toBe('cursor');
     expect(familyForThreadProviderId('acp-opencode')).toBe('opencode');
     expect(familyForThreadProviderId('codex')).toBe('codex');
+    expect(familyForThreadProviderId('acp-grok')).toBe('grok');
     expect(familyForThreadProviderId('unknown')).toBeNull();
   });
 });
@@ -123,7 +127,7 @@ describe('cliAgentModelOptions', () => {
     expect(cliAgentModelOptions({
       adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
       catalogModels: [{ model: 'claude-sonnet-5', displayName: 'Sonnet 5' }]
-    })).toEqual([{ id: 'sonnet', label: 'Sonnet (latest)' }]);
+    })).toEqual([{ model: 'sonnet', displayName: 'Sonnet (latest)' }]);
   });
 
   it('uses the live thread catalog when the adapter has no models (Pi)', () => {
@@ -134,8 +138,8 @@ describe('cliAgentModelOptions', () => {
         { model: 'anthropic/claude-opus-4-8', displayName: 'Opus 4.8' }
       ]
     })).toEqual([
-      { id: 'openai/gpt-5.2', label: 'GPT-5.2' },
-      { id: 'anthropic/claude-opus-4-8', label: 'Opus 4.8' }
+      { model: 'openai/gpt-5.2', displayName: 'GPT-5.2' },
+      { model: 'anthropic/claude-opus-4-8', displayName: 'Opus 4.8' }
     ]);
   });
 
@@ -145,7 +149,7 @@ describe('cliAgentModelOptions', () => {
       catalogModels: [{ model: 'claude-sonnet-5', displayName: 'Sonnet 5' }],
       preferCatalog: true,
       catalogReady: true
-    })).toEqual([{ id: 'claude-sonnet-5', label: 'Sonnet 5' }]);
+    })).toEqual([{ model: 'claude-sonnet-5', displayName: 'Sonnet 5' }]);
     expect(cliAgentModelOptions({
       adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
       catalogModels: [],
@@ -160,7 +164,64 @@ describe('cliAgentModelOptions', () => {
       catalogModels: [],
       preferCatalog: true,
       catalogReady: false
-    })).toEqual([{ id: 'sonnet', label: 'Sonnet (latest)' }]);
+    })).toEqual([{ model: 'sonnet', displayName: 'Sonnet (latest)' }]);
+  });
+
+  it('never mixes PTY snapshot ids into a preferCatalog CLI Agent list', () => {
+    expect(cliAgentModelOptions({
+      adapterModels: [
+        { id: 'auto', label: 'Auto' },
+        { id: 'cursor-grok-4.6-high', label: 'Cursor Grok 4.6' }
+      ],
+      catalogModels: [
+        { model: 'default', displayName: 'Default' },
+        { model: 'grok-4.6', displayName: 'Grok 4.6' }
+      ],
+      preferCatalog: true,
+      catalogReady: true
+    }).map((row) => row.model)).toEqual(['default', 'grok-4.6']);
+    expect(cliAgentModelOptions({
+      adapterModels: [
+        { id: 'gpt-4o', label: 'GPT-4o' },
+        { id: 'o1', label: 'o1' }
+      ],
+      catalogModels: [
+        { model: 'gpt-5.5', displayName: 'GPT-5.5' },
+        { model: 'gpt-5.4', displayName: 'GPT-5.4' }
+      ],
+      preferCatalog: true,
+      catalogReady: true
+    }).map((row) => row.model)).toEqual(['gpt-5.5', 'gpt-5.4']);
+  });
+
+  it('does not keep PTY moving aliases in the primary list once the host catalog is ready', () => {
+    const adapterModels = [
+      { id: 'haiku', label: 'Haiku (latest)' },
+      { id: 'sonnet', label: 'Sonnet (latest)' },
+      { id: 'opus', label: 'Opus (latest)' },
+      { id: 'fable', label: 'Fable (latest)' }
+    ];
+    const catalogModels = [
+      { model: 'claude-sonnet-5', displayName: 'Sonnet 5' },
+      { model: 'claude-opus-5[1m]', displayName: 'Opus 5 (1M)' }
+    ];
+    const catalogMoreModels = [
+      { model: 'haiku', displayName: 'Haiku Alias (Legacy)' },
+      { model: 'sonnet', displayName: 'Sonnet Alias (Legacy)' }
+    ];
+    const primary = cliAgentModelOptions({
+      adapterModels,
+      catalogModels,
+      preferCatalog: true,
+      catalogReady: true
+    });
+    expect(primary.map((row) => row.model)).toEqual(['claude-sonnet-5', 'claude-opus-5[1m]']);
+    expect(primary.map((row) => row.displayName).join(' ')).not.toMatch(/\(latest\)/);
+    expect(cliAgentMoreModelOptions({
+      adapterModelCount: adapterModels.length,
+      catalogMoreModels,
+      preferCatalog: true
+    })).toEqual(catalogMoreModels);
   });
 });
 
@@ -178,7 +239,46 @@ describe('cliAgentMoreModelOptions', () => {
       adapterModelCount: 2,
       catalogMoreModels: [{ model: 'opus', displayName: 'Opus' }],
       preferCatalog: true
-    })).toEqual([{ value: 'opus', label: 'Opus' }]);
+    })).toEqual([{ model: 'opus', displayName: 'Opus' }]);
+  });
+
+  it('passes routeProviderId through from the thread catalog', () => {
+    expect(cliAgentModelOptions({
+      adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
+      catalogModels: [{
+        model: 'openai/gpt-5.2',
+        displayName: 'GPT-5.2',
+        routeProviderId: 'openai'
+      }],
+      preferCatalog: true,
+      catalogReady: true
+    })).toEqual([{
+      model: 'openai/gpt-5.2',
+      displayName: 'GPT-5.2',
+      routeProviderId: 'openai'
+    }]);
+    expect(availableModelsToPickerOptions([{
+      model: 'openai/gpt-5.2',
+      displayName: 'GPT-5.2',
+      routeProviderId: 'openai'
+    }])).toEqual([{
+      value: 'openai/gpt-5.2',
+      label: 'GPT-5.2',
+      routeProviderId: 'openai'
+    }]);
+    expect(cliAgentMoreModelOptions({
+      adapterModelCount: 2,
+      catalogMoreModels: [{
+        model: 'haiku',
+        displayName: 'Haiku Alias (Legacy)',
+        routeProviderId: 'anthropic'
+      }],
+      preferCatalog: true
+    })).toEqual([{
+      model: 'haiku',
+      displayName: 'Haiku Alias (Legacy)',
+      routeProviderId: 'anthropic'
+    }]);
   });
 });
 
@@ -277,7 +377,9 @@ describe('CLI permission modes', () => {
       { family: 'codex', mode: 'full', unrestrictedId: 'codex-yolo', expected: { profileId: 'codex-yolo' } },
       { family: 'pi', mode: 'full', expected: {} },
       { family: 'opencode', mode: 'accept-edits', unrestrictedId: 'opencode-yolo', expected: { executionState: 'accept-edits' } },
-      { family: 'opencode', mode: 'full', unrestrictedId: 'opencode-yolo', expected: { profileId: 'opencode-yolo' } }
+      { family: 'opencode', mode: 'full', unrestrictedId: 'opencode-yolo', expected: { profileId: 'opencode-yolo' } },
+      { family: 'grok', mode: 'accept-edits', unrestrictedId: 'grok-yolo', expected: { executionState: 'accept-edits' } },
+      { family: 'grok', mode: 'full', unrestrictedId: 'grok-yolo', expected: { profileId: 'grok-yolo' } }
     ];
     for (const row of rows) {
       expect(
@@ -571,6 +673,7 @@ describe('cliComposerModeChip', () => {
     expect(cliComposerModeChip('cursor')).toBe('work-mode');
     expect(cliComposerModeChip('codex')).toBe('work-mode');
     expect(cliComposerModeChip('pi')).toBe('none');
+    expect(cliComposerModeChip('grok')).toBe('none');
     expect(cliComposerModeChip('')).toBe('none');
   });
 });
