@@ -2,13 +2,15 @@
 
 Usage analytics for Zana installs, event-only (never prompt/response content).
 
-> **Disclaimer — on by default when a key is set.** This plugin ships **enabled
-> by default**. The default API key comes from `ZCC_POSTHOG_API_KEY` (local
-> `.env`, or the GitHub secret of the same name baked into official builds).
-> With no key, the master switch can be on and still send nothing. To opt out
-> entirely, turn off **Send anonymous usage events to PostHog**. To send events
-> to a different PostHog project, replace **PostHog Project API Key** with your
-> own project's write-only `phc_` key.
+> **Disclaimer — auto-installed and on by default.** This plugin is **builtin**
+> (`autoInstall: true`) — it's installed and enabled for every user with no
+> setup step, and official builds bake in `ZCC_POSTHOG_API_KEY` so it starts
+> sending events right away. (A local `pnpm dev` checkout without that env var
+> set has the master switch on but nothing to send to, until you set one.) To
+> opt out entirely, turn off **Send anonymous usage events to PostHog** — or
+> uninstall the plugin, which is not silently reinstalled once you do. To send
+> events to a different PostHog project, replace **PostHog Project API Key**
+> with your own project's write-only `phc_` key.
 
 ## What is sent
 
@@ -61,11 +63,10 @@ nothing. This toggle is independent and also off by default.
 
 ## Enabling it / opting out / pointing at your own project
 
-1. Install the plugin (`zcc plugin install ./plugins/posthog-analytics` from
-   a checkout, or via the Plugins hub once published). It is **enabled out of
-   the box**. Official builds bake `ZCC_POSTHOG_API_KEY`; local `pnpm dev`
-   reads it from `.env`.
-2. Open its Configure page in the Plugins hub.
+1. Nothing to do — this plugin is **builtin and auto-installed** for every
+   user, and ships **enabled out of the box**. Official builds bake
+   `ZCC_POSTHOG_API_KEY`; local `pnpm dev` reads it from `.env`.
+2. Open its Configure page in the Plugins hub to change any of this.
 3. To opt out entirely: turn off **Send anonymous usage events to PostHog**.
    This stops all outbound requests immediately.
 4. To send events to your *own* PostHog project:
