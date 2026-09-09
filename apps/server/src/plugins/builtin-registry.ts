@@ -107,6 +107,13 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     autoInstall: true,
     defaultEnabled: true,
     category: 'Developer tools'
+  },
+  {
+    name: 'posthog-analytics',
+    pluginId: 'posthog-analytics',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Host access'
   }
 ];
 
