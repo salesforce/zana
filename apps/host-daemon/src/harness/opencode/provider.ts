@@ -578,12 +578,14 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   }
 
   async discoverRoleTargets(context: { cwd: string; config: AppConfig }) {
+    if (context.config.nativeAgentDiscoveryEnabled !== true) {
+      return this.adapter.descriptor.targets?.roles ?? [];
+    }
     try {
       const result = await this.discoverAgentDescriptors(context);
-      if (result.status === 'failure') return [];
       return OpenCodeProvider.roleTargetsFromDiscovery(result, this.adapter.descriptor.targets?.roles ?? []);
     } catch {
-      return [];
+      return this.adapter.descriptor.targets?.roles ?? [];
     }
   }
 

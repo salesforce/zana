@@ -791,6 +791,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessPiEnabled: config.harnessPiEnabled ?? false,
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
     harnessGrokEnabled: config.harnessGrokEnabled ?? false,
+    nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
     teamJobLaunchEnabled: config.teamJobLaunchEnabled === true,
     composerShowCliAgent: config.composerShowCliAgent !== false,
@@ -1540,6 +1541,8 @@ interface DataState {
   harnessOpenCodeEnabled: boolean;
   /** Mirror of AppConfig.harnessGrokEnabled — explicit hide for Grok Build. */
   harnessGrokEnabled: boolean;
+  /** Mirror of AppConfig.nativeAgentDiscoveryEnabled. */
+  nativeAgentDiscoveryEnabled: boolean;
   /** Last code-harness verification snapshot (Settings → Code Harness). Empty
    *  until `refreshHarnessStatus` runs; the launcher gates a harness profile on
    *  `enabled && installed`, showing an enabled-but-missing harness greyed-out. */
@@ -1954,6 +1957,7 @@ export const useData = create<DataState>((set, get) => ({
   harnessPiEnabled: false,
   harnessOpenCodeEnabled: false,
   harnessGrokEnabled: false,
+  nativeAgentDiscoveryEnabled: false,
   harnessStatus: [],
   editorStatus: [],
   lastProjectId: null,

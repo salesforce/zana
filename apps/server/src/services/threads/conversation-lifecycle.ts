@@ -36,7 +36,7 @@ import {
   claudeCodePermissionModeForTurn
 } from './conversation-execution-mode.js';
 import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
-import { hostPromptInputFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
+import { attachmentMarkersFromInput, hostPromptInputFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
 import { resolveActivePlanTurn } from './conversation-timeline.js';
 import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
@@ -222,10 +222,19 @@ export async function sendConversationTurn(
   const next = getConversationThread(ctx.db, live.id) ?? live;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
   if (textPrompt[0] && next.originKind !== 'fork') ctx.threadTitleNamer?.request(next.id, textPrompt[0]);
+  // Presence-only signal for plugins (never the marker text/paths themselves).
+  const hadAttachments = attachmentMarkersFromInput(
+    resolvedInput,
+    (path) => resolvePromptAttachmentPath(ctx.dataDir, live.projectId, path)
+  ).length > 0;
   emitPluginThreadEvent(ctx, {
     name: 'thread.active',
     threadId: next.id,
-    projectId: next.projectId
+    projectId: next.projectId,
+    providerId: next.providerId,
+    ...(packedExecution?.model ? { model: packedExecution.model } : {}),
+    ...(packedExecution?.reasoningLevel ? { reasoningLevel: packedExecution.reasoningLevel } : {}),
+    hadAttachments
   });
   return next;
 }
@@ -407,7 +416,8 @@ export async function stopConversation(
   emitPluginThreadEvent(ctx, {
     name: 'thread.idle',
     threadId: next.id,
-    projectId: next.projectId
+    projectId: next.projectId,
+    providerId: next.providerId
   });
   void import('./conversation-child-notifications.js')
     .then(({ notifyParentOfChildTurn }) => notifyParentOfChildTurn(ctx, next))
@@ -499,12 +509,14 @@ export async function archiveConversation(
   emitPluginThreadEvent(ctx, {
     name: 'thread.archived',
     threadId: archived.id,
-    projectId: archived.projectId
+    projectId: archived.projectId,
+    providerId: archived.providerId
   });
   emitPluginThreadEvent(ctx, {
     name: 'thread.deleted',
     threadId: archived.id,
-    projectId: archived.projectId
+    projectId: archived.projectId,
+    providerId: archived.providerId
   });
   await archiveConversationOnHost(ctx, archived);
   if (!options.skipEnvironmentCleanup && thread.environmentId) {
@@ -588,7 +600,8 @@ export async function forkConversation(
   emitPluginThreadEvent(ctx, {
     name: 'thread.created',
     threadId: forked.id,
-    projectId: forked.projectId
+    projectId: forked.projectId,
+    providerId: forked.providerId
   });
   // Forks already have an explicit "… (fork)" title; pin the id so a later
   // follow-up cannot overwrite it via the retry path on sendConversationTurn.
@@ -646,7 +659,8 @@ export async function reconcileStoppingConversationThreadsOnHostConnect(
       emitPluginThreadEvent(ctx, {
         name: 'thread.idle',
         threadId: next.id,
-        projectId: next.projectId
+        projectId: next.projectId,
+        providerId: next.providerId
       });
       void import('./conversation-child-notifications.js')
         .then(({ notifyParentOfChildTurn }) => notifyParentOfChildTurn(ctx, next))

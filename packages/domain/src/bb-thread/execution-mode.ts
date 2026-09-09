@@ -14,6 +14,26 @@ export interface PortableWorkIntent {
   usesSlashPlan: boolean;
 }
 
+export interface ComposerModeEntry {
+  id: string;
+  label: string;
+  kind: ExecutionModeKind;
+  nativeValue: string | undefined;
+  usesSlashPlan: boolean;
+}
+
+/**
+ * Keep portable ACP modes available until optional native-role discovery is
+ * explicitly enabled. Discovery may add provider-specific ask/custom modes.
+ */
+export function visibleAcpModeOptions(
+  options: readonly { value: string; name?: string }[],
+  nativeAgentDiscoveryEnabled: boolean,
+): readonly { value: string; name?: string }[] {
+  if (nativeAgentDiscoveryEnabled) return options;
+  return options.filter((option) => option.value === "build" || option.value === "plan");
+}
+
 /**
  * Map a harness-native mode id/label onto a portable semantic kind.
  * Core never branches on a provider id — Cursor `plan`/`agent`/`ask` fall
@@ -80,6 +100,46 @@ export function portableWorkIntent(args: {
     executeNativeValue: execute?.id,
     usesSlashPlan,
   };
+}
+
+/**
+ * Build Modern composer's one mode menu. Portable Agent and Plan stay first;
+ * native ask/custom modes follow without duplicating execute/plan entries.
+ */
+export function composerModeEntries(args: {
+  acpModeOptions: readonly { value: string; name?: string }[];
+  composerActions?: readonly string[];
+}): ComposerModeEntry[] {
+  const intent = portableWorkIntent(args);
+  const entries: ComposerModeEntry[] = [
+    {
+      id: "agent",
+      label: "Agent",
+      kind: "execute",
+      nativeValue: intent.executeNativeValue,
+      usesSlashPlan: false,
+    },
+  ];
+  if (intent.planNativeValue || intent.usesSlashPlan) {
+    entries.push({
+      id: "plan",
+      label: "Plan",
+      kind: "plan",
+      nativeValue: intent.planNativeValue,
+      usesSlashPlan: intent.usesSlashPlan,
+    });
+  }
+  for (const option of args.acpModeOptions.map(classifyExecutionModeOption)) {
+    if (option.kind !== "ask" && option.kind !== "custom") continue;
+    entries.push({
+      id: option.id,
+      label: option.label,
+      kind: option.kind,
+      nativeValue: option.id,
+      usesSlashPlan: false,
+    });
+  }
+  return entries;
 }
 
 export function composerWorkModeFromNativeMode(

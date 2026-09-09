@@ -363,7 +363,11 @@ export function PopoverPicklist<T extends string>({
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         aria-label={ariaLabel}
-        data-testid={triggerTestId}
+        // Mirror the developer-authored `id` onto data-testid (when the caller
+        // hasn't supplied a more specific `triggerTestId`) so the content-free
+        // UI-click tracker can distinguish this trigger from others — both are
+        // always stable literals passed by the caller, never user data.
+        data-testid={triggerTestId ?? id}
       >
         {triggerIcon}
         <span>{selected?.compactLabel ?? selected?.label ?? placeholder}</span>

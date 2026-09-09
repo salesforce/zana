@@ -66,7 +66,11 @@ describe('ui-click content script', () => {
     let dispose;
     pluginApp.setup({
       contentScripts: {
-        register({ mount }) {
+        register({ id, mount }) {
+          // This describe block only exercises the ui-click tracker; the
+          // page-view tracker (registered separately) has its own describe
+          // block below and would otherwise clobber `dispose` here.
+          if (id !== 'ui-click-tracker') return;
           dispose = mount({ pluginId: 'posthog-analytics', signal });
         }
       }
@@ -122,5 +126,87 @@ describe('ui-click content script', () => {
     });
     expect(() => listeners[0].fn({ target: el('button', { 'data-testid': 'x' }) })).not.toThrow();
     await Promise.resolve();
+  });
+});
+
+describe('page-view content script', () => {
+  let originalLocation;
+  let originalHistory;
+  let originalAdd;
+  let originalRemove;
+
+  afterEach(() => {
+    delete globalThis.__ZCC_PLUGIN_HOST__;
+    if (originalLocation !== undefined) {
+      Object.defineProperty(globalThis, 'location', { value: originalLocation, configurable: true });
+    }
+    if (originalHistory !== undefined) {
+      Object.defineProperty(globalThis, 'history', { value: originalHistory, configurable: true });
+    }
+    if (originalAdd !== undefined) globalThis.addEventListener = originalAdd;
+    if (originalRemove !== undefined) globalThis.removeEventListener = originalRemove;
+  });
+
+  function mountPageViewTracker({ callRpc, path = '/inbox' } = {}) {
+    const listeners = [];
+    const win = {
+      location: { pathname: path },
+      history: { pushState: () => {}, replaceState: () => {} },
+      addEventListener: vi.fn((type, fn) => listeners.push({ type, fn })),
+      removeEventListener: vi.fn()
+    };
+    globalThis.__ZCC_PLUGIN_HOST__ = {
+      callRpc: callRpc ?? vi.fn(() => Promise.resolve({ ok: true }))
+    };
+
+    originalLocation = globalThis.location;
+    originalHistory = globalThis.history;
+    originalAdd = globalThis.addEventListener;
+    originalRemove = globalThis.removeEventListener;
+    // The content script reads globalThis.location/history directly, so this
+    // test swaps them out for the fake `win` for the duration of this test.
+    Object.defineProperty(globalThis, 'location', { value: win.location, configurable: true });
+    Object.defineProperty(globalThis, 'history', { value: win.history, configurable: true });
+    globalThis.addEventListener = win.addEventListener;
+    globalThis.removeEventListener = win.removeEventListener;
+
+    let dispose;
+    pluginApp.setup({
+      contentScripts: {
+        register({ id, mount }) {
+          if (id !== 'page-view-tracker') return;
+          dispose = mount({ pluginId: 'posthog-analytics' });
+        }
+      }
+    });
+    return { win, listeners, dispose, host: globalThis.__ZCC_PLUGIN_HOST__ };
+  }
+
+  it('reports a from/to/durationMs payload on a pushState navigation', () => {
+    const { win, host } = mountPageViewTracker({ path: '/inbox' });
+    win.location.pathname = '/agents';
+    win.history.pushState('', '', '/agents');
+    expect(host.callRpc).toHaveBeenCalledWith(
+      'posthog-analytics',
+      'trackPageView',
+      expect.objectContaining({ from: 'inbox', to: 'agents' })
+    );
+  });
+
+  it('does not report a transition to the same section', () => {
+    const { win, host } = mountPageViewTracker({ path: '/inbox' });
+    win.history.pushState('', '', '/inbox');
+    expect(host.callRpc).not.toHaveBeenCalled();
+  });
+
+  it('swallows synchronous RPC failures', () => {
+    const { win } = mountPageViewTracker({
+      path: '/inbox',
+      callRpc: () => {
+        throw new Error('sync rpc down');
+      }
+    });
+    win.location.pathname = '/agents';
+    expect(() => win.history.pushState('', '', '/agents')).not.toThrow();
   });
 });

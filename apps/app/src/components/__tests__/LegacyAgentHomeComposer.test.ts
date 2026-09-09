@@ -98,7 +98,7 @@ describe('LegacyAgentHomeComposer', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
     // Full parity: the CLI picker reads the shared ACP session-mode list off the
     // model catalog rather than running its own `opencode agent list` discovery.
-    expect(source).toContain("familyId === 'opencode'\n    ? catalogEntry?.acpMode?.options ?? []");
+    expect(source).toContain("familyId === 'opencode'\n    ? visibleAcpModeOptions(catalogEntry?.acpMode?.options ?? [], nativeAgentDiscoveryEnabled)");
     // The divergent PTY-discovery path is gone.
     expect(source).not.toContain('product.harness.agentDescriptors');
     expect(source).not.toContain('discoveryForOpenCodePicker');

@@ -184,6 +184,16 @@ export interface PluginThreadEvent {
   thread?: PluginSdkThreadSummary;
   lastAssistantText?: string | null;
   error?: string | null;
+  /** The thread's harness/provider id (e.g. claude-code/codex/shell), when known. */
+  providerId?: string;
+  /** The model used for this turn/thread, when known. */
+  model?: string;
+  /** The reasoning-effort level for this turn/thread (e.g. medium/high), when known. */
+  reasoningLevel?: string;
+  /** Coarse execution mode — plan vs an actual agent run (see PORTABLE_EXECUTION_STATES). */
+  executionState?: string;
+  /** Whether the triggering turn/create input included an attachment. Presence only, never content. */
+  hadAttachments?: boolean;
 }
 
 export interface PluginEvents {

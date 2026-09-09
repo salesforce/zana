@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   classifyExecutionMode,
   classifyExecutionModeOption,
+  composerModeEntries,
   composerWorkModeFromNativeMode,
   isPlanExecutionMode,
   nativeModeForComposerWorkMode,
   portableWorkIntent,
+  visibleAcpModeOptions,
 } from "./execution-mode.js";
 
 describe("classifyExecutionMode", () => {
@@ -50,7 +52,7 @@ describe("portableWorkIntent", () => {
     expect(nativeModeForComposerWorkMode("plan", intent)).toBe("plan");
   });
 
-  it("hides OpenCode reviewer and Ask while keeping plan+build", () => {
+  it("keeps native roles available through the unified picker projection", () => {
     const intent = portableWorkIntent({
       acpModeOptions: [
         { value: "plan", name: "Plan" },
@@ -62,8 +64,26 @@ describe("portableWorkIntent", () => {
     expect(intent.modes).toEqual(["agent", "plan"]);
     expect(intent.planNativeValue).toBe("plan");
     expect(intent.executeNativeValue).toBe("build");
-    expect(composerWorkModeFromNativeMode("reviewer")).toBe("agent");
-    expect(composerWorkModeFromNativeMode("ask")).toBe("agent");
+    expect(composerModeEntries({
+      acpModeOptions: [
+        { value: "plan", name: "Plan" },
+        { value: "build", name: "Build" },
+        { value: "reviewer", name: "Reviewer" },
+        { value: "ask", name: "Ask" },
+      ],
+    })).toEqual([
+      { id: "agent", label: "Agent", kind: "execute", nativeValue: "build", usesSlashPlan: false },
+      { id: "plan", label: "Plan", kind: "plan", nativeValue: "plan", usesSlashPlan: false },
+      { id: "reviewer", label: "Reviewer", kind: "custom", nativeValue: "reviewer", usesSlashPlan: false },
+      { id: "ask", label: "Ask", kind: "ask", nativeValue: "ask", usesSlashPlan: false },
+    ]);
+  });
+
+  it("uses slash Plan only when no native plan mode exists", () => {
+    expect(composerModeEntries({ acpModeOptions: [], composerActions: ["plan"] })).toEqual([
+      { id: "agent", label: "Agent", kind: "execute", nativeValue: undefined, usesSlashPlan: false },
+      { id: "plan", label: "Plan", kind: "plan", nativeValue: undefined, usesSlashPlan: true },
+    ]);
   });
 
   it("falls back to /plan when the catalog has no plan-kind mode", () => {
@@ -84,5 +104,18 @@ describe("portableWorkIntent", () => {
     expect(
       portableWorkIntent({ acpModeOptions: [], composerActions: [] }).modes,
     ).toEqual(["agent"]);
+  });
+});
+
+describe("visibleAcpModeOptions", () => {
+  const options = [
+    { value: "build", name: "Build" },
+    { value: "plan", name: "Plan" },
+    { value: "reviewer", name: "Reviewer" },
+  ];
+
+  it("keeps portable modes until optional discovery is enabled", () => {
+    expect(visibleAcpModeOptions(options, false)).toEqual(options.slice(0, 2));
+    expect(visibleAcpModeOptions(options, true)).toBe(options);
   });
 });

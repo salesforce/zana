@@ -3,12 +3,17 @@
  * set (local `.env` or the baked release secret). Point Settings at your own
  * project or turn the master switch off to send nothing.
  *
- * Two kinds of signal, each behind its own toggle:
- *  1. Agent/thread lifecycle events (created/active/idle/failed/archived/deleted).
+ * Three kinds of signal, each behind its own toggle:
+ *  1. Agent/thread lifecycle events (created/active/idle/failed/archived/deleted),
+ *     now also carrying structural fields — providerId/model/reasoningLevel/
+ *     executionState/hadAttachments — never prompt/response content or paths.
  *  2. Coarse UI click events — ONLY a developer-authored `data-testid` and the
  *     element role. NEVER the button text, aria-label, input values, or any
  *     other user-generated content (labels routinely embed project names and
  *     thread titles, so they are deliberately never read).
+ *  3. Optional page/section navigation + dwell time — ONLY a fixed nav-name
+ *     enum for `from`/`to` and a bounded duration in ms. NEVER a path,
+ *     project id, thread id, or other dynamic route segment.
  *
  * Nothing is ever sent about prompt/response content. See README.md.
  */
@@ -21,6 +26,25 @@ const EVENT_NAMES = [
   'thread.archived',
   'thread.deleted'
 ];
+
+/** Fixed nav-name enum re-validated server-side (Rule 1: never trust the
+ *  renderer) — mirrors decode-route.ts's DecodedRoute.nav literals plus the
+ *  "plugin" bucket app.js uses for any nav id outside this fixed set. */
+const KNOWN_NAV_VALUES = new Set([
+  'home',
+  'inbox',
+  'agents',
+  'followups',
+  'suggestions',
+  'scheduler',
+  'goals',
+  'settings',
+  'extensions',
+  'projects',
+  'plugin'
+]);
+
+const MAX_PAGE_VIEW_DURATION_MS = 24 * 60 * 60 * 1000; // 24h sanity cap
 
 const DISTINCT_ID_KEY = 'distinctId';
 const DEFAULT_HOST = 'https://us.posthog.com';
@@ -48,6 +72,13 @@ export default function plugin(zcc) {
       label: 'Also track UI clicks (button ids only)',
       description:
         'Sends a zcc_ui_click event carrying only a developer-authored data-testid and the element role — never button text, labels, or input values.',
+      default: false
+    },
+    trackPageViews: {
+      type: 'boolean',
+      label: 'Also track page navigation & time spent',
+      description:
+        'Sends a zcc_page_view event on each section change carrying only a fixed nav-name enum (from/to) and a duration in ms — never a path, project id, or thread id.',
       default: false
     },
     apiKey: {
@@ -119,7 +150,15 @@ export default function plugin(zcc) {
     const values = await settings.get();
     if (!values.enabled || !values.apiKey) return;
     await sendEvent(values, `zcc_${name.replace('.', '_')}`, {
-      projectId: event.projectId ?? null
+      projectId: event.projectId ?? null,
+      // Structural/enum/boolean-only fields — never prompt/response content,
+      // paths, or titles. All optional; a missing value is sent as null so
+      // the PostHog schema stays stable across event names.
+      providerId: typeof event.providerId === 'string' ? event.providerId : null,
+      model: typeof event.model === 'string' ? event.model : null,
+      reasoningLevel: typeof event.reasoningLevel === 'string' ? event.reasoningLevel : null,
+      executionState: typeof event.executionState === 'string' ? event.executionState : null,
+      hadAttachments: typeof event.hadAttachments === 'boolean' ? event.hadAttachments : null
     });
   }
 
@@ -148,6 +187,41 @@ export default function plugin(zcc) {
     if (!properties.testid && !properties.role) return { ok: false };
     await sendEvent(values, 'zcc_ui_click', properties).catch((err) =>
       zcc.log.warn(`posthog ui click failed: ${err}`)
+    );
+    return { ok: true };
+  });
+
+  /**
+   * Called by the renderer content script (see app.js) on each section
+   * transition. Re-validated here (Rule 1: never trust the renderer) — `from`
+   * and `to` must be one of {@link KNOWN_NAV_VALUES} (anything else, including
+   * a raw plugin nav id, is dropped rather than forwarded) and `durationMs`
+   * must be a finite, non-negative number under {@link MAX_PAGE_VIEW_DURATION_MS}.
+   * Gated on BOTH the master switch and this feature's own toggle
+   * (`trackPageViews`, off by default, independent of `trackUiClicks`).
+   */
+  zcc.rpc.method('trackPageView', async (input) => {
+    const values = await settings.get();
+    if (!values.enabled || !values.trackPageViews || !values.apiKey) return { ok: false };
+
+    const rawFrom = input && input.from;
+    const rawTo = input && input.to;
+    const from = typeof rawFrom === 'string' && KNOWN_NAV_VALUES.has(rawFrom) ? rawFrom : null;
+    const to = typeof rawTo === 'string' && KNOWN_NAV_VALUES.has(rawTo) ? rawTo : null;
+    if (!to) return { ok: false };
+
+    const rawDuration = input && input.durationMs;
+    if (
+      typeof rawDuration !== 'number' ||
+      !Number.isFinite(rawDuration) ||
+      rawDuration < 0 ||
+      rawDuration > MAX_PAGE_VIEW_DURATION_MS
+    ) {
+      return { ok: false };
+    }
+
+    await sendEvent(values, 'zcc_page_view', { from, to, durationMs: rawDuration }).catch((err) =>
+      zcc.log.warn(`posthog page view failed: ${err}`)
     );
     return { ok: true };
   });

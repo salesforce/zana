@@ -36,6 +36,7 @@ import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
 import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { consumeComposerModeCycle, type ComposerWorkMode } from './thread/pickers/composer-mode.js';
+import { visibleAcpModeOptions } from '@zana-ai/zcc-domain/thread-runtime';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { PluginComposerAdvanced, PluginComposerMeta } from '../plugins/PluginComposerSlots.js';
 import {
@@ -124,6 +125,7 @@ export function LegacyAgentHomeComposer({
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
   const harnessGrokEnabled = useData((s) => s.harnessGrokEnabled);
+  const nativeAgentDiscoveryEnabled = useData((s) => s.nativeAgentDiscoveryEnabled);
   const cliRemoteHostCatalogEnabled = useData((s) => s.cliRemoteHostCatalogEnabled);
   const selectTab = useUi((s) => s.selectTab);
   const pushToast = useUi((s) => s.pushToast);
@@ -250,9 +252,14 @@ export function LegacyAgentHomeComposer({
   }, [catalogEntry?.selectedOnlyModels, models, preferHostModels, selectedHarness?.targets?.models]);
   // OpenCode native roles = the ACP session-mode list (identical to Modern).
   const roleOptions = familyId === 'opencode'
-    ? catalogEntry?.acpMode?.options ?? []
+    ? visibleAcpModeOptions(catalogEntry?.acpMode?.options ?? [], nativeAgentDiscoveryEnabled)
     : [];
   const modeChip = cliComposerModeChip(familyId);
+
+  useEffect(() => {
+    if (nativeAgentDiscoveryEnabled || !roleTargetId) return;
+    if (!roleOptions.some((option) => option.value === roleTargetId)) setRoleTargetId(undefined);
+  }, [nativeAgentDiscoveryEnabled, roleOptions, roleTargetId]);
 
   const field = useComposerPromptField({
     placeholder: 'Describe the task… Leave empty to open an interactive session',
@@ -704,6 +711,7 @@ export function LegacyAgentHomeComposer({
                     onRefresh={() => {
                       if (selectedProviderId) void reloadThreadProviderModels(selectedProviderId);
                     }}
+                    discoveryEnabled={nativeAgentDiscoveryEnabled}
                   />
                 ) : modeChip === 'work-mode' ? (
                   <ComposerModePicker

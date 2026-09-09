@@ -304,6 +304,9 @@ export function SettingsView() {
       if (typeof patch.harnessGrokEnabled === 'boolean') {
         useData.getState().setHarnessGrokEnabled(patch.harnessGrokEnabled);
       }
+      if (typeof patch.nativeAgentDiscoveryEnabled === 'boolean') {
+        useData.setState({ nativeAgentDiscoveryEnabled: patch.nativeAgentDiscoveryEnabled });
+      }
       if (typeof patch.microVmEnabled === 'boolean') {
         useData.getState().setMicroVmEnabled(patch.microVmEnabled);
       }

@@ -6,12 +6,16 @@ This is the integration layer vitest can't reach: vitest unit-tests pure modules
 with injected I/O; these prove the wiring works when the whole app is booted.
 
 ```sh
-npm run test:e2e          # build, then run the suite
-npm run test:e2e:only     # run against the existing out/ build (faster inner loop)
+npm run test:e2e          # build, rebuild Electron native addons, then run suite
+npm run test:e2e:only     # existing out/ build; manages native-addon ABI
 npm run test:e2e:headed   # build + run with a visible window (debugging)
-npx playwright test smoke # a single spec
+npm run test:e2e:only -- smoke # a single spec; manages native-addon ABI
 npx playwright show-trace e2e/.artifacts/<…>/trace.zip   # post-mortem a failure
 ```
+
+Do not invoke `playwright` directly for Electron tests. Electron and Node use
+different native-addon ABIs; supported scripts rebuild for Electron before
+test, then restore Node ABI afterward for Vitest and development commands.
 
 ## Optional Linux CI reproduction
 

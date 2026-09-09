@@ -490,7 +490,7 @@
     {
       "id": "posthog-analytics",
       "displayName": "PostHog Analytics",
-      "description": "Usage analytics, on by default when ZCC_POSTHOG_API_KEY is set (bring your own key or opt out): agent lifecycle events plus optional content-free UI-click ids. Never sends prompt or response content.",
+      "description": "Usage analytics, on by default when ZCC_POSTHOG_API_KEY is set (bring your own key or opt out): richer agent lifecycle events (model/provider/reasoning level/execution state/attachment presence) plus optional content-free UI-click ids and page-view/dwell-time tracking. Never sends prompt or response content.",
       "icon": {
         "lucide": "LineChart"
       },

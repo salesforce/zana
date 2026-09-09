@@ -9,6 +9,7 @@ const config = (executionState?: 'plan' | 'interactive' | 'accept-edits' | 'auto
   version: 1,
   theme: 'dark',
   harnessOpenCodeEnabled: true,
+  nativeAgentDiscoveryEnabled: true,
   harnessRouting: executionState ? { schemaVersion: 1, byAdapter: { opencode: { executionState } } } : undefined
 } as AppConfig);
 
@@ -186,7 +187,10 @@ describe('production execution routing preflight', () => {
     }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'remote' });
   });
 
-  it.each(['build', 'custom-reviewer'])('fails closed for %s when authoritative OpenCode role discovery fails', async (roleTargetId) => {
+  it.each([
+    ['build', { decision: 'allowed', scope: 'local' }],
+    ['custom-reviewer', { decision: 'blocked', reason: 'role target unavailable' }]
+  ] as const)('falls back to static roles but rejects unavailable %s when authoritative OpenCode role discovery fails', async (roleTargetId, expected) => {
     const services = deps();
     const provider = new OpenCodeProvider();
     provider.discoverAgentDescriptors = vi.fn(async () => ({ status: 'failure' as const }));
@@ -194,7 +198,7 @@ describe('production execution routing preflight', () => {
       config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
       mode: 'interactive', idempotencyKey: `failed-discovery-${roleTargetId}`,
       harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId } } }
-    }, { ...services, provider })).resolves.toEqual({ decision: 'blocked', reason: 'role target unavailable' });
+    }, { ...services, provider })).resolves.toEqual(expected);
   });
 
   it('allows a live Codex model/list id after catalog overlay stamps evidence', async () => {
