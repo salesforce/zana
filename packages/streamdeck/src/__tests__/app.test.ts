@@ -118,12 +118,20 @@ describe('deck app — ZCC hub', () => {
 
     await vi.waitFor(() => expect(recorded.some((r) => r.op === 'agent.list')).toBe(true));
 
-    // Agent sits in slot 0 → key index 0. Press it to open the overlay.
-    deck.press(coordToIndex(0, 0));
-    // Overlay's Approve key is at (0,1) → reply "y\n" to this session.
-    deck.press(coordToIndex(0, 1));
-
+    // `agent.list` being recorded only proves the control plane received the
+    // request — the out-of-band `pollNow()` promise it's part of still has to
+    // resolve and rebuild the grid before the agent tile is actually pressable
+    // (until then slot 0 is still the pre-poll idle filler with no onPress). So
+    // retry the press pair until it lands rather than firing it exactly once —
+    // this is what actually flaked under full-suite load, not the assertions.
     await vi.waitFor(() => {
+      if (!recorded.some((r) => r.op === 'term.reply')) {
+        // Agent sits in slot 0 → key index 0. Press it to open the overlay.
+        deck.press(coordToIndex(0, 0));
+        // Overlay's Approve key is at (0,1) → reply "y\n" to this session.
+        deck.press(coordToIndex(0, 1));
+      }
+
       const reply = recorded.find((r) => r.op === 'term.reply');
       expect(reply).toBeDefined();
       expect(reply!.args).toEqual({ sessionId: 's-1', text: 'y\n' });

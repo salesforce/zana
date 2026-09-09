@@ -1042,6 +1042,51 @@ describe('conversation lifecycle', () => {
     }));
   });
 
+  it('carries providerId/model/reasoningLevel/hadAttachments on the thread.active plugin event for a follow-up turn', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    const context = ctx(callHostOnlineRpc);
+    await sendConversationTurn(
+      context,
+      thread.id,
+      [{ type: 'text', text: 'follow up' }, { type: 'localImage', path: 'shot.png' }],
+      'auto',
+      { model: 'claude-sonnet-5', reasoningLevel: 'high' }
+    );
+    expect(context.plugins?.emitThreadEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'thread.active',
+        threadId: thread.id,
+        projectId: thread.projectId,
+        providerId: thread.providerId,
+        model: 'claude-sonnet-5',
+        reasoningLevel: 'high',
+        hadAttachments: true
+      })
+    );
+  });
+
+  it('reports hadAttachments: false on a plain text follow-up turn (never the marker text itself)', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    const context = ctx(callHostOnlineRpc);
+    await sendConversationTurn(context, thread.id, [{ type: 'text', text: 'follow up' }]);
+    expect(context.plugins?.emitThreadEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'thread.active', hadAttachments: false })
+    );
+  });
+
+  it('carries providerId on the thread.created plugin event for a fork', async () => {
+    const product = ctx(async () => ({}));
+    const forked = await forkConversation(product, thread.id);
+    expect(product.plugins?.emitThreadEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'thread.created',
+        threadId: forked.id,
+        projectId: forked.projectId,
+        providerId: forked.providerId
+      })
+    );
+  });
+
   it('409s cancelPlan when plan mode is not active', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ cancelled: true }));
     await expect(cancelConversationPlan(ctx(callHostOnlineRpc), thread.id))
