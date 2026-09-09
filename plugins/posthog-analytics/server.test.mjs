@@ -67,7 +67,7 @@ describe('posthog-analytics plugin', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('sends only event name, distinct id, and projectId — never content', async () => {
+  it('sends event name, distinct id, and projectId — never content — with the new fields defaulting to null', async () => {
     const zcc = makeZcc({ enabled: true, apiKey: 'k-123', host: 'https://us.posthog.com' });
     plugin(zcc);
     await zcc._handlers.get('thread.created')({ projectId: 'p1', threadId: 't1' });
@@ -80,10 +80,62 @@ describe('posthog-analytics plugin', () => {
       api_key: 'k-123',
       event: 'zcc_thread_created',
       distinct_id: 'fixed-uuid',
-      properties: { projectId: 'p1' }
+      properties: {
+        projectId: 'p1',
+        providerId: null,
+        model: null,
+        reasoningLevel: null,
+        executionState: null,
+        hadAttachments: null
+      }
     });
     expect(body).not.toHaveProperty('timestamp');
     expect(JSON.stringify(body)).not.toContain('threadId');
+  });
+
+  it('forwards the new structural fields (providerId/model/reasoningLevel/executionState/hadAttachments) — still never content', async () => {
+    const zcc = makeZcc({ enabled: true, apiKey: 'k-123', host: 'https://us.posthog.com' });
+    plugin(zcc);
+    await zcc._handlers.get('thread.active')({
+      projectId: 'p1',
+      threadId: 't1',
+      providerId: 'claude-code',
+      model: 'claude-sonnet-5',
+      reasoningLevel: 'high',
+      executionState: 'accept-edits',
+      hadAttachments: true,
+      // hostile extras that must never reach PostHog:
+      promptText: 'do the secret thing',
+      attachmentPath: '/Users/me/secret.png'
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(body.properties).toEqual({
+      projectId: 'p1',
+      providerId: 'claude-code',
+      model: 'claude-sonnet-5',
+      reasoningLevel: 'high',
+      executionState: 'accept-edits',
+      hadAttachments: true
+    });
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('secret');
+    expect(serialized).not.toContain('promptText');
+    expect(serialized).not.toContain('attachmentPath');
+  });
+
+  it('drops a non-scalar/wrong-typed new field rather than forwarding it', async () => {
+    const zcc = makeZcc({ enabled: true, apiKey: 'k-123', host: 'https://us.posthog.com' });
+    plugin(zcc);
+    await zcc._handlers.get('thread.idle')({
+      projectId: 'p1',
+      providerId: 42,
+      hadAttachments: 'yes'
+    });
+    const body = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(body.properties.providerId).toBeNull();
+    expect(body.properties.hadAttachments).toBeNull();
   });
 
   it('strips a trailing slash from a custom host', async () => {
@@ -151,6 +203,7 @@ describe('posthog-analytics plugin', () => {
     expect(descriptors.enabled.default).toBe(true);
     expect(descriptors.apiKey.default).toBe('phc_from_env');
     expect(descriptors.trackUiClicks.default).toBe(false);
+    expect(descriptors.trackPageViews.default).toBe(false);
   });
 
   it('defaults apiKey to empty when ZCC_POSTHOG_API_KEY is unset', () => {
@@ -220,6 +273,108 @@ describe('posthog-analytics plugin', () => {
       plugin(zcc);
       await zcc._rpc.get('trackUiClick')({ testid: 'x'.repeat(500), role: 42 });
       // testid too long, role not a string → nothing identifiable left → no send
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('trackPageView RPC', () => {
+    it('does not fetch when page-view tracking is off (even if enabled)', async () => {
+      const zcc = makeZcc({ enabled: true, trackPageViews: false, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackPageView')({ from: 'inbox', to: 'agents', durationMs: 1200 });
+      expect(res).toEqual({ ok: false });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('does not fetch when the master switch is off', async () => {
+      const zcc = makeZcc({ enabled: false, trackPageViews: true, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      await zcc._rpc.get('trackPageView')({ from: 'inbox', to: 'agents', durationMs: 1200 });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('is independent of trackUiClicks — page views can be on while clicks stay off', async () => {
+      const zcc = makeZcc({
+        enabled: true,
+        trackUiClicks: false,
+        trackPageViews: true,
+        apiKey: 'k',
+        host: DEFAULT_HOST
+      });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackPageView')({ from: 'home', to: 'settings', durationMs: 500 });
+      expect(res).toEqual({ ok: true });
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends only from/to/durationMs, never any other field', async () => {
+      const zcc = makeZcc({ enabled: true, trackPageViews: true, apiKey: 'k-7', host: DEFAULT_HOST });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackPageView')({
+        from: 'inbox',
+        to: 'projects',
+        durationMs: 4500,
+        // hostile extras that must be dropped:
+        projectId: 'proj-secret',
+        path: '/projects/proj-secret/threads/abc'
+      });
+      expect(res).toEqual({ ok: true });
+      const body = JSON.parse(fetch.mock.calls[0][1].body);
+      expect(body.event).toBe('zcc_page_view');
+      expect(body.properties).toEqual({ from: 'inbox', to: 'projects', durationMs: 4500 });
+      const serialized = JSON.stringify(body);
+      expect(serialized).not.toContain('proj-secret');
+    });
+
+    it('treats a null/missing from as null but still sends when to is known', async () => {
+      const zcc = makeZcc({ enabled: true, trackPageViews: true, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackPageView')({ to: 'agents', durationMs: 0 });
+      expect(res).toEqual({ ok: true });
+      const body = JSON.parse(fetch.mock.calls[0][1].body);
+      expect(body.properties).toEqual({ from: null, to: 'agents', durationMs: 0 });
+    });
+
+    it('buckets an unknown nav value (e.g. a raw plugin id) as dropped rather than forwarded verbatim', async () => {
+      const zcc = makeZcc({ enabled: true, trackPageViews: true, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackPageView')({ from: 'agents', to: 'some-third-party-plugin-id', durationMs: 100 });
+      // "to" is not in the known enum → rejected outright (never forwarded verbatim)
+      expect(res).toEqual({ ok: false });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects a negative durationMs', async () => {
+      const zcc = makeZcc({ enabled: true, trackPageViews: true, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackPageView')({ from: 'home', to: 'agents', durationMs: -5 });
+      expect(res).toEqual({ ok: false });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects a durationMs over the 24h sanity cap', async () => {
+      const zcc = makeZcc({ enabled: true, trackPageViews: true, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackPageView')({ from: 'home', to: 'agents', durationMs: 25 * 60 * 60 * 1000 });
+      expect(res).toEqual({ ok: false });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-numeric or non-finite durationMs', async () => {
+      const zcc = makeZcc({ enabled: true, trackPageViews: true, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      const resA = await zcc._rpc.get('trackPageView')({ from: 'home', to: 'agents', durationMs: 'soon' });
+      const resB = await zcc._rpc.get('trackPageView')({ from: 'home', to: 'agents', durationMs: Infinity });
+      expect(resA).toEqual({ ok: false });
+      expect(resB).toEqual({ ok: false });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects a missing/unknown "to"', async () => {
+      const zcc = makeZcc({ enabled: true, trackPageViews: true, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackPageView')({ from: 'home', durationMs: 10 });
+      expect(res).toEqual({ ok: false });
       expect(fetch).not.toHaveBeenCalled();
     });
   });
