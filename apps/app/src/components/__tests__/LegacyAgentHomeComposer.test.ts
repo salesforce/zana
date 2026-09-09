@@ -143,7 +143,7 @@ describe('LegacyAgentHomeComposer', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<ComposerModePicker');
     expect(source).toContain("modeChip === 'work-mode'");
-    expect(source).toContain('modes={CLI_WORK_MODES}');
+    expect(source).toContain('entries={CLI_WORK_MODE_ENTRIES}');
     expect(source).toContain('cliComposerModeChip');
     expect(source).toContain("kind: 'work'");
     expect(source).not.toContain("kind: 'new-thread'");

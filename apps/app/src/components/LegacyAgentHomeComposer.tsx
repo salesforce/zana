@@ -36,7 +36,7 @@ import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
 import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { consumeComposerModeCycle, type ComposerWorkMode } from './thread/pickers/composer-mode.js';
-import { visibleAcpModeOptions } from '@zana-ai/zcc-domain/thread-runtime';
+import { composerModeEntries, visibleAcpModeOptions } from '@zana-ai/zcc-domain/thread-runtime';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { PluginComposerAdvanced, PluginComposerMeta } from '../plugins/PluginComposerSlots.js';
 import {
@@ -96,6 +96,10 @@ import {
 import { defaultHostId, useHosts } from '../hooks/useHosts.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
+const CLI_WORK_MODE_ENTRIES = composerModeEntries({
+  acpModeOptions: [],
+  composerActions: ['plan']
+});
 
 /**
  * Home PTY launch surface. Thread create stays in ThreadCommandComposer;
@@ -716,8 +720,10 @@ export function LegacyAgentHomeComposer({
                 ) : modeChip === 'work-mode' ? (
                   <ComposerModePicker
                     value={workMode === 'plan' ? 'plan' : 'agent'}
-                    modes={CLI_WORK_MODES}
-                    onChange={setWorkMode}
+                    entries={CLI_WORK_MODE_ENTRIES}
+                    onChange={(value) => {
+                      if (value === 'plan' || value === 'agent') setWorkMode(value);
+                    }}
                   />
                 ) : null}
                 <ModelReasoningPicker

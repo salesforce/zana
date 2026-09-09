@@ -1147,7 +1147,9 @@ export async function runProviderCliInstall(args: {
         pathExists
       })
       : null;
-    let closeResult: { exitCode: number | null; signal: NodeJS.Signals | null } | null = null;
+    const closeState: { result: { exitCode: number | null; signal: NodeJS.Signals | null } | null } = {
+      result: null
+    };
     const child = spawner.spawn({
       command: actionCommand.command,
       args: [...actionCommand.args],
@@ -1197,10 +1199,11 @@ export async function runProviderCliInstall(args: {
         finish();
       });
       child.onClose((exitCode, signal) => {
-        closeResult = { exitCode, signal };
+        closeState.result = { exitCode, signal };
         finish();
       });
     });
+    const closeResult = closeState.result;
     if (closeResult) {
       const alreadyFailed = events.some((event) => event.type === 'error');
       let success = closeResult.exitCode === 0 && !alreadyFailed;

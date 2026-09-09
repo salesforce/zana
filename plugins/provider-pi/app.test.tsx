@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadPluginApp, renderSlot } from "@zana-ai/zcc-plugin-sdk/testing/app";
 import { PI_EXTENSION_UI_KIND } from "./src/extension-ui-contract.js";
 
-const app = await loadPluginApp(() => import("./app"));
+const app = await loadPluginApp(() => import("./app.tsx"));
 
 afterEach(cleanup);
 
