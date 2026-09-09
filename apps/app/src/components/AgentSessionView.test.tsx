@@ -31,7 +31,7 @@ vi.mock('./thread/secondary-panel/ThreadExplorerTab.js', () => ({
 }));
 
 import { PaneContextProvider } from '../views/thread-detail/PaneContext.js';
-import { AgentSessionView, agentWriteScope } from './AgentSessionView.js';
+import { AgentSessionView, agentWriteScope, canPreviewCliPlanFile, cliPlanDocument } from './AgentSessionView.js';
 
 function session(over: Partial<TerminalSession> = {}): TerminalSession {
   return {
@@ -286,5 +286,65 @@ describe('AgentSessionView', () => {
     expect(source).not.toContain('ThreadTerminalTab');
     expect(source).not.toContain('product.threads.create');
     expect(source).not.toContain('createTerminal');
+    expect(source).toContain('<ThreadPlanPanel');
+    expect(source).toContain('showPlanPin={showPlanPin}');
+    expect(source).toContain('Waiting for the CLI to write a plan');
+    expect(source).not.toContain('writeThreadPlanFile');
+    expect(source).not.toContain('thread_plans');
+  });
+
+  it('hides the Plan pin without intent or a snapshot', () => {
+    const html = renderToStaticMarkup(
+      <AgentSessionView
+        session={session()}
+        projectId="p1"
+        projectName="demo-project"
+        state="idle"
+        terminalAnchorId="a"
+      />
+    );
+    expect(html).not.toContain('data-testid="thread-plan-pin"');
+  });
+
+  it('shows the Plan pin and empty waiting copy when cliPlanIntent is set', () => {
+    installMemoryStorage();
+    persistPanel('s-plan', { activeId: 'plan' });
+    const html = renderToStaticMarkup(
+      <AgentSessionView
+        session={session({ id: 's-plan', cliPlanIntent: true })}
+        projectId="p1"
+        projectName="demo-project"
+        state="idle"
+        terminalAnchorId="a"
+      />
+    );
+    expect(html).toContain('data-testid="thread-plan-pin"');
+    expect(html).toContain('data-testid="thread-plan-empty"');
+    expect(html).toContain('Waiting for the CLI to write a plan…');
+  });
+
+  it('maps a live snapshot to durable markdown for the Plan panel', () => {
+    expect(cliPlanDocument(null)).toEqual({
+      markdown: null,
+      filePath: null,
+      prompt: null,
+      source: 'empty'
+    });
+    expect(cliPlanDocument({
+      path: '/tmp/proj/.opencode/plans/plan.md',
+      markdown: '# Ship it',
+      mtime: 9
+    })).toEqual({
+      markdown: '# Ship it',
+      filePath: '/tmp/proj/.opencode/plans/plan.md',
+      prompt: null,
+      source: 'durable'
+    });
+  });
+
+  it('only previews CLI plan files under the session cwd', () => {
+    expect(canPreviewCliPlanFile('/tmp/proj/.opencode/plans/plan.md', '/tmp/proj')).toBe(true);
+    expect(canPreviewCliPlanFile('/Users/me/.claude/plans/slug.md', '/tmp/proj')).toBe(false);
+    expect(canPreviewCliPlanFile('/tmp/proj-other/plan.md', '/tmp/proj')).toBe(false);
   });
 });

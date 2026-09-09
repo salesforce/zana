@@ -1224,6 +1224,13 @@ export type TeamCoordinationMode = 'interactive-team' | 'autonomous-team' | 'job
  */
 export type LegacyAgentSession = TerminalSession;
 
+/** Native on-disk plan snapshot for a CLI Agent inspector (not thread_plans). */
+export interface CliPlanFile {
+  path: string;
+  markdown: string;
+  mtime: number;
+}
+
 export interface TerminalSession {
   id: string;
   /** Opaque main-owned capability used to restore/reconnect this launch. */
@@ -1246,6 +1253,13 @@ export interface TerminalSession {
    */
   finishedAt?: number;
   extraArgs?: string[];
+  /**
+   * True when this local CLI Agent was launched in Plan (portable
+   * `executionState: 'plan'` or OpenCode `--agent plan`). Drives the inspector
+   * Plan pin before a native plan file exists. Absent on Agent-mode, remote,
+   * Codex, and Pi launches.
+   */
+  cliPlanIntent?: boolean;
   pinned?: boolean;
   /**
    * The transcript session id this tab owns, for any `acceptsSessionId`

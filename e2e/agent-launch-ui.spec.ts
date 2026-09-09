@@ -396,7 +396,6 @@ for (const row of PLAN_FAMILIES) {
       await expect(modal.getByTestId('composer-mode-picker-trigger')).toContainText('Agent');
       await selectWorkMode(window, modal, 'plan');
       await expect(modal.getByTestId('composer-mode-picker-trigger')).toContainText('Plan');
-      await expect(modal.getByTestId('composer-mode-picker-trigger')).toContainText('Plan');
 
       const send = modal.getByTestId('legacy-agent-command-send');
       await expect(send).toBeEnabled({ timeout: 15_000 });
@@ -407,6 +406,17 @@ for (const row of PLAN_FAMILIES) {
       await expect(agentModal).toBeVisible({ timeout: 15_000 });
       await expect(agentModal.getByTestId('agent-modal-header')).toBeVisible();
       await expect(agentModal.getByTestId('agent-session-view')).toBeVisible();
+      await agentModal.getByTestId('thread-secondary-show').click();
+      if (row.family === 'codex') {
+        await expect(agentModal.getByTestId('thread-plan-pin')).toHaveCount(0);
+      } else {
+        await expect(agentModal.getByTestId('thread-plan-pin')).toBeVisible();
+        await agentModal.getByTestId('thread-plan-pin').click();
+        await expect(agentModal.getByTestId('thread-plan-empty')).toBeVisible();
+        await expect(agentModal.getByTestId('thread-plan-empty')).toHaveText(
+          'Waiting for the CLI to write a plan…'
+        );
+      }
     } finally {
       await cleanupLaunch(window, projectId, projectDir);
       agent.cleanup();

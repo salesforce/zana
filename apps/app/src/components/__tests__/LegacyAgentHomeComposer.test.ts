@@ -34,7 +34,8 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('useComposerPromptField');
     expect(source).toContain("kind: 'cli'");
     expect(source).toContain('assembleCliLaunchPrompt');
-    expect(source).toContain('absolutePathMentions');
+    expect(source).toContain('stageRemoteComposerAttachments');
+    expect(source).toContain('composerDropProjectRoot');
     expect(source).not.toContain('product.threads.create');
     expect(source).toContain('ComposerModePicker');
     expect(source).toContain('cliComposerModeChip');
@@ -80,11 +81,12 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('disabled={launching}');
   });
 
-  it('uploads remote-project path mentions before launch and rewrites the prompt', () => {
+  it('uploads remote-project attaches before launch and rewrites the prompt', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('stageRemoteComposerAttachments');
     expect(source).toContain("product.fs.uploadToRemote(project.id, localPath, '.')");
-    expect(source).toContain('absolutePathMentions(serialized.mentions)');
-    expect(source).toContain('rewritePromptPaths(promptText, uploaded)');
+    expect(source).toContain('product.fs.uploadProjectAttachmentToRemote(project.id, relativePath)');
+    expect(source).toContain('composerDropProjectRoot(project)');
   });
 
   it('sources OpenCode roles from the SAME ACP mode list as the Modern composer', () => {

@@ -11,7 +11,8 @@ import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, Proj
 import { SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
 import { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
-import { isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
+import { harnessFamilyOf, isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
+import { cliPlanIntentForLaunch } from './harness/cli-plan-files.js';
 import { ensureMcpConfigForProjectSync } from './mcp-config.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv } from './env.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName } from './tmux.js';
@@ -790,6 +791,11 @@ export class PtyManager extends EventEmitter {
       executionTargetId: execution.targetId
     });
     if (combinationError) throw new Error(`${combinationError}.`);
+    const cliPlanIntent = cliPlanIntentForLaunch({
+      familyId: harnessFamilyOf(effectiveProfile),
+      executionState: execution.state,
+      roleTargetId: roleTarget.targetId
+    }) || undefined;
 
     const { command, args } = provider.resolveLaunch(
       effectiveProfile,
@@ -1427,6 +1433,7 @@ export class PtyManager extends EventEmitter {
       extraArgs: opts.extraArgs,
       metadata,
       claudeSessionId,
+      cliPlanIntent,
       ...nativeSessionFields(
         opts.resumeSessionId
           ? registrationFor(opts.profile)?.nativeSessionPatch?.(opts.resumeSessionId)

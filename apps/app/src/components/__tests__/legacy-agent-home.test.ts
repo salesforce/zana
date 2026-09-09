@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { PromptTextMention } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   absolutePathMentions,
   applyLaunchPatch,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
+  composerDropProjectRoot,
   cliAgentCatalogProviders,
   cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
@@ -19,6 +21,8 @@ import {
   resolveCliAgentFamily,
   resolveCliLaunchProfile,
   rewritePromptPaths,
+  stageRemoteComposerAttachments,
+  type StageRemoteComposerAttachmentsInput,
   threadProviderIdForFamily,
   unrestrictedProfileId,
   withExecutionState,
@@ -381,6 +385,131 @@ describe('CLI launch prompt from mention pills', () => {
     ])).toBe('See @/remote/a.ts please');
     expect(assembleCliLaunchPrompt({ text: '  ship it  ', imagePaths: ['shots/a.png'] })).toBe('ship it\n@shots/a.png');
     expect(assembleCliLaunchPrompt({ text: '   ' })).toBe('');
+  });
+});
+
+describe('composerDropProjectRoot', () => {
+  it('keeps local project paths and skips relativization on SSH remotes', () => {
+    expect(composerDropProjectRoot(undefined)).toBeNull();
+    expect(composerDropProjectRoot({ path: '/repo' })).toBe('/repo');
+    expect(composerDropProjectRoot({ path: '/Users/me/zcc-workspace/remotes/dev', remote: { host: 'devbox' } })).toBeNull();
+  });
+});
+
+describe('stageRemoteComposerAttachments', () => {
+  const pathMention = (path: string): PromptTextMention => ({
+    start: 0,
+    end: path.length + 1,
+    resource: { kind: 'path', source: 'workspace', entryKind: 'file', path, label: path.split('/').pop() ?? path }
+  });
+  const imageFile = { name: 'shot.png' } as File;
+
+  function stagingDeps(
+    overrides: Partial<StageRemoteComposerAttachmentsInput> = {}
+  ): StageRemoteComposerAttachmentsInput {
+    const uploadLocalPath = vi.fn(async (localPath: string) => ({
+      ok: true as const,
+      path: `/remote/.zcc-uploads/${localPath.split('/').pop()}`
+    }));
+    const persistImages = vi.fn(async () => ['clip-1.png']);
+    const uploadPersistedAttachment = vi.fn(async (relative: string) => ({
+      ok: true as const,
+      path: `/remote/.zcc-uploads/${relative}`
+    }));
+    return {
+      promptText: 'See @/Users/me/a.ts please',
+      mentions: [pathMention('/Users/me/a.ts')],
+      images: [] as Array<{ path: string | null; file: File }>,
+      projectId: 'p1',
+      uploadLocalPath,
+      persistImages,
+      uploadPersistedAttachment,
+      quoteRemotePath: (path: string) => path,
+      ...overrides
+    };
+  }
+
+  it('uploads absolute local mentions and rewrites the prompt', async () => {
+    const deps = stagingDeps();
+    const staged = await stageRemoteComposerAttachments(deps);
+    expect(staged).toMatchObject({
+      ok: true,
+      promptText: 'See @/remote/.zcc-uploads/a.ts please',
+      imagePaths: []
+    });
+    expect(deps.uploadLocalPath).toHaveBeenCalledWith('/Users/me/a.ts');
+    expect(deps.persistImages).not.toHaveBeenCalled();
+  });
+
+  it('uploads an image disk path and does not persist it locally', async () => {
+    const deps = stagingDeps({
+      promptText: 'look',
+      mentions: [],
+      images: [{ path: '/Users/me/shot.png', file: imageFile }]
+    });
+    const staged = await stageRemoteComposerAttachments(deps);
+    expect(staged).toEqual({
+      ok: true,
+      promptText: 'look',
+      imagePaths: ['/remote/.zcc-uploads/shot.png'],
+      uploaded: [{ localPath: '/Users/me/shot.png', remotePath: '/remote/.zcc-uploads/shot.png' }]
+    });
+    expect(deps.uploadLocalPath).toHaveBeenCalledWith('/Users/me/shot.png');
+    expect(deps.persistImages).not.toHaveBeenCalled();
+    expect(deps.uploadPersistedAttachment).not.toHaveBeenCalled();
+  });
+
+  it('skips relative typeahead paths', async () => {
+    const deps = stagingDeps({
+      promptText: 'See @src/foo.ts',
+      mentions: [pathMention('src/foo.ts')]
+    });
+    const staged = await stageRemoteComposerAttachments(deps);
+    expect(staged).toMatchObject({ ok: true, promptText: 'See @src/foo.ts', imagePaths: [] });
+    expect(deps.uploadLocalPath).not.toHaveBeenCalled();
+  });
+
+  it('skips absolute paths that are not local files so launch continues', async () => {
+    const deps = stagingDeps({
+      uploadLocalPath: vi.fn(async () => ({
+        ok: false as const,
+        message: 'ENOENT: no such file or directory, stat \'/home/dev/src/foo.ts\''
+      }))
+    });
+    const staged = await stageRemoteComposerAttachments(deps);
+    expect(staged).toMatchObject({
+      ok: true,
+      promptText: 'See @/Users/me/a.ts please',
+      uploaded: []
+    });
+  });
+
+  it('aborts when a local file fails to upload', async () => {
+    const deps = stagingDeps({
+      uploadLocalPath: vi.fn(async () => ({ ok: false as const, message: 'Permission denied' }))
+    });
+    await expect(stageRemoteComposerAttachments(deps)).resolves.toEqual({
+      ok: false,
+      localPath: '/Users/me/a.ts',
+      message: 'Permission denied'
+    });
+  });
+
+  it('persists clipboard images then uploads the stored attachment', async () => {
+    const deps = stagingDeps({
+      promptText: 'look',
+      mentions: [],
+      images: [{ path: null, file: imageFile }]
+    });
+    const staged = await stageRemoteComposerAttachments(deps);
+    expect(staged).toMatchObject({
+      ok: true,
+      promptText: 'look',
+      imagePaths: ['/remote/.zcc-uploads/clip-1.png']
+    });
+    expect(deps.persistImages).toHaveBeenCalledWith('p1', [{ path: null, file: imageFile }]);
+    expect(deps.uploadPersistedAttachment).toHaveBeenCalledWith('clip-1.png');
+    expect(deps.uploadLocalPath).not.toHaveBeenCalled();
   });
 });
 

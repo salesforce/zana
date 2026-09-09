@@ -10,6 +10,7 @@ import {
   pathLooksRuntimeReadable,
   readAttachment,
   resolvePromptAttachmentPath,
+  resolveStoredAttachmentPath,
   storeAttachment
 } from './attachments.js';
 
@@ -66,6 +67,15 @@ describe('project attachments', () => {
     const dataDir = '/data';
     expect(resolvePromptAttachmentPath(dataDir, 'p1', '/tmp/a.png')).toBe('/tmp/a.png');
     expect(resolvePromptAttachmentPath(dataDir, 'p1', 'shot.png')).toBe(join(dataDir, 'attachments', 'p1', 'shot.png'));
+  });
+
+  it('refuses absolute paths when resolving a stored attachment for remote upload', () => {
+    const dataDir = '/data';
+    expect(resolveStoredAttachmentPath(dataDir, 'p1', 'shot.png')).toBe(
+      join(dataDir, 'attachments', 'p1', 'shot.png')
+    );
+    expect(() => resolveStoredAttachmentPath(dataDir, 'p1', '/tmp/a.png')).toThrow(/inside the project directory/);
+    expect(() => resolveStoredAttachmentPath(dataDir, 'p1', '../secret.png')).toThrow(/inside the project directory/);
   });
 
   it('appends disk markers for local images onto the host prompt', () => {

@@ -73,6 +73,11 @@ export const IPC = {
      *  which mounts after the pty already printed) can replay it into a fresh
      *  xterm instead of showing a blank buffer. */
     backlog: 'terminals:backlog',
+    /** Native CLI plan snapshot for a Plan-mode inspector (sessionId only). */
+    cliPlan: 'terminals:cliPlan',
+    cliPlanWatch: 'terminals:cliPlanWatch',
+    cliPlanUnwatch: 'terminals:cliPlanUnwatch',
+    onCliPlan: 'terminals:onCliPlan',
     /** Summarize idle agents' work into ONE inbox entry before a bulk close
      *  (the Close-idle action's optional "leave a summary" step). */
     summarizeIdle: 'terminals:summarizeIdle',
@@ -240,6 +245,7 @@ export const IPC = {
     renameRemote: 'fs:renameRemote',
     deleteRemote: 'fs:deleteRemote',
     uploadToRemote: 'fs:uploadToRemote',
+    uploadProjectAttachmentToRemote: 'fs:uploadProjectAttachmentToRemote',
     downloadFromRemote: 'fs:downloadFromRemote'
   },
   executionSources: {

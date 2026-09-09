@@ -210,3 +210,67 @@ describe('structured providers remote blocking', () => {
     expect(spawns).toHaveLength(0);
   });
 });
+
+describe('cliPlanIntent session stamp', () => {
+  beforeEach(() => {
+    spawns.length = 0;
+  });
+
+  it('stamps local Claude Plan without changing Plan argv', () => {
+    const manager = new PtyManager();
+    const session = manager.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      harnessRouting: routing('claude', { executionState: 'plan' })
+    });
+    expect(session.cliPlanIntent).toBe(true);
+    expect(spawns.at(-1)!.args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+  });
+
+  it('stamps local Cursor Plan and OpenCode --agent plan', () => {
+    const manager = new PtyManager();
+    expect(manager.create({
+      projectId: 'proj1',
+      profile: 'cursor',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      harnessRouting: routing('cursor', { executionState: 'plan' })
+    }).cliPlanIntent).toBe(true);
+    expect(manager.create({
+      projectId: 'proj1',
+      profile: 'opencode',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      harnessRouting: routing('opencode', { roleTargetId: 'plan' })
+    }).cliPlanIntent).toBe(true);
+  });
+
+  it('does not stamp default Agent or Codex Plan', () => {
+    const manager = new PtyManager();
+    expect(manager.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: CONFIG
+    }).cliPlanIntent).toBeUndefined();
+    expect(manager.create({
+      projectId: 'proj1',
+      profile: 'codex',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      harnessRouting: routing('codex', { executionState: 'plan' })
+    }).cliPlanIntent).toBeUndefined();
+  });
+});

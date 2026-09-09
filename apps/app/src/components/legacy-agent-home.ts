@@ -1,4 +1,9 @@
-import type { HarnessFamily, HarnessModelRoutingV1, LaunchProfileId } from '@zana-ai/zcc-domain/product';
+import type {
+  HarnessFamily,
+  HarnessModelRoutingV1,
+  LaunchProfileId,
+  RemoteTransferResult
+} from '@zana-ai/zcc-domain/product';
 import type { PromptTextMention } from '@zana-ai/zcc-domain/thread-runtime';
 import type { PluginComposerLaunchPatch } from '@zana-ai/zcc-plugin-sdk/app';
 import {
@@ -175,6 +180,134 @@ export function assembleCliLaunchPrompt(args: {
     ...(args.imagePaths ?? []).map((path) => (path.startsWith('@') ? path : `@${path}`))
   ].filter(Boolean);
   return parts.join('\n');
+}
+
+export type RemoteComposerImage = {
+  path: string | null;
+  file: File;
+};
+
+export type StageRemoteComposerAttachmentsInput = {
+  promptText: string;
+  mentions: readonly PromptTextMention[];
+  images: readonly RemoteComposerImage[];
+  projectId: string;
+  uploadLocalPath: (localPath: string) => Promise<RemoteTransferResult>;
+  persistImages: (projectId: string, images: RemoteComposerImage[]) => Promise<string[]>;
+  uploadPersistedAttachment: (relativePath: string) => Promise<RemoteTransferResult>;
+  quoteRemotePath: (path: string) => string;
+};
+
+export type StageRemoteComposerAttachmentsResult =
+  | {
+      ok: true;
+      promptText: string;
+      imagePaths: string[];
+      uploaded: Array<{ localPath: string; remotePath: string }>;
+    }
+  | { ok: false; message: string; localPath: string };
+
+export function isMissingLocalFileMessage(message: string | undefined): boolean {
+  const text = (message ?? '').toLowerCase();
+  return /\benoent\b/u.test(text) || text.includes('no such file');
+}
+
+function attachmentBasename(path: string): string {
+  return path.split(/[\\/]/u).pop() || path;
+}
+
+function failedUpload(
+  localPath: string,
+  result: RemoteTransferResult
+): StageRemoteComposerAttachmentsResult {
+  return {
+    ok: false,
+    localPath,
+    message: result.message ?? `Failed to upload ${attachmentBasename(localPath)}`
+  };
+}
+
+/**
+ * Push local composer attaches onto an SSH remote (`.zcc-uploads/`) and rewrite
+ * the seed prompt so the harness there can Read them. Relative workspace
+ * mentions and already-remote Explorer paths are left as-is.
+ */
+export async function stageRemoteComposerAttachments(
+  input: StageRemoteComposerAttachmentsInput
+): Promise<StageRemoteComposerAttachmentsResult> {
+  const uploaded: Array<{ localPath: string; remotePath: string }> = [];
+  const replacements: Array<{ from: string; to: string }> = [];
+  const remoteByLocal = new Map<string, string>();
+  const imagePaths: string[] = [];
+
+  const remember = (localPath: string, remotePath: string, rewriteFrom?: string): string => {
+    const quoted = input.quoteRemotePath(remotePath);
+    remoteByLocal.set(localPath, quoted);
+    uploaded.push({ localPath, remotePath: quoted });
+    if (rewriteFrom) replacements.push({ from: rewriteFrom, to: quoted });
+    return quoted;
+  };
+
+  const uploadLocal = async (
+    localPath: string,
+    rewriteFrom?: string
+  ): Promise<string | 'missing' | StageRemoteComposerAttachmentsResult> => {
+    const existing = remoteByLocal.get(localPath);
+    if (existing) return existing;
+    const result = await input.uploadLocalPath(localPath);
+    if (result.ok && result.path) return remember(localPath, result.path, rewriteFrom);
+    if (isMissingLocalFileMessage(result.message)) return 'missing';
+    return failedUpload(localPath, result);
+  };
+
+  for (const localPath of absolutePathMentions(input.mentions)) {
+    const staged = await uploadLocal(localPath, localPath);
+    if (staged === 'missing') continue;
+    if (typeof staged !== 'string') return staged;
+  }
+
+  const pendingPersist: RemoteComposerImage[] = [];
+  for (const image of input.images) {
+    const disk = image.path && isAbsoluteLocalPath(image.path) ? image.path : null;
+    if (disk) {
+      const staged = await uploadLocal(disk);
+      if (typeof staged === 'string' && staged !== 'missing') {
+        imagePaths.push(staged);
+        continue;
+      }
+      if (staged !== 'missing' && typeof staged !== 'string') return staged;
+    }
+    pendingPersist.push(image);
+  }
+
+  if (pendingPersist.length > 0) {
+    const stored = await input.persistImages(input.projectId, pendingPersist);
+    for (const relative of stored) {
+      if (!relative) continue;
+      if (isAbsoluteLocalPath(relative) || /^(https?:|data:|blob:)/iu.test(relative)) {
+        imagePaths.push(relative);
+        continue;
+      }
+      const result = await input.uploadPersistedAttachment(relative);
+      if (!result.ok || !result.path) return failedUpload(relative, result);
+      imagePaths.push(remember(relative, result.path));
+    }
+  }
+
+  return {
+    ok: true,
+    promptText: rewritePromptPaths(input.promptText, replacements),
+    imagePaths,
+    uploaded
+  };
+}
+
+/** Finder/paperclip drops stay absolute on SSH remotes so launch can upload them. */
+export function composerDropProjectRoot(
+  project: { path?: string; remote?: unknown } | undefined
+): string | null {
+  if (!project || project.remote) return null;
+  return project.path ?? null;
 }
 
 export { mergeExtraArgs, mergeHarnessRouting, mergeLaunchPatches };

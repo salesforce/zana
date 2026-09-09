@@ -49,7 +49,6 @@ import { permissionModeOptionsFor } from './thread/pickers/permission-mode-optio
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { TextArgsField } from './settings/FormFields.js';
 import {
-  absolutePathMentions,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
   applyLaunchPatch,
@@ -62,12 +61,13 @@ import {
   cliLaunchExecutionState,
   cliLaunchFromPermissionMode,
   cliPermissionModesFor,
+  composerDropProjectRoot,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
   readCliExtraArgs,
   resolveCliAgentFamily,
   resolveCliLaunchProfile,
-  rewritePromptPaths,
+  stageRemoteComposerAttachments,
   threadProviderIdForFamily,
   unrestrictedProfileId,
   withExecutionState,
@@ -240,7 +240,7 @@ export function LegacyAgentHomeComposer({
     testId: 'legacy-agent-command-input',
     ariaLabel: 'Instruction for the CLI agent',
     projectId,
-    projectRoot: project?.path,
+    projectRoot: composerDropProjectRoot(project),
     projects,
     disabled: launching,
     initialText,
@@ -494,22 +494,31 @@ export function LegacyAgentHomeComposer({
     try {
       const serialized = field.serialize();
       let promptText = serialized.text;
+      let imagePaths: string[] = [];
       if (project.remote) {
-        const uploaded: Array<{ from: string; to: string }> = [];
-        for (const localPath of absolutePathMentions(serialized.mentions)) {
-          const result = await product.fs.uploadToRemote(project.id, localPath, '.');
-          if (!result.ok || !result.path) {
-            pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
-            return;
-          }
-          uploaded.push({ from: localPath, to: posixQuote(result.path) });
-          pushToast(`Uploaded ${attachmentName(localPath)} to ${project.remote.host}`);
+        const staged = await stageRemoteComposerAttachments({
+          promptText,
+          mentions: serialized.mentions,
+          images: field.images,
+          projectId: project.id,
+          uploadLocalPath: (localPath) => product.fs.uploadToRemote(project.id, localPath, '.'),
+          persistImages: persistComposerImages,
+          uploadPersistedAttachment: (relativePath) =>
+            product.fs.uploadProjectAttachmentToRemote(project.id, relativePath),
+          quoteRemotePath: posixQuote
+        });
+        if (!staged.ok) {
+          pushToast(staged.message ?? `Failed to upload ${attachmentName(staged.localPath)}`, 'error');
+          return;
         }
-        promptText = rewritePromptPaths(promptText, uploaded);
+        for (const row of staged.uploaded) {
+          pushToast(`Uploaded ${attachmentName(row.localPath)} to ${project.remote.host}`);
+        }
+        promptText = staged.promptText;
+        imagePaths = staged.imagePaths;
+      } else if (field.images.length > 0) {
+        imagePaths = await persistComposerImages(project.id, field.images);
       }
-      const imagePaths = field.images.length === 0
-        ? []
-        : await persistComposerImages(project.id, field.images);
       const launchedPrompt = assembleCliLaunchPrompt({ text: promptText, imagePaths });
       const args = buildLaunchArgs(
         launchedPrompt,
