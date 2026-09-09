@@ -13,6 +13,7 @@ and loads any installed plugin.
 | `salesforce/` | Official (`autoInstall: false`) — Salesforce DX inner loop **and** the platform SDK (`@zcc-ext/salesforce/sdk`) other plugins consume via `zcc.services.use('salesforce')`. Org doctor, SOQL/Apex/LWC/Agentforce family tools, and fail-closed mutation confirms. |
 | `posthog-analytics/` | Builtin (`autoInstall: true`) — usage analytics: agent lifecycle events plus optional content-free UI-click ids. **Auto-installed and on by default** for every user, no setup required; opt out or point it at your own PostHog project in the plugin's Configure page. Never sends prompt/response content, labels, or input values. |
 
+
 Do not add a runtime plugin to `MAIN_MODULES`. Author it with a `package.json`
 `zcc` block under `plugins/<id>` and install it through the plugin workflow.
 

@@ -1,12 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
 
 // The ClaudeCodeProvider resolves bare family aliases against the developer's
-// real ~/.claude/settings.json (see model-resolve.ts). These assertions pin the
-// emitted argv (`--model opus` stays a family alias), so pin the resolver to
-// identity here — its substitution behaviour has its own suite (model-resolve.test.ts).
-vi.mock('../../model-resolve.js', () => ({
-  resolveModelAlias: (model: string) => model
-}));
+// real ~/.claude/settings.json (see packages/llm/src/model-resolve.ts). These
+// assertions pin the emitted argv (`--model opus`/`--model sonnet` stay bare
+// family aliases), so pin the resolver to identity here — its substitution
+// behaviour has its own suite (model-resolve.test.ts).
+//
+// NOTE: `resolveModelAlias` is imported by claude/provider.ts from the
+// `@zana-ai/zcc-llm` package specifier, not a local `../../model-resolve.js`
+// relative path (no such file exists under host-daemon) — mocking that dead
+// path was a no-op, so this suite was silently reading the CURRENT MACHINE's
+// real ~/.claude/settings.json `model` field and substituting it whenever it
+// matched a requested family (e.g. a settings.json pinned to
+// `global.anthropic.claude-sonnet-4-6` turns `--model sonnet` into
+// `--model global.anthropic.claude-sonnet-4-6`), making the test's outcome
+// depend on ambient dev/CI machine state instead of the fixtures below.
+vi.mock('@zana-ai/zcc-llm', async () => {
+  const actual = await vi.importActual<typeof import('@zana-ai/zcc-llm')>('@zana-ai/zcc-llm');
+  return { ...actual, resolveModelAlias: (model: string) => model };
+});
 
 import { providerFor, registrationFor } from '../registry.js';
 import { ClaudeCodeProvider } from '../claude/provider.js';

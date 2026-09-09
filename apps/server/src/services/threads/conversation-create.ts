@@ -52,7 +52,7 @@ import {
 import { resolveSpawnChoiceForHost } from './spawn-choice-for-host.js';
 import { toRemoteStartPathHost } from '../hosts/host-public.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
-import { hostPromptInputFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
+import { attachmentMarkersFromInput, hostPromptInputFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
 import {
   withResolvedPathMentionContext,
@@ -197,7 +197,7 @@ async function startConversationOnHost(
     remoteToolProxy: boolean;
     dropCwd?: boolean;
   }
-): Promise<void> {
+): Promise<{ permissionMode: string }> {
   const providerId = canonicalThreadProviderId(args.input.providerId);
   if (!getThreadProvider(providerId)) {
     throw new ThreadCreateError(400, 'invalid-provider', `unknown thread provider: ${args.input.providerId}`);
@@ -295,6 +295,10 @@ async function startConversationOnHost(
         .catch(() => undefined);
     }
   });
+  // permissionMode is the closest server-computed signal for "plan vs an actual
+  // agent run" (PORTABLE_EXECUTION_STATES in AgentLauncher.tsx) available at this
+  // seam — surfaced to plugins as PluginThreadEvent.executionState.
+  return { permissionMode };
 }
 
 export async function createConversationFromRequest(
@@ -369,6 +373,12 @@ export async function createConversationFromRequest(
     (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
   );
 
+  // Presence-only signal for plugins (never the marker text/paths themselves).
+  const hadAttachments = attachmentMarkersFromInput(
+    resolvedPromptInput,
+    (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
+  ).length > 0;
+
   let choice: SpawnEnvironmentChoice = input.environment ?? { kind: 'unmanaged' };
   if (project.remote && choice.kind !== 'unmanaged') {
     throw new ThreadCreateError(403, 'remote-unsupported', 'remote projects can only use this checkout');
@@ -436,7 +446,11 @@ export async function createConversationFromRequest(
     emitPluginThreadEvent(ctx, {
       name: 'thread.created',
       threadId: thread.id,
-      projectId: thread.projectId
+      projectId: thread.projectId,
+      providerId: thread.providerId,
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
+      hadAttachments
     });
     try {
       if (needsHostAttach) {
@@ -457,7 +471,7 @@ export async function createConversationFromRequest(
           mergeBaseBranch: provisioned.defaultBranch
         });
       }
-      await startConversationOnHost(ctx, {
+      const launch = await startConversationOnHost(ctx, {
         hostId, project, thread, prompt: textPrompt, hostPrompt: prompt, environmentId: existing.id, input: { ...input, promptInput: resolvedPromptInput }, remoteToolProxy, dropCwd
       });
       const running = applyLoggedConversationLifecycleEvent(ctx, {
@@ -471,7 +485,11 @@ export async function createConversationFromRequest(
       emitPluginThreadEvent(ctx, {
         name: 'thread.active',
         threadId: running.id,
-        projectId: running.projectId
+        projectId: running.projectId,
+        providerId: running.providerId,
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
+        executionState: launch.permissionMode
       });
       return running;
     } catch (error) {
@@ -524,7 +542,11 @@ export async function createConversationFromRequest(
       emitPluginThreadEvent(ctx, {
         name: 'thread.created',
         threadId: thread.id,
-        projectId: thread.projectId
+        projectId: thread.projectId,
+        providerId: thread.providerId,
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
+        hadAttachments
       });
       return { environment, thread };
     });
@@ -548,7 +570,11 @@ export async function createConversationFromRequest(
     emitPluginThreadEvent(ctx, {
       name: 'thread.created',
       threadId: thread.id,
-      projectId: thread.projectId
+      projectId: thread.projectId,
+      providerId: thread.providerId,
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
+      hadAttachments
     });
     created = { environment: existing, thread };
   }
@@ -570,7 +596,7 @@ export async function createConversationFromRequest(
       defaultBranch: provisioned.defaultBranch,
       mergeBaseBranch: provisioned.defaultBranch
     });
-    await startConversationOnHost(ctx, {
+    const launch = await startConversationOnHost(ctx, {
       hostId,
       project,
       thread: created.thread,
@@ -592,7 +618,11 @@ export async function createConversationFromRequest(
     emitPluginThreadEvent(ctx, {
       name: 'thread.active',
       threadId: running.id,
-      projectId: running.projectId
+      projectId: running.projectId,
+      providerId: running.providerId,
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
+      executionState: launch.permissionMode
     });
     return running;
   } catch (error) {
@@ -616,7 +646,8 @@ function failConversationStart(ctx: ProductHttpContext, thread: ConversationThre
   emitPluginThreadEvent(ctx, {
     name: 'thread.failed',
     threadId: failed.id,
-    projectId: failed.projectId
+    projectId: failed.projectId,
+    providerId: failed.providerId
   });
 }
 
