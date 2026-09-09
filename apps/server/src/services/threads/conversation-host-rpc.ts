@@ -1,4 +1,4 @@
-import { getEnvironment, listConversationThreadEvents, type ConversationThreadRow } from '@zana-ai/zcc-db';
+import { getEnvironment, getThreadExecutionState, listConversationThreadEvents, type ConversationThreadRow } from '@zana-ai/zcc-db';
 import type { ThreadResumeFields } from '@zana-ai/zcc-contracts/host-rpc';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
@@ -10,6 +10,7 @@ import {
   permissionModeForLaunchProfile
 } from './thread-provider-catalog.js';
 import { latestProviderCheckpoint } from './conversation-edit-message.js';
+import { claudeCodePermissionModeForTurn } from './conversation-execution-mode.js';
 
 export function isUnknownThreadHostError(error: unknown): boolean {
   return Boolean(
@@ -31,11 +32,16 @@ export async function threadResumeFields(
     projectId: thread.projectId
   });
   const permissionMode = permissionModeForLaunchProfile(thread.providerId);
+  const requestedMode = getThreadExecutionState(ctx.db, thread.id)?.requestedMode;
+  const claudeCodePermissionMode = requestedMode
+    ? claudeCodePermissionModeForTurn(thread.providerId, requestedMode)
+    : undefined;
   const providerOptions = derivedProviderOptionsForCommand({
     providerId: thread.providerId,
     threadId: thread.id,
     projectId: thread.projectId,
     permissionMode,
+    ...(claudeCodePermissionMode ? { claudeCodePermissionMode } : {}),
     plugins: ctx.plugins
   });
   return {

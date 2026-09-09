@@ -40,14 +40,11 @@ import { ComposerSendModePicker } from './thread/pickers/ComposerSendModePicker.
 import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
 import {
   applyComposerWorkMode,
-  consumeComposerModeCycle,
-  type ComposerWorkMode
+  consumeComposerModeCycle
 } from './thread/pickers/composer-mode.js';
 import {
-  composerWorkModeFromNativeMode,
-  nativeModeForComposerWorkMode,
-  portableWorkIntent,
-  type PortableWorkMode
+  composerModeEntries,
+  visibleAcpModeOptions
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { fallbackProviderOption, isOfferedModernProvider } from './thread/pickers/fallback-models.js';
 import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOptions.js';
@@ -149,7 +146,8 @@ export function ThreadCommandComposer({
     hostId: currentThread?.hostId ?? selectedProject?.hostId ?? hostId
   });
   const [permissionMode, setPermissionMode] = useState('accept-edits');
-  const [composerMode, setComposerMode] = useState<PortableWorkMode>('agent');
+  const [composerMode, setComposerMode] = useState('agent');
+  const nativeAgentDiscoveryEnabled = useData((s) => s.nativeAgentDiscoveryEnabled);
   const hydratedRequestedRef = useRef<string | null>(null);
   const composerSendMode = useData((s) => s.composerSendMode);
   const setComposerSendMode = useData((s) => s.setComposerSendMode);
@@ -245,14 +243,15 @@ export function ThreadCommandComposer({
     || ((pinnedProject || projectId) && resolvedProviderId && options.rosterReady)
   );
 
-  const workIntent = useMemo(
-    () => portableWorkIntent({
-      acpModeOptions: options.acpModeOptions,
+  const composerModeEntriesForProvider = useMemo(
+    () => composerModeEntries({
+      acpModeOptions: visibleAcpModeOptions(options.acpModeOptions, nativeAgentDiscoveryEnabled),
       composerActions: options.provider?.composerActions ?? []
     }),
-    [options.acpModeOptions, options.provider]
+    [nativeAgentDiscoveryEnabled, options.acpModeOptions, options.provider]
   );
-  const composerModes = workIntent.modes;
+  const selectedComposerMode = composerModeEntriesForProvider.find((entry) => entry.id === composerMode)
+    ?? composerModeEntriesForProvider[0];
 
   useEffect(() => {
     const modes = options.provider?.permissionModes ?? [];
@@ -267,41 +266,33 @@ export function ThreadCommandComposer({
 
   useEffect(() => {
     if (!threadId) return;
-    const native = options.acpMode ?? executionModeRequested;
-    const next = composerWorkModeFromNativeMode(native);
-    if (!composerModes.includes(next)) return;
-    if (workIntent.usesSlashPlan && !workIntent.planNativeValue) {
-      if (next !== 'plan') return;
-    }
+    const next = options.acpMode ?? executionModeRequested ?? 'agent';
+    const matched = composerModeEntriesForProvider.find((entry) => (
+      entry.id === next || entry.nativeValue === next
+    ));
+    if (!matched) return;
     if (hydratedRequestedRef.current === next) return;
     hydratedRequestedRef.current = next;
-    setComposerMode(next);
+    setComposerMode(matched.id);
   }, [
-    composerModes,
+    composerModeEntriesForProvider,
     executionModeRequested,
     options.acpMode,
     threadId,
-    workIntent.planNativeValue,
-    workIntent.usesSlashPlan
   ]);
 
   useEffect(() => {
-    if (composerModes.includes(composerMode)) return;
+    if (composerModeEntriesForProvider.some((entry) => entry.id === composerMode)) return;
     setComposerMode('agent');
-  }, [composerMode, composerModes]);
+  }, [composerMode, composerModeEntriesForProvider]);
 
-  const setComposerWorkMode = useCallback((next: ComposerWorkMode) => {
-    if (next !== 'agent' && next !== 'plan') return;
-    setComposerMode(next);
-    const native = nativeModeForComposerWorkMode(next, workIntent);
-    if (native !== undefined) {
-      options.setAcpMode(native);
-      return;
-    }
-    if (next === 'agent' && workIntent.planNativeValue && options.acpMode === workIntent.planNativeValue) {
-      options.setAcpMode(undefined);
-    }
-  }, [options, workIntent]);
+  const setComposerWorkMode = useCallback((next: string | undefined) => {
+    if (!next) return;
+    const entry = composerModeEntriesForProvider.find((candidate) => candidate.id === next);
+    if (!entry) return;
+    setComposerMode(entry.id);
+    options.setAcpMode(entry.nativeValue);
+  }, [composerModeEntriesForProvider, options]);
   const provider = options.provider ?? fallbackProviderOption(options.providerId);
   const field = useComposerPromptField({
     placeholder: threadId
@@ -328,8 +319,8 @@ export function ThreadCommandComposer({
       if (consumeComposerModeCycle(
         event,
         {
-          kind: 'work',
-          modes: composerModes,
+          kind: 'native',
+          options: composerModeEntriesForProvider.map((entry) => ({ value: entry.id })),
           current: composerMode,
           onChange: setComposerWorkMode
         }
@@ -492,7 +483,7 @@ export function ThreadCommandComposer({
     });
     const applied = applyComposerWorkMode(
       serialized,
-      workIntent.planNativeValue ? 'agent' : composerMode
+      selectedComposerMode?.usesSlashPlan ? 'plan' : 'agent'
     );
     const text = applied.text;
     field.markRestoreFocus();
@@ -518,7 +509,7 @@ export function ThreadCommandComposer({
           await product.threads.send(threadId, input, sendMode, {
             model: options.model,
             reasoningLevel: options.reasoningLevel,
-            acpMode: workIntent.usesSlashPlan ? undefined : options.acpMode
+            acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
           });
           field.clear();
         } catch (error) {
@@ -537,7 +528,7 @@ export function ThreadCommandComposer({
         permissionMode: permissionMode as 'accept-edits' | 'auto' | 'full',
         model: options.model,
         reasoningLevel: options.reasoningLevel,
-        acpMode: workIntent.usesSlashPlan ? undefined : options.acpMode
+        acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
       });
       if (!created.ok) {
         setError(created.message ?? 'Could not create thread');
@@ -564,7 +555,7 @@ export function ThreadCommandComposer({
     hostSendBlocked,
     field,
     composerMode,
-    workIntent,
+    selectedComposerMode,
     navigate,
     navigateOnCreate,
     onCreated,
@@ -677,8 +668,9 @@ export function ThreadCommandComposer({
               <div className="thread-command-footer-start">
                 <ComposerModePicker
                   value={composerMode}
-                  modes={composerModes}
+                  entries={composerModeEntriesForProvider}
                   onChange={setComposerWorkMode}
+                  onRefresh={nativeAgentDiscoveryEnabled ? options.refreshAcpModeOptions : undefined}
                 />
                 <ModelReasoningPicker
                   providerOptions={options.providerOptions}

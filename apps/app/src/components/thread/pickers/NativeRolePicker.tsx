@@ -12,6 +12,7 @@ export function NativeRolePicker({
   options,
   onChange,
   onRefresh,
+  discoveryEnabled = false,
   disabled,
   ariaLabel = 'Native role',
   refreshLabel = 'Refresh roles'
@@ -20,6 +21,7 @@ export function NativeRolePicker({
   options: readonly NativeRoleOption[];
   onChange: (value: string | undefined) => void;
   onRefresh: () => void;
+  discoveryEnabled?: boolean;
   disabled?: boolean;
   ariaLabel?: string;
   refreshLabel?: string;
@@ -60,7 +62,7 @@ export function NativeRolePicker({
             )
           };
         }),
-        {
+        ...(discoveryEnabled ? [{
           value: REFRESH_VALUE,
           label: refreshLabel,
           sticky: true,
@@ -70,7 +72,7 @@ export function NativeRolePicker({
               {refreshLabel}
             </span>
           )
-        }
+        }] : [])
       ]}
       onChange={(next) => {
         if (next === REFRESH_VALUE) {

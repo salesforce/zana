@@ -299,6 +299,9 @@ export function SettingsView() {
       if (typeof patch.harnessOpenCodeEnabled === 'boolean') {
         useData.getState().setHarnessOpenCodeEnabled(patch.harnessOpenCodeEnabled);
       }
+      if (typeof patch.nativeAgentDiscoveryEnabled === 'boolean') {
+        useData.setState({ nativeAgentDiscoveryEnabled: patch.nativeAgentDiscoveryEnabled });
+      }
       if (typeof patch.microVmEnabled === 'boolean') {
         useData.getState().setMicroVmEnabled(patch.microVmEnabled);
       }

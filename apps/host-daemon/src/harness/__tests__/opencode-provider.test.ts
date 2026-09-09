@@ -207,9 +207,7 @@ describe('parseOpenCodeAgentDescriptors', () => {
     ] }, [
       { id: 'build', label: 'Build', scope: ['local'] },
       { id: 'plan', label: 'Plan', scope: ['local'] }
-    ])).toEqual([
-      { id: 'general', label: 'general', scope: ['local', 'remote'] }
-    ]);
+    ])).toEqual([{ id: 'general', label: 'general', scope: ['local', 'remote'] }]);
   });
 
   it('keeps static fallback available to UI mapping after discovery failure', () => {
@@ -223,8 +221,20 @@ describe('parseOpenCodeAgentDescriptors', () => {
         throw new Error('parser escaped');
       }
     }
+    await expect(new ThrowingOpenCodeProvider().discoverRoleTargets({
+      cwd: '/repo', config: { ...CONFIG, nativeAgentDiscoveryEnabled: true }
+    }))
+      .resolves.toEqual(new ThrowingOpenCodeProvider().adapter.descriptor.targets?.roles);
+  });
+
+  it('uses built-in roles without invoking project discovery when disabled', async () => {
+    class ThrowingOpenCodeProvider extends OpenCodeProvider {
+      override async discoverAgentDescriptors(): ReturnType<OpenCodeProvider['discoverAgentDescriptors']> {
+        throw new Error('discovery must not run');
+      }
+    }
     await expect(new ThrowingOpenCodeProvider().discoverRoleTargets({ cwd: '/repo', config: CONFIG }))
-      .resolves.toEqual([]);
+      .resolves.toEqual(new ThrowingOpenCodeProvider().adapter.descriptor.targets?.roles);
   });
 });
 
