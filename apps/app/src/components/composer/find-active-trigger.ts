@@ -29,6 +29,10 @@ function triggerPattern(trigger: TypeaheadTrigger): RegExp {
   return new RegExp(`(^|[\\s([{])${char}(${queryClass})$`, 'u');
 }
 
+function looksLikeAbsolutePathCommand(query: string): boolean {
+  return query.includes('/');
+}
+
 /**
  * Resolves the typeahead trigger under the caret. Mention queries keep
  * ordinary spaces; commands capture the whole non-space token.
@@ -52,6 +56,9 @@ export function findActiveTrigger(
     if (!match) continue;
 
     const query = match[2] ?? '';
+    // A slash command is one token after one leading slash. Inputs such as
+    // `/Users/name/file.md` and `/tmp/file` are absolute paths, not commands.
+    if (trigger.kind === 'command' && looksLikeAbsolutePathCommand(query)) continue;
     const from = selection.from - query.length - 1;
     if (from < 0) continue;
 
