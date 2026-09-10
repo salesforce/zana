@@ -8,6 +8,7 @@ import type {
   FollowUp,
   Goal,
   InboxEntry,
+  InboxMarkersSnapshot,
   Persona,
   Project,
   Result,
@@ -230,7 +231,23 @@ function httpProduct(): Pick<
       onRemoved: (cb: (id: string) => void) => subscribeProductEvent<string>('inbox:removed', cb),
       onUpdated: (cb: (entry: InboxEntry) => void) =>
         subscribeProductEvent<InboxEntry>('inbox:updated', cb),
-      onPruned: (cb: (ids: string[]) => void) => subscribeProductEvent<string[]>('inbox:pruned', cb)
+      onPruned: (cb: (ids: string[]) => void) => subscribeProductEvent<string[]>('inbox:pruned', cb),
+      markers: () => apiJson<InboxMarkersSnapshot>('/inbox/markers'),
+      markRead: (id) =>
+        apiJson<InboxMarkersSnapshot>(`/inbox/${encodeURIComponent(id)}/read`, { method: 'POST' }),
+      markUnread: (id) =>
+        apiJson<InboxMarkersSnapshot>(`/inbox/${encodeURIComponent(id)}/unread`, { method: 'POST' }),
+      markAllRead: (ids) =>
+        apiJson<InboxMarkersSnapshot>('/inbox/read-all', {
+          method: 'POST',
+          body: JSON.stringify({ ids })
+        }),
+      markAnswered: (id) =>
+        apiJson<InboxMarkersSnapshot>(`/inbox/${encodeURIComponent(id)}/answered`, { method: 'POST' }),
+      toggleKeep: (id) =>
+        apiJson<InboxMarkersSnapshot>(`/inbox/${encodeURIComponent(id)}/keep`, { method: 'POST' }),
+      onMarkersChanged: (cb: (snapshot: InboxMarkersSnapshot) => void) =>
+        subscribeProductEvent<InboxMarkersSnapshot>('inbox:markersChanged', cb)
     } as CcApi['inbox'],
     suggestions: {
       list: async (projectId?: string) => {

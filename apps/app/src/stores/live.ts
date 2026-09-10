@@ -6,6 +6,7 @@ import type {
   AgentMessage,
   SubagentChild,
   InboxEntry,
+  InboxMarkersSnapshot,
   Suggestion,
   InboxDigest,
   DetailedInboxDigest,
@@ -58,9 +59,9 @@ import {
 // - feed: push-driven (onAppended/onRemoved), no polling. Initial load is
 //   one history call from useData.init().
 // - selection: ephemeral, not persisted.
-// - read: per-entry, persisted to localStorage. SELECTION marks read —
-//   never bulk-on-visibility, since bulk-on-view destroys triage in an
-//   inbox-flow product.
+// - read: per-entry, durable in ~/.zcc/inbox-markers.json via main. SELECTION
+//   marks read — never bulk-on-visibility, since bulk-on-view destroys triage
+//   in an inbox-flow product.
 // ============================================================================
 
 interface InboxLiveState {
@@ -548,8 +549,19 @@ export const useInboxSelection = create<InboxSelectionState>((set) => ({
   select: (id) => set({ selectedEntryId: id })
 }));
 
+function persistInboxMarker(run: () => Promise<unknown> | undefined): void {
+  try {
+    const result = run();
+    if (result && typeof (result as Promise<unknown>).then === 'function') {
+      void (result as Promise<unknown>).catch(() => {});
+    }
+  } catch {
+    /* tests / missing bridge */
+  }
+}
+
 interface InboxReadState {
-  /** Object-shaped (not Set) so Zustand `persist` can JSON-serialise it. */
+  /** Object-shaped (not Set) so snapshots stay JSON-serialisable. */
   readIds: Record<string, true>;
   markRead: (id: string) => void;
   markUnread: (id: string) => void;
@@ -559,49 +571,50 @@ interface InboxReadState {
   pruneRead: (removedIds: string[]) => void;
 }
 
-export const useInboxRead = create<InboxReadState>()(
-  persist(
-    (set) => ({
-      readIds: {},
-      markRead: (id) =>
-        set((s) => (s.readIds[id] ? s : { readIds: { ...s.readIds, [id]: true } })),
-      markUnread: (id) =>
-        set((s) => {
-          if (!s.readIds[id]) return s;
-          const next = { ...s.readIds };
+export const useInboxRead = create<InboxReadState>()((set) => ({
+  readIds: {},
+  markRead: (id) => {
+    set((s) => (s.readIds[id] ? s : { readIds: { ...s.readIds, [id]: true } }));
+    persistInboxMarker(() => product.inbox.markRead(id));
+  },
+  markUnread: (id) => {
+    set((s) => {
+      if (!s.readIds[id]) return s;
+      const next = { ...s.readIds };
+      delete next[id];
+      return { readIds: next };
+    });
+    persistInboxMarker(() => product.inbox.markUnread(id));
+  },
+  markAllRead: (ids) => {
+    set((s) => {
+      if (ids.length === 0) return s;
+      const next = { ...s.readIds };
+      for (const id of ids) next[id] = true;
+      return { readIds: next };
+    });
+    persistInboxMarker(() => product.inbox.markAllRead(ids));
+  },
+  pruneRead: (removedIds) =>
+    set((s) => {
+      let changed = false;
+      const next = { ...s.readIds };
+      for (const id of removedIds) {
+        if (next[id]) {
           delete next[id];
-          return { readIds: next };
-        }),
-      markAllRead: (ids) =>
-        set((s) => {
-          if (ids.length === 0) return s;
-          const next = { ...s.readIds };
-          for (const id of ids) next[id] = true;
-          return { readIds: next };
-        }),
-      pruneRead: (removedIds) =>
-        set((s) => {
-          let changed = false;
-          const next = { ...s.readIds };
-          for (const id of removedIds) {
-            if (next[id]) {
-              delete next[id];
-              changed = true;
-            }
-          }
-          return changed ? { readIds: next } : s;
-        })
-    }),
-    { name: 'zcc.inbox-read.v1', version: 1 }
-  )
-);
+          changed = true;
+        }
+      }
+      return changed ? { readIds: next } : s;
+    })
+}));
 
 interface InboxAnsweredState {
   /**
    * Entries the user has replied to via the inbox reply box. Object-shaped
-   * (not Set) so Zustand `persist` can JSON-serialise it. Mirrors
-   * `useInboxRead` — read and answered are independent axes (an entry can be
-   * read but unanswered, or answered which implies read).
+   * (not Set) so snapshots stay JSON-serialisable. Mirrors `useInboxRead` —
+   * read and answered are independent axes (an entry can be read but
+   * unanswered, or answered which implies read).
    */
   answeredIds: Record<string, true>;
   markAnswered: (id: string) => void;
@@ -609,30 +622,27 @@ interface InboxAnsweredState {
   pruneAnswered: (removedIds: string[]) => void;
 }
 
-export const useInboxAnswered = create<InboxAnsweredState>()(
-  persist(
-    (set) => ({
-      answeredIds: {},
-      markAnswered: (id) =>
-        set((s) =>
-          s.answeredIds[id] ? s : { answeredIds: { ...s.answeredIds, [id]: true } }
-        ),
-      pruneAnswered: (removedIds) =>
-        set((s) => {
-          let changed = false;
-          const next = { ...s.answeredIds };
-          for (const id of removedIds) {
-            if (next[id]) {
-              delete next[id];
-              changed = true;
-            }
-          }
-          return changed ? { answeredIds: next } : s;
-        })
-    }),
-    { name: 'zcc.inbox-answered.v1', version: 1 }
-  )
-);
+export const useInboxAnswered = create<InboxAnsweredState>()((set) => ({
+  answeredIds: {},
+  markAnswered: (id) => {
+    set((s) =>
+      s.answeredIds[id] ? s : { answeredIds: { ...s.answeredIds, [id]: true } }
+    );
+    persistInboxMarker(() => product.inbox.markAnswered(id));
+  },
+  pruneAnswered: (removedIds) =>
+    set((s) => {
+      let changed = false;
+      const next = { ...s.answeredIds };
+      for (const id of removedIds) {
+        if (next[id]) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? { answeredIds: next } : s;
+    })
+}));
 
 interface SchedulerLiveState {
   tasks: ScheduledTask[];
@@ -882,9 +892,9 @@ export const useAgentMesh = create<AgentMeshState>((set) => ({
 }));
 
 /**
- * Per-inbox-entry "saved" marker, persisted to localStorage (mirrors
- * useInboxAnswered). Lets the detail view show a "Saved ✓" state without
- * scanning the saved records for a matching sourceEntryId on every render.
+ * Per-inbox-entry "saved" marker, derived from durable `~/.zcc/saved/` records
+ * (`sourceEntryId`). Lets the detail view show "Saved ✓" without scanning the
+ * saved list on every render.
  */
 interface SavedMarkState {
   savedEntryIds: Record<string, true>;
@@ -893,32 +903,27 @@ interface SavedMarkState {
   pruneSaved: (removedIds: string[]) => void;
 }
 
-export const useSavedMark = create<SavedMarkState>()(
-  persist(
-    (set) => ({
-      savedEntryIds: {},
-      markSaved: (entryId) =>
-        set((s) =>
-          s.savedEntryIds[entryId]
-            ? s
-            : { savedEntryIds: { ...s.savedEntryIds, [entryId]: true } }
-        ),
-      pruneSaved: (removedIds) =>
-        set((s) => {
-          let changed = false;
-          const next = { ...s.savedEntryIds };
-          for (const id of removedIds) {
-            if (next[id]) {
-              delete next[id];
-              changed = true;
-            }
-          }
-          return changed ? { savedEntryIds: next } : s;
-        })
-    }),
-    { name: 'zcc.inbox-saved.v1', version: 1 }
-  )
-);
+export const useSavedMark = create<SavedMarkState>()((set) => ({
+  savedEntryIds: {},
+  markSaved: (entryId) =>
+    set((s) =>
+      s.savedEntryIds[entryId]
+        ? s
+        : { savedEntryIds: { ...s.savedEntryIds, [entryId]: true } }
+    ),
+  pruneSaved: (removedIds) =>
+    set((s) => {
+      let changed = false;
+      const next = { ...s.savedEntryIds };
+      for (const id of removedIds) {
+        if (next[id]) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? { savedEntryIds: next } : s;
+    })
+}));
 
 /**
  * The persisted identity of a starred agent. We key on `claudeSessionId` when
@@ -1034,11 +1039,10 @@ export const useLibrary = create<LibraryLiveState>(() => ({
 }));
 
 /**
- * Per-inbox-entry "Keep" flag (star), persisted to localStorage like the other
- * inbox marker stores. A kept entry is protected from "Clear inbox" — it's the
- * user's explicit "don't sweep this away" signal, independent of read/answered/
- * saved. Toggleable (unlike the one-way markers) since keep is a user decision
- * they may reverse.
+ * Per-inbox-entry "Keep" flag (star). A kept entry is protected from "Clear
+ * inbox" — the user's explicit "don't sweep this away" signal, independent of
+ * read/answered/saved. Durable in ~/.zcc/inbox-markers.json. Toggleable
+ * (unlike the one-way markers) since keep is a user decision they may reverse.
  */
 interface InboxKeepState {
   keptIds: Record<string, true>;
@@ -1049,44 +1053,55 @@ interface InboxKeepState {
   pruneKeptByIds: (removedIds: string[]) => void;
 }
 
-export const useInboxKeep = create<InboxKeepState>()(
-  persist(
-    (set) => ({
-      keptIds: {},
-      toggleKeep: (entryId) =>
-        set((s) => {
-          const next = { ...s.keptIds };
-          if (next[entryId]) delete next[entryId];
-          else next[entryId] = true;
-          return { keptIds: next };
-        }),
-      pruneKeep: (presentIds) =>
-        set((s) => {
-          const present = new Set(presentIds);
-          const next: Record<string, true> = {};
-          let changed = false;
-          for (const id of Object.keys(s.keptIds)) {
-            if (present.has(id)) next[id] = true;
-            else changed = true;
-          }
-          return changed ? { keptIds: next } : s;
-        }),
-      pruneKeptByIds: (removedIds) =>
-        set((s) => {
-          let changed = false;
-          const next = { ...s.keptIds };
-          for (const id of removedIds) {
-            if (next[id]) {
-              delete next[id];
-              changed = true;
-            }
-          }
-          return changed ? { keptIds: next } : s;
-        })
+export const useInboxKeep = create<InboxKeepState>()((set) => ({
+  keptIds: {},
+  toggleKeep: (entryId) => {
+    set((s) => {
+      const next = { ...s.keptIds };
+      if (next[entryId]) delete next[entryId];
+      else next[entryId] = true;
+      return { keptIds: next };
+    });
+    persistInboxMarker(() => product.inbox.toggleKeep(entryId));
+  },
+  pruneKeep: (presentIds) =>
+    set((s) => {
+      const present = new Set(presentIds);
+      const next: Record<string, true> = {};
+      let changed = false;
+      for (const id of Object.keys(s.keptIds)) {
+        if (present.has(id)) next[id] = true;
+        else changed = true;
+      }
+      return changed ? { keptIds: next } : s;
     }),
-    { name: 'zcc.inbox-keep.v1', version: 1 }
-  )
-);
+  pruneKeptByIds: (removedIds) =>
+    set((s) => {
+      let changed = false;
+      const next = { ...s.keptIds };
+      for (const id of removedIds) {
+        if (next[id]) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? { keptIds: next } : s;
+    })
+}));
+
+export function applyInboxMarkersSnapshot(snapshot: InboxMarkersSnapshot): void {
+  useInboxRead.setState({ readIds: { ...snapshot.readIds } });
+  useInboxAnswered.setState({ answeredIds: { ...snapshot.answeredIds } });
+  useInboxKeep.setState({ keptIds: { ...snapshot.keptIds } });
+}
+
+export function hydrateSavedMarksFromRecords(records: SavedRecord[]): void {
+  const savedEntryIds: Record<string, true> = {};
+  for (const rec of records) {
+    if (rec.sourceEntryId) savedEntryIds[rec.sourceEntryId] = true;
+  }
+  useSavedMark.setState({ savedEntryIds });
+}
 
 /**
  * Persisted inbox subgroup-collapse state. The sidebar groups entries by time
@@ -1471,11 +1486,9 @@ export const useUsage = create<UsageState>((set, get) => ({
 }));
 
 /**
- * Prune every persisted per-entry marker for a set of removed/evicted entry ids.
- * Called from the inbox `onRemoved` (single delete) and `onPruned` (retention
- * eviction) subscriptions so the read/answered/saved/keep localStorage maps
- * don't accumulate dead ids as inbox history rolls over. A no-op per store when
- * none of the ids were marked (each pruner returns the same state ref).
+ * Prune every in-memory per-entry marker for a set of removed/evicted entry ids.
+ * Called from the inbox `onRemoved` / `onPruned` subscriptions so the UI drops
+ * flags immediately; main also prunes the durable maps.
  */
 export function pruneInboxMarkers(removedIds: string[]): void {
   if (removedIds.length === 0) return;
@@ -1486,22 +1499,16 @@ export function pruneInboxMarkers(removedIds: string[]): void {
 }
 
 /**
- * Cross-window sync for the inbox user-state stores. These four are Zustand
- * `persist` stores backed by localStorage, which is shared across every window
- * of the app (same origin) — but `persist` only READS localStorage at boot, so
- * a change made in one window (e.g. marking an entry read in a per-project
- * window) wouldn't reach an already-open main window until it reloaded.
+ * Cross-window sync for renderer-local persist stores that still live in
+ * localStorage (favorites, agent-panel collapse). Inbox read/answered/keep
+ * sync through `inbox:markersChanged` from main instead.
  *
  * The browser `storage` event fires in OTHER windows when localStorage changes
  * (never in the window that made the write), so re-hydrating the matching store
- * on that event keeps read / answered / saved / kept state live across windows.
+ * on that event keeps those prefs live across windows.
  * Call once at app init; returns an unsubscribe.
  */
 const INBOX_PERSIST_STORES: Record<string, { persist: { rehydrate: () => void | Promise<void> } }> = {
-  'zcc.inbox-read.v1': useInboxRead,
-  'zcc.inbox-answered.v1': useInboxAnswered,
-  'zcc.inbox-saved.v1': useSavedMark,
-  'zcc.inbox-keep.v1': useInboxKeep,
   // Not strictly inbox state, but the same localStorage-only persist store that
   // wants to stay live across windows — starring an agent in one window should
   // update the Favorites drawer in every other window.
@@ -1846,7 +1853,7 @@ export async function deleteSavedRecord(id: string): Promise<void> {
  * If the session is headless (e.g. a background scheduled run), we DON'T
  * promote it to a visible tab — replying in place is the whole point. The
  * "Open in session" button remains the explicit promotion path. We mark the
- * entry answered (localStorage, mirrors read-state) and toast confirmation.
+ * We mark the entry answered (durable, mirrors read-state) and toast confirmation.
  *
  * Returns true on success. A dead session (pty already exited) is reported as
  * an error toast and returns false — the caller's UI already shows a tombstone

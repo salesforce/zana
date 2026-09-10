@@ -74,6 +74,7 @@ import type {
   HarnessVerifyResult,
   IdleTriageResult,
   InboxEntry,
+  InboxMarkersSnapshot,
   InboxPdfExport,
   InboxPdfExportResult,
   InboxSummaryResult,
@@ -1308,11 +1309,23 @@ export interface CcApi {
     onUpdated(cb: (entry: InboxEntry) => void): () => void;
     /**
      * Fires when retention eviction drops old entries; carries their ids. The
-     * renderer removes the rows and prunes their persisted read/keep/answered
-     * markers so those localStorage maps stay bounded. Mirrors
-     * `agents.onMessagesPruned`.
+     * renderer removes the rows; main also prunes durable read/keep/answered
+     * markers. Mirrors `agents.onMessagesPruned`.
      */
     onPruned(cb: (removedIds: string[]) => void): () => void;
+    /**
+     * Durable read / answered / keep flags for inbox entries. Hydrate once at
+     * boot; mutations return the full snapshot and `onMarkersChanged` fans it
+     * to every window. Unknown ids are a no-op (renderer-supplied ids stay
+     * advisory).
+     */
+    markers(): Promise<InboxMarkersSnapshot>;
+    markRead(id: string): Promise<InboxMarkersSnapshot>;
+    markUnread(id: string): Promise<InboxMarkersSnapshot>;
+    markAllRead(ids: string[]): Promise<InboxMarkersSnapshot>;
+    markAnswered(id: string): Promise<InboxMarkersSnapshot>;
+    toggleKeep(id: string): Promise<InboxMarkersSnapshot>;
+    onMarkersChanged(cb: (snapshot: InboxMarkersSnapshot) => void): () => void;
   };
   /**
    * Usage / cost rollup (WARP R2 B7). Data layer only — the dashboard view

@@ -1,7 +1,7 @@
 import { startStaticHost } from './static-host.js';
 import { toBrowserProjectSummaries } from './browser-bootstrap.js';
 import { createProductHttpContext } from './http/product-context.js';
-import { DEFAULT_DEV_APP_PORT } from './http/ports.js';
+import { DEFAULT_DEV_APP_PORT, serverPortFromEnv } from './http/ports.js';
 import { SERVER_RUNTIME_PROTOCOL_VERSION, ServerRuntimeInboundSchema } from '@zana-ai/zcc-contracts/runtime';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -68,9 +68,10 @@ parentPort.on('message', async ({ data }) => {
       projectSettings = createProjectSettingsStore({
         projectSettingsFile: join(message.dataDir, 'project-settings.json')
       });
+      const preferredPort = serverPortFromEnv();
       const product = createProductHttpContext({
         dataDir: message.dataDir,
-        origins: { serverPort: 0, devAppPort: DEFAULT_DEV_APP_PORT },
+        origins: { serverPort: preferredPort, devAppPort: DEFAULT_DEV_APP_PORT },
         projects: projects ?? undefined
       });
       product.teamOps = createTeamOpsViaControl(message.dataDir);
@@ -98,6 +99,7 @@ parentPort.on('message', async ({ data }) => {
       });
       const host = await startStaticHost({
         rootDir: message.rendererRoot,
+        port: preferredPort,
         browserBootstrap: () => ({
           appVersion: version,
           // A browser never needs filesystem paths to render this landing view.

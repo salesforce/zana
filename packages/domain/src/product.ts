@@ -651,6 +651,18 @@ export interface InboxEntry {
 }
 
 /**
+ * User-owned inbox flags (read / answered / keep), stored beside the entry
+ * JSONL at `~/.zcc/inbox-markers.json`. Not fields on {@link InboxEntry}: the
+ * content log stays append-only, and these maps are pruned when entries go.
+ */
+export interface InboxMarkersSnapshot {
+  version: 1;
+  readIds: Record<string, true>;
+  answeredIds: Record<string, true>;
+  keptIds: Record<string, true>;
+}
+
+/**
  * Normalize an entry's question shape to a flat list, so readers don't each
  * re-implement the `questions ?? [question]` fallback. Returns the multi-form
  * `questions` when present, else wraps a lone `question`, else empty. `questions`

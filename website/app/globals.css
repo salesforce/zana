@@ -374,6 +374,17 @@ section .section-lede { color: var(--muted); margin: 0; font-size: 15px; }
   width: auto; height: 32px; padding: 0 10px; gap: 6px;
   grid-auto-flow: column; font-size: 13px; font-weight: 600; color: var(--muted);
 }
+.nav-star-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  color: var(--text);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 18px;
+}
 
 .theme-toggle {
   width: 32px; height: 32px; border-radius: 7px; flex: none;

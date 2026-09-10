@@ -15,6 +15,11 @@ import { CloseSummaryService } from '../services/followups/close-summary.js';
 import { createProjectStore, type ProjectStore } from '../project-store.js';
 import { createConfigStore } from '../services/config/config-store.js';
 import { createInboxStore, type IInboxStore } from '../services/inbox/inbox-store.js';
+import {
+  createInboxMarkersStore,
+  knownInboxEntryIds,
+  type InboxMarkersStore
+} from '../services/inbox/inbox-markers.js';
 import { createSuggestionsStore, type ISuggestionsStore } from '../services/suggestions/suggestions-store.js';
 import { createSavedStore, type ISavedStore } from '../services/saved/saved-store.js';
 import type { LocalAppOriginArgs } from './local-app-origins.js';
@@ -53,6 +58,7 @@ export interface ProductHttpContext {
   projects: ProjectStore;
   config: ReturnType<typeof createConfigStore>;
   inbox: IInboxStore;
+  inboxMarkers: InboxMarkersStore;
   suggestions: ISuggestionsStore;
   saved: ISavedStore;
   hub: ProductHub;
@@ -102,6 +108,10 @@ export function createProductHttpContext(
     identityConfig
   );
   const inbox = createInboxStore({ filePath: join(dataDir, 'inbox', 'entries.jsonl') });
+  const inboxMarkers = createInboxMarkersStore({
+    dataDir,
+    knownIds: (ids) => knownInboxEntryIds(inbox, ids)
+  });
   const suggestions = createSuggestionsStore({
     filePath: join(dataDir, 'suggestions', 'entries.jsonl')
   });
@@ -179,9 +189,15 @@ export function createProductHttpContext(
   writeFileSync(join(dataDir, 'host-enroll.token'), enrollToken, { encoding: 'utf8', mode: 0o600 });
 
   inbox.onAppended((entry) => hub.emit('inbox:appended', entry));
-  inbox.onRemoved((id) => hub.emit('inbox:removed', id));
+  inbox.onRemoved((id) => {
+    hub.emit('inbox:removed', id);
+    void inboxMarkers.prune([id]).then((snapshot) => hub.emit('inbox:markersChanged', snapshot));
+  });
   inbox.onUpdated((entry) => hub.emit('inbox:updated', entry));
-  inbox.onPruned((ids) => hub.emit('inbox:pruned', ids));
+  inbox.onPruned((ids) => {
+    hub.emit('inbox:pruned', ids);
+    void inboxMarkers.prune(ids).then((snapshot) => hub.emit('inbox:markersChanged', snapshot));
+  });
   void prunePendingInteractionInboxCopies(inbox);
   suggestions.onAppended((entry) => hub.emit('suggestions:appended', entry));
   suggestions.onRemoved((id) => hub.emit('suggestions:removed', id));
@@ -278,6 +294,7 @@ export function createProductHttpContext(
     projects,
     config,
     inbox,
+    inboxMarkers,
     suggestions,
     saved,
     hub,

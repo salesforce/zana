@@ -71,6 +71,24 @@ function contentType(file: string): string {
   return CONTENT_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream';
 }
 
+function isAddrInUse(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'EADDRINUSE');
+}
+
+async function listenLoopback(
+  server: ReturnType<typeof createServer>,
+  hostName: string,
+  port: number
+): Promise<void> {
+  await new Promise<void>((resolveListen, rejectListen) => {
+    server.once('error', rejectListen);
+    server.listen(port, hostName, () => {
+      server.off('error', rejectListen);
+      resolveListen();
+    });
+  });
+}
+
 function pathForRequest(rootDir: string, pathname: string): string | null {
   let decoded: string;
   try {
@@ -233,13 +251,19 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     });
   }
 
-  await new Promise<void>((resolveListen, rejectListen) => {
-    server.once('error', rejectListen);
-    server.listen(options.port ?? 0, hostName, () => {
-      server.off('error', rejectListen);
-      resolveListen();
-    });
-  });
+  const preferredPort = options.port ?? 0;
+  try {
+    await listenLoopback(server, hostName, preferredPort);
+  } catch (error) {
+    if (preferredPort !== 0 && isAddrInUse(error)) {
+      console.warn(
+        `[zcc] preferred renderer port ${preferredPort} is in use; falling back to an ephemeral port`
+      );
+      await listenLoopback(server, hostName, 0);
+    } else {
+      throw error;
+    }
+  }
 
   const address = server.address();
   if (!address || typeof address === 'string') {

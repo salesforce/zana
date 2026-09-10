@@ -3,6 +3,7 @@ import {
   attachSshFallbackPairingCommand,
   classifyInstallFailure,
   DAEMON_UNRESPONSIVE_ERROR,
+  DOCKER_JOIN_ORIGIN_ERROR,
   HostBootstrapError,
   PAIRING_DOOR_ERROR,
   parseSshIdentity,
@@ -255,6 +256,11 @@ describe('host bootstrap helpers', () => {
       ctx as never,
       { host: 'limited-pony' }
     ).pairingCommand).toBe('curl already');
+    expect(attachSshFallbackPairingCommand(
+      new HostBootstrapError('join_origin_invalid', DOCKER_JOIN_ORIGIN_ERROR),
+      ctx as never,
+      { host: 'limited-pony' }
+    ).pairingCommand).toContain('ssh -o ExitOnForwardFailure=yes');
   });
 
   it('maps a silent join to a short daemon_unresponsive error', () => {
@@ -287,5 +293,37 @@ describe('host bootstrap helpers', () => {
     expect(calls).toBe(2);
     expect(logs[0]).toBe('Waiting for the remote daemon to connect…');
     expect(logs.some((line) => line.startsWith('Still waiting for the remote daemon'))).toBe(true);
+  });
+
+  it('rejects a leftover Docker Desktop join origin', async () => {
+    const ctx = {
+      config: { getConfig: () => ({ publicAppUrl: 'http://host.docker.internal:18781' }) },
+      pairingRelay: {
+        state: () => 'unconfigured' as const,
+        snapshot: () => ({ state: 'unconfigured' as const })
+      }
+    };
+    await expect(requirePublicAppUrl(ctx as never)).rejects.toMatchObject({
+      name: 'HostBootstrapError',
+      code: 'join_origin_invalid',
+      message: DOCKER_JOIN_ORIGIN_ERROR
+    });
+  });
+
+  it('falls through a leftover Docker Settings URL to the baked public origin', async () => {
+    const ctx = ctxWithRelay('https://zcc.herokuapp.com', {
+      state: () => 'connected' as const,
+      snapshot: () => ({
+        state: 'connected' as const,
+        sessionId: 'zcrs_abcdefghijklmnopqr1234',
+        joinUntil: Date.now() + 60_000
+      })
+    });
+    (ctx.config as { getConfig: () => { publicAppUrl: string } }).getConfig = () => ({
+      publicAppUrl: 'http://host.docker.internal:18781'
+    });
+    await expect(requirePublicAppUrl(ctx as never)).resolves.toBe(
+      'https://zcc.herokuapp.com/t/zcrs_abcdefghijklmnopqr1234'
+    );
   });
 });

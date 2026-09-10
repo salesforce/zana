@@ -252,6 +252,40 @@ function defaultRpcHandler(projectRoot: string) {
 }
 
 describe('host enroll hub and thread create', () => {
+  it('sends host.hello-ok so waitUntilConnected resolves after hello', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken } = await startServer(projectRoot);
+    const instanceId = randomUUID();
+    const enrolled = await enrollHost(enrollToken, 'hello-ok', instanceId);
+    const acks: Array<{ type?: string; hostId?: string }> = [];
+    const url = new URL('internal/hosts/ws', server!.url.replace(/^http/, 'ws'));
+    const socket = new WebSocket(url, {
+      headers: {
+        authorization: `Bearer ${enrolled.hostKey}`,
+        'x-zcc-host-id': enrolled.hostId
+      }
+    });
+    sockets.push(socket);
+    socket.on('message', (raw) => {
+      acks.push(JSON.parse(String(raw)) as { type?: string; hostId?: string });
+    });
+    await new Promise<void>((resolve, reject) => {
+      socket.on('open', () => {
+        socket.send(JSON.stringify({
+          type: 'host.hello',
+          protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+          hostId: enrolled.hostId,
+          instanceId
+        }));
+        resolve();
+      });
+      socket.on('error', reject);
+    });
+    await waitForHost(enrolled.hostId);
+    await server!.ctx.hostHub.waitUntilConnected(enrolled.hostId, 1_000);
+    expect(acks.some((row) => row.type === 'host.hello-ok' && row.hostId === enrolled.hostId)).toBe(true);
+  });
+
   it('rejects browser Origin on enroll and fails create when no host is connected', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
     const { enrollToken } = await startServer(projectRoot);

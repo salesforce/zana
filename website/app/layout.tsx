@@ -6,6 +6,7 @@ import '@/lib/plugin-guide/plugin-guide.css';
 import './components/plugin-guide/plugin-guide-site.css';
 import { Nav, Footer } from './components/Nav';
 import { Reveal } from './components/Reveal';
+import { fetchRepoStarCount } from '@/lib/github-stars';
 import { site } from '@/lib/site';
 
 const inter = Inter({
@@ -70,7 +71,8 @@ const NO_FLASH_THEME = `
 }catch(e){ document.documentElement.setAttribute('data-theme','dark'); }})();
 `;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const starCount = await fetchRepoStarCount({ repoUrl: site.repo });
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`} suppressHydrationWarning>
       <head>
@@ -80,7 +82,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <a href="#main" className="skip-link">
           Skip to content
         </a>
-        <Nav />
+        <Nav starCount={starCount} />
         <main id="main">{children}</main>
         <Footer />
         <Reveal />

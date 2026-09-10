@@ -48,6 +48,7 @@ import { installGlobalSkills, readGlobalSkillsStatus } from './global-skills.js'
 import {
   createSystemPeerDaemonSsh,
   peerDaemonInstall,
+  peerDaemonLogs,
   peerDaemonRestart,
   peerDaemonStatus,
   type PeerDaemonSsh
@@ -1079,6 +1080,8 @@ export async function dispatchHostCommand(
       return peerDaemonStatus(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command.remote, command.serverHost);
     case 'peer_daemon.restart':
       return peerDaemonRestart(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command.remote, command.serverHost);
+    case 'peer_daemon.logs':
+      return peerDaemonLogs(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command.remote, command.serverHost);
     case 'peer_daemon.install': {
       let serverHost: string;
       try {

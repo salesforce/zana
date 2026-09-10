@@ -78,6 +78,8 @@ import {
   findProjectIdForSession,
   hasMissingSetup,
   pruneInboxMarkers,
+  applyInboxMarkersSnapshot,
+  hydrateSavedMarksFromRecords,
   useAgentMesh,
   useAgentStatus,
   useAutonomousRuns,
@@ -2352,6 +2354,13 @@ export const useData = create<DataState>((set, get) => ({
         useInbox.setState({ loading: false });
       }
     })();
+    const loadInboxMarkers = (async () => {
+      try {
+        applyInboxMarkersSnapshot(await product.inbox.markers());
+      } catch {
+        /* markers stay empty until a later hub/IPC event */
+      }
+    })();
     const loadSuggestions = (async () => {
       try {
         const { entries } = await product.suggestions.list(scopedProjectId ?? undefined);
@@ -2364,6 +2373,7 @@ export const useData = create<DataState>((set, get) => ({
       try {
         const records = await product.saved.list();
         useSaved.setState({ records, loading: false });
+        hydrateSavedMarksFromRecords(records);
       } catch {
         useSaved.setState({ loading: false });
       }
@@ -2379,7 +2389,7 @@ export const useData = create<DataState>((set, get) => ({
         /* mesh view is best-effort; leave empty on failure */
       }
     })();
-    await Promise.all([loadInbox, loadSuggestions, loadSaved, loadMesh]);
+    await Promise.all([loadInbox, loadInboxMarkers, loadSuggestions, loadSaved, loadMesh]);
 
     product.inbox.onAppended((entry) => {
       if (scopedProjectId && entry.projectId !== scopedProjectId) return;
@@ -2406,10 +2416,11 @@ export const useData = create<DataState>((set, get) => ({
       useInbox.getState().upsert(entry);
     });
     product.inbox.onPruned((removedIds) => {
-      // Retention rolled these off disk: drop the rows and prune the persisted
-      // read/answered/saved/keep markers so those localStorage maps stay bounded.
       useInbox.getState().removeManyLocal(removedIds);
       pruneInboxMarkers(removedIds);
+    });
+    product.inbox.onMarkersChanged((snapshot) => {
+      applyInboxMarkersSnapshot(snapshot);
     });
 
     // Suggested Actions (afl-03): push subscriptions (the one-shot list load ran
@@ -2434,6 +2445,7 @@ export const useData = create<DataState>((set, get) => ({
     // above). Low volume, so main replaces the whole list on every save/delete.
     product.saved.onChanged((records) => {
       useSaved.setState({ records, loading: false });
+      hydrateSavedMarksFromRecords(records);
     });
 
     // Agent mesh: live pushes (the one-shot registry + message load ran

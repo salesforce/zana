@@ -27,13 +27,16 @@ RUN if [ -f package-lock.json ]; then \
 RUN npm install --no-audit --no-fund
 
 # NEXT_PUBLIC_* are inlined at build time, so pass them as build args when the
-# feed URLs exist (see heroku.yml / docker build --build-arg).
+# feed URLs exist (see heroku.yml / docker build --build-arg). PUBLIC_BASE_URL
+# is also needed at build time for metadataBase / canonical URLs.
 ARG NEXT_PUBLIC_REGISTRY_URL=""
 ARG NEXT_PUBLIC_UPDATE_FEED_URL=""
-ARG NEXT_PUBLIC_APP_VERSION="2.0.6"
+ARG NEXT_PUBLIC_APP_VERSION="2.1.0"
+ARG PUBLIC_BASE_URL=""
 ENV NEXT_PUBLIC_REGISTRY_URL=$NEXT_PUBLIC_REGISTRY_URL \
     NEXT_PUBLIC_UPDATE_FEED_URL=$NEXT_PUBLIC_UPDATE_FEED_URL \
     NEXT_PUBLIC_APP_VERSION=$NEXT_PUBLIC_APP_VERSION \
+    PUBLIC_BASE_URL=$PUBLIC_BASE_URL \
     NEXT_TELEMETRY_DISABLED=1
 
 COPY . .

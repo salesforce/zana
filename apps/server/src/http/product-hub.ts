@@ -5,6 +5,7 @@ export type ProductEventType =
   | 'inbox:removed'
   | 'inbox:updated'
   | 'inbox:pruned'
+  | 'inbox:markersChanged'
   | 'suggestions:appended'
   | 'suggestions:removed'
   | 'suggestions:updated'

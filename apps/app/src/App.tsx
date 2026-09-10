@@ -392,10 +392,8 @@ export function App() {
   useEffect(() => {
     init();
     const offShortcuts = installShortcuts();
-    // Keep inbox read/answered/saved/kept state live across windows: these are
-    // localStorage-backed and shared by every window, but only read at boot —
-    // this re-hydrates them when another window writes (e.g. a per-project
-    // window marks an entry read, the main window reflects it immediately).
+    // Keep localStorage-backed prefs (favorites, agent-panel) live across
+    // windows. Inbox read/answered/keep sync via inbox:markersChanged instead.
     const offInboxSync = installInboxCrossWindowSync();
     const offData = product.terminals.onData((id) => {
       const ui = useUi.getState();

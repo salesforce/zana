@@ -144,8 +144,8 @@ export interface IInboxStore {
   /**
    * Subscribe to retention evictions: when compaction drops old entries to stay
    * within the tier caps, this fires once with their ids. Lets the renderer drop
-   * the evicted rows live AND prune their persisted read/keep/answered markers,
-   * so those localStorage maps don't grow unbounded as history rolls over.
+   * the evicted rows live. Main also prunes the durable read/keep/answered maps
+   * so those files don't grow unbounded as history rolls over.
    * Mirrors `agent-message-log`'s `onPruned`. Returns a dispose function.
    */
   onPruned(listener: (removedIds: string[]) => void): () => void;

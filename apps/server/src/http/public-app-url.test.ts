@@ -41,6 +41,27 @@ describe('public app URL', () => {
     expect(resolvePublicAppUrl({ env: {}, bundledUrl: 'ftp://x' })).toBeUndefined();
   });
 
+  it('skips a Docker Desktop join origin so bake or the repo file can win', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'zcc-url-docker-'));
+    writeFileSync(join(cwd, 'public-app-url'), 'https://zcc-7808c5bc8f3d.herokuapp.com\n');
+    expect(resolvePublicAppUrl({
+      env: { ZCC_APP_URL: 'http://host.docker.internal:18781' },
+      bundledUrl: 'https://baked.example',
+      configUrl: 'http://host.docker.internal:18781',
+      cwd
+    })).toBe('https://baked.example');
+    expect(resolvePublicAppUrl({
+      env: {},
+      configUrl: 'http://host.docker.internal:18781',
+      cwd
+    })).toBe('https://zcc-7808c5bc8f3d.herokuapp.com');
+    expect(resolvePublicAppUrl({
+      env: {},
+      bundledUrl: '',
+      configUrl: 'http://host.docker.internal:18781'
+    })).toBeUndefined();
+  });
+
   it('does not read the repo-root file during vitest unless cwd is passed', () => {
     expect(readPublicAppUrlFile()).toBeUndefined();
     expect(resolvePublicAppUrl({ env: {}, configUrl: undefined })).toBeUndefined();

@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   parsePeerDaemonStatusOutput,
   peerDaemonInstall,
+  peerDaemonLogs,
   peerDaemonRestart,
   peerDaemonStatus,
   peerInstallServiceCommand,
+  peerLogDumpCommand,
   peerRestartCommand,
   peerStatusCommand,
   peerUnpackCommand,
@@ -60,6 +62,18 @@ describe('peer-daemon commands', () => {
     expect(script).toContain('--- host-daemon.log ---');
     expect(script).toContain('tail -n 80 "$data_dir/host-daemon.log"');
     expect(script).toContain('status endpoint unreachable');
+  });
+
+  it('tails remote status and join logs after HostHub never attaches', async () => {
+    expect(() => peerLogDumpCommand('-oProxyCommand=x')).toThrow(/valid hostname/);
+    const dump = peerLogDumpCommand('box.example');
+    expect(dump).toContain('--- /status ---');
+    expect(dump).toContain('--- host-daemon.log ---');
+    expect(dump).toContain('tail -n 80 "$data_dir/host-daemon.log"');
+    const ssh = mockSsh(() => ({ code: 0, stdout: '--- host-daemon.log ---\njoined\n' }));
+    await expect(peerDaemonLogs(ssh, { host: 'devbox' }, 'box.example')).resolves.toEqual({
+      log: '--- host-daemon.log ---\njoined'
+    });
   });
 
   it('keeps ssh argv BatchMode and rejects a leading-dash remote host', () => {

@@ -10,6 +10,7 @@ export type {
   SuggestionInput,
   Suggestion,
   InboxEntry,
+  InboxMarkersSnapshot,
   InboxDigest,
   InboxSummaryResult,
   DetailedInboxPoint,

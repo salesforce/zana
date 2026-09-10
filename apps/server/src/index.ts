@@ -18,6 +18,7 @@ export * from './plugins/builtin-registry.js';
 export * from './plugins/marketplace.js';
 export * from './plugins/marketplace-store.js';
 export * from './services/inbox/inbox-store.js';
+export * from './services/inbox/inbox-markers.js';
 export * from './services/inbox/inbox-summary.js';
 export * from './services/feed/feed-store.js';
 export * from './services/saved/saved-store.js';

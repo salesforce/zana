@@ -280,7 +280,14 @@ export const IPC = {
     onAppended: 'inbox:onAppended',
     onRemoved: 'inbox:onRemoved',
     onUpdated: 'inbox:onUpdated',
-    onPruned: 'inbox:onPruned'
+    onPruned: 'inbox:onPruned',
+    markers: 'inbox:markers',
+    markRead: 'inbox:markRead',
+    markUnread: 'inbox:markUnread',
+    markAllRead: 'inbox:markAllRead',
+    markAnswered: 'inbox:markAnswered',
+    toggleKeep: 'inbox:toggleKeep',
+    onMarkersChanged: 'inbox:onMarkersChanged'
   },
   /**
    * Usage / cost rollup (WARP R2 B7). `getSummary` computes a privacy-safe

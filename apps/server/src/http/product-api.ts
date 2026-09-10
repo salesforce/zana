@@ -457,6 +457,52 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (path === '/api/v1/inbox/markers' && method === 'GET') {
+      sendJson(response, 200, ctx.inboxMarkers.snapshot());
+      return true;
+    }
+
+    if (path === '/api/v1/inbox/read-all' && method === 'POST') {
+      const body = (await readJsonBody(request)) as { ids?: unknown };
+      const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === 'string') : [];
+      const snapshot = await ctx.inboxMarkers.markRead(ids);
+      ctx.hub.emit('inbox:markersChanged', snapshot);
+      sendJson(response, 200, snapshot);
+      return true;
+    }
+
+    const inboxRead = routeParams(path, '/api/v1/inbox/:id/read');
+    if (inboxRead && method === 'POST') {
+      const snapshot = await ctx.inboxMarkers.markRead([inboxRead.id]);
+      ctx.hub.emit('inbox:markersChanged', snapshot);
+      sendJson(response, 200, snapshot);
+      return true;
+    }
+
+    const inboxUnread = routeParams(path, '/api/v1/inbox/:id/unread');
+    if (inboxUnread && method === 'POST') {
+      const snapshot = await ctx.inboxMarkers.markUnread([inboxUnread.id]);
+      ctx.hub.emit('inbox:markersChanged', snapshot);
+      sendJson(response, 200, snapshot);
+      return true;
+    }
+
+    const inboxAnswered = routeParams(path, '/api/v1/inbox/:id/answered');
+    if (inboxAnswered && method === 'POST') {
+      const snapshot = await ctx.inboxMarkers.markAnswered(inboxAnswered.id);
+      ctx.hub.emit('inbox:markersChanged', snapshot);
+      sendJson(response, 200, snapshot);
+      return true;
+    }
+
+    const inboxKeep = routeParams(path, '/api/v1/inbox/:id/keep');
+    if (inboxKeep && method === 'POST') {
+      const snapshot = await ctx.inboxMarkers.toggleKeep(inboxKeep.id);
+      ctx.hub.emit('inbox:markersChanged', snapshot);
+      sendJson(response, 200, snapshot);
+      return true;
+    }
+
     if (path === '/api/v1/inbox' && method === 'GET') {
       const projectId = requestUrl.searchParams.get('projectId') ?? undefined;
       const limitRaw = requestUrl.searchParams.get('limit');

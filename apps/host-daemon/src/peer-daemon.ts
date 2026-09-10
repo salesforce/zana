@@ -119,6 +119,23 @@ function peerJoinFailureDump(): string[] {
   ];
 }
 
+/** Tail /status + host-daemon.log after HostHub never attached. */
+export function peerLogDumpCommand(serverHost: string): string {
+  const host = requireServerHost(serverHost);
+  return [
+    `data_dir="$HOME/.zcc-machines/${host}"`,
+    'echo "--- /status ---"',
+    'if [ -f "$data_dir/host-daemon.port" ]; then',
+    '  port=$(cat "$data_dir/host-daemon.port")',
+    '  curl -sS --max-time 2 "http://127.0.0.1:$port/status" || echo "status endpoint unreachable"',
+    'else',
+    '  echo "status endpoint unreachable"',
+    'fi',
+    'echo "--- host-daemon.log ---"',
+    'if [ -f "$data_dir/host-daemon.log" ]; then tail -n 80 "$data_dir/host-daemon.log"; else echo "(no log yet)"; fi'
+  ].join('\n');
+}
+
 const PEER_HOST_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -316,6 +333,15 @@ export async function peerDaemonRestart(
     throw new HostCommandError('peer_restart_failed', logText(result) || 'Could not restart the host daemon');
   }
   return { ok: true, log: logText(result) };
+}
+
+export async function peerDaemonLogs(
+  ssh: PeerDaemonSsh,
+  remote: ProjectRemote,
+  serverHost: string
+): Promise<{ log: string }> {
+  const result = await ssh.run(remote, peerLogDumpCommand(serverHost));
+  return { log: logText(result) };
 }
 
 export async function peerDaemonInstall(
