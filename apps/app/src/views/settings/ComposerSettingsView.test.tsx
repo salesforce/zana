@@ -13,7 +13,7 @@ const config: AppConfig = {
 };
 
 describe('ComposerSettingsView', () => {
-  it('lists launch surfaces with CLI Agent first and gates Job Team here', () => {
+  it('lists launch surfaces with CLI Agent first and one Team toggle', () => {
     const html = renderToStaticMarkup(
       <ComposerSettingsView config={config} onUpdate={vi.fn().mockResolvedValue(undefined)} />
     );
@@ -21,8 +21,11 @@ describe('ComposerSettingsView', () => {
     expect(html).toContain('Launch surfaces');
     expect(html).toContain('aria-label="CLI Agent"');
     expect(html).toContain('aria-label="Modern"');
-    expect(html).toContain('aria-label="Autonomous Team"');
-    expect(html).toContain('aria-label="Job Team"');
+    expect(html).toContain('aria-label="Team"');
+    expect(html).toContain('Show durable Team mode.');
+    expect(html).not.toContain('when at least one team exists');
+    expect(html).not.toContain('aria-label="Autonomous Team"');
+    expect(html).not.toContain('aria-label="Job Team"');
     expect(html.indexOf('aria-label="CLI Agent"')).toBeLessThan(html.indexOf('aria-label="Modern"'));
     expect(html).toContain('Default launch mode');
     expect(html).toContain('Reload slash commands');

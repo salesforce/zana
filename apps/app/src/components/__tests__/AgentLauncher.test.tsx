@@ -54,14 +54,13 @@ describe('launcher attachments', () => {
 });
 
 describe('launch mode', () => {
-  it('offers Modern, CLI Agent, and Autonomous Team without gating the whole control on teams', () => {
+  it('offers Modern, CLI Agent, and one Team surface without gating the whole control on teams', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('useLaunchModePreference');
     expect(source).toContain('resolveAvailableLaunchMode');
     expect(source).toContain('setStoredMode');
     expect(source).toContain('<LaunchModeSegmented');
-    expect(source).toContain('showAutonomousTeam={showAutonomousTeam}');
-    expect(source).toContain('showJobTeam={showJobTeam}');
+    expect(source).toContain('showTeam={available.showTeam}');
     expect(source).toContain('visibleComposerLaunchModes');
     expect(source).toContain('showLaunchSwitcher');
     expect(source).toContain('showCliAgent={available.showCliAgent}');
@@ -69,14 +68,12 @@ describe('launch mode', () => {
     expect(source).not.toContain('Single agent');
     expect(source).toContain('<ThreadCommandComposer');
     expect(source).toContain('<LegacyAgentHomeComposer');
-    expect(source).toContain('<AutonomousTeamComposer');
-    expect(source).toContain('<JobTeamComposer');
+    expect(source).toContain('<TeamComposer');
     expect(source).toContain('initialText={initialPrompt}');
     expect(source).toContain('composerProjectId={composerProjectId}');
     expect(source).toContain('onComposerProjectIdChange={setComposerProjectId}');
     expect(source).toContain('onCreated={onClose}');
-    expect(source).toContain("{mode === 'autonomous' && (");
-    expect(source).toContain("{mode === 'job' && (");
+    expect(source).toContain("{mode === 'team' && (");
     expect(source).not.toContain('<PromptComposer');
   });
 
@@ -147,14 +144,13 @@ describe('project-scoped conversation history', () => {
 });
 
 describe('launcher composer project', () => {
-  it('lifts the unpinned pick across Modern / CLI Agent / Autonomous', () => {
+  it('lifts the unpinned pick across Modern / CLI Agent / Team', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('const [composerProjectId, setComposerProjectId] = useState(project?.id ?? \'\')');
     expect(source).toContain('composerProjectId={composerProjectId}');
     expect(source).toContain('onComposerProjectIdChange={setComposerProjectId}');
-    const jobStart = source.indexOf('<JobTeamComposer');
-    const jobBlock = source.slice(jobStart, source.indexOf('/>', jobStart));
-    expect(jobBlock).not.toContain('composerProjectId');
+    const teamStart = source.indexOf('<TeamComposer');
+    const teamBlock = source.slice(teamStart, source.indexOf('/>', teamStart));
+    expect(teamBlock).toContain('composerProjectId');
   });
 });
-

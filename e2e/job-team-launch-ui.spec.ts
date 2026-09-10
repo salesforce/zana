@@ -5,7 +5,7 @@
  * the UI was ported to the monorepo layout" bug: the backend `teams.startJob`
  * path survived intact, but the renderer mode button + composer were dropped and
  * no rendering test observed it. This spec clicks the actual `Job Team` mode
- * button, fills the goal / Title / Summary in the real composer, picks a team +
+ * button, fills an untitled goal / Summary in the real composer, picks a team +
  * project, hits `Launch job team`, and asserts the durable job surfaces on the
  * Agents board.
  *
@@ -13,10 +13,10 @@
  *     → "New agent" (data-testid="agents-board-new-thread")
  *     → launcher modal (data-testid="launch-modal")
  *         → Job Team mode button
- *         → goal editor (data-testid="job-team-command-input")
+ *         → goal editor (data-testid="team-command-input")
  *         → Team picklist (aria-label="Team") + Project picklist (aria-label="Project")
- *         → Title / Summary optional fields
- *         → Launch job team (data-testid="job-team-command-send")
+ *         → inferred canonical title / Summary optional field
+ *         → Launch team (data-testid="team-command-send")
  *     → Agents board shows the titled durable job
  *
  * The orchestrator is a `shell`-based persona so the spawn is lightweight and
@@ -30,13 +30,18 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-test.use({ e2e: true, initialConfig: { teamJobLaunchEnabled: true } });
+test.use({ e2e: true, initialConfig: { teamJobLaunchEnabled: true, composerShowAutonomousTeam: true, autoRenameTabs: false } });
 
 test.setTimeout(120_000);
 
-test('launching a durable Job Team through the real UI surfaces it on the board', async ({
-  app
-}) => {
+for (const {
+  planningLabel,
+  coordinationMode
+} of [
+  { planningLabel: 'Infer plan from goal', coordinationMode: 'freeform' },
+  { planningLabel: 'Plan provided in goal', coordinationMode: 'structured' }
+] as const) {
+test(`launching a ${coordinationMode} Team through the real UI completes durable work`, async ({ app }) => {
   const { window } = app;
 
   // The orchestrator is a claude-family persona pointed at a fake stub: the job
@@ -101,17 +106,17 @@ test('launching a durable Job Team through the real UI surfaces it on the board'
     const modal = window.locator('[data-testid="launch-modal"]');
     await expect(modal).toBeVisible();
 
-    // 2. Switch to the Job Team mode — the control this spec exists to protect.
-    await modal.getByRole('button', { name: 'Job Team' }).click();
+    // 2. Switch to the unified Team mode.
+    await modal.locator('.launch-segmented').getByRole('button', { name: 'Team', exact: true }).click();
 
     // 3. Describe the goal in the real composer editor (TipTap).
-    const goal = modal.getByTestId('job-team-command-input');
+    const goal = modal.getByTestId('team-command-input');
     await goal.click();
-    await goal.fill('coordinate the smoke check and report back');
-    await expect(goal).toContainText('coordinate the smoke check and report back');
+    await goal.fill('coordinate smoke check and report back');
+    await expect(goal).toContainText('coordinate smoke check and report back');
 
     // 4. Pick the team through the composer's Team picklist.
-    const teamPicker = modal.getByRole('button', { name: 'Team', exact: true });
+    const teamPicker = modal.getByLabel('Team', { exact: true });
     await teamPicker.click();
     await window
       .getByRole('listbox', { name: 'Team' })
@@ -128,34 +133,48 @@ test('launching a durable Job Team through the real UI surfaces it on the board'
       .click();
     await expect(projectPicker).toContainText(projectName);
 
-    // 6. Fill the optional job metadata fields.
-    await modal.getByLabel('Title Optional').fill('Named job spec');
+    // 6. Leave Title empty so main resolves one canonical title from the goal.
     await modal.getByLabel('Summary Optional').fill('Durable job launch from the Agents board');
 
     // 7. Launch — this calls the intact `teams.startJob` durable path.
-    const send = modal.getByTestId('job-team-command-send');
+    await modal.getByLabel('Team planning').click();
+    await window.getByRole('option', { name: planningLabel, exact: true }).click();
+    const send = modal.getByTestId('team-command-send');
     await expect(send).toBeEnabled({ timeout: 15_000 });
     await send.click();
 
-    // 8. The launcher closes and the durable job surfaces on the board with its
-    //    given title.
+    // 8. The launcher closes and the durable job surfaces with a bounded title
+    //    inferred once by main. E2E disables the real naming provider, so this
+    //    deterministically exercises the path-free objective fallback.
     await expect(modal).toBeHidden();
-    await expect(window.getByText('Named job spec', { exact: true })).toBeVisible({ timeout: 15_000 });
+    const inferredTitle = 'coordinate smoke check and report back';
+    await expect(window.locator('.agent-card-title').getByText(inferredTitle, { exact: true }))
+      .toBeVisible({ timeout: 15_000 });
 
     await expect.poll(async () => window.evaluate(async ({ projectId }) => {
       const page = await window.cc.executionBoard.listProject(projectId);
-      return page.executions.find((execution) => execution.jobTitle === 'Named job spec')?.executionId ?? '';
+      return page.executions.find((execution) => execution.jobTitle === 'coordinate smoke check and report back')?.executionId ?? '';
     }, { projectId: projectId! }), { timeout: 15_000, intervals: [500] }).not.toBe('');
     const executionId = await window.evaluate(async ({ projectId }) => {
       const page = await window.cc.executionBoard.listProject(projectId);
-      return page.executions.find((execution) => execution.jobTitle === 'Named job spec')!.executionId;
+      return page.executions.find((execution) => execution.jobTitle === 'coordinate smoke check and report back')!.executionId;
     }, { projectId: projectId! });
+    await expect.poll(async () => window.evaluate(async ({ projectId, executionId }) => {
+      const snapshot = await window.cc.executionBoard.snapshot(projectId, executionId, 0);
+      return {
+        coordinationMode: snapshot?.execution.coordinationMode,
+        workTotal: snapshot?.execution.work?.total ?? 0
+      };
+    }, { projectId: projectId!, executionId }), { timeout: 15_000, intervals: [500] }).toEqual({
+      coordinationMode,
+      workTotal: 4
+    });
 
     await answerJobBlockerThroughUi({
       window,
       projectId: projectId!,
       executionId,
-      jobTitle: 'Named job spec'
+      jobTitle: inferredTitle
     });
     await expect.poll(() => existsSync(join(projectDir, 'result.txt')), { timeout: 15_000 }).toBe(true);
     expect(readFileSync(join(projectDir, 'result.txt'), 'utf8')).toContain('LABEL: About Atlas');
@@ -193,3 +212,4 @@ test('launching a durable Job Team through the real UI surfaces it on the board'
     agent.cleanup();
   }
 });
+}

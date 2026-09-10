@@ -45,6 +45,7 @@ import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { fleetMatchesLane, resolveMonitorSelection, type FleetItem } from './fleet-item.js';
 import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
 import { openScheduleFromAgents } from './scheduler/openScheduledLive.js';
+import { groupSessionsByTeamRun } from '../lib/teamRunOrganization.js';
 
 /**
  * The Agents "List" view: a live monitor — item list (left), the selected
@@ -105,6 +106,7 @@ function openAgentInProject(card: AgentCard): void {
 export function AgentMonitor({ cards, executions = [], showProject = false, onInspectExecution }: AgentMonitorProps) {
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
+  const organization = useData((s) => s.agentsListOrganization);
   const selection = useUi((s) => s.agentMonitor);
   const selectMonitorAgent = useUi((s) => s.selectMonitorAgent);
   const clearMonitorAgent = useUi((s) => s.clearMonitorAgent);
@@ -135,6 +137,20 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
   }, [cards, executions]);
 
   const grouped = useMemo(() => {
+    if (organization === 'team-run') {
+      const agentGroups = groupSessionsByTeamRun(
+        jobCards.filter((item): item is Extract<FleetItem, { kind: 'agent' }> => item.kind === 'agent')
+          .map((item) => ({ session: item.card.session, item }))
+      ).map((group) => ({
+        key: group.key,
+        label: group.label,
+        cards: group.items.map(({ item }) => item)
+      }));
+      const other = jobCards.filter((item) => item.kind !== 'agent');
+      return other.length
+        ? [...agentGroups, { key: 'other-fleet', label: 'Threads and schedules', cards: other }]
+        : agentGroups;
+    }
     const byLane = new Map<LaneKey, FleetItem[]>();
     for (const item of jobCards) {
       const key = laneOf(item, sensitivity);
@@ -145,7 +161,7 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
     return visibleAgentLanes(includeScheduled)
       .map((l) => ({ key: l.key, label: l.label, cards: byLane.get(l.key) ?? [] }))
       .filter((g) => g.cards.length > 0);
-  }, [jobCards, sensitivity, includeScheduled]);
+  }, [jobCards, sensitivity, includeScheduled, organization]);
 
   const selected = useMemo(
     () =>
@@ -190,7 +206,7 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
       <nav className="agent-monitor-list" aria-label="Agents">
         {grouped.map((g) => (
           <div key={g.key} className="agent-monitor-group">
-            <div className={`agent-monitor-group-head group-${g.key}`}>
+            <div className={`agent-monitor-group-head ${organization === 'status' ? `group-${g.key}` : 'group-team-run'}`}>
               <span>{g.label}</span>
               <span className="agent-monitor-group-count">{g.cards.length}</span>
             </div>
@@ -198,7 +214,7 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
               <AgentMonitorRow
                 key={item.id}
                 item={item}
-                laneKey={g.key}
+                laneKey={laneOf(item, sensitivity)}
                 active={item.id === selected?.id}
                 showProject={showProject}
                 onSelect={() => setPickedId(item.id)}
@@ -372,11 +388,6 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
       <span className="agent-monitor-row-text">
         <span className="agent-monitor-row-title-line">
           {!exited && <span className={`tab-agent-dot agent-${card.state}`} aria-hidden="true" />}
-          {!!t.cohort?.executionId && (
-            <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort.executionId})`} style={{ margin: 0, marginRight: 5 }}>
-              job
-            </span>
-          )}
           <span className="agent-monitor-row-title">{t.title}</span>
           <FleetKindChip kind="agent" />
         </span>
@@ -419,11 +430,6 @@ function AgentMonitorTerminal({
       {!thread && agent && (
         <header className="agent-monitor-main-head">
           <TerminalIcon size={13} aria-hidden="true" />
-          {!!agent.card.session.cohort?.executionId && (
-            <span className="job-badge" title={`Execution-backed job member (Run ID: ${agent.card.session.cohort.executionId})`} style={{ margin: 0, marginRight: 5 }}>
-              job
-            </span>
-          )}
           <span className="agent-monitor-main-title">{agent.card.session.title}</span>
           {agent.card.session.status !== 'exited' && (
             <span className={`agent-monitor-main-state agent-${agent.state}`}>
@@ -521,7 +527,7 @@ function AgentMonitorSession({
           className="agent-monitor-action"
           onClick={() => onInspectExecution(execution.projectId, execution.executionId)}
         >
-          {execution.currentBlocker ? 'Respond in job details' : 'Job details'}
+          {execution.currentBlocker ? 'Respond in Team details' : 'Team details'}
         </button>
       )}
       {!exited && (

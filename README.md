@@ -128,7 +128,7 @@ while `pnpm dev:prod` is running.
 
 | Surface | Purpose |
 | --- | --- |
-| **Home** | New Chat composer (Thread, CLI Agent, Autonomous Team), active work, and quick launch. |
+| **Home** | New Chat composer (Thread, CLI Agent, Team), active work, and quick launch. |
 | **Projects** | Local, enrolled-machine, and SSH project registry, file explorer, project tabs, skills, settings, and scoped agent work. |
 | **Terminals** | Tabbed PTY sessions for supported coding CLIs and shell workflows. |
 | **Agents** | Global and project boards for live state, session details, reports, transcripts, usage, and bulk actions. |

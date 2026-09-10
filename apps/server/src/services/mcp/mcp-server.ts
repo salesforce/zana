@@ -346,7 +346,7 @@ export interface McpServerOptions {
    * autonomous-capable build wires it; the per-call ownership check lives in the
    * supervisor (an agent can only complete the run it orchestrates).
    */
-  completeAutonomousRun?: (orchestratorSessionId: string, summary: string) => boolean;
+  completeAutonomousRun?: (orchestratorSessionId: string, summary: string) => boolean | Promise<boolean>;
   /**
    * Resolve the idle peer agents to close for `close_idle_agents`, grouped by
    * project with the caller excluded (idle detection + per-project confinement

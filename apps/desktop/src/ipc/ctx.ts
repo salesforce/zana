@@ -62,7 +62,7 @@ export interface IpcCtx {
   heartbeat: any;
   hostCommandRelay: any;
   inboxStore: any;
-  inboxMarkers: any;
+  inboxReadStore: any;
   inboxSummary: any;
   isTeamWorkerRestore: any;
   keepAwake: any;

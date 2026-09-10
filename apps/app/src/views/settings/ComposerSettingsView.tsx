@@ -90,16 +90,10 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
           onChange={(showModern) => updateSurfaces({ showModern })}
         />
         <CheckboxField
-          label="Autonomous Team"
-          help="Show Autonomous Team when at least one team exists."
-          checked={surfaces.showAutonomousTeam}
-          onChange={(showAutonomousTeam) => updateSurfaces({ showAutonomousTeam })}
-        />
-        <CheckboxField
-          label="Job Team"
-          help="Show durable Job Team mode. Jobs stay on the Agents board after you close the launcher."
-          checked={surfaces.showJobTeam}
-          onChange={(showJobTeam) => updateSurfaces({ showJobTeam })}
+          label="Team"
+          help="Show durable Team mode."
+          checked={surfaces.showTeam}
+          onChange={(showTeam) => updateSurfaces({ showTeam })}
         />
       </Section>
 

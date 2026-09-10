@@ -5,13 +5,13 @@ import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 
 function record(): ExecutionRecord {
   return {
-    id: 'execution-1', callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', launchKind: 'team', launchDisplay: { label: 'Release execution' }, jobTitle: 'Release train', coordinationMode: 'job-team', summary: 'Ship safely', requestDigest: 'digest', launchRequestId: 'request', teamLaunchRequestId: 'team-request', request: {
+    id: 'execution-1', callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', launchKind: 'team', launchDisplay: { label: 'Release execution' }, jobTitle: 'Release train', coordinationMode: 'job-team', origin: 'scheduled', summary: 'Ship safely', requestDigest: 'digest', launchRequestId: 'request', teamLaunchRequestId: 'team-request', request: {
       version: 1,
       launchKind: 'team',
       launchDisplay: { label: 'Release execution' },
       slots: [{ initialTask: 'Ship' }, { initialTask: 'Review' }],
       resolvedModels: [],
-      goal: 'Deliver release train',
+      objective: 'Deliver release train',
       sourceBundle: { contentRef: 'execution-1/sources.json', sources: [{ id: 'source-1', name: 'plan.md', mediaType: 'text/markdown', byteSize: 25_000, contentDigest: 'sha256:source', extractionStatus: 'READY', extractionWarnings: ['Normalized line endings'] }] }
     }, attempt: 2, state: 'BLOCKED', stateVersion: 3, resolvedModels: [],
     workUnits: [
@@ -30,8 +30,8 @@ describe('projectExecutionProjection', () => {
   it('projects non-secret project execution state and finds only a live orchestrator', () => {
     const session = { id: 'orch', status: 'running', cohort: { executionId: 'execution-1', role: 'orchestrator' } } as TerminalSession;
     expect(projectExecutionProjection([record()], [session])[0]).toMatchObject({
-      executionId: 'execution-1', projectId: 'project-1', teamId: 'team-1', launchKind: 'team', launchDisplay: { label: 'Release execution' }, jobTitle: 'Release train', coordinationMode: 'job-team',
-      goal: 'Deliver release train', summary: 'Ship safely', state: 'BLOCKED', attempt: 2,
+      executionId: 'execution-1', projectId: 'project-1', teamId: 'team-1', launchKind: 'team', launchDisplay: { label: 'Release execution' }, jobTitle: 'Release train', coordinationMode: 'job-team', origin: 'scheduled',
+      objective: 'Deliver release train', summary: 'Ship safely', state: 'BLOCKED', attempt: 2,
       orchestratorSessionId: 'orch', coordinator: { status: 'live', sessionId: 'orch' },
       sources: [{ name: 'plan.md', contentDigest: 'sha256:source', extractionWarnings: ['Normalized line endings'] }],
       work: {
@@ -39,6 +39,10 @@ describe('projectExecutionProjection', () => {
         assignments: [{ workUnitId: 'build', slotId: 'builder', state: 'COMPLETED' }, { workUnitId: 'verify', slotId: 'reviewer', state: 'BLOCKED' }]
       },
       currentBlocker: { id: 'current', workUnitId: 'verify', slotId: 'reviewer', question: 'Use staging?', options: ['Yes', 'No'] },
+      blockers: [
+        { id: 'old', resolved: true },
+        { id: 'current', resolved: false }
+      ],
       finalSummary: 'Full coordinator summary', eventCursor: 0, recoveryAttention: false
     });
   });
@@ -120,6 +124,21 @@ describe('projectExecutionProjection', () => {
     });
     expect(JSON.stringify(blocker)).not.toContain('secret response text');
     expect(blocker?.delivery?.error?.length ?? 0).toBeLessThanOrEqual(1_024);
+  });
+
+  it('projects delivery state for every bounded blocker, not only the newest unresolved blocker', () => {
+    const input = record();
+    input.blockers!.push({ id: 'newest', workUnitId: 'verify', slotId: 'reviewer', question: 'Proceed?', resolved: false, createdAt: 5 });
+    input.deliveries = [
+      { id: 'delivery-current', clientRequestId: 'client-current', blockerId: 'current', workUnitId: 'verify', slotId: 'reviewer', payload: { text: 'queued' }, state: 'PENDING', attempt: 0, createdAt: 3, updatedAt: 4 },
+      { id: 'delivery-newest', clientRequestId: 'client-newest', blockerId: 'newest', workUnitId: 'verify', slotId: 'reviewer', payload: { text: 'failed' }, state: 'FAILED', attempt: 1, createdAt: 5, updatedAt: 6 }
+    ];
+
+    expect(projectExecutionProjection([input], [])[0].blockers).toEqual([
+      { id: 'old', resolved: true },
+      { id: 'current', resolved: false, deliveryState: 'PENDING' },
+      { id: 'newest', resolved: false, deliveryState: 'FAILED' }
+    ]);
   });
 
   it('surfaces a delivery error as a first-line message, never a multi-line stack trace', () => {

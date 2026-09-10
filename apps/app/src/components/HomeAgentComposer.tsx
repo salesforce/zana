@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ThreadCommandComposer, type ThreadCommandComposerProps } from './ThreadCommandComposer.js';
 import { LegacyAgentHomeComposer } from './LegacyAgentHomeComposer.js';
-import { AutonomousTeamComposer } from './AutonomousTeamComposer.js';
-import { JobTeamComposer } from './JobTeamComposer.js';
+import { TeamComposer } from './TeamComposer.js';
 import { LaunchModeSegmented } from './LaunchModeSegmented.js';
 import {
   resolveAvailableLaunchMode,
@@ -35,11 +34,8 @@ export function HomeAgentComposer({
   const available = visibleComposerLaunchModes({
     showCliAgent: walkthroughHomeMode ? true : composerShowCliAgent,
     showModern: walkthroughHomeMode ? true : composerShowModern,
-    showAutonomousTeam: composerShowAutonomousTeam,
-    showJobTeam: teamJobLaunchEnabled
+    showTeam: composerShowAutonomousTeam || teamJobLaunchEnabled
   }, { hasTeams: teams.length > 0 });
-  const showAutonomousTeam = available.showAutonomousTeam;
-  const showJobTeam = available.showJobTeam;
   const [storedMode, setStoredMode] = useLaunchModePreference();
   const preferred = resolveAvailableLaunchMode(storedMode, available);
   const kind = walkthroughHomeMode === 'thread' || walkthroughHomeMode === 'agent'
@@ -58,8 +54,7 @@ export function HomeAgentComposer({
           onChange={setStoredMode}
           showCliAgent={available.showCliAgent}
           showModern={available.showModern}
-          showAutonomousTeam={showAutonomousTeam}
-          showJobTeam={showJobTeam}
+          showTeam={available.showTeam}
         />
       )}
       {allowLegacyAgent && kind === 'agent' ? (
@@ -68,14 +63,12 @@ export function HomeAgentComposer({
           composerProjectId={composerProjectId}
           onComposerProjectIdChange={setComposerProjectId}
         />
-      ) : allowLegacyAgent && kind === 'autonomous' ? (
-        <AutonomousTeamComposer
+      ) : allowLegacyAgent && kind === 'team' ? (
+        <TeamComposer
           project={project}
           composerProjectId={composerProjectId}
           onComposerProjectIdChange={setComposerProjectId}
         />
-      ) : allowLegacyAgent && kind === 'job' ? (
-        <JobTeamComposer project={project} />
       ) : (
         <ThreadCommandComposer
           {...props}

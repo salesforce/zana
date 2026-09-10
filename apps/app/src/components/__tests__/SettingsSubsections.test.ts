@@ -170,6 +170,7 @@ describe('Settings subsection navigation', () => {
       'agent-guidance',
       'git-worktrees',
       'agent-tabs',
+      'teams',
       'agent-attention',
       'scheduled',
       'agent-automation',

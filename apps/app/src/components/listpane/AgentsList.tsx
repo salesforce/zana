@@ -25,6 +25,7 @@ import { PluginExclusiveThreadList } from '@/plugins/PluginExclusiveThreadList';
 import { usePaneContentSplitDrag } from '@/components/sidebar/useThreadRowSplitDrag';
 import { usePaneContentSplitIndicator } from '@/components/sidebar/paneContentSplitIndicator';
 import { SplitPaneMiniMap } from '@/components/sidebar/SplitPaneMiniMap';
+import { groupSessionsByTeamRun } from '@/lib/teamRunOrganization';
 
 /**
  * The Agents section's column-2 list pane. Column 3 under the Agents nav is the
@@ -234,9 +235,10 @@ function partitionExecutionRows(
 /** Build (or re-skin) the one row that represents a Job's execution as a whole. */
 function executionRowHost(member: AgentRow | undefined, execution: ExecutionBoardProjection, synthetic = !member): AgentRow {
   const terminal = execution.state === 'COMPLETED' || execution.state === 'FAILED' || execution.state === 'STOPPED';
+  const displayTitle = execution.jobTitle;
   const session = member?.session ?? {
     id: `execution:${execution.executionId}`,
-    title: execution.jobTitle,
+    title: displayTitle,
     status: terminal ? 'exited' : 'running',
     profile: 'claude'
   } as TerminalSession;
@@ -245,13 +247,13 @@ function executionRowHost(member: AgentRow | undefined, execution: ExecutionBoar
     session: {
       ...session,
       id: synthetic ? `execution:${execution.executionId}` : session.id,
-      title: execution.jobTitle,
+      title: displayTitle,
       status: terminal ? 'exited' : 'running',
       headless: synthetic || session.headless,
       cohort: {
-        ...(session.cohort ?? { cohortId: execution.executionId, teamId: 'execution', teamName: 'Execution', role: 'orchestrator' }),
+        ...(session.cohort ?? { cohortId: execution.executionId, teamId: execution.teamId ?? 'execution', teamName: execution.teamName ?? 'Team', role: 'orchestrator' }),
         executionId: execution.executionId,
-        executionJobTitle: execution.jobTitle,
+        executionJobTitle: displayTitle,
         role: 'orchestrator'
       }
     },
@@ -270,6 +272,7 @@ export function AgentsListPane() {
   // off, only `blocked` agents are "Needs you" and a triaged idle one stays Idle.
   const promoteTriage = useData((s) => s.agentListNeedsYouFromTriage);
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
+  const organization = useData((s) => s.agentsListOrganization);
   // Durable Job Team executions surfaced on this list (mirrors AgentsBoard's
   // own polling), so a Job-backed cohort collapses into one host row here too.
   const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
@@ -484,6 +487,10 @@ export function AgentsListPane() {
     }
   ].filter((g) => g.entries.length > 0);
 
+  const teamRunGroups = groupSessionsByTeamRun(
+    [...live, ...background, ...finished].map((row) => ({ session: row.session, row }))
+  );
+
   // A compact worker row nested under its squad's orchestrator: a status dot +
   // title + duration, no icon/project/badges — smaller than a top-level row so a
   // squad's members read as a tight sub-list, not a wall of full rows. At-rest
@@ -574,13 +581,13 @@ export function AgentsListPane() {
           </div>
         ) : (
           <>
-            {liveGroups.map((g) => (
+            {(organization === 'team-run' ? teamRunGroups : liveGroups).map((g) => (
               <div key={g.key} className="agents-group">
                 <div className={`agents-group-label group-${g.key}`}>
                   <span>{g.label}</span>
-                  <span className="agents-group-count">{g.entries.length}</span>
+                  <span className="agents-group-count">{'entries' in g ? g.entries.length : g.items.length}</span>
                 </div>
-                {g.entries.map((entry) =>
+                {('entries' in g ? g.entries : g.items.map(({ row }) => ({ kind: 'agent' as const, row }))).map((entry) =>
                   entry.kind === 'thread' ? (
                     <ThreadListEntry
                       key={entry.thread.id}
@@ -599,7 +606,28 @@ export function AgentsListPane() {
                 )}
               </div>
             ))}
-            {(background.length > 0 || finished.length > 0) && (
+            {organization === 'team-run' && visibleThreads.length > 0 && (
+              <div className="agents-group">
+                <div className="agents-group-label group-threads">
+                  <span>Threads</span>
+                  <span className="agents-group-count">{visibleThreads.length}</span>
+                </div>
+                {[...pinnedThreads, ...unpinnedThreads].map((thread) => (
+                  <ThreadListEntry
+                    key={thread.id}
+                    thread={thread}
+                    projectName={nameById.get(thread.projectId) ?? 'Unknown'}
+                    projectId={scopedProjectId}
+                    active={thread.id === activeThreadId}
+                    onContextMenu={(e) => {
+                      setMenu(null);
+                      openThreadMenu(e, thread, setThreadMenu);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+            {organization === 'status' && (background.length > 0 || finished.length > 0) && (
               // At-rest sections (detached + exited) pin to the bottom via
               // margin-top:auto so they sit below the live groups even when no
               // foreground agent is running and the list is otherwise empty.
@@ -715,11 +743,6 @@ function AgentWorkerRow({
       title={`${t.title} — ${row.projectName} · ${STATE_LABEL[row.state]}`}
     >
       <span className={`tab-agent-dot agent-${exited ? 'done' : row.state}`} aria-hidden="true" />
-      {isJob && (
-        <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort!.executionId})`} style={{ margin: 0, marginRight: 5 }}>
-          job
-        </span>
-      )}
       <span className="agents-worker-title">{label}</span>
       {t.cohort?.role === 'worker' && (
         <span title="Worker">
@@ -796,11 +819,6 @@ function AgentSideListRow({
       <span className="agents-row-text">
         <span className="agents-row-title-line">
           {!exited && <span className={`tab-agent-dot agent-${row.state}`} aria-hidden="true" />}
-          {isJob && (
-            <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort!.executionId})`} style={{ margin: 0, marginRight: 5 }}>
-              job
-            </span>
-          )}
           <span className="agents-row-title">{t.title}</span>
           {isOrch && (
             <span title="Coordinator">

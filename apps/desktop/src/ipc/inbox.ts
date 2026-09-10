@@ -7,7 +7,7 @@ import { runSuggestion } from '@zana-ai/zcc-server/services/suggestions/run-sugg
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import type { InboxEntry } from '@zana-ai/zcc-server';
 import type { Suggestion } from '@zana-ai/zcc-server';
-import type { DetailedInboxSummaryResult, FeedNoiseResult, InboxMarkersSnapshot, InboxPdfExport, InboxSummaryResult } from '@zana-ai/zcc-domain/product';
+import type { DetailedInboxSummaryResult, FeedNoiseResult, InboxPdfExport, InboxSummaryResult } from '@zana-ai/zcc-domain/product';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 
 export function registerInboxIpc(): void {
@@ -62,61 +62,32 @@ export function registerInboxIpc(): void {
     },
     (): FeedNoiseResult => ({ routineIds: [], candidateCount: 0 })
   );
-  const emptyMarkers = (): InboxMarkersSnapshot => ({
-    version: 1,
-    readIds: {},
-    answeredIds: {},
-    keptIds: {}
-  });
-  ctx.safeHandle(
-    IPC.inbox.markers,
-    () => ctx.inboxMarkers.snapshot(),
-    emptyMarkers
-  );
+  const emptyReadState = () => ({ readIds: {}, migratedFromLocalStorage: false });
+  ctx.safeHandle(IPC.inbox.getReadState, () => ctx.inboxReadStore.getReadState(), emptyReadState);
   ctx.safeHandle(
     IPC.inbox.markRead,
-    async (id: string) => {
-      const snapshot = await ctx.inboxMarkers.markRead([id]);
-      ctx.safeSend(IPC.inbox.onMarkersChanged, snapshot);
-      return snapshot;
-    },
-    emptyMarkers
+    (id: string) => ctx.inboxReadStore.markRead(id),
+    emptyReadState
   );
   ctx.safeHandle(
     IPC.inbox.markUnread,
-    async (id: string) => {
-      const snapshot = await ctx.inboxMarkers.markUnread([id]);
-      ctx.safeSend(IPC.inbox.onMarkersChanged, snapshot);
-      return snapshot;
-    },
-    emptyMarkers
+    (id: string) => ctx.inboxReadStore.markUnread(id),
+    emptyReadState
   );
   ctx.safeHandle(
     IPC.inbox.markAllRead,
-    async (ids: string[]) => {
-      const snapshot = await ctx.inboxMarkers.markRead(Array.isArray(ids) ? ids : []);
-      ctx.safeSend(IPC.inbox.onMarkersChanged, snapshot);
-      return snapshot;
-    },
-    emptyMarkers
+    (ids: string[]) => ctx.inboxReadStore.markAllRead(Array.isArray(ids) ? ids : []),
+    emptyReadState
   );
   ctx.safeHandle(
-    IPC.inbox.markAnswered,
-    async (id: string) => {
-      const snapshot = await ctx.inboxMarkers.markAnswered(id);
-      ctx.safeSend(IPC.inbox.onMarkersChanged, snapshot);
-      return snapshot;
-    },
-    emptyMarkers
+    IPC.inbox.pruneRead,
+    (ids: string[]) => ctx.inboxReadStore.pruneRead(Array.isArray(ids) ? ids : []),
+    emptyReadState
   );
   ctx.safeHandle(
-    IPC.inbox.toggleKeep,
-    async (id: string) => {
-      const snapshot = await ctx.inboxMarkers.toggleKeep(id);
-      ctx.safeSend(IPC.inbox.onMarkersChanged, snapshot);
-      return snapshot;
-    },
-    emptyMarkers
+    IPC.inbox.migrateReadState,
+    (ids: string[]) => ctx.inboxReadStore.migrateCurrentOriginReadIds(Array.isArray(ids) ? ids : []),
+    emptyReadState
   );
   ctx.safeHandle(
     IPC.usage.getSummary,
@@ -145,18 +116,12 @@ export function registerInboxIpc(): void {
   ctx.offLoudInboxAppended = ctx.inboxStore.onAppended(ctx.handleLoudInboxEntry);
   ctx.inboxStore.onRemoved((id: string) => {
     ctx.safeSend(IPC.inbox.onRemoved, id);
-    void ctx.inboxMarkers.prune([id]).then((snapshot) => {
-      ctx.safeSend(IPC.inbox.onMarkersChanged, snapshot);
-    });
   });
   ctx.inboxStore.onUpdated((entry: InboxEntry) => {
     ctx.safeSend(IPC.inbox.onUpdated, entry);
   });
   ctx.inboxStore.onPruned((removedIds: string[]) => {
     ctx.safeSend(IPC.inbox.onPruned, removedIds);
-    void ctx.inboxMarkers.prune(removedIds).then((snapshot) => {
-      ctx.safeSend(IPC.inbox.onMarkersChanged, snapshot);
-    });
   });
 
   // Suggested Actions launcher (afl-03): list/dismiss RPCs + a main-authorized

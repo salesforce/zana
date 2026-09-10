@@ -65,7 +65,7 @@ export async function answerJobBlockerThroughUi(args: {
   await expect(card).toBeVisible({ timeout: 15_000 });
   await card.click();
 
-  const details = window.getByLabel('Job details');
+  const details = window.getByLabel('Team details');
   await expect(details).toBeVisible();
   await expect(details.getByText('Current blocker', { exact: true })).toBeVisible();
   await expect(details.getByText('Which label should result.txt use?', { exact: true })).toBeVisible();
@@ -88,7 +88,7 @@ export async function answerJobBlockerThroughUi(args: {
 
   await window.getByTestId('nav-agents').or(window.getByTestId('project-nav-agents')).click();
   await window.locator('.agent-card').filter({ hasText: jobTitle }).first().click();
-  const completed = window.getByLabel('Job details');
+  const completed = window.getByLabel('Team details');
   await expect(completed.getByText(/COMPLETED · attempt/)).toBeVisible({ timeout: 15_000 });
   await expect(completed.getByText('4/4 complete', { exact: false })).toBeVisible();
 }

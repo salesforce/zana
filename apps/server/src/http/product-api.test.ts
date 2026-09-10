@@ -474,9 +474,7 @@ describe('product HTTP', () => {
       if (input.teamId === 'missing') {
         return { ok: false as const, code: 'NOT_FOUND', message: 'team not found' };
       }
-      return input.mode === 'structured'
-        ? { ok: true as const, value: { kind: 'job' as const, id: 'ex-1', state: 'RUNNING' } }
-        : { ok: true as const, value: { kind: 'run' as const, id: 'run-1', state: 'running' } };
+      return { ok: true as const, value: { kind: 'job' as const, id: input.mode === 'structured' ? 'ex-1' : 'ex-2', state: 'RUNNING' } };
     });
     const status = vi.fn(async (id: string) => {
       if (id === 'missing') return { ok: false as const, code: 'NOT_FOUND', message: 'not found' };
@@ -2037,87 +2035,66 @@ describe('product HTTP thread tabs', () => {
     const missing = await fetch(`${server.url}api/v1/threads/missing/tabs`);
     expect(missing.status).toBe(404);
   });
-});
 
-describe('product HTTP inbox markers', () => {
-  it('persists read/unread/keep across a process-style reopen and prunes on delete', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-inbox-markers-http-'));
+  it('hydrates, marks, prunes, and migrates inbox read state', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-inbox-read-'));
     mkdirSync(join(dataDir, 'inbox'), { recursive: true });
     writeFileSync(
       join(dataDir, 'inbox', 'entries.jsonl'),
       `${JSON.stringify({ id: 'inb-1', projectId: 'proj-1', comments: 'hello', ts: 2 })}\n${JSON.stringify({ id: 'inb-2', projectId: 'proj-1', comments: 'later', ts: 3 })}\n`
     );
-
     server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
 
-    const empty = await fetch(`${server.url}api/v1/inbox/markers`).then((r) => r.json());
-    expect(empty).toEqual({ version: 1, readIds: {}, answeredIds: {}, keptIds: {} });
+    const empty = await fetch(`${server.url}api/v1/inbox/read-state`).then((r) => r.json());
+    expect(empty).toEqual({ readIds: {}, migratedFromLocalStorage: false });
 
-    const emit = vi.spyOn(server.ctx.hub, 'emit');
-    const json = { 'content-type': 'application/json' };
-
-    const read = await fetch(`${server.url}api/v1/inbox/inb-1/read`, {
-      method: 'POST',
-      headers: json,
-      body: '{}'
-    });
-    expect(read.status).toBe(200);
-    await expect(read.json()).resolves.toEqual({
-      version: 1,
-      readIds: { 'inb-1': true },
-      answeredIds: {},
-      keptIds: {}
-    });
-    expect(emit).toHaveBeenCalledWith(
-      'inbox:markersChanged',
-      expect.objectContaining({ readIds: { 'inb-1': true } })
-    );
-
-    await fetch(`${server.url}api/v1/inbox/inb-1/answered`, {
-      method: 'POST',
-      headers: json,
-      body: '{}'
-    });
-    await fetch(`${server.url}api/v1/inbox/inb-2/keep`, {
-      method: 'POST',
-      headers: json,
-      body: '{}'
-    });
-    const all = await fetch(`${server.url}api/v1/inbox/read-all`, {
-      method: 'POST',
-      headers: json,
-      body: JSON.stringify({ ids: ['inb-1', 'inb-2', 'ghost'] })
+    const marked = await fetch(`${server.url}api/v1/inbox/read-state/inb-1`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' }
     }).then((r) => r.json());
-    expect(all.readIds).toEqual({ 'inb-1': true, 'inb-2': true });
-    expect(all.answeredIds).toEqual({ 'inb-1': true });
-    expect(all.keptIds).toEqual({ 'inb-2': true });
+    expect(marked.readIds['inb-1']).toBe(true);
 
-    await fetch(`${server.url}api/v1/inbox/inb-1/unread`, {
+    const ghost = await fetch(`${server.url}api/v1/inbox/read-state`, {
       method: 'POST',
-      headers: json,
-      body: '{}'
-    });
-    await fetch(`${server.url}api/v1/inbox/inb-1`, {
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['inb-2', 'ghost'] })
+    }).then((r) => r.json());
+    expect(ghost.readIds['inb-2']).toBe(true);
+    expect(ghost.readIds.ghost).toBeUndefined();
+
+    const unread = await fetch(`${server.url}api/v1/inbox/read-state/inb-1`, {
       method: 'DELETE',
-      headers: json,
-      body: '{}'
-    });
+      headers: { 'content-type': 'application/json' }
+    }).then((r) => r.json());
+    expect(unread.readIds['inb-1']).toBeUndefined();
+    expect(unread.readIds['inb-2']).toBe(true);
 
-    await server.close();
-    server = await startTestProductServer({
-      dataDir,
-      origins: { serverPort: 0, devAppPort: 5173 }
-    });
+    const pruned = await fetch(`${server.url}api/v1/inbox/read-state`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['inb-2'] })
+    }).then((r) => r.json());
+    expect(pruned.readIds).toEqual({});
 
-    const reopened = await fetch(`${server.url}api/v1/inbox/markers`).then((r) => r.json());
-    expect(reopened).toEqual({
-      version: 1,
-      readIds: { 'inb-2': true },
-      answeredIds: {},
-      keptIds: { 'inb-2': true }
-    });
+    const migrated = await fetch(`${server.url}api/v1/inbox/read-state/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['inb-1', 'ghost'] })
+    }).then((r) => r.json());
+    expect(migrated.migratedFromLocalStorage).toBe(true);
+    expect(migrated.readIds['inb-1']).toBe(true);
+    expect(migrated.readIds.ghost).toBeUndefined();
+
+    const again = await fetch(`${server.url}api/v1/inbox/read-state/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['inb-2'] })
+    }).then((r) => r.json());
+    expect(again.migratedFromLocalStorage).toBe(true);
+    expect(again.readIds['inb-2']).toBeUndefined();
+    expect(again.readIds['inb-1']).toBe(true);
   });
 });

@@ -17,6 +17,7 @@ const project: Project = {
 const h = vi.hoisted(() => ({
   data: {
     terminals: {} as Record<string, TerminalSession[]>,
+    projectNavigationOrganization: 'sessions' as 'sessions' | 'team-runs',
     closeTerminal: vi.fn(),
     restoreTerminal: vi.fn()
   },
@@ -214,6 +215,27 @@ describe('ProjectSessionRail', () => {
     expect(markup).not.toContain('Inbox watcher');
     expect(markup).not.toContain('Scheduled:');
     expect(markup).toContain('>1<');
+  });
+
+  it('uses the canonical execution title for a Team-run coordinator', () => {
+    h.data.terminals = {
+      'proj-1': [session({
+        title: 'Claude Code',
+        cohort: {
+          cohortId: 'run-1',
+          teamId: 'team-1',
+          teamName: 'Review Squad',
+          role: 'orchestrator',
+          executionId: 'execution-1',
+          executionJobTitle: 'Review Workflow Test Plan'
+        }
+      })]
+    };
+    h.threads = [];
+
+    const markup = renderRail();
+    expect(markup).toContain('Review Workflow Test Plan');
+    expect(markup).not.toContain('class="project-terminal-name">Claude Code<');
   });
 
   it('opens nested rows on the project-scoped session and thread routes', () => {

@@ -38,7 +38,6 @@ import type {
   ExtensionEntry,
   IdleTriageResult,
   InboxEntry,
-  InboxMarkersSnapshot,
   LibraryDoc,
   OverseerActivity,
   LlmPromptEntry,
@@ -678,6 +677,12 @@ const api: CcApi = {
     summarizeDetailed: (projectId) =>
       ipcRenderer.invoke(IPC.inbox.summarizeDetailed, projectId ?? null),
     classifyNoise: (projectId) => ipcRenderer.invoke(IPC.inbox.classifyNoise, projectId ?? null),
+    getReadState: () => ipcRenderer.invoke(IPC.inbox.getReadState),
+    markRead: (id) => ipcRenderer.invoke(IPC.inbox.markRead, id),
+    markUnread: (id) => ipcRenderer.invoke(IPC.inbox.markUnread, id),
+    markAllRead: (ids) => ipcRenderer.invoke(IPC.inbox.markAllRead, ids),
+    pruneRead: (ids) => ipcRenderer.invoke(IPC.inbox.pruneRead, ids),
+    migrateCurrentOriginReadIds: (ids) => ipcRenderer.invoke(IPC.inbox.migrateReadState, ids),
     onAppended: (cb) => {
       const handler = (_e: unknown, entry: InboxEntry) => cb(entry);
       ipcRenderer.on(IPC.inbox.onAppended, handler);
@@ -697,17 +702,6 @@ const api: CcApi = {
       const handler = (_e: unknown, ids: string[]) => cb(ids);
       ipcRenderer.on(IPC.inbox.onPruned, handler);
       return () => ipcRenderer.off(IPC.inbox.onPruned, handler);
-    },
-    markers: () => ipcRenderer.invoke(IPC.inbox.markers),
-    markRead: (id) => ipcRenderer.invoke(IPC.inbox.markRead, id),
-    markUnread: (id) => ipcRenderer.invoke(IPC.inbox.markUnread, id),
-    markAllRead: (ids) => ipcRenderer.invoke(IPC.inbox.markAllRead, ids),
-    markAnswered: (id) => ipcRenderer.invoke(IPC.inbox.markAnswered, id),
-    toggleKeep: (id) => ipcRenderer.invoke(IPC.inbox.toggleKeep, id),
-    onMarkersChanged: (cb) => {
-      const handler = (_e: unknown, snapshot: InboxMarkersSnapshot) => cb(snapshot);
-      ipcRenderer.on(IPC.inbox.onMarkersChanged, handler);
-      return () => ipcRenderer.off(IPC.inbox.onMarkersChanged, handler);
     }
   },
   usage: {

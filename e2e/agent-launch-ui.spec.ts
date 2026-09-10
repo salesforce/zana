@@ -251,7 +251,7 @@ for (const row of CLI_CASES) {
       await probeHarness(
         window,
         row.family,
-          row.expectWorking ? /2\.1\.220/ : /^2026\.09\.02$/
+        row.expectWorking ? /2\.1\.220/ : /^2026\.09\.02$/
       );
 
       projectId = await window.evaluate(async (path) => {

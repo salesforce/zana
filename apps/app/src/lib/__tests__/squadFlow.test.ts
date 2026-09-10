@@ -392,6 +392,24 @@ describe('buildSquadFlow — launchFilter (one squad within a project)', () => {
     expect(g!.nodes.map((n) => n.sessionId).sort()).toEqual(['l1a', 'l1b']);
   });
 
+  it('uses host-stamped cohort identity and preserves completed Team run metadata', () => {
+    const cohort = {
+      cohortId: 'run-2', teamId: 'team-1', teamName: 'Review Team', role: 'worker' as const,
+      executionId: 'execution-12345678'
+    };
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'a', teamLaunchId: 'stale-run' })],
+      sessions: [
+        session({ id: 'a', status: 'exited', cohort }),
+        session({ id: 'b', status: 'exited', cohort: { ...cohort, role: 'orchestrator' } })
+      ],
+      launchFilter: 'run-2'
+    }));
+
+    expect(g?.nodes.map((node) => node.sessionId).sort()).toEqual(['a', 'b']);
+    expect(g).toMatchObject({ teamName: 'Review Team', executionId: 'execution-12345678' });
+  });
+
   it('recomputes the orchestrator WITHIN the squad (not inherited from the merge)', () => {
     // Across the whole project, l1a has the highest out-degree (2 sends) so it
     // would be the merged orchestrator. Filtered to L2, l2a must lead its own squad.

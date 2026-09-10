@@ -277,17 +277,16 @@ export const IPC = {
     summarize: 'inbox:summarize',
     summarizeDetailed: 'inbox:summarizeDetailed',
     classifyNoise: 'inbox:classifyNoise',
-    onAppended: 'inbox:onAppended',
-    onRemoved: 'inbox:onRemoved',
-    onUpdated: 'inbox:onUpdated',
-    onPruned: 'inbox:onPruned',
-    markers: 'inbox:markers',
+    getReadState: 'inbox:getReadState',
     markRead: 'inbox:markRead',
     markUnread: 'inbox:markUnread',
     markAllRead: 'inbox:markAllRead',
-    markAnswered: 'inbox:markAnswered',
-    toggleKeep: 'inbox:toggleKeep',
-    onMarkersChanged: 'inbox:onMarkersChanged'
+    pruneRead: 'inbox:pruneRead',
+    migrateReadState: 'inbox:migrateReadState',
+    onAppended: 'inbox:onAppended',
+    onRemoved: 'inbox:onRemoved',
+    onUpdated: 'inbox:onUpdated',
+    onPruned: 'inbox:onPruned'
   },
   /**
    * Usage / cost rollup (WARP R2 B7). `getSummary` computes a privacy-safe

@@ -111,9 +111,9 @@ vi.mock('../../plugins/PluginComposerChrome.js', () => ({
   PluginComposerChrome: ({ children }: { children: React.ReactNode }) => <>{children}</>
 }));
 
-import { JobTeamComposer } from '../JobTeamComposer.js';
+import { TeamComposer } from '../TeamComposer.js';
 
-describe('JobTeamComposer source-capability clearing', () => {
+describe('TeamComposer source-capability clearing', () => {
   afterEach(() => {
     cleanup();
     pick.mockClear();
@@ -123,7 +123,7 @@ describe('JobTeamComposer source-capability clearing', () => {
   });
 
   it('clears previously picked source capabilities when the effective project changes', async () => {
-    render(<JobTeamComposer />);
+    render(<TeamComposer />);
 
     // Select project one, then attach a source capability to it.
     fireEvent.click(screen.getByTestId('pick-project-p1'));

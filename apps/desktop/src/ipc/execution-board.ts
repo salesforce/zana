@@ -323,6 +323,7 @@ export function registerExecutionBoardIpc(): void {
           }));
         },
         findOrchestratorPersona: () => (personas.list() as Persona[]).find((candidate) => candidate.id === 'builtin:orchestrator'),
+        resolveTeamName: (teamId) => (teams.list() as Team[]).find((team) => team.id === teamId)?.name ?? teamId,
         createMonitor: createTerminalConfined,
         bindMonitor: (sessionId, id, execution, token) => squadExecutionService.resumeBinding(sessionId, id, execution, token),
         closeMonitor: (sessionId) => ptys.close(sessionId),

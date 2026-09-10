@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { launchDigest } from './digest.js';
+import { projectIdentityDigest } from './commit-revalidation.js';
 import type { LaunchAuthorizationBinding, LaunchConsumerKind, LaunchPrincipalRef } from './types.js';
 import type { HarnessExecutionTarget, HarnessProfilePosture, HarnessScope } from '@zana-ai/zcc-domain/harness-adapter';
 import type { ExecutionEvidenceFixture } from '@zana-ai/zcc-host-daemon/harness/execution-evidence';
@@ -180,7 +181,7 @@ export function preflightLaunch<TRequest, TResolved>(
     ...bindingInput,
     initialTaskDigest: launchDigest(requestSnapshot),
     storeRevision: storeRevisionOf(resolved),
-    projectIdentityDigest: launchDigest(projectOf(resolved)),
+    projectIdentityDigest: projectIdentityDigest(projectOf(resolved)),
     expiresAt: (deps.now ?? Date.now)() + (deps.authorizationTtlMs ?? 5 * 60_000)
   });
   const digest = launchDigest({ principal, request: requestSnapshot, resolved, sessionId, binding });

@@ -65,6 +65,28 @@ describe('normalizeConfig — sidebarWidth', () => {
   });
 });
 
+describe('normalizeConfig — Team organization', () => {
+  it('preserves supported organization modes', () => {
+    expect(normalizeConfig({
+      agentsListOrganization: 'team-run',
+      projectNavigationOrganization: 'team-runs',
+      flowAllOrganization: 'team-runs'
+    })).toMatchObject({
+      agentsListOrganization: 'team-run',
+      projectNavigationOrganization: 'team-runs',
+      flowAllOrganization: 'team-runs'
+    });
+  });
+
+  it('drops unsupported organization modes so readers use defaults', () => {
+    expect(normalizeConfig({
+      agentsListOrganization: 'project' as never,
+      projectNavigationOrganization: 'agents' as never,
+      flowAllOrganization: 'stacked' as never
+    })).not.toHaveProperty('agentsListOrganization');
+  });
+});
+
 describe('normalizeConfig — window state', () => {
   it('does not change omitted window state', () => {
     expect(normalizeConfig({})).not.toHaveProperty('windowBounds');

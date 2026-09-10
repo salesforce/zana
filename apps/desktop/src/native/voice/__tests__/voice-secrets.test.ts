@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -85,5 +85,33 @@ describe('voice secrets storage', () => {
     const { setGeminiKey, getGeminiKey } = await import('../secrets.js');
     setGeminiKey('g-stored');
     expect(getGeminiKey()).toBe('g-stored');
+  });
+
+  describe('under ZCC_E2E_HOME', () => {
+    beforeEach(() => {
+      process.env.ZCC_E2E_HOME = testHome;
+    });
+
+    afterEach(() => {
+      delete process.env.ZCC_E2E_HOME;
+    });
+
+    it('never touches safeStorage — falls back to the env var (no Keychain prompt in headless E2E)', async () => {
+      process.env.OPENAI_API_KEY = 'sk-env-key';
+      const { safeStorage } = await import('electron');
+      const callsBefore = vi.mocked(safeStorage.isEncryptionAvailable).mock.calls.length;
+      const { getOpenAiKey, hasOpenAiKey } = await import('../secrets.js');
+      expect(getOpenAiKey()).toBe('sk-env-key');
+      expect(hasOpenAiKey()).toBe(true);
+      expect(vi.mocked(safeStorage.isEncryptionAvailable).mock.calls.length).toBe(callsBefore);
+    });
+
+    it('rejects setOpenAiKey rather than touching safeStorage', async () => {
+      const { safeStorage } = await import('electron');
+      const callsBefore = vi.mocked(safeStorage.encryptString).mock.calls.length;
+      const { setOpenAiKey } = await import('../secrets.js');
+      expect(() => setOpenAiKey('sk-should-not-store')).toThrow('Encryption unavailable');
+      expect(vi.mocked(safeStorage.encryptString).mock.calls.length).toBe(callsBefore);
+    });
   });
 });

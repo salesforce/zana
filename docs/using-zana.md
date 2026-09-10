@@ -19,7 +19,7 @@ from the sidebar.
   project you pick. This is the usual path for day-to-day work.
 - **CLI Agent** — a real PTY running the native CLI, with the same tools and
   permissions as a standalone terminal.
-- **Autonomous Team** — launch a saved team of personas against the project when
+- **Team** — launch a saved team of personas against the project when
   the work benefits from parallel roles.
 
 The composer also picks the environment (Work locally, a new or existing

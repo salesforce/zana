@@ -13,6 +13,7 @@ import { FavoriteStar } from './FavoriteStar.js';
 import { PromptModal } from './PromptModal.js';
 import { FleetKindChip } from './FleetKindChip.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
+import { shortRunId } from '../lib/executionIdentity.js';
 import {
   agentCardRuntimeLabel,
   agentFleetItem,
@@ -385,9 +386,10 @@ export function executionNeedsAttention(execution: ExecutionBoardProjection): bo
 /** Board-only job host for retained execution workers after their real lead exits. */
 function executionHost(member: AgentCard | undefined, execution: ExecutionBoardProjection, synthetic = !member): AgentCard {
   const terminal = execution.state === 'COMPLETED' || execution.state === 'FAILED' || execution.state === 'STOPPED';
+  const displayTitle = execution.jobTitle;
   const session = member?.session ?? {
-    id: `execution:${execution.executionId}`,
-    title: execution.jobTitle,
+      id: `execution:${execution.executionId}`,
+      title: displayTitle,
     status: terminal ? 'exited' : 'running',
     profile: 'claude'
   } as TerminalSession;
@@ -396,13 +398,13 @@ function executionHost(member: AgentCard | undefined, execution: ExecutionBoardP
     session: {
       ...session,
       id: synthetic ? `execution:${execution.executionId}` : session.id,
-      title: execution.jobTitle,
+      title: displayTitle,
       status: terminal ? 'exited' : 'running',
       headless: synthetic || session.headless,
       cohort: {
-        ...(session.cohort ?? { cohortId: execution.executionId, teamId: 'execution', teamName: 'Execution', role: 'orchestrator' }),
+        ...(session.cohort ?? { cohortId: execution.executionId, teamId: execution.teamId ?? 'execution', teamName: execution.teamName ?? 'Team', role: 'orchestrator' }),
         executionId: execution.executionId,
-        executionJobTitle: execution.jobTitle,
+        executionJobTitle: displayTitle,
         role: 'orchestrator'
       }
     },
@@ -668,7 +670,6 @@ function SquadWorkers({
           >
             <span className={`tab-agent-dot agent-${exited ? 'done' : w.state}`} aria-hidden="true" />
             <span className="agent-squad-worker-label">{slotLabel}</span>
-            <span className="agent-squad-worker-activity">{activity}</span>
             <span className="agent-squad-worker-dur">{exited ? `ran ${dur}` : dur}</span>
           </button>
         );
@@ -874,6 +875,15 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     const cohort = cardCohort(c);
     const execution = cohort?.executionId ? executions?.find((candidate) => candidate.executionId === cohort.executionId) : undefined;
     const isOrchestrator = cohort?.role === 'orchestrator';
+    const teamRunTooltip = execution
+      ? [
+          `Team: ${execution.teamName ?? cohort?.teamName ?? 'Team'}`,
+          `Run ID: ${execution.executionId}`,
+          `Goal: ${execution.objective?.trim() || execution.jobTitle}`,
+          `Started: ${new Date(execution.createdAt).toLocaleString()}`,
+          `Status: ${execution.state}`
+        ].join('\n')
+      : undefined;
     // Workers of this squad, nested under their orchestrator card (empty for
     // every non-orchestrator card). `partitionSquads` pulled these OUT of the
     // lanes, so they render here or nowhere — the squad reads as one board card.
@@ -892,7 +902,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         key={t.id}
         className={`agent-card lane-${laneKey} ${active ? 'active' : ''} ${bad ? 'bad' : ''} ${
           cohort ? `has-cohort ${isOrchestrator ? 'cohort-orch' : 'cohort-worker'}` : ''
-        }`}
+        } ${execution ? 'has-execution' : ''}`}
         onClick={() => onInspect(agentFleetItem(c))}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -908,7 +918,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           setMenu({ card: c, ...clampMenuAnchor(e) });
         }}
         aria-current={active ? 'true' : undefined}
-        title={`${t.title} · ${subtitle}${showProject ? ` · ${c.projectName}` : ''}`}
+        title={execution ? undefined : `${t.title} · ${subtitle}${showProject ? ` · ${c.projectName}` : ''}`}
       >
         {laneKey === 'working' && (
           // Animated activity bar — the visible "alive" signal for a working
@@ -924,11 +934,6 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           >
             {persona ? personaIcon(persona, 14) : profileIcon(t.profile, 14)}
           </span>
-          {!!cohort?.executionId && (
-            <span className="job-badge" title={`Execution-backed job member (Run ID: ${cohort.executionId})`} style={{ margin: 0, marginRight: 2 }}>
-              job
-            </span>
-          )}
           <span className="agent-card-title">{cohort?.executionJobTitle ?? t.title}</span>
           <FleetKindChip kind="agent" />
           {!exited && <span className={`tab-agent-dot agent-${c.state}`} aria-hidden="true" />}
@@ -950,14 +955,21 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           {/* When cards are grouped under a project header (global board), the
               project is already named above — show the harness/runtime subtitle
               instead of a redundant project chip. */}
-          {showProject && !grouped && (
+          {execution && (
+            <span className="agent-card-team-run" data-tooltip={teamRunTooltip} tabIndex={0}>
+              <span className="agent-card-team-name">{execution.teamName ?? cohort?.teamName ?? 'Team'}</span>
+              <span aria-hidden="true"> · </span>
+              <span className="team-run-id">Run {shortRunId(execution.executionId)}</span>
+            </span>
+          )}
+          {showProject && !grouped && !execution && (
             <span className="agent-card-project" title={c.projectName}>
               {/* No colored project dot here — the project-tinted ring around
                   the agent icon already carries the project's color. */}
               <span className="agent-card-project-name">{c.projectName}</span>
             </span>
           )}
-          {(!showProject || grouped) && <span className="agent-card-sub">{subtitle}</span>}
+          {(!showProject || grouped) && !execution && <span className="agent-card-sub">{subtitle}</span>}
           {/* Branch of the agent's cwd — surfaced so a glance tells you which
               branch/worktree each agent is on. Local git only (remote omits it),
               and only for a repo cwd; renders nothing otherwise. */}
@@ -1002,15 +1014,12 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
               they read as background on the board, not just a stateless card.
               Distinct from Scheduled: a hidden non-scheduled agent is Background
               too, and a scheduled run shows both. */}
-          {cohort && (
-            // Team membership chip: the orchestrator gets a crown, workers a
-            // group glyph. The shared team name + the card's left accent make a
-            // launched team read as one unit wherever its members sit.
+          {cohort && !execution && (
             <span
               className={`agent-card-badge cohort ${isOrchestrator ? 'orch' : 'worker'}`}
               title={
                 c.isSyntheticExecutionHost
-                  ? `${cohort.teamName} — retained job host`
+                  ? `${cohort.teamName} — retained Team run`
                   : isOrchestrator
                   ? `${cohort.teamName} — team lead (you talk to this one; closing it ends the whole team)`
                   : `${cohort.teamName} — worker${cohort.slotLabel ? ` · ${cohort.slotLabel}` : ''}`
@@ -1069,16 +1078,16 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
               const result = retryable
                 ? await window.cc.executionBoard.retry(execution.projectId, execution.executionId, execution.stateVersion)
                 : await window.cc.executionBoard.stop(execution.projectId, execution.executionId, execution.stateVersion);
-              if (!result.ok) useUi.getState().pushToast(`Job control failed: ${result.message ?? result.code}`, 'error');
+               if (!result.ok) useUi.getState().pushToast(`Team control failed: ${result.message ?? result.code}`, 'error');
             } catch (err) {
               console.error(`[AgentBoard] ${execution.executionId} control (retry/stop) failed`, err);
-              useUi.getState().pushToast(`Job control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+               useUi.getState().pushToast(`Team control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
             } finally { setControllingExecutionId(null); }
           }}
         >
           {controllingExecutionId === execution.executionId
-            ? 'Updating job...'
-            : execution.state === 'BLOCKED' && !execution.orchestratorSessionId ? 'Retry job' : 'Stop job'}
+             ? 'Updating Team run...'
+             : execution.state === 'BLOCKED' && !execution.orchestratorSessionId ? 'Retry Team run' : 'Stop Team run'}
         </button>
       </span>
     ) : null;
@@ -1286,12 +1295,12 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
               if (execution.stateVersion === undefined) return;
               try {
                 const result = await window.cc.executionBoard.stop(execution.projectId, execution.executionId, execution.stateVersion);
-                if (!result.ok) useUi.getState().pushToast(`Job control failed: ${result.message ?? result.code}`, 'error');
+                 if (!result.ok) useUi.getState().pushToast(`Team control failed: ${result.message ?? result.code}`, 'error');
               } catch (err) {
                 console.error(`[AgentBoard] ${execution.executionId} stop (context menu) failed`, err);
-                useUi.getState().pushToast(`Job control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+                 useUi.getState().pushToast(`Team control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
               }
-            }}>Stop job</button>
+             }}>Stop Team run</button>
           )}
           {['COMPLETED', 'FAILED', 'STOPPED'].includes(executionMenu.execution.state) && (
             <>
@@ -1304,14 +1313,14 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
                   try {
                     const result = await window.cc.executionBoard.dismiss(execution.projectId, execution.executionId);
                     if (!result.ok) {
-                      useUi.getState().pushToast(`Job dismissal failed: ${result.message ?? result.code}`, 'error');
+                       useUi.getState().pushToast(`Team run dismissal failed: ${result.message ?? result.code}`, 'error');
                       return;
                     }
                     useData.getState().dismissTerminals(result.value.dismissedSessionIds);
                     onDismissExecution?.(execution.executionId);
                   } catch (err) {
                     console.error(`[AgentBoard] ${execution.executionId} dismiss failed`, err);
-                    useUi.getState().pushToast(`Job dismissal failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+                     useUi.getState().pushToast(`Team run dismissal failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
                   }
                 }}
               >

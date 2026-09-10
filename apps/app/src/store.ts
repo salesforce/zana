@@ -77,9 +77,8 @@ import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 import {
   findProjectIdForSession,
   hasMissingSetup,
+  hydrateInboxReadFromProduct,
   pruneInboxMarkers,
-  applyInboxMarkersSnapshot,
-  hydrateSavedMarksFromRecords,
   useAgentMesh,
   useAgentStatus,
   useAutonomousRuns,
@@ -774,6 +773,9 @@ function mirroredConfigFlags(config: AppConfig) {
     followUpsEnabled: config.followUpsEnabled ?? false,
     idleAttentionSensitivity: config.idleAttentionSensitivity ?? 'medium',
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
+    agentsListOrganization: config.agentsListOrganization ?? 'status',
+    projectNavigationOrganization: config.projectNavigationOrganization ?? 'sessions',
+    flowAllOrganization: config.flowAllOrganization ?? 'combined',
     includeScheduledAgentsInAgentView: config.includeScheduledAgentsInAgentView ?? true,
     voiceInputEnabled: config.voiceInputEnabled ?? false,
     steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false,
@@ -795,7 +797,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessGrokEnabled: config.harnessGrokEnabled ?? false,
     nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
-    teamJobLaunchEnabled: config.teamJobLaunchEnabled === true,
+    teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false,
     composerShowCliAgent: config.composerShowCliAgent !== false,
     composerShowModern: config.composerShowModern !== false,
     composerShowAutonomousTeam: config.composerShowAutonomousTeam !== false,
@@ -1481,6 +1483,9 @@ interface DataState {
    *  AgentsListPane also promotes triaged idle agents into its "Needs you" group
    *  (the board already does). Default off. */
   agentListNeedsYouFromTriage: boolean;
+  agentsListOrganization: NonNullable<AppConfig['agentsListOrganization']>;
+  projectNavigationOrganization: NonNullable<AppConfig['projectNavigationOrganization']>;
+  flowAllOrganization: NonNullable<AppConfig['flowAllOrganization']>;
   /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, waiting
    *  scheduler jobs appear in the Agents board Scheduled column (plus finished
    *  runs in Done). Working/blocked scheduled runs stay in Working even when
@@ -1579,7 +1584,7 @@ interface DataState {
   /** Mirror of AppConfig.composerShowModern — Modern in the launch switcher. */
   composerShowModern: boolean;
   setComposerShowModern: (on: boolean) => void;
-  /** Mirror of AppConfig.composerShowAutonomousTeam — Autonomous Team in the switcher. */
+  /** Mirror of AppConfig.composerShowAutonomousTeam — Team in the switcher. */
   composerShowAutonomousTeam: boolean;
   setComposerShowAutonomousTeam: (on: boolean) => void;
   /** Mirror of AppConfig.worktreeIsolationDefault — the default workspace
@@ -1939,6 +1944,9 @@ export const useData = create<DataState>((set, get) => ({
   followUpsEnabled: false,
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
+  agentsListOrganization: 'status',
+  projectNavigationOrganization: 'sessions',
+  flowAllOrganization: 'combined',
   includeScheduledAgentsInAgentView: true,
   voiceInputEnabled: false,
   steerActiveThreadOnEnter: false,
@@ -1970,7 +1978,7 @@ export const useData = create<DataState>((set, get) => ({
   },
   openerHiddenTargets: [],
   microVmEnabled: false,
-  teamJobLaunchEnabled: false,
+  teamJobLaunchEnabled: true,
   composerShowCliAgent: true,
   composerShowModern: true,
   composerShowAutonomousTeam: true,
@@ -2354,13 +2362,7 @@ export const useData = create<DataState>((set, get) => ({
         useInbox.setState({ loading: false });
       }
     })();
-    const loadInboxMarkers = (async () => {
-      try {
-        applyInboxMarkersSnapshot(await product.inbox.markers());
-      } catch {
-        /* markers stay empty until a later hub/IPC event */
-      }
-    })();
+    const loadInboxRead = hydrateInboxReadFromProduct();
     const loadSuggestions = (async () => {
       try {
         const { entries } = await product.suggestions.list(scopedProjectId ?? undefined);
@@ -2373,7 +2375,6 @@ export const useData = create<DataState>((set, get) => ({
       try {
         const records = await product.saved.list();
         useSaved.setState({ records, loading: false });
-        hydrateSavedMarksFromRecords(records);
       } catch {
         useSaved.setState({ loading: false });
       }
@@ -2389,7 +2390,7 @@ export const useData = create<DataState>((set, get) => ({
         /* mesh view is best-effort; leave empty on failure */
       }
     })();
-    await Promise.all([loadInbox, loadInboxMarkers, loadSuggestions, loadSaved, loadMesh]);
+    await Promise.all([loadInbox, loadInboxRead, loadSuggestions, loadSaved, loadMesh]);
 
     product.inbox.onAppended((entry) => {
       if (scopedProjectId && entry.projectId !== scopedProjectId) return;
@@ -2416,11 +2417,10 @@ export const useData = create<DataState>((set, get) => ({
       useInbox.getState().upsert(entry);
     });
     product.inbox.onPruned((removedIds) => {
+      // Retention rolled these off disk: drop the rows and prune the persisted
+      // read/answered/saved/keep markers so those localStorage maps stay bounded.
       useInbox.getState().removeManyLocal(removedIds);
       pruneInboxMarkers(removedIds);
-    });
-    product.inbox.onMarkersChanged((snapshot) => {
-      applyInboxMarkersSnapshot(snapshot);
     });
 
     // Suggested Actions (afl-03): push subscriptions (the one-shot list load ran
@@ -2445,7 +2445,6 @@ export const useData = create<DataState>((set, get) => ({
     // above). Low volume, so main replaces the whole list on every save/delete.
     product.saved.onChanged((records) => {
       useSaved.setState({ records, loading: false });
-      hydrateSavedMarksFromRecords(records);
     });
 
     // Agent mesh: live pushes (the one-shot registry + message load ran

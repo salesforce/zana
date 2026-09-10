@@ -1,7 +1,7 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, FileText, Folder, Loader2, Mic, Paperclip, Users, X } from 'lucide-react';
-import type { ExecutionSourceCapabilityView, Project } from '@zana-ai/zcc-domain/product';
+import type { ExecutionSourceCapabilityView, Project, TeamCoordinationMode } from '@zana-ai/zcc-domain/product';
 import {
   CommandComposer,
   ComposerIconButton,
@@ -15,42 +15,47 @@ import { posixQuote } from '../lib/quote.js';
 import { attachmentName } from '../lib/attachments.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
-import { composerProjectOptions, resolveComposerProjectId } from './composer-project-default.js';
+import { composerProjectOptions, preferredComposerProjectId, resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { defaultAutonomousTeamId } from './autonomous-team-composer.js';
-import { titleFromPrompt } from '../lib/promptTitle.js';
 import {
   assembleCliLaunchPrompt,
   composerDropProjectRoot,
   stageRemoteComposerAttachments
 } from './legacy-agent-home.js';
 
-/**
- * New Chat / launcher surface for a durable **Job Team** run — the persistent,
- * orchestrator-led team execution that survives closing the launcher and shows
- * on the Agents board. Mirrors AutonomousTeamComposer, but launches via
- * `teams.startJob` (durable) rather than `teams.launchAutonomous`, and adds the
- * optional Title/Summary fields and attached source capabilities that a job
- * carries. This file is the only composer caller of `teams.startJob`.
- */
-export function JobTeamComposer({
+/** One durable Team launch surface for inferred and user-provided plans. */
+export function TeamComposer({
   project: pinnedProject,
+  composerProjectId,
+  onComposerProjectIdChange,
   initialText,
   onClose
 }: {
   project?: Project;
   initialText?: string;
   onClose?: () => void;
-}) {
+} & ComposerProjectSelectionProps) {
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
   const teams = useTeams(useShallow((s) => s.teams));
   const pushToast = useUi((s) => s.pushToast);
-  const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
+  const selectedProjectId = useUi((s) => s.selectedProjectId);
+  const lastProjectId = useData((s) => s.lastProjectId);
+  const [internalProjectId, setInternalProjectId] = useState(pinnedProject?.id ?? composerProjectId ?? '');
+  const projectId = pinnedProject?.id
+    ?? (onComposerProjectIdChange ? (composerProjectId || internalProjectId) : internalProjectId);
+  const setProjectId = (nextProjectId: string | ((current: string) => string)) => {
+    const resolved = typeof nextProjectId === 'function' ? nextProjectId(projectId) : nextProjectId;
+    if (!onComposerProjectIdChange) setInternalProjectId(resolved);
+    onComposerProjectIdChange?.(resolved);
+  };
+  const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
   const [teamId, setTeamId] = useState('');
+  const [coordinationMode, setCoordinationMode] = useState<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>('freeform');
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
   const [jobSources, setJobSources] = useState<ExecutionSourceCapabilityView[]>([]);
@@ -66,8 +71,8 @@ export function JobTeamComposer({
 
   const field = useComposerPromptField({
     placeholder: 'Describe the GOAL for the team to reach (⌘↵ to launch). Attach or drop supporting files.',
-    testId: 'job-team-command-input',
-    ariaLabel: 'Goal for the job team',
+    testId: 'team-command-input',
+    ariaLabel: 'Goal for the team',
     projectId,
     projectRoot: composerDropProjectRoot(project),
     projects,
@@ -96,7 +101,7 @@ export function JobTeamComposer({
       setProjectId(preferred);
       return;
     }
-    const nextId = resolveComposerProjectId(projects, projectId);
+    const nextId = resolveComposerProjectId(projects, projectId, undefined, preferredProjectId);
     if (nextId && nextId !== projectId) {
       setProjectId(nextId);
       return;
@@ -114,7 +119,7 @@ export function JobTeamComposer({
     return () => {
       cancelled = true;
     };
-  }, [loadProjects, pinnedProject, projectId, projects, selectedTeam?.defaultProjectId]);
+  }, [loadProjects, pinnedProject, preferredProjectId, projectId, projects, selectedTeam?.defaultProjectId]);
 
   // A previous project's picked source capabilities are meaningless (and
   // unsafe to submit) once the effective project changes — clear them so a
@@ -144,7 +149,7 @@ export function JobTeamComposer({
       });
     } catch (err) {
       const message = `Failed to attach sources: ${err instanceof Error ? err.message : String(err)}`;
-      console.error('[JobTeamComposer] pickSources failed', err);
+      console.error('[TeamComposer] pickSources failed', err);
       setError(message);
       pushToast(message, 'error');
     } finally {
@@ -194,12 +199,13 @@ export function JobTeamComposer({
         teamId,
         projectId: project.id,
         goal,
-        title: title.trim() || titleFromPrompt(goal),
+        coordinationMode,
+        ...(title.trim() ? { title: title.trim() } : {}),
         ...(summary.trim() ? { summary: summary.trim() } : {}),
         ...(jobSources.length ? { sourceCapabilityIds: jobSources.map(({ id }) => id) } : {})
       });
       if (!res.ok) {
-        const message = `Job launch failed: ${res.message ?? res.code}`;
+        const message = `Team launch failed: ${res.message ?? res.code}`;
         setError(message);
         pushToast(message, 'error');
         return;
@@ -208,10 +214,10 @@ export function JobTeamComposer({
       setTitle('');
       setSummary('');
       setJobSources([]);
-      pushToast('Job launched. Open Agents board to monitor it.');
+      pushToast('Team launched. Open Agents board to monitor it.');
       onClose?.();
     } catch (err) {
-      const message = `Job launch failed: ${err instanceof Error ? err.message : String(err)}`;
+      const message = `Team launch failed: ${err instanceof Error ? err.message : String(err)}`;
       setError(message);
       pushToast(message, 'error');
     } finally {
@@ -234,16 +240,16 @@ export function JobTeamComposer({
       onKeyDown={field.handleChromeKeyDown}
       {...field.dropHandlers}
     >
-      <span id="job-team-command-label" className="thread-command-label">Job team composer</span>
+      <span id="team-command-label" className="thread-command-label">Team composer</span>
       {error ? (
-        <p className="thread-command-error" data-testid="job-team-command-error">{error}</p>
+        <p className="thread-command-error" data-testid="team-command-error">{error}</p>
       ) : null}
       {teams.length === 0 ? (
         <p className="thread-command-error" role="status">No teams configured.</p>
       ) : null}
       <CommandComposer
         className="home-agent-command thread-command-card"
-        labelledBy="job-team-command-label"
+        labelledBy="team-command-label"
         aria-busy={launching}
       >
         <ComposerPromptField
@@ -252,7 +258,7 @@ export function JobTeamComposer({
           onRemoveImage={field.removeImage}
           expanded={expanded}
           onToggleExpanded={() => setExpanded((current) => !current)}
-          expandTestId="job-team-command-expand"
+          expandTestId="team-command-expand"
           menuOpen={field.menuOpen}
           suggestions={field.suggestions}
           selectedIndex={field.highlighted}
@@ -273,7 +279,7 @@ export function JobTeamComposer({
                 <div className="thread-command-chip">
                   <Users size={14} aria-hidden="true" />
                   <PopoverPicklist
-                    id="job-team-picker"
+                    id="team-picker"
                     value={teamId}
                     ariaLabel="Team"
                     placeholder="Select a team"
@@ -288,51 +294,67 @@ export function JobTeamComposer({
                     emptyHint="No teams configured"
                   />
                 </div>
+                <div className="thread-command-chip">
+                  <PopoverPicklist
+                    id="team-coordination-mode"
+                    value={coordinationMode}
+                    ariaLabel="Team planning"
+                    searchable={false}
+                    options={[
+                      { value: 'freeform', label: 'Infer plan from goal' },
+                      { value: 'structured', label: 'Plan provided in goal' }
+                    ]}
+                    onChange={(value) => setCoordinationMode(value as typeof coordinationMode)}
+                  />
+                </div>
               </div>
               <div className="thread-command-footer-end">
-                <ComposerIconButton
-                  onClick={() => { if (!field.canAttach) return; field.attachPickedFiles(); }}
-                  disabled={!field.canAttach}
-                  title={field.canAttach ? 'Attach files' : 'File attachments require the desktop app'}
-                  aria-label="Attach files"
-                >
-                  <Paperclip size={14} aria-hidden="true" />
-                </ComposerIconButton>
-                <ComposerIconButton
-                  onClick={() => void pickSources()}
-                  disabled={!project || pickingSources}
-                  title="Attach source files for the team to work from"
-                  aria-label="Attach sources"
-                >
-                  <FileText size={14} aria-hidden="true" />
-                </ComposerIconButton>
-                <ComposerIconButton
-                  className="voice-input-btn voice-input-btn--icon"
-                  aria-label={
+                <span className="composer-control-tooltip" data-tooltip={field.canAttach ? 'Attach files' : 'File attachments require the desktop app'}>
+                  <ComposerIconButton
+                    onClick={() => { if (!field.canAttach) return; field.attachPickedFiles(); }}
+                    disabled={!field.canAttach}
+                    aria-label="Attach files"
+                  >
+                    <Paperclip size={14} aria-hidden="true" />
+                  </ComposerIconButton>
+                </span>
+                <span className="composer-control-tooltip" data-tooltip="Attach source files for the team to work from">
+                  <ComposerIconButton
+                    onClick={() => void pickSources()}
+                    disabled={!project || pickingSources}
+                    aria-label="Attach sources"
+                  >
+                    <FileText size={14} aria-hidden="true" />
+                  </ComposerIconButton>
+                </span>
+                <span className="composer-control-tooltip" data-tooltip={
+                  !voice.isSupported
+                    ? 'Voice input is not supported in this browser'
+                    : !voice.available
+                      ? 'Host daemon is not connected'
+                      : 'Start voice input'
+                }>
+                  <ComposerIconButton
+                    className="voice-input-btn voice-input-btn--icon"
+                    aria-label={
                     !voice.isSupported
                       ? 'Voice input is not supported in this browser'
                       : !voice.available
                         ? 'Host daemon is not connected'
                         : 'Start voice input'
-                  }
-                  title={
-                    !voice.isSupported
-                      ? 'Voice input is not supported in this browser'
-                      : !voice.available
-                        ? 'Host daemon is not connected'
-                        : 'Start voice input'
-                  }
-                  disabled={!voice.canStart}
-                  onClick={() => void voice.start()}
-                >
-                  <Mic size={14} />
-                </ComposerIconButton>
+                    }
+                    disabled={!voice.canStart}
+                    onClick={() => void voice.start()}
+                  >
+                    <Mic size={14} />
+                  </ComposerIconButton>
+                </span>
                 <ComposerIconButton
                     className={`thread-command-send${launching ? ' is-sending' : ''}`}
-                    aria-label={launching ? 'Launching job team' : 'Launch job team'}
-                    title={launching ? 'Launching job team' : 'Launch job team'}
+                    aria-label={launching ? 'Launching team' : 'Launch team'}
+                    title={launching ? 'Launching team' : 'Launch team'}
                     aria-busy={launching}
-                    data-testid="job-team-command-send"
+                    data-testid="team-command-send"
                     disabled={!canLaunch}
                     onClick={() => void launch()}
                     onMouseDown={(event) => event.preventDefault()}
@@ -365,11 +387,11 @@ export function JobTeamComposer({
           ))}
         </ul>
       ) : null}
-      <div className="launch-job-details" role="group" aria-label="Job details">
-        <label className="workflow-arg-field" htmlFor="job-team-title">
+      <div className="launch-job-details" role="group" aria-label="Team details">
+        <label className="workflow-arg-field" htmlFor="team-title">
           <span>Title <span className="launch-optional">Optional</span></span>
           <input
-            id="job-team-title"
+            id="team-title"
             type="text"
             maxLength={256}
             value={title}
@@ -377,14 +399,14 @@ export function JobTeamComposer({
             onChange={(event) => setTitle(event.target.value)}
           />
         </label>
-        <label className="workflow-arg-field" htmlFor="job-team-summary">
+        <label className="workflow-arg-field" htmlFor="team-summary">
           <span>Summary <span className="launch-optional">Optional</span></span>
           <textarea
-            id="job-team-summary"
+            id="team-summary"
             rows={3}
             maxLength={4000}
             value={summary}
-            placeholder="Add context for this job"
+            placeholder="Add context for this team"
             onChange={(event) => setSummary(event.target.value)}
           />
         </label>

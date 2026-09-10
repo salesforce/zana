@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LlmPromptEntry, LlmRunResult } from '@zana-ai/zcc-domain/llm';
-import { TAB_NAMER_PROMPT_ID, runTabNamerOnce } from './tab-namer.js';
+import { resolveNamedTitle, TAB_NAMER_PROMPT_ID, runTabNamerOnce } from './tab-namer.js';
 
 const entry: LlmPromptEntry = {
   id: TAB_NAMER_PROMPT_ID,
@@ -153,5 +153,30 @@ describe('runTabNamerOnce', () => {
       stillLive: () => false
     });
     expect(title).toBeNull();
+  });
+});
+
+describe('resolveNamedTitle', () => {
+  const base = {
+    id: 'team-run-1',
+    prompt: 'Fix login',
+    namedIds: new Set<string>(),
+    enabled: true,
+    getEntry: () => entry,
+    fallbackTitle: 'Fix login'
+  };
+
+  it('preserves explicit title without spending a naming call', async () => {
+    const run = vi.fn(async () => ok('Ignored'));
+    expect(await resolveNamedTitle({ ...base, explicitTitle: 'Release blocker', run }))
+      .toBe('Release blocker');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('uses fallback when naming is disabled or fails', async () => {
+    expect(await resolveNamedTitle({ ...base, enabled: false, run: async () => ok('Ignored') }))
+      .toBe('Fix login');
+    expect(await resolveNamedTitle({ ...base, namedIds: new Set(), run: async () => fail() }))
+      .toBe('Fix login');
   });
 });

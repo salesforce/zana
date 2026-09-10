@@ -9,8 +9,7 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import { useData, useTeams } from '../store.js';
 import { profileIcon } from '../lib/profileIcon.js';
-import { AutonomousTeamComposer } from './AutonomousTeamComposer.js';
-import { JobTeamComposer } from './JobTeamComposer.js';
+import { TeamComposer } from './TeamComposer.js';
 import { ThreadCommandComposer } from './ThreadCommandComposer.js';
 import { LegacyAgentHomeComposer } from './LegacyAgentHomeComposer.js';
 import { LaunchModeSegmented } from './LaunchModeSegmented.js';
@@ -131,11 +130,8 @@ export const AgentLauncher = memo(function AgentLauncher({
   const available = visibleComposerLaunchModes({
     showCliAgent: composerShowCliAgent,
     showModern: composerShowModern,
-    showAutonomousTeam: composerShowAutonomousTeam,
-    showJobTeam: teamJobLaunchEnabled
+    showTeam: composerShowAutonomousTeam || teamJobLaunchEnabled
   }, { hasTeams: teams.length > 0 });
-  const showAutonomousTeam = available.showAutonomousTeam;
-  const showJobTeam = available.showJobTeam;
   const mode = resolveAvailableLaunchMode(storedMode, available);
   const showLaunchSwitcher = visibleLaunchModeCount(available) > 1;
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -203,7 +199,7 @@ export const AgentLauncher = memo(function AgentLauncher({
         className="palette launch-modal"
         role="dialog"
         aria-modal
-        aria-label={mode === 'autonomous' ? 'New autonomous team' : mode === 'job' ? 'New job team' : 'New agent'}
+        aria-label={mode === 'team' ? 'New team' : 'New agent'}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="launch-panel">
@@ -238,8 +234,8 @@ export const AgentLauncher = memo(function AgentLauncher({
               section or extra-args panel can never push Send off-screen. */}
           <div className="launch-scroll">
           {/* Launch mode: Modern (HTTP conversation) and CLI Agent (PTY) are
-              offered unless Settings hides one. Autonomous Team / Job Team
-              only appear when enabled and teams exist. */}
+               offered unless Settings hides one. Team only appears when enabled
+               and teams exist. */}
           {showLaunchSwitcher && (
           <div className="launch-row">
             <LaunchModeSegmented
@@ -247,8 +243,7 @@ export const AgentLauncher = memo(function AgentLauncher({
               onChange={setStoredMode}
               showCliAgent={available.showCliAgent}
               showModern={available.showModern}
-              showAutonomousTeam={showAutonomousTeam}
-              showJobTeam={showJobTeam}
+              showTeam={available.showTeam}
             />
           </div>
           )}
@@ -278,22 +273,12 @@ export const AgentLauncher = memo(function AgentLauncher({
             </div>
           )}
 
-          {mode === 'autonomous' && (
+          {mode === 'team' && (
           <div className="launch-thread-composer">
-            <AutonomousTeamComposer
+            <TeamComposer
               project={project}
               composerProjectId={composerProjectId}
               onComposerProjectIdChange={setComposerProjectId}
-              initialText={initialPrompt}
-              onClose={onClose}
-            />
-          </div>
-          )}
-
-          {mode === 'job' && (
-          <div className="launch-thread-composer">
-            <JobTeamComposer
-              project={project}
               initialText={initialPrompt}
               onClose={onClose}
             />

@@ -16,10 +16,10 @@ import { createProjectStore, type ProjectStore } from '../project-store.js';
 import { createConfigStore } from '../services/config/config-store.js';
 import { createInboxStore, type IInboxStore } from '../services/inbox/inbox-store.js';
 import {
-  createInboxMarkersStore,
-  knownInboxEntryIds,
-  type InboxMarkersStore
-} from '../services/inbox/inbox-markers.js';
+  createInboxReadStore,
+  defaultInboxReadStateFile,
+  type IInboxReadStore
+} from '../services/inbox/inbox-read-store.js';
 import { createSuggestionsStore, type ISuggestionsStore } from '../services/suggestions/suggestions-store.js';
 import { createSavedStore, type ISavedStore } from '../services/saved/saved-store.js';
 import type { LocalAppOriginArgs } from './local-app-origins.js';
@@ -58,7 +58,7 @@ export interface ProductHttpContext {
   projects: ProjectStore;
   config: ReturnType<typeof createConfigStore>;
   inbox: IInboxStore;
-  inboxMarkers: InboxMarkersStore;
+  inboxRead: IInboxReadStore;
   suggestions: ISuggestionsStore;
   saved: ISavedStore;
   hub: ProductHub;
@@ -107,10 +107,11 @@ export function createProductHttpContext(
     { homeDir: join(dataDir, '..'), configFile: join(dataDir, 'config.json') },
     identityConfig
   );
-  const inbox = createInboxStore({ filePath: join(dataDir, 'inbox', 'entries.jsonl') });
-  const inboxMarkers = createInboxMarkersStore({
-    dataDir,
-    knownIds: (ids) => knownInboxEntryIds(inbox, ids)
+  const inboxFile = join(dataDir, 'inbox', 'entries.jsonl');
+  const inbox = createInboxStore({ filePath: inboxFile });
+  const inboxRead = createInboxReadStore({
+    filePath: defaultInboxReadStateFile(inboxFile),
+    inbox
   });
   const suggestions = createSuggestionsStore({
     filePath: join(dataDir, 'suggestions', 'entries.jsonl')
@@ -189,15 +190,9 @@ export function createProductHttpContext(
   writeFileSync(join(dataDir, 'host-enroll.token'), enrollToken, { encoding: 'utf8', mode: 0o600 });
 
   inbox.onAppended((entry) => hub.emit('inbox:appended', entry));
-  inbox.onRemoved((id) => {
-    hub.emit('inbox:removed', id);
-    void inboxMarkers.prune([id]).then((snapshot) => hub.emit('inbox:markersChanged', snapshot));
-  });
+  inbox.onRemoved((id) => hub.emit('inbox:removed', id));
   inbox.onUpdated((entry) => hub.emit('inbox:updated', entry));
-  inbox.onPruned((ids) => {
-    hub.emit('inbox:pruned', ids);
-    void inboxMarkers.prune(ids).then((snapshot) => hub.emit('inbox:markersChanged', snapshot));
-  });
+  inbox.onPruned((ids) => hub.emit('inbox:pruned', ids));
   void prunePendingInteractionInboxCopies(inbox);
   suggestions.onAppended((entry) => hub.emit('suggestions:appended', entry));
   suggestions.onRemoved((id) => hub.emit('suggestions:removed', id));
@@ -294,7 +289,7 @@ export function createProductHttpContext(
     projects,
     config,
     inbox,
-    inboxMarkers,
+    inboxRead,
     suggestions,
     saved,
     hub,
@@ -308,6 +303,7 @@ export function createProductHttpContext(
       for (const timer of disconnectHealTimers.values()) clearTimeout(timer);
       disconnectHealTimers.clear();
       disposeLocalHostDaemon(ctx);
+      inboxRead.dispose();
       promptRegistry.stop();
       ctx.plugins?.stop?.();
     }

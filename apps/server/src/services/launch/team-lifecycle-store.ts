@@ -70,6 +70,16 @@ export interface TeamLifecycleWorker extends TeamLaunchedWorker {
   task: TeamWorkerTaskState;
   delivery: TeamWorkerDeliveryState;
   capacityReleased: boolean;
+  /**
+   * Process exit detail captured at the PTY `exit` event when a slot dies.
+   * Historically dropped (onSessionExit took only the sessionId), which made
+   * every Team failure surface as an identical detail-less "All Team slots
+   * exited without completion". Persisting these lets reconcile build a
+   * self-diagnosing per-slot FAILED detail.
+   */
+  exitCode?: number;
+  exitSignal?: number;
+  exitReason?: string;
 }
 
 export interface TeamLifecycleRecord {
@@ -116,11 +126,21 @@ export type TeamLifecycleClaimResult =
   | { outcome: 'replay'; record: TeamLifecycleRecord }
   | { outcome: 'conflict'; record: TeamLifecycleRecord };
 
+/** PTY exit detail forwarded from the `exit` event into onSessionExit. */
+export interface TeamWorkerExitDetail {
+  exitCode?: number;
+  signal?: number;
+  reason?: string;
+}
+
 export interface TeamWorkerUpdate {
   process?: TeamWorkerProcessState;
   attention?: TeamWorkerAttentionState;
   task?: TeamWorkerTaskState;
   delivery?: TeamWorkerDeliveryState;
+  exitCode?: number;
+  exitSignal?: number;
+  exitReason?: string;
 }
 
 export interface TeamLifecycleCancelResult extends TeamLifecycleRecord {
@@ -282,8 +302,14 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const changed = update.process !== undefined && update.process !== worker.process
         || update.attention !== undefined && update.attention !== worker.attention
         || update.task !== undefined && update.task !== worker.task
-        || update.delivery !== undefined && update.delivery !== worker.delivery;
+        || update.delivery !== undefined && update.delivery !== worker.delivery
+        || update.exitCode !== undefined && update.exitCode !== worker.exitCode
+        || update.exitSignal !== undefined && update.exitSignal !== worker.exitSignal
+        || update.exitReason !== undefined && update.exitReason !== worker.exitReason;
 
+      if (update.exitCode !== undefined) worker.exitCode = update.exitCode;
+      if (update.exitSignal !== undefined) worker.exitSignal = update.exitSignal;
+      if (update.exitReason !== undefined) worker.exitReason = update.exitReason;
       if (update.process !== undefined && update.process !== worker.process) {
         if (!processTransitions[worker.process].has(update.process)) {
           throw new Error(`invalid worker process transition ${worker.process} -> ${update.process}`);
@@ -554,7 +580,7 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
     isTracked(sessionId: string): boolean {
       return bySession.has(sessionId);
     },
-    onSessionExit(sessionId: string): Promise<void> {
+    onSessionExit(sessionId: string, exit?: TeamWorkerExitDetail): Promise<void> {
       return serialize(async () => {
         const tracked = bySession.get(sessionId);
         if (!tracked) return;
@@ -563,7 +589,17 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         if (terminalProcesses.has(tracked.process)) return;
         const record = await opts.store.get(tracked.recordId);
         const process = record?.state === 'cancel-pending' || record?.state === 'canceled' ? 'canceled' : 'exited';
-        const updated = await opts.store.updateWorker(tracked.recordId, tracked.slotId, { process });
+        // Capture the PTY exit detail alongside the process transition so a
+        // FAILED reconcile can report per-slot cause instead of a generic line.
+        const update: TeamWorkerUpdate = { process };
+        if (exit) {
+          if (Number.isInteger(exit.exitCode)) update.exitCode = exit.exitCode;
+          if (Number.isInteger(exit.signal)) update.exitSignal = exit.signal;
+          if (typeof exit.reason === 'string' && exit.reason.length > 0) {
+            update.exitReason = exit.reason.slice(0, MAX_STRING_LENGTH);
+          }
+        }
+        const updated = await opts.store.updateWorker(tracked.recordId, tracked.slotId, update);
         if (updated.capacityReleasedNow) opts.releaseCapacity(tracked.authorizationId);
       });
     },
@@ -872,11 +908,14 @@ function boundedWorker(worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): O
 
 function validateUpdate(update: TeamWorkerUpdate): void {
   if (!update || typeof update !== 'object' || Object.keys(update).length === 0
-    || Object.keys(update).some((key) => !['process', 'attention', 'task', 'delivery'].includes(key))
+    || Object.keys(update).some((key) => !['process', 'attention', 'task', 'delivery', 'exitCode', 'exitSignal', 'exitReason'].includes(key))
     || update.process !== undefined && !(update.process in processTransitions)
     || update.attention !== undefined && update.attention !== 'active' && update.attention !== 'blocked'
     || update.task !== undefined && !(update.task in taskTransitions)
-    || update.delivery !== undefined && !(update.delivery in deliveryTransitions)) {
+    || update.delivery !== undefined && !(update.delivery in deliveryTransitions)
+    || update.exitCode !== undefined && !Number.isInteger(update.exitCode)
+    || update.exitSignal !== undefined && !Number.isInteger(update.exitSignal)
+    || update.exitReason !== undefined && !isBoundedString(update.exitReason)) {
     throw new Error('invalid team worker update');
   }
 }

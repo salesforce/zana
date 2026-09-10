@@ -172,6 +172,10 @@ async function handlePluginAppEnabled(
   }
 }
 
+function parseStringIds(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+}
+
 function pluginAppErrorStatus(message: string): number {
   if (/not installed|not running|unknown rpc/i.test(message)) return 404;
   return 400;
@@ -457,52 +461,6 @@ export async function handleProductHttp(
       return true;
     }
 
-    if (path === '/api/v1/inbox/markers' && method === 'GET') {
-      sendJson(response, 200, ctx.inboxMarkers.snapshot());
-      return true;
-    }
-
-    if (path === '/api/v1/inbox/read-all' && method === 'POST') {
-      const body = (await readJsonBody(request)) as { ids?: unknown };
-      const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === 'string') : [];
-      const snapshot = await ctx.inboxMarkers.markRead(ids);
-      ctx.hub.emit('inbox:markersChanged', snapshot);
-      sendJson(response, 200, snapshot);
-      return true;
-    }
-
-    const inboxRead = routeParams(path, '/api/v1/inbox/:id/read');
-    if (inboxRead && method === 'POST') {
-      const snapshot = await ctx.inboxMarkers.markRead([inboxRead.id]);
-      ctx.hub.emit('inbox:markersChanged', snapshot);
-      sendJson(response, 200, snapshot);
-      return true;
-    }
-
-    const inboxUnread = routeParams(path, '/api/v1/inbox/:id/unread');
-    if (inboxUnread && method === 'POST') {
-      const snapshot = await ctx.inboxMarkers.markUnread([inboxUnread.id]);
-      ctx.hub.emit('inbox:markersChanged', snapshot);
-      sendJson(response, 200, snapshot);
-      return true;
-    }
-
-    const inboxAnswered = routeParams(path, '/api/v1/inbox/:id/answered');
-    if (inboxAnswered && method === 'POST') {
-      const snapshot = await ctx.inboxMarkers.markAnswered(inboxAnswered.id);
-      ctx.hub.emit('inbox:markersChanged', snapshot);
-      sendJson(response, 200, snapshot);
-      return true;
-    }
-
-    const inboxKeep = routeParams(path, '/api/v1/inbox/:id/keep');
-    if (inboxKeep && method === 'POST') {
-      const snapshot = await ctx.inboxMarkers.toggleKeep(inboxKeep.id);
-      ctx.hub.emit('inbox:markersChanged', snapshot);
-      sendJson(response, 200, snapshot);
-      return true;
-    }
-
     if (path === '/api/v1/inbox' && method === 'GET') {
       const projectId = requestUrl.searchParams.get('projectId') ?? undefined;
       const limitRaw = requestUrl.searchParams.get('limit');
@@ -517,18 +475,51 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (path === '/api/v1/inbox' && method === 'DELETE') {
+      const body = (await readJsonBody(request)) as { ids?: unknown };
+      const ids = parseStringIds(body.ids);
+      const removed = await ctx.inbox.deleteMany(ids);
+      sendJson(response, 200, { removed });
+      return true;
+    }
+
+    if (path === '/api/v1/inbox/read-state' && method === 'GET') {
+      sendJson(response, 200, await ctx.inboxRead.getReadState());
+      return true;
+    }
+
+    if (path === '/api/v1/inbox/read-state' && method === 'POST') {
+      const body = (await readJsonBody(request)) as { ids?: unknown };
+      sendJson(response, 200, await ctx.inboxRead.markAllRead(parseStringIds(body.ids)));
+      return true;
+    }
+
+    if (path === '/api/v1/inbox/read-state' && method === 'DELETE') {
+      const body = (await readJsonBody(request)) as { ids?: unknown };
+      sendJson(response, 200, await ctx.inboxRead.pruneRead(parseStringIds(body.ids)));
+      return true;
+    }
+
+    if (path === '/api/v1/inbox/read-state/migrate' && method === 'POST') {
+      const body = (await readJsonBody(request)) as { ids?: unknown };
+      sendJson(response, 200, await ctx.inboxRead.migrateCurrentOriginReadIds(parseStringIds(body.ids)));
+      return true;
+    }
+
+    const inboxReadOne = routeParams(path, '/api/v1/inbox/read-state/:id');
+    if (inboxReadOne && method === 'PUT') {
+      sendJson(response, 200, await ctx.inboxRead.markRead(inboxReadOne.id));
+      return true;
+    }
+    if (inboxReadOne && method === 'DELETE') {
+      sendJson(response, 200, await ctx.inboxRead.markUnread(inboxReadOne.id));
+      return true;
+    }
+
     const inboxOne = routeParams(path, '/api/v1/inbox/:id');
     if (inboxOne && method === 'DELETE') {
       const ok = await ctx.inbox.delete(inboxOne.id);
       sendJson(response, ok ? 200 : 404, { ok });
-      return true;
-    }
-
-    if (path === '/api/v1/inbox' && method === 'DELETE') {
-      const body = (await readJsonBody(request)) as { ids?: unknown };
-      const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === 'string') : [];
-      const removed = await ctx.inbox.deleteMany(ids);
-      sendJson(response, 200, { removed });
       return true;
     }
 

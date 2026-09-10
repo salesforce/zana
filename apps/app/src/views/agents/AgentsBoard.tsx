@@ -20,7 +20,6 @@ import { getThreadRoutePath, getAgentSessionRoutePath, threadIdFromPath } from '
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
 import { AgentViewToggle, ScheduledColumnToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
-import { AutonomousRunBanner } from '@/components/AutonomousRunBanner';
 import { AgentMonitor } from '@/components/AgentMonitor';
 import { CloseIdleAgentsDialog } from '@/components/CloseIdleAgentsDialog';
 import { CohortBar, type LiveCohort } from '@/components/CohortBar';
@@ -425,7 +424,6 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       )}
 
       <div className="agents-board-content">
-      {scopedProject && <AutonomousRunBanner projectId={scopedProject.id} />}
       {selectedExecution && (
         <ExecutionJobDetails
           projectId={selectedExecution.projectId}

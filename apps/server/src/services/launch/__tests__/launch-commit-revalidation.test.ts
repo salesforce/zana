@@ -20,6 +20,16 @@ describe('launch commit revalidation', () => {
     })).toEqual({ ok: true });
   });
 
+  it('accepts an activity timestamp update after preflight', () => {
+    const { plan, project } = fixture();
+    expect(revalidateLaunchCommit(plan, {
+      project: { ...project, lastActiveAt: Date.now() },
+      storeRevision: 'stores:1',
+      liveCount: 2,
+      capacity: 3
+    })).toEqual({ ok: true });
+  });
+
   it.each([
     ['project identity changed after preflight', { project: { id: 'p1', path: '/other' } }],
     ['launch stores changed after preflight', { storeRevision: 'stores:2' }],

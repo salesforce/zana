@@ -8,7 +8,6 @@ import type {
   FollowUp,
   Goal,
   InboxEntry,
-  InboxMarkersSnapshot,
   Persona,
   Project,
   Result,
@@ -232,22 +231,23 @@ function httpProduct(): Pick<
       onUpdated: (cb: (entry: InboxEntry) => void) =>
         subscribeProductEvent<InboxEntry>('inbox:updated', cb),
       onPruned: (cb: (ids: string[]) => void) => subscribeProductEvent<string[]>('inbox:pruned', cb),
-      markers: () => apiJson<InboxMarkersSnapshot>('/inbox/markers'),
-      markRead: (id) =>
-        apiJson<InboxMarkersSnapshot>(`/inbox/${encodeURIComponent(id)}/read`, { method: 'POST' }),
-      markUnread: (id) =>
-        apiJson<InboxMarkersSnapshot>(`/inbox/${encodeURIComponent(id)}/unread`, { method: 'POST' }),
-      markAllRead: (ids) =>
-        apiJson<InboxMarkersSnapshot>('/inbox/read-all', {
-          method: 'POST',
-          body: JSON.stringify({ ids })
+      getReadState: () => apiJson('/inbox/read-state'),
+      markRead: async (id) =>
+        apiJson(`/inbox/read-state/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          body: JSON.stringify({})
         }),
-      markAnswered: (id) =>
-        apiJson<InboxMarkersSnapshot>(`/inbox/${encodeURIComponent(id)}/answered`, { method: 'POST' }),
-      toggleKeep: (id) =>
-        apiJson<InboxMarkersSnapshot>(`/inbox/${encodeURIComponent(id)}/keep`, { method: 'POST' }),
-      onMarkersChanged: (cb: (snapshot: InboxMarkersSnapshot) => void) =>
-        subscribeProductEvent<InboxMarkersSnapshot>('inbox:markersChanged', cb)
+      markUnread: async (id) =>
+        apiJson(`/inbox/read-state/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          body: JSON.stringify({})
+        }),
+      markAllRead: async (ids) =>
+        apiJson('/inbox/read-state', { method: 'POST', body: JSON.stringify({ ids }) }),
+      pruneRead: async (ids) =>
+        apiJson('/inbox/read-state', { method: 'DELETE', body: JSON.stringify({ ids }) }),
+      migrateCurrentOriginReadIds: async (ids) =>
+        apiJson('/inbox/read-state/migrate', { method: 'POST', body: JSON.stringify({ ids }) })
     } as CcApi['inbox'],
     suggestions: {
       list: async (projectId?: string) => {

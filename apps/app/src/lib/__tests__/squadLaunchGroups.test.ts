@@ -76,6 +76,19 @@ describe('squadLaunchGroups', () => {
     );
     expect(groups.map((g) => g.launchId)).toEqual(['NEW', 'OLD', SOLO_LAUNCH_ID]);
   });
+
+  it('prefers host-stamped cohort identity and keeps unregistered Team sessions grouped', () => {
+    const cohort = { cohortId: 'run-2', teamId: 'team-1', teamName: 'Review Team', role: 'worker' as const };
+    const groups = squadLaunchGroups(
+      [agent({ sessionId: 'registered', teamLaunchId: 'stale-run' })],
+      [
+        session({ id: 'registered', cohort }),
+        session({ id: 'unregistered', cohort: { ...cohort, role: 'orchestrator' } })
+      ]
+    );
+
+    expect(groups).toEqual([expect.objectContaining({ launchId: 'run-2', nodeCount: 2 })]);
+  });
 });
 
 describe('reconcileSquadLaunchSelection', () => {

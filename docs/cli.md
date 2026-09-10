@@ -242,12 +242,12 @@ zcc team ls --json
 
 ### `team launch|status|wait|answer|stop`
 
-Start and watch Autonomous (`--mode freeform`) or Job (`--mode structured`, default) teams from the shell. **Product API — needs the app running.**
+Start and watch one durable Team execution. `--mode freeform` asks the coordinator to infer a plan; `--mode structured` (default) says the goal contains the plan. **Product API — needs the app running.**
 Launch, answer, and stop cross Electron main's native operator-confirmation gate.
 
 ```bash
 zcc team launch --team <id> --project <id> --goal "ship it" [--mode structured|freeform] [--wait]
-zcc team status <executionId|runId>
+zcc team status <executionId>
 zcc team wait <id> [--timeout 5m]
 zcc team answer <id> --text "yes" [--blocker <blockerId>]
 zcc team stop <id>
