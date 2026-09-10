@@ -265,13 +265,14 @@ describe('CloseSummaryService', () => {
     expect(res.summarized).toBe(1);
   });
 
-  it('drops an agent with no transcript text without spending a call', async () => {
+  it('drops an agent with no transcript text or digest without spending a call', async () => {
     const readLastTurn = vi.fn(async (ref: { claudeSessionId?: string }) =>
       ref.claudeSessionId === 'cs-empty' ? '' : 'did stuff'
     );
     const deps = makeDeps({
       getSession: (id) => session({ title: id, claudeSessionId: id === 'empty' ? 'cs-empty' : 'cs' }),
-      readLastTurn
+      readLastTurn,
+      readDigest: vi.fn(async (ref) => (ref.claudeSessionId === 'cs-empty' ? '' : 'digest'))
     });
     const svc = new CloseSummaryService(deps);
     const res = await svc.summarize('p1', ['good', 'empty']);
@@ -280,7 +281,10 @@ describe('CloseSummaryService', () => {
   });
 
   it('writes nothing and reports 0 when no agent yields a note', async () => {
-    const deps = makeDeps({ readLastTurn: vi.fn(async () => '') });
+    const deps = makeDeps({
+      readLastTurn: vi.fn(async () => ''),
+      readDigest: vi.fn(async () => '')
+    });
     const svc = new CloseSummaryService(deps);
     const res = await svc.summarize('p1', ['a', 'b']);
     expect(res).toEqual({ summarized: 0 });
@@ -404,7 +408,10 @@ describe('CloseSummaryService.summarizeAndClose', () => {
   });
 
   it('closes even when the summary wrote nothing (summary failure never blocks close)', async () => {
-    const deps = makeDeps({ readLastTurn: vi.fn(async () => '') }); // no transcript → summarized 0
+    const deps = makeDeps({
+      readLastTurn: vi.fn(async () => ''),
+      readDigest: vi.fn(async () => '')
+    }); // no transcript → summarized 0
     const svc = new CloseSummaryService(deps);
     const res = await svc.summarizeAndClose('p1', ['a']);
     expect(res.summarized).toBe(0);
@@ -509,6 +516,33 @@ describe('CloseSummaryService.summarizeAndFollowUp', () => {
     // No distilled note ⇒ no digest written (no bare "closed" noise anymore).
     expect(deps.appendInbox).not.toHaveBeenCalled();
     expect(deps.createFollowUp).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the session digest when the last assistant turn has no prose', async () => {
+    const deps = makeDeps({
+      readLastTurn: vi.fn(async () => ''),
+      readDigest: vi.fn(async () => 'User: fix the test\n\nAssistant ran: Bash')
+    });
+    const svc = new CloseSummaryService(deps);
+
+    const res = await svc.summarizeAndFollowUp('p1', ['a']);
+
+    expect(res).toEqual({ summarized: 1, followedUp: 1 });
+    expect(deps.runSummary).toHaveBeenCalledWith(
+      'User: fix the test\n\nAssistant ran: Bash',
+      'close-summary:a'
+    );
+    expect(deps.appendInbox).toHaveBeenCalledTimes(1);
+    expect(deps.createFollowUp).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not read the digest when the last assistant turn has prose', async () => {
+    const deps = makeDeps();
+    const svc = new CloseSummaryService(deps);
+
+    await svc.summarizeAndFollowUp('p1', ['a']);
+
+    expect(deps.readDigest).not.toHaveBeenCalled();
   });
 });
 

@@ -244,4 +244,17 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('if (catalogModelsLoading) return');
     expect(source).not.toContain("selectionState !== 'resolved' || catalogModelsLoading");
   });
+
+  it('keeps launch available while the host catalog and local descriptor settle independently', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('selectedHarness || Boolean(PROFILE_BY_FAMILY[familyId])');
+    expect(source).toContain('if (!selectedHarness && !PROFILE_BY_FAMILY[familyId]) return;');
+    expect(source).not.toContain("selectionProvenance !== 'explicit'\n      || selectedHarness");
+  });
+
+  it('launches absolute-path prompts when slash-command typeahead has no matches', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('if (field.typeaheadOpen && field.suggestions.length > 0) return;');
+    expect(source).not.toContain('if (field.typeaheadOpen) return;');
+  });
 });

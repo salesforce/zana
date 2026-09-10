@@ -29,6 +29,8 @@ export type HarnessProfile = 'claude' | 'generic';
 export type HarnessSequence =
   /** Braille spinner (working) then block forever. The classic "hold working" stub. */
   | 'working-hold'
+  /** Enter blocked through the real notify callback, then hold there. */
+  | 'blocked-hold'
   /** Work briefly, then settle to ✳ idle and hold — drives a working→idle transition. */
   | 'work-then-idle'
   /** Work briefly, then clean exit(code) — drives the onExit lifecycle. */
@@ -184,6 +186,14 @@ function presetBody(opts: FakeAgentOptions): string {
   switch (seq) {
     case 'working-hold':
       return `${versionIntercept}${oscTitle(`${BRAILLE_WORKING} ${working}`)}\n${HOLD}`;
+    case 'blocked-hold':
+      return [
+        versionIntercept,
+        '[ -n "$ZCC_NOTIFY_URL" ] || exit 90',
+        oscTitle(`${BRAILLE_WORKING} ${working}`),
+        'curl -s -m 5 -X POST "$ZCC_NOTIFY_URL/blocked" >/dev/null',
+        HOLD
+      ].join('\n');
     case 'work-then-idle':
       return [
         versionIntercept,
