@@ -283,7 +283,9 @@ describe('host enroll hub and thread create', () => {
     });
     await waitForHost(enrolled.hostId);
     await server!.ctx.hostHub.waitUntilConnected(enrolled.hostId, 1_000);
-    expect(acks.some((row) => row.type === 'host.hello-ok' && row.hostId === enrolled.hostId)).toBe(true);
+    await expect.poll(
+      () => acks.some((row) => row.type === 'host.hello-ok' && row.hostId === enrolled.hostId)
+    ).toBe(true);
   });
 
   it('rejects browser Origin on enroll and fails create when no host is connected', async () => {
