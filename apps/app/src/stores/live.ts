@@ -548,53 +548,140 @@ export const useInboxSelection = create<InboxSelectionState>((set) => ({
   select: (id) => set({ selectedEntryId: id })
 }));
 
+export interface DurableInboxReadState {
+  readIds: Record<string, true>;
+  migratedFromLocalStorage: boolean;
+}
+
 interface InboxReadState {
   /** Object-shaped (not Set) so Zustand `persist` can JSON-serialise it. */
   readIds: Record<string, true>;
+  /** Server flag. Renderer never sets this directly. */
+  migratedFromLocalStorage: boolean;
   markRead: (id: string) => void;
   markUnread: (id: string) => void;
   /** Reserved for an explicit "Mark all read" affordance — not auto-fired. */
   markAllRead: (ids: string[]) => void;
   /** Drop read flags for the given ids (entry removed or evicted by retention). */
   pruneRead: (removedIds: string[]) => void;
+  /** Replace local cache from durable main/server state. */
+  hydrateFromServer: (state: DurableInboxReadState) => void;
+}
+
+function applyDurableReadState(state: DurableInboxReadState): Pick<InboxReadState, 'readIds' | 'migratedFromLocalStorage'> {
+  return {
+    readIds: state.readIds ?? {},
+    migratedFromLocalStorage: state.migratedFromLocalStorage === true
+  };
+}
+
+function rollbackReadIds(ids: string[], add: boolean): void {
+  const current = useInboxRead.getState().readIds;
+  const next = { ...current };
+  let changed = false;
+  for (const id of ids) {
+    if (add) {
+      if (next[id]) {
+        delete next[id];
+        changed = true;
+      }
+    } else if (!next[id]) {
+      next[id] = true;
+      changed = true;
+    }
+  }
+  if (changed) useInboxRead.setState({ readIds: next });
+}
+
+function logInboxReadFailure(operation: string, ids: string[], err: unknown): void {
+  console.error(`[inbox] ${operation} failed`, { ids, err });
 }
 
 export const useInboxRead = create<InboxReadState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       readIds: {},
-      markRead: (id) =>
-        set((s) => (s.readIds[id] ? s : { readIds: { ...s.readIds, [id]: true } })),
-      markUnread: (id) =>
-        set((s) => {
-          if (!s.readIds[id]) return s;
-          const next = { ...s.readIds };
-          delete next[id];
-          return { readIds: next };
-        }),
-      markAllRead: (ids) =>
-        set((s) => {
-          if (ids.length === 0) return s;
-          const next = { ...s.readIds };
-          for (const id of ids) next[id] = true;
-          return { readIds: next };
-        }),
-      pruneRead: (removedIds) =>
-        set((s) => {
-          let changed = false;
-          const next = { ...s.readIds };
-          for (const id of removedIds) {
-            if (next[id]) {
-              delete next[id];
-              changed = true;
-            }
+      migratedFromLocalStorage: false,
+      hydrateFromServer: (state) => set(applyDurableReadState(state)),
+      markRead: (id) => {
+        const prev = get();
+        if (prev.readIds[id]) return;
+        set({ readIds: { ...prev.readIds, [id]: true } });
+        void product.inbox.markRead(id).then(
+          (next) => set(applyDurableReadState(next)),
+          (err) => {
+            logInboxReadFailure('markRead', [id], err);
+            rollbackReadIds([id], true);
           }
-          return changed ? { readIds: next } : s;
-        })
+        );
+      },
+      markUnread: (id) => {
+        const prev = get();
+        if (!prev.readIds[id]) return;
+        const next = { ...prev.readIds };
+        delete next[id];
+        set({ readIds: next });
+        void product.inbox.markUnread(id).then(
+          (server) => set(applyDurableReadState(server)),
+          (err) => {
+            logInboxReadFailure('markUnread', [id], err);
+            rollbackReadIds([id], false);
+          }
+        );
+      },
+      markAllRead: (ids) => {
+        if (ids.length === 0) return;
+        const prev = get();
+        const next = { ...prev.readIds };
+        for (const id of ids) next[id] = true;
+        set({ readIds: next });
+        void product.inbox.markAllRead(ids).then(
+          (server) => set(applyDurableReadState(server)),
+          (err) => {
+            logInboxReadFailure('markAllRead', ids, err);
+            rollbackReadIds(ids, true);
+          }
+        );
+      },
+      pruneRead: (removedIds) => {
+        if (removedIds.length === 0) return;
+        const prev = get();
+        let changed = false;
+        const next = { ...prev.readIds };
+        for (const id of removedIds) {
+          if (next[id]) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        if (changed) set({ readIds: next });
+        void product.inbox.pruneRead(removedIds).then(
+          (server) => set(applyDurableReadState(server)),
+          (err) => {
+            logInboxReadFailure('pruneRead', removedIds, err);
+          }
+        );
+      }
     }),
     { name: 'zcc.inbox-read.v1', version: 1 }
   )
 );
+
+/** One-shot current-origin localStorage → durable store, then hydrate. */
+export async function hydrateInboxReadFromProduct(): Promise<void> {
+  try {
+    const durable = await product.inbox.getReadState();
+    if (!durable.migratedFromLocalStorage) {
+      const localIds = Object.keys(useInboxRead.getState().readIds);
+      const migrated = await product.inbox.migrateCurrentOriginReadIds(localIds);
+      useInboxRead.getState().hydrateFromServer(migrated);
+      return;
+    }
+    useInboxRead.getState().hydrateFromServer(durable);
+  } catch (err) {
+    console.error('[inbox] hydrateFromProduct failed', err);
+  }
+}
 
 interface InboxAnsweredState {
   /**

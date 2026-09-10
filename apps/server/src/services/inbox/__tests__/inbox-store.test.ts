@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { appendFile, mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -176,13 +176,18 @@ describe('InboxStore (in-memory)', () => {
   it('keeps valid entries readable when a JSONL line is malformed', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zcc-inbox-torn-'));
     const path = join(dir, 'entries.jsonl');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const store = createInboxStore({ filePath: path });
       await store.append({ projectId: 'proj-1', comments: 'saved entry' });
       await appendFile(path, '{"id":"torn');
       const { entries } = await store.read();
       expect(entries.map((entry) => entry.comments)).toEqual(['saved entry']);
+      expect(await store.listIds()).toHaveLength(1);
+      expect(await store.hasId(entries[0]!.id)).toBe(true);
+      expect(warnSpy).toHaveBeenCalled();
     } finally {
+      warnSpy.mockRestore();
       await rm(dir, { recursive: true, force: true });
     }
   });

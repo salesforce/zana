@@ -120,6 +120,14 @@ export interface IInboxStore {
   append(input: InboxInput): Promise<InboxEntry>;
   read(opts?: InboxReadOpts): Promise<{ entries: InboxEntry[]; hasMore: boolean }>;
   /**
+   * Every live entry id currently on disk / in memory. Used by the sibling
+   * read-state store to existence-validate markers without the history
+   * pagination window. Order is not significant.
+   */
+  listIds(): Promise<string[]>;
+  /** True when `id` is a live inbox entry. */
+  hasId(id: string): Promise<boolean>;
+  /**
    * Hard-delete an entry by id. Returns true if removed, false if no
    * entry matched. JSONL rewrites are atomic (tmp + rename).
    */
@@ -335,6 +343,7 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
   // source of truth — so a stale hint can at worst delay or trigger an extra
   // (correct) compaction, never corrupt data.
   let lineCountHint: number | null = null;
+  let liveIds: Set<string> | null = null;
 
   // In-process mutex. Every file-mutating critical section (append+compaction,
   // delete, deleteMany) appends itself to this promise chain so they run
@@ -430,7 +439,10 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
     await rename(tmp, filePath);
     // Tell subscribers which ids rolled off so they can drop the rows and prune
     // persisted markers. Emitted after the rename so the file already reflects it.
-    if (evictedIds.length > 0) emitter.emit('pruned', evictedIds);
+    if (evictedIds.length > 0) {
+      if (liveIds) for (const id of evictedIds) liveIds.delete(id);
+      emitter.emit('pruned', evictedIds);
+    }
     return kept.length;
   }
 
@@ -536,6 +548,7 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
       }
 
       await appendFile(filePath, JSON.stringify(entry) + '\n');
+      liveIds?.add(entry.id);
       // Emit before any compaction so a subscriber sees the new entry promptly;
       // trimming old history is housekeeping, not part of the append's contract.
       // Still inside the mutex, so no other mutation can interleave between this
@@ -575,8 +588,8 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
       if (!line.trim()) continue;
       try {
         all.push(JSON.parse(line) as InboxEntry);
-      } catch {
-        // A crash can tear an append mid-line. Preserve the readable history.
+      } catch (err) {
+        console.warn('[inbox] skipped torn JSONL line', { line, err });
       }
     }
 
@@ -595,6 +608,40 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
     const entries = [...window].reverse();
     const hasMore = window.length < scoped.length;
     return { entries, hasMore };
+  }
+
+  async function loadLiveIds(): Promise<Set<string>> {
+    if (liveIds) return liveIds;
+    let raw: string;
+    try {
+      raw = await readFile(filePath, 'utf-8');
+    } catch (err: unknown) {
+      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+        liveIds = new Set();
+        return liveIds;
+      }
+      throw err;
+    }
+    const ids = new Set<string>();
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line) as InboxEntry;
+        if (typeof entry.id === 'string' && entry.id.length > 0) ids.add(entry.id);
+      } catch (err) {
+        console.warn('[inbox] skipped torn JSONL line while listing ids', { line, err });
+      }
+    }
+    liveIds = ids;
+    return ids;
+  }
+
+  async function listIds(): Promise<string[]> {
+    return [...(await loadLiveIds())];
+  }
+
+  async function hasId(id: string): Promise<boolean> {
+    return (await loadLiveIds()).has(id);
   }
 
   async function deleteEntry(id: string): Promise<boolean> {
@@ -626,6 +673,7 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
         }
       }
       if (!removed) return false;
+      liveIds?.delete(id);
 
       // Atomic rewrite — tmp + rename. Crash mid-write leaves the previous
       // file intact instead of producing a half-truncated JSONL. Matches
@@ -672,6 +720,7 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
         }
       }
       if (removedIds.length === 0) return 0;
+      if (liveIds) for (const id of removedIds) liveIds.delete(id);
 
       const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
       const body = kept.length > 0 ? kept.join('\n') + '\n' : '';
@@ -714,6 +763,8 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
   return {
     append,
     read,
+    listIds,
+    hasId,
     delete: deleteEntry,
     deleteMany,
     onAppended,
@@ -783,6 +834,14 @@ export function createMemoryInboxStore(): IInboxStore {
     return { entries: [...window].reverse(), hasMore: window.length < scoped.length };
   }
 
+  async function listIds(): Promise<string[]> {
+    return entries.map((entry) => entry.id);
+  }
+
+  async function hasId(id: string): Promise<boolean> {
+    return entries.some((entry) => entry.id === id);
+  }
+
   async function deleteEntry(id: string): Promise<boolean> {
     const idx = entries.findIndex((e) => e.id === id);
     if (idx < 0) return false;
@@ -836,6 +895,8 @@ export function createMemoryInboxStore(): IInboxStore {
   return {
     append,
     read,
+    listIds,
+    hasId,
     delete: deleteEntry,
     deleteMany,
     onAppended,

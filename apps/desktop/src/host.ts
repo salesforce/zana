@@ -133,7 +133,15 @@ import {
   commitProjectChanges,
   pushProjectBranch
 } from '@zana-ai/zcc-server/services/projects/git';
-import { createInboxStore, type IInboxStore, type InboxEntry } from '@zana-ai/zcc-server';
+import {
+  createInboxStore,
+  createInboxReadStore,
+  defaultInboxFile,
+  defaultInboxReadStateFile,
+  type IInboxStore,
+  type IInboxReadStore,
+  type InboxEntry
+} from '@zana-ai/zcc-server';
 import {
   createSuggestionsStore,
   type ISuggestionsStore,
@@ -978,6 +986,10 @@ const screenScanBlocked = new ScreenScanBlockedDetector({
   clearTimer: (handle) => clearTimeout(handle)
 });
 const inboxStore: IInboxStore = createInboxStore();
+const inboxReadStore: IInboxReadStore = createInboxReadStore({
+  filePath: defaultInboxReadStateFile(defaultInboxFile()),
+  inbox: inboxStore
+});
 // Suggested Actions launcher backing store (afl-03). Durable JSONL sibling of
 // the inbox: holds runnable next actions an agent proposes for the operator.
 const suggestionsStore: ISuggestionsStore = createSuggestionsStore();
@@ -5534,6 +5546,7 @@ function registerIpc() {
     get heartbeat() { return heartbeat; },
     get hostCommandRelay() { return hostCommandRelay; },
     get inboxStore() { return inboxStore; },
+    get inboxReadStore() { return inboxReadStore; },
     get inboxSummary() { return inboxSummary; },
     get isTeamWorkerRestore() { return isTeamWorkerRestore; },
     get keepAwake() { return keepAwake; },

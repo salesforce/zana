@@ -677,6 +677,12 @@ const api: CcApi = {
     summarizeDetailed: (projectId) =>
       ipcRenderer.invoke(IPC.inbox.summarizeDetailed, projectId ?? null),
     classifyNoise: (projectId) => ipcRenderer.invoke(IPC.inbox.classifyNoise, projectId ?? null),
+    getReadState: () => ipcRenderer.invoke(IPC.inbox.getReadState),
+    markRead: (id) => ipcRenderer.invoke(IPC.inbox.markRead, id),
+    markUnread: (id) => ipcRenderer.invoke(IPC.inbox.markUnread, id),
+    markAllRead: (ids) => ipcRenderer.invoke(IPC.inbox.markAllRead, ids),
+    pruneRead: (ids) => ipcRenderer.invoke(IPC.inbox.pruneRead, ids),
+    migrateCurrentOriginReadIds: (ids) => ipcRenderer.invoke(IPC.inbox.migrateReadState, ids),
     onAppended: (cb) => {
       const handler = (_e: unknown, entry: InboxEntry) => cb(entry);
       ipcRenderer.on(IPC.inbox.onAppended, handler);
