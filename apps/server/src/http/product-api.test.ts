@@ -2035,4 +2035,66 @@ describe('product HTTP thread tabs', () => {
     const missing = await fetch(`${server.url}api/v1/threads/missing/tabs`);
     expect(missing.status).toBe(404);
   });
+
+  it('hydrates, marks, prunes, and migrates inbox read state', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-inbox-read-'));
+    mkdirSync(join(dataDir, 'inbox'), { recursive: true });
+    writeFileSync(
+      join(dataDir, 'inbox', 'entries.jsonl'),
+      `${JSON.stringify({ id: 'inb-1', projectId: 'proj-1', comments: 'hello', ts: 2 })}\n${JSON.stringify({ id: 'inb-2', projectId: 'proj-1', comments: 'later', ts: 3 })}\n`
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+
+    const empty = await fetch(`${server.url}api/v1/inbox/read-state`).then((r) => r.json());
+    expect(empty).toEqual({ readIds: {}, migratedFromLocalStorage: false });
+
+    const marked = await fetch(`${server.url}api/v1/inbox/read-state/inb-1`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' }
+    }).then((r) => r.json());
+    expect(marked.readIds['inb-1']).toBe(true);
+
+    const ghost = await fetch(`${server.url}api/v1/inbox/read-state`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['inb-2', 'ghost'] })
+    }).then((r) => r.json());
+    expect(ghost.readIds['inb-2']).toBe(true);
+    expect(ghost.readIds.ghost).toBeUndefined();
+
+    const unread = await fetch(`${server.url}api/v1/inbox/read-state/inb-1`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' }
+    }).then((r) => r.json());
+    expect(unread.readIds['inb-1']).toBeUndefined();
+    expect(unread.readIds['inb-2']).toBe(true);
+
+    const pruned = await fetch(`${server.url}api/v1/inbox/read-state`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['inb-2'] })
+    }).then((r) => r.json());
+    expect(pruned.readIds).toEqual({});
+
+    const migrated = await fetch(`${server.url}api/v1/inbox/read-state/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['inb-1', 'ghost'] })
+    }).then((r) => r.json());
+    expect(migrated.migratedFromLocalStorage).toBe(true);
+    expect(migrated.readIds['inb-1']).toBe(true);
+    expect(migrated.readIds.ghost).toBeUndefined();
+
+    const again = await fetch(`${server.url}api/v1/inbox/read-state/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['inb-2'] })
+    }).then((r) => r.json());
+    expect(again.migratedFromLocalStorage).toBe(true);
+    expect(again.readIds['inb-2']).toBeUndefined();
+    expect(again.readIds['inb-1']).toBe(true);
+  });
 });

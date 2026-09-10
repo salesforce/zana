@@ -7,6 +7,35 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import type { InboxEntry } from '@zana-ai/zcc-domain/product';
 
+vi.mock('../product-client.js', () => ({
+  product: {
+    inbox: {
+      getReadState: vi.fn(async () => ({ readIds: {}, migratedFromLocalStorage: true })),
+      markRead: vi.fn(async (id: string) => ({
+        readIds: { [id]: true },
+        migratedFromLocalStorage: true
+      })),
+      markUnread: vi.fn(async () => ({ readIds: {}, migratedFromLocalStorage: true })),
+      markAllRead: vi.fn(async (ids: string[]) => ({
+        readIds: Object.fromEntries(ids.map((id) => [id, true])),
+        migratedFromLocalStorage: true
+      })),
+      pruneRead: vi.fn(async () => ({ readIds: {}, migratedFromLocalStorage: true })),
+      migrateCurrentOriginReadIds: vi.fn(async () => ({
+        readIds: {},
+        migratedFromLocalStorage: true
+      }))
+    },
+    config: {
+      get: vi.fn(async () => ({})),
+      set: vi.fn(async () => ({}))
+    },
+    projects: {
+      touch: vi.fn(async () => {})
+    }
+  }
+}));
+
 function makeEntry(overrides: Partial<InboxEntry> = {}): InboxEntry {
   return {
     id: 'entry-1',

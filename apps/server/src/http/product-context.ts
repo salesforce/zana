@@ -15,6 +15,11 @@ import { CloseSummaryService } from '../services/followups/close-summary.js';
 import { createProjectStore, type ProjectStore } from '../project-store.js';
 import { createConfigStore } from '../services/config/config-store.js';
 import { createInboxStore, type IInboxStore } from '../services/inbox/inbox-store.js';
+import {
+  createInboxReadStore,
+  defaultInboxReadStateFile,
+  type IInboxReadStore
+} from '../services/inbox/inbox-read-store.js';
 import { createSuggestionsStore, type ISuggestionsStore } from '../services/suggestions/suggestions-store.js';
 import { createSavedStore, type ISavedStore } from '../services/saved/saved-store.js';
 import type { LocalAppOriginArgs } from './local-app-origins.js';
@@ -53,6 +58,7 @@ export interface ProductHttpContext {
   projects: ProjectStore;
   config: ReturnType<typeof createConfigStore>;
   inbox: IInboxStore;
+  inboxRead: IInboxReadStore;
   suggestions: ISuggestionsStore;
   saved: ISavedStore;
   hub: ProductHub;
@@ -101,7 +107,12 @@ export function createProductHttpContext(
     { homeDir: join(dataDir, '..'), configFile: join(dataDir, 'config.json') },
     identityConfig
   );
-  const inbox = createInboxStore({ filePath: join(dataDir, 'inbox', 'entries.jsonl') });
+  const inboxFile = join(dataDir, 'inbox', 'entries.jsonl');
+  const inbox = createInboxStore({ filePath: inboxFile });
+  const inboxRead = createInboxReadStore({
+    filePath: defaultInboxReadStateFile(inboxFile),
+    inbox
+  });
   const suggestions = createSuggestionsStore({
     filePath: join(dataDir, 'suggestions', 'entries.jsonl')
   });
@@ -278,6 +289,7 @@ export function createProductHttpContext(
     projects,
     config,
     inbox,
+    inboxRead,
     suggestions,
     saved,
     hub,
@@ -291,6 +303,7 @@ export function createProductHttpContext(
       for (const timer of disconnectHealTimers.values()) clearTimeout(timer);
       disconnectHealTimers.clear();
       disposeLocalHostDaemon(ctx);
+      inboxRead.dispose();
       promptRegistry.stop();
       ctx.plugins?.stop?.();
     }

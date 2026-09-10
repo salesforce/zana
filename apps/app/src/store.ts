@@ -77,6 +77,7 @@ import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 import {
   findProjectIdForSession,
   hasMissingSetup,
+  hydrateInboxReadFromProduct,
   pruneInboxMarkers,
   useAgentMesh,
   useAgentStatus,
@@ -2361,6 +2362,7 @@ export const useData = create<DataState>((set, get) => ({
         useInbox.setState({ loading: false });
       }
     })();
+    const loadInboxRead = hydrateInboxReadFromProduct();
     const loadSuggestions = (async () => {
       try {
         const { entries } = await product.suggestions.list(scopedProjectId ?? undefined);
@@ -2388,7 +2390,7 @@ export const useData = create<DataState>((set, get) => ({
         /* mesh view is best-effort; leave empty on failure */
       }
     })();
-    await Promise.all([loadInbox, loadSuggestions, loadSaved, loadMesh]);
+    await Promise.all([loadInbox, loadInboxRead, loadSuggestions, loadSaved, loadMesh]);
 
     product.inbox.onAppended((entry) => {
       if (scopedProjectId && entry.projectId !== scopedProjectId) return;

@@ -62,6 +62,33 @@ export function registerInboxIpc(): void {
     },
     (): FeedNoiseResult => ({ routineIds: [], candidateCount: 0 })
   );
+  const emptyReadState = () => ({ readIds: {}, migratedFromLocalStorage: false });
+  ctx.safeHandle(IPC.inbox.getReadState, () => ctx.inboxReadStore.getReadState(), emptyReadState);
+  ctx.safeHandle(
+    IPC.inbox.markRead,
+    (id: string) => ctx.inboxReadStore.markRead(id),
+    emptyReadState
+  );
+  ctx.safeHandle(
+    IPC.inbox.markUnread,
+    (id: string) => ctx.inboxReadStore.markUnread(id),
+    emptyReadState
+  );
+  ctx.safeHandle(
+    IPC.inbox.markAllRead,
+    (ids: string[]) => ctx.inboxReadStore.markAllRead(Array.isArray(ids) ? ids : []),
+    emptyReadState
+  );
+  ctx.safeHandle(
+    IPC.inbox.pruneRead,
+    (ids: string[]) => ctx.inboxReadStore.pruneRead(Array.isArray(ids) ? ids : []),
+    emptyReadState
+  );
+  ctx.safeHandle(
+    IPC.inbox.migrateReadState,
+    (ids: string[]) => ctx.inboxReadStore.migrateCurrentOriginReadIds(Array.isArray(ids) ? ids : []),
+    emptyReadState
+  );
   ctx.safeHandle(
     IPC.usage.getSummary,
     () => ctx.usageService.summarize(),

@@ -1295,6 +1295,22 @@ export interface CcApi {
      * throws — failures resolve to an empty id set (nothing folded).
      */
     classifyNoise(projectId?: string | null): Promise<FeedNoiseResult>;
+    /**
+     * Durable inbox read markers owned by main/server. `readIds` is never a
+     * renderer-supplied overwrite — mutations go through mark/prune/migrate.
+     */
+    getReadState(): Promise<{ readIds: Record<string, true>; migratedFromLocalStorage: boolean }>;
+    markRead(id: string): Promise<{ readIds: Record<string, true>; migratedFromLocalStorage: boolean }>;
+    markUnread(id: string): Promise<{ readIds: Record<string, true>; migratedFromLocalStorage: boolean }>;
+    markAllRead(ids: string[]): Promise<{ readIds: Record<string, true>; migratedFromLocalStorage: boolean }>;
+    pruneRead(ids: string[]): Promise<{ readIds: Record<string, true>; migratedFromLocalStorage: boolean }>;
+    /**
+     * One-shot union of reachable current-origin localStorage ids. Idempotent:
+     * later calls no-op once `migratedFromLocalStorage` is true.
+     */
+    migrateCurrentOriginReadIds(
+      ids: string[]
+    ): Promise<{ readIds: Record<string, true>; migratedFromLocalStorage: boolean }>;
     onAppended(cb: (entry: InboxEntry) => void): () => void;
     onRemoved(cb: (id: string) => void): () => void;
     /**

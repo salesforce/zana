@@ -120,6 +120,12 @@ export interface IInboxStore {
   append(input: InboxInput): Promise<InboxEntry>;
   read(opts?: InboxReadOpts): Promise<{ entries: InboxEntry[]; hasMore: boolean }>;
   /**
+   * Every live entry id currently on disk / in memory. Used by the sibling
+   * read-state store to existence-validate markers without the history
+   * pagination window. Order is not significant.
+   */
+  listIds(): Promise<string[]>;
+  /**
    * Hard-delete an entry by id. Returns true if removed, false if no
    * entry matched. JSONL rewrites are atomic (tmp + rename).
    */
@@ -597,6 +603,29 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
     return { entries, hasMore };
   }
 
+  async function listIds(): Promise<string[]> {
+    let raw: string;
+    try {
+      raw = await readFile(filePath, 'utf-8');
+    } catch (err: unknown) {
+      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return [];
+      }
+      throw err;
+    }
+    const ids: string[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line) as InboxEntry;
+        if (typeof entry.id === 'string' && entry.id.length > 0) ids.push(entry.id);
+      } catch {
+        /* preserve readable history; skip torn lines */
+      }
+    }
+    return ids;
+  }
+
   async function deleteEntry(id: string): Promise<boolean> {
     return runExclusive(async () => {
       let raw: string;
@@ -714,6 +743,7 @@ export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
   return {
     append,
     read,
+    listIds,
     delete: deleteEntry,
     deleteMany,
     onAppended,
@@ -783,6 +813,10 @@ export function createMemoryInboxStore(): IInboxStore {
     return { entries: [...window].reverse(), hasMore: window.length < scoped.length };
   }
 
+  async function listIds(): Promise<string[]> {
+    return entries.map((entry) => entry.id);
+  }
+
   async function deleteEntry(id: string): Promise<boolean> {
     const idx = entries.findIndex((e) => e.id === id);
     if (idx < 0) return false;
@@ -836,6 +870,7 @@ export function createMemoryInboxStore(): IInboxStore {
   return {
     append,
     read,
+    listIds,
     delete: deleteEntry,
     deleteMany,
     onAppended,

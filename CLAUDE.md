@@ -4,8 +4,9 @@ Guidance for working in this repo (Zana Command Center — an Electron + React +
 
 ## Worktrees
 
-Create all git worktrees under `.worktrees/<branch-name>` inside this repository.
-Keeps repo instructions and tooling configuration in each worktree ancestor.
+Do not create git worktrees by default. Work in the existing checkout.
+
+If a worktree is explicitly requested, put it under `.worktrees/<branch-name>` inside this repository so repo instructions and tooling stay in the ancestor.
 
 ## Engineering Rules
 
