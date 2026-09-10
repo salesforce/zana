@@ -105,6 +105,7 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   agents: [
     { id: 'git-worktrees', label: 'Git worktrees' },
     { id: 'agent-tabs', label: 'Tabs' },
+    { id: 'teams', label: 'Teams' },
     { id: 'agent-attention', label: 'Agent attention' },
     { id: 'scheduled', label: 'Scheduled' },
     { id: 'agent-automation', label: 'Agent automation' },

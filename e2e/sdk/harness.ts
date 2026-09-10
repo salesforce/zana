@@ -178,8 +178,8 @@ function presetBody(opts: FakeAgentOptions): string {
 
   // Report a Claude version at the reviewed evidence floor so model-target
   // preflight (Haiku, etc.) does not block e2e launches as "CLI version below
-  // reviewed floor (installed 1.0.0, requires >= 2.1.209)".
-  const versionIntercept = 'if [ "$1" = "--version" ]; then echo "2.1.209 (Claude Code)"; exit 0; fi\n';
+  // reviewed floor (installed 1.0.0, requires >= 2.1.220)".
+  const versionIntercept = 'if [ "$1" = "--version" ]; then echo "2.1.220 (Claude Code)"; exit 0; fi\n';
 
   switch (seq) {
     case 'working-hold':
@@ -227,7 +227,7 @@ function presetBody(opts: FakeAgentOptions): string {
  * spawned process self-identifies its role by parsing its own launch prompt
  * (delivered as a spawn-arg), because role / executionId reach the agent ONLY
  * via that prompt text — never via env or a readback tool. The orchestrator
- * prompt matches `coordinator of Job Team`; a worker prompt matches
+ * prompt matches `coordinator of Team`; a worker prompt matches
  * `worker standby`; the executionId is the backtick-delimited `` execution `<id>` ``.
  *
  * Transport (per the MCP server's stateless streamable-http config): a single
@@ -280,7 +280,7 @@ const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
 const execMatch = PROMPT.match(new RegExp('execution ' + BT + '([^' + BT + ']+)' + BT));
 const EXECUTION_ID = execMatch ? execMatch[1] : null;
-const IS_ORCHESTRATOR = /coordinator of Job Team/.test(PROMPT);
+const IS_ORCHESTRATOR = /coordinator of Team/.test(PROMPT);
 const IS_WORKER = /worker standby/.test(PROMPT);
 const IS_OWNER = /E2E start Job Team/.test(PROMPT);
 

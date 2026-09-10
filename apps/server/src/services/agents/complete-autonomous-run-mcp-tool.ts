@@ -52,7 +52,7 @@ export interface RegisterCompleteAutonomousRunOpts {
    * the caller owned a running run (and it was completed), false otherwise (not
    * an orchestrator / no active run). The supervisor does the teardown + inbox.
    */
-  completeRun: (orchestratorSessionId: string, summary: string) => boolean;
+  completeRun: (orchestratorSessionId: string, summary: string) => boolean | Promise<boolean>;
 }
 
 /**
@@ -88,7 +88,7 @@ export function registerCompleteAutonomousRunTool(
         summary.length > MAX_COMPLETE_SUMMARY_CHARS
           ? summary.slice(0, MAX_COMPLETE_SUMMARY_CHARS) + '\n\n…(summary truncated)'
           : summary;
-      const ok = completeRun(sessionId, clamped);
+      const ok = await completeRun(sessionId, clamped);
       if (!ok) {
         return {
           isError: true,

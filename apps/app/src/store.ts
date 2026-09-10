@@ -772,6 +772,9 @@ function mirroredConfigFlags(config: AppConfig) {
     followUpsEnabled: config.followUpsEnabled ?? false,
     idleAttentionSensitivity: config.idleAttentionSensitivity ?? 'medium',
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
+    agentsListOrganization: config.agentsListOrganization ?? 'status',
+    projectNavigationOrganization: config.projectNavigationOrganization ?? 'sessions',
+    flowAllOrganization: config.flowAllOrganization ?? 'combined',
     includeScheduledAgentsInAgentView: config.includeScheduledAgentsInAgentView ?? true,
     voiceInputEnabled: config.voiceInputEnabled ?? false,
     steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false,
@@ -792,7 +795,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
     nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
-    teamJobLaunchEnabled: config.teamJobLaunchEnabled === true,
+    teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false,
     composerShowCliAgent: config.composerShowCliAgent !== false,
     composerShowModern: config.composerShowModern !== false,
     composerShowAutonomousTeam: config.composerShowAutonomousTeam !== false,
@@ -1478,6 +1481,9 @@ interface DataState {
    *  AgentsListPane also promotes triaged idle agents into its "Needs you" group
    *  (the board already does). Default off. */
   agentListNeedsYouFromTriage: boolean;
+  agentsListOrganization: NonNullable<AppConfig['agentsListOrganization']>;
+  projectNavigationOrganization: NonNullable<AppConfig['projectNavigationOrganization']>;
+  flowAllOrganization: NonNullable<AppConfig['flowAllOrganization']>;
   /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, waiting
    *  scheduler jobs appear in the Agents board Scheduled column (plus finished
    *  runs in Done). Working/blocked scheduled runs stay in Working even when
@@ -1570,7 +1576,7 @@ interface DataState {
   /** Mirror of AppConfig.composerShowModern — Modern in the launch switcher. */
   composerShowModern: boolean;
   setComposerShowModern: (on: boolean) => void;
-  /** Mirror of AppConfig.composerShowAutonomousTeam — Autonomous Team in the switcher. */
+  /** Mirror of AppConfig.composerShowAutonomousTeam — Team in the switcher. */
   composerShowAutonomousTeam: boolean;
   setComposerShowAutonomousTeam: (on: boolean) => void;
   /** Mirror of AppConfig.worktreeIsolationDefault — the default workspace
@@ -1929,6 +1935,9 @@ export const useData = create<DataState>((set, get) => ({
   followUpsEnabled: false,
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
+  agentsListOrganization: 'status',
+  projectNavigationOrganization: 'sessions',
+  flowAllOrganization: 'combined',
   includeScheduledAgentsInAgentView: true,
   voiceInputEnabled: false,
   steerActiveThreadOnEnter: false,
@@ -1954,7 +1963,7 @@ export const useData = create<DataState>((set, get) => ({
   lastProjectId: null,
   openerHiddenTargets: [],
   microVmEnabled: false,
-  teamJobLaunchEnabled: false,
+  teamJobLaunchEnabled: true,
   composerShowCliAgent: true,
   composerShowModern: true,
   composerShowAutonomousTeam: true,

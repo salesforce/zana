@@ -182,6 +182,9 @@ zcc team launch --team <id> --project <id> --goal "..." [--mode structured|freef
 zcc team status|wait|answer|stop <id>
 ```
 
+Both modes create durable execution IDs. `freeform` infers a plan from the goal;
+`structured` treats the goal as a provided plan.
+
 Team launch, answer, and stop require native operator confirmation in Electron
 main. Agent-class callers can inspect status but cannot mutate team execution.
 

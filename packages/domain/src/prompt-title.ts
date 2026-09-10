@@ -8,3 +8,9 @@ export function titleFromPrompt(prompt: string): string {
   if (!oneLine) return '';
   return oneLine.length > 40 ? `${oneLine.slice(0, 40)}…` : oneLine;
 }
+
+/** Bounded objective fallback that never exposes local absolute/relative paths. */
+export function titleFromObjective(objective: string): string {
+  const pathFree = objective.replace(/(^|\s)(?:~\/|\.{1,2}\/|\/|[a-zA-Z]:[\\/])\S+/g, '$1');
+  return titleFromPrompt(pathFree);
+}

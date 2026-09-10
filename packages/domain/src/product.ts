@@ -1213,9 +1213,12 @@ export interface SessionCohort {
   executionJobTitle?: string;
   /** Main-owned launch semantics. Renderer cannot select or widen this authority. */
   coordinationMode?: TeamCoordinationMode;
+  /** Main-owned trigger identity, distinct from execution kind and coordination. */
+  origin?: LaunchOrigin;
 }
 
-export type TeamCoordinationMode = 'interactive-team' | 'autonomous-team' | 'job-team';
+export type TeamCoordinationMode = 'interactive-team' | 'autonomous-team' | 'job-team' | 'structured' | 'freeform';
+export type LaunchOrigin = 'explicit' | 'scheduled' | 'goal';
 
 /**
  * Canonical name for a PTY-spawned coding agent. Same shape as
@@ -1755,6 +1758,12 @@ export interface AppConfig {
   /** Global Agents-board layout preference: kanban lanes, grouped list, or the
    *  squad-flow graph. */
   agentsBoardView?: 'board' | 'list' | 'flow';
+  /** Agents List view organization. Default keeps status lanes. */
+  agentsListOrganization?: 'status' | 'team-run';
+  /** Project navigation organization. Team-run mode hides worker rows. */
+  projectNavigationOrganization?: 'sessions' | 'team-runs';
+  /** Composition of Flow's All Team runs view. */
+  flowAllOrganization?: 'combined' | 'team-runs';
   /** How the inbox Feed groups rows within each day bucket: per-project
    *  subgroups ('project', default) or a flat chronological stream ('time'). */
   inboxGrouping?: 'project' | 'time';
@@ -2214,7 +2223,7 @@ export interface AppConfig {
    */
   composerShowModern?: boolean;
   /**
-   * Show Autonomous Team in the New Chat / New agent launch switcher. Default
+   * Show Team in the New Chat / New agent launch switcher. Default
    * ON; the button still only appears when at least one team exists.
    */
   composerShowAutonomousTeam?: boolean;
@@ -3779,9 +3788,11 @@ export interface TeamLaunchRequestInput {
   executionJobTitle?: string;
   /** Main-owned team coordination contract. Public renderer input never carries this field. */
   coordinationMode?: TeamCoordinationMode;
+  /** Main-owned trigger identity propagated to execution-backed sessions. */
+  origin?: LaunchOrigin;
   /** Main-owned durable job briefing composed after source snapshotting. */
   jobContext?: {
-    goal: string;
+    objective: string;
     title?: string;
     summary?: string;
     sourceBundle?: {
@@ -4061,6 +4072,12 @@ export interface SquadFlowGraph {
   /** Optional squad-template descriptor when the project is running a known
    *  squad (matched loosely by name); absent when unknown. */
   squad?: SquadSummary;
+  /** Host-stamped Team name when this graph is scoped to one Team run. */
+  teamName?: string;
+  /** Durable run identity when this graph is scoped to one execution. */
+  executionId?: string;
+  /** Canonical title when this graph is scoped to one execution. */
+  executionJobTitle?: string;
   nodes: SquadFlowNode[];
   edges: SquadFlowEdge[];
   /** Convenience rollups for the header. */
@@ -5269,6 +5286,7 @@ export interface ExecutionBoardProjection {
   jobTitle: string;
   /** Main-owned coordination contract, so Job UI never infers its mode from a title. */
   coordinationMode?: TeamCoordinationMode;
+  origin?: LaunchOrigin;
   state: 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
   attempt: number;
   stateVersion?: number;
@@ -5277,7 +5295,7 @@ export interface ExecutionBoardProjection {
   orchestratorSessionId?: string;
   hasResumeToken?: boolean;
   teamName?: string;
-  goal?: string;
+  objective?: string;
   summary?: string;
   sources?: Array<{
     id: string;
@@ -5310,6 +5328,12 @@ export interface ExecutionBoardProjection {
       retryEligible: boolean;
     };
   };
+  /** Bounded main-owned state for correlating execution-linked Inbox entries. */
+  blockers?: Array<{
+    id: string;
+    resolved: boolean;
+    deliveryState?: 'PENDING' | 'LEASED' | 'DELIVERED' | 'FAILED';
+  }>;
   finalSummary?: string;
   eventCursor?: number;
   coordinator?: { status: 'live' | 'lost' | 'complete'; sessionId?: string };
@@ -5325,6 +5349,7 @@ export interface TeamJobLaunchInput {
   title?: string;
   summary?: string;
   sourceCapabilityIds?: string[];
+  coordinationMode?: Extract<TeamCoordinationMode, 'structured' | 'freeform'>;
 }
 
 /** Safe renderer projection for a main-owned, short-lived selected-file capability. */
@@ -5372,13 +5397,13 @@ export interface ProductTeamLaunchInput {
 }
 
 export interface ProductTeamLaunchResult {
-  kind: 'job' | 'run';
+  kind: 'job';
   id: string;
   state?: string;
 }
 
 export interface ProductTeamStatus {
-  kind: 'job' | 'run';
+  kind: 'job';
   id: string;
   projectId?: string;
   teamId?: string;

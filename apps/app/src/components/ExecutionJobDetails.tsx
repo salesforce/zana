@@ -48,8 +48,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     return () => window.clearInterval(timer);
   }, [refresh, snapshot?.execution.state, snapshot?.nextAfter]);
   if (!snapshot) return (
-    <section className="execution-details" aria-label="Job details">
-      {loaded && unavailable ? <p role="alert">Job details unavailable.</p> : <p>Loading job details…</p>}
+    <section className="execution-details" aria-label="Team details">
+      {loaded && unavailable ? <p role="alert">Team details unavailable.</p> : <p>Loading Team details…</p>}
       <button className="btn" type="button" onClick={() => { setLoaded(false); setUnavailable(false); void refresh(); }}>Retry</button>
       <button className="btn" type="button" onClick={onClose}>Close details</button>
     </section>
@@ -63,25 +63,25 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     setBusy(true);
     try {
       const result = await action();
-      if (!result.ok) useUi.getState().pushToast(`Job control failed: ${result.message ?? result.code}`, 'error');
+      if (!result.ok) useUi.getState().pushToast(`Team control failed: ${result.message ?? result.code}`, 'error');
       else if (clearReply) {
         setReplyDraft('');
         requestIdentityRef.current = undefined;
       }
       await refresh();
     } catch {
-      useUi.getState().pushToast('Job control failed: response status unknown', 'error');
+      useUi.getState().pushToast('Team control failed: response status unknown', 'error');
     } finally { setBusy(false); }
   };
 
   return (
-    <section className="execution-details" aria-label="Job details">
-      <header><strong>Job · {execution.jobTitle}</strong><button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button></header>
+    <section className="execution-details" aria-label="Team details">
+      <header><strong>Team · {execution.jobTitle}</strong><button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button></header>
       <dl className="execution-details-meta">
         <dt>Run ID</dt><dd><code>{execution.executionId}</code></dd>
-        <dt>Kind</dt><dd>{execution.launchDisplay?.label ?? (execution.coordinationMode === 'job-team' ? 'Job Team' : 'Team execution')}</dd>
+        <dt>Kind</dt><dd>{execution.launchDisplay?.label ?? 'Team execution'}</dd>
         <dt>Status</dt><dd>{execution.state} · attempt {execution.attempt}</dd>
-        <dt>Goal</dt><dd>{execution.goal ?? execution.jobTitle}</dd>
+        <dt>Goal</dt><dd>{execution.objective ?? execution.jobTitle}</dd>
         <dt>Summary</dt><dd>{execution.summary ?? '—'}</dd>
         <dt>Team</dt><dd>{execution.teamName ?? execution.teamId ?? '—'}</dd>
         <dt>Coordinator</dt><dd>{execution.coordinator?.status ?? 'unknown'}{execution.coordinator?.sessionId ? ` · ${execution.coordinator.sessionId}` : ''}</dd>
@@ -128,10 +128,10 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
           }
           void mutate(() => window.cc.executionBoard.respond(projectId, executionId, execution.stateVersion ?? 0, blocker.id, requestIdentityRef.current!.id, message), true);
         }}>
-          <div className="execution-blocker-heading"><h4>Current blocker</h4><span>{isTerminal ? 'Job closed' : 'Needs your response'}</span></div>
+          <div className="execution-blocker-heading"><h4>Current blocker</h4><span>{isTerminal ? 'Team run closed' : 'Needs your response'}</span></div>
           <p className="execution-blocker-question">{snapshot.execution.currentBlocker.question}</p>
           {snapshot.execution.currentBlocker.options?.length ? <p className="execution-blocker-options">{snapshot.execution.currentBlocker.options.join(' · ')}</p> : null}
-          {isTerminal && <p className="execution-blocker-terminal" role="status">Job {execution.state.toLowerCase()}. This blocker is retained as history and can no longer receive a response.</p>}
+          {isTerminal && <p className="execution-blocker-terminal" role="status">Team run {execution.state.toLowerCase()}. This blocker is retained as history and can no longer receive a response.</p>}
           {snapshot.execution.currentBlocker.delivery && <p className="execution-delivery-status"
             role={snapshot.execution.currentBlocker.delivery.state === 'FAILED' ? 'alert' : 'status'}
             aria-live="polite"
@@ -183,8 +183,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       }}><summary>{artifact.name} · {artifact.mediaType} · {artifact.contentDigest}</summary><pre>{artifactContent[artifact.id] ?? 'Loading…'}</pre></details>)}
       <h4>Final summary</h4><p>{execution.finalSummary ?? 'Not completed.'}</p>
       <div>
-        {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop job</button>}
-        {execution.state === 'BLOCKED' && !execution.currentBlocker && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry job</button>}
+        {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Team run</button>}
+        {execution.state === 'BLOCKED' && !execution.currentBlocker && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Team run</button>}
         {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover coordinator</button>}
       </div>
     </section>

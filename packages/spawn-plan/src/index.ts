@@ -235,7 +235,7 @@ export function buildSystemPromptGuidance(scheduled: boolean, coordinationMode?:
   const guidanceBlocks = [
     INBOX_USAGE_GUIDANCE,
     ...(scheduled ? [SCHEDULE_REPORT_GUIDANCE] : []),
-    ...(coordinationMode === 'job-team' ? [] : [AGENT_MESH_GUIDANCE]),
+    ...(coordinationMode === 'job-team' || coordinationMode === 'structured' || coordinationMode === 'freeform' ? [] : [AGENT_MESH_GUIDANCE]),
     PROJECT_AWARENESS_GUIDANCE,
     PROJECT_LIBRARY_GUIDANCE,
     FOLLOWUP_USAGE_GUIDANCE

@@ -122,6 +122,7 @@ export interface ExecutionRecord {
   deliveries?: ExecutionDeliveryRecord[];
   finalSummary?: string;
   coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
+  origin?: import('@zana-ai/zcc-domain/product').LaunchOrigin;
   createdAt: number;
   updatedAt: number;
   /** User hid terminal history from board; durable evidence remains retained. */
@@ -144,7 +145,7 @@ export interface ExecutionRequestSnapshotV1 {
     contentRef: string;
     sources: Array<Omit<ExecutionSourceSnapshot, 'extractedText'>>;
   };
-  goal?: string;
+  objective?: string;
 }
 
 /** Durable, non-capability launch boundary for crash diagnosis and reconciliation. */
@@ -257,7 +258,8 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.blockers === undefined || Array.isArray(record.blockers) && record.blockers.length <= MAX_WORK_UNITS && record.blockers.every(validExecutionBlocker))
     && (record.deliveries === undefined || Array.isArray(record.deliveries) && record.deliveries.length <= MAX_DELIVERIES_PER_EXECUTION && record.deliveries.every(validExecutionDelivery))
     && (record.finalSummary === undefined || typeof record.finalSummary === 'string' && record.finalSummary.length > 0 && record.finalSummary.length <= MAX_FINAL_SUMMARY)
-    && (record.coordinationMode === undefined || record.coordinationMode === 'interactive-team' || record.coordinationMode === 'autonomous-team' || record.coordinationMode === 'job-team')
+    && (record.coordinationMode === undefined || record.coordinationMode === 'interactive-team' || record.coordinationMode === 'autonomous-team' || record.coordinationMode === 'job-team' || record.coordinationMode === 'structured' || record.coordinationMode === 'freeform')
+    && (record.origin === undefined || record.origin === 'explicit' || record.origin === 'scheduled' || record.origin === 'goal')
     && typeof record.createdAt === 'number' && typeof record.updatedAt === 'number'
     && (record.dismissedAt === undefined || typeof record.dismissedAt === 'number');
 }
@@ -330,7 +332,7 @@ function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshot
     && request.slots.every((slot) => !!slot && typeof slot === 'object'
       && validUtf8String((slot as { initialTask?: unknown }).initialTask, MAX_TEAM_INITIAL_TASK_BYTES))
     && Array.isArray(request.resolvedModels) && request.resolvedModels.every(validModelSnapshot)
-    && (request.goal === undefined || validString(request.goal))
+    && (request.objective === undefined || validString(request.objective))
     && (request.sourceBundle === undefined || validSourceBundle(request.sourceBundle))
     && (request.policy === undefined || typeof request.policy === 'object')
     && (request.workflow === undefined || typeof request.workflow === 'object');
@@ -453,6 +455,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           if (!Array.isArray(record.deliveries)) record.deliveries = [];
           for (const delivery of record.deliveries) delivery.manualRetryCount ??= 0;
           record.recoveryGeneration ??= 0;
+          const legacyRequest = record.request as ExecutionRequestSnapshotV1 & { goal?: string };
+          if (legacyRequest.objective === undefined && legacyRequest.goal !== undefined) legacyRequest.objective = legacyRequest.goal;
+          delete legacyRequest.goal;
           if (typeof record.createdAt === 'number') record.recoveryDeadlineAt ??= record.createdAt + EXECUTION_RECOVERY_TTL_MS;
         }
       }
@@ -504,7 +509,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   async function claim(input: ExecutionClaimInput) {
     if (input.launchKind !== undefined && input.launchKind !== 'team') throw new Error('invalid execution launch kind');
     const request = normalizeRequest(input.request);
-    const workUnits = input.workUnits === undefined ? undefined : normalizePlan(input.workUnits, input.coordinationMode === 'job-team');
+    const workUnits = input.workUnits === undefined ? undefined : normalizePlan(input.workUnits, isDurableCoordination(input.coordinationMode));
     if (input.launchKind !== undefined && input.launchKind !== request.launchKind) {
       throw new Error('execution launch kind disagrees with request snapshot');
     }
@@ -527,7 +532,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         model: string(snapshot.model, 'model'), ...(snapshot.reasoning === undefined ? {} : { reasoning: string(snapshot.reasoning, 'model reasoning') })
       })),
       ...(workUnits ? { workUnits, blockers: [] } : {}),
-      ...(input.coordinationMode ? { coordinationMode: input.coordinationMode } : {})
+      ...(input.coordinationMode ? { coordinationMode: input.coordinationMode } : {}),
+      ...(input.origin ? { origin: input.origin } : {})
     };
     return storeQueue.run(async () => {
       const snapshot = read();
@@ -832,7 +838,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       // needs a non-empty file scope and every unit needs verification. Otherwise a
       // scope-less mutating unit passes registration but `scopesOverlap` treats it
       // as overlapping every other mutation, falsely serializing the whole plan.
-      const normalized = normalizePlan(units, record.coordinationMode === 'job-team');
+      const normalized = normalizePlan(units, isDurableCoordination(record.coordinationMode));
       if (record.workUnits?.length) {
         if (JSON.stringify(record.workUnits.map(stripWorkUnitState)) === JSON.stringify(normalized.map(stripWorkUnitState))) {
           return clone(record);
@@ -1234,7 +1240,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
 
   async function completeExecution(executionId: string, expectedStateVersion: number, finalSummary: string): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record) => {
-      if (record.coordinationMode === 'job-team' && !record.workUnits?.length) throw new Error('execution plan is required');
+      if (isDurableCoordination(record.coordinationMode) && !record.workUnits?.length) throw new Error('execution plan is required');
       if (record.workUnits?.some((unit) => unit.state !== 'COMPLETED')) throw new Error('required work units are incomplete');
       if (record.blockers?.some((blocker) => !blocker.resolved)) throw new Error('execution has unresolved blockers');
       if (record.state !== 'RUNNING' && record.state !== 'STARTING') throw new Error(`invalid execution transition ${record.state} -> COMPLETED`);
@@ -1393,6 +1399,10 @@ function normalizeRequest(input: ExecutionRequestSnapshotV1): ExecutionRequestSn
   return { ...clone(input), launchKind: input.launchKind ?? 'team' };
 }
 
+function isDurableCoordination(mode: ExecutionRecord['coordinationMode']): boolean {
+  return mode === 'job-team' || mode === 'structured' || mode === 'freeform';
+}
+
 function sameLaunchDisplay(left: ExecutionLaunchDisplayV1, right: ExecutionLaunchDisplayV1 | undefined): boolean {
   return left.label === right?.label;
 }
@@ -1467,7 +1477,7 @@ function assertUnitAuthority(unit: ExecutionWorkUnit, authority: ExecutionCohort
 }
 
 function assertAuthorizedSlot(record: ExecutionRecord, slotId: string): void {
-  if (record.coordinationMode === 'job-team' && !record.authorizationContext?.slots.some((slot) => slot.slotId === slotId)) {
+  if (isDurableCoordination(record.coordinationMode) && !record.authorizationContext?.slots.some((slot) => slot.slotId === slotId)) {
     throw new Error('assigned slot is not authorized');
   }
 }

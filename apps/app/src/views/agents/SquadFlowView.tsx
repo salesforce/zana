@@ -12,12 +12,14 @@ import {
 } from '@/store';
 import { useCanvasPan } from '@/hooks/useCanvasPan';
 import { buildSquadFlow, isQuiescentSquad } from '@/lib/squadFlow';
+import { squadFlowBounds, type FlowPoint } from '@/lib/squadFlowBounds';
 import {
   ALL_SQUADS,
   reconcileSquadLaunchSelection,
   squadLaunchGroups
 } from '@/lib/squadLaunchGroups';
 import { SquadSwitcher, type SquadSwitcherItem } from '@/components/SquadSwitcher';
+import { teamRunLabel } from '@/lib/executionIdentity';
 
 /**
  * Sticky squad-selection reducer for the Flow view's switcher. Given the
@@ -85,6 +87,7 @@ function sinceLabel(stateSince: number | undefined, now: number): string {
  */
 function squadChipLabel(graph: SquadFlowGraph, isSolo: boolean, ordinal: number): string {
   if (isSolo) return 'Solo agents';
+  if (graph.teamName) return graph.teamName;
   const orch = graph.nodes.find((n) => n.isOrchestrator);
   if (orch) return prettyLabel(orch.label);
   if (graph.squad?.name) return graph.squad.name;
@@ -202,10 +205,7 @@ function layout(graph: SquadFlowGraph, width: number): { placed: Placed[]; heigh
   return { placed, height: Math.max(height, NODE_H + PAD_TOP * 2) };
 }
 
-interface Pt {
-  x: number;
-  y: number;
-}
+type Pt = FlowPoint;
 
 /** Drop consecutive duplicate + collinear waypoints so the rounded-corner
  *  builder never sees a zero-length segment (which would break the arc math). */
@@ -265,7 +265,7 @@ const EDGE_OFFSET = 22; // how far an edge steps out of a node before turning
  *  - Target above / too close (a reply handoff) → route around a side lane so
  *    the edge never cuts back through the source node.
  */
-function edgePath(from: Placed, to: Placed): string {
+function edgeRoute(from: Placed, to: Placed): Pt[] {
   const sx = from.x + NODE_W / 2;
   const sy = from.y + NODE_H;
   const tx = to.x + NODE_W / 2;
@@ -295,8 +295,10 @@ function edgePath(from: Placed, to: Placed): string {
   }
 
   pts.push({ x: tx, y: ty });
-  return roundedPath(pts, EDGE_RADIUS);
+  return simplify(pts);
 }
+
+const EDGE_BOUNDS_PAD = 16;
 
 // Animated chevrons ride source→target along each edge, so the direction of a
 // handoff reads at a glance (borrowed from the Agentforce flow builder's
@@ -354,10 +356,14 @@ function FlowEdge({
 
 const DRAG_THRESHOLD = 4;
 
-function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onInspectExecution?: (projectId: string, executionId: string) => void }) {
+function SquadGraph({ graph, onInspectExecution, pannable = true }: {
+  graph: SquadFlowGraph;
+  onInspectExecution?: (projectId: string, executionId: string) => void;
+  pannable?: boolean;
+}) {
   const width = 1100;
   const now = graph.builtAt;
-  const { placed, height } = useMemo(() => layout(graph, width), [graph, width]);
+  const { placed, height: layoutHeight } = useMemo(() => layout(graph, width), [graph, width]);
 
   // Skip the flowing chevrons for reduced-motion users (arrowheads still show
   // direction). Read once — the preference doesn't change mid-session in practice.
@@ -393,6 +399,21 @@ function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onIn
     () => new Map(resolvedPlaced.map((p) => [p.node.sessionId, p])),
     [resolvedPlaced]
   );
+
+  const routedEdges = useMemo(() => graph.edges.flatMap((edge) => {
+    const from = byId.get(edge.fromSessionId);
+    const to = byId.get(edge.toSessionId);
+    return from && to ? [{ edge, points: edgeRoute(from, to) }] : [];
+  }), [graph.edges, byId]);
+  const bounds = useMemo(() => squadFlowBounds(
+    resolvedPlaced.map(({ x, y }) => ({ x, y, width: NODE_W, height: NODE_H })),
+    routedEdges.flatMap(({ points }) => points),
+    width,
+    layoutHeight,
+    EDGE_BOUNDS_PAD
+  ), [resolvedPlaced, routedEdges, width, layoutHeight]);
+  const contentWidth = bounds.width;
+  const contentHeight = bounds.height;
 
   const newestTs = graph.edges.reduce((mx, e) => Math.max(mx, e.lastTs), 0);
   const rollup = graph.summary;
@@ -461,7 +482,11 @@ function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onIn
         <span className="squad-flow-icon" aria-hidden="true">
           {graph.squad?.icon ?? '🤖'}
         </span>
-        <span className="squad-flow-name">{graph.squad?.name ?? 'Squad'}</span>
+         <span className="squad-flow-name">
+           {graph.executionId && graph.teamName
+             ? teamRunLabel({ cohortId: graph.executionId, executionId: graph.executionId, executionJobTitle: graph.executionJobTitle, teamName: graph.teamName })
+             : graph.teamName ?? graph.squad?.name ?? 'Team'}
+         </span>
         <span className="squad-flow-rollup">
           {rollup.working > 0 && <em className="squad-flow-stat agent-working">{rollup.working} working</em>}
           {rollup.blocked > 0 && <em className="squad-flow-stat agent-blocked">{rollup.blocked} blocked</em>}
@@ -472,16 +497,16 @@ function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onIn
       </header>
 
       <div
-        className={`squad-flow-canvas${isPanning ? ' is-panning' : ''}`}
-        aria-label="Squad canvas. Drag empty space to pan."
-        {...canvasPanProps}
+        className={`squad-flow-canvas${pannable ? ' is-pannable' : ''}${isPanning ? ' is-panning' : ''}`}
+        aria-label={pannable ? 'Squad canvas. Drag empty space to pan.' : 'Squad canvas'}
+        {...(pannable ? canvasPanProps : {})}
       >
-        <div className="squad-flow-content" style={{ width, height }}>
+        <div className="squad-flow-content" style={{ width: contentWidth, height: contentHeight }}>
           <svg
             className="squad-flow-edges"
-            width={width}
-            height={height}
-            viewBox={`0 0 ${width} ${height}`}
+            width={contentWidth}
+            height={contentHeight}
+            viewBox={`0 0 ${contentWidth} ${contentHeight}`}
             aria-hidden="true"
           >
             <defs>
@@ -492,15 +517,15 @@ function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onIn
                 <path d="M0,0 L10,5 L0,10 z" className="squad-flow-arrowhead-hot" />
               </marker>
             </defs>
-            {graph.edges.map((e) => {
-              const from = byId.get(e.fromSessionId);
-              const to = byId.get(e.toSessionId);
-              if (!from || !to) return null;
+            {routedEdges.map(({ edge: e, points }) => {
               const hot = !quiescent && e.lastTs === newestTs && newestTs > 0;
               return (
                 <FlowEdge
                   key={`${e.fromSessionId}->${e.toSessionId}`}
-                  path={edgePath(from, to)}
+                  path={roundedPath(points.map((point) => ({
+                    x: point.x + bounds.offsetX,
+                    y: point.y + bounds.offsetY
+                  })), EDGE_RADIUS)}
                   hot={hot}
                   pending={e.pending}
                   strokeWidth={Math.min(4, 1.5 + (e.count - 1) * 0.6)}
@@ -519,7 +544,7 @@ function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onIn
                 key={node.sessionId}
                 type="button"
                 className={`squad-flow-node ${node.isOrchestrator ? 'squad-flow-node--orch' : ''} ${node.exited ? 'squad-flow-node--exited' : ''} ${isDragging ? 'squad-flow-node--dragging' : ''}`}
-                style={{ left: x, top: y, width: NODE_W }}
+                style={{ left: x + bounds.offsetX, top: y + bounds.offsetY, width: NODE_W }}
                 onPointerDown={(e) => handlePointerDown(e, node, x, y)}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
@@ -536,11 +561,6 @@ function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onIn
                   </span>
                   <span className="squad-flow-node-body">
                     <span className="squad-flow-node-top">
-                      {node.job?.executionId && (
-                        <span className="job-badge" title={`Execution-backed job member (Run ID: ${node.job.executionId})`} style={{ margin: 0, marginRight: 5 }}>
-                          job
-                        </span>
-                      )}
                       <span className="squad-flow-node-label">{prettyLabel(node.label)}</span>
                       {node.isOrchestrator && (
                         <span className="squad-flow-orch-tag" title="Team lead — close it to end the whole team">
@@ -600,6 +620,8 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
   const subagentsById = useSubagents((s) => s.byId);
   const subagentChildrenById = useSubagentChildren((s) => s.byId);
   const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
+  const flowAllOrganization = useData((s) => s.flowAllOrganization);
+  const { isPanning: isStackPanning, canvasPanProps: stackPanProps } = useCanvasPan();
   const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
 
   useEffect(() => {
@@ -785,7 +807,9 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
       if (!grp.isSolo) realOrdinal += 1;
       return {
         id: grp.launchId,
-        label: g ? squadChipLabel(g, grp.isSolo, realOrdinal) : grp.launchId,
+        label: g?.executionId && g.teamName
+          ? teamRunLabel({ cohortId: grp.launchId, executionId: g.executionId, executionJobTitle: g.executionJobTitle, teamName: g.teamName })
+          : g ? squadChipLabel(g, grp.isSolo, realOrdinal) : grp.launchId,
         icon: grp.isSolo ? '👤' : '🤖',
         working: g?.summary.working ?? 0,
         isNew: !seenLaunchSet.has(grp.launchId) && grp.launchId !== selectedSquad
@@ -797,6 +821,12 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
   // filtered graph (falling back to merged if that squad just vanished).
   const activeGraph =
     selectedSquad === ALL_SQUADS ? mergedGraph : byLaunch.get(selectedSquad) ?? mergedGraph;
+  const separateGraphs = selectedSquad === ALL_SQUADS && flowAllOrganization === 'team-runs'
+    ? groups.flatMap((group) => {
+        const graph = byLaunch.get(group.launchId);
+        return graph ? [graph] : [];
+      })
+    : [];
 
   return (
     <div className="squad-flow">
@@ -811,7 +841,24 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
           ariaLabel="Squads in project"
         />
       )}
-      <SquadGraph key={`${activeGraph.projectId}:${selectedSquad}`} graph={activeGraph} onInspectExecution={onInspectExecution} />
+      {separateGraphs.length > 0 ? (
+        <div
+          className={`squad-flow-run-groups${isStackPanning ? ' is-panning' : ''}`}
+          aria-label="Team run canvases. Drag empty space to pan."
+          {...stackPanProps}
+        >
+          {separateGraphs.map((graph) => (
+            <SquadGraph
+              key={`${graph.projectId}:${graph.executionId ?? graph.nodes[0]?.sessionId}`}
+              graph={graph}
+              onInspectExecution={onInspectExecution}
+              pannable={false}
+            />
+          ))}
+        </div>
+      ) : (
+        <SquadGraph key={`${activeGraph.projectId}:${selectedSquad}`} graph={activeGraph} onInspectExecution={onInspectExecution} />
+      )}
     </div>
   );
 }

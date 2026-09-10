@@ -43,3 +43,12 @@ export async function runTabNamerOnce(args: RunTabNamerOnceArgs): Promise<string
     return null;
   }
 }
+
+/** Resolve one canonical title: explicit input, one namer call, then fallback. */
+export async function resolveNamedTitle(
+  args: RunTabNamerOnceArgs & { explicitTitle?: string; fallbackTitle: string }
+): Promise<string> {
+  const explicit = args.explicitTitle?.trim();
+  if (explicit) return explicit;
+  return (await runTabNamerOnce(args))?.trim() || args.fallbackTitle;
+}

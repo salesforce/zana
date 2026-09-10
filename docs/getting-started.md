@@ -68,7 +68,7 @@ conversation with the selected harness in the project you pick.
 - Type your task and send. The thread starts in that directory so the harness
   sees the right files.
 - Switch to **CLI Agent** when you want a real PTY running the native CLI.
-- **Autonomous Team** launches a saved team of personas when the work needs
+- **Team** launches a saved team of personas when the work needs
   parallel roles.
 
 The difference is that you're not limited to one. Start several across

@@ -474,9 +474,7 @@ describe('product HTTP', () => {
       if (input.teamId === 'missing') {
         return { ok: false as const, code: 'NOT_FOUND', message: 'team not found' };
       }
-      return input.mode === 'structured'
-        ? { ok: true as const, value: { kind: 'job' as const, id: 'ex-1', state: 'RUNNING' } }
-        : { ok: true as const, value: { kind: 'run' as const, id: 'run-1', state: 'running' } };
+      return { ok: true as const, value: { kind: 'job' as const, id: input.mode === 'structured' ? 'ex-1' : 'ex-2', state: 'RUNNING' } };
     });
     const status = vi.fn(async (id: string) => {
       if (id === 'missing') return { ok: false as const, code: 'NOT_FOUND', message: 'not found' };

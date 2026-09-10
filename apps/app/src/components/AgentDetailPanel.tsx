@@ -41,6 +41,7 @@ const STATE_LABEL: Record<AgentState, string> = {
 interface DetailCohort {
   teamName: string;
   role: string;
+  executionId?: string;
 }
 
 /** Heartbeat opt-in control (modal only). */
@@ -206,11 +207,6 @@ export function AgentDetailPanel({
               </span>
               <span className="agent-detail-heading">
                 <span style={{ display: 'flex', alignItems: 'center' }}>
-                  {!!t.cohort?.executionId && (
-                    <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort.executionId})`} style={{ margin: 0, marginRight: 5 }}>
-                      job
-                    </span>
-                  )}
                   <span className="agent-detail-title">{t.title}</span>
                 </span>
                 <span className="agent-detail-sub">{subtitle}</span>
@@ -337,6 +333,12 @@ export function AgentDetailPanel({
               {cohort.teamName}
               {cohort.role === 'orchestrator' ? ' · orchestrator' : ' · worker'}
             </dd>
+          </div>
+        )}
+        {cohort?.executionId && (
+          <div className="agent-detail-fact">
+            <dt>Run ID</dt>
+            <dd>{cohort.executionId}</dd>
           </div>
         )}
         {background && (

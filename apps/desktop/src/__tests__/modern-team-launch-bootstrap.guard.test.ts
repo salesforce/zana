@@ -10,7 +10,7 @@ describe('Modern team-launch bootstrap', () => {
       source.indexOf('async function getAuthoritativeProjectSettings')
     );
     expect(bootstrap).toMatch(
-      /if \(mcpServer\)[\s\S]*?runtimeSupervisor\.setMcpBaseUrl\([\s\S]*?mcpServer\.url[\s\S]*?teamLaunchEnabled[\s\S]*?teamJobLaunchEnabled/
+      /if \(mcpServer\)[\s\S]*?runtimeSupervisor\.setMcpBaseUrl\([\s\S]*?mcpServer\.url[\s\S]*?teamLaunchEnabled[\s\S]*?teamExecutionEnabled/
     );
   });
 });

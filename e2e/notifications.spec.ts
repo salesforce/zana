@@ -2,20 +2,17 @@
  * E2E coverage for the notifications rework (Phases B + C — see
  * docs/extensions-sdk-reference.md and the CLAUDE.md "notify" naming note):
  *
- *  - Phase B: a sandboxed disk extension calling `ctx.inbox.push` reaches the
- *    real Inbox via the brokered `inbox.push` capability, gated on the
- *    `inbox:push` permission and stamped with `extensionSource` from the
- *    AUTHENTICATED moduleId. An extension WITHOUT the permission is denied,
- *    and an unknown `projectId` is rejected — both re-verified end to end
- *    here (not just in the offline broker-caps unit tests).
+ *  - Phase B: a full-trust PluginService plugin calling `zcc.sdk.inbox.push`
+ *    reaches the real Inbox, is stamped with `extensionSource` from the
+ *    authenticated plugin id.
  *  - Phase C: the titlebar bell opens the `NotificationsDrawer` slide-over
  *    instead of navigating to the Inbox nav route, and a pushed entry shows
  *    up there.
  *
- * Installs the inline `inbox-push-sample` extension from a local `git://`
+ * Installs the inline `inbox-push-sample` plugin from a local `git://`
  * daemon — the same offline, no-network install path
- * `install-from-git.spec.ts` uses — so this exercises a REAL sandboxed
- * `main.mjs` utilityProcess, not a stub.
+ * `install-from-git.spec.ts` uses — so this exercises a REAL in-process
+ * PluginService `server.mjs`, not a stub.
  */
 import { test, expect } from './fixtures/app.js';
 import { startGitDaemon, type GitDaemon } from './fixtures/git-daemon.js';
@@ -27,34 +24,6 @@ import { tmpdir } from 'node:os';
 
 const INBOX_PUSH_REPO = { repoName: 'inbox-push-sample', files: INBOX_PUSH_SAMPLE_FILES };
 
-/** Same manifest, permissions:[] — proves the deny path without a real grant. */
-const NOPERM_MANIFEST = JSON.stringify(
-  {
-    id: 'inbox-push-noperm',
-    version: '1.0.0',
-    title: 'Inbox Push NoPerm',
-    icon: 'Bell',
-    titleLabel: 'Inbox Push NoPerm',
-    entry: { main: 'main.mjs', renderer: 'renderer.js' },
-    engines: { zccApi: '^1.0.0' },
-    permissions: [],
-    projectTab: { label: 'NoPerm', icon: 'Bell', order: 101, global: true }
-  },
-  null,
-  2
-);
-const NOPERM_MAIN = `export default {
-  id: 'inbox-push-noperm',
-  setup(ctx) {
-    return { push: async (input) => ctx.inbox.push(input) };
-  }
-};
-`;
-const NOPERM_RENDERER = `export default {
-  renderProjectTab() { return document.createElement('div'); }
-};
-`;
-
 test.describe('notifications — extension inbox push + bell drawer', () => {
   let daemon: GitDaemon | null = null;
 
@@ -63,21 +32,11 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
     daemon = null;
   });
 
-  test('a granted extension pushes a durable, stamped inbox entry an unpermissioned one cannot', async ({
+  test('an installed plugin pushes a durable, host-stamped inbox entry', async ({
     app,
     home
   }) => {
-    daemon = await startGitDaemon(join(home, '.git-daemon'), [
-      INBOX_PUSH_REPO,
-      {
-        repoName: 'inbox-push-noperm',
-        files: {
-          'extension.json': NOPERM_MANIFEST,
-          'main.mjs': NOPERM_MAIN,
-          'renderer.js': NOPERM_RENDERER
-        }
-      }
-    ]);
+    daemon = await startGitDaemon(join(home, '.git-daemon'), [INBOX_PUSH_REPO]);
     const market = new MarketplacePage(app.window);
     const win = app.window;
 
@@ -90,18 +49,10 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
     });
     expect(installed.ok).toBe(true);
 
-    // Grant consent (declares `inbox:push` → raises the P3-D overlay).
-    const overlay = win.locator('.consent-overlay');
-    await expect(overlay).toBeVisible({ timeout: 15_000 });
-    await overlay.locator('button.btn.primary').click();
-    await expect(overlay).toBeHidden({ timeout: 15_000 });
-
-    // Install the unpermissioned twin — permissions:[] means no consent gate.
-    const installedNoPerm = await market.ipc<{ ok: boolean }>('install', {
-      kind: 'git',
-      url: daemon.urlFor('inbox-push-noperm')
-    });
-    expect(installedNoPerm.ok).toBe(true);
+    await expect.poll(async () => win.evaluate(async () => {
+      const plugins = await window.cc.pluginApps.list();
+      return plugins.some((plugin) => plugin.id === 'inbox-push-sample' && plugin.enabled);
+    })).toBe(true);
 
     const projectDir = mkdtempSync(join(tmpdir(), 'zcc-inbox-push-test-'));
     let projectId: string | null = null;
@@ -115,39 +66,12 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
       }, projectDir);
       expect(projectId).toBeTruthy();
 
-      // Deny path FIRST: the unpermissioned extension's push must be rejected,
-      // and nothing should land in the inbox for it.
-      const deniedResult = await win.evaluate(async (pid) => {
-        try {
-          await window.cc.modules.call('inbox-push-noperm', 'push', [{ projectId: pid, comments: 'nope' }]);
-          return { threw: false };
-        } catch (err) {
-          return { threw: true, message: String((err as Error)?.message ?? err) };
-        }
-      }, projectId);
-      expect(deniedResult.threw).toBe(true);
-
-      // Consent dismissal starts the extension child asynchronously. Wait until
-      // its broker reaches the expected authorization error, not merely until the
-      // overlay disappears (Linux utility-process startup is slower than macOS).
-      await expect.poll(async () => win.evaluate(async () => {
-        try {
-          await window.cc.modules.call('inbox-push-sample', 'push', [
-            { projectId: 'proj-does-not-exist', comments: 'ghost' }
-          ]);
-          return 'accepted';
-        } catch (err) {
-          return String((err as Error)?.message ?? err);
-        }
-      }), { timeout: 15_000 }).toContain('unknown projectId');
-
-      // The real push: granted extension + real projectId.
+      // Real PluginService RPC + SDK push with a real projectId.
       const marker = `E2E_INBOX_PUSH_${Date.now()}`;
       const pushResult = await win.evaluate(
         async ({ pid, text }) => {
-          return window.cc.modules.call('inbox-push-sample', 'push', [
-            { projectId: pid, comments: text }
-          ]) as Promise<{ id: string }>;
+          return window.cc.pluginApps.callRpc('inbox-push-sample', 'push',
+            { projectId: pid, comments: text }) as Promise<{ id: string }>;
         },
         { pid: projectId, text: marker }
       );
@@ -200,11 +124,6 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
       url: daemon.urlFor('inbox-push-sample')
     });
     expect(installed.ok).toBe(true);
-    const overlay = win.locator('.consent-overlay');
-    await expect(overlay).toBeVisible({ timeout: 15_000 });
-    await overlay.locator('button.btn.primary').click();
-    await expect(overlay).toBeHidden({ timeout: 15_000 });
-
     const projectDir = mkdtempSync(join(tmpdir(), 'zcc-inbox-drawer-test-'));
     let projectId: string | null = null;
     try {
@@ -231,9 +150,11 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
             try {
               await win.evaluate(
                 async ({ pid, text }) =>
-                  window.cc.modules.call('inbox-push-sample', 'push', [{ projectId: pid, comments: text }]),
+                  window.cc.pluginApps.callRpc('inbox-push-sample', 'push', { projectId: pid, comments: text }),
                 { pid: projectId, text: marker }
               );
+              await win.reload();
+              await expect(win.locator('.titlebar-bell')).toBeVisible({ timeout: 15_000 });
               return 'ok';
             } catch (err) {
               return String((err as Error)?.message ?? err);
@@ -281,7 +202,7 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
     }
   });
 
-  test('a `target` naming the extension\'s own module redirects the drawer click to its project tab, not the Inbox', async ({
+  test('clicking a plugin-pushed drawer row opens that specific Inbox entry', async ({
     app,
     home
   }) => {
@@ -296,11 +217,6 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
       url: daemon.urlFor('inbox-push-sample')
     });
     expect(installed.ok).toBe(true);
-    const overlay = win.locator('.consent-overlay');
-    await expect(overlay).toBeVisible({ timeout: 15_000 });
-    await overlay.locator('button.btn.primary').click();
-    await expect(overlay).toBeHidden({ timeout: 15_000 });
-
     const projectDir = mkdtempSync(join(tmpdir(), 'zcc-inbox-target-test-'));
     let projectId: string | null = null;
     try {
@@ -313,17 +229,8 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
       }, projectDir);
       expect(projectId).toBeTruthy();
 
-      // The raw `projects.add` IPC persists in main but doesn't broadcast
-      // `projects:onChanged` — land on Projects and reload so the renderer
-      // actually knows about this project (else `focusInboxEntry`'s
-      // `enterProjectFocus` has nothing to focus).
-      const projectsNav = win.locator('.nav-item').filter({ hasText: 'Projects' });
-      await projectsNav.first().click();
-      await win.locator('button[aria-label="Reload project list"]').click();
-
-      // Same fixture forwards its `push` input verbatim to `ctx.inbox.push`, so
-      // this exercises the SAME brokered `target` trust chain as the unit tests
-      // (self-only, re-validated at click time) end to end.
+      // Current Plugin SDK push contract accepts projectId + comments. Clicking
+      // its row must use normal entry-focused Inbox navigation.
       const marker = `E2ETARGETMARKER${Date.now()}`;
       await expect
         .poll(
@@ -331,11 +238,11 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
             try {
               await win.evaluate(
                 async ({ pid, text }) =>
-                  window.cc.modules.call('inbox-push-sample', 'push', [
-                    { projectId: pid, comments: text, target: { moduleId: 'inbox-push-sample' } }
-                  ]),
+                  window.cc.pluginApps.callRpc('inbox-push-sample', 'push', { projectId: pid, comments: text }),
                 { pid: projectId, text: marker }
               );
+              await win.reload();
+              await expect(win.locator('.titlebar-bell')).toBeVisible({ timeout: 15_000 });
               return 'ok';
             } catch (err) {
               return String((err as Error)?.message ?? err);
@@ -355,13 +262,10 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
       await expect(row).toBeVisible({ timeout: 5_000 });
       await row.click();
 
-      // The drawer closes and the click lands on the extension's OWN project
-      // tab — not the Inbox nav route. Exact text match: the extension's own
-      // nav item is labeled "Inbox Push Sample", which a substring `hasText:
-      // 'Inbox'` filter would also match.
+      // Drawer closes and exact pushed entry opens in Inbox.
       await expect(drawer).toBeHidden({ timeout: 5_000 });
-      await expect(win.locator('.nav-item.active', { hasText: /^Inbox$/ })).toHaveCount(0);
-      await expect(win.locator('.inbox-push-sample-panel')).toBeVisible({ timeout: 5_000 });
+      await expect(win.locator('.nav-item.active', { hasText: /^Inbox$/ })).toHaveCount(1);
+      await expect(win.locator('.inbox-detail')).toContainText(marker, { timeout: 5_000 });
     } finally {
       if (projectId) {
         await win.evaluate(async (pid) => {

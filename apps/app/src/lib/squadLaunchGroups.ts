@@ -55,13 +55,14 @@ export function squadLaunchGroups(
 
   for (const a of agents) {
     agentSessionIds.add(a.sessionId);
-    add(a.teamLaunchId ?? SOLO_LAUNCH_ID, a.registeredAt);
+    const session = sessions.find((candidate) => candidate.id === a.sessionId);
+    add(session?.cohort?.cohortId ?? a.teamLaunchId ?? SOLO_LAUNCH_ID, a.registeredAt);
   }
   // Unregistered, non-shell live sessions are mesh nodes too — solo bucket only.
   for (const s of sessions) {
     if (s.profile === 'shell') continue;
     if (agentSessionIds.has(s.id)) continue;
-    add(SOLO_LAUNCH_ID, s.createdAt);
+    add(s.cohort?.cohortId ?? SOLO_LAUNCH_ID, s.createdAt);
   }
 
   const groups: SquadLaunchGroup[] = [...acc.entries()].map(([launchId, v]) => ({

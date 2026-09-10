@@ -29,13 +29,10 @@ describe('HomeAgentComposer layout', () => {
     expect(source).toContain('setStoredMode');
     expect(source).toContain('<LaunchModeSegmented');
     expect(source).toContain('<LegacyAgentHomeComposer');
-    expect(source).toContain('<AutonomousTeamComposer');
-    expect(source).toContain('<JobTeamComposer');
+    expect(source).toContain('<TeamComposer');
     expect(source).toContain("kind === 'agent'");
-    expect(source).toContain("kind === 'autonomous'");
-    expect(source).toContain("kind === 'job'");
-    expect(source).toContain('showAutonomousTeam={showAutonomousTeam}');
-    expect(source).toContain('showJobTeam={showJobTeam}');
+    expect(source).toContain("kind === 'team'");
+    expect(source).toContain('showTeam={available.showTeam}');
     expect(source).toContain('visibleComposerLaunchModes');
     expect(source).toContain('showLaunchSwitcher');
     expect(source).toContain('showCliAgent={available.showCliAgent}');
@@ -229,6 +226,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain("tone: row.tone");
     expect(source).toContain('VoiceRecordingBar');
     expect(source).toContain('Start voice input');
+    expect(source).toContain('className="composer-control-tooltip" data-tooltip={field.canAttach');
+    expect(source).toContain('className="composer-control-tooltip" data-tooltip={\n                    !voice.isSupported');
     expect(source).toContain('expandTestId="thread-command-expand"');
     expect(source).toContain('<ThreadContextMeter');
     expect(source).toContain('contextWindowUsage');
@@ -371,6 +370,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(field).toContain('droppedPathsFromAbsolutePaths');
     expect(source).toContain('is-drop-over');
     expect(source).toContain('Attach files');
+    expect(source).toContain('className="composer-control-tooltip" data-tooltip={field.canAttach');
     expect(source).toContain('Paperclip');
     expect(source).not.toContain('useFileDrop');
     expect(field).not.toContain('useFileDrop');

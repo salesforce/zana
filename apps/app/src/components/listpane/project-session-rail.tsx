@@ -24,6 +24,7 @@ import { ThreadCardMenu, openThreadMenu, useThreadCardActions } from '../threadC
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
 import { ProjectAgentRailRow, ProjectThreadRailRow } from './project-session-rail-rows.js';
+import { projectNavigationSessions } from '../../lib/teamRunOrganization.js';
 
 const SIDEBAR_PROJECT_SESSION_SECTION_KEY = 'sidebar:project-sessions';
 const SIDEBAR_PROJECT_SESSION_TREE_ID = 'sidebar-project-sessions-tree';
@@ -34,10 +35,11 @@ export function useProjectRailSessions(projectId: string): {
   hasSessions: boolean;
 } {
   const terminals = useData((s) => s.terminals);
+  const organization = useData((s) => s.projectNavigationOrganization);
   const threads = useThreads((s) => s.threads);
   useEnsureThreads();
   return useMemo(() => {
-    const liveList = projectRailTerminals(terminals[projectId]);
+    const liveList = projectNavigationSessions(projectRailTerminals(terminals[projectId]), organization);
     const railThreads = railThreadsForProject(
       threads.filter((thread) => thread.projectId === projectId)
     );
@@ -46,7 +48,7 @@ export function useProjectRailSessions(projectId: string): {
       railThreads,
       hasSessions: liveList.length > 0 || railThreads.length > 0
     };
-  }, [projectId, terminals, threads]);
+  }, [projectId, terminals, threads, organization]);
 }
 
 /**

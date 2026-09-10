@@ -1,14 +1,14 @@
-# Job Team E2E tests
+# Team E2E tests
 
-The **Job Team** launch feature ships THREE owner surfaces that must all start a
-durable structured execution and drive it to `COMPLETED`. When someone says
+The **Team** launch feature ships THREE owner surfaces that must all start a
+durable execution and drive it to `COMPLETED`. When someone says
 "run the Job Team E2E tests", run the deterministic suite below.
 
 ## The three surfaces (deterministic, always-on, no model spend)
 
 | Surface | Spec | What it drives |
 | --- | --- | --- |
-| Job Team UI | `e2e/job-team-launch-ui.spec.ts` | Real composer → `teams.startJob` → board |
+| Team UI | `e2e/job-team-launch-ui.spec.ts` | Real composer → structured planning → `teams.startJob` → board |
 | CLI Agent owner | `e2e/cli-agent-job-team-run.spec.ts` | Live PTY owner → loopback MCP `execution.start` |
 | Modern (ACP) owner | `e2e/modern-owner-job-team-run.spec.ts` | Real ACP owner thread → `/internal/hosts/tool-call` → Modern forwarder → loopback MCP `execution.start` |
 

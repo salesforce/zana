@@ -197,6 +197,55 @@ describe('auto mode — launch wiring', () => {
   });
 });
 
+describe('autonomous flag gating — non-Claude harness', () => {
+  beforeEach(() => {
+    spawned.length = 0;
+  });
+
+  // Regression: a Team/autonomous launch used to splice Claude-only
+  // `--permission-mode acceptEdits` + `--disallowedTools AskUserQuestion` into
+  // EVERY autonomous spawn, gated only on `claude-yolo`. opencode rejects both
+  // (prints usage, exits 1) so all Team slots died at ~0s. Now gated on
+  // `acceptsPermissionMode` / `injectsClaudeMcpConfig` (both false for opencode).
+  it('opencode structured Team spawn omits --permission-mode and --disallowedTools', () => {
+    make(BASE, {
+      profile: 'opencode',
+      autonomous: true,
+      coordinationMode: 'structured',
+      persona: { id: 'p', name: 'P', executionState: 'autonomous' }
+    });
+    const argv = spawned[0].args;
+    // Neither Claude-only flag — opencode rejects them and exits 1 at spawn.
+    expect(argv).not.toContain('--permission-mode');
+    expect(argv).not.toContain('--disallowedTools');
+    // Autonomy is conveyed by opencode's own executionContribution.
+    expect(argv).toContain('--agent');
+  });
+
+  it('opencode freeform Team spawn is identical (no Claude flags)', () => {
+    make(BASE, {
+      profile: 'opencode',
+      autonomous: true,
+      coordinationMode: 'freeform',
+      persona: { id: 'p', name: 'P', executionState: 'autonomous' }
+    });
+    const argv = spawned[0].args;
+    expect(argv).not.toContain('--permission-mode');
+    expect(argv).not.toContain('--disallowedTools');
+    expect(argv).toContain('--agent');
+  });
+
+  it('claude Team spawn still injects the Claude-only --disallowedTools (gate lets Claude through)', () => {
+    make({ ...BASE, autoModeEnabled: false }, { autonomous: true, coordinationMode: 'structured' });
+    const argv = spawned[0].args;
+    // A structured/autonomous claude Team resolves to the yolo base
+    // (--dangerously-skip-permissions), so --permission-mode is correctly absent
+    // (mutually exclusive), but the AskUserQuestion suppression still applies.
+    expect(argv).toContain('--disallowedTools');
+    expect(argv[argv.indexOf('--disallowedTools') + 1]).toBe('AskUserQuestion');
+  });
+});
+
 describe('buildClaudeAutoModeSettings', () => {
   it('returns undefined when nothing is configured', () => {
     expect(buildClaudeAutoModeSettings(BASE)).toBeUndefined();

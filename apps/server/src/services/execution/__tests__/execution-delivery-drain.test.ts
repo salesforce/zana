@@ -29,6 +29,19 @@ describe('ExecutionDeliveryDrainService', () => {
     expect(reply.mock.calls[0][1]).toContain('execution.delivery.ack');
   });
 
+  it('announces all pending blockers for one worker in one bounded production nudge', async () => {
+    queue.worker = [
+      { id: 'delivery-1', executionId: 'execution-1', attempt: 0 },
+      { id: 'delivery-2', executionId: 'execution-1', attempt: 0 }
+    ];
+    restful.worker = true;
+    service.observe('worker', 'idle');
+
+    await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
+    expect(reply.mock.calls[0][1]).toContain('2 pending blocker responses');
+    expect(reply.mock.calls[0][1]).toContain('execution-1');
+  });
+
   it('does not re-announce unchanged pending delivery after an idle flicker', async () => {
     queue.worker = [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }];
     restful.worker = true;

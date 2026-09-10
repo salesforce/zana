@@ -891,6 +891,39 @@ describe('launchTeam', () => {
     expect(createCalls).toHaveLength(1);
   });
 
+  it('accepts a preauthorized freeform run when Team autonomy is enabled', async () => {
+    TEAMS = [{
+      id: 'freeform-preissued',
+      name: 'Freeform Preissued',
+      orchestratorPersonaId: 'builtin:reviewer',
+      slots: [{ personaId: 'builtin:reviewer' }]
+    }];
+    CONFIG.teamLaunchEnabled = true;
+    try {
+      const authorized = authorizeTeamLaunch(
+        'caller-freeform', 'freeform-preissued', 'p1', 'freeform-request', {},
+        [{ initialTask: 'coordinate this run' }], 'freeform'
+      );
+      expect(authorized.ok).toBe(true);
+      if (!authorized.ok) return;
+
+      const result = await launchTeam('freeform-preissued', 'p1', {
+        callerPrincipalId: 'caller-freeform',
+        launchRequestId: 'freeform-request',
+        requirePreauthorization: true,
+        coordinationMode: 'freeform',
+        slots: authorized.value.slots.map(({ slotId, initialTask, authorizationId }) => ({
+          slotId, initialTask, authorizationId
+        }))
+      });
+
+      expect(result.ok, result.ok ? undefined : result.message).toBe(true);
+      expect(createCalls).toHaveLength(1);
+    } finally {
+      delete CONFIG.teamLaunchEnabled;
+    }
+  });
+
   it('replays a completed request with freshly issued equivalent authorizations', async () => {
     TEAMS = [{ id: 'fresh-replay', name: 'Fresh Replay', slots: [{ personaId: 'builtin:reviewer' }] }];
     const firstAuth = authorizeTeamLaunch('caller-fresh', 'fresh-replay', 'p1', 'fresh-request', {}, [{ initialTask: 'review once' }]);

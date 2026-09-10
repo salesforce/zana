@@ -60,6 +60,10 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     .filter((delivery) => delivery.blockerId === currentBlocker.id)
     .sort((left, right) => right.updatedAt - left.updatedAt)[0] : undefined;
   const terminal = record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED';
+  const deliveryStateByBlocker = new Map<string, NonNullable<ExecutionBoardProjection['blockers']>[number]['deliveryState']>();
+  for (const delivery of [...(record.deliveries ?? [])].sort((left, right) => left.updatedAt - right.updatedAt)) {
+    deliveryStateByBlocker.set(delivery.blockerId, delivery.state);
+  }
   return {
     executionId: record.id,
     projectId: record.projectId,
@@ -68,12 +72,13 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     ...(record.request.launchDisplay ?? record.launchDisplay ? { launchDisplay: record.request.launchDisplay ?? record.launchDisplay } : {}),
     jobTitle: record.jobTitle,
     ...(record.coordinationMode ? { coordinationMode: record.coordinationMode } : {}),
+    ...(record.origin ? { origin: record.origin } : {}),
     state: record.state,
     attempt: record.attempt,
     stateVersion: record.stateVersion,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
-    ...(record.request.goal ? { goal: record.request.goal } : {}),
+    ...(record.request.objective ? { objective: record.request.objective } : {}),
     ...(record.summary ? { summary: record.summary } : {}),
     sources: (record.request.sourceBundle?.sources ?? []).map((source) => ({
       id: source.id, name: source.name, mediaType: source.mediaType, byteSize: source.byteSize,
@@ -102,6 +107,13 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
         ...(currentDelivery.lastError ? { error: firstErrorLine(currentDelivery.lastError) } : {})
       } } : {})
     } } : {}),
+    blockers: (record.blockers ?? []).map((blocker) => ({
+      id: blocker.id,
+      resolved: blocker.resolved,
+      ...(deliveryStateByBlocker.has(blocker.id)
+        ? { deliveryState: deliveryStateByBlocker.get(blocker.id) }
+        : {})
+    })),
     ...(record.finalSummary ? { finalSummary: record.finalSummary } : {}),
     eventCursor: record.lastEventSequence ?? 0,
     ...(orchestratorSessionId ? { orchestratorSessionId } : {}),

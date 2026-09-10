@@ -102,11 +102,13 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
   const cohortLabelBySession = new Map<string, string>();
   const executionIdBySession = new Map<string, string>();
   const cohortRoleBySession = new Map<string, string>();
+  const cohortIdBySession = new Map<string, string>();
   for (const s of input.sessions) {
     exitedBySession.set(s.id, s.status === 'exited');
     if (s.cohort?.slotLabel) cohortLabelBySession.set(s.id, s.cohort.slotLabel);
     if (s.cohort?.executionId) executionIdBySession.set(s.id, s.cohort.executionId);
     if (s.cohort?.role) cohortRoleBySession.set(s.id, s.cohort.role);
+    if (s.cohort?.cohortId) cohortIdBySession.set(s.id, s.cohort.cohortId);
   }
 
   // Node set: every registry agent, plus any live non-shell session that never
@@ -163,7 +165,7 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
   const agentSessionIds = new Set(input.agents.map((a) => a.sessionId));
 
   for (const a of input.agents) {
-    if (!inScope(a.teamLaunchId)) continue;
+    if (!inScope(cohortIdBySession.get(a.sessionId) ?? a.teamLaunchId)) continue;
     // Cohort labels are main-owned, harness-neutral launch identity. Prefer them
     // over mesh handles so an OpenCode/Codex/Pi worker never renders as a generic
     // provider name merely because it skipped register_agent.
@@ -173,7 +175,7 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
   for (const s of input.sessions) {
     if (s.profile === 'shell') continue; // plain shells aren't agents
     if (agentSessionIds.has(s.id)) continue; // a registry agent — handled (or scoped out) above
-    if (!inScope(undefined)) continue; // truly unregistered → solo bucket only
+    if (!inScope(s.cohort?.cohortId)) continue;
     bySession.set(s.id, makeNode(s.id, s.cohort?.slotLabel, s.cohort?.slotLabel ?? s.title, undefined, undefined));
   }
 
@@ -273,9 +275,18 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     else if (n.state === 'idle') summary.idle += 1;
   }
 
+  const scopedCohorts = input.launchFilter === undefined || input.launchFilter === SOLO_LAUNCH_ID
+    ? []
+    : input.sessions.map((session) => session.cohort).filter((cohort) => cohort?.cohortId === input.launchFilter);
+  const teamName = scopedCohorts.find((cohort) => cohort?.teamName)?.teamName;
+  const executionId = scopedCohorts.find((cohort) => cohort?.executionId)?.executionId;
+  const executionJobTitle = scopedCohorts.find((cohort) => cohort?.executionJobTitle)?.executionJobTitle;
   return {
     projectId: input.projectId,
     squad: input.squad,
+    ...(teamName ? { teamName } : {}),
+    ...(executionId ? { executionId } : {}),
+    ...(executionJobTitle ? { executionJobTitle } : {}),
     nodes,
     edges,
     summary,

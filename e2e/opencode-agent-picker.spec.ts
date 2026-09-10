@@ -52,27 +52,29 @@ async function openRoleMenu(window: Page, modal: Locator, timeout = 5_000) {
   const trigger = roleTrigger(modal);
   await expect(trigger).toBeVisible({ timeout });
   await trigger.click();
-  const menu = window.locator('[data-testid="native-role-picker-menu"]');
+  const menu = window.getByRole('listbox', { name: 'Native role' });
   await expect(menu).toBeVisible();
   return menu;
 }
 
 async function readRoleLabels(window: Page, modal: Locator, timeout = 5_000) {
   const menu = await openRoleMenu(window, modal, timeout);
-  const labels = (await menu.getByRole('option').allTextContents()).map((label) => label.trim());
+  const labels = (await menu.getByRole('option').allTextContents())
+    .map((label) => label.replace(/^∞/, '').trim())
+    .filter((label) => label !== 'Refresh roles');
   await roleTrigger(modal).click(); // toggle the popover closed
   await expect(menu).toBeHidden();
   return labels;
 }
 
 async function selectRole(window: Page, modal: Locator, value: string) {
-  await openRoleMenu(window, modal);
-  await window.locator(`[data-testid="native-role-${value}"]`).click();
+  const menu = await openRoleMenu(window, modal);
+  await menu.getByRole('option', { name: new RegExp(`^${value}$`, 'i') }).click();
 }
 
 async function refreshRoles(window: Page, modal: Locator) {
-  await openRoleMenu(window, modal);
-  await window.locator('[data-testid="native-role-refresh"]').click();
+  const menu = await openRoleMenu(window, modal);
+  await menu.getByText('Refresh roles', { exact: true }).click();
 }
 
 // The CLI Agent composer rests on claude-code (Modern-parity default), so the
@@ -95,6 +97,7 @@ async function selectHarness(window: Page, modal: Locator, providerId: string) {
 // `session/new`; enabling `FAKE_ACP_MODE_CONFIG` makes it offer Build/Plan.
 test.describe('OpenCode native-role picker (ACP mode parity)', () => {
   test.use({
+    initialConfig: { nativeAgentDiscoveryEnabled: true },
     launchEnv: {
       PATH: `${fixtureBin}${delimiter}${process.env.PATH ?? ''}`,
       FAKE_ACP_MODEL_CONFIG: '1',
@@ -117,7 +120,7 @@ test.describe('OpenCode native-role picker (ACP mode parity)', () => {
       await window.getByRole('link', { name: 'Settings' }).click();
       await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
       const openCodeSettings = window.locator('#settings-anchor-harness-opencode');
-      await expect(openCodeSettings.locator('.opener-row-status')).toHaveClass(/opener-row-status--ok/);
+      await expect(openCodeSettings.locator('.opener-row-status--ok').first()).toHaveAttribute('title', /1\.18\.10/);
 
       projectId = await window.evaluate(async (path) => {
         const result = await window.cc.projects.add(path);

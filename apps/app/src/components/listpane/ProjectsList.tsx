@@ -41,6 +41,7 @@ import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
 import { isProjectRailExpanded, pinFavoriteProjectsFirst } from './project-rail.js';
 import { ProjectAgentRailRow, ProjectThreadRailRow } from './project-session-rail-rows.js';
+import { projectNavigationSessions } from '../../lib/teamRunOrganization.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '../threadCardActions.js';
 import { PromptModal } from '../PromptModal.js';
@@ -160,6 +161,7 @@ export function ProjectsList({
   const inSidebar = placement === 'sidebar';
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
+  const projectNavigationOrganization = useData((s) => s.projectNavigationOrganization);
   const loadProjects = useData((s) => s.loadProjects);
   const addProjectByPath = useData((s) => s.addProjectByPath);
   const addRemoteProject = useData((s) => s.addRemoteProject);
@@ -606,7 +608,10 @@ export function ProjectsList({
   const renderProject = (group: RailGroup, p: Project) => {
     const sortable = canReorder && renamingId !== p.id;
     const labelClass = sortable ? 'project-label project-label--sortable' : 'project-label';
-    const liveList = projectRailTerminals(terminals[p.id]);
+    const liveList = projectNavigationSessions(
+      projectRailTerminals(terminals[p.id]),
+      projectNavigationOrganization
+    );
     const railThreads = railThreadsByProject.get(p.id) ?? [];
     const nestedCount = liveList.length + railThreads.length;
     const displayName = composerProjectLabel(p);

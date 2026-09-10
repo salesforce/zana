@@ -8,7 +8,7 @@ function record(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
     jobTitle: 'Recover job', summary: 'Ship it', requestDigest: 'digest', launchRequestId: 'req',
     teamLaunchRequestId: 'team-req', attempt: 1, state: 'RUNNING', stateVersion: 5, recoveryGeneration: 2,
     resolvedModels: [], createdAt: 1, updatedAt: 2,
-    request: { version: 1, slots: [], resolvedModels: [], goal: 'Deliver', sourceBundle: { contentRef: 'ref', sources: [] } },
+    request: { version: 1, slots: [], resolvedModels: [], objective: 'Deliver', sourceBundle: { contentRef: 'ref', sources: [] } },
     ...overrides
   } as ExecutionRecord;
 }
@@ -22,6 +22,7 @@ function baseDeps(overrides: Partial<RelaunchMonitorDeps> = {}): RelaunchMonitor
     readSource: async () => ({ content: '', totalBytes: 0 }),
     getWorkerRoster: async () => [{ slotId: 'w1', sessionId: 's1', status: 'live' }],
     findOrchestratorPersona: () => ({ id: 'persona-1' }),
+    resolveTeamName: () => 'Release Team',
     createMonitor: () => ({ ok: true, value: { id: 'monitor-session-1' } }),
     bindMonitor: async () => ({ ok: true, value: {} }),
     closeMonitor: vi.fn(),
@@ -39,6 +40,19 @@ describe('relaunchExecutionMonitor', () => {
     const result = await relaunchExecutionMonitor(baseDeps({ clearToken }), 'project-1', 'execution-1');
     expect(result).toEqual({ ok: true, value: { sessionId: 'monitor-session-1' } });
     expect(clearToken).toHaveBeenCalledWith('project-1', 'execution-1');
+  });
+
+  it('preserves freeform policy and resolves the team label for a recovery monitor', async () => {
+    const createMonitor = vi.fn(() => ({ ok: true as const, value: { id: 'monitor-session-1' } }));
+    const result = await relaunchExecutionMonitor(baseDeps({
+      getExecution: async () => record({ coordinationMode: 'freeform' }),
+      createMonitor
+    }), 'project-1', 'execution-1');
+    expect(result).toMatchObject({ ok: true });
+    expect(createMonitor).toHaveBeenCalledWith(expect.objectContaining({
+      coordinationMode: 'freeform',
+      cohort: expect.objectContaining({ teamName: 'Release Team', coordinationMode: 'freeform' })
+    }));
   });
 
   it('rejects when the execution is already terminal (preflight failure)', async () => {

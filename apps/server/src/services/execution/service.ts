@@ -30,7 +30,7 @@ export interface ExecutionRequestV1 {
   teamId: string;
   launchRequestId: string;
   jobTitle?: string;
-  goal?: string;
+  objective?: string;
   summary?: string;
   slots: TeamLaunchAuthorizationInputSlot[];
   policy?: TeamLaunchRequestInput['policy'];
@@ -42,6 +42,7 @@ export interface ExecutionRequestV1 {
   };
   workUnits?: ExecutionWorkUnitInput[];
   coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
+  origin?: import('@zana-ai/zcc-domain/product').LaunchOrigin;
 }
 
 /** @deprecated Use ExecutionRequestV1. Retained for Team backend callers. */
@@ -57,7 +58,8 @@ export interface ExecutionServiceDeps {
     projectId: string,
     launchRequestId: string,
     policy: NonNullable<TeamLaunchRequestInput['policy']>,
-    slots: TeamLaunchAuthorizationInputSlot[]
+    slots: TeamLaunchAuthorizationInputSlot[],
+    coordinationMode?: ExecutionRequestV1['coordinationMode']
   ) => Promise<{ ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string }> | { ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string };
   launchTeam: (teamId: string, projectId: string, request: TeamLaunchRequestInput) => Promise<{ ok: boolean; code?: string; message?: string }>;
   getTeamLaunch: (callerPrincipalId: string, launchRequestId: string) => Promise<unknown>;
@@ -114,6 +116,9 @@ interface ExtractedLifecycle {
     projectId?: string;
     process?: string;
     task?: string;
+    exitCode?: number;
+    exitSignal?: number;
+    exitReason?: string;
   }>;
   launchResult?: {
     failedSlots?: unknown[];
@@ -211,8 +216,9 @@ export class ExecutionService {
         callerPrincipalId, projectId, teamId: request.teamId, launchKind: request.launchKind ?? 'team',
         ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), jobTitle, summary,
         ...(request.coordinationMode ? { coordinationMode: request.coordinationMode } : {}),
+        ...(request.origin ? { origin: request.origin } : {}),
         launchRequestId: request.launchRequestId,
-        request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: request.policy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, goal: request.goal },
+        request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: request.policy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective },
         ...(request.workUnits ? { workUnits: request.workUnits } : {}),
         resolvedModels,
         requestDigest: launchDigest({ callerPrincipalId, projectId, request: { ...withoutDefaultLaunchKind(request), jobTitle, summary } })
@@ -273,7 +279,8 @@ export class ExecutionService {
         }
       }
       const authorization = await this.deps.authorizeTeamLaunch(
-        callerPrincipalId, request.teamId, projectId, record.teamLaunchRequestId, request.policy ?? {}, request.slots
+        callerPrincipalId, request.teamId, projectId, record.teamLaunchRequestId,
+        request.policy ?? {}, request.slots, request.coordinationMode
       );
         if (!authorization.ok) {
           await this.transitionOrCurrent(record, 'BLOCKED', 'warning', authorization.message);
@@ -305,8 +312,9 @@ export class ExecutionService {
         callerPrincipalId, launchRequestId: record.teamLaunchRequestId, slots: authorization.value.slots,
         policy: request.policy, requirePreauthorization: true, executionId: record.id, executionJobTitle: record.jobTitle,
         ...(request.coordinationMode ? { coordinationMode: request.coordinationMode } : {}),
-        ...(request.coordinationMode === 'job-team' ? { jobContext: {
-          goal: request.goal?.trim() || record.jobTitle,
+        ...(request.origin ? { origin: request.origin } : {}),
+        ...(isDurableCoordination(request.coordinationMode) ? { jobContext: {
+          objective: request.objective?.trim() || record.jobTitle,
           title: record.jobTitle,
           ...(record.summary ? { summary: record.summary } : {}),
           ...(request.sourceBundle ? { sourceBundle: request.sourceBundle } : {})
@@ -317,6 +325,13 @@ export class ExecutionService {
         return { ok: false, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed' };
       }
       if (!await this.launchMayProceed(record)) {
+        const current = await this.deps.store.get(record.id);
+        if (current?.state === 'COMPLETED') {
+          return { ok: true, value: { ...current, ...(resumeGrant ? { resumeToken: resumeGrant.token, resumeTokenExpiresAt: resumeGrant.expiresAt } : {}) } };
+        }
+        if (current?.state === 'FAILED') {
+          return { ok: false, code: 'TEAM_LAUNCH_FAILED', message: current.finalSummary ?? 'execution failed during Team launch' };
+        }
         return { ok: false, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed during Team launch' };
       }
       record = await this.transitionOrCurrent(record, 'RUNNING', 'info', 'Team launch started');
@@ -705,7 +720,10 @@ export class ExecutionService {
           return { ok: false as const, code: preflight?.code ?? 'INVALID_WORKFLOW_PROFILE', message: preflight?.message ?? 'workflow profile is unavailable', value: blocked };
         }
       }
-      const authorization = await this.deps.authorizeTeamLaunch(retry.callerPrincipalId, retry.teamId, projectId, retry.teamLaunchRequestId, request.policy ?? {}, request.slots);
+      const authorization = await this.deps.authorizeTeamLaunch(
+        retry.callerPrincipalId, retry.teamId, projectId, retry.teamLaunchRequestId,
+        request.policy ?? {}, request.slots, retry.coordinationMode
+      );
       if (!authorization.ok || !authorization.value.context) {
         const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', authorization.ok ? 'Team authorization context unavailable' : authorization.message);
         return { ok: false as const, code: authorization.ok ? 'AUTHORIZATION_CONTEXT_UNAVAILABLE' : authorization.code, message: authorization.ok ? 'Team authorization context unavailable' : authorization.message, value: blocked };
@@ -723,8 +741,9 @@ export class ExecutionService {
         slots: authorization.value.slots, policy: request.policy, requirePreauthorization: true,
         executionId: retry.id, executionJobTitle: retry.jobTitle,
         ...(retry.coordinationMode ? { coordinationMode: retry.coordinationMode } : {}),
-        ...(retry.coordinationMode === 'job-team' ? { jobContext: {
-          goal: request.goal?.trim() || retry.jobTitle,
+        ...(retry.origin ? { origin: retry.origin } : {}),
+        ...(isDurableCoordination(retry.coordinationMode) ? { jobContext: {
+          objective: request.objective?.trim() || retry.jobTitle,
           title: retry.jobTitle,
           ...(retry.summary ? { summary: retry.summary } : {}),
           ...(request.sourceBundle ? { sourceBundle: request.sourceBundle } : {})
@@ -1258,8 +1277,29 @@ export class ExecutionService {
       return this.transitionOrCurrent(record, 'BLOCKED', 'warning', 'Team lifecycle record unavailable or mismatched');
     }
     if (record.state !== 'RUNNING' && record.state !== 'STARTING') return record;
+    // launchTeam adds slots sequentially. Renderer polling can therefore observe
+    // a partial lifecycle where every worker added so far already exited but the
+    // orchestrator has not been added yet. During start(), only promote visible
+    // live progress; defer terminal lifecycle conclusions until launch settles.
+    if (this.starting.has(record.id)) {
+      if (record.state === 'STARTING' && lifecycle.workers.some((worker) =>
+        worker.process !== 'exited' && worker.process !== 'spawn-failed' && worker.process !== 'canceled')) {
+        return this.transitionOrCurrent(record, 'RUNNING', 'info', 'Team launch recovered from lifecycle record');
+      }
+      return record;
+    }
     if (lifecycle.launchResult?.failedSlots?.length) {
-      return this.transitionOrCurrent(record, 'FAILED', 'error', 'One or more Team slots failed to launch');
+      const details = lifecycle.launchResult.failedSlots
+        .map((slot) => {
+          if (!slot || typeof slot !== 'object') return '';
+          const value = slot as { slotId?: unknown; reason?: unknown };
+          const slotId = typeof value.slotId === 'string' ? value.slotId : 'unknown slot';
+          const reason = typeof value.reason === 'string' ? value.reason : 'unknown reason';
+          return `${slotId}: ${reason}`;
+        })
+        .filter(Boolean)
+        .join('; ');
+      return this.transitionOrCurrent(record, 'FAILED', 'error', details || 'One or more Team slots failed to launch');
     }
     if (lifecycle.outcome?.status === 'completed' && lifecycle.outcome.result?.ok === false) {
       return this.transitionOrCurrent(record, 'FAILED', 'error', lifecycle.outcome.result.message ?? 'Team launch failed');
@@ -1276,7 +1316,27 @@ export class ExecutionService {
     }
     if (lifecycle.workers.length > 0 && lifecycle.workers.every((worker) =>
       worker.process === 'exited' || worker.process === 'spawn-failed' || worker.process === 'canceled')) {
-      return this.transitionOrCurrent(record, 'FAILED', 'error', 'All Team slots exited without completion');
+      // Build a self-diagnosing per-slot detail from the exit info captured at the
+      // PTY exit event (exit code + provider explanation). Historically this was a
+      // generic detail-less line, which is why identical undiagnosable failures
+      // recurred. Fall back to the generic text only when no slot carried detail.
+      const perSlot = lifecycle.workers
+        .map((worker) => {
+          const slotId = typeof worker.slotId === 'string' ? worker.slotId : 'unknown slot';
+          if (typeof worker.exitReason === 'string' && worker.exitReason.length > 0) {
+            return `${slotId}: ${worker.exitReason}`;
+          }
+          if (typeof worker.exitCode === 'number' && worker.exitCode !== 0) {
+            const sig = typeof worker.exitSignal === 'number' && worker.exitSignal > 0 ? `, signal ${worker.exitSignal}` : '';
+            return `${slotId}: exited code ${worker.exitCode}${sig}`;
+          }
+          return '';
+        })
+        .filter(Boolean);
+      const detail = perSlot.length > 0
+        ? `All Team slots exited without completion — ${perSlot.join('; ')}`
+        : 'All Team slots exited without completion';
+      return this.transitionOrCurrent(record, 'FAILED', 'error', detail);
     }
     if (record.state === 'STARTING' && lifecycle.workers.some((worker) => worker.process !== 'exited' && worker.process !== 'spawn-failed' && worker.process !== 'canceled')) {
       return this.transitionOrCurrent(record, 'RUNNING', 'info', 'Team launch recovered from lifecycle record');
@@ -1437,6 +1497,10 @@ function hasUniqueModelSlots(models: readonly ResolvedModelSnapshotV1[]): boolea
     slots.add(model.slotId);
   }
   return true;
+}
+
+function isDurableCoordination(mode: ExecutionRequestV1['coordinationMode']): boolean {
+  return mode === 'job-team' || mode === 'structured' || mode === 'freeform';
 }
 
 function deniedBound(message: string) {

@@ -33,9 +33,10 @@ export function ProjectAgentRailRow({
   onOpen: () => void;
   onContextMenu: (e: MouseEvent) => void;
 }) {
+  const title = session.cohort?.executionJobTitle?.trim() || session.title;
   const { onPointerDown, openInSplit } = usePaneContentSplitDrag({
     content: { kind: 'agent-session', projectId, sessionId: session.id },
-    title: session.title
+    title
   });
   const indicator = usePaneContentSplitIndicator({
     kind: 'agent-session',
@@ -61,19 +62,19 @@ export function ProjectAgentRailRow({
           onOpen();
         }}
         onContextMenu={onContextMenu}
-        aria-label={isUnread ? `${session.title}, unread output` : session.title}
+        aria-label={isUnread ? `${title}, unread output` : title}
         aria-current={active ? 'true' : undefined}
-        title={isUnread ? `${session.title} · unread output` : session.title}
+        title={isUnread ? `${title} · unread output` : title}
       >
         <span className={`tab-profile-icon profile-${session.profile}`} aria-hidden="true">
           {profileIcon(session.profile)}
         </span>
         <span className="project-terminal-text">
-          <span className="project-terminal-name">{session.title}</span>
+          <span className="project-terminal-name">{title}</span>
           <AgentRowDetail session={session} projectRemote={projectRemote} />
         </span>
         {indicator.miniMap ? (
-          <SplitPaneMiniMap slots={indicator.miniMap} label={`${session.title} split position`} />
+          <SplitPaneMiniMap slots={indicator.miniMap} label={`${title} split position`} />
         ) : null}
       </button>
       {!session.scheduled && <AgentDeleteQuickAction session={session} projectId={projectId} />}
