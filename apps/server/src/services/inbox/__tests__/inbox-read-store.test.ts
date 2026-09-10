@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -132,6 +132,23 @@ describe('InboxReadStore', () => {
     const next = await store.migrateCurrentOriginReadIds(['nope']);
     expect(next.migratedFromLocalStorage).toBe(true);
     expect(next.readIds).toEqual({});
+  });
+
+  it('background prune failure is caught and logged', async () => {
+    store.dispose();
+    const persist = vi.fn(async () => {
+      throw new Error('disk full');
+    });
+    store = createInboxReadStore({ filePath: readPath, inbox, persist });
+    const [a] = await seed(1);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await inbox.delete(a);
+    await expect.poll(() => persist.mock.calls.length).toBeGreaterThan(0);
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[inbox-read] background prune failed',
+      expect.objectContaining({ ids: [a] })
+    );
+    errorSpy.mockRestore();
   });
 
   it('serializes concurrent RMW', async () => {

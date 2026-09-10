@@ -575,6 +575,28 @@ function applyDurableReadState(state: DurableInboxReadState): Pick<InboxReadStat
   };
 }
 
+function rollbackReadIds(ids: string[], add: boolean): void {
+  const current = useInboxRead.getState().readIds;
+  const next = { ...current };
+  let changed = false;
+  for (const id of ids) {
+    if (add) {
+      if (next[id]) {
+        delete next[id];
+        changed = true;
+      }
+    } else if (!next[id]) {
+      next[id] = true;
+      changed = true;
+    }
+  }
+  if (changed) useInboxRead.setState({ readIds: next });
+}
+
+function logInboxReadFailure(operation: string, ids: string[], err: unknown): void {
+  console.error(`[inbox] ${operation} failed`, { ids, err });
+}
+
 export const useInboxRead = create<InboxReadState>()(
   persist(
     (set, get) => ({
@@ -587,7 +609,10 @@ export const useInboxRead = create<InboxReadState>()(
         set({ readIds: { ...prev.readIds, [id]: true } });
         void product.inbox.markRead(id).then(
           (next) => set(applyDurableReadState(next)),
-          () => set({ readIds: prev.readIds })
+          (err) => {
+            logInboxReadFailure('markRead', [id], err);
+            rollbackReadIds([id], true);
+          }
         );
       },
       markUnread: (id) => {
@@ -598,7 +623,10 @@ export const useInboxRead = create<InboxReadState>()(
         set({ readIds: next });
         void product.inbox.markUnread(id).then(
           (server) => set(applyDurableReadState(server)),
-          () => set({ readIds: prev.readIds })
+          (err) => {
+            logInboxReadFailure('markUnread', [id], err);
+            rollbackReadIds([id], false);
+          }
         );
       },
       markAllRead: (ids) => {
@@ -609,7 +637,10 @@ export const useInboxRead = create<InboxReadState>()(
         set({ readIds: next });
         void product.inbox.markAllRead(ids).then(
           (server) => set(applyDurableReadState(server)),
-          () => set({ readIds: prev.readIds })
+          (err) => {
+            logInboxReadFailure('markAllRead', ids, err);
+            rollbackReadIds(ids, true);
+          }
         );
       },
       pruneRead: (removedIds) => {
@@ -626,8 +657,8 @@ export const useInboxRead = create<InboxReadState>()(
         if (changed) set({ readIds: next });
         void product.inbox.pruneRead(removedIds).then(
           (server) => set(applyDurableReadState(server)),
-          () => {
-            /* keep optimistic prune; server prune is best-effort */
+          (err) => {
+            logInboxReadFailure('pruneRead', removedIds, err);
           }
         );
       }
@@ -647,8 +678,8 @@ export async function hydrateInboxReadFromProduct(): Promise<void> {
       return;
     }
     useInboxRead.getState().hydrateFromServer(durable);
-  } catch {
-    /* keep last local cache until a later hydrate */
+  } catch (err) {
+    console.error('[inbox] hydrateFromProduct failed', err);
   }
 }
 

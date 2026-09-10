@@ -62,12 +62,50 @@ describe('useInboxRead durable hydrate', () => {
   it('failed markRead rolls back optimistic id', async () => {
     getReadState.mockResolvedValue({ readIds: {}, migratedFromLocalStorage: true });
     markRead.mockRejectedValue(new Error('nope'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { useInboxRead } = await import('../live.js');
     useInboxRead.getState().markRead('x');
     expect(useInboxRead.getState().readIds.x).toBe(true);
     await vi.waitFor(() => {
       expect(useInboxRead.getState().readIds.x).toBeUndefined();
     });
+    expect(errorSpy).toHaveBeenCalledWith('[inbox] markRead failed', expect.objectContaining({ ids: ['x'] }));
+    errorSpy.mockRestore();
+  });
+
+  it('failed markRead does not erase a later successful mark', async () => {
+    let rejectFirst: ((err: Error) => void) | undefined;
+    markRead.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectFirst = reject;
+        })
+    );
+    markRead.mockResolvedValueOnce({
+      readIds: { later: true },
+      migratedFromLocalStorage: true
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { useInboxRead } = await import('../live.js');
+    useInboxRead.getState().markRead('first');
+    useInboxRead.getState().markRead('later');
+    expect(useInboxRead.getState().readIds).toEqual({ first: true, later: true });
+    rejectFirst?.(new Error('stale'));
+    await vi.waitFor(() => {
+      expect(useInboxRead.getState().readIds).toEqual({ later: true });
+    });
+    errorSpy.mockRestore();
+  });
+
+  it('hydrate logs and keeps local cache on failure', async () => {
+    getReadState.mockRejectedValue(new Error('offline'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { useInboxRead, hydrateInboxReadFromProduct } = await import('../live.js');
+    useInboxRead.setState({ readIds: { local: true }, migratedFromLocalStorage: false });
+    await hydrateInboxReadFromProduct();
+    expect(useInboxRead.getState().readIds).toEqual({ local: true });
+    expect(errorSpy).toHaveBeenCalledWith('[inbox] hydrateFromProduct failed', expect.any(Error));
+    errorSpy.mockRestore();
   });
 
   it('migrates current-origin ids once when flag is false', async () => {

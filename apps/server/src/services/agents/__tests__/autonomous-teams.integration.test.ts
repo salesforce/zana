@@ -109,6 +109,7 @@ vi.mock('@zana-ai/zcc-server', async (importOriginal) => {
       append: inboxAppendSpy,
       read: () => [],
       listIds: async () => [],
+      hasId: async () => false,
       delete: () => {},
       deleteMany: () => {},
       onAppended: () => {},

@@ -42,6 +42,7 @@ export interface InboxReadStoreOptions {
   /** Override the JSON path (defaults to sibling of `entries.jsonl`). */
   filePath?: string;
   inbox: IInboxStore;
+  persist?: (filePath: string, state: InboxReadState) => Promise<void>;
 }
 
 export function defaultInboxReadStateFile(entriesFile = defaultInboxFile()): string {
@@ -81,132 +82,162 @@ function parseState(raw: string): InboxReadState {
   };
 }
 
-export function createInboxReadStore(opts: InboxReadStoreOptions): IInboxReadStore {
-  const filePath = opts.filePath ?? defaultInboxReadStateFile();
-  const inbox = opts.inbox;
-
+function createExclusiveQueue(): <T>(task: () => Promise<T>) => Promise<T> {
   let tail: Promise<unknown> = Promise.resolve();
-  function runExclusive<T>(task: () => Promise<T>): Promise<T> {
+  return function runExclusive<T>(task: () => Promise<T>): Promise<T> {
     const result = tail.then(task, task);
     tail = result.then(
       () => undefined,
       () => undefined
     );
     return result;
-  }
+  };
+}
 
-  async function load(): Promise<InboxReadState> {
-    try {
-      return parseState(await readFile(filePath, 'utf-8'));
-    } catch {
-      return emptyState();
+async function loadState(filePath: string): Promise<InboxReadState> {
+  try {
+    return parseState(await readFile(filePath, 'utf-8'));
+  } catch {
+    return emptyState();
+  }
+}
+
+async function persistState(filePath: string, state: InboxReadState): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  const body: InboxReadStateFile = {
+    version: INBOX_READ_STATE_VERSION,
+    migratedFromLocalStorage: state.migratedFromLocalStorage,
+    readIds: state.readIds
+  };
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
+  await writeFile(tmp, `${JSON.stringify(body)}\n`, { encoding: 'utf-8', mode: 0o600 });
+  await rename(tmp, filePath);
+}
+
+function intersect(readIds: Record<string, true>, live: Set<string>): Record<string, true> {
+  const next: Record<string, true> = {};
+  for (const id of Object.keys(readIds)) {
+    if (live.has(id)) next[id] = true;
+  }
+  return next;
+}
+
+function createLiveIdCache(inbox: IInboxStore): {
+  get(): Promise<Set<string>>;
+  dispose(): void;
+} {
+  let cached: Set<string> | null = null;
+  const offAppended = inbox.onAppended((entry) => {
+    cached?.add(entry.id);
+  });
+  const offRemoved = inbox.onRemoved((id) => {
+    cached?.delete(id);
+  });
+  const offPruned = inbox.onPruned((removedIds) => {
+    if (!cached) return;
+    for (const id of removedIds) cached.delete(id);
+  });
+  return {
+    async get() {
+      if (!cached) cached = new Set(await inbox.listIds());
+      return cached;
+    },
+    dispose() {
+      offAppended();
+      offRemoved();
+      offPruned();
     }
-  }
+  };
+}
 
-  async function persist(state: InboxReadState): Promise<void> {
-    await mkdir(dirname(filePath), { recursive: true });
-    const body: InboxReadStateFile = {
-      version: INBOX_READ_STATE_VERSION,
-      migratedFromLocalStorage: state.migratedFromLocalStorage,
-      readIds: state.readIds
-    };
-    const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
-    await writeFile(tmp, `${JSON.stringify(body)}\n`, { encoding: 'utf-8', mode: 0o600 });
-    await rename(tmp, filePath);
-  }
+function logBackgroundPruneFailure(ids: string[], err: unknown): void {
+  console.error('[inbox-read] background prune failed', { ids, err });
+}
 
-  async function liveInboxIds(): Promise<Set<string>> {
-    return new Set(await inbox.listIds());
-  }
+export function createInboxReadStore(opts: InboxReadStoreOptions): IInboxReadStore {
+  const filePath = opts.filePath ?? defaultInboxReadStateFile();
+  const inbox = opts.inbox;
+  const persist = opts.persist ?? persistState;
+  const runExclusive = createExclusiveQueue();
+  const liveIds = createLiveIdCache(inbox);
 
-  function intersect(readIds: Record<string, true>, live: Set<string>): Record<string, true> {
-    const next: Record<string, true> = {};
-    for (const id of Object.keys(readIds)) {
-      if (live.has(id)) next[id] = true;
-    }
-    return next;
+  async function mutate(
+    apply: (state: InboxReadState, live: Set<string>) => InboxReadState
+  ): Promise<InboxReadState> {
+    return runExclusive(async () => {
+      const state = await loadState(filePath);
+      const live = await liveIds.get();
+      const next = apply({ ...state, readIds: intersect(state.readIds, live) }, live);
+        await persist(filePath, next);
+      return next;
+    });
   }
 
   async function getReadState(): Promise<InboxReadState> {
     return runExclusive(async () => {
-      const state = await load();
-      const live = await liveInboxIds();
+      const state = await loadState(filePath);
+      const live = await liveIds.get();
       const readIds = intersect(state.readIds, live);
       if (Object.keys(readIds).length !== Object.keys(state.readIds).length) {
         const next = { ...state, readIds };
-        await persist(next);
+      await persist(filePath, next);
         return next;
       }
       return { readIds, migratedFromLocalStorage: state.migratedFromLocalStorage };
     });
   }
 
-  async function markRead(id: string): Promise<InboxReadState> {
+  async function markAllRead(ids: string[]): Promise<InboxReadState> {
+    const wanted = normalizeIds(ids);
+    return mutate((state, live) => {
+      for (const id of wanted) {
+        if (live.has(id)) state.readIds[id] = true;
+      }
+      return state;
+    });
+  }
+
+  function markRead(id: string): Promise<InboxReadState> {
     return markAllRead(typeof id === 'string' ? [id] : []);
   }
 
-  async function markUnread(id: string): Promise<InboxReadState> {
-    return runExclusive(async () => {
-      const state = await load();
-      const live = await liveInboxIds();
-      const readIds = intersect(state.readIds, live);
-      if (typeof id === 'string' && readIds[id]) delete readIds[id];
-      const next = { ...state, readIds };
-      await persist(next);
-      return next;
+  function markUnread(id: string): Promise<InboxReadState> {
+    return mutate((state) => {
+      if (typeof id === 'string' && state.readIds[id]) delete state.readIds[id];
+      return state;
     });
   }
 
-  async function markAllRead(ids: string[]): Promise<InboxReadState> {
-    return runExclusive(async () => {
-      const wanted = normalizeIds(ids);
-      const state = await load();
-      const live = await liveInboxIds();
-      const readIds = intersect(state.readIds, live);
-      for (const id of wanted) {
-        if (live.has(id)) readIds[id] = true;
-      }
-      const next = { ...state, readIds };
-      await persist(next);
-      return next;
+  function pruneRead(ids: string[]): Promise<InboxReadState> {
+    const wanted = normalizeIds(ids);
+    return mutate((state) => {
+      for (const id of wanted) delete state.readIds[id];
+      return state;
     });
   }
 
-  async function pruneRead(ids: string[]): Promise<InboxReadState> {
-    return runExclusive(async () => {
-      const wanted = normalizeIds(ids);
-      const state = await load();
-      const live = await liveInboxIds();
-      const readIds = intersect(state.readIds, live);
-      for (const id of wanted) delete readIds[id];
-      const next = { ...state, readIds };
-      await persist(next);
-      return next;
-    });
-  }
-
-  async function migrateCurrentOriginReadIds(ids: string[]): Promise<InboxReadState> {
-    return runExclusive(async () => {
-      const state = await load();
-      const live = await liveInboxIds();
-      const readIds = intersect(state.readIds, live);
+  function migrateCurrentOriginReadIds(ids: string[]): Promise<InboxReadState> {
+    const wanted = normalizeIds(ids);
+    return mutate((state, live) => {
       if (state.migratedFromLocalStorage) {
-        return { readIds, migratedFromLocalStorage: true };
+        return { readIds: state.readIds, migratedFromLocalStorage: true };
       }
-      for (const id of normalizeIds(ids)) {
-        if (live.has(id)) readIds[id] = true;
+      for (const id of wanted) {
+        if (live.has(id)) state.readIds[id] = true;
       }
-      const next = { readIds, migratedFromLocalStorage: true };
-      await persist(next);
-      return next;
+      return { readIds: state.readIds, migratedFromLocalStorage: true };
     });
+  }
+
+  function pruneInBackground(ids: string[]): void {
+    void pruneRead(ids).catch((err) => logBackgroundPruneFailure(ids, err));
   }
 
   const offRemoved = inbox.onRemoved((id) => {
-    void pruneRead([id]);
+    pruneInBackground([id]);
   });
   const offPruned = inbox.onPruned((removedIds) => {
-    void pruneRead(removedIds);
+    pruneInBackground(removedIds);
   });
 
   return {
@@ -219,6 +250,7 @@ export function createInboxReadStore(opts: InboxReadStoreOptions): IInboxReadSto
     dispose() {
       offRemoved();
       offPruned();
+      liveIds.dispose();
     }
   };
 }
