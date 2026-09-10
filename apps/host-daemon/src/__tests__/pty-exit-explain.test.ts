@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Fake IPty that STORES the onData/onExit callbacks so a test can push output
 // (to populate the replay backlog) and then trigger an exit with a chosen code.
 interface FakeProc {
   pid: number;
   dataCb?: (d: string) => void;
+  diagnosticDataCb?: (d: string) => void;
   exitCb?: (e: { exitCode: number }) => void;
   write: (data: string) => void;
   onData: (cb: (d: string) => void) => void;
@@ -23,8 +27,8 @@ vi.mock('node-pty', () => ({
       pid: nextPid++,
       write() {},
       onData(cb) {
-        // Only the first subscriber is the manager's buffer pump; keep it.
         if (!this.dataCb) this.dataCb = cb;
+        else this.diagnosticDataCb = cb;
       },
       onExit(cb) {
         this.exitCb = cb;
@@ -115,5 +119,27 @@ describe('PtyManager.finalizeExit — provider exit explanation', () => {
 
     const explanation = events.find((e) => e.kind === 'data' && e.payload.includes('no longer available'));
     expect(explanation).toBeUndefined();
+  });
+
+  it('persists opted-in spawn, output, signal, and exit diagnostics', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-pty-diagnostic-'));
+    process.env.ZCC_DEBUG_YOLO_CAPTURE = dir;
+    try {
+      const mgr = new PtyManager();
+      const session = mgr.create({ projectId: 'p1', profile: 'opencode', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
+      const proc = spawned[0];
+      proc.dataCb?.('startup failed');
+      proc.diagnosticDataCb?.('startup failed');
+      proc.exitCb?.({ exitCode: 17, signal: 9 } as { exitCode: number });
+
+      const events = readFileSync(join(dir, `${session.id}.jsonl`), 'utf8')
+        .trim().split('\n').map((line) => JSON.parse(line));
+      expect(events[0]).toMatchObject({ event: 'spawn', command: 'opencode', cwd: '/tmp', profile: 'opencode' });
+      expect(events).toContainEqual(expect.objectContaining({ event: 'data', data: 'startup failed' }));
+      expect(events.at(-1)).toMatchObject({ event: 'exit', exitCode: 17, signal: 9 });
+    } finally {
+      delete process.env.ZCC_DEBUG_YOLO_CAPTURE;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

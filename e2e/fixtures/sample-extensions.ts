@@ -52,42 +52,25 @@ export const HELLO_SAMPLE_FILES: Record<string, string> = {
 };
 
 export const INBOX_PUSH_SAMPLE_FILES: Record<string, string> = {
-  'extension.json': JSON.stringify(
+  'package.json': JSON.stringify(
     {
-      id: 'inbox-push-sample',
+      name: 'inbox-push-sample',
       version: '1.0.0',
-      title: 'Inbox Push Sample',
-      icon: 'Bell',
-      titleLabel: 'Inbox Push Sample',
-      entry: { main: 'main.mjs', renderer: 'renderer.js' },
-      engines: { zccApi: '^1.0.0' },
-      permissions: ['inbox:push'],
-      projectTab: { label: 'Inbox Push Sample', icon: 'Bell', order: 100, global: true },
+      type: 'module',
+      engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+      zcc: {
+        name: 'inbox-push-sample',
+        description: 'Inbox push E2E fixture',
+        branding: { icon: 'Bell' },
+        server: './server.mjs'
+      }
     },
     null,
     2
   ),
-  'main.mjs': `export default {
-  id: 'inbox-push-sample',
-  setup(ctx) {
-    ctx.log('inbox-push-sample: main process activated');
-    return {
-      push: async (input) => {
-        const res = await ctx.inbox.push(input);
-        ctx.log(\`inbox-push-sample: pushed \${res.id}\`);
-        return res;
-      },
-    };
-  },
-};
-`,
-  'renderer.js': `export default {
-  activate({ React }) {
-    return function Panel() {
-      return React.createElement('div', { className: 'inbox-push-sample-panel' }, 'Inbox Push Sample');
-    };
-  },
-};
+  'server.mjs': `export default function plugin(zcc) {
+  zcc.rpc.method('push', async (input) => zcc.sdk.inbox.push(input));
+}
 `,
 };
 
@@ -113,4 +96,3 @@ export const ZCC_PLUGIN_SAMPLE_FILES: Record<string, string> = {
 }
 `
 };
-

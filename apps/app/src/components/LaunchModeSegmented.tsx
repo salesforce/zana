@@ -1,4 +1,4 @@
-import { Users, Zap } from 'lucide-react';
+import { Users } from 'lucide-react';
 import type { LaunchMode } from '../lib/launch-mode-preference.js';
 
 export type { LaunchMode };
@@ -8,15 +8,13 @@ export function LaunchModeSegmented({
   onChange,
   showCliAgent = true,
   showModern = true,
-  showAutonomousTeam,
-  showJobTeam
+  showTeam
 }: {
   value: LaunchMode;
   onChange: (mode: LaunchMode) => void;
   showCliAgent?: boolean;
   showModern?: boolean;
-  showAutonomousTeam: boolean;
-  showJobTeam: boolean;
+  showTeam: boolean;
 }) {
   return (
     <div className="launch-segmented" role="group" aria-label="Launch mode">
@@ -41,24 +39,14 @@ export function LaunchModeSegmented({
           <span className="launch-segmented-new" aria-hidden="true">NEW</span>
         </button>
       )}
-      {showAutonomousTeam && (
+      {showTeam && (
         <button
           type="button"
-          className={value === 'autonomous' ? 'active' : ''}
-          onClick={() => onChange('autonomous')}
-          aria-pressed={value === 'autonomous'}
+          className={value === 'team' ? 'active' : ''}
+          onClick={() => onChange('team')}
+          aria-pressed={value === 'team'}
         >
-          <Zap size={13} /> Autonomous Team
-        </button>
-      )}
-      {showJobTeam && (
-        <button
-          type="button"
-          className={value === 'job' ? 'active' : ''}
-          onClick={() => onChange('job')}
-          aria-pressed={value === 'job'}
-        >
-          <Users size={13} /> Job Team
+          <Users size={13} /> Team
         </button>
       )}
     </div>

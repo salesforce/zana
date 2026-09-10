@@ -49,6 +49,58 @@ export function AgentsSettingsView({
         />
       </Section>
 
+      <Section
+        anchorId="teams"
+        title="Teams"
+        help="How concurrent Team runs are organized across Agents surfaces. Each run stays distinct even when it uses the same Team."
+      >
+        <Field
+          label="Agents list organization"
+          help="By status keeps Working, Needs you, and Idle sections. By Team run keeps each coordinator and its workers together."
+        >
+          <PopoverPicklist
+            value={config.agentsListOrganization ?? 'status'}
+            ariaLabel="Agents list organization"
+            searchable={false}
+            onChange={(agentsListOrganization) => onUpdate({ agentsListOrganization: agentsListOrganization as AppConfig['agentsListOrganization'] })}
+            options={[
+              { value: 'status', label: 'By status' },
+              { value: 'team-run', label: 'By Team run' }
+            ]}
+          />
+        </Field>
+        <Field
+          label="Project navigation organization"
+          help="Sessions shows every agent. Team runs shows one coordinator row per run and hides worker rows from project navigation."
+        >
+          <PopoverPicklist
+            value={config.projectNavigationOrganization ?? 'sessions'}
+            ariaLabel="Project navigation organization"
+            searchable={false}
+            onChange={(projectNavigationOrganization) => onUpdate({ projectNavigationOrganization: projectNavigationOrganization as AppConfig['projectNavigationOrganization'] })}
+            options={[
+              { value: 'sessions', label: 'Sessions' },
+              { value: 'team-runs', label: 'Team runs' }
+            ]}
+          />
+        </Field>
+        <Field
+          label="Flow All view"
+          help="Combined canvas preserves the current merged graph. Separate Team runs renders one bounded graph per run; run tabs remain available in both modes."
+        >
+          <PopoverPicklist
+            value={config.flowAllOrganization ?? 'combined'}
+            ariaLabel="Flow All view"
+            searchable={false}
+            onChange={(flowAllOrganization) => onUpdate({ flowAllOrganization: flowAllOrganization as AppConfig['flowAllOrganization'] })}
+            options={[
+              { value: 'combined', label: 'Combined canvas' },
+              { value: 'team-runs', label: 'Separate Team runs' }
+            ]}
+          />
+        </Field>
+      </Section>
+
       {/* Agent attention — surfacing which agents need you. The triage sub-settings
           (delay / sensitivity / side-list promotion) only show when it's on. */}
       <Section
@@ -166,7 +218,7 @@ export function AgentsSettingsView({
         />
         <CheckboxField
           label="Agent launch-team (MCP)"
-          help="Let a running agent launch a Team via the launch_team MCP tool — opening one tab per slot (workers first, then an orchestrator handed the workers’ session ids to delegate with). Launches into the agent’s own project by default, or a named one. Off by default; takes effect on the next app launch. The operator can always launch teams from the New-agent launcher’s autonomous mode regardless."
+          help="Let a running agent launch a Team via the launch_team MCP tool — opening one tab per slot (workers first, then an orchestrator handed the workers’ session ids to delegate with). Launches into the agent’s own project by default, or a named one. Off by default; takes effect on the next app launch. Operator Team launches remain available through the New-agent launcher."
           checked={config.teamLaunchEnabled ?? false}
           onChange={(v) => onUpdate({ teamLaunchEnabled: v })}
         />
@@ -246,7 +298,7 @@ export function AgentsSettingsView({
         )}
         <Field
           label="Team timeout (minutes, 0 = no timeout)"
-          help="How long Autonomous Team runs and Team jobs can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
+          help="How long Team runs can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
         >
           <input
             type="number"

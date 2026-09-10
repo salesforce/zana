@@ -4,11 +4,11 @@ import { createRequire } from 'node:module';
 import { controlCredentialForSession } from './control-credential.js';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { chmodSync, existsSync, realpathSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree, HarnessModelRoutingV1 } from '@zana-ai/zcc-domain/product';
-import { SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
+import { SESSION_MEMORY_DEFAULTS, isDurableCoordination } from '@zana-ai/zcc-domain/product';
 import { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 import { harnessFamilyOf, isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
@@ -57,6 +57,26 @@ function ensureNodePtySpawnHelperExecutable(): void {
   if (packageRoot.includes(`${sep}app.asar${sep}`)) return;
   const helper = join(packageRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper');
   if (existsSync(helper)) chmodSync(helper, 0o755);
+}
+
+/** Opt-in debug capture (ZCC_DEBUG_YOLO_CAPTURE) has no expiry — bound it here so a long-lived dev box doesn't accumulate `.jsonl` files forever. */
+const DIAGNOSTIC_CAPTURE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function sweepStaleDiagnosticCaptures(dir: string): void {
+  try {
+    const now = Date.now();
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.jsonl')) continue;
+      const path = join(dir, name);
+      try {
+        if (now - statSync(path).mtimeMs > DIAGNOSTIC_CAPTURE_MAX_AGE_MS) unlinkSync(path);
+      } catch {
+        /* best-effort per-file */
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
 }
 
 interface Live {
@@ -299,6 +319,8 @@ export class PtyManager extends EventEmitter {
   private backlogs = new Map<string, string>();
   /** Async execution failures are available to the creator until readiness settles. */
   private startupFailures = new Map<string, string>();
+  /** Opt-in diagnostic files retained past exit; never populated in normal runs. */
+  private diagnosticFiles = new Map<string, string>();
 
   /** Run scheduled commands through a native supervisor with stable child PID ownership. */
   private scheduledSupervisor(command: string, args: string[]): { command: string; args: string[] } {
@@ -940,7 +962,7 @@ export class PtyManager extends EventEmitter {
       ? {
           stop: `${providerHookBase}/stop/${opts.projectId}/${sessionId}`,
           notify: `${providerHookBase}/notify/${opts.projectId}/${sessionId}`,
-          firstPrompt: opts.scheduled || opts.coordinationMode === 'job-team'
+          firstPrompt: opts.scheduled || isDurableCoordination(opts.coordinationMode)
             ? undefined
             : `${providerHookBase}/firstprompt/${opts.projectId}/${sessionId}`,
           subagent: `${providerHookBase}/subagent/${opts.projectId}/${sessionId}`
@@ -1002,7 +1024,7 @@ export class PtyManager extends EventEmitter {
       callbacks: lifecycleBase ? {
         stop: `${lifecycleBase}/stop/${opts.projectId}/${sessionId}`,
         notify: `${lifecycleBase}/notify/${opts.projectId}/${sessionId}`,
-        firstPrompt: opts.scheduled || opts.coordinationMode === 'job-team'
+        firstPrompt: opts.scheduled || isDurableCoordination(opts.coordinationMode)
           ? undefined
           : `${lifecycleBase}/firstprompt/${opts.projectId}/${sessionId}`,
         subagent: `${lifecycleBase}/subagent/${opts.projectId}/${sessionId}`,
@@ -1036,7 +1058,7 @@ export class PtyManager extends EventEmitter {
       'mcp__zcc-inbox__list_agents',
       'mcp__zcc-inbox__find_agent',
       'mcp__zcc-inbox__agent_inbox',
-      ...(opts.autonomous || opts.coordinationMode === 'job-team' ? ['mcp__zcc-inbox__agent_send'] : [])
+      ...(opts.autonomous || isDurableCoordination(opts.coordinationMode) ? ['mcp__zcc-inbox__agent_send'] : [])
     ];
     // Agent-data tools — follow-ups, library, and goals. Same host-confined trust
     // model as `inbox_push`: the `projectId`/`sessionId` they operate on is closed
@@ -1170,25 +1192,36 @@ export class PtyManager extends EventEmitter {
     //      on this fleet, makes claude ignore the flag and silently fall back to
     //      prompting — chosen deliberately by the operator who selects the yolo
     //      base for a squad.
-    //  1b. non-yolo base → `--permission-mode acceptEdits`, the autonomy lever a
-    //      managed policy PERMITS: auto-accepts file edits + MCP tools with no
-    //      prompt; only raw Bash still prompts. Placed AFTER personaArgs/psArgs so
-    //      it wins over any persona/project permissionMode (claude CLI: last
+    //  1b. non-yolo Claude base → `--permission-mode acceptEdits`, the autonomy
+    //      lever a managed policy PERMITS: auto-accepts file edits + MCP tools with
+    //      no prompt; only raw Bash still prompts. Placed AFTER personaArgs/psArgs
+    //      so it wins over any persona/project permissionMode (claude CLI: last
     //      --permission-mode occurrence wins).
-    //  2. `--disallowedTools AskUserQuestion` (both bases) — that built-in tool
-    //     pops an interactive prompt and waits for the user; neither acceptEdits
-    //     nor skip-permissions suppresses it (it's a question, not a permission).
-    //     An unattended agent must decide, not ask, so we remove the tool entirely.
+    //  2. `--disallowedTools AskUserQuestion` — that built-in tool pops an
+    //     interactive prompt and waits for the user; neither acceptEdits nor
+    //     skip-permissions suppresses it (it's a question, not a permission). An
+    //     unattended agent must decide, not ask, so we remove the tool entirely.
     // The orchestrator prompt also instructs them to decide autonomously.
+    //
+    // BOTH flags are Claude-CLI-only. A non-Claude harness (opencode/codex/cursor/
+    // pi) rejects them: opencode prints its usage and EXITS 1 at spawn (every Team
+    // slot dies at ~0s with no diagnostic). So gate each on the capability that
+    // owns its flag family — `acceptsPermissionMode` (already false for claude-yolo
+    // AND every non-Claude harness) for --permission-mode, and `injectsClaudeMcpConfig`
+    // for --disallowedTools (same gate as the sibling jobTeamArgs / remote-tools
+    // deny below). Non-Claude harnesses convey autonomy through their own
+    // executionContribution instead (opencode: `--agent build --auto`).
     const autonomousPermissionArgs =
-      effectiveProfile === 'claude-yolo' ? [] : ['--permission-mode', 'acceptEdits'];
+      caps.acceptsPermissionMode ? ['--permission-mode', 'acceptEdits'] : [];
+    const autonomousDisallowArgs =
+      caps.injectsClaudeMcpConfig ? ['--disallowedTools', 'AskUserQuestion'] : [];
     const autonomousArgs = opts.autonomous
-      ? [...autonomousPermissionArgs, '--disallowedTools', 'AskUserQuestion']
+      ? [...autonomousPermissionArgs, ...autonomousDisallowArgs]
       : [];
     // Job Team's MCP allowlist and AskUserQuestion denial use Claude-only argv
     // flags. Passing them to another harness makes its CLI reject the launch
     // before it can consume the already-bound kickoff prompt.
-    const claudeJobTeamPolicy = opts.coordinationMode === 'job-team' && caps.injectsClaudeMcpConfig;
+    const claudeJobTeamPolicy = (isDurableCoordination(opts.coordinationMode)) && caps.injectsClaudeMcpConfig;
     const jobTeamAllow = claudeJobTeamPolicy
       ? [
           'mcp__zcc-inbox__execution.snapshot',
@@ -1416,6 +1449,34 @@ export class PtyManager extends EventEmitter {
     );
     Object.assign(env, rewrittenCallbackEnv);
 
+    if (process.env.ZCC_DEBUG_YOLO_CAPTURE) {
+      try {
+        const dir = process.env.ZCC_DEBUG_YOLO_CAPTURE;
+        mkdirSync(dir, { recursive: true });
+        sweepStaleDiagnosticCaptures(dir);
+        const file = join(dir, `${sessionId}.jsonl`);
+        writeFileSync(file, `${JSON.stringify({
+          event: 'spawn',
+          at: Date.now(),
+          command: inner.command,
+          args: inner.args,
+          cwd: opts.cwd,
+          profile: opts.profile,
+          personaId: opts.persona?.id,
+          env: {
+            PATH: env.PATH,
+            HOME: env.HOME,
+            TERM: env.TERM,
+            ZCC_SESSION_ID: env.ZCC_SESSION_ID,
+            OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT
+          }
+        })}\n`, { mode: 0o600 });
+        this.diagnosticFiles.set(sessionId, file);
+      } catch {
+        this.diagnosticFiles.delete(sessionId);
+      }
+    }
+
     // Session record, shared by both launch paths.
     const session: TerminalSession = {
       id: sessionId,
@@ -1523,25 +1584,15 @@ export class PtyManager extends EventEmitter {
     proc.onData((data) => {
       this.bufferData(session.id, data);
     });
-    // TEMP DIAGNOSTIC (gated on ZCC_DEBUG_YOLO_CAPTURE): tee an autonomous
-    // session's raw output to a file so we can read the ACTUAL on-screen prompt
-    // an agent stalls on. Off unless the env var is set; remove after debugging.
-    if (opts.autonomous && process.env.ZCC_DEBUG_YOLO_CAPTURE) {
-      try {
-        const fs = require('node:fs');
-        const dir = process.env.ZCC_DEBUG_YOLO_CAPTURE;
-        fs.mkdirSync(dir, { recursive: true });
-        const file = `${dir}/${session.id}.log`;
-        proc.onData((d: string) => {
-          try {
-            fs.appendFileSync(file, d);
-          } catch {
-            /* best-effort */
-          }
-        });
-      } catch {
-        /* best-effort */
-      }
+    const diagnosticFile = this.diagnosticFiles.get(session.id);
+    if (diagnosticFile) {
+      proc.onData((data: string) => {
+        try {
+          appendFileSync(diagnosticFile, `${JSON.stringify({ event: 'data', at: Date.now(), data })}\n`);
+        } catch {
+          /* best-effort */
+        }
+      });
     }
     // Persona initialPrompt: when a persona declares an opening prompt AND this
     // is an interactive claude-family spawn (not scheduled — the scheduler
@@ -1566,11 +1617,21 @@ export class PtyManager extends EventEmitter {
       };
       proc.onData(writePrompt);
     }
-    proc.onExit(({ exitCode }) => {
+    proc.onExit((event) => {
+      const { exitCode } = event;
+      const signal = 'signal' in event && typeof event.signal === 'number' ? event.signal : undefined;
       // A launcher-initiated close (auto-close Stop hook) reports as a clean
       // exit so the scheduler logs the run as success, not a kill-signal error.
       const expected = this.expectedClose.delete(session.id);
-      this.finalizeExit(session.id, expected ? 0 : exitCode);
+      const reportedExitCode = expected ? 0 : exitCode;
+      if (diagnosticFile) {
+        try {
+          appendFileSync(diagnosticFile, `${JSON.stringify({ event: 'exit', at: Date.now(), exitCode: reportedExitCode, signal })}\n`);
+        } catch {
+          /* best-effort */
+        }
+      }
+      this.finalizeExit(session.id, reportedExitCode, signal);
     });
   }
 
@@ -1651,17 +1712,20 @@ export class PtyManager extends EventEmitter {
    * its cap slot frees immediately. Idempotent: a no-op once the session is
    * gone, so the onExit callback and {@link reapDeadSessions} can't double-fire.
    */
-  private finalizeExit(sessionId: string, exitCode: number): void {
+  private finalizeExit(sessionId: string, exitCode: number, signal?: number): void {
     this.flushData(sessionId);
     const live = this.live.get(sessionId);
     // Diagnose an opaque non-zero exit from the retained output tail BEFORE the
     // backlog is dropped. A provider may turn a bare exit code into a specific,
     // actionable message (OpenCode exit-64 = a pinned model gone from the gateway).
     // Emit it as a terminal `data` event so the renderer shows it inline, ahead of
-    // `exit`. Read the backlog first — clearDataBuffer() deletes it.
+    // `exit`. Read the backlog first — clearDataBuffer() deletes it. Keep the
+    // explanation to forward on the `exit` event too, so a Team slot's FAILED
+    // reconcile can record WHY it died instead of a generic detail-less line.
+    let explanation: string | undefined;
     if (live && exitCode !== 0) {
       const provider = providerFor(live.session.profile);
-      const explanation = provider.explainUnexpectedExit?.(
+      explanation = provider.explainUnexpectedExit?.(
         live.session.profile,
         exitCode,
         this.getBacklog(sessionId)
@@ -1669,11 +1733,14 @@ export class PtyManager extends EventEmitter {
       if (explanation) this.emit('data', sessionId, `\r\n\x1b[31m${explanation}\x1b[0m\r\n`);
     }
     this.clearDataBuffer(sessionId);
+    this.diagnosticFiles.delete(sessionId);
     if (!live) return;
     if (live.session.status === 'running') this.startupFailures.delete(sessionId);
     live.session.status = 'exited';
     live.session.exitCode = exitCode;
-    this.emit('exit', sessionId, exitCode);
+    // Trailing args are additive (plain EventEmitter): existing `(id, code)`
+    // listeners ignore them; the Team lifecycle integration consumes them.
+    this.emit('exit', sessionId, exitCode, signal ?? null, explanation ?? null);
     this.live.delete(sessionId);
     // Release node-pty's master /dev/ptmx fd. On a normal `onExit`, node-pty's
     // own socket-close path already frees it — but reapDeadSessions() finalizes
@@ -2142,7 +2209,9 @@ export class PtyManager extends EventEmitter {
       }
       this.bufferData(session.id, data);
     });
-    proc.onExit(({ exitCode }) => {
+    proc.onExit((event) => {
+      const { exitCode } = event;
+      const signal = 'signal' in event && typeof event.signal === 'number' ? event.signal : undefined;
       const expected = this.expectedClose.delete(session.id);
       const live = this.live.get(session.id);
       if (live?.remoteTerminationInFlight) {
@@ -2152,7 +2221,7 @@ export class PtyManager extends EventEmitter {
         return;
       }
       if (!expected && this.tryReattachRemote(session.id)) return; // reconnecting
-      this.finalizeExit(session.id, expected ? 0 : exitCode);
+      this.finalizeExit(session.id, expected ? 0 : exitCode, signal);
     });
   }
 

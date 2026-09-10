@@ -1,4 +1,4 @@
-export const LAUNCH_MODES = ['agent', 'thread', 'autonomous', 'job'] as const;
+export const LAUNCH_MODES = ['agent', 'thread', 'team'] as const;
 export type LaunchMode = (typeof LAUNCH_MODES)[number];
 
 export const DEFAULT_LAUNCH_MODE: LaunchMode = 'thread';
@@ -9,8 +9,7 @@ const PREFS_EVENT = 'zcc-prefs';
 export const LAUNCH_MODE_LABELS: Record<LaunchMode, string> = {
   thread: 'Modern',
   agent: 'CLI Agent',
-  autonomous: 'Autonomous Team',
-  job: 'Job Team'
+  team: 'Team'
 };
 
 export const LAUNCH_MODE_PICKLIST_OPTIONS = LAUNCH_MODES.map((value) => ({
@@ -22,15 +21,13 @@ export const LAUNCH_MODE_PICKLIST_OPTIONS = LAUNCH_MODES.map((value) => ({
 export interface ComposerSurfaceFlags {
   showCliAgent: boolean;
   showModern: boolean;
-  showAutonomousTeam: boolean;
-  showJobTeam: boolean;
+  showTeam: boolean;
 }
 
 export const COMPOSER_SURFACE_DEFAULTS: ComposerSurfaceFlags = {
   showCliAgent: true,
   showModern: true,
-  showAutonomousTeam: true,
-  showJobTeam: false
+  showTeam: true
 };
 
 export function composerSurfacesFromConfig(config: {
@@ -42,8 +39,7 @@ export function composerSurfacesFromConfig(config: {
   return {
     showCliAgent: config.composerShowCliAgent !== false,
     showModern: config.composerShowModern !== false,
-    showAutonomousTeam: config.composerShowAutonomousTeam !== false,
-    showJobTeam: config.teamJobLaunchEnabled === true
+    showTeam: config.composerShowAutonomousTeam !== false || config.teamJobLaunchEnabled !== false
   };
 }
 
@@ -72,8 +68,8 @@ export function composerSurfacesToConfigPatch(flags: ComposerSurfaceFlags): {
   return {
     composerShowCliAgent: next.showCliAgent,
     composerShowModern: next.showModern,
-    composerShowAutonomousTeam: next.showAutonomousTeam,
-    teamJobLaunchEnabled: next.showJobTeam
+    composerShowAutonomousTeam: next.showTeam,
+    teamJobLaunchEnabled: next.showTeam
   };
 }
 
@@ -85,8 +81,7 @@ export function visibleComposerLaunchModes(
   return {
     showCliAgent: next.showCliAgent,
     showModern: next.showModern,
-    showAutonomousTeam: next.showAutonomousTeam && runtime.hasTeams,
-    showJobTeam: next.showJobTeam && runtime.hasTeams
+    showTeam: next.showTeam && runtime.hasTeams
   };
 }
 
@@ -94,8 +89,7 @@ export function visibleLaunchModeCount(available: ComposerSurfaceFlags): number 
   return (
     Number(available.showCliAgent)
     + Number(available.showModern)
-    + Number(available.showAutonomousTeam)
-    + Number(available.showJobTeam)
+    + Number(available.showTeam)
   );
 }
 
@@ -107,20 +101,19 @@ export function launchModePicklistOptions(flags: ComposerSurfaceFlags): Array<{
   return LAUNCH_MODES.filter((value) => {
     if (value === 'agent') return shown.showCliAgent;
     if (value === 'thread') return shown.showModern;
-    if (value === 'autonomous') return shown.showAutonomousTeam;
-    return shown.showJobTeam;
+    return shown.showTeam;
   }).map((value) => ({ value, label: LAUNCH_MODE_LABELS[value] }));
 }
 
 function isSurfaceOffered(mode: LaunchMode, available: ComposerSurfaceFlags): boolean {
   if (mode === 'agent') return available.showCliAgent;
   if (mode === 'thread') return available.showModern;
-  if (mode === 'autonomous') return available.showAutonomousTeam;
-  return available.showJobTeam;
+  return available.showTeam;
 }
 
 export function parseLaunchMode(raw: string | null | undefined): LaunchMode {
-  if (raw === 'thread' || raw === 'agent' || raw === 'autonomous' || raw === 'job') {
+  if (raw === 'autonomous' || raw === 'job') return 'team';
+  if (raw === 'thread' || raw === 'agent' || raw === 'team') {
     return raw;
   }
   return DEFAULT_LAUNCH_MODE;
@@ -163,15 +156,13 @@ export function resolveAvailableLaunchMode(
   available: {
     showCliAgent?: boolean;
     showModern?: boolean;
-    showAutonomousTeam: boolean;
-    showJobTeam: boolean;
+    showTeam: boolean;
   }
 ): LaunchMode {
   const surfaces = normalizeComposerSurfaces({
     showCliAgent: available.showCliAgent !== false,
     showModern: available.showModern !== false,
-    showAutonomousTeam: available.showAutonomousTeam,
-    showJobTeam: available.showJobTeam
+    showTeam: available.showTeam
   });
   if (isSurfaceOffered(mode, surfaces)) return mode;
   for (const candidate of LAUNCH_MODES) {

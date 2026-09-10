@@ -4,7 +4,7 @@ import { createModernTeamLaunchSource, type ModernTeamLaunchConfig } from './mod
 import { readMcpPort } from '../mcp/mcp-port-store.js';
 
 export interface ModernTeamLaunchConfigSourceOptions {
-  getAppConfig: () => Pick<AppConfig, 'teamLaunchEnabled' | 'teamJobLaunchEnabled'>;
+  getAppConfig: () => Pick<AppConfig, 'teamLaunchEnabled' | 'teamJobLaunchEnabled' | 'composerShowAutonomousTeam'>;
   getMcpBaseUrl: () => string | undefined;
 }
 
@@ -21,7 +21,7 @@ export function createModernTeamLaunchConfigSource(options: ModernTeamLaunchConf
       return {
         mcpBaseUrl: options.getMcpBaseUrl(),
         teamLaunchEnabled: config.teamLaunchEnabled === true,
-        teamJobLaunchEnabled: config.teamJobLaunchEnabled === true
+        teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false || config.composerShowAutonomousTeam !== false
       };
     }
   });

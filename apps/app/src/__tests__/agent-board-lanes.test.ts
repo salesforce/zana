@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { ExecutionBoardProjection, ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   isIdleAgent,
   isBackgroundAgent,
@@ -8,6 +8,7 @@ import {
   LANES,
   visibleAgentLanes,
   groupCardsByProject,
+  partitionExecutionMembers,
   partitionSquads,
   scheduleBySessionId,
   formatCountdown,
@@ -435,6 +436,34 @@ describe('partitionSquads', () => {
     const { workersByOrchestrator } = partitionSquads(cards);
     // Workers keep their incoming order (w2 before w1), not sorted.
     expect(workersByOrchestrator.get('o1')?.map((c) => c.session.id)).toEqual(['w2', 'w1']);
+  });
+});
+
+describe('partitionExecutionMembers', () => {
+  it('uses durable job title for execution host instead of generic orchestrator tab title', () => {
+    const orchestrator = memberCard('orch', 'co1', 'orchestrator');
+    orchestrator.session.title = 'E2E Job Team';
+    orchestrator.session.cohort = {
+      ...orchestrator.session.cohort!,
+      executionId: 'execution-1'
+    };
+    const execution: ExecutionBoardProjection = {
+      executionId: 'execution-1',
+      projectId: 'p1',
+      teamId: 't1',
+      teamName: 'E2E Job Team',
+      jobTitle: 'Named job spec',
+      state: 'BLOCKED',
+      attempt: 1,
+      createdAt: 1,
+      updatedAt: 2
+    };
+
+    const { top } = partitionExecutionMembers([orchestrator], [execution]);
+
+    expect(top).toHaveLength(1);
+    expect(top[0].session.title).toBe('Named job spec');
+    expect(top[0].session.cohort?.executionJobTitle).toBe('Named job spec');
   });
 });
 

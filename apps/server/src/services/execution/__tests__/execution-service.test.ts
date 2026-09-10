@@ -83,6 +83,26 @@ describe('SquadExecutionService', () => {
     expect(launchTeam).toHaveBeenCalledTimes(1);
   }));
 
+  it('launches freeform as a durable execution with no upfront DAG for Path B registration', async () => fixture(async (filePath) => {
+    const launchTeam = vi.fn(async () => ({ ok: true }));
+    const service = new ExecutionService(deps(filePath, { launchTeam }));
+    const started = await service.start('session-1', 'project-1', {
+      ...request,
+      objective: 'Infer and ship',
+      coordinationMode: 'freeform',
+      origin: 'explicit'
+    });
+    expect(started).toMatchObject({
+      ok: true,
+      value: { coordinationMode: 'freeform', origin: 'explicit', request: { objective: 'Infer and ship' } }
+    });
+    expect(started.ok && started.value.workUnits).toBeUndefined();
+    expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({
+      coordinationMode: 'freeform',
+      jobContext: expect.objectContaining({ objective: 'Infer and ship' })
+    }));
+  }));
+
   it('replays pre-normalization records when launchKind remains omitted', async () => fixture(async (filePath) => {
     let launchCount = 0;
     const input = deps(filePath, { launchTeam: async () => { launchCount += 1; return { ok: true }; } });
@@ -445,6 +465,87 @@ describe('SquadExecutionService', () => {
     }
   }));
 
+  it('returns success when a fast coordinator completes before Team launch returns', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let service!: SquadExecutionService;
+    const launchTeam = vi.fn(async () => {
+      await service.completeByCoordinator('coordinator', 'project-1', 'execution-1', 'done during launch');
+      return { ok: true };
+    });
+    service = new SquadExecutionService(deps(filePath, {
+      store,
+      launchTeam,
+      getTeamLaunch: async () => ({
+        orchestratorSessionId: 'coordinator',
+        workers: [{ slotId: 'orchestrator:lead', sessionId: 'coordinator', projectId: 'project-1', process: 'running' }]
+      })
+    }));
+
+    await expect(service.start('session-1', 'project-1', request)).resolves.toMatchObject({
+      ok: true,
+      value: { state: 'COMPLETED', finalSummary: 'done during launch' }
+    });
+  }));
+
+  it('does not fail from a partial all-exited lifecycle while Team launch is still adding slots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let service!: SquadExecutionService;
+    let releaseLaunch!: () => void;
+    const launchBlocked = new Promise<void>((resolve) => { releaseLaunch = resolve; });
+    const launchTeam = vi.fn(async () => {
+      await launchBlocked;
+      return { ok: true };
+    });
+    const getTeamLaunch = vi.fn(async () => ({
+      workers: [{ slotId: 'worker-1', sessionId: 'worker-1', projectId: 'project-1', process: 'exited' }]
+    }));
+    service = new SquadExecutionService(deps(filePath, { store, launchTeam, getTeamLaunch }));
+
+    const starting = service.start('session-1', 'project-1', request);
+    await vi.waitFor(async () => expect(await store.get('execution-1')).toMatchObject({ state: 'STARTING' }));
+    await expect(service.status('session-1', 'project-1', 'execution-1')).resolves.toMatchObject({ state: 'STARTING' });
+    releaseLaunch();
+
+    await expect(starting).resolves.toMatchObject({ ok: true, value: { state: 'RUNNING' } });
+  }));
+
+  it('records slot launch failure details during reconciliation', async () => fixture(async (filePath) => {
+    const getTeamLaunch = vi.fn(async () => ({
+      workers: [{ slotId: 'worker-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }],
+      launchResult: {
+        failedSlots: [{ slotId: 'worker-2', reason: 'project identity changed after preflight' }]
+      }
+    }));
+    const service = new SquadExecutionService(deps(filePath, { getTeamLaunch }));
+    await service.start('session-1', 'project-1', request);
+
+    await expect(service.status('session-1', 'project-1', 'execution-1')).resolves.toMatchObject({ state: 'FAILED' });
+    const state = JSON.parse(await readFile(filePath, 'utf8')) as { events: Array<{ summary: string }> };
+    expect(state.events.at(-1)?.summary).toBe('worker-2: project identity changed after preflight');
+  }));
+
+  it('records per-slot exit detail when all Team slots exit without completion', async () => fixture(async (filePath) => {
+    const getTeamLaunch = vi.fn(async () => ({
+      workers: [
+        { slotId: 'worker-1', sessionId: 'worker-1', projectId: 'project-1', task: 'unknown', process: 'exited', exitCode: 1, exitReason: 'OpenCode exited 1: unsupported flag.' },
+        { slotId: 'worker-2', sessionId: 'worker-2', projectId: 'project-1', task: 'unknown', process: 'exited', exitCode: 64 },
+        { slotId: 'worker-3', sessionId: 'worker-3', projectId: 'project-1', task: 'unknown', process: 'exited', exitCode: 0, exitSignal: 9 }
+      ]
+    }));
+    const service = new SquadExecutionService(deps(filePath, { getTeamLaunch }));
+    await service.start('session-1', 'project-1', request);
+
+    await expect(service.status('session-1', 'project-1', 'execution-1')).resolves.toMatchObject({ state: 'FAILED' });
+    const state = JSON.parse(await readFile(filePath, 'utf8')) as { events: Array<{ summary: string }> };
+    const summary = state.events.at(-1)?.summary ?? '';
+    expect(summary).toContain('All Team slots exited without completion —');
+    expect(summary).toContain('worker-1: OpenCode exited 1: unsupported flag.');
+    expect(summary).toContain('worker-2: exited code 64');
+    // A signal-killed worker with no exitReason and exitCode 0 must still
+    // surface its signal, not fall through to a blank (filtered-out) detail.
+    expect(summary).toContain('worker-3: exited code 0, signal 9');
+  }));
+
   it('retries timeout cancellation when cancellation returns failure or throws', async () => fixture(async (filePath) => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-28T12:00:00.000Z'));
@@ -550,7 +651,7 @@ describe('SquadExecutionService', () => {
     const service = new SquadExecutionService(deps(filePath, { authorizeTeamLaunch, launchTeam }));
     const result = await service.start('session-1', 'project-1', { ...request, jobTitle: 'Caller title' });
     expect(result).toMatchObject({ ok: true, value: { id: 'execution-1', jobTitle: 'Caller title', state: 'RUNNING', authorizationContext: { principalId: 'team:team-1:session-1:request-1' }, authorizationContextDigest: expect.any(String), launchIntent: { slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTaskDigest: expect.any(String) }] } } });
-    expect(authorizeTeamLaunch).toHaveBeenCalledWith('session-1', 'team-1', 'project-1', 'request-1', {}, request.slots);
+    expect(authorizeTeamLaunch).toHaveBeenCalledWith('session-1', 'team-1', 'project-1', 'request-1', {}, request.slots, request.coordinationMode);
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ requirePreauthorization: true }));
   }));
 
@@ -586,7 +687,7 @@ describe('SquadExecutionService', () => {
     const blocked = await service.status('session-1', 'project-1', 'execution-1');
     if (!blocked) throw new Error('missing blocked execution');
     await expect(service.retry('session-1', 'project-1', 'execution-1', blocked.stateVersion)).resolves.toMatchObject({ ok: true, value: { id: 'execution-1', attempt: 2, state: 'RUNNING', teamLaunchRequestId: 'execution-1:attempt:2' } });
-    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots);
+    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots, undefined);
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ launchRequestId: 'execution-1:attempt:2', executionId: 'execution-1', executionJobTitle: 'Build release' }));
   }));
 
@@ -609,7 +710,7 @@ describe('SquadExecutionService', () => {
     const blocked = await store.get('execution-1');
     if (!blocked) throw new Error('missing execution');
     await expect(service.retry('session-2', 'project-1', 'execution-1', blocked.stateVersion)).resolves.toMatchObject({ ok: true });
-    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots);
+    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots, undefined);
   }));
 
   it('reruns workflow profile preflight before retry', async () => fixture(async (filePath) => {
@@ -1106,6 +1207,46 @@ describe('SquadExecutionService', () => {
     expect(accepted).toMatchObject({ ok: true, delivery: { blockerId: 'blocker-1', clientRequestId: 'client-1' } });
     await expect(service.resumeBlocker('session-1', 'project-1', record.id, record.stateVersion + 1, 'blocker-1', 'client-1', 'Answer')).resolves.toMatchObject({ ok: true, delivery: { id: (accepted as { delivery: { id: string } }).delivery.id } });
     await expect(service.resumeBlocker('session-1', 'project-1', record.id, record.stateVersion + 1, 'missing', 'client-2', 'Answer')).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
+  }));
+
+  it('fans out two exact blocker responses to their independently authorized worker sessions', async () => fixture(async (filePath) => {
+    const id = (() => { let n = 0; return () => n++ === 0 ? 'execution-1' : `delivery-${n}`; })();
+    const store = createExecutionStore({ filePath, id });
+    const replyToSession = vi.fn(() => true);
+    const triggerDeliveryDrain = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      replyToSession,
+      triggerDeliveryDrain,
+      getTeamLaunch: async () => ({ workers: [
+        { slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', task: 'A' },
+        { slotId: 'slot-2', sessionId: 'worker-2', projectId: 'project-1', task: 'B' }
+      ] })
+    }));
+    await service.start('session-1', 'project-1', request);
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [
+      { id: 'a', title: 'A', task: 'A', dependencies: [], files: ['a.txt'] },
+      { id: 'b', title: 'B', task: 'B', dependencies: [], files: ['b.txt'] }
+    ]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'a', 'slot-1');
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'b', 'slot-2');
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'a', { id: 'blocker-1', question: 'First?' });
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-2' }, 'b', { id: 'blocker-2', question: 'Second?' });
+
+    const first = await service.resumeBlocker('session-1', 'project-1', record.id, record.stateVersion, 'blocker-1', 'client-1', 'Answer one');
+    expect(first).toMatchObject({ ok: true, delivery: { blockerId: 'blocker-1', slotId: 'slot-1' } });
+    const firstRecord = (first as { value: ExecutionRecord }).value;
+    const second = await service.resumeBlocker('session-1', 'project-1', record.id, firstRecord.stateVersion, 'blocker-2', 'client-2', 'Answer two');
+    expect(second).toMatchObject({ ok: true, delivery: { blockerId: 'blocker-2', slotId: 'slot-2' } });
+
+    expect(replyToSession).toHaveBeenCalledTimes(2);
+    expect(replyToSession.mock.calls.map(([sessionId]) => sessionId)).toEqual(['worker-1', 'worker-2']);
+    expect(triggerDeliveryDrain.mock.calls.map(([sessionId]) => sessionId)).toEqual(['worker-1', 'worker-2']);
+    expect((await store.get(record.id))?.deliveries).toMatchObject([
+      { blockerId: 'blocker-1', slotId: 'slot-1', state: 'PENDING' },
+      { blockerId: 'blocker-2', slotId: 'slot-2', state: 'PENDING' }
+    ]);
   }));
 
   it('rejects blocker responses above the 16 KiB UTF-8 transport limit', async () => fixture(async (filePath) => {

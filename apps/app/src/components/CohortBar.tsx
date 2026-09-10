@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Users, Moon, Crown } from 'lucide-react';
 import { isIdleAgent, type AgentCard } from './AgentBoard.js';
+import { shortRunId } from '../lib/executionIdentity.js';
 
 /**
  * A live Team cohort: one launch of a team (cohortId minted per launch), with
@@ -11,6 +12,7 @@ export interface LiveCohort {
   cohortId: string;
   teamId: string;
   teamName: string;
+  executionId?: string;
   cards: AgentCard[];
   /** The orchestrator card, if its session is still live. */
   orchestrator?: AgentCard;
@@ -36,6 +38,7 @@ export function buildLiveCohorts(cards: AgentCard[]): LiveCohort[] {
         cohortId: co.cohortId,
         teamId: co.teamId,
         teamName: co.teamName,
+        ...(co.executionId ? { executionId: co.executionId } : {}),
         cards: [],
         liveCount: 0,
         idleCount: 0
@@ -91,6 +94,7 @@ export function CohortBar({ cards, onCloseIdle }: CohortBarProps) {
             </span>
           )}
           <span className="cohort-chip-name">{co.teamName}</span>
+          {co.executionId && <span className="team-run-id" title={`Run ID ${co.executionId}`}>Run {shortRunId(co.executionId)}</span>}
           <span className="cohort-chip-count" title={`${co.liveCount} live`}>
             {co.liveCount}
           </span>

@@ -23,6 +23,7 @@ const fixtureBin = join(repoRoot, 'e2e', 'fixtures', 'bin');
 // names as session modes so the picker offers them; `agent list` marks
 // `reviewer` primary and `sandbox` a subagent.
 test.use({
+  initialConfig: { nativeAgentDiscoveryEnabled: true },
   launchEnv: {
     PATH: `${fixtureBin}${delimiter}${process.env.PATH ?? ''}`,
     FAKE_ACP_MODEL_CONFIG: '1',
@@ -73,8 +74,11 @@ async function selectRole(window: Page, modal: Locator, value: string, timeout =
   await trigger.click();
   const menu = window.getByRole('listbox', { name: 'Native role' });
   await expect(menu).toBeVisible();
+  await menu.getByText('Refresh roles', { exact: true }).click();
+  await trigger.click();
+  await expect(menu).toBeVisible({ timeout });
   const label = `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
-  await menu.getByRole('option', { name: label, exact: true }).click();
+  await menu.getByRole('option', { name: label, exact: true }).click({ timeout });
 }
 
 const fixtureOpenCode = join(fixtureBin, 'opencode');

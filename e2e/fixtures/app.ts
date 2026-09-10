@@ -297,7 +297,12 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     // Without this, Playwright downloads its own Electron (log: "Downloading
     // Electron binary...") which will not load this repo's native addons.
     executablePath: projectElectronBinary(),
-    args: [...linuxCiElectronArgs(), `--user-data-dir=${userDataDir}`, MAIN_ENTRY],
+    // Chromium's os_crypt keychain init runs before any of our JS (bootstrap.ts's
+    // `app.commandLine.appendSwitch('use-mock-keychain')` only reaches child
+    // processes spawned afterward, not this process's own early init — same class
+    // of bug as the ozone flag above), so it must ride in argv, not be appended
+    // at runtime, or macOS pops a real Keychain prompt on a headless E2E run.
+    args: [...linuxCiElectronArgs(), '--use-mock-keychain', `--user-data-dir=${userDataDir}`, MAIN_ENTRY],
     env,
     timeout: 60_000
   });

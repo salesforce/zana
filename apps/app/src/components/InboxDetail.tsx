@@ -28,6 +28,7 @@ import { inboxPrimaryTitle, inboxShortTitle, inboxContextLine } from '../lib/inb
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
 import { resolveAnswerSurface } from '../lib/answerSurface.js';
 import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
+import { useExecutionInboxBlockerState } from '../lib/executionInboxBlockerState.js';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../lib/launchProfile.js';
 import type {
   InboxDoc,
@@ -820,13 +821,15 @@ function ReplyBox({
   deadSessionBusy?: boolean;
 }) {
   const answered = useInboxAnswered((s) => !!s.answeredIds[entry.id]);
+  const blockerState = useExecutionInboxBlockerState(entry, answered);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [reopened, setReopened] = useState(false);
 
   const dead = !sessionId && !!onAnswerDeadSession;
   const busy = sending || deadSessionBusy;
-  const collapsed = answered && !reopened;
+  const executionLinked = !!entry.executionId && !!entry.blockerId;
+  const collapsed = (executionLinked ? blockerState !== 'actionable' && blockerState !== 'unknown' : answered) && !reopened;
 
   const submit = async () => {
     if (busy || !text.trim()) return;
@@ -854,15 +857,20 @@ function ReplyBox({
       <div className="inbox-reply answered">
         <span className="inbox-reply-answered-label">
           <CornerDownLeft size={13} strokeWidth={1.75} />
-          Replied to <span className="strong">{sessionTitle}</span>
+          {executionLinked
+            ? blockerState === 'resolved' ? 'Resolved' : 'Answer queued for'
+            : 'Replied to'}{' '}
+          <span className="strong">{sessionTitle}</span>
         </span>
-        <button
-          type="button"
-          className="inbox-reply-again"
-          onClick={() => setReopened(true)}
-        >
-          Reply again
-        </button>
+        {!executionLinked && (
+          <button
+            type="button"
+            className="inbox-reply-again"
+            onClick={() => setReopened(true)}
+          >
+            Reply again
+          </button>
+        )}
       </div>
     );
   }

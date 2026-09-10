@@ -75,6 +75,7 @@ test('imported editable folder automatically reloads a rebuilt dist while its sh
     // the dynamically imported panel. No rescan occurs after the source edit.
     const rescan = await app.window.evaluate(() => window.cc.extensions.rescan());
     expect(rescan.ok).toBe(true);
+    await app.window.getByRole('link', { name: 'Back to app' }).click();
     const extensionNav = app.window.locator('.nav-item', { hasText: 'Editable E2E' }).first();
     await expect(extensionNav).toBeVisible();
     await extensionNav.click();

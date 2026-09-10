@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const view = readFileSync(new URL('./SquadFlowView.tsx', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
 
 describe('SquadFlowView execution-board poll refresh', () => {
   it('uses allSettled so one project rejecting cannot blank out every project', () => {
@@ -21,5 +22,14 @@ describe('SquadFlowView execution-board poll refresh', () => {
 
   it('applies fulfilled results directly rather than gating the whole tick on every project succeeding', () => {
     expect(view).toContain('if (result.status === \'fulfilled\') return result.value.executions;');
+  });
+});
+
+describe('SquadFlowView separate Team-run canvases', () => {
+  it('uses one pannable scrollport for the full stack instead of nested run scrollports', () => {
+    expect(css).toMatch(/\.squad-flow-run-groups \{[^}]*overflow:\s*auto;[^}]*cursor:\s*grab;/s);
+    expect(css).toMatch(/\.squad-flow-run-groups \.squad-flow-canvas \{[^}]*overflow:\s*visible;/s);
+    expect(view).toContain('aria-label="Team run canvases. Drag empty space to pan."');
+    expect(view).toContain('pannable={false}');
   });
 });

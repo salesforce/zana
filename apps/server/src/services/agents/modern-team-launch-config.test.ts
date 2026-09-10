@@ -23,7 +23,7 @@ describe('Modern team-launch config source', () => {
     let teamJobLaunchEnabled = false;
     const source = createModernTeamLaunchConfigSource({
       getMcpBaseUrl: () => endpoint,
-      getAppConfig: () => ({ teamLaunchEnabled: false, teamJobLaunchEnabled })
+      getAppConfig: () => ({ teamLaunchEnabled: false, teamJobLaunchEnabled, composerShowAutonomousTeam: false })
     });
 
     await expect(resolvePluginSessionTools([source], session)).resolves.toMatchObject({ tools: [] });
@@ -41,11 +41,21 @@ describe('Modern team-launch config source', () => {
     dirs.push(dataDir);
     const source = standaloneModernTeamLaunchSource(dataDir, () => ({
       teamLaunchEnabled: false,
-      teamJobLaunchEnabled: true
+      teamJobLaunchEnabled: true,
+      composerShowAutonomousTeam: false
     }));
 
     await expect(resolvePluginSessionTools([source], session)).resolves.toMatchObject({ tools: [] });
     writeMcpPort(join(dataDir, 'electron-user-data', 'mcp-port-dev.json'), 43_124);
+    const configured = await resolvePluginSessionTools([source], session);
+    expect(configured.tools.map((tool) => tool.name)).toContain('execution_start');
+  });
+
+  it('offers durable Team tools for the default legacy configuration', async () => {
+    const source = createModernTeamLaunchConfigSource({
+      getMcpBaseUrl: () => 'http://127.0.0.1:43123',
+      getAppConfig: () => ({ teamLaunchEnabled: false })
+    });
     const configured = await resolvePluginSessionTools([source], session);
     expect(configured.tools.map((tool) => tool.name)).toContain('execution_start');
   });

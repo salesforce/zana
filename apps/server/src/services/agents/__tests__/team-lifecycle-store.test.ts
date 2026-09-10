@@ -362,6 +362,35 @@ describe('team lifecycle integration', () => {
     expect(released).toEqual(['authorization-1']);
   }));
 
+  it('captures PTY exit detail (exitCode/signal/reason) on the worker at onSessionExit', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const claimed = await store.claim(claimInput('principal-a'));
+    await markClaimedWorkerRunning(store, claimed.record.id);
+    await store.complete(claimed.record.id, completedResult());
+    const integration = createTeamLifecycleIntegration({
+      store,
+      isLiveSession: () => true,
+      closeSession: async () => true,
+      releaseCapacity: () => {}
+    });
+    integration.track((await store.get(claimed.record.id))!);
+
+    await integration.onSessionExit('session-1', {
+      exitCode: 1,
+      signal: 0,
+      reason: 'OpenCode rejected an unsupported flag and exited.'
+    });
+
+    expect(await store.get(claimed.record.id)).toMatchObject({
+      workers: [{
+        process: 'exited',
+        exitCode: 1,
+        exitSignal: 0,
+        exitReason: 'OpenCode rejected an unsupported flag and exited.'
+      }]
+    });
+  }));
+
   it('authorizes cancellation by stored principal and request, closes only that request, and is idempotent', async () => fixture(async (filePath) => {
     let next = 0;
     const store = createTeamLifecycleStore({ filePath, id: () => `record-${++next}` });

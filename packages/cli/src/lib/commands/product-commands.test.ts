@@ -448,7 +448,7 @@ describe('product API command groups', () => {
     const fetchImpl = router({
       'POST /api/v1/teams/launch': (_url, init) => {
         body = JSON.parse(String(init?.body));
-        return jsonResponse(201, { ok: true, value: { kind: 'run', id: 'run-1', state: 'running' } });
+        return jsonResponse(201, { ok: true, value: { kind: 'job', id: 'execution-1', state: 'RUNNING' } });
       }
     });
     const launched = await runCli(
@@ -474,9 +474,9 @@ describe('product API command groups', () => {
     const fetchImpl = router({
       'POST /api/v1/teams/launch': (_url, init) => {
         body = JSON.parse(String(init?.body));
-        return jsonResponse(201, { ok: true, value: { kind: 'run', id: 'run-1', state } });
+        return jsonResponse(201, { ok: true, value: { kind: 'job', id: 'execution-1', state } });
       },
-      'GET /api/v1/executions/run-1': () => ({ ok: true, value: { kind: 'run', id: 'run-1', state } })
+      'GET /api/v1/executions/execution-1': () => ({ ok: true, value: { kind: 'job', id: 'execution-1', state } })
     });
     const launched = await runCli(
       [

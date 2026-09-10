@@ -70,8 +70,7 @@ describe('thread / legacy isolation', () => {
     const source = stripComments(readFileSync(join(appRoot, 'components/AgentLauncher.tsx'), 'utf8'));
     expect(source).toContain('ThreadCommandComposer');
     expect(source).toContain('LegacyAgentHomeComposer');
-    expect(source).toContain('AutonomousTeamComposer');
-    expect(source).toContain('JobTeamComposer');
+    expect(source).toContain('TeamComposer');
     expect(source).not.toContain('PromptComposer');
     expect(source).not.toContain('threads.create');
     expect(source).not.toContain('product.threads');
@@ -79,18 +78,8 @@ describe('thread / legacy isolation', () => {
     expect(source).not.toContain('product.teams.startJob');
   });
 
-  it('keeps AutonomousTeamComposer on launchAutonomous only', () => {
-    const source = stripComments(readFileSync(join(appRoot, 'components/AutonomousTeamComposer.tsx'), 'utf8'));
-    expect(source).toContain('product.teams.launchAutonomous');
-    expect(source).not.toContain('threads.create');
-    expect(source).not.toContain('createTerminal');
-    expect(source).not.toContain('ModelReasoningPicker');
-    expect(source).not.toContain('ComposerModePicker');
-    expect(source).not.toContain('ReasoningEffortPicker');
-  });
-
-  it('keeps JobTeamComposer on startJob only', () => {
-    const source = stripComments(readFileSync(join(appRoot, 'components/JobTeamComposer.tsx'), 'utf8'));
+  it('keeps TeamComposer on durable startJob only', () => {
+    const source = stripComments(readFileSync(join(appRoot, 'components/TeamComposer.tsx'), 'utf8'));
     expect(source).toContain('product.teams.startJob');
     expect(source).not.toContain('product.teams.launchAutonomous');
     expect(source).not.toContain('threads.create');
@@ -107,13 +96,10 @@ describe('thread / legacy isolation', () => {
     const field = stripComments(readFileSync(join(appRoot, 'components/composer/use-composer-prompt-field.ts'), 'utf8'));
     expect(home).toContain('allowLegacyAgent');
     expect(home).toContain('LegacyAgentHomeComposer');
-    expect(home).toContain('AutonomousTeamComposer');
-    expect(home).toContain('JobTeamComposer');
+    expect(home).toContain('TeamComposer');
     expect(home).toContain('LaunchModeSegmented');
-    expect(home).toContain('showAutonomousTeam={showAutonomousTeam}');
-    expect(home).toContain('showJobTeam={showJobTeam}');
-    expect(home).toContain("kind === 'autonomous'");
-    expect(home).toContain("kind === 'job'");
+    expect(home).toContain('showTeam={available.showTeam}');
+    expect(home).toContain("kind === 'team'");
     expect(home).not.toContain('HomeAutonomousComposer');
     expect(home).not.toContain('createTerminal');
     expect(home).not.toContain('product.teams.launchAutonomous');

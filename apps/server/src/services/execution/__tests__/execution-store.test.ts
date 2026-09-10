@@ -100,6 +100,31 @@ describe('execution store', () => {
     expect((await store.get('execution-1'))?.deliveries).toEqual([]);
   }));
 
+  it('migrates persisted request goal to objective at read time', async () => fixture(async (filePath) => {
+    const seed = createExecutionStore({ filePath, id: () => 'execution-1' });
+    await seed.claim({ ...request(), request: { ...request().request, objective: 'Ship safely' } });
+    const legacy = JSON.parse(await readFile(filePath, 'utf8')) as { records: Array<{ request: Record<string, unknown> }> };
+    legacy.records[0]!.request.goal = legacy.records[0]!.request.objective;
+    delete legacy.records[0]!.request.objective;
+    await writeFile(filePath, JSON.stringify(legacy));
+
+    const record = await createExecutionStore({ filePath }).get('execution-1');
+    expect(record?.request).toMatchObject({ objective: 'Ship safely' });
+    expect(record?.request).not.toHaveProperty('goal');
+  }));
+
+  it('requires a registered completed DAG for both durable coordination modes', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: (() => { let n = 0; return () => `execution-${++n}`; })() });
+    for (const coordinationMode of ['structured', 'freeform'] as const) {
+      let record = (await store.claim({
+        ...request(), launchRequestId: coordinationMode, requestDigest: coordinationMode, coordinationMode
+      })).record;
+      record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+      record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+      await expect(store.completeExecution(record.id, record.stateVersion, 'done')).rejects.toThrow('execution plan is required');
+    }
+  }));
+
   it('persists legacy source digest upgrades only when trusted metadata still matches', async () => fixture(async (filePath) => {
     const legacySource = {
       id: 'source-1', name: 'source.txt', mediaType: 'text/plain', byteSize: 7,

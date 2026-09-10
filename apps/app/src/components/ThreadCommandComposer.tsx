@@ -708,35 +708,37 @@ export function ThreadCommandComposer({
                       : undefined
                   }
                 />
-                <ComposerIconButton
-                  onClick={() => { if (!field.canAttach) return; field.attachPickedFiles(); }}
-                  disabled={!field.canAttach}
-                  title={field.canAttach ? 'Attach files' : 'File attachments require the desktop app'}
-                  aria-label="Attach files"
-                >
-                  <Paperclip size={14} aria-hidden="true" />
-                </ComposerIconButton>
-                <ComposerIconButton
-                  className="voice-input-btn voice-input-btn--icon"
-                  aria-label={
+                <span className="composer-control-tooltip" data-tooltip={field.canAttach ? 'Attach files' : 'File attachments require the desktop app'}>
+                  <ComposerIconButton
+                    onClick={() => { if (!field.canAttach) return; field.attachPickedFiles(); }}
+                    disabled={!field.canAttach}
+                    aria-label="Attach files"
+                  >
+                    <Paperclip size={14} aria-hidden="true" />
+                  </ComposerIconButton>
+                </span>
+                <span className="composer-control-tooltip" data-tooltip={
                     !voice.isSupported
                       ? 'Voice input is not supported in this browser'
                       : !voice.available
                         ? 'Host daemon is not connected'
                         : 'Start voice input'
-                  }
-                  title={
-                    !voice.isSupported
-                      ? 'Voice input is not supported in this browser'
-                      : !voice.available
-                        ? 'Host daemon is not connected'
-                        : 'Start voice input'
-                  }
-                  disabled={!voice.canStart}
-                  onClick={() => void voice.start()}
-                >
-                  <Mic size={14} />
-                </ComposerIconButton>
+                  }>
+                  <ComposerIconButton
+                    className="voice-input-btn voice-input-btn--icon"
+                    aria-label={
+                      !voice.isSupported
+                        ? 'Voice input is not supported in this browser'
+                        : !voice.available
+                          ? 'Host daemon is not connected'
+                          : 'Start voice input'
+                    }
+                    disabled={!voice.canStart}
+                    onClick={() => void voice.start()}
+                  >
+                    <Mic size={14} />
+                  </ComposerIconButton>
+                </span>
                 {threadId && shouldShowThreadStop(threadId, status, inFlightRetry) && (
                   <ComposerIconButton
                     className="thread-command-stop"

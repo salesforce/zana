@@ -4,6 +4,7 @@ import type { InboxEntry, InboxQuestion } from '@zana-ai/zcc-domain/product';
 import { replyToInboxEntry, useInboxAnswered } from '../store.js';
 import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
 import { MarkdownContent } from './MarkdownContent.js';
+import { useExecutionInboxBlockerState } from '../lib/executionInboxBlockerState.js';
 
 /**
  * Structured multiple-choice question form — the interactive half of the
@@ -88,6 +89,7 @@ export function QuestionBlock({
   deadSessionBusy?: boolean;
 }) {
   const answered = useInboxAnswered((s) => !!s.answeredIds[entry.id]);
+  const blockerState = useExecutionInboxBlockerState(entry, answered);
   const [states, setStates] = useState<QState[]>(() => questions.map(emptyQState));
   const [sending, setSending] = useState(false);
   const [reopened, setReopened] = useState(false);
@@ -95,7 +97,8 @@ export function QuestionBlock({
   const dead = !sessionId && !!onAnswerDeadSession;
   const busy = sending || deadSessionBusy;
   const isMulti = questions.length > 1;
-  const collapsed = answered && !reopened;
+  const executionLinked = !!entry.executionId && !!entry.blockerId;
+  const collapsed = (executionLinked ? blockerState !== 'actionable' && blockerState !== 'unknown' : answered) && !reopened;
 
   const patch = (qi: number, next: QState) =>
     setStates((prev) => prev.map((s, i) => (i === qi ? next : s)));
@@ -164,11 +167,16 @@ export function QuestionBlock({
       <div className="inbox-reply answered">
         <span className="inbox-reply-answered-label">
           <CornerDownLeft size={13} strokeWidth={1.75} />
-          Answered <span className="strong">{sessionTitle}</span>
+          {executionLinked
+            ? blockerState === 'resolved' ? 'Resolved' : 'Answer queued for'
+            : 'Answered'}{' '}
+          <span className="strong">{sessionTitle}</span>
         </span>
-        <button type="button" className="inbox-reply-again" onClick={() => setReopened(true)}>
-          Answer again
-        </button>
+        {blockerState !== 'resolved' && !executionLinked && (
+          <button type="button" className="inbox-reply-again" onClick={() => setReopened(true)}>
+            Answer again
+          </button>
+        )}
       </div>
     );
   }
@@ -256,9 +264,11 @@ export function QuestionBlock({
         );
       })}
       <div className="inbox-question-actions">
-        <button type="button" className="inbox-question-skip" onClick={skip} disabled={busy}>
-          Skip
-        </button>
+        {!executionLinked && (
+          <button type="button" className="inbox-question-skip" onClick={skip} disabled={busy}>
+            Skip
+          </button>
+        )}
         <button
           type="button"
           className="inbox-question-continue"

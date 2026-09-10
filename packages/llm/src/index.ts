@@ -6,6 +6,7 @@ export {
 } from './prompt-registry.js';
 export {
   TAB_NAMER_PROMPT_ID,
+  resolveNamedTitle,
   runTabNamerOnce,
   type RunTabNamerOnceArgs
 } from './tab-namer.js';

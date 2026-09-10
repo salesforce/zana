@@ -261,6 +261,31 @@ describe('OpenCode spawn-time tab-namer trigger', () => {
     expect(llmRunCalls).toHaveLength(0);
   });
 
+  it('uses a trusted naming prompt instead of generated launch instructions', () => {
+    const res = createTerminalConfined(
+      {
+        projectId: 'p1',
+        profile: 'opencode',
+        cols: 80,
+        rows: 24,
+        prompt: 'You are coordinator. Source: /tmp/proj/spec.md'
+      },
+      { tabNamerPrompt: 'Implement durable Team launch' }
+    );
+    expect(res.ok).toBe(true);
+    expect(llmRunCalls).toHaveLength(1);
+    expect(llmRunCalls[0]?.prompt).toBe('Implement durable Team launch');
+  });
+
+  it('suppresses spawn-time naming when main passes null', () => {
+    const res = createTerminalConfined(
+      { projectId: 'p1', profile: 'opencode', cols: 80, rows: 24, prompt: 'Team worker standby' },
+      { tabNamerPrompt: null }
+    );
+    expect(res.ok).toBe(true);
+    expect(llmRunCalls).toHaveLength(0);
+  });
+
   it('one-shot guard: a second spawn reusing the same session id does not fire twice', () => {
     createTerminalConfined(
       { projectId: 'p1', profile: 'opencode', cols: 80, rows: 24, prompt: 'first' },

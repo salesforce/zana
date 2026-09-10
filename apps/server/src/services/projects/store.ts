@@ -774,6 +774,15 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   ) {
     normalized.agentsBoardView = input.agentsBoardView;
   }
+  if (input.agentsListOrganization === 'status' || input.agentsListOrganization === 'team-run') {
+    normalized.agentsListOrganization = input.agentsListOrganization;
+  }
+  if (input.projectNavigationOrganization === 'sessions' || input.projectNavigationOrganization === 'team-runs') {
+    normalized.projectNavigationOrganization = input.projectNavigationOrganization;
+  }
+  if (input.flowAllOrganization === 'combined' || input.flowAllOrganization === 'team-runs') {
+    normalized.flowAllOrganization = input.flowAllOrganization;
+  }
   if (input.inboxGrouping === 'project' || input.inboxGrouping === 'time') {
     normalized.inboxGrouping = input.inboxGrouping;
   }
