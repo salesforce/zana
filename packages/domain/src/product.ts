@@ -55,14 +55,17 @@ export type LaunchProfileId =
   | 'pi-resume'
   | 'opencode'
   | 'opencode-resume'
-  | 'opencode-yolo';
+  | 'opencode-yolo'
+  | 'grok'
+  | 'grok-resume'
+  | 'grok-yolo';
 
 /**
  * A verifiable code-harness FAMILY — the coarse grouping the Settings → Code
  * Harness category and the launcher's profile gate reason about (one family can
  * back several `LaunchProfileId`s, e.g. `claude`/`claude-resume`/`claude-yolo`).
  */
-export type HarnessFamily = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode';
+export type HarnessFamily = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok';
 
 /** Why a launch profile was supplied. Only an explicit choice may override a persona pin. */
 export type LaunchProfileSource = 'explicit' | 'seeded-default';
@@ -1227,6 +1230,13 @@ export type LaunchOrigin = 'explicit' | 'scheduled' | 'goal';
  */
 export type LegacyAgentSession = TerminalSession;
 
+/** Native on-disk plan snapshot for a CLI Agent inspector (not thread_plans). */
+export interface CliPlanFile {
+  path: string;
+  markdown: string;
+  mtime: number;
+}
+
 export interface TerminalSession {
   id: string;
   /** Opaque main-owned capability used to restore/reconnect this launch. */
@@ -1249,6 +1259,13 @@ export interface TerminalSession {
    */
   finishedAt?: number;
   extraArgs?: string[];
+  /**
+   * True when this local CLI Agent was launched in Plan (portable
+   * `executionState: 'plan'` or OpenCode `--agent plan`). Drives the inspector
+   * Plan pin before a native plan file exists. Absent on Agent-mode, remote,
+   * Codex, and Pi launches.
+   */
+  cliPlanIntent?: boolean;
   pinned?: boolean;
   /**
    * The transcript session id this tab owns, for any `acceptsSessionId`
@@ -1655,6 +1672,12 @@ export interface AppConfig {
    */
   opencodeBinary?: string;
   /**
+   * Path/name of the `grok` CLI (the Grok Build TUI harness). Optional: absent
+   * ⇒ the provider falls back to the bare `grok` on PATH. Thread already speaks
+   * this binary over ACP (`grok agent stdio`); this slot is the interactive TUI.
+   */
+  grokBinary?: string;
+  /**
    * Hide the Cursor harness from agent-launch UIs. Absent/undefined ⇒ auto-on
    * when the CLI is installed. `false` is an explicit hide.
    */
@@ -1674,6 +1697,11 @@ export interface AppConfig {
    * when the CLI is installed. `false` is an explicit hide.
    */
   harnessOpenCodeEnabled?: boolean;
+  /**
+   * Hide the Grok Build TUI harness from agent-launch UIs. Absent/undefined ⇒
+   * auto-on when the CLI is installed. `false` is an explicit hide.
+   */
+  harnessGrokEnabled?: boolean;
   /**
    * Allow compatible harnesses to discover project-specific native agents.
    * Default OFF: only built-in semantic roles remain available in composers.
@@ -2377,6 +2405,35 @@ export interface AppConfig {
    * builds also force this on.
    */
   showUnhandledProviderEvents?: boolean;
+  /**
+   * Preferred alias of {@link showUnhandledProviderEvents}. Surface provider
+   * diagnostics and routine environment-provisioning rows. Default off.
+   * Writing either flag updates both so older configs keep working.
+   */
+  showDiagnosticEvents?: boolean;
+  /**
+   * Inject the product introduction (inbox/mesh/library guidance) and layered
+   * `RULES.md` into subsequent launches. Default ON (absent ⇒ true). Subsequent
+   * launches only — already-running sessions keep their current prompt.
+   */
+  injectProductGuidance?: boolean;
+  /**
+   * Inject the remote-access / Connect instruction blob when a launch uses
+   * the CLI remote tool proxy. Default ON (absent ⇒ true). Independent of
+   * {@link injectProductGuidance}. Subsequent launches only.
+   */
+  injectRemoteInstructions?: boolean;
+  /**
+   * Inject the shipped builtin-skills roster into subsequent launches.
+   * Default ON (absent ⇒ true). Master switch — turning it off does not
+   * clear {@link disabledBundledSkills}, so per-skill picks survive.
+   */
+  injectBundledSkills?: boolean;
+  /**
+   * Per-skill opt-outs from the shipped builtin roster. Absent/empty ⇒ every
+   * bundled skill is injected (when {@link injectBundledSkills} is on).
+   */
+  disabledBundledSkills?: string[];
   /**
    * Tee provider-bridge runtime/ACP wires to NDJSON under the data dir
    * (`provider-recordings/raw`). Default off. A non-empty

@@ -26,6 +26,14 @@
  * default is workspace-style: writes ⊂ cwd + scratch, reads of the sensitive-root
  * blocklist denied, network ALLOWED.
  *
+ * PLUGIN-OWNED WHERE (not in this wave)
+ * -------------------------------------
+ * bb's environment-provider plugins (`experimental_environments.register`) let
+ * extensions mint cwd/worktrees. ZCC keeps WHERE first-party (`local | sandbox |
+ * microvm | runtime-host`) so Rule 2 `realpath` confinement stays in main. If a
+ * concrete Salesforce environment ever needs a third-party type, add a *brokered*
+ * create/remove slot with confined paths — do not copy an open plugin registry.
+ *
  * DEGRADATION (decided: grok-style warn-and-run)
  * ----------------------------------------------
  * When the kernel can't enforce the sandbox (non-macOS, missing `sandbox-exec`),

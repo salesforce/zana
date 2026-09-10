@@ -12,7 +12,8 @@ const LOGIN_BY_FAMILY: Partial<Record<HarnessFamily, { providerId: string; login
   cursor: { providerId: 'acp-cursor', loginCommand: 'cursor-agent login' },
   codex: { providerId: 'codex', loginCommand: 'codex login' },
   pi: { providerId: 'pi', loginCommand: 'pi' },
-  opencode: { providerId: 'acp-opencode', loginCommand: 'opencode auth login' }
+  opencode: { providerId: 'acp-opencode', loginCommand: 'opencode auth login' },
+  grok: { providerId: 'acp-grok', loginCommand: 'grok login' }
 };
 
 export function loginCommandForProvider(providerId: string): string | null {
@@ -20,6 +21,7 @@ export function loginCommandForProvider(providerId: string): string | null {
   if (providerId === 'codex') return 'codex login';
   if (providerId === 'pi') return 'pi';
   if (providerId === 'acp-opencode' || providerId === 'opencode') return 'opencode auth login';
+  if (providerId === 'acp-grok' || providerId === 'grok') return 'grok login';
   return null;
 }
 
@@ -60,7 +62,7 @@ export function harnessLoginStatus(
     if (family === 'pi') {
       return { state: 'sign_in_required', loginCommand: login.loginCommand };
     }
-    if (family === 'opencode') {
+    if (family === 'opencode' || family === 'grok') {
       return { state: 'unverified', loginCommand: login.loginCommand };
     }
   }

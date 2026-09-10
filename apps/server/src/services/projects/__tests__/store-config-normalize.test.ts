@@ -654,3 +654,24 @@ describe('normalizeConfig — publicAppUrl / relayToken', () => {
     expect(store.getConfig().relayToken).toBeUndefined();
   });
 });
+
+describe('normalizeConfig — agent guidance', () => {
+  it('aliases showDiagnosticEvents onto showUnhandledProviderEvents', () => {
+    expect(normalizeConfig({ showDiagnosticEvents: true })).toMatchObject({
+      showDiagnosticEvents: true,
+      showUnhandledProviderEvents: true
+    });
+    expect(normalizeConfig({ showUnhandledProviderEvents: true })).toMatchObject({
+      showDiagnosticEvents: true,
+      showUnhandledProviderEvents: true
+    });
+  });
+
+  it('trims unique disabledBundledSkills and drops non-arrays', () => {
+    expect(normalizeConfig({
+      disabledBundledSkills: [' zcc-cli ', 'zcc-cli', 'zcc-inbox']
+    }).disabledBundledSkills).toEqual(['zcc-cli', 'zcc-inbox']);
+    expect(normalizeConfig({ disabledBundledSkills: 'zcc-cli' as never }).disabledBundledSkills)
+      .toBeUndefined();
+  });
+});

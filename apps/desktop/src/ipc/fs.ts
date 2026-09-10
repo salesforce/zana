@@ -8,6 +8,8 @@ import { confine, createDir as fsCreateDir, createFile as fsCreateFile, deletePa
 import { commitProjectChanges, discardChanges, getGitStatus, gitCommonDir, isGitRepo, listBranches, listWorktrees, previewProjectCommit, pushProjectBranch, removeWorktree, showHead, withWorktreeLock } from '@zana-ai/zcc-server/services/projects/git';
 import { createDirRemote as fsCreateDirRemote, createFileRemote as fsCreateFileRemote, deleteRemote as fsDeleteRemote, listDirRemote as fsListDirRemote, readFileRemote as fsReadFileRemote, remoteRoot as fsRemoteRoot, renameRemote as fsRenameRemote, writeFileRemote as fsWriteFileRemote } from '@zana-ai/zcc-host-daemon/remote-fs';
 import { downloadFromRemote as fsDownloadFromRemote, uploadToRemote as fsUploadToRemote } from '@zana-ai/zcc-host-daemon/remote-transfer';
+import { resolveStoredAttachmentPath } from '@zana-ai/zcc-server/services/projects/attachments';
+import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { store, worktreeRoot } from '@zana-ai/zcc-server/services/projects/store';
 import { openIn } from '../native/openers.js';
 import { isWithin } from '@zana-ai/zcc-path-confine';
@@ -297,6 +299,25 @@ export function registerFsIpc(): void {
       // drops at the canonical root so no renderer-provided path can broaden
       // the transfer's trust boundary.
       return fsUploadToRemote(remote, root, localPath, destDir === '.' ? root : destDir);
+    },
+    () => ({ ok: false, message: 'Upload failed' })
+  );
+  ctx.safeHandle(
+    IPC.fs.uploadProjectAttachmentToRemote,
+    async (projectId: string, relativePath: string) => {
+      const remote = remoteFor(projectId);
+      const root = remote ? await resolveRemoteRoot(projectId) : null;
+      if (!remote || !root) return { ok: false, message: 'Not a remote project' };
+      if (typeof relativePath !== 'string' || !relativePath) {
+        return { ok: false, message: 'Attachment path is required' };
+      }
+      let localPath: string;
+      try {
+        localPath = resolveStoredAttachmentPath(electronZccDataDir(), projectId, relativePath);
+      } catch (err) {
+        return { ok: false, message: err instanceof Error ? err.message : String(err) };
+      }
+      return fsUploadToRemote(remote, root, localPath, root);
     },
     () => ({ ok: false, message: 'Upload failed' })
   );

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { HarnessExecutionTarget } from '@zana-ai/zcc-domain/harness-adapter';
+import { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
+import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { ExecutionConsentBinding, ExecutionConsentReserveResult, ExecutionConsentScope } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import { preflightExecutionAuthorization } from '../preflight.js';
 
@@ -133,5 +138,23 @@ describe('execution launch preflight', () => {
       ...base, provenance: 'inherited-native-default', target: undefined, evidence: undefined
     }, consent(reserve))).resolves.toEqual({ decision: 'allowed', scope: 'local' });
     expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it('auto-grants project consent for interactive closest mappings without a dialog', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zcc-execution-preflight-'));
+    try {
+      const store = createExecutionConsentStore({ filePath: join(dir, 'consent.json'), id: () => 'grant-1' });
+      const service = new ExecutionConsentService({ store });
+      await expect(preflightExecutionAuthorization(base, {
+        reserve: store.reserve,
+        request: service.request.bind(service)
+      })).resolves.toMatchObject({
+        decision: 'allowed',
+        consentReservation: { id: expect.any(String), scope: 'project' }
+      });
+      expect((await store.list()).grants).toEqual([expect.objectContaining({ id: 'grant-1', scope: 'project' })]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

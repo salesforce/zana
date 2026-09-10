@@ -91,6 +91,7 @@ export function threadProviderFamily(providerId: string): string | null {
   if (providerId === 'claude-code') return 'claude';
   if (providerId === 'acp-cursor') return 'cursor';
   if (providerId === 'acp-opencode') return 'opencode';
+  if (providerId === 'acp-grok') return 'grok';
   if (providerId === 'codex' || providerId === 'pi') return providerId;
   return null;
 }

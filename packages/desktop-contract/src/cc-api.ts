@@ -16,6 +16,7 @@ import type {
   AutonomousRun,
   CancelTeamLaunchResult,
   CatchUpSummaryResult,
+  CliPlanFile,
   ClaudeProjectFileId,
   ClaudeProjectSettings,
   ClaudeSessionSummary,
@@ -363,7 +364,8 @@ export interface CcApi {
     providerCliStatus(id: string): Promise<ProviderCliStatusResponse>;
     installProviderCli(
       id: string,
-      request: { provider: ProviderCliKey; actionKind: ProviderCliInstallActionKind }
+      request: { provider: ProviderCliKey; actionKind: ProviderCliInstallActionKind },
+      onEvent?: (event: ProviderCliInstallEvent) => void
     ): Promise<ProviderCliInstallEvent[]>;
     onChanged(cb: (hosts: Host[] | undefined) => void): () => void;
     /**
@@ -756,6 +758,15 @@ export interface CcApi {
      */
     backlog(sessionId: string): Promise<string>;
     /**
+     * Native on-disk CLI plan for a Plan-mode local session. Renderer supplies
+     * sessionId only; main discovers and confines the path.
+     */
+    cliPlan(sessionId: string): Promise<CliPlanFile | null>;
+    /** Refcounted watch of the session's plan directories. Pair with {@link cliPlanUnwatch}. */
+    cliPlanWatch(sessionId: string): Promise<void>;
+    cliPlanUnwatch(sessionId: string): Promise<void>;
+    onCliPlan(cb: (sessionId: string, snapshot: CliPlanFile | null) => void): () => void;
+    /**
      * Toggle the headless flag on a live session. Used to "hide" a tab
      * (X button / ⌘W) without killing its pty, and to restore one from
      * the Hidden picker.
@@ -1030,6 +1041,12 @@ export interface CcApi {
      * pass the session cwd or a tree folder. Returns the final remote path.
      */
     uploadToRemote(projectId: string, localPath: string, destDir: string): Promise<RemoteTransferResult>;
+    /**
+     * Upload a previously persisted project attachment (relative name under
+     * `~/.zcc/attachments/<projectId>/`) to the remote host. Main resolves the
+     * stored file; the renderer never supplies a disk path.
+     */
+    uploadProjectAttachmentToRemote(projectId: string, relativePath: string): Promise<RemoteTransferResult>;
     /**
      * Download a remote file of `projectId` to the local machine. Opens an OS
      * save dialog (defaulting to the file's basename); `canceled` is set if the

@@ -19,7 +19,10 @@ vi.mock('../../lib/product-client.js', () => ({
     executionSources: { pick: (...args: unknown[]) => pick(...args) },
     projects: { ensureQuickAgent: (...args: unknown[]) => ensureQuickAgent(...args) },
     teams: { startJob: (...args: unknown[]) => startJob(...args) },
-    fs: { uploadToRemote: (...args: unknown[]) => uploadToRemote(...args) }
+    fs: {
+      uploadToRemote: (...args: unknown[]) => uploadToRemote(...args),
+      uploadProjectAttachmentToRemote: vi.fn()
+    }
   }
 }));
 

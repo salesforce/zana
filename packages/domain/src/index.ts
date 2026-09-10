@@ -111,5 +111,6 @@ export * from './launch-sanitize.js';
 export * from './git-checkout.js';
 export * from './workspace-diff.js';
 export * from './environment.js';
+export * from './bundled-product-skills.js';
 export * from './machine-pairing.js';
 export * from './remote-start-path.js';

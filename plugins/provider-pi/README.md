@@ -26,13 +26,18 @@ directories (`experimental_nativeSkillRoots`):
 - `project`: `.pi/skills` and `.agents/skills` under the workspace.
 
 The directories only a host knows are the host entry's answer
-(`experimental_resolvesNativeRoots`): when bb lists skills on a host it asks
+(`experimental_resolvesNativeRoots`): when ZCC lists skills on a host it asks
 the plugin's host entry there, which reads `<agentDir>/settings.json`'s
 `skills` entries (absolute, `~`-relative, or relative to the agent dir) and
 adds `<agentDir>/skills` when `PI_CODING_AGENT_DIR` moves the agent dir. Each
-host answers for itself, from its own files, at listing time (bb caches the
-answer briefly). A settings entry that names a declared directory is listed
-once: bb scans each directory once, and the declared root wins.
+host answers for itself, from its own files, at listing time. A settings entry
+that names a declared directory is listed once.
+
+Pi extensions that call `ctx.ui.select` / `confirm` / `input` / `editor` over
+RPC are forwarded as answerable pending interactions (`provider-pi/extension-ui`).
+Fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`,
+`set_editor_text`) are dropped. Without a UI handler the bridge still
+auto-cancels, so helper sessions stay non-blocking.
 
 Not listed, by design:
 

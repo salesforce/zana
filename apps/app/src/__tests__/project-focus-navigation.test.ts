@@ -133,4 +133,14 @@ describe('project-focus navigation contract', () => {
 
     registerAppNavigate(null);
   });
+
+  it('selectProject mirrors lastProjectId into the data store and config immediately', async () => {
+    const { useUi, useData } = await import('../store.js');
+
+    useUi.getState().selectProject('proj-last');
+
+    expect(useUi.getState().selectedProjectId).toBe('proj-last');
+    expect(useData.getState().lastProjectId).toBe('proj-last');
+    expect(mockConfig.set).toHaveBeenCalledWith({ lastProjectId: 'proj-last' });
+  });
 });

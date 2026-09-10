@@ -33,6 +33,7 @@ import type {
   AppConfig,
   AutonomousRun,
   CatchUpSummaryResult,
+  CliPlanFile,
   CreateTerminalRequest,
   ExtensionEntry,
   IdleTriageResult,
@@ -487,6 +488,9 @@ const api: CcApi = {
     resize: (id, cols, rows) => ipcRenderer.invoke(IPC.terminals.resize, id, cols, rows),
     close: (id) => ipcRenderer.invoke(IPC.terminals.close, id),
     backlog: (id) => ipcRenderer.invoke(IPC.terminals.backlog, id),
+    cliPlan: (id) => ipcRenderer.invoke(IPC.terminals.cliPlan, id),
+    cliPlanWatch: (id) => ipcRenderer.invoke(IPC.terminals.cliPlanWatch, id),
+    cliPlanUnwatch: (id) => ipcRenderer.invoke(IPC.terminals.cliPlanUnwatch, id),
     summarizeIdle: (projectId, sessionIds) =>
       ipcRenderer.invoke(IPC.terminals.summarizeIdle, projectId, sessionIds),
     summarizeSession: (projectId, sessionId) =>
@@ -568,6 +572,11 @@ const api: CcApi = {
       const handler = (_e: unknown, activity: OverseerActivity) => cb(activity);
       ipcRenderer.on(IPC.terminals.onOverseerActivity, handler);
       return () => ipcRenderer.off(IPC.terminals.onOverseerActivity, handler);
+    },
+    onCliPlan: (cb) => {
+      const handler = (_e: unknown, id: string, snapshot: CliPlanFile | null) => cb(id, snapshot);
+      ipcRenderer.on(IPC.terminals.onCliPlan, handler);
+      return () => ipcRenderer.off(IPC.terminals.onCliPlan, handler);
     }
   },
   config: {
@@ -620,6 +629,8 @@ const api: CcApi = {
     deleteRemote: (projectId, path) => ipcRenderer.invoke(IPC.fs.deleteRemote, projectId, path),
     uploadToRemote: (projectId, localPath, destDir) =>
       ipcRenderer.invoke(IPC.fs.uploadToRemote, projectId, localPath, destDir),
+    uploadProjectAttachmentToRemote: (projectId, relativePath) =>
+      ipcRenderer.invoke(IPC.fs.uploadProjectAttachmentToRemote, projectId, relativePath),
     downloadFromRemote: (projectId, remotePath) =>
       ipcRenderer.invoke(IPC.fs.downloadFromRemote, projectId, remotePath)
   },

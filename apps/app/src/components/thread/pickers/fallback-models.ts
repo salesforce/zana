@@ -71,6 +71,7 @@ const FALLBACK_PROVIDERS: readonly ThreadComposerProviderOption[] = [
   { id: 'pi', displayName: 'Pi', permissionModes: ['full'], composerActions: [] },
   { id: 'acp-cursor', displayName: 'Cursor', permissionModes: ['accept-edits', 'full'], composerActions: [] },
   { id: 'acp-opencode', displayName: 'OpenCode', permissionModes: ['accept-edits', 'full'], composerActions: [] },
+  { id: 'acp-grok', displayName: 'Grok Build', permissionModes: ['accept-edits', 'full'], composerActions: [] },
   { id: 'fake', displayName: 'Fake', permissionModes: ['full'], composerActions: ['plan'] }
 ];
 
@@ -81,7 +82,7 @@ export function fallbackProviderOption(providerId: string): ThreadComposerProvid
 
 /** Builtin harnesses for a new thread before execution-options returns. Omits `fake` and installed-only OpenCode. */
 export function fallbackProvidersForNewThread(): ThreadComposerProviderOption[] {
-  return FALLBACK_PROVIDERS.filter((row) => row.id !== 'fake' && row.id !== 'acp-opencode');
+  return FALLBACK_PROVIDERS.filter((row) => row.id !== 'fake' && row.id !== 'acp-opencode' && row.id !== 'acp-grok');
 }
 
 /** True when a new-thread send can use this provider (it is in the live roster). */
@@ -234,6 +235,60 @@ const CODEX_FALLBACK_MODELS: ReadonlyArray<{
   }
 ];
 
+const CURSOR_REASONING_LEVELS: readonly ReasoningLevel[] = ['low', 'medium', 'high', 'xhigh'];
+
+/** Same primary ids as ACP Cursor's Modern picker (`BUILT_IN_ACP_MODEL_PICKER`). */
+const CURSOR_FALLBACK_MODELS: ReadonlyArray<{
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  defaultReasoningEffort: ReasoningLevel;
+}> = [
+  {
+    id: 'default',
+    model: 'default',
+    displayName: 'Default',
+    description: 'Cursor’s native model pin',
+    defaultReasoningEffort: 'medium'
+  },
+  {
+    id: 'grok-4.6',
+    model: 'grok-4.6',
+    displayName: 'Grok 4.6',
+    description: 'Grok 4.6 on Cursor',
+    defaultReasoningEffort: 'high'
+  },
+  {
+    id: 'gpt-5.6-sol',
+    model: 'gpt-5.6-sol',
+    displayName: 'GPT-5.6 Sol',
+    description: 'GPT-5.6 Sol on Cursor',
+    defaultReasoningEffort: 'high'
+  },
+  {
+    id: 'claude-opus-5',
+    model: 'claude-opus-5',
+    displayName: 'Opus 5',
+    description: 'Opus 5 on Cursor',
+    defaultReasoningEffort: 'high'
+  },
+  {
+    id: 'claude-fable-5',
+    model: 'claude-fable-5',
+    displayName: 'Fable 5',
+    description: 'Fable 5 on Cursor',
+    defaultReasoningEffort: 'high'
+  },
+  {
+    id: 'composer-2.5',
+    model: 'composer-2.5',
+    displayName: 'Composer 2.5',
+    description: 'Composer 2.5 on Cursor',
+    defaultReasoningEffort: 'medium'
+  }
+];
+
 function withCatalogEfforts(
   entries: ReadonlyArray<{
     id: string;
@@ -259,6 +314,9 @@ export function fallbackModelsForProvider(providerId: string): AvailableModel[] 
   }
   if (providerId === 'codex') {
     return withCatalogEfforts(CODEX_FALLBACK_MODELS, CODEX_REASONING_LEVELS, 'gpt-5.5');
+  }
+  if (providerId === 'acp-cursor' || providerId === 'cursor') {
+    return withCatalogEfforts(CURSOR_FALLBACK_MODELS, CURSOR_REASONING_LEVELS, 'default');
   }
   if (providerId === 'fake') {
     return withCatalogEfforts([{

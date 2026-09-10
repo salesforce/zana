@@ -191,6 +191,12 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
   readonly nativeRolePinsModel: boolean = false;
 
   /**
+   * No provider accepts snapshot-absent model ids by default (Claude overrides
+   * so the thread catalog's versioned ids can launch as `--model`).
+   */
+  readonly acceptsUnlistedModelTargets: boolean = false;
+
+  /**
    * No screen-scan blocked pattern by default. Only a provider whose CLI goes
    * QUIET at an interactive prompt with no OSC/hook blocked signal (OpenCode's
    * `△ Permission required` TUI) overrides this — see the interface doc. Claude

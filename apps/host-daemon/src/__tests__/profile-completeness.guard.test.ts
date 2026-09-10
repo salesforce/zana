@@ -6,7 +6,7 @@
  * but a profile id is physically re-listed in several files that cannot all
  * import the shared runtime value:
  *   - the family predicates (`isClaudeProfile` / `isCursorProfile` /
- *     `isCodexProfile` / `isPiProfile` / `isOpenCodeProfile`) — every non-shell
+ *     `isCodexProfile` / `isPiProfile` / `isOpenCodeProfile` / `isGrokProfile`) — every non-shell
  *     profile must belong to exactly one;
  *   - `providerCapabilities` — must return a descriptor for every profile;
  *   - the registry (`providerFor`) — must resolve a real provider for every
@@ -34,6 +34,7 @@ import {
   isCodexProfile,
   isPiProfile,
   isOpenCodeProfile,
+  isGrokProfile,
   isAgentProfile,
   providerCapabilities
 } from '@zana-ai/zcc-domain/launch-provider';
@@ -69,7 +70,8 @@ describe('profile-completeness — the enumeration agrees everywhere', () => {
         isCursorProfile(p),
         isCodexProfile(p),
         isPiProfile(p),
-        isOpenCodeProfile(p)
+        isOpenCodeProfile(p),
+        isGrokProfile(p)
       ].filter(Boolean).length;
       expect(inFamilies, `${p} must be in exactly one family predicate`).toBe(1);
       expect(isAgentProfile(p), `${p} must be an agent profile`).toBe(true);

@@ -403,9 +403,11 @@ describe('SquadExecutionService', () => {
   }));
 
   it('stops an overdue execution and cancels its Team lifecycle', async () => fixture(async (filePath) => {
-    let now = Date.now();
+    let now = 1_000_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
     const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
     const service = new SquadExecutionService(deps(filePath, {
+      store,
       now: () => now,
       cancelTeamLaunch,
       getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] })

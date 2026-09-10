@@ -793,6 +793,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessCodexEnabled: config.harnessCodexEnabled ?? false,
     harnessPiEnabled: config.harnessPiEnabled ?? false,
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
+    harnessGrokEnabled: config.harnessGrokEnabled ?? false,
     nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
     teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false,
@@ -1089,7 +1090,7 @@ export const useUi = create<UiState>((set, get) => ({
       product.projects.touch('').catch(() => {});
       return;
     }
-    product.config.set({ lastProjectId: id }).catch(() => {});
+    useData.getState().rememberLastProjectId(id);
     // Persist the touch to disk so the next launch's auto-sort reflects
     // recent use, but DON'T merge the updated lastActiveAt back into the
     // in-memory projects list — that causes the just-clicked project to
@@ -1544,6 +1545,8 @@ interface DataState {
   harnessPiEnabled: boolean;
   /** Mirror of AppConfig.harnessOpenCodeEnabled — explicit hide for OpenCode. */
   harnessOpenCodeEnabled: boolean;
+  /** Mirror of AppConfig.harnessGrokEnabled — explicit hide for Grok Build. */
+  harnessGrokEnabled: boolean;
   /** Mirror of AppConfig.nativeAgentDiscoveryEnabled. */
   nativeAgentDiscoveryEnabled: boolean;
   /** Last code-harness verification snapshot (Settings → Code Harness). Empty
@@ -1555,9 +1558,13 @@ interface DataState {
   /** Last external-editor verification snapshot (Settings → Editor). Empty until
    *  `refreshEditorStatus` runs. */
   editorStatus: EditorVerifyResult[];
-  /** Mirror of AppConfig.lastProjectId — seeds New Chat when the sidebar has
-   *  no current selection (e.g. after adding a remote, then opening Home). */
+  /** Mirror of AppConfig.lastProjectId — seeds the unpinned New Chat / New
+   *  agent composer (last picker or sidebar pick). Project-view launches stay
+   *  pinned and ignore this. */
   lastProjectId: string | null;
+  /** Stamp last-used immediately and persist it. Composer picker and sidebar
+   *  selection share this so reopen does not wait on the config round-trip. */
+  rememberLastProjectId: (id: string) => void;
   /** Re-probe every external editor's `<shim> --version` and cache the result. */
   refreshEditorStatus: () => Promise<void>;
   /** Mirror of AppConfig.openerHiddenTargets — opener-bar targets the user hid.
@@ -1605,6 +1612,7 @@ interface DataState {
   setHarnessCodexEnabled: (on: boolean) => void;
   setHarnessPiEnabled: (on: boolean) => void;
   setHarnessOpenCodeEnabled: (on: boolean) => void;
+  setHarnessGrokEnabled: (on: boolean) => void;
   setMicroVmEnabled: (on: boolean) => void;
   setWorktreeIsolationDefault: (on: boolean) => void;
   setIdleAttentionSensitivity: (level: 'high' | 'medium' | 'low') => void;
@@ -1957,10 +1965,16 @@ export const useData = create<DataState>((set, get) => ({
   harnessCodexEnabled: false,
   harnessPiEnabled: false,
   harnessOpenCodeEnabled: false,
+  harnessGrokEnabled: false,
   nativeAgentDiscoveryEnabled: false,
   harnessStatus: [],
   editorStatus: [],
   lastProjectId: null,
+  rememberLastProjectId(id) {
+    if (!id) return;
+    set({ lastProjectId: id });
+    product.config.set({ lastProjectId: id }).catch(() => {});
+  },
   openerHiddenTargets: [],
   microVmEnabled: false,
   teamJobLaunchEnabled: true,
@@ -2043,6 +2057,11 @@ export const useData = create<DataState>((set, get) => ({
 
   setHarnessOpenCodeEnabled(on) {
     set({ harnessOpenCodeEnabled: on });
+    void prefetchThreadModelCatalog().catch(() => undefined);
+  },
+
+  setHarnessGrokEnabled(on) {
+    set({ harnessGrokEnabled: on });
     void prefetchThreadModelCatalog().catch(() => undefined);
   },
 

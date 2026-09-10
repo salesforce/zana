@@ -243,6 +243,14 @@ export interface LaunchProvider {
   acceptsDynamicRoleTargets?: boolean;
 
   /**
+   * Claude (and similar) accept well-formed model ids that are not in the
+   * static 4-alias PTY snapshot — the thread catalog's versioned ids
+   * (`claude-opus-5[1m]`, `claude-sonnet-5`). Default false; only Claude
+   * opts in. OpenCode keeps live-probe authority via discoverModelTargets.
+   */
+  readonly acceptsUnlistedModelTargets?: boolean;
+
+  /**
    * A resolved native role pins its OWN model, so any host-injected `--model`
    * (from per-tab / persona / project / global routing) must be SUPPRESSED when
    * a role target resolves — forcing a catalog model alongside `--agent <role>`

@@ -1,6 +1,7 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
-import type { AgentState, SessionStats, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { AgentState, CliPlanFile, SessionStats, TerminalSession } from '@zana-ai/zcc-domain/product';
+import { product } from '../lib/product-client.js';
 import { AgentDetailPanel } from './AgentDetailPanel.js';
 import { AgentDiffPanel } from './AgentDiffPanel.js';
 import { useSessionStats } from './AgentInsights.js';
@@ -10,6 +11,11 @@ import { ThreadFilePreviewTab } from './thread/secondary-panel/ThreadFilePreview
 import { BrowserTabDeck } from './thread/secondary-panel/BrowserTabDeck.js';
 import { ThreadPluginTab } from './thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from './thread/secondary-panel/ThreadExplorerTab.js';
+import { ThreadPlanPanel } from './thread/secondary-panel/ThreadPlanPanel.js';
+import {
+  planFileTabTitle,
+  type ThreadPlanDocument
+} from './thread/secondary-panel/thread-plan-document.js';
 import { useSecondaryPanel } from './thread/secondary-panel/useThreadSecondaryPanel.js';
 import { useInAppBrowserPanel } from './thread/secondary-panel/useInAppBrowserPanel.js';
 import { useThreadOpenFileSignal } from './thread/secondary-panel/useThreadOpenFileSignal.js';
@@ -35,6 +41,50 @@ import { useOptionalPaneContext } from '../views/thread-detail/PaneContext.js';
 export function agentWriteScope(stats: SessionStats | null): Set<string> | null {
   if (!stats) return null;
   return new Set(stats.files.filter((file) => file.op !== 'R').map((file) => file.path));
+}
+
+export function cliPlanDocument(snapshot: CliPlanFile | null): ThreadPlanDocument {
+  return {
+    markdown: snapshot?.markdown ?? null,
+    filePath: snapshot?.path ?? null,
+    prompt: null,
+    source: snapshot ? 'durable' : 'empty'
+  };
+}
+
+/** True when a plan file lives under the session cwd (safe for project file-preview). */
+export function canPreviewCliPlanFile(path: string, cwd: string): boolean {
+  if (!path || !cwd) return false;
+  const prefix = cwd.endsWith('/') ? cwd : `${cwd}/`;
+  return path === cwd || path.startsWith(prefix);
+}
+
+export function useCliPlanSnapshot(session: TerminalSession): CliPlanFile | null {
+  const [snapshot, setSnapshot] = useState<CliPlanFile | null>(null);
+  const intent = Boolean(session.cliPlanIntent);
+  useEffect(() => {
+    if (!intent) {
+      setSnapshot(null);
+      return;
+    }
+    let cancelled = false;
+    const { cliPlan, cliPlanWatch, cliPlanUnwatch, onCliPlan } = product.terminals;
+    void cliPlan(session.id).then((file) => {
+      if (!cancelled) setSnapshot(file);
+    }).catch(() => {
+      if (!cancelled) setSnapshot(null);
+    });
+    const stop = onCliPlan((id, file) => {
+      if (id === session.id) setSnapshot(file);
+    });
+    void cliPlanWatch(session.id);
+    return () => {
+      cancelled = true;
+      stop();
+      void cliPlanUnwatch(session.id);
+    };
+  }, [intent, session.id]);
+  return snapshot;
 }
 
 export function AgentSessionView({
@@ -99,6 +149,8 @@ export function AgentSessionView({
   const loadedStats = useSessionStats(session.id, projectId, exited, providedStats === undefined);
   const stats = providedStats ?? loadedStats;
   const writeScope = agentWriteScope(stats);
+  const cliPlan = useCliPlanSnapshot(session);
+  const showPlanPin = Boolean(session.cliPlanIntent) || Boolean(cliPlan);
 
   useEffect(() => {
     if (!focusDiffKey) return;
@@ -148,6 +200,21 @@ export function AgentSessionView({
         isRemote={projectRemote}
         exited={exited}
         scope={writeScope}
+      />
+    );
+  } else if (pin === 'plan') {
+    const document = cliPlanDocument(cliPlan);
+    panelBody = (
+      <ThreadPlanPanel
+        document={document}
+        emptyLabel="Waiting for the CLI to write a plan…"
+        onOpenFile={
+          document.filePath && canPreviewCliPlanFile(document.filePath, session.cwd)
+            ? (path) => {
+                panel.addTab({ kind: 'file-preview', title: planFileTabTitle(path), path });
+              }
+            : undefined
+        }
       />
     );
   } else if (closable?.kind === 'new-tab') {
@@ -271,9 +338,11 @@ export function AgentSessionView({
         <ThreadSecondaryPanel
           state={panel.state}
           showDiffPin
+          showPlanPin={showPlanPin}
           footer={footer}
           onSelectInfo={() => panel.selectPin('info')}
           onSelectDiff={() => panel.selectPin('diff')}
+          onSelectPlan={() => panel.selectPin('plan')}
           onNewTab={panel.openNewTab}
           onCloseTab={panel.closeTab}
           onActivateTab={panel.activateTab}

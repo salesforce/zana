@@ -1401,13 +1401,46 @@ describe("buildThreadTimelineFromEvents", () => {
         (row) =>
           row.systemKind === "operation" && row.title === "Provisioned thread",
       ),
+    ).toHaveLength(0);
+  });
+
+  it("surfaces environment provisioning rows when diagnostic events are on", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const rows = buildThreadTimelineFromEvents({
+      acceptedClientRequestContext: EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
+      contextWindowEvents: [],
+      events: fromRows([
+        event.threadProvisioning({
+          provisioningId: "tpv-real",
+          status: "completed",
+          entries: [],
+        }),
+      ]),
+      options: {
+        includeDebugRawEvents: false,
+        includeNestedRows: true,
+        includeProviderUnhandledOperations: true,
+        isLatestPage: true,
+        threadStatus: "idle",
+        threadName: "",
+        turnMessageDetail: "full",
+        workspaceRoot: null,
+      },
+    }).rows;
+    expect(
+      collectSystemRows(rows).filter(
+        (row) =>
+          row.systemKind === "operation" && row.title === "Provisioned thread",
+      ),
     ).toHaveLength(1);
   });
 
   it("normalizes carriage-return provisioning output in operation detail", () => {
     const event = createTimelineEventFactory({ threadId: "thread-1" });
-    const rows = buildTimelineRows(
-      fromRows([
+    const rows = buildThreadTimelineFromEvents({
+      acceptedClientRequestContext: EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
+      contextWindowEvents: [],
+      events: fromRows([
         event.threadProvisioning({
           status: "active",
           entries: [
@@ -1424,7 +1457,17 @@ describe("buildThreadTimelineFromEvents", () => {
           ],
         }),
       ]),
-    );
+      options: {
+        includeDebugRawEvents: false,
+        includeNestedRows: true,
+        includeProviderUnhandledOperations: true,
+        isLatestPage: true,
+        threadStatus: "idle",
+        threadName: "",
+        turnMessageDetail: "full",
+        workspaceRoot: null,
+      },
+    }).rows;
 
     const [row] = rows;
     if (!row || row.kind !== "system") {

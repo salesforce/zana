@@ -2,23 +2,36 @@ import { useEffect, useState } from 'react';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import { product } from '../lib/product-client.js';
 
+/** Last roster from a successful (or empty) fetch — survives composer remounts. */
+let cachedHosts: Host[] = [];
+
+function rememberHosts(rows: Host[]): Host[] {
+  cachedHosts = rows;
+  return rows;
+}
+
+/** Test hook: drop the remount cache so specs start from an empty roster. */
+export function resetHostsCache(): void {
+  cachedHosts = [];
+}
+
 export function useHosts(): Host[] {
-  const [hosts, setHosts] = useState<Host[]>([]);
+  const [hosts, setHosts] = useState<Host[]>(() => cachedHosts);
 
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
       product.hosts.list().then((rows) => {
-        if (!cancelled) setHosts(Array.isArray(rows) ? rows : []);
+        if (!cancelled) setHosts(rememberHosts(Array.isArray(rows) ? rows : []));
       }).catch(() => {
-        if (!cancelled) setHosts([]);
+        if (!cancelled) setHosts(rememberHosts([]));
       });
     };
     refresh();
     const unsub = product.hosts.onChanged((payload) => {
       if (cancelled) return;
       if (Array.isArray(payload)) {
-        setHosts(payload);
+        setHosts(rememberHosts(payload));
         return;
       }
       refresh();

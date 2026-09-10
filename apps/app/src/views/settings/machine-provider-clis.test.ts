@@ -9,10 +9,16 @@ import {
   installProviderCliOnMachine,
   machineCliInventorySummary,
   orderedProviderCliRows,
+  parseProviderCliUpdateHint,
   providerCliBadge,
+  providerCliBusyLabel,
+  dismissInstallLogOnSuccess,
+  providerCliInstallLogLines,
   providerCliInstallOutcome,
   providerCliInstallOutputSnippet,
-  providerCliPresentation
+  providerCliKeyForFamily,
+  providerCliPresentation,
+  providerCliStartLog
 } from './machine-provider-clis.js';
 
 function status(overrides: Partial<ProviderCliStatus>): ProviderCliStatus {
@@ -86,13 +92,15 @@ describe('machine provider CLI rows', () => {
       tone: 'ok',
       badge: 'Current',
       currentLabel: '0.145.0',
-      latestLabel: null
+      latestLabel: null,
+      hint: null
     });
     expect(providerCliPresentation(status({}))).toEqual({
       tone: 'warn',
       badge: 'Update',
       currentLabel: '0.145.0',
-      latestLabel: '0.149.1'
+      latestLabel: '0.149.1',
+      hint: null
     });
     expect(providerCliPresentation(status({
       versionUnsupported: true,
@@ -101,7 +109,8 @@ describe('machine provider CLI rows', () => {
       tone: 'warn',
       badge: 'Unsupported',
       currentLabel: '0.145.0',
-      latestLabel: '0.150.0'
+      latestLabel: '0.150.0',
+      hint: null
     });
     expect(providerCliPresentation(status({
       installed: false,
@@ -111,7 +120,28 @@ describe('machine provider CLI rows', () => {
       tone: 'warn',
       badge: 'Not installed',
       currentLabel: 'Not installed',
-      latestLabel: null
+      latestLabel: null,
+      hint: null
+    });
+    expect(providerCliPresentation(status({
+      installAction: null,
+      updateUnavailableReason: 'Managed by Homebrew. Update with `brew upgrade codex`.'
+    }))).toEqual({
+      tone: 'warn',
+      badge: 'Homebrew',
+      currentLabel: '0.145.0',
+      latestLabel: '0.149.1',
+      hint: 'Managed by Homebrew. Update with `brew upgrade codex`.'
+    });
+    expect(providerCliPresentation(status({
+      installAction: null,
+      updateUnavailableReason: 'ZCC cannot update this CLI. PATH is /Users/me/.local/bin/opencode.'
+    }))).toEqual({
+      tone: 'warn',
+      badge: 'External',
+      currentLabel: '0.145.0',
+      latestLabel: '0.149.1',
+      hint: 'ZCC cannot update this CLI. PATH is /Users/me/.local/bin/opencode.'
     });
   });
 
@@ -127,12 +157,77 @@ describe('machine provider CLI rows', () => {
       { provider: 'codex', status: status({}) },
       { provider: 'pi', status: status({ displayName: 'PI' }) }
     ])).toBe('2 updates');
+    expect(machineCliInventorySummary([
+      {
+        provider: 'codex',
+        status: status({
+          installAction: null,
+          updateUnavailableReason: 'Managed by Homebrew. Update with `brew upgrade codex`.'
+        })
+      }
+    ])).toBeNull();
     expect(orderedProviderCliRows(undefined)).toEqual([]);
     expect(providerCliPresentation(status({
       currentVersion: null,
       installAction: null,
       needsUpdate: false
     })).currentLabel).toBe('Installed');
+  });
+
+  it('splits Homebrew and PATH hints for the settings note', () => {
+    expect(parseProviderCliUpdateHint(
+      'Managed by Homebrew. Update with `brew upgrade codex`.'
+    )).toEqual({ kind: 'homebrew', formula: 'codex' });
+    expect(parseProviderCliUpdateHint(
+      'ZCC cannot update this CLI. PATH is /Users/me/.local/bin/opencode (resolves to /opt/vendor/pkgs/opencode/1.18.4/opencode).'
+    )).toEqual({
+      kind: 'external',
+      path: '/Users/me/.local/bin/opencode',
+      resolvedPath: '/opt/vendor/pkgs/opencode/1.18.4/opencode'
+    });
+    expect(parseProviderCliUpdateHint(
+      'ZCC cannot update this CLI. PATH is /usr/local/bin/opencode.'
+    )).toEqual({
+      kind: 'external',
+      path: '/usr/local/bin/opencode',
+      resolvedPath: null
+    });
+    expect(parseProviderCliUpdateHint('Use the vendor installer.')).toEqual({
+      kind: 'plain',
+      text: 'Use the vendor installer.'
+    });
+  });
+
+  it('maps harness families onto provider CLI keys and labels busy work', () => {
+    expect(providerCliKeyForFamily('claude')).toBe('claudeCode');
+    expect(providerCliKeyForFamily('codex')).toBe('codex');
+    expect(providerCliKeyForFamily('grok')).toBeNull();
+    expect(providerCliBusyLabel('update')).toBe('Updating…');
+    expect(providerCliBusyLabel('install')).toBe('Installing…');
+    expect(providerCliStartLog('codex update')).toBe(
+      'Running `codex update`. This can take a few minutes.'
+    );
+    expect(providerCliInstallLogLines([
+      { type: 'started', provider: 'codex', command: 'codex update' },
+      { type: 'output', provider: 'codex', stream: 'stdout', text: 'Updating Codex via npm\n' },
+      { type: 'completed', provider: 'codex', exitCode: 0, signal: null, success: true }
+    ])).toEqual([
+      'Running `codex update`. This can take a few minutes.',
+      'Updating Codex via npm',
+      'Finished.'
+    ]);
+  });
+
+  it('dismisses only the successful row log', () => {
+    const logs = {
+      'h1:codex': 'Finished.',
+      'h1:opencode': 'Running `npm install -g opencode-ai@latest`. This can take a few minutes.'
+    };
+    expect(dismissInstallLogOnSuccess(logs, 'h1:codex', true)).toEqual({
+      'h1:opencode': logs['h1:opencode']
+    });
+    expect(dismissInstallLogOnSuccess(logs, 'h1:codex', false)).toBe(logs);
+    expect(dismissInstallLogOnSuccess(logs, 'h1:missing', true)).toBe(logs);
   });
 });
 
@@ -216,14 +311,24 @@ describe('providerCliInstallOutputSnippet', () => {
 
 describe('installProviderCliOnMachine', () => {
   it('returns the parsed stream outcome', async () => {
+    const seen: string[] = [];
     await expect(installProviderCliOnMachine({
       hostId: 'h1',
       provider: 'codex',
       actionKind: 'update',
-      install: async () => [
-        { type: 'completed', provider: 'codex', exitCode: 0, signal: null, success: true }
-      ]
+      onEvent: (event) => {
+        if (event.type === 'started') seen.push(event.command);
+      },
+      install: async (_hostId, _request, onEvent) => {
+        const events = [
+          { type: 'started' as const, provider: 'codex' as const, command: 'codex update' },
+          { type: 'completed' as const, provider: 'codex' as const, exitCode: 0, signal: null, success: true }
+        ];
+        for (const event of events) onEvent?.(event);
+        return events;
+      }
     })).resolves.toEqual({ ok: true });
+    expect(seen).toEqual(['codex update']);
   });
 
   it('turns thrown failures into a visible message', async () => {

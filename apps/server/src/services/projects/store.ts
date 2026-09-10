@@ -13,7 +13,7 @@ import { normalizeRepoUrl } from './git-clone.js';
 import { createConfigStore } from '../config/config-store.js';
 import { electronZccDataDir } from '../../electron-data-dir.js';
 
-const HARNESS_FAMILIES = ['claude', 'cursor', 'codex', 'pi', 'opencode'] as const;
+const HARNESS_FAMILIES = ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok'] as const;
 
 function isSelectableHarness(value: unknown): value is AppConfig['defaultHarness'] {
   return typeof value === 'string' && registeredAdapters().some((provider) =>
@@ -26,6 +26,7 @@ function harnessEnabled(config: AppConfig, id: NonNullable<AppConfig['defaultHar
   if (id === 'cursor') return config.harnessCursorEnabled !== false;
   if (id === 'codex') return config.harnessCodexEnabled !== false;
   if (id === 'pi') return config.harnessPiEnabled !== false;
+  if (id === 'grok') return config.harnessGrokEnabled !== false;
   return config.harnessOpenCodeEnabled !== false;
 }
 
@@ -100,8 +101,8 @@ export function normalizeProjectSettings(input: Partial<ProjectSettings>): Proje
 function projectConfigCompatibility(config: AppConfig): AppConfig {
   const next = { ...config };
   const byId = config.harnesses?.byId;
-  const binaries = { claude: 'claudeBinary', cursor: 'cursorBinary', codex: 'codexBinary', pi: 'piBinary', opencode: 'opencodeBinary' } as const;
-  const enabled = { cursor: 'harnessCursorEnabled', codex: 'harnessCodexEnabled', pi: 'harnessPiEnabled', opencode: 'harnessOpenCodeEnabled' } as const;
+  const binaries = { claude: 'claudeBinary', cursor: 'cursorBinary', codex: 'codexBinary', pi: 'piBinary', opencode: 'opencodeBinary', grok: 'grokBinary' } as const;
+  const enabled = { cursor: 'harnessCursorEnabled', codex: 'harnessCodexEnabled', pi: 'harnessPiEnabled', opencode: 'harnessOpenCodeEnabled', grok: 'harnessGrokEnabled' } as const;
   for (const id of HARNESS_FAMILIES) {
     const entry = byId?.[id];
     if (entry?.binary !== undefined) (next as Record<string, unknown>)[binaries[id]] = entry.binary;
@@ -148,8 +149,8 @@ function projectSettingsCompatibility(settings: ProjectSettings): ProjectSetting
 }
 
 const RETIRED_CONFIG_KEYS = [
-  'claudeBinary', 'cursorBinary', 'codexBinary', 'piBinary', 'opencodeBinary',
-  'harnessCursorEnabled', 'harnessCodexEnabled', 'harnessPiEnabled', 'harnessOpenCodeEnabled',
+  'claudeBinary', 'cursorBinary', 'codexBinary', 'piBinary', 'opencodeBinary', 'grokBinary',
+  'harnessCursorEnabled', 'harnessCodexEnabled', 'harnessPiEnabled', 'harnessOpenCodeEnabled', 'harnessGrokEnabled',
   'defaultModel', 'defaultPermissionMode', 'claudeAppendSystemPrompt', 'claudeExtraArgs',
   'claudeAddDirs', 'claudeAllowedTools', 'claudeDeniedTools', 'defaultCodexSandbox',
   'defaultCodexApproval', 'autoModeEnabled', 'autoModeEnvironment', 'autoModeAllow',
@@ -189,10 +190,10 @@ function canonicalConfigForWrite(config: AppConfig): AppConfig {
   const entry = (id: HarnessFamily): Record<string, any> => byId.byId![id] ??= {};
   const compat = (id: HarnessFamily): Record<string, any> => entry(id).compatibility ??= {};
 
-  const binaries = { claude: 'claudeBinary', cursor: 'cursorBinary', codex: 'codexBinary', pi: 'piBinary', opencode: 'opencodeBinary' } as const;
+  const binaries = { claude: 'claudeBinary', cursor: 'cursorBinary', codex: 'codexBinary', pi: 'piBinary', opencode: 'opencodeBinary', grok: 'grokBinary' } as const;
   for (const id of HARNESS_FAMILIES) setOrDelete(entry(id), 'binary', source[binaries[id]]);
-  const enabled = { cursor: 'harnessCursorEnabled', codex: 'harnessCodexEnabled', pi: 'harnessPiEnabled', opencode: 'harnessOpenCodeEnabled' } as const;
-  for (const id of ['cursor', 'codex', 'pi', 'opencode'] as const) setOrDelete(entry(id), 'enabled', source[enabled[id]]);
+  const enabled = { cursor: 'harnessCursorEnabled', codex: 'harnessCodexEnabled', pi: 'harnessPiEnabled', opencode: 'harnessOpenCodeEnabled', grok: 'harnessGrokEnabled' } as const;
+  for (const id of ['cursor', 'codex', 'pi', 'opencode', 'grok'] as const) setOrDelete(entry(id), 'enabled', source[enabled[id]]);
 
   const claude = compat('claude');
   setOrDelete(claude, 'model', source.defaultModel);
@@ -650,6 +651,10 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
     const t = input.opencodeBinary.trim();
     normalized.opencodeBinary = t || undefined;
   }
+  if (typeof input.grokBinary === 'string') {
+    const t = input.grokBinary.trim();
+    normalized.grokBinary = t || undefined;
+  }
   if (typeof input.harnessCursorEnabled === 'boolean') {
     normalized.harnessCursorEnabled = input.harnessCursorEnabled;
   }
@@ -661,6 +666,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.harnessOpenCodeEnabled === 'boolean') {
     normalized.harnessOpenCodeEnabled = input.harnessOpenCodeEnabled;
+  }
+  if (typeof input.harnessGrokEnabled === 'boolean') {
+    normalized.harnessGrokEnabled = input.harnessGrokEnabled;
   }
   if (typeof input.nativeAgentDiscoveryEnabled === 'boolean') {
     normalized.nativeAgentDiscoveryEnabled = input.nativeAgentDiscoveryEnabled;
@@ -1060,8 +1068,27 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   ) {
     normalized.composerSendMode = input.composerSendMode;
   }
-  if (typeof input.showUnhandledProviderEvents === 'boolean') {
+  if (typeof input.showDiagnosticEvents === 'boolean') {
+    normalized.showDiagnosticEvents = input.showDiagnosticEvents;
+    normalized.showUnhandledProviderEvents = input.showDiagnosticEvents;
+  } else if (typeof input.showUnhandledProviderEvents === 'boolean') {
     normalized.showUnhandledProviderEvents = input.showUnhandledProviderEvents;
+    normalized.showDiagnosticEvents = input.showUnhandledProviderEvents;
+  }
+  if (typeof input.injectProductGuidance === 'boolean') {
+    normalized.injectProductGuidance = input.injectProductGuidance;
+  }
+  if (typeof input.injectRemoteInstructions === 'boolean') {
+    normalized.injectRemoteInstructions = input.injectRemoteInstructions;
+  }
+  if (typeof input.injectBundledSkills === 'boolean') {
+    normalized.injectBundledSkills = input.injectBundledSkills;
+  }
+  if (Array.isArray(input.disabledBundledSkills)) {
+    const names = input.disabledBundledSkills.filter(
+      (name): name is string => typeof name === 'string' && name.trim().length > 0
+    ).map((name) => name.trim());
+    normalized.disabledBundledSkills = [...new Set(names)];
   }
   if (typeof input.providerBridgeRecordingEnabled === 'boolean') {
     normalized.providerBridgeRecordingEnabled = input.providerBridgeRecordingEnabled;

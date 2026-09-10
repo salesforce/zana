@@ -10,6 +10,7 @@ import { conversationImageSrc } from '../../../lib/prompt-attachments.js';
 import { extractInlineThreadImages, threadImageStubLabel } from './thread-inline-images.js';
 import { ThreadDisplayedImage } from './ThreadDisplayedImage.js';
 import { splitStreamingMarkdown } from './streaming-markdown-split.js';
+import { repairStreamingMarkdownTail } from './repair-streaming-markdown-tail.js';
 import {
   canEditConversationMessage,
   MessageActionBar,
@@ -104,6 +105,9 @@ export const ConversationRow = memo(function ConversationRow({
     () => (streaming && row.role === 'assistant' ? splitStreamingMarkdown(extracted.text) : null),
     [extracted.text, row.role, streaming]
   );
+  const streamingTail = streamingSplit
+    ? repairStreamingMarkdownTail(streamingSplit.tail)
+    : null;
   const requestLabel = userRequestLabel(row);
   const cancelEdit = () => {
     setEditing(false);
@@ -304,7 +308,7 @@ export const ConversationRow = memo(function ConversationRow({
                   />
                   <div className="thread-timeline-streaming-tail" data-testid="thread-streaming-tail">
                     <PluginMarkdownDirectives
-                      text={streamingSplit.tail}
+                      text={streamingTail ?? streamingSplit.tail}
                       threadId={threadId}
                       projectId={projectId}
                       messageId={`${row.id}:tail`}

@@ -433,6 +433,11 @@ export async function handleProductHttp(
       const config = presentAppConfig(ctx.config.setConfig(patch));
       ctx.pairingRelay?.refresh();
       ctx.hub.emit('config:changed', config);
+      try {
+        await ctx.plugins?.syncInjectedSkillRoots?.();
+      } catch {
+        /* best-effort — next plugin sync will rewrite roots */
+      }
       sendJson(response, 200, { config });
       return true;
     }

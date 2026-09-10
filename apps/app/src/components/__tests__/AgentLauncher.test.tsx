@@ -70,6 +70,8 @@ describe('launch mode', () => {
     expect(source).toContain('<LegacyAgentHomeComposer');
     expect(source).toContain('<TeamComposer');
     expect(source).toContain('initialText={initialPrompt}');
+    expect(source).toContain('composerProjectId={composerProjectId}');
+    expect(source).toContain('onComposerProjectIdChange={setComposerProjectId}');
     expect(source).toContain('onCreated={onClose}');
     expect(source).toContain("{mode === 'team' && (");
     expect(source).not.toContain('<PromptComposer');
@@ -122,13 +124,13 @@ describe('execution mapping options', () => {
     expect(executionMappingOptions({
       plan: 'plan',
       interactive: 'default',
-      'accept-edits': 'force',
+      'accept-edits': 'default',
       autonomous: 'force'
     })).toEqual([
       { id: 'plan', native: 'plan', states: ['plan'] },
-      { id: 'interactive', native: 'default', states: ['interactive'] },
-      { id: 'accept-edits', native: 'force', states: ['accept-edits', 'autonomous'] },
-      { id: 'autonomous', native: 'force', states: ['accept-edits', 'autonomous'] }
+      { id: 'interactive', native: 'default', states: ['interactive', 'accept-edits'] },
+      { id: 'accept-edits', native: 'default', states: ['interactive', 'accept-edits'] },
+      { id: 'autonomous', native: 'force', states: ['autonomous'] }
     ]);
   });
 });
@@ -138,5 +140,17 @@ describe('project-scoped conversation history', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />');
     expect(source).not.toContain('conversationHistoryEnabled');
+  });
+});
+
+describe('launcher composer project', () => {
+  it('lifts the unpinned pick across Modern / CLI Agent / Team', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('const [composerProjectId, setComposerProjectId] = useState(project?.id ?? \'\')');
+    expect(source).toContain('composerProjectId={composerProjectId}');
+    expect(source).toContain('onComposerProjectIdChange={setComposerProjectId}');
+    const teamStart = source.indexOf('<TeamComposer');
+    const teamBlock = source.slice(teamStart, source.indexOf('/>', teamStart));
+    expect(teamBlock).toContain('composerProjectId');
   });
 });

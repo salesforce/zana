@@ -67,6 +67,8 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
       providerModelRelationship: 'combined-provider-model',
       models: [
         { id: 'auto', label: 'Auto', provider: 'cursor', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
+        // ACP / Modern thread catalog uses `default` for the same native pin.
+        { id: 'default', label: 'Default', provider: 'cursor', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
         { id: 'cursor-grok-4.6-high', label: 'Cursor Grok 4.6', provider: 'cursor', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
         { id: 'cursor-grok-4.5-high', label: 'Cursor Grok 4.5', provider: 'cursor', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
         { id: 'claude-opus-5-high', label: 'Opus 5 High', provider: 'anthropic', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
@@ -85,7 +87,9 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
       executionStateMapping: {
         plan: 'plan',
         interactive: 'default',
-        'accept-edits': 'force',
+        // CLI Agent Edits is the native TUI (prompts). --force is Full Access /
+        // cursor-yolo only — it auto-approves every action, not workspace edits.
+        'accept-edits': 'default',
         autonomous: 'force'
       }
     },
@@ -96,7 +100,7 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
   executionTargetMetadata: {
     plan: { equivalence: 'exact', scopes: ['local'] },
     interactive: { equivalence: 'conditional', scopes: ['local'] },
-    'accept-edits': { equivalence: 'closest', scopes: ['local'] },
+    'accept-edits': { equivalence: 'exact', scopes: ['local'] },
     autonomous: { equivalence: 'exact', scopes: ['local'] }
   },
   collision: {
@@ -110,7 +114,7 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
   status: { mode: 'output-activity' },
   evidence: [
     cursorEvidence('cursor.facet.opening-prompt', 'CLI accepts opening prompt as spawn argument.'),
-    ...['auto', 'cursor-grok-4.6-high', 'cursor-grok-4.5-high', 'claude-opus-5-high', 'gpt-5.6-sol-medium', 'claude-sonnet-5-high',
+    ...['auto', 'default', 'cursor-grok-4.6-high', 'cursor-grok-4.5-high', 'claude-opus-5-high', 'gpt-5.6-sol-medium', 'claude-sonnet-5-high',
       'gpt-5.6-terra-medium', 'claude-4.5-opus-high', 'claude-4.5-sonnet']
       .map((id) => cursorEvidence(id, 'Cursor model catalog and --model contribution verified.'))
   ]
@@ -123,6 +127,8 @@ function cursorBinary(config: AppConfig): string {
 
 export class CursorProvider extends BaseLaunchProvider {
   readonly id = 'cursor-agent';
+  /** Same as Claude: CLI Agent / Modern send thread-catalog ids (`default`, `grok-4.6`). */
+  readonly acceptsUnlistedModelTargets = true;
   private discoveredModels: readonly HarnessModelTarget[] = [];
 
   get adapter(): TrustedHarnessAdapter {
@@ -171,7 +177,7 @@ export class CursorProvider extends BaseLaunchProvider {
   executionContribution(targetId: string) {
     const state = targetId.replace('cursor.execution.', '');
     if (state === 'plan') return { args: ['--mode', 'plan'] };
-    if (state === 'accept-edits' || state === 'autonomous') return { args: ['--force'] };
+    if (state === 'autonomous') return { args: ['--force'] };
     return {};
   }
 

@@ -141,9 +141,9 @@ describe('auto mode — launch wiring', () => {
       projectSettings: { executionState: 'plan' },
       persona: { id: 'p', name: 'P', executionState: 'accept-edits' }
     });
-    expect(permModeValue()).toBe('acceptEdits');
+    expect(permModeValue()).toBeUndefined();
     expect(spawned[0].env.CLAUDE_CODE_ENABLE_AUTO_MODE).toBeUndefined();
-    expect(spawned[0].args.filter((arg) => arg === '--permission-mode')).toHaveLength(1);
+    expect(spawned[0].args.filter((arg) => arg === '--permission-mode')).toHaveLength(0);
   });
 
   it('never uses auto mode for claude-yolo (already --dangerously-skip-permissions)', () => {

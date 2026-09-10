@@ -62,6 +62,7 @@ export async function attachProductPluginService(
     },
     onAgentCapabilitiesChanged: opts?.onAgentCapabilitiesChanged,
     onAppsChanged: opts?.onAppsChanged,
+    getAppConfig: () => ctx.config.getConfig(),
     watchBuiltinPluginSources:
       opts?.watchBuiltinPluginSources ?? process.env.ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD === '1',
     pushInbox: (args) => productPushInbox(ctx, args),

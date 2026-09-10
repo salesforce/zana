@@ -103,6 +103,7 @@ export const SETTINGS_SECTIONS: Array<{
  */
 export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: string; label: string }>>> = {
   agents: [
+    { id: 'agent-guidance', label: 'Agent guidance' },
     { id: 'git-worktrees', label: 'Git worktrees' },
     { id: 'agent-tabs', label: 'Tabs' },
     { id: 'teams', label: 'Teams' },
@@ -140,7 +141,8 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'harness-cursor', label: 'Cursor' },
     { id: 'harness-codex', label: 'Codex' },
     { id: 'harness-pi', label: 'PI' },
-    { id: 'harness-opencode', label: 'OpenCode' }
+    { id: 'harness-opencode', label: 'OpenCode' },
+    { id: 'harness-grok', label: 'Grok Build' }
   ],
   editor: [
     { id: 'editor-status', label: 'Installed editors' },
@@ -299,6 +301,9 @@ export function SettingsView() {
       }
       if (typeof patch.harnessOpenCodeEnabled === 'boolean') {
         useData.getState().setHarnessOpenCodeEnabled(patch.harnessOpenCodeEnabled);
+      }
+      if (typeof patch.harnessGrokEnabled === 'boolean') {
+        useData.getState().setHarnessGrokEnabled(patch.harnessGrokEnabled);
       }
       if (typeof patch.nativeAgentDiscoveryEnabled === 'boolean') {
         useData.setState({ nativeAgentDiscoveryEnabled: patch.nativeAgentDiscoveryEnabled });

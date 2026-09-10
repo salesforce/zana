@@ -46,10 +46,10 @@ export function GlobalView({
         help="Diagnostics for agent timelines and provider wires. Off by default."
       >
         <CheckboxField
-          label="Show unhandled provider events"
-          help="Surface provider/unhandled timeline rows. Development builds also force this on."
-          checked={config.showUnhandledProviderEvents ?? false}
-          onChange={(v) => onUpdate({ showUnhandledProviderEvents: v })}
+          label="Show diagnostic events"
+          help="Surface provider/unhandled timeline rows and routine environment-provisioning noise. Development builds also force unhandled provider rows on."
+          checked={(config.showDiagnosticEvents ?? config.showUnhandledProviderEvents) ?? false}
+          onChange={(v) => onUpdate({ showDiagnosticEvents: v, showUnhandledProviderEvents: v })}
         />
         <CheckboxField
           label="Record provider traffic"

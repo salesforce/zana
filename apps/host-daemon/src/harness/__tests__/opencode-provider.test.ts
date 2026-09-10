@@ -486,8 +486,12 @@ describe('OpenCodeProvider', () => {
     expect(p.adapter.descriptor.targets?.executionStateMapping).toEqual({
       plan: 'plan',
       interactive: 'default',
-      'accept-edits': 'build + auto-approve',
+      'accept-edits': 'default',
       autonomous: 'build + auto-approve'
+    });
+    expect(p.executionContribution('opencode.execution.accept-edits')).toEqual({});
+    expect(p.executionContribution('opencode.execution.autonomous')).toEqual({
+      args: ['--agent', 'build', '--auto']
     });
   });
 

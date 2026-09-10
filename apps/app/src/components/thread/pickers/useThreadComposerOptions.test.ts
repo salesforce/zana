@@ -27,6 +27,8 @@ describe('useThreadComposerOptions', () => {
   it('reads the session model catalog, reconciles hardness, and only falls back provider on a new thread', () => {
     const source = readFileSync(HOOK_SOURCE_PATH, 'utf8');
     expect(source).toContain('hostId?: string');
+    expect(source).toContain('hostPending?: boolean');
+    expect(source).toContain('if (input.hostPending) return');
     expect(source).toContain('void setThreadModelCatalogHost(input.hostId)');
     expect(source).toContain('setThreadModelCatalogHost');
     expect(source).toContain('ensureThreadProviderModels');
@@ -41,6 +43,7 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('rememberedSelectionFor');
     expect(source).toContain('setProviderIdState(next)');
     expect(source).toContain('fallbackModelsForProvider');
+    expect(source).toContain('availableModelsToPickerOptions');
     expect(source).toContain('fallbackMoreModelsForProvider');
     expect(source).toContain('composerProvidersFromCatalog');
     expect(source).toContain('snapNewThreadProviderId');

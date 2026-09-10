@@ -111,7 +111,8 @@ describe('thread / legacy isolation', () => {
     expect(legacy).toContain('ensureThreadProviderModels');
     expect(legacy).toContain('useComposerPromptField');
     expect(legacy).toContain("kind: 'cli'");
-    expect(legacy).not.toContain('ComposerModePicker');
+    expect(legacy).toContain('ComposerModePicker');
+    expect(legacy).toContain('cliComposerModeChip');
     expect(legacy).not.toContain('LauncherModelPicker');
     expect(legacy).not.toContain('ThreadCommandComposer');
     expect(thread).not.toContain('onSelectLegacyAgent');

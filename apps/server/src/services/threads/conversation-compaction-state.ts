@@ -18,7 +18,7 @@ export function isManualCompactionActive(ctx: Pick<ProductHttpContext, 'db'>, th
       id: row.id,
       seq: row.sequence,
       createdAt: row.createdAt
-    });
+    }, undefined);
     if (!parsed) continue;
     if (parsed.kind === 'begin') open.add(parsed.key);
     else open.delete(parsed.key);

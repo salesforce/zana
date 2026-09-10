@@ -33,6 +33,31 @@ export function tryLoadBetterSqlite3() {
   }
 }
 
+/**
+ * Native addons cannot be re-dlopen'd in the same Node process after a failed
+ * load. Probe and post-rebuild verify in a child so restore never maps the
+ * Electron-built .node (that was failing smoke teardown with
+ * "Module did not self-register").
+ */
+export function probeBetterSqlite3InChild() {
+  const script = `
+    const { createRequire } = require('node:module');
+    const requireFrom = createRequire(${JSON.stringify(import.meta.url)});
+    const Database = requireFrom('better-sqlite3');
+    const db = new Database(':memory:');
+    db.close();
+  `;
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+  if (result.status === 0) return { ok: true };
+  const message = `${result.stderr || ''}${result.stdout || ''}`.trim()
+    || 'better-sqlite3 failed to load in child process';
+  const error = new Error(message);
+  if (/ERR_DLOPEN_FAILED|NODE_MODULE_VERSION|did not self-register/.test(message)) {
+    error.code = 'ERR_DLOPEN_FAILED';
+  }
+  return { ok: false, error };
+}
+
 export function rebuildBetterSqlite3ForNode() {
   const cwd = sqlitePackageRoot();
   const nodeGyp = require.resolve('node-gyp/bin/node-gyp.js', { paths: [cwd, process.cwd()] });
@@ -50,11 +75,11 @@ export function rebuildBetterSqlite3ForNode() {
 }
 
 export function ensureBetterSqlite3ForNode() {
-  const loaded = tryLoadBetterSqlite3();
+  const loaded = probeBetterSqlite3InChild();
   if (loaded.ok) return;
   if (!isNativeAbiMismatch(loaded.error)) throw loaded.error;
   rebuildBetterSqlite3ForNode();
-  const retry = tryLoadBetterSqlite3();
+  const retry = probeBetterSqlite3InChild();
   if (!retry.ok) throw retry.error;
 }
 

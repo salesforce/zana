@@ -176,6 +176,9 @@ const PROFILES: LaunchProfileId[] = [
   'opencode',
   'opencode-resume',
   'opencode-yolo',
+  'grok',
+  'grok-resume',
+  'grok-yolo',
   'shell'
 ];
 type LayerName = 'plain' | 'persona' | 'projectSettings' | 'persona+projectSettings';

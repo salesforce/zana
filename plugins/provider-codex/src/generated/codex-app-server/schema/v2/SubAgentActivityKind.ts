@@ -1,3 +1,3 @@
 
 
-export type SubAgentActivityKind = "started" | "interacted" | "interrupted";
+export type SubAgentActivityKind = "started" | "interacted" | "interrupted" | "completed";

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import type {
   ProviderCliInstallAction,
@@ -76,6 +77,26 @@ export interface RunProviderCliCommandArgs {
 
 export interface ProviderCliCommandRunner {
   run(args: RunProviderCliCommandArgs): Promise<ProviderCliCommandResult>;
+}
+
+export type ProviderCliPathExists = (path: string) => boolean;
+export type ProviderCliPathResolver = (path: string) => string;
+export type ProviderCliFileHead = (path: string) => string | null;
+
+function defaultResolvePath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+function defaultReadFileHead(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8').slice(0, 8_192);
+  } catch {
+    return null;
+  }
 }
 
 interface ProviderCliActionCommand {
@@ -171,9 +192,9 @@ const PROVIDER_CLI_DEFINITIONS = {
     installCommand: { kind: 'npmGlobal' },
     updateCommand: {
       commandKind: 'exec',
-      displayCommand: 'npm install -g @earendil-works/pi-coding-agent@latest',
-      command: 'npm',
-      args: ['install', '-g', '@earendil-works/pi-coding-agent@latest']
+      displayCommand: 'pi update',
+      command: 'pi',
+      args: ['update']
     }
   },
   opencode: {
@@ -185,9 +206,9 @@ const PROVIDER_CLI_DEFINITIONS = {
     installCommand: { kind: 'npmGlobal' },
     updateCommand: {
       commandKind: 'exec',
-      displayCommand: 'npm install -g opencode-ai@latest',
-      command: 'npm',
-      args: ['install', '-g', 'opencode-ai@latest']
+      displayCommand: 'opencode upgrade',
+      command: 'opencode',
+      args: ['upgrade']
     }
   }
 } satisfies Record<ProviderCliKey, ProviderCliDefinition>;
@@ -212,6 +233,32 @@ function isSuccessfulCommand(result: ProviderCliCommandResult): boolean {
 
 function firstOutputLine(text: string): string | null {
   return text.split(/\r?\n/u).map((line) => line.trim()).find((line) => line.length > 0) ?? null;
+}
+
+function firstNpmConfigValue(text: string): string | null {
+  return text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !/^npm (warn|error|notice)\b/iu.test(line))
+    ?? null;
+}
+
+function extractJsonValue(text: string): unknown | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const start = trimmed.search(/[{["]/u);
+  if (start < 0) return null;
+  const candidates = start === 0 ? [trimmed] : [trimmed.slice(start)];
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (lastBrace > start) candidates.push(trimmed.slice(start, lastBrace + 1));
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Surrounding npm diagnostics are common on piped stdout/stderr.
+    }
+  }
+  return null;
 }
 
 function parseSemverCore(text: string): [number, number, number] | null {
@@ -343,6 +390,285 @@ function npmInstallActionCommand(
   return { commandKind: 'exec', displayCommand: formatCommand(command, args), command, args };
 }
 
+function nativeUpdateArgs(provider: ProviderCliKey): readonly string[] | null {
+  if (provider === 'opencode') return ['upgrade'];
+  if (provider === 'codex' || provider === 'claudeCode' || provider === 'cursor' || provider === 'pi') {
+    return ['update'];
+  }
+  return null;
+}
+
+function npmPackageJsonPath(
+  prefix: string,
+  npmPackageName: string,
+  nodePlatform: NodeJS.Platform
+): string {
+  return nodePlatform === 'win32'
+    ? join(prefix, 'node_modules', npmPackageName, 'package.json')
+    : join(prefix, 'lib', 'node_modules', npmPackageName, 'package.json');
+}
+
+export function npmInstallPrefixForExecutable(args: {
+  executablePath: string | null;
+  npmPackageName: string | null;
+  nodePlatform: NodeJS.Platform;
+  pathExists: ProviderCliPathExists;
+}): string | null {
+  if (!args.executablePath || !args.npmPackageName) return null;
+  const executableDir = dirname(args.executablePath);
+  const prefixes =
+    args.nodePlatform === 'win32'
+      ? [executableDir]
+      : basename(executableDir) === 'bin'
+        ? [dirname(executableDir)]
+        : [];
+  for (const prefix of prefixes) {
+    if (args.pathExists(npmPackageJsonPath(prefix, args.npmPackageName, args.nodePlatform))) {
+      return prefix;
+    }
+  }
+  return null;
+}
+
+export function brewFormulaNameFromPath(path: string): string | null {
+  const normalized = path.replace(/\\/gu, '/');
+  return /(?:^|\/)Cellar\/([^/]+)\//u.exec(normalized)?.[1]
+    ?? /(?:^|\/)opt\/homebrew\/opt\/([^/]+)\//u.exec(normalized)?.[1]
+    ?? /(?:^|\/)usr\/local\/opt\/([^/]+)\//u.exec(normalized)?.[1]
+    ?? null;
+}
+
+export function shellExecTargetFromHead(source: string, fromFile: string): string | null {
+  if (!source.startsWith('#!')) return null;
+  for (const line of source.split(/\r?\n/u)) {
+    const match = /^\s*exec\s+(?:"([^"]+)"|'([^']+)'|(\S+))/u.exec(line);
+    const raw = match?.[1] ?? match?.[2] ?? match?.[3];
+    if (!raw) continue;
+    return isAbsolute(raw) ? raw : resolve(dirname(fromFile), raw);
+  }
+  return null;
+}
+
+function unixInstallPrefixGuess(executablePath: string, nodePlatform: NodeJS.Platform): string | null {
+  const executableDir = dirname(executablePath);
+  if (nodePlatform === 'win32') return executableDir;
+  return basename(executableDir) === 'bin' ? dirname(executableDir) : null;
+}
+
+export type ProviderCliUpdateClassification =
+  | { kind: 'uninstalled' }
+  | { kind: 'updatable'; npmPrefix: string | null }
+  | { kind: 'homebrewFormula'; formula: string }
+  | { kind: 'externalManaged'; pathLabel: string };
+
+export function classifyProviderCliUpdate(args: {
+  executablePath: string | null;
+  npmPackageName: string | null;
+  nodePlatform: NodeJS.Platform;
+  pathExists: ProviderCliPathExists;
+  resolvePath: ProviderCliPathResolver;
+  readFileHead: ProviderCliFileHead;
+}): ProviderCliUpdateClassification {
+  if (!args.executablePath) return { kind: 'uninstalled' };
+  const npmPrefix = npmInstallPrefixForExecutable({
+    executablePath: args.executablePath,
+    npmPackageName: args.npmPackageName,
+    nodePlatform: args.nodePlatform,
+    pathExists: args.pathExists
+  });
+  if (npmPrefix) return { kind: 'updatable', npmPrefix };
+  const resolved = args.resolvePath(args.executablePath);
+  const formula = brewFormulaNameFromPath(resolved) ?? brewFormulaNameFromPath(args.executablePath);
+  if (formula) return { kind: 'homebrewFormula', formula };
+  const head = args.readFileHead(args.executablePath);
+  const target = head ? shellExecTargetFromHead(head, args.executablePath) : null;
+  if (target) {
+    const resolvedTarget = args.resolvePath(target);
+    const prefix = unixInstallPrefixGuess(args.executablePath, args.nodePlatform);
+    if (prefix && !isPathInsideDirectory(resolvedTarget, prefix)) {
+      const pathLabel = resolvedTarget === args.executablePath
+        ? args.executablePath
+        : `${args.executablePath} (resolves to ${resolvedTarget})`;
+      return { kind: 'externalManaged', pathLabel };
+    }
+  }
+  return { kind: 'updatable', npmPrefix: null };
+}
+
+export function providerCliUpdateUnavailableReason(
+  classification: ProviderCliUpdateClassification
+): string | null {
+  if (classification.kind === 'homebrewFormula') {
+    return `Managed by Homebrew. Update with \`brew upgrade ${classification.formula}\`.`;
+  }
+  if (classification.kind === 'externalManaged') {
+    return `ZCC cannot update this CLI. PATH is ${classification.pathLabel}.`;
+  }
+  return null;
+}
+
+const MS_PER_DAY = 86_400_000;
+
+export function parseNpmMinReleaseAgeMs(value: string | null): number | null {
+  if (!value) return null;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed || trimmed === 'null' || trimmed === 'undefined' || trimmed === '0') return null;
+  const suffixed = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/u.exec(trimmed);
+  if (suffixed) {
+    const amount = Number(suffixed[1]);
+    const unit = suffixed[2];
+    const ms =
+      unit === 'ms' ? amount
+        : unit === 's' ? amount * 1_000
+          : unit === 'm' ? amount * 60_000
+            : unit === 'h' ? amount * 3_600_000
+              : amount * MS_PER_DAY;
+    return ms > 0 ? ms : null;
+  }
+  if (/^\d+(?:\.\d+)?$/u.test(trimmed)) {
+    const days = Number(trimmed);
+    return days > 0 ? days * MS_PER_DAY : null;
+  }
+  return null;
+}
+
+const npmViewLatestSchema = z.object({
+  version: z.string().min(1).optional(),
+  time: z.record(z.string(), z.unknown()).optional()
+}).passthrough();
+
+function stringTimeMap(time: Record<string, unknown> | undefined): Record<string, string> | null {
+  if (!time) return null;
+  const out: Record<string, string> = {};
+  for (const [version, published] of Object.entries(time)) {
+    if (typeof published === 'string' && published.length > 0) out[version] = published;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+export function parseNpmViewLatest(text: string): {
+  version: string | null;
+  time: Record<string, string> | null;
+} {
+  const parsedJson = extractJsonValue(text);
+  if (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)) {
+    const parsed = npmViewLatestSchema.safeParse(parsedJson);
+    if (parsed.success) {
+      return {
+        version: parsed.data.version ? extractVersion(parsed.data.version) : extractVersion(text),
+        time: stringTimeMap(parsed.data.time)
+      };
+    }
+  }
+  if (typeof parsedJson === 'string') {
+    return { version: extractVersion(parsedJson), time: null };
+  }
+  return { version: extractVersion(text), time: null };
+}
+
+export function latestVersionRespectingMinReleaseAge(args: {
+  absoluteLatest: string | null;
+  versionTimes: Record<string, string> | null;
+  minReleaseAgeMs: number | null;
+  nowMs?: number;
+}): string | null {
+  if (!args.absoluteLatest) return null;
+  if (!args.minReleaseAgeMs || !args.versionTimes) return args.absoluteLatest;
+  const cutoff = (args.nowMs ?? Date.now()) - args.minReleaseAgeMs;
+  const publishedAt = (version: string): number | null => {
+    const raw = args.versionTimes?.[version];
+    if (!raw) return null;
+    const ms = Date.parse(raw);
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const absolutePublished = publishedAt(args.absoluteLatest);
+  if (absolutePublished !== null && absolutePublished <= cutoff) return args.absoluteLatest;
+  let best: string | null = null;
+  for (const version of Object.keys(args.versionTimes)) {
+    if (version === 'created' || version === 'modified') continue;
+    if (!parseSemverCore(version) || version.includes('-')) continue;
+    if (semverGt(version, args.absoluteLatest)) continue;
+    const time = publishedAt(version);
+    if (time === null || time > cutoff) continue;
+    if (best === null || semverGt(version, best)) best = version;
+  }
+  return best;
+}
+
+export function resolveProviderCliUpdateCommand(args: {
+  definition: ProviderCliDefinition;
+  executablePath: string | null;
+}): ProviderCliActionCommand {
+  const nativeArgs = nativeUpdateArgs(args.definition.key);
+  if (nativeArgs) {
+    return {
+      commandKind: 'exec',
+      displayCommand: formatCommand(args.definition.executableName, nativeArgs),
+      command: args.executablePath ?? args.definition.updateCommand.command,
+      args: nativeArgs
+    };
+  }
+  return args.definition.updateCommand;
+}
+
+export function providerCliInstallDidNotTake(args: {
+  actionKind: ProviderCliInstallActionKind;
+  before: Pick<
+    ProviderCliStatus,
+    | 'displayName'
+    | 'executablePath'
+    | 'installed'
+    | 'currentVersion'
+    | 'latestVersion'
+    | 'needsUpdate'
+    | 'npmGlobalPackageVersion'
+  >;
+  after: Pick<
+    ProviderCliStatus,
+    | 'displayName'
+    | 'executablePath'
+    | 'installed'
+    | 'currentVersion'
+    | 'latestVersion'
+    | 'needsUpdate'
+    | 'npmGlobalPackageVersion'
+  >;
+}): string | null {
+  const pathLabel = args.after.executablePath ?? args.before.executablePath ?? args.after.displayName;
+  if (args.actionKind === 'install') {
+    return args.after.installed
+      ? null
+      : `${args.after.displayName} is still not on PATH after install.`;
+  }
+  if (!args.after.installed) {
+    return `${args.after.displayName} is no longer on PATH after update.`;
+  }
+  const versionUnchanged =
+    args.after.currentVersion !== null
+    && args.before.currentVersion !== null
+    && args.after.currentVersion === args.before.currentVersion;
+  const stillBehindLatest =
+    args.after.needsUpdate
+    && args.after.latestVersion !== null
+    && args.after.currentVersion !== null
+    && semverLt(args.after.currentVersion, args.after.latestVersion);
+  const updateMissedThePathBinary =
+    stillBehindLatest
+    || (versionUnchanged && (args.after.needsUpdate || args.after.latestVersion === null));
+  if (!updateMissedThePathBinary) return null;
+  const current = args.after.currentVersion ?? 'an unknown version';
+  const npmHint =
+    args.after.npmGlobalPackageVersion
+    && args.after.npmGlobalPackageVersion !== args.after.currentVersion
+      ? ` npm global has ${args.after.npmGlobalPackageVersion}.`
+      : '';
+  const latestHint = args.after.latestVersion ? ` Latest is ${args.after.latestVersion}.` : '';
+  return (
+    `PATH still has ${current} at ${pathLabel}.${npmHint}${latestHint} `
+    + 'The update did not replace the CLI this machine launches.'
+  );
+}
+
 function shellInstallActionCommand(command: string): ProviderCliActionCommand {
   return { commandKind: 'shell', displayCommand: command, command: 'sh', args: ['-c', command] };
 }
@@ -408,10 +734,14 @@ function buildInstallAction(args: {
   versionUnsupported: boolean;
   nodePlatform: NodeJS.Platform;
   claudeCodeDoctorStatus: ClaudeCodeDoctorStatus | null;
+  classification: ProviderCliUpdateClassification;
 }): ProviderCliInstallAction | null {
   if (!args.installed) {
     const command = installActionCommand(args.definition, args.nodePlatform);
     return { kind: 'install', label: 'Install', commandKind: command.commandKind, command: command.displayCommand };
+  }
+  if (providerCliUpdateUnavailableReason(args.classification)) {
+    return null;
   }
   const claudeCodeInstallMethod = args.claudeCodeDoctorStatus?.installMethod ?? null;
   const hasNativeClaudeCodeFallback =
@@ -424,9 +754,13 @@ function buildInstallAction(args: {
     || claudeCodeInstallMethod === 'native'
     || hasNativeClaudeCodeFallback
     || (args.installSource === 'npmGlobal'
-      && (claudeCodeInstallMethod === null || claudeCodeInstallMethod === 'npm-global'));
+      && (claudeCodeInstallMethod === null || claudeCodeInstallMethod === 'npm-global'))
+    || (args.classification.kind === 'updatable' && args.classification.npmPrefix !== null);
   if ((args.needsUpdate || args.versionUnsupported) && canRunUpdate) {
-    const command = args.definition.updateCommand;
+    const command = resolveProviderCliUpdateCommand({
+      definition: args.definition,
+      executablePath: args.executablePath
+    });
     return { kind: 'update', label: 'Update', commandKind: command.commandKind, command: command.displayCommand };
   }
   return null;
@@ -435,11 +769,15 @@ function buildInstallAction(args: {
 function resolveProviderCliActionCommand(args: {
   definition: ProviderCliDefinition;
   actionKind: ProviderCliInstallActionKind;
+  executablePath: string | null;
   nodePlatform: NodeJS.Platform;
 }): ProviderCliActionCommand {
   return args.actionKind === 'install'
     ? installActionCommand(args.definition, args.nodePlatform)
-    : args.definition.updateCommand;
+    : resolveProviderCliUpdateCommand({
+      definition: args.definition,
+      executablePath: args.executablePath
+    });
 }
 
 function createCommandResult(args: Omit<ProviderCliCommandResult, 'args'> & { commandArgs: readonly string[] }): ProviderCliCommandResult {
@@ -527,10 +865,17 @@ export async function inspectProviderCli(args: {
   definition: ProviderCliDefinition;
   runner: ProviderCliCommandRunner;
   nodePlatform: NodeJS.Platform;
+  pathExists?: ProviderCliPathExists;
+  resolvePath?: ProviderCliPathResolver;
+  readFileHead?: ProviderCliFileHead;
 }): Promise<ProviderCliStatus> {
+  const pathExists = args.pathExists ?? existsSync;
+  const resolvePath = args.resolvePath ?? defaultResolvePath;
+  const readFileHead = args.readFileHead ?? defaultReadFileHead;
   const npmCommand = npmExecutableName(args.nodePlatform);
   const npmPackageName = args.definition.npmPackageName;
-  const [whichResult, versionResult, latestResult, npmPrefixResult, npmListResult, claudeDoctorResult] = await Promise.all([
+  const usesNpmReleaseLag = args.definition.key === 'codex' || args.definition.key === 'pi';
+  const [whichResult, versionResult, latestResult, npmPrefixResult, npmListResult, claudeDoctorResult, minReleaseAgeResult] = await Promise.all([
     args.runner.run({
       command: args.nodePlatform === 'win32' ? 'where' : 'which',
       args: [args.definition.executableName],
@@ -547,7 +892,7 @@ export async function inspectProviderCli(args: {
         command: npmCommand,
         args: args.definition.key === 'claudeCode'
           ? ['view', npmPackageName, 'dist-tags', '--json']
-          : ['view', npmPackageName, 'version'],
+          : ['view', npmPackageName, 'version', 'time', '--json'],
         timeoutMs: NPM_VIEW_TIMEOUT_MS
       }),
     args.runner.run({
@@ -567,6 +912,13 @@ export async function inspectProviderCli(args: {
         command: args.definition.executableName,
         args: ['doctor'],
         timeoutMs: CLAUDE_DOCTOR_TIMEOUT_MS
+      })
+      : Promise.resolve(null),
+    usesNpmReleaseLag
+      ? args.runner.run({
+        command: npmCommand,
+        args: ['config', 'get', 'min-release-age'],
+        timeoutMs: NPM_INSTALL_STATE_TIMEOUT_MS
       })
       : Promise.resolve(null)
   ]);
@@ -592,9 +944,22 @@ export async function inspectProviderCli(args: {
     })
     : null;
   const latestVersion = claudeCodeVersionStatus === null
-    ? latestResult && isSuccessfulCommand(latestResult)
-      ? extractVersion(`${latestResult.stdout}\n${latestResult.stderr}`)
-      : null
+    ? (() => {
+      if (!latestResult || !isSuccessfulCommand(latestResult)) return null;
+      const viewed = parseNpmViewLatest(latestResult.stdout);
+      if (!usesNpmReleaseLag) return viewed.version;
+      const minReleaseAgeMs = minReleaseAgeResult && isSuccessfulCommand(minReleaseAgeResult)
+        ? parseNpmMinReleaseAgeMs(
+          firstNpmConfigValue(minReleaseAgeResult.stdout)
+          ?? firstNpmConfigValue(minReleaseAgeResult.stderr)
+        )
+        : null;
+      return latestVersionRespectingMinReleaseAge({
+        absoluteLatest: viewed.version,
+        versionTimes: viewed.time,
+        minReleaseAgeMs
+      });
+    })()
     : claudeCodeVersionStatus.latestVersion;
   const npmGlobalPrefix = isSuccessfulCommand(npmPrefixResult) ? firstOutputLine(npmPrefixResult.stdout) : null;
   const npmGlobalPackageVersion = npmListResult && npmPackageName
@@ -613,6 +978,17 @@ export async function inspectProviderCli(args: {
     currentVersion,
     minimumSupportedVersion: args.definition.minimumSupportedVersion
   });
+  const classification = classifyProviderCliUpdate({
+    executablePath,
+    npmPackageName,
+    nodePlatform: args.nodePlatform,
+    pathExists,
+    resolvePath,
+    readFileHead
+  });
+  const blockedReason = providerCliUpdateUnavailableReason(classification);
+  const updateUnavailableReason =
+    (needsUpdate || versionUnsupported) && blockedReason ? blockedReason : null;
   return {
     displayName: args.definition.displayName,
     executableName: args.definition.executableName,
@@ -632,10 +1008,12 @@ export async function inspectProviderCli(args: {
       needsUpdate,
       versionUnsupported,
       nodePlatform: args.nodePlatform,
-      claudeCodeDoctorStatus
+      claudeCodeDoctorStatus,
+      classification
     }),
     needsUpdate,
-    versionUnsupported
+    versionUnsupported,
+    updateUnavailableReason
   };
 }
 
@@ -643,6 +1021,9 @@ export async function getProviderCliStatus(args: {
   env?: NodeJS.ProcessEnv;
   runner?: ProviderCliCommandRunner;
   nodePlatform?: NodeJS.Platform;
+  pathExists?: ProviderCliPathExists;
+  resolvePath?: ProviderCliPathResolver;
+  readFileHead?: ProviderCliFileHead;
 } = {}): Promise<ProviderCliStatusResponse> {
   const runner = args.runner ?? createSpawnProviderCliCommandRunner(args.env);
   const nodePlatform = args.nodePlatform ?? process.platform;
@@ -652,7 +1033,10 @@ export async function getProviderCliStatus(args: {
       await inspectProviderCli({
         definition: getProviderCliDefinition(key),
         runner,
-        nodePlatform
+        nodePlatform,
+        pathExists: args.pathExists,
+        resolvePath: args.resolvePath,
+        readFileHead: args.readFileHead
       })
     ] as const)
   );
@@ -665,7 +1049,11 @@ export function createSpawnProviderCliInstallProcessSpawner(
   return {
     spawn(args) {
       const child = spawn(args.command, args.args, {
-        env: args.env ?? env,
+        env: {
+          ...(args.env ?? env),
+          CI: '1',
+          npm_config_update_notifier: 'false'
+        },
         stdio: ['ignore', 'pipe', 'pipe']
       });
       return {
@@ -706,29 +1094,69 @@ export async function runProviderCliInstall(args: {
   actionKind: ProviderCliInstallActionKind;
   env?: NodeJS.ProcessEnv;
   nodePlatform?: NodeJS.Platform;
+  runner?: ProviderCliCommandRunner;
+  pathExists?: ProviderCliPathExists;
+  resolvePath?: ProviderCliPathResolver;
+  readFileHead?: ProviderCliFileHead;
   installProcessSpawner?: ProviderCliInstallProcessSpawner;
 }): Promise<{ events: ProviderCliInstallEvent[] }> {
   const nodePlatform = args.nodePlatform ?? process.platform;
   const definition = getProviderCliDefinition(args.provider);
-  const actionCommand = resolveProviderCliActionCommand({
-    definition,
-    actionKind: args.actionKind,
-    nodePlatform
-  });
+  const pathExists = args.pathExists ?? existsSync;
+  const resolvePath = args.resolvePath ?? defaultResolvePath;
+  const readFileHead = args.readFileHead ?? defaultReadFileHead;
+  const runner = args.runner ?? createSpawnProviderCliCommandRunner(args.env);
   const slot = reserveProviderCliInstall(args.provider);
-  const events: ProviderCliInstallEvent[] = [{
-    type: 'started',
-    provider: args.provider,
-    command: actionCommand.displayCommand
-  }];
+  const events: ProviderCliInstallEvent[] = [];
   const spawner = args.installProcessSpawner ?? createSpawnProviderCliInstallProcessSpawner(args.env);
   let outputBytes = 0;
 
   try {
+    const before = await inspectProviderCli({
+      definition,
+      runner,
+      nodePlatform,
+      pathExists,
+      resolvePath,
+      readFileHead
+    });
+    if (args.actionKind === 'update' && before.updateUnavailableReason) {
+      events.push({
+        type: 'error',
+        provider: args.provider,
+        message: before.updateUnavailableReason
+      });
+      return { events };
+    }
+    const actionCommand = resolveProviderCliActionCommand({
+      definition,
+      actionKind: args.actionKind,
+      executablePath: before.executablePath,
+      nodePlatform
+    });
+    events.push({
+      type: 'started',
+      provider: args.provider,
+      command: actionCommand.displayCommand
+    });
+    const npmPrefix = args.actionKind === 'update'
+      ? npmInstallPrefixForExecutable({
+        executablePath: before.executablePath,
+        npmPackageName: definition.npmPackageName,
+        nodePlatform,
+        pathExists
+      })
+      : null;
+    const closeState: { result: { exitCode: number | null; signal: NodeJS.Signals | null } | null } = {
+      result: null
+    };
     const child = spawner.spawn({
       command: actionCommand.command,
       args: [...actionCommand.args],
-      ...(args.env ? { env: args.env } : {})
+      env: {
+        ...(args.env ?? process.env),
+        ...(npmPrefix ? { npm_config_prefix: npmPrefix } : {})
+      }
     });
     await new Promise<void>((settle, reject) => {
       let done = false;
@@ -771,16 +1199,41 @@ export async function runProviderCliInstall(args: {
         finish();
       });
       child.onClose((exitCode, signal) => {
-        events.push({
-          type: 'completed',
-          provider: args.provider,
-          exitCode,
-          signal,
-          success: exitCode === 0
-        });
+        closeState.result = { exitCode, signal };
         finish();
       });
     });
+    const closeResult = closeState.result;
+    if (closeResult) {
+      const alreadyFailed = events.some((event) => event.type === 'error');
+      let success = closeResult.exitCode === 0 && !alreadyFailed;
+      if (success) {
+        const after = await inspectProviderCli({
+          definition,
+          runner,
+          nodePlatform,
+          pathExists,
+          resolvePath,
+          readFileHead
+        });
+        const failure = providerCliInstallDidNotTake({
+          actionKind: args.actionKind,
+          before,
+          after
+        });
+        if (failure) {
+          events.push({ type: 'error', provider: args.provider, message: failure });
+          success = false;
+        }
+      }
+      events.push({
+        type: 'completed',
+        provider: args.provider,
+        exitCode: closeResult.exitCode,
+        signal: closeResult.signal,
+        success
+      });
+    }
   } catch (error) {
     events.push({
       type: 'error',

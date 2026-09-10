@@ -234,6 +234,7 @@ export const providerCliStatusSchema = z.object({
   installAction: providerCliInstallActionSchema.nullable(),
   needsUpdate: z.boolean(),
   versionUnsupported: z.boolean(),
+  updateUnavailableReason: z.string().min(1).nullable().optional(),
 });
 export type ProviderCliStatus = z.infer<typeof providerCliStatusSchema>;
 

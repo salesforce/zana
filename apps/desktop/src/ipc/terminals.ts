@@ -4,13 +4,33 @@ import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import { listLocalTmuxSessionIds, verifyTmux } from '@zana-ai/zcc-host-daemon/tmux';
+import { CliPlanWatcher } from '@zana-ai/zcc-host-daemon/harness/cli-plan-watch';
 import { isRepliable } from '../menu.js';
 import { app } from 'electron';
 import type { SessionStats } from '@zana-ai/zcc-host-daemon/harness/claude/transcript-reader';
 import type { CatchUpSummaryResult, CreateTerminalRequest, LaunchProfileId, MenubarReplyResult, Result, TerminalSession } from '@zana-ai/zcc-domain/product';
 
+function cliPlanSessionId(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 && value.length < 128 ? value : null;
+}
+
+function allowedRootsForCliPlan(session: { projectId: string; cwd: string }): string[] {
+  const project = store.listProjects().find((p) => p.id === session.projectId);
+  if (!project || project.remote) return [];
+  return session.cwd && session.cwd !== project.path
+    ? [project.path, session.cwd]
+    : [project.path];
+}
+
 export function registerTerminalsIpc(): void {
-  
+  const cliPlanWatcher = new CliPlanWatcher({
+    getSession: (id) => ctx.ptys.getSession(id),
+    allowedRootsFor: allowedRootsForCliPlan,
+    homedir: () => app.getPath('home'),
+    emit: (sessionId, snapshot) => ctx.safeSend(IPC.terminals.onCliPlan, sessionId, snapshot)
+  });
+  ctx.ptys.on('exit', (sessionId) => cliPlanWatcher.onSessionExit(sessionId));
+
   ctx.safeHandle(IPC.terminals.list, (projectId: string) => ctx.ptys.list(projectId), () => []);
   ctx.safeHandle(
     IPC.terminals.verifyTmux,
@@ -437,6 +457,30 @@ export function registerTerminalsIpc(): void {
     IPC.terminals.subagentChildrenSnapshot,
     () => ctx.agentStatus.subagentChildSnapshot(),
     () => []
+  );
+  ctx.safeHandle(
+    IPC.terminals.cliPlan,
+    (sessionId: unknown) => {
+      const id = cliPlanSessionId(sessionId);
+      return id ? cliPlanWatcher.snapshot(id) : null;
+    },
+    () => null
+  );
+  ctx.safeHandle(
+    IPC.terminals.cliPlanWatch,
+    (sessionId: unknown) => {
+      const id = cliPlanSessionId(sessionId);
+      if (id) cliPlanWatcher.watch(id);
+    },
+    () => undefined
+  );
+  ctx.safeHandle(
+    IPC.terminals.cliPlanUnwatch,
+    (sessionId: unknown) => {
+      const id = cliPlanSessionId(sessionId);
+      if (id) cliPlanWatcher.unwatch(id);
+    },
+    () => undefined
   );
 }
 

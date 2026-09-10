@@ -28,14 +28,15 @@ import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
 import {
   composerProjectOptions,
-  isRemoteWorkspaceProject,
+  preferredComposerProjectId,
   resolveComposerProjectId,
   type ComposerProjectSelectionProps
 } from './composer-project-default.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
-import { consumeComposerModeCycle } from './thread/pickers/composer-mode.js';
-import { visibleAcpModeOptions } from '@zana-ai/zcc-domain/thread-runtime';
+import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
+import { consumeComposerModeCycle, type ComposerWorkMode } from './thread/pickers/composer-mode.js';
+import { composerModeEntries, visibleAcpModeOptions } from '@zana-ai/zcc-domain/thread-runtime';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { PluginComposerAdvanced, PluginComposerMeta } from '../plugins/PluginComposerSlots.js';
 import {
@@ -44,27 +45,36 @@ import {
 } from '../plugins/plugin-composer-api.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
-import { composerProvidersFromCatalog, fallbackProviderOption } from './thread/pickers/fallback-models.js';
+import {
+  composerProvidersFromCatalog,
+  fallbackModelsForProvider,
+  fallbackMoreModelsForProvider,
+  fallbackProviderOption
+} from './thread/pickers/fallback-models.js';
 import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { TextArgsField } from './settings/FormFields.js';
 import {
-  absolutePathMentions,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
   applyLaunchPatch,
   cliAgentCatalogProviders,
   cliAgentFamilyIdsFromCatalog,
+  availableModelsToPickerOptions,
   cliAgentModelOptions,
   cliAgentMoreModelOptions,
+  CLI_WORK_MODES,
+  cliComposerModeChip,
+  cliLaunchExecutionState,
   cliLaunchFromPermissionMode,
   cliPermissionModesFor,
+  composerDropProjectRoot,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
   readCliExtraArgs,
   resolveCliAgentFamily,
   resolveCliLaunchProfile,
-  rewritePromptPaths,
+  stageRemoteComposerAttachments,
   threadProviderIdForFamily,
   unrestrictedProfileId,
   withExecutionState,
@@ -79,7 +89,6 @@ import {
 import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
-  prefetchThreadModelCatalog,
   reloadThreadProviderModels,
   setThreadModelCatalogHost,
   subscribeThreadModelCatalog
@@ -87,6 +96,10 @@ import {
 import { defaultHostId, useHosts } from '../hooks/useHosts.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
+const CLI_WORK_MODE_ENTRIES = composerModeEntries({
+  acpModeOptions: [],
+  composerActions: ['plan']
+});
 
 /**
  * Home PTY launch surface. Thread create stays in ThreadCommandComposer;
@@ -115,6 +128,7 @@ export function LegacyAgentHomeComposer({
   const harnessCodexEnabled = useData((s) => s.harnessCodexEnabled);
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
+  const harnessGrokEnabled = useData((s) => s.harnessGrokEnabled);
   const nativeAgentDiscoveryEnabled = useData((s) => s.nativeAgentDiscoveryEnabled);
   const cliRemoteHostCatalogEnabled = useData((s) => s.cliRemoteHostCatalogEnabled);
   const selectTab = useUi((s) => s.selectTab);
@@ -131,14 +145,18 @@ export function LegacyAgentHomeComposer({
     if (!onComposerProjectIdChange) setInternalProjectId(resolved);
     onComposerProjectIdChange?.(resolved);
   };
-  const preferredProjectId = selectedProjectId ?? lastProjectId;
-  const [familyId, setFamilyId] = useState<HarnessFamily | ''>('');
+  const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
+  const [familyId, setFamilyId] = useState<HarnessFamily | ''>(
+    () => familyForThreadProviderId(rememberedProviderId() ?? 'claude-code') ?? 'claude'
+  );
   const [automaticProfile, setAutomaticProfile] = useState<LaunchProfileId | null>(null);
   const [selectionState, setSelectionState] = useState<'loading' | 'resolved' | 'unavailable'>('loading');
   const [resolvedProjectId, setResolvedProjectId] = useState<string | null>(null);
   const [selectionMessage, setSelectionMessage] = useState<string | null>(null);
   const [selectionProvenance, setSelectionProvenance] = useState<'automatic' | 'explicit'>('automatic');
-  const [modelId, setModelId] = useState('');
+  const [modelId, setModelId] = useState(
+    () => rememberedSelectionFor(rememberedProviderId() ?? 'claude-code')?.model ?? ''
+  );
   // OpenCode native-role selection (`--agent <role>`). Roles come from the SAME
   // ACP session-mode list the Modern composer uses (`catalogEntry.acpMode`), so
   // both surfaces show an identical, plain-named list. Non-opencode harnesses
@@ -153,6 +171,7 @@ export function LegacyAgentHomeComposer({
   const [extraArgs, setExtraArgs] = useState<string[]>([]);
   const [personaId, setPersonaId] = useState('');
   const [permissionMode, setPermissionMode] = useState('accept-edits');
+  const [workMode, setWorkMode] = useState<ComposerWorkMode>('agent');
   const launchPatch = useSyncExternalStore(
     subscribeLaunchPatches,
     getMergedLaunchPatch,
@@ -176,6 +195,7 @@ export function LegacyAgentHomeComposer({
 
   useEffect(() => {
     setExtraArgs(readCliExtraArgs(familyId));
+    setWorkMode('agent');
   }, [familyId]);
   const cliRuntimeProfile = automaticProfile
     ?? selectedHarness?.defaultProfileId
@@ -200,25 +220,34 @@ export function LegacyAgentHomeComposer({
     [catalogPermissionModes, unrestrictedId]
   );
   const permissionOptions = permissionModeOptionsFor(permissionModeIds);
-  const preferHostModels = cliRemoteHostCatalogEnabled && isRemoteWorkspaceProject(project);
+  // Same thread AvailableModel roster as Modern. The PTY snapshot is only a
+  // loading placeholder — including on a remote project. Which machine's
+  // catalog is fetched is `catalogHostId` below, not this flag.
+  const preferHostModels = true;
+  const catalogHostId = project?.hostId ?? executionHostId;
   const models = cliAgentModelOptions({
     adapterModels: selectedHarness?.targets?.models ?? EMPTY_MODELS,
-    catalogModels: catalogEntry?.models ?? [],
+    catalogModels: catalogEntry?.models
+      ?? (selectedProviderId ? fallbackModelsForProvider(selectedProviderId) : []),
     preferCatalog: preferHostModels,
-    catalogReady: Boolean(catalogEntry)
+    catalogReady: Boolean(catalogEntry) || Boolean(selectedProviderId)
   });
   const moreModelOptions = cliAgentMoreModelOptions({
     adapterModelCount: selectedHarness?.targets?.models?.length ?? 0,
-    catalogMoreModels: catalogEntry?.selectedOnlyModels ?? [],
+    catalogMoreModels: catalogEntry?.selectedOnlyModels
+      ?? (selectedProviderId ? fallbackMoreModelsForProvider(selectedProviderId) : []),
     preferCatalog: preferHostModels
   });
+  // Same rule as Modern: cached rows stay on screen. Skeletons only while this
+  // provider is in flight AND we have no catalog entry yet — never while the
+  // harness-default effect is still resolving (`selectionState === 'loading'`).
   const catalogModelsLoading = Boolean(
     selectedProviderId
-    && (preferHostModels || (selectedHarness?.targets?.models?.length ?? 0) === 0)
-    && (catalog.inflight.has(selectedProviderId) || !catalogEntry)
+    && !catalogEntry
+    && catalog.inflight.has(selectedProviderId)
   );
   const offeredModelIds = useMemo(() => {
-    const ids = models.map((model) => model.id);
+    const ids = models.map((model) => model.model);
     if (!preferHostModels && (selectedHarness?.targets?.models?.length ?? 0) > 0) return ids;
     for (const row of catalogEntry?.selectedOnlyModels ?? []) {
       if (!ids.includes(row.model)) ids.push(row.model);
@@ -229,6 +258,7 @@ export function LegacyAgentHomeComposer({
   const roleOptions = familyId === 'opencode'
     ? visibleAcpModeOptions(catalogEntry?.acpMode?.options ?? [], nativeAgentDiscoveryEnabled)
     : [];
+  const modeChip = cliComposerModeChip(familyId);
 
   useEffect(() => {
     if (nativeAgentDiscoveryEnabled || !roleTargetId) return;
@@ -240,7 +270,7 @@ export function LegacyAgentHomeComposer({
     testId: 'legacy-agent-command-input',
     ariaLabel: 'Instruction for the CLI agent',
     projectId,
-    projectRoot: project?.path,
+    projectRoot: composerDropProjectRoot(project),
     projects,
     disabled: launching,
     initialText,
@@ -248,28 +278,41 @@ export function LegacyAgentHomeComposer({
     onSubmit: () => {
       launchRef.current();
     },
-    interceptKeyDown: (event) => consumeComposerModeCycle(event, {
-      kind: 'native',
-      options: roleOptions,
-      current: roleTargetId,
-      onChange: setRoleTargetId
-    }),
+    interceptKeyDown: (event) => {
+      if (modeChip === 'native-role') {
+        return consumeComposerModeCycle(event, {
+          kind: 'native',
+          options: roleOptions,
+          current: roleTargetId,
+          onChange: setRoleTargetId
+        });
+      }
+      if (modeChip === 'work-mode') {
+        return consumeComposerModeCycle(event, {
+          kind: 'work',
+          modes: CLI_WORK_MODES,
+          current: workMode,
+          onChange: setWorkMode
+        });
+      }
+      return false;
+    },
     onError: setError
   });
   const voice = useVoiceInput({ onTranscript: field.insertText });
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 
   useEffect(() => {
-    if (cliRemoteHostCatalogEnabled) {
-      void setThreadModelCatalogHost(executionHostId);
-      return;
-    }
-    void prefetchThreadModelCatalog();
-  }, [cliRemoteHostCatalogEnabled, executionHostId]);
+    // Hosts start empty on a fresh mount. Don't treat that as "no machine" and
+    // wipe the catalog Modern already loaded.
+    if (!catalogHostId && hosts.length === 0) return;
+    void setThreadModelCatalogHost(catalogHostId);
+  }, [catalogHostId, hosts.length]);
 
   useEffect(() => {
-    if (selectedProviderId) void ensureThreadProviderModels(selectedProviderId);
-  }, [selectedProviderId]);
+    if (!selectedProviderId || catalogEntry) return;
+    void ensureThreadProviderModels(selectedProviderId);
+  }, [catalogEntry, selectedProviderId]);
 
   // Keep the role pick coherent with the ACP mode list (same discipline as the
   // Modern composer): seed from `acpMode.currentValue` when unset, and drop a
@@ -305,7 +348,7 @@ export function LegacyAgentHomeComposer({
       if (generation !== descriptorGeneration.current) return;
       setDescriptors([]);
     });
-  }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled]);
+  }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, harnessGrokEnabled]);
 
   useEffect(() => {
     if (pinnedProject) {
@@ -344,8 +387,10 @@ export function LegacyAgentHomeComposer({
   // Resolve a concrete model like the Modern composer instead of resting on
   // "Select model": keep a still-valid pick, otherwise adopt the remembered or
   // default model for the provider. Clears only when no models are offered.
+  // Do not wait for harness-default `selectionState` — that gate was flashing
+  // the picker skeletons on every CLI remount.
   useEffect(() => {
-    if (selectionState !== 'resolved' || catalogModelsLoading) return;
+    if (catalogModelsLoading) return;
     const next = pickOfferedComposerModel({
       rememberedModel: selectedProviderId ? rememberedSelectionFor(selectedProviderId)?.model : undefined,
       currentModel: modelId,
@@ -355,7 +400,7 @@ export function LegacyAgentHomeComposer({
     if (next && selectedProviderId) {
       rememberComposerSelection({ providerId: selectedProviderId, model: next });
     }
-  }, [catalogModelsLoading, modelId, offeredModelIds, selectedProviderId, selectionState]);
+  }, [catalogModelsLoading, modelId, offeredModelIds, selectedProviderId]);
 
   // Default the harness like the Modern composer: keep the current pick, else
   // the last-used (remembered) family, else the project's effective default —
@@ -452,6 +497,7 @@ export function LegacyAgentHomeComposer({
     harnessCodexEnabled,
     harnessPiEnabled,
     harnessOpenCodeEnabled,
+    harnessGrokEnabled,
     cliRemoteHostCatalogEnabled,
     catalog.providers
   ]);
@@ -481,22 +527,31 @@ export function LegacyAgentHomeComposer({
     try {
       const serialized = field.serialize();
       let promptText = serialized.text;
+      let imagePaths: string[] = [];
       if (project.remote) {
-        const uploaded: Array<{ from: string; to: string }> = [];
-        for (const localPath of absolutePathMentions(serialized.mentions)) {
-          const result = await product.fs.uploadToRemote(project.id, localPath, '.');
-          if (!result.ok || !result.path) {
-            pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
-            return;
-          }
-          uploaded.push({ from: localPath, to: posixQuote(result.path) });
-          pushToast(`Uploaded ${attachmentName(localPath)} to ${project.remote.host}`);
+        const staged = await stageRemoteComposerAttachments({
+          promptText,
+          mentions: serialized.mentions,
+          images: field.images,
+          projectId: project.id,
+          uploadLocalPath: (localPath) => product.fs.uploadToRemote(project.id, localPath, '.'),
+          persistImages: persistComposerImages,
+          uploadPersistedAttachment: (relativePath) =>
+            product.fs.uploadProjectAttachmentToRemote(project.id, relativePath),
+          quoteRemotePath: posixQuote
+        });
+        if (!staged.ok) {
+          pushToast(staged.message ?? `Failed to upload ${attachmentName(staged.localPath)}`, 'error');
+          return;
         }
-        promptText = rewritePromptPaths(promptText, uploaded);
+        for (const row of staged.uploaded) {
+          pushToast(`Uploaded ${attachmentName(row.localPath)} to ${project.remote.host}`);
+        }
+        promptText = staged.promptText;
+        imagePaths = staged.imagePaths;
+      } else if (field.images.length > 0) {
+        imagePaths = await persistComposerImages(project.id, field.images);
       }
-      const imagePaths = field.images.length === 0
-        ? []
-        : await persistComposerImages(project.id, field.images);
       const launchedPrompt = assembleCliLaunchPrompt({ text: promptText, imagePaths });
       const args = buildLaunchArgs(
         launchedPrompt,
@@ -530,9 +585,17 @@ export function LegacyAgentHomeComposer({
         : {};
       // OpenCode treats a native `--agent` role as the execution policy. Sending
       // Edits (`accept-edits`) alongside a role fails preflight with "require
-      // one compatible role policy". Same XOR as role-vs-model above.
-      const withState = permLaunch.executionState && !validRoleId
-        ? withExecutionState(coreRouting, familyId, permLaunch.executionState)
+      // one compatible role policy". Same XOR as role-vs-model above. Plan for
+      // Claude/Cursor/Codex also XOR's Edits via cliLaunchExecutionState.
+      const executionState = cliLaunchExecutionState({
+        familyId,
+        workMode: workMode === 'plan' ? 'plan' : 'agent',
+        permissionExecutionState: permLaunch.executionState,
+        hasNativeRole: Boolean(validRoleId),
+        unrestrictedProfileSelected: Boolean(permLaunch.profileId)
+      });
+      const withState = executionState
+        ? withExecutionState(coreRouting, familyId, executionState)
         : coreRouting;
       const merged = applyLaunchPatch({
         baseProfile: resolveCliLaunchProfile({
@@ -644,6 +707,25 @@ export function LegacyAgentHomeComposer({
           ) : (
             <>
               <div className="thread-command-footer-start">
+                {familyId === 'opencode' ? (
+                  <NativeRolePicker
+                    value={roleTargetId}
+                    options={roleOptions.map((role) => ({ value: role.value, name: role.name }))}
+                    onChange={setRoleTargetId}
+                    onRefresh={() => {
+                      if (selectedProviderId) void reloadThreadProviderModels(selectedProviderId);
+                    }}
+                    discoveryEnabled={nativeAgentDiscoveryEnabled}
+                  />
+                ) : modeChip === 'work-mode' ? (
+                  <ComposerModePicker
+                    value={workMode === 'plan' ? 'plan' : 'agent'}
+                    entries={CLI_WORK_MODE_ENTRIES}
+                    onChange={(value) => {
+                      if (value === 'plan' || value === 'agent') setWorkMode(value);
+                    }}
+                  />
+                ) : null}
                 <ModelReasoningPicker
                   providerOptions={harnessProviderOptions}
                   selectedProviderId={
@@ -663,15 +745,16 @@ export function LegacyAgentHomeComposer({
                       rememberComposerSelection({ providerId: nextProviderId, model: restored });
                     }
                     setRoleTargetId(undefined);
+                    setWorkMode('agent');
                     setSelectionProvenance('explicit');
                     setSelectionState('resolved');
                     setResolvedProjectId(projectId);
                     setSelectionMessage(null);
                   }}
                   modelValue={modelId}
-                  modelOptions={models.map((model) => ({ value: model.id, label: model.label }))}
-                  moreModelOptions={moreModelOptions}
-                  modelIsLoading={selectionState === 'loading' || catalogModelsLoading}
+                  modelOptions={availableModelsToPickerOptions(models)}
+                  moreModelOptions={availableModelsToPickerOptions(moreModelOptions)}
+                  modelIsLoading={catalogModelsLoading}
                   modelLoadError={
                     preferHostModels || (selectedHarness?.targets?.models?.length ?? 0) === 0
                       ? catalogEntry?.modelLoadError ?? null
@@ -685,17 +768,6 @@ export function LegacyAgentHomeComposer({
                   }}
                   disabled={harnessProviderOptions.length === 0}
                 />
-                {familyId === 'opencode' ? (
-                  <NativeRolePicker
-                    value={roleTargetId}
-                    options={roleOptions.map((role) => ({ value: role.value, name: role.name }))}
-                    onChange={setRoleTargetId}
-                    onRefresh={() => {
-                      if (selectedProviderId) void reloadThreadProviderModels(selectedProviderId);
-                    }}
-                    discoveryEnabled={nativeAgentDiscoveryEnabled}
-                  />
-                ) : null}
               </div>
               <div className="thread-command-footer-end">
                 <span className="composer-control-tooltip" data-tooltip={field.canAttach ? 'Attach files' : 'File attachments require the desktop app'}>

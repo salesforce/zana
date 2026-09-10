@@ -128,7 +128,13 @@ Writing a plugin? Use the zcc-plugin-authoring skill.
   zcc skill install-cli-skills
   zcc skill cli-skills-status
 
+  zcc settings show
+  zcc settings general injectProductGuidance false
+  zcc settings general injectBundledSkills false
+  zcc settings general disabledBundledSkills '["zcc-cli"]'
+
 install-cli-skills copies the zcc-cli skill onto each machine's ~/.claude/skills and ~/.agents/skills so agents outside ZCC can drive the CLI.
+Settings writes apply to subsequent launches only.
 `
   },
   {

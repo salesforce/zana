@@ -55,7 +55,7 @@ import {
   publicSettingsValues
 } from './plugin-secret-settings.js';
 
-export const HOST_ZCC_VERSION = '2.0.6';
+export const HOST_ZCC_VERSION = '2.1.0';
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
 export const FACTORY_TIMEOUT_MS = 10_000;
 

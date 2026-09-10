@@ -32,7 +32,8 @@ const FAMILY_PROFILE: Record<HarnessFamily, LaunchProfileId> = {
   cursor: 'cursor',
   codex: 'codex',
   pi: 'pi',
-  opencode: 'opencode'
+  opencode: 'opencode',
+  grok: 'grok'
 };
 
 interface ProjectTabProps {

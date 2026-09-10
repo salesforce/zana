@@ -190,7 +190,7 @@ describe('CodexProvider', () => {
   it('maps portable execution states to native sandbox and approval policies', () => {
     expect(p.executionContribution('plan').args).toEqual(['-s', 'read-only', '-a', 'on-request']);
     expect(p.executionContribution('interactive').args).toEqual(['-s', 'workspace-write', '-a', 'untrusted']);
-    expect(p.executionContribution('accept-edits').args).toEqual(['-s', 'workspace-write', '-a', 'on-request']);
+    expect(p.executionContribution('accept-edits')).toEqual({});
     expect(p.executionContribution('autonomous').args).toEqual(['-s', 'danger-full-access', '-a', 'never']);
   });
 
