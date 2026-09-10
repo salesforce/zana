@@ -102,7 +102,7 @@ export async function closeAgentWithFollowup(
   if (!globalThis.confirm(`Close “${session.title}” and file a follow-up if work is left?`)) {
     return false;
   }
-  await useData.getState().closeIdleAgents(projectId, [session.id], true);
+  await useData.getState().closeIdleAgents(projectId, [session.id], true, { force: true });
   return true;
 }
 

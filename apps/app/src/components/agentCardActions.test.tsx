@@ -88,7 +88,7 @@ describe('plugin agent card menu', () => {
     expect(source).toContain('canCloseWithFollowup(card.session)');
     expect(source).toContain('actions.closeWithFollowup(card)');
     expect(source).toContain('Close with follow-up');
-    expect(source).toContain('closeIdleAgents(projectId, [session.id], true)');
+    expect(source).toContain('closeIdleAgents(projectId, [session.id], true, { force: true })');
     expect(source).toContain('Open in split');
     expect(source).toContain('openAgentSessionInSplit');
     expect(source).toContain('cliAgentRemoveLabel(exited)');
@@ -140,7 +140,7 @@ describe('closeAgentWithFollowup', () => {
     const ok = await closeAgentWithFollowup({ id: 's1', title: 'Review' }, 'p1');
     expect(ok).toBe(true);
     expect(confirm).toHaveBeenCalled();
-    expect(h.closeIdleAgents).toHaveBeenCalledWith('p1', ['s1'], true);
+    expect(h.closeIdleAgents).toHaveBeenCalledWith('p1', ['s1'], true, { force: true });
     vi.unstubAllGlobals();
   });
 

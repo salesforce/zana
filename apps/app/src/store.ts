@@ -45,6 +45,8 @@ import { DEFAULT_TERMINAL_THEME, type TerminalThemeId } from '@zana-ai/zcc-domai
 import { seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 import { resolveRestartProfile } from './lib/sessionRestore.js';
+import { runCloseIdleAgents } from './lib/close-idle-agents.js';
+
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
@@ -1744,22 +1746,25 @@ interface DataState {
   closeTerminal: (sessionId: string, projectId: string) => Promise<void>;
   /** Remove terminal cards owned by a Job after its single dismiss action succeeds. */
   dismissTerminals: (sessionIds: readonly string[]) => void;
-  /**
-   * Bulk-close the given at-rest agents in a project (the Agents board's Close
-   * action and the modal's "Close with follow-up" item). When `summarize` is
-   * set, asks main FIRST to fold each agent's work into ONE inbox entry AND file
-   * a follow-up for anything left unfinished (transcripts are read while the
-   * ptys are still alive), then closes each session via the same per-session
-   * {@link closeTerminal} path. Before killing, re-checks each agent's LIVE
-   * status and skips any that drifted back to working/blocked while the confirm
-   * dialog was open — a manual reclaim must never terminate an agent mid-task.
-   * Returns how many were closed / summarized / followed up.
-   */
-  closeIdleAgents: (
-    projectId: string,
-    sessionIds: string[],
-    summarize: boolean
-  ) => Promise<{ closed: number; summarized: number; followedUp: number }>;
+    /**
+    * Bulk-close the given at-rest agents in a project (the Agents board's Close
+    * action). When `summarize` is set, asks main FIRST to fold each agent's work
+    * into ONE inbox entry AND file a follow-up for anything left unfinished
+    * (transcripts are read while the ptys are still alive), then closes each
+    * session via the same per-session {@link closeTerminal} path. Before killing,
+    * re-checks each agent's LIVE status and skips any that drifted back to
+    * working/blocked while the confirm dialog was open — a bulk reclaim must
+    * never terminate an agent mid-task. Pass `{ force: true }` for an explicit
+    * single-card Close with follow-up so Needs you / blocked / working still
+    * close after the user confirmed that card. Returns how many were closed /
+    * summarized / followed up.
+    */
+   closeIdleAgents: (
+     projectId: string,
+     sessionIds: string[],
+     summarize: boolean,
+     opts?: { force?: boolean }
+   ) => Promise<{ closed: number; summarized: number; followedUp: number }>;
   /**
    * READ-ONLY companion to {@link closeIdleAgents}: fold the given idle agents'
    * work into ONE inbox entry and leave every agent RUNNING (the Agents board's
@@ -3291,67 +3296,43 @@ export const useData = create<DataState>((set, get) => ({
     }
   },
 
-  async closeIdleAgents(projectId, sessionIds, summarize) {
-    if (sessionIds.length === 0) return { closed: 0, summarized: 0, followedUp: 0 };
-    // Re-check LIVE status right before we act. The confirm dialog is an open
-    // dwell window during which an idle agent can resume (a scheduled fire, a
-    // human reply) — a manual reclaim must never terminate an agent mid-task, so
-    // drop any that drifted back to working/blocked. useAgentStatus is the same
-    // live signal the board's lanes read, so this can't disagree with what the
-    // user last saw. (Ids missing from the map are treated as still-eligible —
-    // an unknown state is the at-rest default here, matching isIdleAgent.)
-    const status = useAgentStatus.getState().byId;
-    const ids = sessionIds.filter((id) => {
-      const st = status[id];
-      return st !== 'working' && st !== 'blocked';
+  async closeIdleAgents(projectId, sessionIds, summarize, opts) {
+    return runCloseIdleAgents({
+      projectId,
+      sessionIds,
+      summarize,
+      force: opts?.force === true,
+      deps: {
+        statusById: useAgentStatus.getState().byId,
+        closeFollowup: (pid, ids) => product.terminals.closeFollowup(pid, ids),
+        closeTerminal: (id, pid) => get().closeTerminal(id, pid),
+        pushBusyToast: (requestedCount) => {
+          useUi
+            .getState()
+            .pushToast(
+              requestedCount === 1
+                ? 'Agent is busy again — left it running.'
+                : 'Those agents are busy again — left them running.',
+              'info'
+            );
+        },
+        pushErrorToast: (err) => {
+          pushErrorToast(errorMessage(err, 'Failed to summarize agents'));
+        },
+        pushClosedToast: (closed, summarized, followedUp) => {
+          const bits = [`Closed ${closed} agent${closed === 1 ? '' : 's'}`];
+          if (summarized > 0) bits.push(`${summarized} summarized to inbox`);
+          if (followedUp > 0) {
+            bits.push(`${followedUp} follow-up${followedUp === 1 ? '' : 's'} filed`);
+          } else if (summarized > 0) {
+            bits.push('no unfinished work found');
+          } else {
+            bits.push('no readable transcript found');
+          }
+          useUi.getState().pushToast(`${bits.join(' · ')}.`, summarized > 0 ? 'info' : 'error');
+        }
+      }
     });
-    if (ids.length === 0) {
-      // Everything drifted back to working/blocked since the confirm opened — say
-      // so rather than closing the dialog with no visible effect.
-      useUi
-        .getState()
-        .pushToast(
-          sessionIds.length === 1
-            ? 'Agent is busy again — left it running.'
-            : 'Those agents are busy again — left them running.',
-          'info'
-        );
-      return { closed: 0, summarized: 0, followedUp: 0 };
-    }
-
-    // Summarize + (optionally) file follow-ups BEFORE closing: main reads each
-    // agent's live transcript, so it must run while the ptys are still alive.
-    // Main confines the ids to the project and never throws, but guard anyway —
-    // a lost paper trail is never a reason to abort the close the user asked for.
-    let summarized = 0;
-    let followedUp = 0;
-    if (summarize) {
-      try {
-        const res = await product.terminals.closeFollowup(projectId, ids);
-        summarized = res.summarized;
-        followedUp = res.followedUp;
-      } catch (err) {
-        pushErrorToast(errorMessage(err, 'Failed to summarize agents'));
-      }
-    }
-    // Close each via the single-agent path so selection-advance, split removal,
-    // and status/triage cleanup all stay correct. Sequential to keep the
-    // selection math (it reindexes the visible strip each time) deterministic.
-    let closed = 0;
-    for (const id of ids) {
-      try {
-        await get().closeTerminal(id, projectId);
-        closed++;
-      } catch {
-        // closeTerminal already toasts on the IPC failure; keep going.
-      }
-    }
-    if (closed > 0) {
-      const bits = [`Closed ${closed} agent${closed === 1 ? '' : 's'}`];
-      if (followedUp > 0) bits.push(`${followedUp} follow-up${followedUp === 1 ? '' : 's'} filed`);
-      useUi.getState().pushToast(`${bits.join(' · ')}.`, 'info');
-    }
-    return { closed, summarized, followedUp };
   },
 
   async summarizeIdleAgents(projectId, sessionIds) {

@@ -507,17 +507,17 @@ export function LegacyAgentHomeComposer({
     && familyId
     && selectionState === 'resolved'
     && resolvedProjectId === projectId
-    && (selectionProvenance !== 'explicit'
-      || selectedHarness
-      || (cliRemoteHostCatalogEnabled && Boolean(PROFILE_BY_FAMILY[familyId])))
+    && (selectedHarness || Boolean(PROFILE_BY_FAMILY[familyId]))
     && !launching
   );
 
   const launch = async () => {
     if (!project || !familyId || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId) return;
-    if (selectionProvenance === 'explicit' && !selectedHarness
-      && !(cliRemoteHostCatalogEnabled && PROFILE_BY_FAMILY[familyId])) return;
-    if (field.typeaheadOpen) return;
+    if (!selectedHarness && !PROFILE_BY_FAMILY[familyId]) return;
+    // An absolute path after whitespace is syntactically a slash-command query.
+    // When it matches nothing, the menu shows "No matching commands"; do not let
+    // that advisory empty state turn the enabled launch button into a silent no-op.
+    if (field.typeaheadOpen && field.suggestions.length > 0) return;
     const profile = selectionProvenance === 'automatic'
       ? automaticProfile
       : selectedHarness?.defaultProfileId ?? PROFILE_BY_FAMILY[familyId];
