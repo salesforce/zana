@@ -6,12 +6,15 @@ import { join } from 'node:path';
 const e2eHome = process.env.ZCC_E2E_HOME;
 if (e2eHome) {
   app.setPath('home', e2eHome);
-  // NOTE: the durable-launch safeStorage/Keychain problem is NOT solved here.
   // `--password-store=basic` is a Linux-only switch — macOS always uses the
-  // Keychain backend, and `safeStorage.isEncryptionAvailable()` BLOCKS the main
-  // thread forever on a headless runner (no Keychain session). The real fix is
-  // the resume-token store's `insecure` mode, enabled from ZCC_E2E_HOME in
-  // host.ts, which bypasses safeStorage entirely under E2E.
+  // Keychain backend for app-level safeStorage calls, which the resume-token
+  // store's `insecure` mode (enabled from ZCC_E2E_HOME in host.ts) bypasses.
+  // But Chromium's OWN os_crypt (cookie/local-storage encryption) touches the
+  // real macOS Keychain at boot regardless of app code, prompting an
+  // interactive "wants to access key in your keychain" dialog with no one to
+  // click Allow on a headless runner. `use-mock-keychain` is the cross-platform
+  // Chromium switch for exactly this (must be set before app ready).
+  app.commandLine.appendSwitch('use-mock-keychain');
 }
 
 // Unpackaged `pnpm dev` shares the packaged app's userData (`Zana`) unless we

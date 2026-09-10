@@ -4,11 +4,11 @@ import { createRequire } from 'node:module';
 import { controlCredentialForSession } from './control-credential.js';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree, HarnessModelRoutingV1 } from '@zana-ai/zcc-domain/product';
-import { SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
+import { SESSION_MEMORY_DEFAULTS, isDurableCoordination } from '@zana-ai/zcc-domain/product';
 import { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 import { harnessFamilyOf, isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
@@ -57,6 +57,26 @@ function ensureNodePtySpawnHelperExecutable(): void {
   if (packageRoot.includes(`${sep}app.asar${sep}`)) return;
   const helper = join(packageRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper');
   if (existsSync(helper)) chmodSync(helper, 0o755);
+}
+
+/** Opt-in debug capture (ZCC_DEBUG_YOLO_CAPTURE) has no expiry — bound it here so a long-lived dev box doesn't accumulate `.jsonl` files forever. */
+const DIAGNOSTIC_CAPTURE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function sweepStaleDiagnosticCaptures(dir: string): void {
+  try {
+    const now = Date.now();
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.jsonl')) continue;
+      const path = join(dir, name);
+      try {
+        if (now - statSync(path).mtimeMs > DIAGNOSTIC_CAPTURE_MAX_AGE_MS) unlinkSync(path);
+      } catch {
+        /* best-effort per-file */
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
 }
 
 interface Live {
@@ -942,7 +962,7 @@ export class PtyManager extends EventEmitter {
       ? {
           stop: `${providerHookBase}/stop/${opts.projectId}/${sessionId}`,
           notify: `${providerHookBase}/notify/${opts.projectId}/${sessionId}`,
-          firstPrompt: opts.scheduled || opts.coordinationMode === 'job-team' || opts.coordinationMode === 'structured' || opts.coordinationMode === 'freeform'
+          firstPrompt: opts.scheduled || isDurableCoordination(opts.coordinationMode)
             ? undefined
             : `${providerHookBase}/firstprompt/${opts.projectId}/${sessionId}`,
           subagent: `${providerHookBase}/subagent/${opts.projectId}/${sessionId}`
@@ -1004,7 +1024,7 @@ export class PtyManager extends EventEmitter {
       callbacks: lifecycleBase ? {
         stop: `${lifecycleBase}/stop/${opts.projectId}/${sessionId}`,
         notify: `${lifecycleBase}/notify/${opts.projectId}/${sessionId}`,
-        firstPrompt: opts.scheduled || opts.coordinationMode === 'job-team' || opts.coordinationMode === 'structured' || opts.coordinationMode === 'freeform'
+        firstPrompt: opts.scheduled || isDurableCoordination(opts.coordinationMode)
           ? undefined
           : `${lifecycleBase}/firstprompt/${opts.projectId}/${sessionId}`,
         subagent: `${lifecycleBase}/subagent/${opts.projectId}/${sessionId}`,
@@ -1038,7 +1058,7 @@ export class PtyManager extends EventEmitter {
       'mcp__zcc-inbox__list_agents',
       'mcp__zcc-inbox__find_agent',
       'mcp__zcc-inbox__agent_inbox',
-      ...(opts.autonomous || opts.coordinationMode === 'job-team' || opts.coordinationMode === 'structured' || opts.coordinationMode === 'freeform' ? ['mcp__zcc-inbox__agent_send'] : [])
+      ...(opts.autonomous || isDurableCoordination(opts.coordinationMode) ? ['mcp__zcc-inbox__agent_send'] : [])
     ];
     // Agent-data tools — follow-ups, library, and goals. Same host-confined trust
     // model as `inbox_push`: the `projectId`/`sessionId` they operate on is closed
@@ -1201,7 +1221,7 @@ export class PtyManager extends EventEmitter {
     // Job Team's MCP allowlist and AskUserQuestion denial use Claude-only argv
     // flags. Passing them to another harness makes its CLI reject the launch
     // before it can consume the already-bound kickoff prompt.
-    const claudeJobTeamPolicy = (opts.coordinationMode === 'job-team' || opts.coordinationMode === 'structured' || opts.coordinationMode === 'freeform') && caps.injectsClaudeMcpConfig;
+    const claudeJobTeamPolicy = (isDurableCoordination(opts.coordinationMode)) && caps.injectsClaudeMcpConfig;
     const jobTeamAllow = claudeJobTeamPolicy
       ? [
           'mcp__zcc-inbox__execution.snapshot',
@@ -1433,8 +1453,8 @@ export class PtyManager extends EventEmitter {
       try {
         const dir = process.env.ZCC_DEBUG_YOLO_CAPTURE;
         mkdirSync(dir, { recursive: true });
+        sweepStaleDiagnosticCaptures(dir);
         const file = join(dir, `${sessionId}.jsonl`);
-        this.diagnosticFiles.set(sessionId, file);
         writeFileSync(file, `${JSON.stringify({
           event: 'spawn',
           at: Date.now(),
@@ -1451,6 +1471,7 @@ export class PtyManager extends EventEmitter {
             OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT
           }
         })}\n`, { mode: 0o600 });
+        this.diagnosticFiles.set(sessionId, file);
       } catch {
         this.diagnosticFiles.delete(sessionId);
       }

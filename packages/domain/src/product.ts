@@ -1223,6 +1223,11 @@ export interface SessionCohort {
 export type TeamCoordinationMode = 'interactive-team' | 'autonomous-team' | 'job-team' | 'structured' | 'freeform';
 export type LaunchOrigin = 'explicit' | 'scheduled' | 'goal';
 
+/** A durable Team coordination mode carries a persisted work-unit plan, unlike an interactive/autonomous chat. */
+export function isDurableCoordination(mode: TeamCoordinationMode | undefined): boolean {
+  return mode === 'job-team' || mode === 'structured' || mode === 'freeform';
+}
+
 /**
  * Canonical name for a PTY-spawned coding agent. Same shape as
  * {@link TerminalSession}; Threads use a separate domain type and must not

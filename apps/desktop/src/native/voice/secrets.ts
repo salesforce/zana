@@ -15,6 +15,18 @@ function ensureDir(): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
+/**
+ * `safeStorage.isEncryptionAvailable()`/`encryptString`/`decryptString` touch
+ * the real OS Keychain on macOS (creating/reading the app's "Safe Storage" item),
+ * which pops an interactive system consent prompt on first access. A headless
+ * E2E runner (`ZCC_E2E_HOME` set — see `resume-token-store.ts`'s `insecure`
+ * flag for the twin fix) has no one to click "Allow", so treat encryption as
+ * unavailable there and fall through to the env-var fallback instead.
+ */
+function encryptionAvailable(): boolean {
+  return !process.env.ZCC_E2E_HOME && safeStorage.isEncryptionAvailable();
+}
+
 interface SecretsBlob {
   openai?: string;
   gemini?: string;
@@ -40,7 +52,7 @@ function writeSecretsBlob(blob: SecretsBlob): void {
 }
 
 export function setOpenAiKey(key: string): void {
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!encryptionAvailable()) {
     throw new Error('Encryption unavailable — safeStorage not ready');
   }
   const encrypted = safeStorage.encryptString(key);
@@ -50,7 +62,7 @@ export function setOpenAiKey(key: string): void {
 }
 
 export function getOpenAiKey(): string | null {
-  if (safeStorage.isEncryptionAvailable()) {
+  if (encryptionAvailable()) {
     try {
       const blob = readSecretsBlob();
       if (blob.openai) {
@@ -71,7 +83,7 @@ export function hasOpenAiKey(): boolean {
 }
 
 export function setGeminiKey(key: string): void {
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!encryptionAvailable()) {
     throw new Error('Encryption unavailable — safeStorage not ready');
   }
   const encrypted = safeStorage.encryptString(key);
@@ -81,7 +93,7 @@ export function setGeminiKey(key: string): void {
 }
 
 export function getGeminiKey(): string | null {
-  if (safeStorage.isEncryptionAvailable()) {
+  if (encryptionAvailable()) {
     try {
       const blob = readSecretsBlob();
       if (blob.gemini) {

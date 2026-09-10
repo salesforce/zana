@@ -1665,7 +1665,7 @@ async function nameTeamExecution(launchId: string, objective: string, explicitTi
     run: (entry, vars, dedupeKey) => llmService.run(entry, vars, dedupeKey),
     onError: (err) => logMainError('team-run-namer', err)
   });
-  return title.slice(0, 240);
+  return title.slice(0, 256);
 }
 /**
  * Host-resolved resume coordinates for an inbox entry (Rule 1) — the shared
@@ -3962,7 +3962,15 @@ function jobCoordinatorPrompt(input: {
  */
 export async function goalExecutionSourcePaths(goal: string, home: string): Promise<ExecutionSourcePathDescriptor[]> {
   const paths = new Map<string, ExecutionSourcePathDescriptor>();
-  const realHome = await realpath(home);
+  let realHome: string;
+  try {
+    realHome = await realpath(home);
+  } catch {
+    // `home` is a remote/nonexistent local path (e.g. a remote project root) —
+    // goal-embedded source-path discovery is a local-filesystem nicety, so skip
+    // it rather than failing the whole Team launch.
+    return [];
+  }
   const sensitiveRoots = [join(realHome, '.ssh'), join(realHome, '.aws'), join(realHome, '.zcc')];
   const matches = goal.match(/(?:^|[\s`'"(])(\/[^\s`'"),;:]+)/g) ?? [];
   for (const match of matches) {
@@ -4813,7 +4821,7 @@ export async function startTeamJobFromUi(
   }
   const capturedPathDescriptors = [...(sourceBundle?.pathDescriptors ?? []), ...goalSourceDescriptors];
   const sanitizedGoal = (redactCapturedExecutionSourcePaths(originalGoal, capturedPathDescriptors) ?? originalGoal).slice(0, 4_000);
-  const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(originalJobTitle, capturedPathDescriptors)?.slice(0, 240) || undefined;
+  const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(originalJobTitle, capturedPathDescriptors)?.slice(0, 256) || undefined;
   const sanitizedSummary = redactCapturedExecutionSourcePaths(originalSummary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
   const sourceMetadata = sourceBundle?.sources.map(({ extractedText: _content, ...metadata }) => metadata);
   const sanitizedJobTitle = await nameTeamExecution(launchRequestId, sanitizedGoal, sanitizedExplicitTitle);

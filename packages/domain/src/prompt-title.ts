@@ -11,6 +11,10 @@ export function titleFromPrompt(prompt: string): string {
 
 /** Bounded objective fallback that never exposes local absolute/relative paths. */
 export function titleFromObjective(objective: string): string {
-  const pathFree = objective.replace(/(^|\s)(?:~\/|\.{1,2}\/|\/|[a-zA-Z]:[\\/])\S+/g, '$1');
+  // Boundary excludes ':' and '/' so a URL scheme ("https://…") is never
+  // mistaken for a local path — the second '/' of "//" would otherwise look
+  // like a fresh boundary — while still catching a path right after
+  // punctuation/quotes ("Fix (/home/alice/file)", '"C:\Users\alice\secret"').
+  const pathFree = objective.replace(/(^|[^\w:/])(?:~\/|\.{1,2}\/|\/|[a-zA-Z]:[\\/])\S+/g, '$1');
   return titleFromPrompt(pathFree);
 }

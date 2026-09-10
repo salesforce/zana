@@ -528,7 +528,8 @@ describe('SquadExecutionService', () => {
     const getTeamLaunch = vi.fn(async () => ({
       workers: [
         { slotId: 'worker-1', sessionId: 'worker-1', projectId: 'project-1', task: 'unknown', process: 'exited', exitCode: 1, exitReason: 'OpenCode exited 1: unsupported flag.' },
-        { slotId: 'worker-2', sessionId: 'worker-2', projectId: 'project-1', task: 'unknown', process: 'exited', exitCode: 64 }
+        { slotId: 'worker-2', sessionId: 'worker-2', projectId: 'project-1', task: 'unknown', process: 'exited', exitCode: 64 },
+        { slotId: 'worker-3', sessionId: 'worker-3', projectId: 'project-1', task: 'unknown', process: 'exited', exitCode: 0, exitSignal: 9 }
       ]
     }));
     const service = new SquadExecutionService(deps(filePath, { getTeamLaunch }));
@@ -540,6 +541,9 @@ describe('SquadExecutionService', () => {
     expect(summary).toContain('All Team slots exited without completion —');
     expect(summary).toContain('worker-1: OpenCode exited 1: unsupported flag.');
     expect(summary).toContain('worker-2: exited code 64');
+    // A signal-killed worker with no exitReason and exitCode 0 must still
+    // surface its signal, not fall through to a blank (filtered-out) detail.
+    expect(summary).toContain('worker-3: exited code 0, signal 9');
   }));
 
   it('retries timeout cancellation when cancellation returns failure or throws', async () => fixture(async (filePath) => {

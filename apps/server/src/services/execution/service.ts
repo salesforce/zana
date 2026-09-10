@@ -1,4 +1,4 @@
-import type { ExecutionSourceSnapshot, SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
+import { isDurableCoordination, type ExecutionSourceSnapshot, type SquadBundleWorkflowMetadataV1, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { launchDigest } from '../launch/digest.js';
 import { EXECUTION_RETENTION_MS, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
@@ -1326,9 +1326,11 @@ export class ExecutionService {
           if (typeof worker.exitReason === 'string' && worker.exitReason.length > 0) {
             return `${slotId}: ${worker.exitReason}`;
           }
-          if (typeof worker.exitCode === 'number' && worker.exitCode !== 0) {
-            const sig = typeof worker.exitSignal === 'number' && worker.exitSignal > 0 ? `, signal ${worker.exitSignal}` : '';
-            return `${slotId}: exited code ${worker.exitCode}${sig}`;
+          const hasSignal = typeof worker.exitSignal === 'number' && worker.exitSignal > 0;
+          if ((typeof worker.exitCode === 'number' && worker.exitCode !== 0) || hasSignal) {
+            const sig = hasSignal ? `, signal ${worker.exitSignal}` : '';
+            const code = typeof worker.exitCode === 'number' ? worker.exitCode : 'unknown';
+            return `${slotId}: exited code ${code}${sig}`;
           }
           return '';
         })
@@ -1499,9 +1501,6 @@ function hasUniqueModelSlots(models: readonly ResolvedModelSnapshotV1[]): boolea
   return true;
 }
 
-function isDurableCoordination(mode: ExecutionRequestV1['coordinationMode']): boolean {
-  return mode === 'job-team' || mode === 'structured' || mode === 'freeform';
-}
 
 function deniedBound(message: string) {
   return { ok: false as const, code: 'DENIED', message };

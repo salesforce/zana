@@ -8,6 +8,7 @@ import {
   readRawFile
 } from '../harness-routing/storage.js';
 import type { WorkflowPolicyResultV1 } from './policy-result.js';
+import { isDurableCoordination } from '@zana-ai/zcc-domain/product';
 import type { ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
@@ -1399,9 +1400,6 @@ function normalizeRequest(input: ExecutionRequestSnapshotV1): ExecutionRequestSn
   return { ...clone(input), launchKind: input.launchKind ?? 'team' };
 }
 
-function isDurableCoordination(mode: ExecutionRecord['coordinationMode']): boolean {
-  return mode === 'job-team' || mode === 'structured' || mode === 'freeform';
-}
 
 function sameLaunchDisplay(left: ExecutionLaunchDisplayV1, right: ExecutionLaunchDisplayV1 | undefined): boolean {
   return left.label === right?.label;

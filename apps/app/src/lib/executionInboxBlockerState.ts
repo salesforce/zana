@@ -31,14 +31,23 @@ export function useExecutionInboxBlockerState(
       return;
     }
     let cancelled = false;
+    let timer: number | undefined;
     const refresh = () => {
       void window.cc.executionBoard.snapshot(entry.projectId, entry.executionId!).then(
-        (snapshot) => { if (!cancelled) setExecution(snapshot?.execution); },
+        (snapshot) => {
+          if (cancelled) return;
+          setExecution(snapshot?.execution);
+          // The blocker is terminal once resolved — stop polling rather than
+          // hammering the snapshot endpoint for the rest of the mount's life.
+          if (executionInboxBlockerState(entry, snapshot?.execution, locallyAnswered) === 'resolved') {
+            window.clearInterval(timer);
+          }
+        },
         () => { /* retain last authoritative state across transient failures */ }
       );
     };
     refresh();
-    const timer = window.setInterval(refresh, REFRESH_MS);
+    timer = window.setInterval(refresh, REFRESH_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
