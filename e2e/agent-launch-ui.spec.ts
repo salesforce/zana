@@ -271,8 +271,9 @@ for (const row of CLI_CASES) {
 
       const instruction = modal.getByTestId('legacy-agent-command-input');
       await instruction.click();
-      await instruction.fill('run the smoke check and report');
-      await expect(instruction).toContainText('run the smoke check and report');
+      await instruction.fill('read /Users/test/project/zcc-smoke-check.md and report');
+      await expect(instruction).toContainText('read /Users/test/project/zcc-smoke-check.md and report');
+      await expect(modal.getByTestId('composer-typeahead-menu')).toHaveCount(0);
 
       const targetProject = modal.getByRole('button', { name: 'Project' });
       await targetProject.click();

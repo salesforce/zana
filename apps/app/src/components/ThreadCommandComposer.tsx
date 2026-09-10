@@ -444,7 +444,8 @@ export function ThreadCommandComposer({
   }, [hostAction, hostBusy, hosts, runPeerDaemon]);
 
   const submit = useCallback(async (opts?: { modifierEnter?: boolean }) => {
-    if (busy || sendBlocked || hostSendBlocked || followUpSubmitBlocked || field.typeaheadOpen) return;
+    if (busy || sendBlocked || hostSendBlocked || followUpSubmitBlocked) return;
+    if (field.typeaheadOpen && field.suggestions.length > 0) return;
     const serialized = field.serialize();
     if (!serialized.text.trim() && field.images.length === 0) {
       setError('Enter a message first');
