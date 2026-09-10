@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -235,5 +236,37 @@ describe('startStaticHost', () => {
     socket.close();
     product.hostHub.close();
     product.db.close();
+  });
+
+  it('binds a preferred port and falls back to ephemeral when that port is taken', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+
+    const blocker = createServer();
+    const occupied = await new Promise<number>((resolve, reject) => {
+      blocker.once('error', reject);
+      blocker.listen(0, '127.0.0.1', () => {
+        const addr = blocker.address();
+        if (!addr || typeof addr === 'string') {
+          reject(new Error('blocker did not bind'));
+          return;
+        }
+        resolve(addr.port);
+      });
+    });
+
+    host = await startStaticHost({ rootDir: root, port: occupied });
+    const bound = Number(new URL(host.url).port);
+    expect(bound).not.toBe(occupied);
+    expect(bound).toBeGreaterThan(0);
+    await expect(fetch(`${host.url}_zcc/health`).then((r) => r.json())).resolves.toEqual({ ok: true });
+    await host.close();
+    host = null;
+    await new Promise<void>((resolve, reject) => {
+      blocker.close((err) => (err ? reject(err) : resolve()));
+    });
+
+    host = await startStaticHost({ rootDir: root, port: occupied });
+    expect(Number(new URL(host.url).port)).toBe(occupied);
   });
 });

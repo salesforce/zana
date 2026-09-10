@@ -39,6 +39,27 @@ function parsePublicOrigin(raw: string | undefined): string | undefined {
   }
 }
 
+/**
+ * Docker Desktop's gateway hostname. Valid as a Host header from a container
+ * on this Mac, never as a join origin for a real SSH remote.
+ */
+export function isDockerDesktopGatewayHost(hostHeader: string | undefined): boolean {
+  const host = (hostHeader?.trim().split(':')[0] ?? '').toLowerCase();
+  return host === 'host.docker.internal';
+}
+
+/** Skip leftover `host.docker.internal` Settings/env so bake/repo can win. */
+function parseJoinPublicOrigin(raw: string | undefined): string | undefined {
+  const origin = parsePublicOrigin(raw);
+  if (!origin) return undefined;
+  try {
+    if (isDockerDesktopGatewayHost(new URL(origin).hostname)) return undefined;
+  } catch {
+    return undefined;
+  }
+  return origin;
+}
+
 function compileTimeAppUrl(): string | undefined {
   return typeof __ZCC_BUNDLED_APP_URL__ === 'string' ? __ZCC_BUNDLED_APP_URL__ : undefined;
 }
@@ -61,10 +82,10 @@ export function resolvePublicAppUrl(input?: {
   const bundled = input && 'bundledUrl' in input
     ? input.bundledUrl ?? undefined
     : compileTimeAppUrl();
-  return parsePublicOrigin(env.ZCC_APP_URL)
-    ?? parsePublicOrigin(bundled)
-    ?? parsePublicOrigin(input?.configUrl ?? undefined)
-    ?? parsePublicOrigin(readPublicAppUrlFile(input?.cwd));
+  return parseJoinPublicOrigin(env.ZCC_APP_URL)
+    ?? parseJoinPublicOrigin(bundled)
+    ?? parseJoinPublicOrigin(input?.configUrl ?? undefined)
+    ?? parseJoinPublicOrigin(readPublicAppUrlFile(input?.cwd));
 }
 
 /** Renderer-facing config: resolved public origin; never the relay token. */
@@ -96,11 +117,6 @@ export function publicOriginHost(publicAppUrl: string | undefined): string | und
  * (Tailscale Serve / Heroku). DNS-rebinding Host headers that match none of
  * those are refused.
  */
-function isDockerDesktopGatewayHost(hostHeader: string | undefined): boolean {
-  const host = (hostHeader?.trim().split(':')[0] ?? '').toLowerCase();
-  return host === 'host.docker.internal';
-}
-
 export function isAllowedHostInternalHost(
   hostHeader: string | undefined,
   publicAppUrl?: string

@@ -10,7 +10,7 @@ import { sshPairingCommand } from '@zana-ai/zcc-domain/machine-pairing';
 import { isLoopbackHttpHost } from '../../browser-bootstrap.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { HostUnavailableError } from '../../http/host-hub.js';
-import { resolvePublicAppUrl } from '../../http/public-app-url.js';
+import { isDockerDesktopGatewayHost, resolvePublicAppUrl } from '../../http/public-app-url.js';
 import { isRelaySessionId, pairingSessionServerUrl, relayJoinWindowOpen } from '../../http/pairing-session-url.js';
 import { serverPortFromEnv } from '../../http/ports.js';
 import { resolveHostArtifact } from './host-artifact.js';
@@ -38,6 +38,9 @@ export const PAIRING_DOOR_ERROR =
 
 export const DAEMON_UNRESPONSIVE_ERROR =
   'The host daemon started but never connected back. Retry, or copy the SSH command.';
+
+export const DOCKER_JOIN_ORIGIN_ERROR =
+  'A Docker Desktop address cannot enroll another computer. Set a public app URL, or copy the SSH command.';
 
 type HostBootstrapListener = (event: HostBootstrapEvent) => void;
 
@@ -154,11 +157,24 @@ export function sshRemoteFromProject(project: ProjectRecord): ProjectRemote | nu
   return parsed;
 }
 
+function isDockerJoinOrigin(raw: string | undefined): boolean {
+  if (!raw?.trim()) return false;
+  try {
+    return isDockerDesktopGatewayHost(new URL(raw.trim()).hostname);
+  } catch {
+    return false;
+  }
+}
+
 export async function requirePublicAppUrl(ctx: ProductHttpContext): Promise<string> {
+  const configUrl = ctx.config.getConfig().publicAppUrl;
   const url = resolvePublicAppUrl({
-    configUrl: ctx.config.getConfig().publicAppUrl
+    configUrl
   });
   if (!url) {
+    if (isDockerJoinOrigin(configUrl)) {
+      throw new HostBootstrapError('join_origin_invalid', DOCKER_JOIN_ORIGIN_ERROR);
+    }
     throw new HostBootstrapError(
       'public_url_required',
       'Set a public app URL before installing a remote host daemon.'
@@ -169,6 +185,9 @@ export async function requirePublicAppUrl(ctx: ProductHttpContext): Promise<stri
     hostname = new URL(url).hostname;
   } catch {
     throw new HostBootstrapError('public_url_required', 'Public app URL is invalid.');
+  }
+  if (isDockerDesktopGatewayHost(hostname)) {
+    throw new HostBootstrapError('join_origin_invalid', DOCKER_JOIN_ORIGIN_ERROR);
   }
   if (isLoopbackHttpHost(hostname)) {
     throw new HostBootstrapError(
@@ -237,7 +256,12 @@ export function attachSshFallbackPairingCommand(
   remote: ProjectRemote | null,
   hostId?: string
 ): HostBootstrapError {
-  if (error.code !== 'join_expired' && error.code !== 'relay_offline' && error.code !== 'daemon_unresponsive') {
+  if (
+    error.code !== 'join_expired'
+    && error.code !== 'relay_offline'
+    && error.code !== 'daemon_unresponsive'
+    && error.code !== 'join_origin_invalid'
+  ) {
     return error;
   }
   if (error.pairingCommand && error.code !== 'daemon_unresponsive') return error;
@@ -292,6 +316,34 @@ function executionPath(remote: ProjectRemote, homeDir: string | null): string {
 function emitLogLines(emit: HostBootstrapListener, text: string): void {
   for (const line of installFailureLogLines(text)) {
     emit({ type: 'log', text: line });
+  }
+}
+
+async function dumpPeerDaemonLogs(
+  ctx: ProductHttpContext,
+  remote: ProjectRemote,
+  serverUrl: string,
+  emit: HostBootstrapListener
+): Promise<void> {
+  try {
+    const primary = getPrimaryHost(ctx.db);
+    if (!primary) return;
+    ctx.hostHub.ensureHostSessionReady(primary.id);
+    const dumped = await ctx.hostHub.callHostOnlineRpc<{ log: string }>({
+      hostId: primary.id,
+      command: {
+        type: 'peer_daemon.logs',
+        remote: {
+          host: remote.host,
+          ...(remote.user ? { user: remote.user } : {}),
+          ...(remote.proxyJump ? { proxyJump: remote.proxyJump } : {})
+        },
+        serverHost: new URL(serverUrl).hostname
+      }
+    });
+    if (dumped.log.trim()) emitLogLines(emit, dumped.log.trim());
+  } catch {
+    /* Best-effort: a missing primary or old daemon must not hide the wait error. */
   }
 }
 
@@ -358,10 +410,15 @@ async function installPeer(
       }
     });
     if (result.log.trim()) emitLogLines(input.emit, result.log.trim());
-    await waitForPeerConnect(
-      (timeoutMs) => ctx.hostHub.waitUntilConnected(input.hostId, timeoutMs),
-      input.emit
-    );
+    try {
+      await waitForPeerConnect(
+        (timeoutMs) => ctx.hostHub.waitUntilConnected(input.hostId, timeoutMs),
+        input.emit
+      );
+    } catch (error) {
+      await dumpPeerDaemonLogs(ctx, input.remote, input.serverUrl, input.emit);
+      throw error;
+    }
   } catch (error) {
     const raw = error instanceof Error ? error.message : String(error);
     emitLogLines(input.emit, raw);
@@ -529,10 +586,15 @@ export async function repairHost(
           }
         });
         if (restarted.log.trim()) emitLogLines(emit, restarted.log.trim());
-        await waitForPeerConnect(
-          (timeoutMs) => ctx.hostHub.waitUntilConnected(hostId, timeoutMs),
-          emit
-        );
+        try {
+          await waitForPeerConnect(
+            (timeoutMs) => ctx.hostHub.waitUntilConnected(hostId, timeoutMs),
+            emit
+          );
+        } catch (error) {
+          await dumpPeerDaemonLogs(ctx, remote, serverUrl, emit);
+          throw error;
+        }
         emit({ type: 'done', hostId });
         return events;
       } catch {

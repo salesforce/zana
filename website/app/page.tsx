@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   openGraph: { url: '/', type: 'website', images: ['/opengraph-image'] }
 };
 
-const HARNESSES = ['Claude Code', 'Cursor', 'OpenCode', 'Codex', 'Pi', 'Shell'];
+const HARNESSES = ['Claude Code', 'Cursor', 'OpenCode', 'Codex', 'Pi', 'Grok Build'];
 
 const JSON_LD = {
   '@context': 'https://schema.org',

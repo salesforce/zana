@@ -3,6 +3,7 @@ import {
   HOST_RPC_PROTOCOL_VERSION,
   HostEventBatchMessageSchema,
   HostHelloMessageSchema,
+  HostHelloOkMessageSchema,
   type HostEventEnvelope
 } from '@zana-ai/zcc-contracts/host-rpc';
 import { createEventSink, type EventSink } from './event-sink.js';
@@ -27,7 +28,7 @@ const HEARTBEAT_MS = 15_000;
 export interface EnrolledHostConnection {
   runtime: CommandRuntime;
   sink: EventSink;
-  /** Resolves after the host websocket opens and `host.hello` is sent. */
+  /** Resolves after the laptop accepts `host.hello` (`host.hello-ok`). */
   ready: Promise<void>;
   close(): Promise<void>;
 }
@@ -196,13 +197,19 @@ export function startEnrolledHostConnection(options: {
         }
       }, HEARTBEAT_MS);
       void sink.flush();
-      markReady();
     });
     next.addEventListener('message', (event) => {
       let parsed: unknown;
       try {
         parsed = JSON.parse(String(event.data));
       } catch {
+        return;
+      }
+      if (parsed && typeof parsed === 'object' && (parsed as { type?: string }).type === 'host.hello-ok') {
+        const ack = HostHelloOkMessageSchema.safeParse(parsed);
+        if (ack.success && ack.data.hostId === options.hostId) {
+          markReady();
+        }
         return;
       }
       if (!parsed || typeof parsed !== 'object' || (parsed as { type?: string }).type !== 'host-rpc.request') {

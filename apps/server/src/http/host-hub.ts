@@ -6,6 +6,7 @@ import {
   HostEventAckMessageSchema,
   HostEventBatchMessageSchema,
   HostHelloMessageSchema,
+  HostHelloOkMessageSchema,
   HostRpcCommandSchema,
   HostRpcRequestMessageSchema,
   HostRpcResponseMessageSchema,
@@ -485,6 +486,13 @@ export function createHostHub(
     if (!hello.success) return false;
     if (hello.data.hostId !== hostId) return false;
     attach(socket, hostId, hello.data.instanceId);
+    if (socket.readyState === socket.OPEN) {
+      socket.send(JSON.stringify(HostHelloOkMessageSchema.parse({
+        type: 'host.hello-ok',
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostId
+      })));
+    }
     return true;
   }
 

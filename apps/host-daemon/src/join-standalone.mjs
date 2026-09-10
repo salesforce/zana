@@ -10,7 +10,7 @@ import { homedir, hostname } from 'node:os';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const PROTOCOL_VERSION = 23;
+const PROTOCOL_VERSION = 24;
 
 function joinServerUrl(serverUrl, path) {
   const base = serverUrl.endsWith('/') ? serverUrl : `${serverUrl}/`;
@@ -147,7 +147,14 @@ function connectWs(options, auth, onOpen) {
           next.send(JSON.stringify({ type: 'heartbeat' }));
         }
       }, 15_000);
-      onOpen();
+    });
+    next.addEventListener('message', (event) => {
+      try {
+        const payload = JSON.parse(String(event.data));
+        if (payload?.type === 'host.hello-ok' && payload.hostId === auth.hostId) onOpen();
+      } catch {
+        /* ignore non-JSON frames */
+      }
     });
     next.addEventListener('close', () => {
       if (heartbeat) {

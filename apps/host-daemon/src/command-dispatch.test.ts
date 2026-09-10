@@ -907,6 +907,25 @@ describe('host command dispatch', () => {
       serverHost: 'box.tailnet.ts.net'
     })).resolves.toEqual({ state: 'connected' });
   });
+
+  it('dispatches peer_daemon.logs through injectable SSH', async () => {
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      peerSsh: {
+        async run() {
+          return { code: 0, stdout: '--- host-daemon.log ---\njoined\n', stderr: '' };
+        },
+        async pipeFile() {
+          return { code: 0, stdout: '', stderr: '' };
+        }
+      }
+    });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'peer_daemon.logs',
+      remote: { host: 'devbox' },
+      serverHost: 'box.tailnet.ts.net'
+    })).resolves.toEqual({ log: '--- host-daemon.log ---\njoined' });
+  });
 });
 
 function git(cwd: string, args: string[]): void {

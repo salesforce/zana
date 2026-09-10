@@ -49,8 +49,10 @@ import { HOST_ARTIFACT_MAX_BYTES } from '@zana-ai/zcc-host-daemon-contract';
  * answer unknown_command; listing falls back to provider.status).
  * 23: thread.start / turn.submit input is PromptInput[] so command mentions
  * and attachments survive the host hop (BB-aligned).
+ * 24: host.hello-ok after acceptHello so /status connected means HostHub
+ * attached; peer_daemon.logs tails the remote join log after a silent wait.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 23;
+export const HOST_RPC_PROTOCOL_VERSION = 24;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -120,7 +122,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'host.global_skills_status',
   'peer_daemon.status',
   'peer_daemon.restart',
-  'peer_daemon.install'
+  'peer_daemon.install',
+  'peer_daemon.logs'
 ]);
 export type HostRpcCommandType = z.infer<typeof HostRpcCommandTypeSchema>;
 
@@ -722,6 +725,13 @@ export const PeerDaemonInstallCommandSchema = z.object({
 }).strict();
 export type PeerDaemonInstallCommand = z.infer<typeof PeerDaemonInstallCommandSchema>;
 
+export const PeerDaemonLogsCommandSchema = z.object({
+  type: z.literal('peer_daemon.logs'),
+  remote: PeerDaemonRemoteSchema,
+  serverHost: z.string().min(1).max(256)
+}).strict();
+export type PeerDaemonLogsCommand = z.infer<typeof PeerDaemonLogsCommandSchema>;
+
 export const HostRpcCommandSchema = z.union([
   ProviderStatusCommandSchema,
   ProviderAgentDescriptorsCommandSchema,
@@ -783,7 +793,8 @@ export const HostRpcCommandSchema = z.union([
   HostGlobalSkillsStatusCommandSchema,
   PeerDaemonStatusCommandSchema,
   PeerDaemonRestartCommandSchema,
-  PeerDaemonInstallCommandSchema
+  PeerDaemonInstallCommandSchema,
+  PeerDaemonLogsCommandSchema
 ]);
 export type HostRpcCommand = z.infer<typeof HostRpcCommandSchema>;
 
@@ -1194,6 +1205,11 @@ export const PeerDaemonInstallResultSchema = z.object({
 }).strict();
 export type PeerDaemonInstallResult = z.infer<typeof PeerDaemonInstallResultSchema>;
 
+export const PeerDaemonLogsResultSchema = z.object({
+  log: z.string()
+}).strict();
+export type PeerDaemonLogsResult = z.infer<typeof PeerDaemonLogsResultSchema>;
+
 export type {
   ProviderCliInstallActionKind,
   ProviderCliInstallEvent,
@@ -1263,7 +1279,8 @@ export const HostRpcResultSchemaByType = {
   'host.global_skills_status': HostGlobalSkillsStatusResultSchema,
   'peer_daemon.status': PeerDaemonStatusResultSchema,
   'peer_daemon.restart': PeerDaemonRestartResultSchema,
-  'peer_daemon.install': PeerDaemonInstallResultSchema
+  'peer_daemon.install': PeerDaemonInstallResultSchema,
+  'peer_daemon.logs': PeerDaemonLogsResultSchema
 } as const;
 
 export const HostRpcErrorSchema = z.object({
@@ -1295,6 +1312,13 @@ export const HostHelloMessageSchema = z.object({
   instanceId: UuidSchema
 }).strict();
 export type HostHelloMessage = z.infer<typeof HostHelloMessageSchema>;
+
+export const HostHelloOkMessageSchema = z.object({
+  type: z.literal('host.hello-ok'),
+  protocolVersion: ProtocolVersionSchema,
+  hostId: UuidSchema
+}).strict();
+export type HostHelloOkMessage = z.infer<typeof HostHelloOkMessageSchema>;
 
 export const HostRpcRequestMessageSchema = z.object({
   type: z.literal('host-rpc.request'),
@@ -1379,7 +1403,8 @@ export type HostDaemonWsInbound = z.infer<typeof HostDaemonWsInboundSchema>;
 
 export const HostDaemonWsOutboundSchema = z.discriminatedUnion('type', [
   HostRpcRequestMessageSchema,
-  HostEventAckMessageSchema
+  HostEventAckMessageSchema,
+  HostHelloOkMessageSchema
 ]);
 export type HostDaemonWsOutbound = z.infer<typeof HostDaemonWsOutboundSchema>;
 

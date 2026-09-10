@@ -6,6 +6,7 @@ import {
   HostEnrollRequestSchema,
   HostEnrollResponseSchema,
   HostEventBatchMessageSchema,
+  HostHelloOkMessageSchema,
   HostRpcCommandSchema,
   HostRpcRequestMessageSchema,
   HostRpcResponseMessageSchema,
@@ -29,6 +30,15 @@ describe('host-rpc contract', () => {
       hostId,
       hostKey: 'k'.repeat(32)
     })).toMatchObject({ hostId });
+    expect(HostHelloOkMessageSchema.parse({
+      type: 'host.hello-ok',
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      hostId
+    })).toEqual({
+      type: 'host.hello-ok',
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      hostId
+    });
   });
 
   it('rejects an incompatible protocol version before dispatch', () => {
@@ -576,6 +586,14 @@ describe('host-rpc contract', () => {
     expect(parseHostRpcResult('peer_daemon.install', { ok: true, log: 'installed' })).toEqual({
       ok: true,
       log: 'installed'
+    });
+    expect(HostRpcCommandSchema.parse({
+      type: 'peer_daemon.logs',
+      remote: { host: 'devbox' },
+      serverHost: 'box.tailnet.ts.net'
+    }).type).toBe('peer_daemon.logs');
+    expect(parseHostRpcResult('peer_daemon.logs', { log: '--- host-daemon.log ---\njoined' })).toEqual({
+      log: '--- host-daemon.log ---\njoined'
     });
   });
 

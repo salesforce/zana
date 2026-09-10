@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { utilityProcess } from 'electron';
 import { join } from 'node:path';
 import { startStaticHost, type StaticHost } from '@zana-ai/zcc-server/static-host';
+import { serverPortFromEnv } from '@zana-ai/zcc-server/http/ports';
 import { startHostDaemon, type HostDaemon } from '@zana-ai/zcc-host-daemon';
 import { createLocalPtyTerminalManager } from '@zana-ai/zcc-host-daemon';
 import { readEnrollToken } from '@zana-ai/zcc-host-daemon/enroll-runtime';
@@ -158,7 +159,10 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     hostConnectionRenewal = setInterval(() => {
       void terminalSessions?.refreshHostConnection().catch(() => {});
     }, 10_000);
-    renderer = await startStaticHost({ rootDir: options.rendererRoot });
+    renderer = await startStaticHost({
+      rootDir: options.rendererRoot,
+      port: serverPortFromEnv()
+    });
   } catch (error) {
     if (hostConnectionRenewal) clearInterval(hostConnectionRenewal);
     await host.close();
