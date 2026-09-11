@@ -102,8 +102,8 @@ an inbox entry.
 - Open the entry, read the context, and **reply right there**.
 - Your answer routes straight back to the waiting agent, as if you'd typed it
   at that session's prompt.
-- An **AI Summary** card digests recent activity so a busy inbox stays
-  readable.
+- An **AI Summary** on the Inbox landing digests recent activity. Generate it
+  from the card; it also refreshes on a throttle while that landing is open.
 
 This is the core loop: **make the wishes, the work gets done.** You stay the
 executive — spawning work, answering the few things that need a human, and

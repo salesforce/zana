@@ -1,10 +1,10 @@
-import { Unplug } from 'lucide-react';
 import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useData, useAgentStatus } from '../../store.js';
 import { agentSessionAnchorId } from '../../lib/split-layout/agentSessionPortal.js';
 import { AgentSessionView } from '../../components/AgentSessionView.js';
 import { AgentSessionActions } from '../../components/AgentSessionActions.js';
+import { PaneEmptyState } from '../../components/PaneEmptyState.js';
 
 function findSessionById(
   terminals: Record<string, TerminalSession[]>,
@@ -49,24 +49,12 @@ export function AgentSessionPage({
 
   if (!session || !resolvedProjectId) {
     return (
-      <div className="agent-session-missing" data-testid="agent-session-missing">
-        <div className="agent-session-missing-art" aria-hidden="true">
-          <div className="agent-session-missing-term">
-            <div className="agent-session-missing-term-bar">
-              <span /><span /><span />
-            </div>
-            <div className="agent-session-missing-term-body">
-              <span className="agent-session-missing-prompt">$</span>
-              <span className="agent-session-missing-caret" />
-            </div>
-          </div>
-          <span className="agent-session-missing-plug">
-            <Unplug size={22} strokeWidth={1.75} />
-          </span>
-        </div>
-        <p className="agent-session-missing-title">This CLI agent is no longer running.</p>
-        <p className="agent-session-missing-hint">The session was closed. You can close this pane.</p>
-      </div>
+      <PaneEmptyState
+        testId="agent-session-missing"
+        art="ended"
+        title="This CLI agent is no longer running."
+        hint="The session was closed. You can close this pane."
+      />
     );
   }
 

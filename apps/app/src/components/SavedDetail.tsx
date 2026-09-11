@@ -3,6 +3,7 @@ import { Trash2 } from 'lucide-react';
 import { deleteSavedRecord, useSaved, useSavedSelection, useUi } from '../store.js';
 import { DocContent, MarkdownContent } from './MarkdownContent.js';
 import { DelayedStencilLines } from './ui/Skeleton.js';
+import { PaneEmptyState } from './PaneEmptyState.js';
 import type { SavedDoc, SavedRecord } from '@zana-ai/zcc-domain/product';
 
 interface SavedDetailProps {
@@ -59,14 +60,12 @@ export function SavedDetail({ visible }: SavedDetailProps) {
   }
   if (records.length === 0) {
     return (
-      <div className="inbox-detail-empty-state">
-        <div className="inbox-detail-empty-title">No saved reports yet</div>
-        <p className="inbox-detail-empty-body">
-          When a report lands in your inbox, open it and click the bookmark to save a durable copy
-          here. Saved reports keep a frozen snapshot of their documents, so they stay readable even
-          after the project&rsquo;s files change or the project is removed.
-        </p>
-      </div>
+      <PaneEmptyState
+        art="inbox"
+        title="No saved reports yet"
+        hint="Open a report in the inbox and click the bookmark to save a durable copy here. Saved reports keep a frozen snapshot of their documents."
+        testId="saved-detail-empty"
+      />
     );
   }
   if (!selected) {
@@ -141,8 +140,6 @@ function Detail({ record, onDelete }: { record: SavedRecord; onDelete: () => voi
           <MarkdownContent text={record.comments!} exportable />
         </div>
       )}
-
-      <div className="inbox-detail-meta-id">project: {record.projectId}</div>
     </div>
   );
 }

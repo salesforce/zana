@@ -46,6 +46,7 @@ import { fleetMatchesLane, resolveMonitorSelection, type FleetItem } from './fle
 import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
 import { openScheduleFromAgents } from './scheduler/openScheduledLive.js';
 import { groupSessionsByTeamRun } from '../lib/teamRunOrganization.js';
+import { PaneEmptyState } from './PaneEmptyState.js';
 
 /**
  * The Agents "List" view: a live monitor — item list (left), the selected
@@ -189,11 +190,12 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
 
   if (cards.length === 0) {
     return (
-      <div className="agent-monitor agent-monitor--empty">
-        <Bot size={28} aria-hidden="true" />
-        <h4>No agents</h4>
-        <p>Start an agent and it will appear here to watch live.</p>
-      </div>
+      <PaneEmptyState
+        className="agent-monitor agent-monitor--empty"
+        art="agents"
+        title="No agents"
+        hint="Start an agent and it will appear here to watch live."
+      />
     );
   }
 

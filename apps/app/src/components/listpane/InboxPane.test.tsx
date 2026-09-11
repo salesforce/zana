@@ -27,7 +27,7 @@ vi.mock('../../store.js', () => ({
   useSaved: (selector: (state: { records: { id: string; projectId: string }[] }) => unknown) =>
     selector({ records: [{ id: 's1', projectId: 'p1' }] }),
   useUi: (selector: (state: {
-    inboxTab: 'feed' | 'reports' | 'saved';
+    inboxTab: 'feed' | 'saved';
     setInboxTab: typeof setInboxTab;
     inboxGrouping: 'project' | 'time';
     setInboxGrouping: typeof setInboxGrouping;
@@ -47,16 +47,24 @@ vi.mock('../SavedSidebar.js', () => ({ SavedSidebar: () => null }));
 import { InboxPane } from './InboxPane.js';
 
 describe('InboxPane tabs', () => {
-  it('exposes full tab names via aria-label, including counts', () => {
+  it('exposes Feed and Saved tabs, not a Reports tab', () => {
     const html = renderToStaticMarkup(<InboxPane />);
 
     expect(html).toContain('aria-label="Feed, 1 unread"');
-    expect(html).toContain('aria-label="Reports, 1"');
     expect(html).toContain('aria-label="Saved, 1"');
     expect(html).toContain('class="inbox-tab-label">Feed<');
-    expect(html).toContain('class="inbox-tab-label">Reports<');
     expect(html).toContain('class="inbox-tab-label">Saved<');
+    expect(html).not.toContain('class="inbox-tab-label">Reports<');
     expect(html).not.toContain('Saved reports');
+  });
+
+  it('puts Unread and Reports on the filter row as chips', () => {
+    const html = renderToStaticMarkup(<InboxPane />);
+
+    expect(html).toContain('class="inbox-filter-chip ');
+    expect(html).toContain('>Unread 1<');
+    expect(html).toContain('>Reports 1<');
+    expect(html).toContain('aria-pressed="false"');
   });
 
   it('keeps an overflow trigger labeled Inbox actions beside the tablist', () => {
@@ -66,19 +74,25 @@ describe('InboxPane tabs', () => {
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('class="inbox-actions-more"');
     expect(html).not.toContain('class="inbox-actions-menu"');
+    expect(html).not.toContain('class="tab-context-menu"');
   });
 });
 
 describe('InboxPane compact chrome contract', () => {
-  it('keeps feed actions in the ⋯ menu instead of a second icon row', () => {
+  it('keeps grouping / clear in the ⋯ menu instead of a second icon row', () => {
     const source = readFileSync(new URL('./InboxPane.tsx', import.meta.url), 'utf8');
     const html = renderToStaticMarkup(<InboxPane />);
 
     expect(source).toContain('<span className="inbox-tab-label">Saved</span>');
     expect(source).toContain('aria-label="Inbox actions"');
     expect(source).toContain('Group by project');
-    expect(source).toContain('Sort by time');
+    expect(source).toContain('Group by time');
+    expect(source).toContain('className="tab-context-menu"');
+    expect(source).toContain('tab-context-sep');
+    expect(source).toContain('MailCheck');
+    expect(source).toContain('createPortal');
     expect(source).toContain('role="menu"');
+    expect(source).not.toContain('inbox-actions-menu-item');
     expect(source).not.toContain('AppPageHeader');
     expect(source).not.toContain('list-header-actions');
     expect(html).not.toContain('inbox-unread-toggle');

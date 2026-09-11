@@ -3,7 +3,10 @@ import type { InboxEntry } from '@zana-ai/zcc-domain/product';
 import {
   inboxIntent,
   inboxContextLine,
-  inboxPrimaryTitle
+  inboxPrimaryTitle,
+  isUnansweredQuestion,
+  isPinnedBlockingQuestion,
+  PINNED_QUESTION_MAX_AGE_MS
 } from '../inboxPresentation.js';
 
 function entry(overrides: Partial<InboxEntry>): InboxEntry {
@@ -53,5 +56,40 @@ describe('inboxContextLine', () => {
 
   it('returns empty when there is no context at all', () => {
     expect(inboxContextLine(entry({ comments: 'hi' }))).toBe('');
+  });
+});
+
+describe('isPinnedBlockingQuestion', () => {
+  const opt = { id: 'A', label: 'Yes' };
+
+  it('keeps a fresh unanswered blocking question', () => {
+    const e = entry({
+      ts: Date.now(),
+      question: { options: [opt], blocking: true }
+    });
+    expect(isUnansweredQuestion(e, {})).toBe(true);
+    expect(isPinnedBlockingQuestion(e, {})).toBe(true);
+  });
+
+  it('drops answered, soft, and stale questions from the pin set', () => {
+    const blocking = entry({
+      id: 'q1',
+      ts: Date.now(),
+      question: { options: [opt], blocking: true }
+    });
+    expect(isPinnedBlockingQuestion(blocking, { q1: true })).toBe(false);
+
+    const soft = entry({
+      ts: Date.now(),
+      question: { options: [opt], blocking: false }
+    });
+    expect(isUnansweredQuestion(soft, {})).toBe(true);
+    expect(isPinnedBlockingQuestion(soft, {})).toBe(false);
+
+    const stale = entry({
+      ts: Date.now() - PINNED_QUESTION_MAX_AGE_MS - 1,
+      question: { options: [opt], blocking: true }
+    });
+    expect(isPinnedBlockingQuestion(stale, {})).toBe(false);
   });
 });

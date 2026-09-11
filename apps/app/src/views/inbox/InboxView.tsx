@@ -10,16 +10,13 @@ import { SavedDetail } from '@/components/SavedDetail';
  * internal grid. The shell is always nav + full content, so this panel owns
  * any list/detail chrome rather than borrowing a middle ListPane column.
  *
- * The inbox has three tabs (`inboxTab`): the live Feed, the Reports filter
- * (entries flagged `report: true`), and the durable Saved reports. Feed and
- * Reports share the same detail pane (they differ only in which rows the list
- * shows); Saved has its own. Each is gated on visibility so keyboard shortcuts
- * (Delete) only fire for the tab actually on screen.
+ * Two tabs (`inboxTab`): the live Feed and the durable Saved reports. Flagged
+ * deliverables (`report: true`) are a Feed filter, not a third tab. Feed and
+ * Saved each have their own detail pane. Each is gated on visibility so
+ * keyboard shortcuts (Delete) only fire for the tab actually on screen.
  *
- * Feed / Reports tab, detail column:
- *   • nothing selected → the Inbox OVERVIEW (AI summary + Reports /
- *     Ideas / Goals rollups) as the landing page. The AI summary used to live
- *     atop the narrow list column; it moved here so the list is a pure feed.
+ * Feed tab, detail column:
+ *   • nothing selected → the attention landing (pending questions + AI summary).
  *   • an entry selected → that entry's `InboxDetail` preview.
  */
 export function InboxView() {
@@ -29,7 +26,7 @@ export function InboxView() {
   const showingSaved = inboxTab === 'saved';
   const selectedId = useInboxSelection((s) => s.selectedEntryId);
 
-  // Same scoped slice the list column computes, so the Overview's rollups and
+  // Same scoped slice the list column computes, so the landing's questions and
   // AI summary agree with what the feed shows (home = all projects, drilled-in
   // = that project).
   const allEntries = useInbox((s) => s.entries);

@@ -38,8 +38,8 @@
  *     renders (inline SIGNAL).
  *   • The `InboxEntry.report` FLAG (see `isReport()` below + shared/types.ts) is
  *     an EXPLICIT author opt-in (`inbox_push({ report: true })`) marking a
- *     finished deliverable. It's about FINDABILITY — it powers the Reports tab,
- *     the list-pane Reports filter, and the row badge. A flagged entry is always
+ *     finished deliverable. It's about FINDABILITY — it powers the Reports
+ *     filter and the row badge. A flagged entry is always
  *     feed-category `report` too, but the reverse does NOT hold. `classifyEntry`
  *     does NOT read the flag; the report-only UI surfaces read `isReport`.
  *
@@ -262,7 +262,7 @@ export function isAutoCloseEntry(entry: Pick<InboxEntry, 'dedupeKey'>): boolean 
  * deliverable the user wants to find fast? This reads the author-set
  * {@link InboxEntry.report} flag, NOT the feed CATEGORY `report` (which is the
  * un-classified fallback every plain push lands in). It's the single predicate
- * behind the report-only surfaces (Reports tab, the list-pane Reports filter,
+ * behind the report-only surfaces (the list-pane Reports filter,
  * the row badge). A flagged report is still a feed-category `report` (SIGNAL,
  * inline) — this flag just makes it findable, it doesn't change where it renders.
  *

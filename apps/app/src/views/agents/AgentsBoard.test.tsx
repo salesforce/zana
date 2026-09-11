@@ -44,6 +44,7 @@ describe('AgentsBoard', () => {
     const emptyBranch = board.slice(emptyStart, filterStart);
     expect(emptyBranch).not.toContain('<HomeAgentComposer');
     expect(emptyBranch).toContain('agents-board-empty--launch');
+    expect(emptyBranch).toContain('<PaneEmptyState');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));
     expect(filterBranch).not.toContain('<HomeAgentComposer');

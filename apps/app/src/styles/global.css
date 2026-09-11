@@ -10286,6 +10286,10 @@ button.statusbar-item {
   color: var(--accent-red, #f85149);
 }
 
+.tab-context-menu .inbox-menu-check {
+  margin-left: auto;
+}
+
 .opener-bar {
   display: flex;
   align-items: center;
@@ -11168,12 +11172,19 @@ body.resizing-col .explorer-resizer::after {
   gap: 6px;
   padding: 6px 10px 8px;
   border-bottom: 1px solid var(--border);
+}
+
+.inbox-filter-search {
   position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .inbox-filter-icon {
   position: absolute;
-  left: 18px;
+  left: 8px;
   color: var(--text-dim);
   pointer-events: none;
 }
@@ -11229,69 +11240,13 @@ body.resizing-col .explorer-resizer::after {
   min-width: 0;
 }
 
-/* Always visible — grouping / unread / clear live in this menu at every
-   pane width rather than as a second icon row. */
+/* Always visible — grouping / mark-read / clear live in this overflow. */
 .inbox-actions-more {
   display: flex;
   position: relative;
   flex: 0 0 auto;
   align-self: center;
   margin-left: auto;
-}
-
-.inbox-actions-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 20;
-  display: flex;
-  min-width: 180px;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--bg-elevated);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-}
-
-.inbox-actions-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.inbox-actions-menu-item > span {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.inbox-actions-menu-item:hover,
-.inbox-actions-menu-item:focus-visible {
-  background: var(--bg-hover);
-}
-
-.inbox-actions-menu-item:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.inbox-actions-menu-item--danger {
-  color: var(--danger);
-}
-
-.inbox-actions-menu-item--danger:hover:not(:disabled) {
-  background: rgba(248, 81, 73, 0.12);
 }
 
 .inbox-tab:hover {
@@ -11470,6 +11425,25 @@ body.resizing-col .explorer-resizer::after {
 .inbox-ai-card-expand:hover {
   background: color-mix(in srgb, var(--accent-blue) 16%, transparent);
   color: var(--accent-blue);
+}
+
+.inbox-ai-card-generate {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 8px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+  color: var(--accent-blue);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inbox-ai-card-generate:hover {
+  background: color-mix(in srgb, var(--accent-blue) 18%, transparent);
 }
 
 /* ---- Detailed inbox summary modal (opened from the AI Summary card) ---- */
@@ -11706,7 +11680,7 @@ body.resizing-col .explorer-resizer::after {
 
 .inbox-filter-clear {
   position: absolute;
-  right: 14px;
+  right: 6px;
   display: grid;
   place-items: center;
   width: 18px;
@@ -11721,6 +11695,37 @@ body.resizing-col .explorer-resizer::after {
 .inbox-filter-clear:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.inbox-filter-chip {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.inbox-filter-chip:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.inbox-filter-chip.on {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border));
+}
+
+.inbox-filter-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .inbox-sidebar-empty {
@@ -12209,10 +12214,7 @@ body.resizing-col .explorer-resizer::after {
   flex-direction: column;
 }
 
-/* ── Inbox Overview — the detail-column landing page (no entry selected) ──
-   Holds the AI summary card (lifted out of the narrow list column) plus a
-   set of category rollups (Reports / Ideas / Goals). Rendered by
-   InboxOverview.tsx. */
+/* ── Inbox attention landing (no entry selected) — questions + AI summary. */
 .inbox-overview {
   flex: 1;
   min-height: 0;
@@ -12223,138 +12225,135 @@ body.resizing-col .explorer-resizer::after {
   gap: 14px;
 }
 
-/* The AI summary card was tuned for the 8px list-column gutter; in the wider
-   overview it reads better flush with the rollups (no side margin). */
 .inbox-overview .inbox-ai-card {
   margin: 0;
 }
 
-.inbox-overview-rollup {
-  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+.inbox-overview-questions {
+  margin: 0;
+  padding: 4px 4px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 30%, var(--border));
   border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
-  overflow: hidden;
+  background: color-mix(in srgb, var(--accent-blue) 6%, var(--bg-elevated));
 }
 
-.inbox-overview-rollup-head {
+.inbox-overview-questions-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 9px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--text-dim);
+  padding: 6px 10px 8px;
+  color: var(--accent-blue);
 }
 
-.inbox-overview-rollup-icon {
-  flex-shrink: 0;
-}
-
-.inbox-overview-rollup-label {
+.inbox-overview-questions-label {
   flex: 1;
   min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
-.inbox-overview-rollup-count {
+.inbox-overview-questions-count {
   flex-shrink: 0;
-  font-weight: 500;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--text-dim);
+  min-width: 16px;
+  padding: 0 5px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 8px;
+  color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 16%, transparent);
   font-variant-numeric: tabular-nums;
 }
 
-/* Category accents — a subtle tint on the header icon/border so the
-   rollups are distinguishable at a glance. */
-.inbox-overview-rollup.tone-report .inbox-overview-rollup-icon {
-  color: var(--accent-blue);
-}
-.inbox-overview-rollup.tone-idea .inbox-overview-rollup-icon {
-  color: var(--accent-yellow, #e0b341);
-}
-.inbox-overview-rollup.tone-goal .inbox-overview-rollup-icon {
-  color: var(--accent-green, #4caf7d);
-}
-
-.inbox-overview-rollup-rows {
+.inbox-overview-questions-rows {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
-.inbox-overview-row {
+.inbox-overview-question {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   width: 100%;
-  padding: 8px 12px;
-  background: transparent;
+  padding: 8px 10px;
   border: none;
-  border-top: 1px solid color-mix(in srgb, var(--border) 44%, transparent);
+  border-radius: 8px;
+  background: transparent;
   cursor: pointer;
   text-align: left;
-  color: var(--text-base);
-  font-size: 12px;
-  outline: none;
-}
-.inbox-overview-row:first-child {
-  border-top: none;
-}
-.inbox-overview-row:hover {
-  background: color-mix(in srgb, var(--bg-hover) 80%, transparent);
+  color: var(--text-primary);
+  font-family: inherit;
 }
 
-/* Title takes the flex space so the timestamp/arrow stay right-aligned. */
-.inbox-overview-row-main {
+.inbox-overview-question:hover {
+  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+}
+
+.inbox-overview-question-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
-.inbox-overview-row-title {
-  min-width: 0;
+.inbox-overview-question-title {
+  font-size: 13px;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.inbox-overview-row-ts {
+.inbox-overview-question-context {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-overview-question-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.inbox-overview-question-project {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-overview-question-ts {
   flex-shrink: 0;
   font-size: 10px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
 
-.inbox-overview-row-arrow {
+.inbox-overview-question-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   flex-shrink: 0;
-  color: var(--text-dim);
-  opacity: 0;
-  transition: opacity 0.1s ease;
-}
-.inbox-overview-row:hover .inbox-overview-row-arrow {
-  opacity: 1;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-blue);
 }
 
-.inbox-overview-rollup-more {
-  padding: 7px 12px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 44%, transparent);
-  font-size: 10px;
-  color: var(--text-dim);
+.inbox-overview-empty-pane .inbox-guidance {
+  margin-top: 8px;
+  text-align: left;
 }
 
-.inbox-overview-empty {
-  padding: 24px 16px;
-  text-align: center;
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-/* "← Overview" back chip in the detail header (return to the landing page). */
+/* "← Inbox" back chip in the detail header (return to the landing page). */
 .inbox-detail-overview-back {
   display: inline-flex;
   align-items: center;
@@ -14673,13 +14672,6 @@ body.resizing-col .explorer-resizer::after {
 
 .inbox-question-continue:not(:disabled):hover {
   opacity: 0.9;
-}
-
-.inbox-detail-meta-id {
-  margin-top: 16px;
-  font-family: 'JetBrains Mono', 'SF Mono', monospace;
-  font-size: 11px;
-  color: var(--text-dim);
 }
 
 /* Markdown body */
@@ -26419,10 +26411,8 @@ body.resizing-col .library-split-resizer::after {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   color: var(--text-muted);
   text-align: center;
-  padding: 32px;
 }
 .agent-monitor.agent-monitor--empty h4 {
   margin: 4px 0 0;
@@ -32706,22 +32696,27 @@ textarea.thread-command-editor {
   gap: 0;
 }
 
-/* Vanished CLI-agent session (closed/dismissed). Centered playful empty state
-   so the pane doesn't read as a blank crash. */
-.agent-session-missing {
+/* Full-pane empty / gone / crash. Centered so a vanished view doesn't read as a
+   blank crash. `height: 100%` fills block parents (#root crash screen);
+   `flex: 1` + `min-height: 0` fills remaining space under a pane header. */
+.pane-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 12px;
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
   height: 100%;
+  min-width: 0;
   min-height: 0;
   padding: 32px 24px;
   text-align: center;
-  animation: agent-session-missing-in 280ms ease-out;
+  animation: pane-empty-in 280ms ease-out;
 }
 
-.agent-session-missing-art {
+.pane-empty-art {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -32729,7 +32724,7 @@ textarea.thread-command-editor {
   margin-bottom: 4px;
 }
 
-.agent-session-missing-term {
+.pane-empty-term {
   width: 168px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -32738,7 +32733,7 @@ textarea.thread-command-editor {
   box-shadow: 0 8px 24px color-mix(in srgb, var(--bg-base) 35%, transparent);
 }
 
-.agent-session-missing-term-bar {
+.pane-empty-term-bar {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -32748,7 +32743,7 @@ textarea.thread-command-editor {
   background: color-mix(in srgb, var(--bg-elevated) 70%, var(--bg-panel));
 }
 
-.agent-session-missing-term-bar span {
+.pane-empty-term-bar span {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -32756,11 +32751,11 @@ textarea.thread-command-editor {
   opacity: 0.45;
 }
 
-.agent-session-missing-term-bar span:nth-child(1) { background: #ff5f57; opacity: 0.7; }
-.agent-session-missing-term-bar span:nth-child(2) { background: #febc2e; opacity: 0.7; }
-.agent-session-missing-term-bar span:nth-child(3) { background: #28c840; opacity: 0.7; }
+.pane-empty-term-bar span:nth-child(1) { background: #ff5f57; opacity: 0.7; }
+.pane-empty-term-bar span:nth-child(2) { background: #febc2e; opacity: 0.7; }
+.pane-empty-term-bar span:nth-child(3) { background: #28c840; opacity: 0.7; }
 
-.agent-session-missing-term-body {
+.pane-empty-term-body {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -32771,28 +32766,27 @@ textarea.thread-command-editor {
   color: var(--text-muted);
 }
 
-.agent-session-missing-prompt {
+.pane-empty-prompt {
   color: var(--text-dim);
   font-weight: 600;
 }
 
-.agent-session-missing-caret {
+.pane-empty-caret {
   display: inline-block;
   width: 7px;
   height: 14px;
   border-radius: 1px;
   background: var(--accent-blue);
-  animation: agent-session-missing-blink 1s step-end infinite;
+  animation: pane-empty-blink 1s step-end infinite;
 }
 
-.agent-session-missing-plug {
+.pane-empty-well {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 44px;
   height: 44px;
-  margin-top: -14px;
   border-radius: 50%;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -32800,24 +32794,40 @@ textarea.thread-command-editor {
   box-shadow: 0 2px 8px color-mix(in srgb, var(--bg-base) 28%, transparent);
 }
 
-.agent-session-missing-plug::before {
+.pane-empty-well::before {
   content: '';
   position: absolute;
   inset: -6px;
   border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
-  animation: agent-session-missing-pulse 2.4s ease-in-out infinite;
+  animation: pane-empty-pulse 2.4s ease-in-out infinite;
   pointer-events: none;
 }
 
-.agent-session-missing-title {
+.pane-empty-well--ended {
+  margin-top: -14px;
+}
+
+.pane-empty-well--error {
+  color: var(--danger);
+}
+
+.pane-empty-well--error::before {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+.pane-empty-well--inbox {
+  color: var(--accent-blue);
+}
+
+.pane-empty-title {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.agent-session-missing-hint {
+.pane-empty-hint {
   margin: 0;
   max-width: 280px;
   font-size: 12px;
@@ -32825,30 +32835,48 @@ textarea.thread-command-editor {
   color: var(--text-dim);
 }
 
-@keyframes agent-session-missing-in {
+.pane-empty-status {
+  margin: 0;
+  max-width: 480px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-panel));
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border));
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  text-align: left;
+}
+
+.pane-empty .empty-actions {
+  margin-top: 4px;
+}
+
+@keyframes pane-empty-in {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
 
-@keyframes agent-session-missing-blink {
+@keyframes pane-empty-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
 
-@keyframes agent-session-missing-pulse {
+@keyframes pane-empty-pulse {
   0%, 100% { opacity: 0.25; transform: scale(0.92); }
   50% { opacity: 0.85; transform: scale(1.08); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-session-missing {
+  .pane-empty {
     animation: none;
   }
-  .agent-session-missing-caret {
+  .pane-empty-caret {
     animation: none;
     opacity: 1;
   }
-  .agent-session-missing-plug::before {
+  .pane-empty-well::before {
     animation: none;
     opacity: 0.4;
     transform: none;

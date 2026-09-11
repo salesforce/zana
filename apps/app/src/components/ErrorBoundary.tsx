@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Bug } from 'lucide-react';
 import { reportRendererCrash } from '../lib/report-bug.js';
+import { PaneEmptyState } from './PaneEmptyState.js';
 
 interface Props {
   children: ReactNode;
@@ -65,31 +66,31 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.hasError) return this.props.children;
     return (
-      <div className="settings-panel">
-        <div className="settings-inner">
-          <h2>Renderer crashed</h2>
-          <p>The app hit an unexpected error and recovered to a safe screen.</p>
-          <pre style={{ whiteSpace: 'pre-wrap', color: 'var(--danger)' }}>{this.state.message}</pre>
-          {this.state.reportStatus ? (
-            <p className="crash-report-status" role="status">{this.state.reportStatus}</p>
-          ) : null}
-          <div className="empty-actions">
-            <button className="btn primary" type="button" onClick={this.handleReload}>
-              Reload app
-            </button>
-            <button
-              className="btn"
-              type="button"
-              onClick={this.handleReport}
-              disabled={this.state.reporting}
-              aria-label="Report a bug"
-            >
-              <Bug size={14} aria-hidden="true" />
-              {this.state.reporting ? 'Preparing report…' : 'Report a bug'}
-            </button>
-          </div>
+      <PaneEmptyState
+        art="error"
+        title="Renderer crashed"
+        hint="The app hit an unexpected error and recovered to a safe screen."
+      >
+        <pre className="pane-empty-status" role="alert">{this.state.message}</pre>
+        {this.state.reportStatus ? (
+          <p className="crash-report-status" role="status">{this.state.reportStatus}</p>
+        ) : null}
+        <div className="empty-actions">
+          <button className="btn primary" type="button" onClick={this.handleReload}>
+            Reload app
+          </button>
+          <button
+            className="btn"
+            type="button"
+            onClick={this.handleReport}
+            disabled={this.state.reporting}
+            aria-label="Report a bug"
+          >
+            <Bug size={14} aria-hidden="true" />
+            {this.state.reporting ? 'Preparing report…' : 'Report a bug'}
+          </button>
         </div>
-      </div>
+      </PaneEmptyState>
     );
   }
 }

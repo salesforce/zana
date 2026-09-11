@@ -613,14 +613,13 @@ interface UiState {
   setSchedulerTab: (tab: 'overview' | 'group' | 'global' | 'project') => void;
   /**
    * Which tab is active in the Inbox list pane:
-   *  - 'feed'    — the live push feed (default)
-   *  - 'reports' — only entries explicitly flagged `report: true` (deliverables)
-   *  - 'saved'   — the durable saved-for-later reports (`~/.zcc/saved/`)
-   * Purely a view toggle; all read their own slice, so switching never mutates
-   * any list. Not persisted — the feed is the natural landing tab.
+   *  - 'feed'  — the live push feed (default)
+   *  - 'saved' — the durable saved-for-later reports (`~/.zcc/saved/`)
+   * Flagged deliverables (`report: true`) are a Feed filter chip, not a tab.
+   * Purely a view toggle; not persisted — the feed is the natural landing tab.
    */
-  inboxTab: 'feed' | 'reports' | 'saved';
-  setInboxTab: (tab: 'feed' | 'reports' | 'saved') => void;
+  inboxTab: 'feed' | 'saved';
+  setInboxTab: (tab: 'feed' | 'saved') => void;
   /**
    * How the inbox Feed groups its rows within each day bucket:
    *  - 'project' — collapsible per-project subgroups (default), folded noise
@@ -644,8 +643,8 @@ interface UiState {
   revealSchedule: (taskId: string) => void;
   clearRevealSchedule: () => void;
   /**
-   * Deep-link target for the Library view — the doc id another surface (the
-   * Inbox Overview's Ideas rollup) asked to open. LibraryView picks it up,
+   * Deep-link target for the Library view — the doc id another surface asked
+   * to open. LibraryView picks it up,
    * selects that doc (expanding its scope folder), then clears this so a
    * re-render doesn't re-trigger the jump. Twin of {@link revealScheduleId}.
    * Null when nothing is pending.
@@ -1074,7 +1073,7 @@ export const useUi = create<UiState>((set, get) => ({
       nav === 'scheduler' ? { schedulerTab: 'overview' } : undefined
     ),
   inboxTab: 'feed',
-  setInboxTab: (inboxTab) => set({ inboxTab }),
+  setInboxTab: (inboxTab) => set({ inboxTab: inboxTab === 'saved' ? 'saved' : 'feed' }),
   inboxGrouping: 'project',
   setInboxGrouping: (grouping) => {
     set({ inboxGrouping: grouping });

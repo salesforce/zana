@@ -10,6 +10,7 @@ import { ScheduleEditor } from '../../components/scheduler/ScheduleEditor.js';
 import { ScheduleInfoPanel } from '../../components/scheduler/ScheduleInfoPanel.js';
 import { DeleteConfirmModal } from '../../components/scheduler/DeleteConfirmModal.js';
 import { scheduleSeedFromLocationState, type ScheduleSeed } from '../../components/scheduler/schedule-seed.js';
+import { PaneEmptyState } from '../../components/PaneEmptyState.js';
 
 /**
  * Schedule editor as a first-class page (same as a thread). In a split pane it
@@ -86,9 +87,12 @@ function ScheduleDetailView({
     : undefined;
 
   const body = task === 'missing' ? (
-    <div className="thread-detail-empty" data-testid="schedule-missing">
-      This schedule is no longer available.
-    </div>
+    <PaneEmptyState
+      testId="schedule-missing"
+      art="missing"
+      title="This schedule is no longer available."
+      hint="It was deleted or is no longer on this machine. You can close this pane."
+    />
   ) : (
     <div className="schedule-detail-layout" data-testid="schedule-detail">
       <div className="schedule-detail-editor">
