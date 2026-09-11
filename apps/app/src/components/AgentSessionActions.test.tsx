@@ -14,7 +14,8 @@ const canCloseWithFollowup = vi.fn((..._args: unknown[]) => true);
 const idleSurfacesToNeedsYou = vi.fn((..._args: unknown[]) => false);
 const dataState = {
   catchUpSummaryEnabled: true,
-  idleAttentionSensitivity: 'medium'
+  idleAttentionSensitivity: 'medium',
+  closingFollowupIds: new Set<string>()
 };
 
 vi.mock('../lib/product-client.js', () => ({
@@ -81,6 +82,7 @@ describe('AgentSessionActions', () => {
     idleSurfacesToNeedsYou.mockReset();
     idleSurfacesToNeedsYou.mockReturnValue(false);
     dataState.catchUpSummaryEnabled = true;
+    dataState.closingFollowupIds = new Set();
   });
 
   it('offers close, follow-up, and summarize on a live Claude session', () => {
@@ -113,13 +115,18 @@ describe('AgentSessionActions', () => {
   });
 
   it('ignores a second follow-up or summarize click while the first is in flight', async () => {
-    let resolveClose: ((value: boolean) => void) | undefined;
-    closeAgentWithFollowup.mockImplementation(
-      () =>
-        new Promise<boolean>((resolve) => {
-          resolveClose = resolve;
-        })
+    dataState.closingFollowupIds = new Set(['s1']);
+    render(<AgentSessionActions session={session()} projectId="p1" state="idle" />);
+    fireEvent.click(screen.getByText('Closing…'));
+    expect(closeAgentWithFollowup).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: 'Closing…' }) as HTMLButtonElement).disabled).toBe(
+      true
     );
+
+    dataState.closingFollowupIds = new Set();
+    cleanup();
+    render(<AgentSessionActions session={session()} projectId="p1" state="idle" />);
+
     let resolveSummary: (() => void) | undefined;
     summarizeSession.mockImplementation(
       () =>
@@ -127,13 +134,6 @@ describe('AgentSessionActions', () => {
           resolveSummary = resolve;
         })
     );
-    render(<AgentSessionActions session={session()} projectId="p1" state="idle" />);
-    fireEvent.click(screen.getByText('Close with follow-up'));
-    fireEvent.click(screen.getByText('Closing…'));
-    expect(closeAgentWithFollowup).toHaveBeenCalledTimes(1);
-    resolveClose?.(true);
-    await waitFor(() => expect(screen.getByText('Close with follow-up')).toBeTruthy());
-
     fireEvent.click(screen.getByText('Summarize to inbox'));
     fireEvent.click(screen.getByText('Summarizing…'));
     expect(summarizeSession).toHaveBeenCalledTimes(1);

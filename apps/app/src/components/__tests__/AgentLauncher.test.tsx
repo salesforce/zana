@@ -146,7 +146,8 @@ describe('project-scoped conversation history', () => {
 describe('launcher composer project', () => {
   it('lifts the unpinned pick across Modern / CLI Agent / Team', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('const [composerProjectId, setComposerProjectId] = useState(project?.id ?? \'\')');
+    expect(source).toContain('const selectedProjectId = useUi((s) => s.selectedProjectId);');
+    expect(source).toContain('const [composerProjectId, setComposerProjectId] = useState(project?.id ?? selectedProjectId ?? \'\')');
     expect(source).toContain('composerProjectId={composerProjectId}');
     expect(source).toContain('onComposerProjectIdChange={setComposerProjectId}');
     const teamStart = source.indexOf('<TeamComposer');

@@ -141,7 +141,12 @@ describe('AgentSessionPage', () => {
   it('shows an empty state when the session is gone', () => {
     const html = renderToStaticMarkup(<AgentSessionPage projectId="p1" sessionId="missing" />);
     expect(html).toContain('data-testid="agent-session-missing"');
+    expect(html).toContain('class="agent-session-missing"');
+    expect(html).toContain('agent-session-missing-art');
+    expect(html).toContain('agent-session-missing-title');
     expect(html).toContain('This CLI agent is no longer running.');
+    expect(html).toContain('agent-session-missing-hint');
+    expect(html).toContain('The session was closed. You can close this pane.');
     expect(html).not.toContain('data-testid="agent-session-view"');
     expect(renderToStaticMarkup(<AgentSessionPage projectId="gone" sessionId="s1" />)).toContain(
       'data-testid="agent-session-missing"'

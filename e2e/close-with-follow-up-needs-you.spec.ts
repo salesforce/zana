@@ -102,8 +102,13 @@ test('Close with follow-up on a blocked Needs you agent closes the session', asy
 
     const closeButton = window.getByRole('button', { name: 'Close with follow-up' });
     await expect(closeButton).toBeVisible({ timeout: 15_000 });
+    const progress = window
+      .locator('.toast')
+      .filter({ hasText: /Closing/ })
+      .or(window.getByRole('button', { name: 'Closing…' }));
     window.once('dialog', (dialog) => void dialog.accept());
     await closeButton.click();
+    await expect(progress).toBeVisible({ timeout: 8_000 });
 
     await expect
       .poll(

@@ -24,7 +24,6 @@ import { AgentMonitor } from '@/components/AgentMonitor';
 import { CloseIdleAgentsDialog } from '@/components/CloseIdleAgentsDialog';
 import { CohortBar, type LiveCohort } from '@/components/CohortBar';
 import { ExecutionJobDetails } from '@/components/ExecutionJobDetails';
-import { AuroraGrid } from '@/components/AuroraGrid';
 import {
   agentFleetItem,
   fleetAgentCards,
@@ -339,8 +338,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   };
 
   return (
-    <div className={isGlobal ? 'agents-board agents-board--global panel-body--full aurora-host' : 'agents-board aurora-host'}>
-      <AuroraGrid />
+    <div className={isGlobal ? 'agents-board agents-board--global panel-body--full' : 'agents-board'}>
       {showToolbar && (
         <div className="agents-board-toolbar">
           <AgentViewToggle />

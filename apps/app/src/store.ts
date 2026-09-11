@@ -45,7 +45,7 @@ import { DEFAULT_TERMINAL_THEME, type TerminalThemeId } from '@zana-ai/zcc-domai
 import { seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 import { resolveRestartProfile } from './lib/sessionRestore.js';
-import { runCloseIdleAgents } from './lib/close-idle-agents.js';
+import { closeFollowupProgressMessage, runCloseIdleAgents } from './lib/close-idle-agents.js';
 
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
@@ -670,7 +670,11 @@ interface UiState {
   /** Jump to the global Follow-ups panel and reveal `id`. */
   revealFollowUp: (id: string) => void;
   clearRevealFollowUp: () => void;
-  pushToast: (message: string, kind?: 'info' | 'error') => void;
+  pushToast: (
+    message: string,
+    kind?: 'info' | 'error',
+    opts?: { persist?: boolean }
+  ) => string;
   dismissToast: (id: string) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
@@ -1193,12 +1197,15 @@ export const useUi = create<UiState>((set, get) => ({
     applyDestination(set, getFollowUpsRoutePath(), { revealFollowUpId: id });
   },
   clearRevealFollowUp: () => set({ revealFollowUpId: null }),
-  pushToast: (message, kind = 'info') => {
+  pushToast: (message, kind = 'info', opts) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }));
-    setTimeout(() => {
-      set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
-    }, 4000);
+    if (!opts?.persist) {
+      setTimeout(() => {
+        set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+      }, 4000);
+    }
+    return id;
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   addPendingLaunches: (launches) =>
@@ -1746,6 +1753,11 @@ interface DataState {
   closeTerminal: (sessionId: string, projectId: string) => Promise<void>;
   /** Remove terminal cards owned by a Job after its single dismiss action succeeds. */
   dismissTerminals: (sessionIds: readonly string[]) => void;
+  /**
+   * Session ids currently in Close with follow-up (LLM paper trail + close).
+   * Drives footer/menu `Closing…` busy state so the action cannot double-fire.
+   */
+  closingFollowupIds: ReadonlySet<string>;
     /**
     * Bulk-close the given at-rest agents in a project (the Agents board's Close
     * action). When `summarize` is set, asks main FIRST to fold each agent's work
@@ -1967,6 +1979,7 @@ export const useData = create<DataState>((set, get) => ({
   structuredQuestionsEnabled: true,
   defaultHarness: null,
   configLoaded: false,
+  closingFollowupIds: new Set<string>(),
   harnessCursorEnabled: false,
   harnessCodexEnabled: false,
   harnessPiEnabled: false,
@@ -3297,6 +3310,22 @@ export const useData = create<DataState>((set, get) => ({
   },
 
   async closeIdleAgents(projectId, sessionIds, summarize, opts) {
+    const markClosing = (ids: string[]) => {
+      if (ids.length === 0) return;
+      set((s) => {
+        const next = new Set(s.closingFollowupIds);
+        for (const id of ids) next.add(id);
+        return { closingFollowupIds: next };
+      });
+    };
+    const clearClosing = (ids: string[]) => {
+      if (ids.length === 0) return;
+      set((s) => {
+        const next = new Set(s.closingFollowupIds);
+        for (const id of ids) next.delete(id);
+        return { closingFollowupIds: next };
+      });
+    };
     return runCloseIdleAgents({
       projectId,
       sessionIds,
@@ -3304,6 +3333,9 @@ export const useData = create<DataState>((set, get) => ({
       force: opts?.force === true,
       deps: {
         statusById: useAgentStatus.getState().byId,
+        alreadyClosingIds: get().closingFollowupIds,
+        markClosing,
+        clearClosing,
         closeFollowup: (pid, ids) => product.terminals.closeFollowup(pid, ids),
         closeTerminal: (id, pid) => get().closeTerminal(id, pid),
         pushBusyToast: (requestedCount) => {
@@ -3330,7 +3362,10 @@ export const useData = create<DataState>((set, get) => ({
             bits.push('no readable transcript found');
           }
           useUi.getState().pushToast(`${bits.join(' · ')}.`, summarized > 0 ? 'info' : 'error');
-        }
+        },
+        pushProgressToast: (count) =>
+          useUi.getState().pushToast(closeFollowupProgressMessage(count), 'info', { persist: true }),
+        dismissProgressToast: (id) => useUi.getState().dismissToast(id)
       }
     });
   },

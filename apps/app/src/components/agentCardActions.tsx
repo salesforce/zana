@@ -99,6 +99,7 @@ export async function closeAgentWithFollowup(
   session: Pick<TerminalSession, 'id' | 'title'>,
   projectId: string
 ): Promise<boolean> {
+  if (useData.getState().closingFollowupIds.has(session.id)) return false;
   if (!globalThis.confirm(`Close “${session.title}” and file a follow-up if work is left?`)) {
     return false;
   }
@@ -232,9 +233,9 @@ interface AgentCardMenuProps {
  * matches the rest of the app; stopPropagation on mousedown keeps the global
  * close-on-mousedown from firing before a button's onClick.
  *
- * Portaled to `document.body` so the Agents kanban's `.aurora-host` (container
- * queries + a more-specific `position: relative` on direct children) cannot
- * steal `position: fixed` and shove the menu outside the window.
+ * Portaled to `document.body` so the Agents kanban's container queries
+ * (`container-type: inline-size` on `.agents-board`) cannot steal
+ * `position: fixed` and shove the menu outside the window.
  */
 export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuProps) {
   const { card } = menu;
@@ -252,6 +253,7 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
   // agent (its state is `idle`, not `blocked`). Offer the action for BOTH so a
   // triaged card isn't stuck nagging — gate on the same predicate the lane uses.
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
+  const closingWithFollowup = useData((s) => s.closingFollowupIds.has(card.session.id));
   const needsYou = !exited && (card.state === 'blocked' || cardNeedsAttention(card, sensitivity));
   const pluginSlots = useSyncExternalStore(subscribePluginSlots, listAgentCardActions, listAgentCardActions);
   const pluginCtx = { sessionId: card.session.id, projectId: card.projectId };
@@ -329,10 +331,16 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
       <button onClick={() => { setMenu(null); actions.rename(card); }}>Rename…</button>
       {canCloseWithFollowup(card.session) && (
         <button
-          onClick={() => { setMenu(null); actions.closeWithFollowup(card); }}
+          type="button"
+          disabled={closingWithFollowup}
+          onClick={() => {
+            if (closingWithFollowup) return;
+            setMenu(null);
+            actions.closeWithFollowup(card);
+          }}
           title="Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished"
         >
-          Close with follow-up
+          {closingWithFollowup ? 'Closing…' : 'Close with follow-up'}
         </button>
       )}
       {pluginActions.length > 0 ? <div className="tab-context-sep" /> : null}

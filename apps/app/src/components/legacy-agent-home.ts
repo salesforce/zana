@@ -135,6 +135,29 @@ export function resolveCliAgentFamily(input: {
   return input.effectiveDefaultFamilyId || '';
 }
 
+/**
+ * Concrete PTY profile for a CLI Agent launch. An automatic project default
+ * (`codex-yolo`, …) wins only when it actually resolved. Otherwise fall back
+ * to the harness default / family map so a remembered family (Codex already
+ * selected on open) is still spawnable — `automaticProfile` stays null on
+ * that early-resolve path.
+ */
+export function resolveCliAgentSpawnProfile(input: {
+  provenance: 'automatic' | 'explicit';
+  automaticProfile: LaunchProfileId | null;
+  harnessDefaultProfileId?: LaunchProfileId | null;
+  familyId: string;
+}): LaunchProfileId | undefined {
+  if (input.provenance === 'automatic' && input.automaticProfile) {
+    return input.automaticProfile;
+  }
+  if (input.harnessDefaultProfileId) return input.harnessDefaultProfileId;
+  if (input.familyId in PROFILE_BY_FAMILY) {
+    return PROFILE_BY_FAMILY[input.familyId as HarnessFamily];
+  }
+  return undefined;
+}
+
 export function availableAgentHarnesses<T extends {
   agentDefaultEligible: boolean;
   availability: { enabled: boolean; installed: boolean };

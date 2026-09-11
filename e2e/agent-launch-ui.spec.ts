@@ -17,6 +17,7 @@
  *         → instruction editor (data-testid="legacy-agent-command-input")
  *         → Project picklist
  *         → harness tab (data-testid="model-reasoning-provider-<id>")
+ *           (one Codex case skips this click: remembered last-used family)
  *         → Permission mode (when offered)
  *         → Launch agent (data-testid="legacy-agent-command-send")
  *     → agent-inspector modal (data-testid="agent-terminal-modal")
@@ -434,3 +435,78 @@ for (const row of PLAN_FAMILIES) {
     }
   });
 }
+
+test('launching a remembered Codex CLI Agent without re-clicking the harness tab opens its terminal', {
+  timeout: 60_000
+}, async ({ app }) => {
+  const { window } = app;
+  await stubNativeDialogs(app.electron, [0]);
+  const agent = makeFakeGenericHoldBinary();
+  const projectDir = mkdtempSync(join(tmpdir(), 'zcc-launch-ui-codex-remembered-'));
+  const projectName = basename(projectDir);
+  let projectId: string | null = null;
+
+  try {
+    await window.evaluate(async (cfg) => {
+      await window.cc.config.set(cfg);
+    }, {
+      codexBinary: agent.path,
+      defaultHarness: 'codex',
+      harnessCodexEnabled: true
+    });
+    await probeHarness(window, 'codex', /^2026\.09\.02$/);
+
+    projectId = await window.evaluate(async (path) => {
+      const res = await window.cc.projects.add(path);
+      const proj = (res && 'ok' in res ? (res as { value: { id: string } }).value : res) as {
+        id: string;
+      };
+      return proj.id;
+    }, projectDir);
+    expect(projectId).toBeTruthy();
+
+    await window.locator('[data-testid="nav-agents"]').click();
+    await window.locator('[data-testid="agents-board-new-thread"]').first().click();
+    const modal = window.locator('[data-testid="launch-modal"]');
+    await expect(modal).toBeVisible();
+    await modal.getByRole('button', { name: 'CLI Agent' }).click();
+    await selectHarness(window, modal, 'codex');
+    const picker = modal.getByTestId('model-reasoning-picker-trigger');
+    await expect(picker).toHaveAttribute('title', /codex/i, { timeout: 30_000 });
+    await window.keyboard.press('Escape');
+    await expect(modal).toBeHidden();
+
+    // Re-open with Codex already last-used. Send must work without clicking
+    // the Codex tab again — that re-click was the live workaround.
+    await window.locator('[data-testid="agents-board-new-thread"]').first().click();
+    await expect(modal).toBeVisible();
+    await modal.getByRole('button', { name: 'CLI Agent' }).click();
+
+    const instruction = modal.getByTestId('legacy-agent-command-input');
+    await instruction.click();
+    await instruction.fill('read /Users/test/project/zcc-smoke-check.md and report');
+    await expect(instruction).toContainText('read /Users/test/project/zcc-smoke-check.md and report');
+
+    const targetProject = modal.getByRole('button', { name: 'Project' });
+    await targetProject.click();
+    await window
+      .getByRole('listbox', { name: 'Project' })
+      .getByRole('option', { name: projectName, exact: true })
+      .click();
+    await expect(targetProject).toContainText(projectName);
+
+    await expect(picker).toHaveAttribute('title', /codex/i);
+    const send = modal.getByTestId('legacy-agent-command-send');
+    await expect(send).toBeEnabled({ timeout: 15_000 });
+    await send.click();
+
+    await expect(modal).toBeHidden({ timeout: 30_000 });
+    const agentModal = window.locator('[data-testid="agent-terminal-modal"]');
+    await expect(agentModal).toBeVisible({ timeout: 15_000 });
+    await expect(agentModal.getByTestId('agent-modal-header')).toBeVisible();
+    await expect(agentModal.getByTestId('agent-session-view')).toBeVisible();
+  } finally {
+    await cleanupLaunch(window, projectId, projectDir);
+    agent.cleanup();
+  }
+});

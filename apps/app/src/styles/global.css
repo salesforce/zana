@@ -12412,7 +12412,7 @@ body.resizing-col .explorer-resizer::after {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 8px 12px 0;
+  padding: 8px 12px 12px;
 }
 
 .app-shell.sidebar-is-collapsed .agents-board-toolbar {
@@ -12800,7 +12800,7 @@ body.resizing-col .explorer-resizer::after {
   max-width: 340px;
 }
 
-/* Empty fleet board: the board-level AuroraGrid shows through. */
+/* Empty fleet board: fill the pane on the standard panel surface. */
 .agents-board-empty--launch {
   overflow: auto;
   gap: 20px;
@@ -30177,15 +30177,11 @@ body.resizing-col .library-split-resizer::after {
 /* New Chat (`nav === 'home'`): ListPane returns null, so without an explicit
  * span the .settings-panel auto-flows into a narrow column. Center the
  * composer column like `.new-thread-view`. Home, Plugins, New Thread,
- * Scheduler, and Agents all host AuroraGrid via `.aurora-host`. */
+ * and Scheduler host AuroraGrid via `.aurora-host`. Agents uses the
+ * standard panel surface. */
 .aurora-host {
   position: relative;
   isolation: isolate;
-}
-
-.agents-board.aurora-host > :not(.aurora-grid) {
-  position: relative;
-  z-index: 1;
 }
 
 .home-panel {
@@ -30250,7 +30246,7 @@ body.resizing-col .library-split-resizer::after {
 }
 
 /* AuroraGrid: a low-contrast grid, slow blue/gold drift, and occasional circuit
- * traces. Hosts (New Chat, New Thread, Plugins, Scheduler, Agents) add
+ * traces. Hosts (New Chat, New Thread, Plugins, Scheduler) add
  * `.aurora-host`. Decorative; respects reduced-motion. */
 .aurora-host .aurora-grid {
   position: absolute;
@@ -32708,6 +32704,155 @@ textarea.thread-command-editor {
   position: relative;
   padding: 0;
   gap: 0;
+}
+
+/* Vanished CLI-agent session (closed/dismissed). Centered playful empty state
+   so the pane doesn't read as a blank crash. */
+.agent-session-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  padding: 32px 24px;
+  text-align: center;
+  animation: agent-session-missing-in 280ms ease-out;
+}
+
+.agent-session-missing-art {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.agent-session-missing-term {
+  width: 168px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  overflow: hidden;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--bg-base) 35%, transparent);
+}
+
+.agent-session-missing-term-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 70%, var(--bg-panel));
+}
+
+.agent-session-missing-term-bar span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  opacity: 0.45;
+}
+
+.agent-session-missing-term-bar span:nth-child(1) { background: #ff5f57; opacity: 0.7; }
+.agent-session-missing-term-bar span:nth-child(2) { background: #febc2e; opacity: 0.7; }
+.agent-session-missing-term-bar span:nth-child(3) { background: #28c840; opacity: 0.7; }
+
+.agent-session-missing-term-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 14px;
+  font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.agent-session-missing-prompt {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.agent-session-missing-caret {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  border-radius: 1px;
+  background: var(--accent-blue);
+  animation: agent-session-missing-blink 1s step-end infinite;
+}
+
+.agent-session-missing-plug {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-top: -14px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--bg-base) 28%, transparent);
+}
+
+.agent-session-missing-plug::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
+  animation: agent-session-missing-pulse 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.agent-session-missing-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.agent-session-missing-hint {
+  margin: 0;
+  max-width: 280px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+@keyframes agent-session-missing-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes agent-session-missing-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes agent-session-missing-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.92); }
+  50% { opacity: 0.85; transform: scale(1.08); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-session-missing {
+    animation: none;
+  }
+  .agent-session-missing-caret {
+    animation: none;
+    opacity: 1;
+  }
+  .agent-session-missing-plug::before {
+    animation: none;
+    opacity: 0.4;
+    transform: none;
+  }
 }
 
 .thread-detail-view.is-secondary-maximized .thread-detail-main {

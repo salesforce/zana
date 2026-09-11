@@ -493,7 +493,7 @@ function AgentMonitorSession({
   const canSummarize = isClaudeProfile(t.profile);
   const canFollowupClose = canCloseWithFollowup(t);
   const [summarizing, setSummarizing] = useState(false);
-  const [closingWithFollowup, setClosingWithFollowup] = useState(false);
+  const closingWithFollowup = useData((s) => s.closingFollowupIds.has(t.id));
   const summarize = async () => {
     if (summarizing) return;
     setSummarizing(true);
@@ -505,18 +505,12 @@ function AgentMonitorSession({
   };
   const closeWithFollowup = async () => {
     if (closingWithFollowup) return;
-    setClosingWithFollowup(true);
-    try {
-      await closeAgentWithFollowup(t, card.projectId);
-    } finally {
-      setClosingWithFollowup(false);
-    }
+    await closeAgentWithFollowup(t, card.projectId);
   };
   const prevId = useRef(t.id);
   if (prevId.current !== t.id) {
     prevId.current = t.id;
     if (summarizing) setSummarizing(false);
-    if (closingWithFollowup) setClosingWithFollowup(false);
   }
 
   const monitorActions = (
