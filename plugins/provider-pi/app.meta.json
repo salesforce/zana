@@ -5,7 +5,7 @@
   "pluginId": "provider-pi",
   "pluginVersion": "0.1.0",
   "builtWith": {
-    "zccVersion": "2.1.0",
+    "zccVersion": "2.1.1",
     "pluginSdkVersion": "0.1.0"
   }
 }

@@ -1,5 +1,10 @@
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  createSystemPeerDaemonSsh,
   parsePeerDaemonStatusOutput,
   peerDaemonInstall,
   peerDaemonLogs,
@@ -127,5 +132,28 @@ describe('peer-daemon commands', () => {
       serverHost: 'box.example',
       artifactPath: '/tmp/zcc-missing-artifact.tgz'
     })).rejects.toMatchObject({ code: 'artifact_missing' });
+  });
+
+  it('does not crash the process when ssh closes stdin during artifact upload', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-peer-epipe-'));
+    const file = join(dir, 'artifact.bin');
+    writeFileSync(file, Buffer.alloc(256 * 1024, 7));
+    const uncaught: Error[] = [];
+    const onUncaught = (err: Error) => {
+      uncaught.push(err);
+    };
+    process.on('uncaughtException', onUncaught);
+    try {
+      const ssh = createSystemPeerDaemonSsh((_command, _args, options) =>
+        spawn(process.execPath, ['-e', 'process.exit(1)'], options)
+      );
+      const result = await ssh.pipeFile({ host: 'devbox' }, 'tar -xzf -', file, 5_000);
+      expect(result.code).not.toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(uncaught.filter((err) => (err as NodeJS.ErrnoException).code === 'EPIPE')).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

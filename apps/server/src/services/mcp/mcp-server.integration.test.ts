@@ -17,6 +17,7 @@
  *                     close() shuts the listener.
  */
 
+import { createServer, type Server } from 'node:http';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -1067,5 +1068,46 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(projectTools.tools.find((t) => t.name === 'schedule_run_now')).toBeTruthy();
     expect(projectTools.tools.find((t) => t.name === 'schedule_set_enabled')).toBeTruthy();
     expect(projectTools.tools.find((t) => t.name === 'schedule_report')).toBeFalsy();
+  });
+});
+
+describe('startMcpServer bind recovery', () => {
+  let occupant: Server | null = null;
+  let handle: McpServerHandle | null = null;
+
+  afterEach(async () => {
+    if (handle) {
+      await handle.close();
+      handle = null;
+    }
+    if (occupant) {
+      await new Promise<void>((resolve, reject) => {
+        occupant!.close((err) => (err ? reject(err) : resolve()));
+      });
+      occupant = null;
+    }
+  });
+
+  it('falls back to an ephemeral port when the preferred port is already bound', async () => {
+    occupant = createServer((_req, res) => res.end());
+    await new Promise<void>((resolve, reject) => {
+      occupant!.once('error', reject);
+      occupant!.listen(0, '127.0.0.1', () => {
+        occupant!.off('error', reject);
+        resolve();
+      });
+    });
+    const taken = (occupant.address() as { port: number }).port;
+    const logs: string[] = [];
+    handle = await startMcpServer({
+      port: taken,
+      inboxStore: createMemoryInboxStore(),
+      suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => null },
+      log: (msg) => logs.push(msg)
+    });
+    expect(handle.port).not.toBe(taken);
+    expect(logs.some((line) => line.includes(`port ${taken} is in use`))).toBe(true);
+    expect(logs.some((line) => line.includes(`[mcp] listening on ${handle!.url}`))).toBe(true);
   });
 });
