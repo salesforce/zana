@@ -34,6 +34,7 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('pickOfferedComposerModel');
     expect(source).toContain('rememberComposerSelection');
     expect(source).toContain('resolveCliAgentFamily');
+    expect(source).toContain('resolveCliAgentSpawnProfile');
     expect(source).toContain('rememberedSelectionFor');
     expect(source).toContain('useComposerPromptField');
     expect(source).toContain("kind: 'cli'");
@@ -83,7 +84,7 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('aria-busy={launching}');
     expect(source).toContain('thread-command-send-spin');
     expect(source).toContain("className={`thread-command-send${launching ? ' is-sending' : ''}`}");
-    expect(source).toContain('disabled={launching}');
+    expect(source).toContain('disabled={!canLaunch}');
   });
 
   it('uploads remote-project attaches before launch and rewrites the prompt', () => {
@@ -180,6 +181,7 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('currentFamilyId,');
     // A remembered family restores its remembered model on switch.
     expect(source).toContain('rememberedSelectionFor(providerId)?.model');
+    expect(source).toContain("setSelectionProvenance('explicit');\n      if (availableFamilyIds.length > 0)");
   });
 
   it('replaces the isolation checkbox with a workspace picker for real local projects', () => {
@@ -243,5 +245,22 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain("familyForThreadProviderId(rememberedProviderId() ?? 'claude-code') ?? 'claude'");
     expect(source).toContain('if (catalogModelsLoading) return');
     expect(source).not.toContain("selectionState !== 'resolved' || catalogModelsLoading");
+  });
+
+  it('keeps launch available while the host catalog and local descriptor settle independently', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('resolveCliAgentSpawnProfile({');
+    expect(source).toContain('&& spawnProfile');
+    expect(source).toContain("const message = 'Agent launch failed: no launch profile for this harness'");
+    expect(source).toContain("pushToast(message, 'error')");
+    expect(source).not.toContain('if (!profile) return;');
+    expect(source).not.toContain("selectionProvenance === 'automatic'\n      ? automaticProfile");
+    expect(source).not.toContain("selectionProvenance !== 'explicit'\n      || selectedHarness");
+  });
+
+  it('launches absolute-path prompts when slash-command typeahead has no matches', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('if (field.typeaheadOpen && field.suggestions.length > 0) return;');
+    expect(source).not.toContain('if (field.typeaheadOpen) return;');
   });
 });

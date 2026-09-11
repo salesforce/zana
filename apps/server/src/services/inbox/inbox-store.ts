@@ -57,7 +57,7 @@ export interface InboxInput {
   /**
    * OPTIONAL author-set flag marking this push as a REPORT (a finished
    * deliverable/analysis, not a routine check-in). Persisted as-is on the entry
-   * and used by the renderer's report-only surfaces (Reports tab, filter, badge).
+   * and used by the renderer's report-only surfaces (Reports filter, badge).
    * See {@link InboxEntry.report}. NOT counted as content — a report-only push
    * (no docs/comments/question) is still rejected.
    */

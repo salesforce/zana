@@ -20,6 +20,7 @@ import {
   PROFILE_BY_FAMILY,
   readCliExtraArgs,
   resolveCliAgentFamily,
+  resolveCliAgentSpawnProfile,
   resolveCliLaunchProfile,
   rewritePromptPaths,
   stageRemoteComposerAttachments,
@@ -119,6 +120,56 @@ describe('resolveCliAgentFamily', () => {
       rememberedFamilyId: 'pi',
       effectiveDefaultFamilyId: 'claude'
     })).toBe('pi');
+  });
+});
+
+describe('resolveCliAgentSpawnProfile', () => {
+  it('falls back to the family default when a remembered Codex pick never got an automatic profile', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'automatic',
+      automaticProfile: null,
+      familyId: 'codex'
+    })).toBe('codex');
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'explicit',
+      automaticProfile: null,
+      familyId: 'codex'
+    })).toBe('codex');
+  });
+
+  it('prefers a resolved automatic profile such as a yolo default', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'automatic',
+      automaticProfile: 'codex-yolo',
+      harnessDefaultProfileId: 'codex',
+      familyId: 'codex'
+    })).toBe('codex-yolo');
+  });
+
+  it('ignores automaticProfile once the user picked the family explicitly', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'explicit',
+      automaticProfile: 'codex-yolo',
+      harnessDefaultProfileId: 'codex',
+      familyId: 'codex'
+    })).toBe('codex');
+  });
+
+  it('prefers the harness default over the family map', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'explicit',
+      automaticProfile: null,
+      harnessDefaultProfileId: 'codex-yolo',
+      familyId: 'codex'
+    })).toBe('codex-yolo');
+  });
+
+  it('returns undefined for an unknown family with no automatic or harness profile', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'automatic',
+      automaticProfile: null,
+      familyId: 'unknown'
+    })).toBeUndefined();
   });
 });
 

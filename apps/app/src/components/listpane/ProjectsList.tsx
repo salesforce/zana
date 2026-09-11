@@ -375,10 +375,10 @@ export function ProjectsList({
     setRenamingId(null);
   };
 
-  // The chat action focuses the project (Agents board) and opens the same
-  // Start-a-session modal every other launch point uses.
+  // Open the shared Start-a-session modal in the current view. selectProject
+  // seeds the launcher's project picker; it does not switch to the workspace.
   const spawnDefaultAgent = (p: Project) => {
-    enterProjectFocus(p.id);
+    selectProject(p.id);
     setLauncherOpen(true);
   };
 

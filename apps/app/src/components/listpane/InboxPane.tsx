@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, X, Check, Trash2, ChevronsDownUp, ChevronsUpDown, InboxIcon, Bookmark, FolderTree, Clock, FileText, MoreHorizontal } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
+import { Search, X, Check, Trash2, ChevronsDownUp, ChevronsUpDown, InboxIcon, Bookmark, FolderTree, Clock, MoreHorizontal, MailCheck } from 'lucide-react';
 import { useInbox, useInboxRead, useInboxKeep, useInboxCollapsed, useInboxScopeProjectId, clearInbox, useSaved, useUi, INBOX_LIST_MIN } from '../../store.js';
 import { groupByBucketThenProject, subGroupKey } from '@zana-ai/zcc-domain/inbox-grouping';
 import { isReport } from '@zana-ai/zcc-domain/feed-categories';
@@ -26,8 +27,12 @@ export function InboxPane() {
   const savedRecords = useSaved((s) => s.records);
   const [query, setQuery] = useState('');
   const [unreadOnly, setUnreadOnly] = useState(false);
+  const [reportsOnly, setReportsOnly] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [actionsMenuPos, setActionsMenuPos] = useState<CSSProperties>({});
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const actionsTriggerRef = useRef<HTMLButtonElement>(null);
+  const actionsPanelRef = useRef<HTMLDivElement>(null);
   // When the shell is drilled into one project (focused or scoped window), the
   // inbox shows only that project — so every count/action here works off the
   // scoped slice, not the full store.
@@ -46,12 +51,9 @@ export function InboxPane() {
     [savedRecords, scopeProjectId]
   );
   const showingSaved = inboxTab === 'saved';
-  const showingReports = inboxTab === 'reports';
-  // The plain live feed (not Reports filter, not Saved) — the toolbar's
-  // group/collapse/unread/mark-read/clear actions apply only here.
-  const showingFeed = !showingSaved && !showingReports;
+  // The live feed (not Saved) — toolbar group/collapse/mark-read/clear apply here.
+  const showingFeed = !showingSaved;
   const unreadCount = entries.reduce((n, e) => (readIds[e.id] ? n : n + 1), 0);
-  // How many entries are explicitly-flagged reports (drives the Reports tab count).
   const reportCount = useMemo(() => entries.reduce((n, e) => (isReport(e) ? n + 1 : n), 0), [entries]);
   // Distinct (bucket,project) subgroups present in the inbox — collapse-all /
   // expand-all should apply to visible subgroup rows, not globally by project.
@@ -71,14 +73,14 @@ export function InboxPane() {
   const keptCount = entries.length - clearableCount;
   const showCollapseAll = showingFeed && inboxGrouping === 'project' && subgroupKeys.length > 1;
   const collapseTitle = anyCollapsed ? 'Expand all projects' : 'Collapse all projects';
-  const unreadTitle = unreadOnly ? 'Show all messages' : `Show only unread (${unreadCount})`;
+  const unreadChipLabel = unreadOnly ? 'Show all messages' : `Unread${unreadCount > 0 ? ` ${unreadCount}` : ''}`;
+  const reportsChipLabel = reportsOnly ? 'Show all messages' : `Reports${reportCount > 0 ? ` ${reportCount}` : ''}`;
   const markReadTitle = `Mark ${unreadCount} as read`;
   const clearTitle =
     clearableCount === 0
       ? 'Nothing to clear (all kept or empty)'
       : `Clear ${clearableCount} ${clearableCount === 1 ? 'message' : 'messages'}${keptCount > 0 ? ` (keeps ${keptCount})` : ''}`;
   const feedAria = tabAriaLabel('Feed', unreadCount, 'unread');
-  const reportsAria = tabAriaLabel('Reports', reportCount);
   const savedAria = tabAriaLabel('Saved', savedCount);
 
   const onClear = () => {
@@ -93,7 +95,10 @@ export function InboxPane() {
   useEffect(() => {
     if (!actionsMenuOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (actionsMenuRef.current?.contains(e.target as Node)) return;
+      const target = e.target as Node;
+      if (actionsMenuRef.current?.contains(target) || actionsPanelRef.current?.contains(target)) {
+        return;
+      }
       setActionsMenuOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -113,9 +118,8 @@ export function InboxPane() {
 
   return (
     <section className="list-pane inbox-list-pane">
-      {/* Tab strip: the live feed vs. durable saved-for-later reports. Feed
-          actions always live in the ⋯ menu beside the tabs — never as a
-          second icon row — so a wide pane stays one chrome strip. */}
+      {/* Tab strip: live feed vs durable saved reports. Feed actions live in
+          the ⋯ menu; Unread / Reports are filter chips under the search. */}
       <div className="inbox-tabs-row">
         <div className="inbox-tabs" role="tablist" aria-label="Inbox view">
           <button
@@ -130,19 +134,6 @@ export function InboxPane() {
             <InboxIcon size={13} aria-hidden />
             <span className="inbox-tab-label">Feed</span>
             {unreadCount > 0 && <span className="inbox-tab-count">{unreadCount}</span>}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={showingReports}
-            aria-label={reportsAria}
-            title={reportsAria}
-            className={`inbox-tab ${showingReports ? 'active' : ''}`}
-            onClick={() => setInboxTab('reports')}
-          >
-            <FileText size={13} aria-hidden />
-            <span className="inbox-tab-label">Reports</span>
-            {reportCount > 0 && <span className="inbox-tab-count">{reportCount}</span>}
           </button>
           <button
             type="button"
@@ -162,143 +153,176 @@ export function InboxPane() {
           <div className="inbox-actions-more" ref={actionsMenuRef}>
             <button
               type="button"
+              ref={actionsTriggerRef}
               className="icon-btn"
               aria-label="Inbox actions"
               aria-haspopup="menu"
               aria-expanded={actionsMenuOpen}
               title="Inbox actions"
-              onClick={() => setActionsMenuOpen((open) => !open)}
+              onClick={() => {
+                const rect = actionsTriggerRef.current?.getBoundingClientRect();
+                if (rect) {
+                  setActionsMenuPos({
+                    top: rect.bottom + 4,
+                    right: Math.max(8, window.innerWidth - rect.right)
+                  });
+                }
+                setActionsMenuOpen((open) => !open);
+              }}
             >
               <MoreHorizontal size={14} />
             </button>
-            {actionsMenuOpen && (
-              <div className="inbox-actions-menu" role="menu" aria-label="Inbox actions">
-                {showingFeed && (
-                  <>
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={inboxGrouping === 'project'}
-                      className="inbox-actions-menu-item"
-                      onClick={() => {
-                        setInboxGrouping('project');
-                        setActionsMenuOpen(false);
-                      }}
+            {actionsMenuOpen &&
+              (typeof document === 'undefined'
+                ? null
+                : createPortal(
+                    <div
+                      ref={actionsPanelRef}
+                      className="tab-context-menu"
+                      role="menu"
+                      aria-label="Inbox actions"
+                      style={actionsMenuPos}
+                      onMouseDown={(e) => e.stopPropagation()}
                     >
-                      <FolderTree size={14} aria-hidden />
-                      <span>Group by project</span>
-                      {inboxGrouping === 'project' && <Check size={14} aria-hidden />}
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={inboxGrouping === 'time'}
-                      className="inbox-actions-menu-item"
-                      onClick={() => {
-                        setInboxGrouping('time');
-                        setActionsMenuOpen(false);
-                      }}
-                    >
-                      <Clock size={14} aria-hidden />
-                      <span>Sort by time</span>
-                      {inboxGrouping === 'time' && <Check size={14} aria-hidden />}
-                    </button>
-                  </>
-                )}
-                {showCollapseAll && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="inbox-actions-menu-item"
-                    onClick={() => {
-                      setManyCollapsed(subgroupKeys, !anyCollapsed);
-                      setActionsMenuOpen(false);
-                    }}
-                  >
-                    {anyCollapsed ? <ChevronsUpDown size={14} aria-hidden /> : <ChevronsDownUp size={14} aria-hidden />}
-                    <span>{collapseTitle}</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  role="menuitemcheckbox"
-                  className="inbox-actions-menu-item"
-                  aria-checked={unreadOnly}
-                  disabled={unreadCount === 0 && !unreadOnly}
-                  onClick={() => {
-                    setUnreadOnly((v) => !v);
-                    setActionsMenuOpen(false);
-                  }}
-                >
-                  <InboxIcon size={14} aria-hidden />
-                  <span>{unreadTitle}</span>
-                </button>
-                {unreadCount > 0 && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="inbox-actions-menu-item"
-                    onClick={() => {
-                      markAllRead(entries.map((e) => e.id));
-                      setActionsMenuOpen(false);
-                    }}
-                  >
-                    <Check size={14} aria-hidden />
-                    <span>{markReadTitle}</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="inbox-actions-menu-item inbox-actions-menu-item--danger"
-                  disabled={clearableCount === 0}
-                  onClick={() => {
-                    setActionsMenuOpen(false);
-                    onClear();
-                  }}
-                >
-                  <Trash2 size={14} aria-hidden />
-                  <span>{clearableCount === 0 ? 'Clear inbox' : clearTitle}</span>
-                </button>
-              </div>
-            )}
+                      {showingFeed && (
+                        <div role="group" aria-label="Inbox grouping">
+                          <button
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={inboxGrouping === 'project'}
+                            onClick={() => {
+                              setInboxGrouping('project');
+                              setActionsMenuOpen(false);
+                            }}
+                          >
+                            <FolderTree size={13} aria-hidden />
+                            Group by project
+                            {inboxGrouping === 'project' && <Check size={13} className="inbox-menu-check" aria-hidden />}
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={inboxGrouping === 'time'}
+                            onClick={() => {
+                              setInboxGrouping('time');
+                              setActionsMenuOpen(false);
+                            }}
+                          >
+                            <Clock size={13} aria-hidden />
+                            Group by time
+                            {inboxGrouping === 'time' && <Check size={13} className="inbox-menu-check" aria-hidden />}
+                          </button>
+                        </div>
+                      )}
+                      {(showCollapseAll || unreadCount > 0) && <div className="tab-context-sep" />}
+                      {showCollapseAll && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setManyCollapsed(subgroupKeys, !anyCollapsed);
+                            setActionsMenuOpen(false);
+                          }}
+                        >
+                          {anyCollapsed ? <ChevronsUpDown size={13} aria-hidden /> : <ChevronsDownUp size={13} aria-hidden />}
+                          {collapseTitle}
+                        </button>
+                      )}
+                      {unreadCount > 0 && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            markAllRead(entries.map((e) => e.id));
+                            setActionsMenuOpen(false);
+                          }}
+                        >
+                          <MailCheck size={13} aria-hidden />
+                          {markReadTitle}
+                        </button>
+                      )}
+                      <div className="tab-context-sep" />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="tab-context-danger"
+                        disabled={clearableCount === 0}
+                        title={clearTitle}
+                        onClick={() => {
+                          setActionsMenuOpen(false);
+                          onClear();
+                        }}
+                      >
+                        <Trash2 size={13} aria-hidden />
+                        Clear inbox
+                      </button>
+                    </div>,
+                    document.body
+                  ))}
           </div>
         )}
       </div>
       <div className="inbox-filter-row">
-        <Search size={12} className="inbox-filter-icon" aria-hidden />
-        <input
-          type="text"
-          className="inbox-filter-input"
-          placeholder={showingSaved ? 'Filter saved reports…' : showingReports ? 'Filter reports…' : 'Filter inbox…'}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        {query && (
-          <button
-            type="button"
-            className="inbox-filter-clear"
-            aria-label="Clear filter"
-            onClick={() => setQuery('')}
-          >
-            <X size={12} />
-          </button>
+        <div className="inbox-filter-search">
+          <Search size={12} className="inbox-filter-icon" aria-hidden />
+          <input
+            type="text"
+            className="inbox-filter-input"
+            placeholder={showingSaved ? 'Filter saved reports…' : reportsOnly ? 'Filter reports…' : 'Filter inbox…'}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
+            <button
+              type="button"
+              className="inbox-filter-clear"
+              aria-label="Clear filter"
+              onClick={() => setQuery('')}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        {!showingSaved && (
+          <>
+            <button
+              type="button"
+              className={`inbox-filter-chip ${unreadOnly ? 'on' : ''}`}
+              aria-pressed={unreadOnly}
+              aria-label={unreadChipLabel}
+              title={unreadChipLabel}
+              disabled={unreadCount === 0 && !unreadOnly}
+              onClick={() => setUnreadOnly((v) => !v)}
+            >
+              Unread{unreadCount > 0 ? ` ${unreadCount}` : ''}
+            </button>
+            <button
+              type="button"
+              className={`inbox-filter-chip ${reportsOnly ? 'on' : ''}`}
+              aria-pressed={reportsOnly}
+              aria-label={reportsChipLabel}
+              title={reportsChipLabel}
+              disabled={reportCount === 0 && !reportsOnly}
+              onClick={() => setReportsOnly((v) => !v)}
+            >
+              Reports{reportCount > 0 ? ` ${reportCount}` : ''}
+            </button>
+          </>
         )}
       </div>
       <div className="list-body">
         {showingSaved ? (
           <SavedSidebar query={query} scopeProjectId={scopeProjectId} />
         ) : (
-          // The AI summary card used to sit here, atop the list — it moved to the
-          // detail column's Overview landing page (see `InboxView`/`InboxOverview`)
-          // so the list column is a pure, scannable feed. The Reports tab reuses
-          // the same sidebar with `reportsOnly` — flagged deliverables only.
+          // The AI summary card sits on the detail landing (see InboxOverview)
+          // so the list column stays a scannable feed. Reports is a filter chip,
+          // not a tab — same sidebar, `reportsOnly` on.
           <InboxSidebar
             query={query}
             unreadOnly={unreadOnly}
-            reportsOnly={showingReports}
+            reportsOnly={reportsOnly}
             scopeProjectId={scopeProjectId}
-            grouping={showingReports ? 'time' : inboxGrouping}
+            grouping={inboxGrouping}
           />
         )}
       </div>

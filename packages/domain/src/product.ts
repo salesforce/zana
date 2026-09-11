@@ -525,14 +525,14 @@ export interface InboxEntry {
    * deliverable/analysis the user should be able to find fast (an RCA, an audit,
    * a design writeup), as opposed to a routine status check-in. Set by the agent
    * via `inbox_push({ report: true })`; the app surfaces flagged entries with a
-   * "Report" badge, a dedicated Reports tab, and a list-pane Reports filter.
+   * "Report" badge and a list-pane Reports filter.
    *
    * This is an EXPLICIT opt-in signal, distinct from the `report` FEED CATEGORY
    * in `feedCategories.ts` (which is the un-classified *fallback* — every plain
    * push lands there). A `report: true` entry is always a feed-category `report`
    * too, but not every feed-category `report` carries this flag. The flag is what
    * `isReport()` reads to power the report-only surfaces. Absent/false ⇒ a normal
-   * entry (still surfaced inline, just not badged or in the Reports tab).
+   * entry (still surfaced inline, just not badged or in the Reports filter).
    */
   report?: boolean;
   /**

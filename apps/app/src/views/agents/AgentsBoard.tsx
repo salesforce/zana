@@ -24,7 +24,6 @@ import { AgentMonitor } from '@/components/AgentMonitor';
 import { CloseIdleAgentsDialog } from '@/components/CloseIdleAgentsDialog';
 import { CohortBar, type LiveCohort } from '@/components/CohortBar';
 import { ExecutionJobDetails } from '@/components/ExecutionJobDetails';
-import { AuroraGrid } from '@/components/AuroraGrid';
 import {
   agentFleetItem,
   fleetAgentCards,
@@ -37,6 +36,7 @@ import { resolveIcon } from '@/lib/resolveIcon';
 import { invokeAgentsBoardAction } from '@/plugins/plugin-agent-actions';
 import { listAgentsBoardActions, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { openScheduleFromAgents } from '@/components/scheduler/openScheduledLive';
+import { PaneEmptyState } from '@/components/PaneEmptyState';
 
 /**
  * One Agents Kanban, two scopes. Global (`kind: 'global'`) flattens every
@@ -339,8 +339,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   };
 
   return (
-    <div className={isGlobal ? 'agents-board agents-board--global panel-body--full aurora-host' : 'agents-board aurora-host'}>
-      <AuroraGrid />
+    <div className={isGlobal ? 'agents-board agents-board--global panel-body--full' : 'agents-board'}>
       {showToolbar && (
         <div className="agents-board-toolbar">
           <AgentViewToggle />
@@ -457,35 +456,28 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           onInspectExecution={(projectId, executionId) => setSelectedExecution({ projectId, executionId })}
         />
       ) : fleet.length === 0 && executions.length === 0 ? (
-        <div className="agents-board-empty agents-board-empty--launch">
-          <div className="agents-board-empty-copy">
-            <Bot size={28} aria-hidden="true" />
-            {isGlobal ? (
-              <>
-                <h4>No agents</h4>
-                <p>
-                  Start an agent — it&rsquo;ll appear here, across every project.
-                </p>
-              </>
-            ) : (
-              <>
-                <h4>No agents yet</h4>
-                <p>Start an agent in this project and watch it move across the board.</p>
-              </>
-            )}
-            {!showToolbar && (
-              <button
-                type="button"
-                className="btn primary"
-                data-testid="agents-board-new-thread"
-                onClick={() => useUi.getState().setLauncherOpen(true)}
-              >
-                <Plus size={14} />
-                New agent
-              </button>
-            )}
-          </div>
-        </div>
+        <PaneEmptyState
+          className="agents-board-empty agents-board-empty--launch"
+          art="agents"
+          title={isGlobal ? 'No agents' : 'No agents yet'}
+          hint={
+            isGlobal
+              ? 'Start an agent — it will appear here, across every project.'
+              : 'Start an agent in this project and watch it move across the board.'
+          }
+        >
+          {!showToolbar && (
+            <button
+              type="button"
+              className="btn primary"
+              data-testid="agents-board-new-thread"
+              onClick={() => useUi.getState().setLauncherOpen(true)}
+            >
+              <Plus size={14} />
+              New agent
+            </button>
+          )}
+        </PaneEmptyState>
       ) : isGlobal && visibleFleet.length === 0 ? (
         <div className="agents-board-empty">
           <Bot size={28} aria-hidden="true" />

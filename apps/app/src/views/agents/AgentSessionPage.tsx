@@ -4,6 +4,7 @@ import { useData, useAgentStatus } from '../../store.js';
 import { agentSessionAnchorId } from '../../lib/split-layout/agentSessionPortal.js';
 import { AgentSessionView } from '../../components/AgentSessionView.js';
 import { AgentSessionActions } from '../../components/AgentSessionActions.js';
+import { PaneEmptyState } from '../../components/PaneEmptyState.js';
 
 function findSessionById(
   terminals: Record<string, TerminalSession[]>,
@@ -48,9 +49,12 @@ export function AgentSessionPage({
 
   if (!session || !resolvedProjectId) {
     return (
-      <div className="thread-detail-empty" data-testid="agent-session-missing">
-        This CLI agent is no longer running.
-      </div>
+      <PaneEmptyState
+        testId="agent-session-missing"
+        art="ended"
+        title="This CLI agent is no longer running."
+        hint="The session was closed. You can close this pane."
+      />
     );
   }
 

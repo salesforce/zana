@@ -1,5 +1,12 @@
-import type { InboxEntry } from '@zana-ai/zcc-domain/product';
+import {
+  hasBlockingQuestion,
+  inboxQuestions,
+  type InboxEntry
+} from '@zana-ai/zcc-domain/product';
 import { mdToPlainText } from './plainText.js';
+
+/** Questions older than this drop off the pinned band / landing (still reachable inline). */
+export const PINNED_QUESTION_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
  * Primary inbox heading shown across list/overview/detail.
@@ -70,4 +77,28 @@ export function inboxPreview(entry: InboxEntry): string {
     }
   }
   return '';
+}
+
+/** True when the entry still has a structured question the user hasn't answered. */
+export function isUnansweredQuestion(
+  entry: InboxEntry,
+  answeredIds: Record<string, true>
+): boolean {
+  return inboxQuestions(entry).length > 0 && !answeredIds[entry.id];
+}
+
+/**
+ * Fresh unanswered BLOCKING question — the pin-band / attention-landing set.
+ * Soft questions stay inline and answerable; they don't take a pinned slot.
+ */
+export function isPinnedBlockingQuestion(
+  entry: InboxEntry,
+  answeredIds: Record<string, true>,
+  now = Date.now()
+): boolean {
+  return (
+    entry.ts >= now - PINNED_QUESTION_MAX_AGE_MS &&
+    isUnansweredQuestion(entry, answeredIds) &&
+    hasBlockingQuestion(entry)
+  );
 }

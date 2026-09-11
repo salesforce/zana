@@ -21,7 +21,6 @@ import {
 import { DelayedStencilLines, StencilLines } from './ui/Skeleton.js';
 import { AgentLauncher } from './AgentLauncher.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
-import { InboxGuidance } from './InboxGuidance.js';
 import { DocContent, MarkdownContent } from './MarkdownContent.js';
 import { renderReportHtml, type ReportDoc } from '../lib/renderReportHtml.js';
 import { inboxPrimaryTitle, inboxShortTitle, inboxContextLine } from '../lib/inboxPresentation.js';
@@ -112,10 +111,7 @@ export function InboxDetail({ visible }: InboxDetailProps) {
   if (loading && entries.length === 0) {
     return <DelayedStencilLines label="Loading inbox" className="zcc-stencil-padded" />;
   }
-  if (entries.length === 0) {
-    return <EmptyState />;
-  }
-  if (!selected) {
+  if (entries.length === 0 || !selected) {
     return <div className="inbox-detail-empty">Select an entry from the sidebar.</div>;
   }
   return <Detail entry={selected} onDelete={() => handleDelete(selected.id)} />;
@@ -127,19 +123,6 @@ export function InboxDetail({ visible }: InboxDetailProps) {
 // OOM it. Bound the total: once the budget is spent, remaining docs are recorded
 // as skipped (visible in the output, per "no silent caps"), not read.
 const EXPORT_TOTAL_BYTES_CAP = 32 * 1024 * 1024; // 32 MB of source markdown
-
-function EmptyState() {
-  return (
-    <div className="inbox-detail-empty-state">
-      <div className="inbox-detail-empty-title">No inbox messages yet</div>
-      <p className="inbox-detail-empty-body">
-        Projects will push status updates here as they work — finished
-        analyses, blocked tasks, questions back to you.
-      </p>
-      <InboxGuidance />
-    </div>
-  );
-}
 
 function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }) {
   const projects = useData((s) => s.projects);
@@ -230,6 +213,7 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
   // from the entry's own structured question field, so a user who disabled the
   // interactive picker still gets an answer box for a real question (never null).
   const answerable = questionSet.length > 0 || classifyEntry(entry) === 'question';
+  const questionFirst = answerable;
   // Single deterministic decision for the answer surface (see resolveAnswerSurface):
   //  live   → inject into the originating/reopened pty.
   //  reopen → no live session but project survives → reopen the agent with the
@@ -463,6 +447,78 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
     }
   };
 
+  const answerSurface = (
+    <>
+          {/* Answer surface — one deterministic decision (resolveAnswerSurface):
+              • live   → the originating (or a reopened) session is alive → inject
+                         the answer into its pty.
+              • reopen → no live session but the project survives → deliver by
+                         reopening the agent (resume, or a fresh seeded agent) with
+                         the answer as its opening turn. Covers BOTH a tombstoned
+                         session AND a question-shaped entry that never had a
+                         sessionId (e.g. a manual push phrased as a question) — the
+                         case the old session-liveness ternary dropped to `null`.
+                         A plain report shows a quiet "Reply…" button first so every
+                         report doesn't sprout a textarea; a real question auto-opens.
+              • none   → project gone → honest disabled panel, never a blank node. */}
+          {deliveryMode === 'live' && aliveSession ? (
+            questionSet.length > 0 ? (
+              <QuestionBlock
+                key={entry.id}
+                entry={entry}
+                questions={questionSet}
+                prompt={entry.comments}
+                sessionId={aliveSession.id}
+                sessionTitle={aliveSession.title}
+              />
+            ) : (
+              <ReplyBox entry={entry} sessionId={aliveSession.id} sessionTitle={aliveSession.title} />
+            )
+          ) : deliveryMode === 'reopen' ? (
+            showReopenBox ? (
+              questionSet.length > 0 ? (
+                <QuestionBlock
+                  key={entry.id}
+                  entry={entry}
+                  questions={questionSet}
+                  prompt={entry.comments}
+                  sessionTitle={sessionTitleForTombstone(entry)}
+                  onAnswerDeadSession={answerOnDeadSession}
+                  deadSessionBusy={reopening}
+                />
+              ) : (
+                <ReplyBox
+                  entry={entry}
+                  sessionTitle={sessionTitleForTombstone(entry)}
+                  onAnswerDeadSession={answerOnDeadSession}
+                  deadSessionBusy={reopening}
+                />
+              )
+            ) : (
+              <div className="inbox-reply">
+                <button
+                  type="button"
+                  className="inbox-reply-again"
+                  onClick={() => setReplyExpanded(true)}
+                >
+                  Reply / pick this back up…
+                </button>
+              </div>
+            )
+          ) : answerable ? (
+            // mode === 'none' AND the entry is a question: the project is gone so
+            // there's nowhere to route an answer, but a question must never render a
+            // blank surface — show an honest explanation instead of nothing.
+            <div className="inbox-reply">
+              <div className="inbox-detail-open disabled">
+                This project no longer exists — there's no agent to route an answer to.
+              </div>
+            </div>
+          ) : null}
+
+    </>
+  );
+
   return (
     <div className="inbox-detail">
       <div className="inbox-detail-header">
@@ -470,10 +526,10 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
           type="button"
           className="inbox-detail-overview-back"
           onClick={() => clearSelection(null)}
-          title="Back to inbox overview"
+          title="Back to inbox"
         >
           <ArrowLeft size={13} aria-hidden />
-          <span>Overview</span>
+          <span>Inbox</span>
         </button>
         <span
           className={`inbox-detail-label ${projectAlive ? '' : 'tombstoned'}`}
@@ -585,6 +641,8 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
         </div>
       )}
 
+      {questionFirst ? answerSurface : null}
+
       {/* A structured-question entry shows its question text INSIDE the
           "Your input" card (QuestionBlock `prompt`), so it's self-contained and
           the user sees what they're answering right above the options. Rendering
@@ -604,15 +662,6 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
             originCwd={entry.origin?.cwd}
           />
         </div>
-      )}
-
-      {relatedSuggestions.length > 0 && (
-        <RelatedNextSteps
-          suggestions={relatedSuggestions}
-          onOpen={() => {
-            setNav('suggestions');
-          }}
-        />
       )}
 
       <div className="inbox-detail-footer">
@@ -658,74 +707,16 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
         )}
       </div>
 
-      {/* Answer surface — one deterministic decision (resolveAnswerSurface):
-          • live   → the originating (or a reopened) session is alive → inject
-                     the answer into its pty.
-          • reopen → no live session but the project survives → deliver by
-                     reopening the agent (resume, or a fresh seeded agent) with
-                     the answer as its opening turn. Covers BOTH a tombstoned
-                     session AND a question-shaped entry that never had a
-                     sessionId (e.g. a manual push phrased as a question) — the
-                     case the old session-liveness ternary dropped to `null`.
-                     A plain report shows a quiet "Reply…" button first so every
-                     report doesn't sprout a textarea; a real question auto-opens.
-          • none   → project gone → honest disabled panel, never a blank node. */}
-      {deliveryMode === 'live' && aliveSession ? (
-        questionSet.length > 0 ? (
-          <QuestionBlock
-            key={entry.id}
-            entry={entry}
-            questions={questionSet}
-            prompt={entry.comments}
-            sessionId={aliveSession.id}
-            sessionTitle={aliveSession.title}
-          />
-        ) : (
-          <ReplyBox entry={entry} sessionId={aliveSession.id} sessionTitle={aliveSession.title} />
-        )
-      ) : deliveryMode === 'reopen' ? (
-        showReopenBox ? (
-          questionSet.length > 0 ? (
-            <QuestionBlock
-              key={entry.id}
-              entry={entry}
-              questions={questionSet}
-              prompt={entry.comments}
-              sessionTitle={sessionTitleForTombstone(entry)}
-              onAnswerDeadSession={answerOnDeadSession}
-              deadSessionBusy={reopening}
-            />
-          ) : (
-            <ReplyBox
-              entry={entry}
-              sessionTitle={sessionTitleForTombstone(entry)}
-              onAnswerDeadSession={answerOnDeadSession}
-              deadSessionBusy={reopening}
-            />
-          )
-        ) : (
-          <div className="inbox-reply">
-            <button
-              type="button"
-              className="inbox-reply-again"
-              onClick={() => setReplyExpanded(true)}
-            >
-              Reply / pick this back up…
-            </button>
-          </div>
-        )
-      ) : answerable ? (
-        // mode === 'none' AND the entry is a question: the project is gone so
-        // there's nowhere to route an answer, but a question must never render a
-        // blank surface — show an honest explanation instead of nothing.
-        <div className="inbox-reply">
-          <div className="inbox-detail-open disabled">
-            This project no longer exists — there's no agent to route an answer to.
-          </div>
-        </div>
-      ) : null}
+      {questionFirst ? null : answerSurface}
 
-      <div className="inbox-detail-meta-id">project: {entry.projectId}</div>
+      {relatedSuggestions.length > 0 && (
+        <RelatedNextSteps
+          suggestions={relatedSuggestions}
+          onOpen={() => {
+            setNav('suggestions');
+          }}
+        />
+      )}
 
       {launcherOpen && aliveProject && (
         <AgentLauncher

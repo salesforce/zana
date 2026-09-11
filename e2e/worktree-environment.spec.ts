@@ -198,9 +198,10 @@ async function openWorktreeLauncher(window: Page, projectName: string, prompt: s
   const modal = window.locator('[data-testid="launch-modal"]');
   await expect(modal).toBeVisible();
   // The launcher's agent surface is the CLI Agent composer (TipTap). The
-  // launching row already pinned the project (enterProjectFocus), so the
-  // composer's project chip is locked — no target-project pick needed.
+  // launching row seeds the project picker via selectProject (no workspace
+  // redirect); assert the chip shows this project after CLI Agent is selected.
   await modal.getByRole('button', { name: 'CLI Agent' }).click();
+  await expect(modal.getByRole('button', { name: 'Project', exact: true })).toContainText(projectName);
   const instruction = modal.getByTestId('legacy-agent-command-input');
   await instruction.click();
   await instruction.fill(prompt);

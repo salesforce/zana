@@ -103,16 +103,22 @@ each terminal, agents push here when they:
 
 **Reply inline.** When an entry is a question, your answer routes straight back
 to the waiting agent as if typed at its prompt — you never have to find the
-right terminal.
+right terminal. Unanswered questions sit on the landing page and in a pinned
+band at the top of the Feed.
 
-**Signal vs. noise.** The feed keeps high-value items (reports, ideas,
-questions, goals) inline as solo rows, and folds high-volume routine events
-(scheduled runs, auto-closed agents, heartbeats) into collapsible per-project
-sections so they can't bury what matters.
+**Feed and Saved.** The list has two tabs: the live **Feed**, and **Saved**
+(durable snapshots you bookmark from a report). Flagged deliverables
+(`report: true`) stay in the Feed with a Report badge; turn on the **Reports**
+filter to see only those. Ideas live in the Library, not here.
 
-**AI Summary.** A card at the top digests recent activity into a few lines, so
-even a busy inbox is readable at a glance. It refreshes on its own as the inbox
-changes.
+**Signal vs. noise.** The feed keeps high-value items (reports, questions, goals)
+inline as solo rows, and folds high-volume routine events (scheduled runs,
+auto-closed agents, heartbeats) into collapsible per-project sections so they
+can't bury what matters.
+
+**AI Summary.** A card on the landing page digests recent activity into a few
+lines. Open Inbox with nothing selected to generate or refresh it; it also
+regenerates on a throttle while that landing is open and the inbox has changed.
 
 ---
 

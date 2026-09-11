@@ -41,6 +41,8 @@ describe('AgentMonitor thread selection', () => {
     expect(source).toContain('canCloseWithFollowup');
     expect(source).toContain('closeAgentWithFollowup');
     expect(source).toContain('Close with follow-up');
+    expect(source).toContain('closingFollowupIds.has(t.id)');
+    expect(source).toContain("closingWithFollowup ? 'Closing…' : 'Close with follow-up'");
     expect(source).toContain("summarizing ? 'Summarizing…' : 'Summarize'");
     expect(source.indexOf('Close with follow-up')).toBeLessThan(source.indexOf("summarizing ? 'Summarizing…' : 'Summarize'"));
   });
