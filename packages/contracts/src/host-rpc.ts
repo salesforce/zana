@@ -27,7 +27,11 @@ import {
   providerCliInstallRequestSchema,
   providerCliStatusResponseSchema
 } from '@zana-ai/zcc-host-daemon-contract/local';
-import { HOST_ARTIFACT_MAX_BYTES } from '@zana-ai/zcc-host-daemon-contract';
+import {
+  HOST_ARTIFACT_MAX_BYTES,
+  desktopBrowserCommandSchemas,
+  desktopBrowserResultSchemas
+} from '@zana-ai/zcc-host-daemon-contract';
 
 /**
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
@@ -51,8 +55,13 @@ import { HOST_ARTIFACT_MAX_BYTES } from '@zana-ai/zcc-host-daemon-contract';
  * and attachments survive the host hop (BB-aligned).
  * 24: host.hello-ok after acceptHello so /status connected means HostHub
  * attached; peer_daemon.logs tails the remote join log after a silent wait.
+ * 25: workspace.processes.list / workspace.processes.kill — confined cwd
+ * process inspector for leftover servers.
+ * 26: desktop.browser.* commands and desktop.browser.changed host event.
+ * Conversation thread ids travel in the event payload, not envelope.threadId
+ * (ZCC ids are not always UUIDs).
  */
-export const HOST_RPC_PROTOCOL_VERSION = 24;
+export const HOST_RPC_PROTOCOL_VERSION = 26;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -111,6 +120,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'workspace.pull_request_draft',
   'workspace.pull_request_merge',
   'workspace.pull_request_create',
+  'workspace.processes.list',
+  'workspace.processes.kill',
   'project.clone',
   'project.clone_default_path',
   'codex.voice.transcribe',
@@ -123,7 +134,18 @@ export const HostRpcCommandTypeSchema = z.enum([
   'peer_daemon.status',
   'peer_daemon.restart',
   'peer_daemon.install',
-  'peer_daemon.logs'
+  'peer_daemon.logs',
+  'desktop.browser.list_instances',
+  'desktop.browser.list_tabs',
+  'desktop.browser.create_tab',
+  'desktop.browser.reveal_tab',
+  'desktop.browser.close_tab',
+  'desktop.browser.capture_tab',
+  'desktop.browser.acquire_control',
+  'desktop.browser.open_connection',
+  'desktop.browser.release_control',
+  'desktop.browser.list_import_sources',
+  'desktop.browser.import_cookies'
 ]);
 export type HostRpcCommandType = z.infer<typeof HostRpcCommandTypeSchema>;
 
@@ -624,6 +646,17 @@ export const WorkspacePullRequestCreateCommandSchema = workspaceContextSchema.ex
   draft: z.boolean().optional()
 }).strict();
 
+const workspaceProcessPidSchema = z.number().int().positive();
+
+export const WorkspaceProcessesListCommandSchema = workspaceContextSchema.extend({
+  type: z.literal('workspace.processes.list')
+}).strict();
+
+export const WorkspaceProcessesKillCommandSchema = workspaceContextSchema.extend({
+  type: z.literal('workspace.processes.kill'),
+  pids: z.array(workspaceProcessPidSchema).min(1).max(200)
+}).strict();
+
 export const ProjectCloneCommandSchema = z.object({
   type: z.literal('project.clone'),
   remoteUrl: z.string().min(1).max(2048),
@@ -782,6 +815,8 @@ export const HostRpcCommandSchema = z.union([
   WorkspacePullRequestDraftCommandSchema,
   WorkspacePullRequestMergeCommandSchema,
   WorkspacePullRequestCreateCommandSchema,
+  WorkspaceProcessesListCommandSchema,
+  WorkspaceProcessesKillCommandSchema,
   ProjectCloneCommandSchema,
   ProjectCloneDefaultPathCommandSchema,
   CodexVoiceTranscribeCommandSchema,
@@ -794,7 +829,18 @@ export const HostRpcCommandSchema = z.union([
   PeerDaemonStatusCommandSchema,
   PeerDaemonRestartCommandSchema,
   PeerDaemonInstallCommandSchema,
-  PeerDaemonLogsCommandSchema
+  PeerDaemonLogsCommandSchema,
+  desktopBrowserCommandSchemas['desktop.browser.list_instances'],
+  desktopBrowserCommandSchemas['desktop.browser.list_tabs'],
+  desktopBrowserCommandSchemas['desktop.browser.create_tab'],
+  desktopBrowserCommandSchemas['desktop.browser.reveal_tab'],
+  desktopBrowserCommandSchemas['desktop.browser.close_tab'],
+  desktopBrowserCommandSchemas['desktop.browser.capture_tab'],
+  desktopBrowserCommandSchemas['desktop.browser.acquire_control'],
+  desktopBrowserCommandSchemas['desktop.browser.open_connection'],
+  desktopBrowserCommandSchemas['desktop.browser.release_control'],
+  desktopBrowserCommandSchemas['desktop.browser.list_import_sources'],
+  desktopBrowserCommandSchemas['desktop.browser.import_cookies']
 ]);
 export type HostRpcCommand = z.infer<typeof HostRpcCommandSchema>;
 
@@ -1135,6 +1181,26 @@ export const WorkspacePullRequestActionResultSchema = z.object({
   ok: z.literal(true),
   message: z.string().min(1)
 }).strict();
+
+export const workspaceProcessRowSchema = z.object({
+  pid: z.number().int().positive(),
+  cwd: PathSchema,
+  command: z.string().max(200)
+}).strict();
+export type WorkspaceProcessRow = z.infer<typeof workspaceProcessRowSchema>;
+
+export const WorkspaceProcessesListResultSchema = z.object({
+  processes: z.array(workspaceProcessRowSchema),
+  truncated: z.boolean(),
+  supported: z.boolean()
+}).strict();
+export type WorkspaceProcessesListResult = z.infer<typeof WorkspaceProcessesListResultSchema>;
+
+export const WorkspaceProcessesKillResultSchema = z.object({
+  killed: z.array(workspaceProcessRowSchema)
+}).strict();
+export type WorkspaceProcessesKillResult = z.infer<typeof WorkspaceProcessesKillResultSchema>;
+
 export const ProjectCloneResultSchema = z.object({
   path: PathSchema,
   gitRemoteUrl: z.string().nullable()
@@ -1268,6 +1334,8 @@ export const HostRpcResultSchemaByType = {
   'workspace.pull_request_draft': WorkspacePullRequestActionResultSchema,
   'workspace.pull_request_merge': WorkspacePullRequestActionResultSchema,
   'workspace.pull_request_create': WorkspacePullRequestResultSchema,
+  'workspace.processes.list': WorkspaceProcessesListResultSchema,
+  'workspace.processes.kill': WorkspaceProcessesKillResultSchema,
   'project.clone': ProjectCloneResultSchema,
   'project.clone_default_path': ProjectCloneDefaultPathResultSchema,
   'codex.voice.transcribe': CodexVoiceTranscribeResultSchema,
@@ -1280,7 +1348,18 @@ export const HostRpcResultSchemaByType = {
   'peer_daemon.status': PeerDaemonStatusResultSchema,
   'peer_daemon.restart': PeerDaemonRestartResultSchema,
   'peer_daemon.install': PeerDaemonInstallResultSchema,
-  'peer_daemon.logs': PeerDaemonLogsResultSchema
+  'peer_daemon.logs': PeerDaemonLogsResultSchema,
+  'desktop.browser.list_instances': desktopBrowserResultSchemas['desktop.browser.list_instances'],
+  'desktop.browser.list_tabs': desktopBrowserResultSchemas['desktop.browser.list_tabs'],
+  'desktop.browser.create_tab': desktopBrowserResultSchemas['desktop.browser.create_tab'],
+  'desktop.browser.reveal_tab': desktopBrowserResultSchemas['desktop.browser.reveal_tab'],
+  'desktop.browser.close_tab': desktopBrowserResultSchemas['desktop.browser.close_tab'],
+  'desktop.browser.capture_tab': desktopBrowserResultSchemas['desktop.browser.capture_tab'],
+  'desktop.browser.acquire_control': desktopBrowserResultSchemas['desktop.browser.acquire_control'],
+  'desktop.browser.open_connection': desktopBrowserResultSchemas['desktop.browser.open_connection'],
+  'desktop.browser.release_control': desktopBrowserResultSchemas['desktop.browser.release_control'],
+  'desktop.browser.list_import_sources': desktopBrowserResultSchemas['desktop.browser.list_import_sources'],
+  'desktop.browser.import_cookies': desktopBrowserResultSchemas['desktop.browser.import_cookies']
 } as const;
 
 export const HostRpcErrorSchema = z.object({
@@ -1360,7 +1439,8 @@ export const HostEventKindSchema = z.enum([
   'terminal.output',
   'terminal.exited',
   'environment.provision.progress',
-  'project.clone.progress'
+  'project.clone.progress',
+  'desktop.browser.changed'
 ]);
 export type HostEventKind = z.infer<typeof HostEventKindSchema>;
 

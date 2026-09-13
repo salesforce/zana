@@ -1,4 +1,5 @@
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -7,6 +8,7 @@ import { copyWorktreeIncludeFiles } from './worktree-include.js';
 import { createWorktree, removeWorktree } from './provisioning.js';
 import {
   cloneProject,
+  destroyWorkspace,
   provisionWorkspace,
   workspaceCommit,
   workspaceDiff,
@@ -117,6 +119,63 @@ describe('managed worktree', () => {
     expect(await runGit(repo, ['worktree', 'list'])).toBeTruthy();
     const listed = await runGit(repo, ['worktree', 'list']);
     expect(listed.stdout).not.toContain(target);
+  });
+
+  it('removes the checkout even when git cannot open the source cwd', async () => {
+    const parent = await tempDir('zcc-ws-orphan-');
+    const target = join(parent, 'repo');
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'keep.txt'), 'x\n');
+    await removeWorktree({
+      path: target,
+      sourcePath: join(parent, 'missing-source'),
+      force: true
+    });
+    await expect(workspaceStatus(target)).resolves.toMatchObject({ isGitRepo: false });
+  });
+});
+
+const posixOnly = process.platform === 'win32' ? describe.skip : describe;
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntilDead(pid: number, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (isAlive(pid)) {
+    if (Date.now() > deadline) throw new Error(`pid ${pid} still alive`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+posixOnly('destroyWorkspace process reap', () => {
+  it('reaps leftover processes in a personal workspace before delete', async () => {
+    const target = await tempDir('zcc-ws-personal-reap-');
+    const child = spawn('sleep', ['300'], { cwd: target, detached: true, stdio: 'ignore' });
+    child.unref();
+    const pid = child.pid ?? 0;
+    expect(isAlive(pid)).toBe(true);
+    await destroyWorkspace({ path: target, workspaceProvisionType: 'personal' });
+    await waitUntilDead(pid);
+  });
+
+  it('does not reap processes in an unmanaged project checkout', async () => {
+    const target = await tempDir('zcc-ws-unmanaged-keep-');
+    const child = spawn('sleep', ['300'], { cwd: target, detached: true, stdio: 'ignore' });
+    child.unref();
+    const pid = child.pid ?? 0;
+    expect(isAlive(pid)).toBe(true);
+    await destroyWorkspace({ path: target, workspaceProvisionType: 'unmanaged' });
+    expect(isAlive(pid)).toBe(true);
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {}
   });
 });
 

@@ -78,6 +78,7 @@ void _assertAllApiKeysListed;
 const SETTING_DESCRIPTOR_TYPES = [
   'string',
   'boolean',
+  'number',
   'select',
   'project'
 ] as const satisfies readonly PluginSettingDescriptor['type'][];

@@ -181,6 +181,14 @@ export function filterInstalledRows(
     return hay.includes(q);
   });
   return filtered.sort((left, right) => {
+    const enabledResult = Number(!rowEnabled(left)) - Number(!rowEnabled(right));
+    if (enabledResult !== 0) return enabledResult;
+    if (rowEnabled(left)) {
+      const publisherResult =
+        Number(publisherLabel(installedPublisher(left)) === null) -
+        Number(publisherLabel(installedPublisher(right)) === null);
+      if (publisherResult !== 0) return publisherResult;
+    }
     const nameCmp =
       left.module.title.localeCompare(right.module.title) ||
       left.module.id.localeCompare(right.module.id);

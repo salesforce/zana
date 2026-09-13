@@ -5,8 +5,11 @@ describe('LegacyAgentHomeComposer', () => {
   it('spawns through createTerminal without owning the launch-mode switcher', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('createTerminal');
+    expect(source).not.toContain('product.threads.create');
+    expect(source).not.toContain('shouldLaunchManagedThread');
     expect(source).toContain('buildLaunchArgs');
     expect(source).toContain('openAgentModal');
+    expect(source).not.toContain('openThreadModal');
     expect(source).toContain('product.harness.effectiveDefault');
     expect(source).toContain('<ModelReasoningPicker');
     expect(source).toContain('composerProvidersFromCatalog');
@@ -41,7 +44,7 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('assembleCliLaunchPrompt');
     expect(source).toContain('stageRemoteComposerAttachments');
     expect(source).toContain('composerDropProjectRoot');
-    expect(source).not.toContain('product.threads.create');
+    expect(source).toContain('assembleCliLaunchPrompt');
     expect(source).toContain('ComposerModePicker');
     expect(source).toContain('cliComposerModeChip');
     expect(source).toContain('cliLaunchExecutionState');
@@ -186,7 +189,8 @@ describe('LegacyAgentHomeComposer', () => {
 
   it('replaces the isolation checkbox with a workspace picker for real local projects', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('<EnvironmentPicker');
+    expect(source).toContain('workspace: project.quickAgent ? undefined : workspace');
+    expect(source).toContain('isolateScratch: project.quickAgent ? args.title || true : undefined');
     expect(source).toContain('project?.remote');
     expect(source).toContain('defaultWorkspaceChoice');
     expect(source).not.toContain('Isolate in a git worktree');

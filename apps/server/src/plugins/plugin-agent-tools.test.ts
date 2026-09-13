@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { PluginAgentToolRegistration } from '@zana-ai/zcc-plugin-sdk/server';
+import { z } from 'zod';
+import { jsonSchemaAgentToolRecord, normalizeRegisteredAgentTool } from '@zana-ai/zcc-plugin-sdk/internal/host-policy';
 import {
+  GENERIC_AGENT_TOOL_GLYPH,
   HOST_SESSION_INSTRUCTIONS_MAX,
   HOST_SESSION_TOOLS_MAX,
   invokePluginAgentTool,
@@ -14,14 +16,14 @@ import {
 
 function tool(
   name: string,
-  execute: PluginAgentToolRegistration['execute'] = async (input) => input
-): PluginAgentToolRegistration {
-  return {
+  execute: Parameters<typeof jsonSchemaAgentToolRecord>[0]['execute'] = async (input) => input
+) {
+  return jsonSchemaAgentToolRecord({
     name,
     description: `${name} tool`,
     inputSchema: { type: 'object', properties: { q: { type: 'string' } } },
     execute
-  };
+  });
 }
 
 function source(partial: Partial<PluginAgentToolSource> & { pluginId: string }): PluginAgentToolSource {
@@ -32,20 +34,39 @@ function source(partial: Partial<PluginAgentToolSource> & { pluginId: string }):
 }
 
 describe('toDynamicTool', () => {
-  it('fills an empty object schema when inputSchema is omitted', () => {
-    expect(toDynamicTool({
+  it('fills an empty object schema and default presentation when they are omitted', () => {
+    expect(toDynamicTool(jsonSchemaAgentToolRecord({
       name: 'bare',
       description: 'Bare',
       execute: async () => undefined
-    })).toEqual({
+    }))).toEqual({
       name: 'bare',
       description: 'Bare',
-      inputSchema: { type: 'object', properties: {} }
+      inputSchema: { type: 'object', properties: {} },
+      presentation: {
+        label: { pending: 'Running bare', completed: 'Ran bare' },
+        icon: { glyph: GENERIC_AGENT_TOOL_GLYPH }
+      }
     });
   });
 });
 
 describe('resolvePluginSessionTools', () => {
+  it('attributes per-tool instructions into the session prompt', async () => {
+    const record = jsonSchemaAgentToolRecord({
+      name: 'note_search',
+      description: 'Search',
+      instructions: 'Prefer exact titles.',
+      execute: async () => 'ok'
+    });
+    const session = await resolvePluginSessionTools([
+      source({ pluginId: 'notes', tools: [record] })
+    ], { threadId: 'thr-1', projectId: 'proj-1' });
+    expect(session.instructions).toBe(
+      'The following instructions come from the ZCC plugin "notes" for its tool "note_search":\n\nPrefer exact titles.'
+    );
+  });
+
   it('includes every registered tool when a plugin has no configure()', async () => {
     const session = await resolvePluginSessionTools([
       source({
@@ -129,6 +150,23 @@ describe('resolvePluginSessionTools', () => {
     expect(session.tools[0]?.description).toBe('shared tool');
   });
 
+  it('appends per-tool instructions attributed to the plugin', async () => {
+    const session = await resolvePluginSessionTools([
+      source({
+        pluginId: 'notes',
+        tools: [jsonSchemaAgentToolRecord({
+          name: 'note_search',
+          description: 'Search notes',
+          instructions: 'Prefer recent notes.',
+          execute: async () => undefined
+        })]
+      })
+    ], { threadId: 'thr-1', projectId: 'proj-1' });
+    expect(session.instructions).toContain('ZCC plugin "notes"');
+    expect(session.instructions).toContain('note_search');
+    expect(session.instructions).toContain('Prefer recent notes.');
+  });
+
   it('treats configure() tools: [] as no tools from that plugin', async () => {
     const session = await resolvePluginSessionTools([
       source({
@@ -139,9 +177,83 @@ describe('resolvePluginSessionTools', () => {
     ], { threadId: 'thr-1', projectId: 'proj-1' });
     expect(session.tools).toEqual([]);
   });
+
+  it('applies per-tool parameter overrides from configure()', async () => {
+    const session = await resolvePluginSessionTools([
+      source({
+        pluginId: 'workflows',
+        tools: [tool('zcc_workflow_result')],
+        configurers: [() => ({
+          tools: [{
+            name: 'zcc_workflow_result',
+            parameters: {
+              type: 'object',
+              properties: { value: { type: 'string' } },
+              required: ['value']
+            }
+          }]
+        })]
+      })
+    ], { threadId: 'thr-worker', projectId: 'proj-1' });
+    expect(session.tools).toEqual([
+      expect.objectContaining({
+        name: 'zcc_workflow_result',
+        inputSchema: {
+          type: 'object',
+          properties: { value: { type: 'string' } },
+          required: ['value']
+        }
+      })
+    ]);
+  });
 });
 
 describe('invokePluginAgentTool', () => {
+  it('attaches screenshots as inputImage and prefers result text', async () => {
+    const result = await invokePluginAgentTool(
+      [source({
+        pluginId: 'example',
+        tools: [tool('capture_page', async () => ({
+          ok: true,
+          output: 'title',
+          result: '"ok"',
+          text: 'title\n\n1 screenshot(s) attached.',
+          screenshots: [{ mime: 'image/png', base64: 'aaaa' }]
+        }))]
+      })],
+      'capture_page',
+      {},
+      { threadId: 'thr-1', projectId: 'proj-1', signal: new AbortController().signal }
+    );
+    expect(result.success).toBe(true);
+    expect(result.contentItems).toEqual([
+      { type: 'inputText', text: 'title\n\n1 screenshot(s) attached.' },
+      { type: 'inputImage', imageUrl: 'data:image/png;base64,aaaa' }
+    ]);
+  });
+
+  it('maps MCP image content parts to inputImage', async () => {
+    const result = await invokePluginAgentTool(
+      [source({
+        pluginId: 'example',
+        tools: [tool('capture_page', async () => ({
+          content: [
+            { type: 'text', text: 'ok' },
+            { type: 'image', mimeType: 'image/jpeg', data: 'bbbb' }
+          ]
+        }))]
+      })],
+      'capture_page',
+      {},
+      { threadId: 'thr-1', projectId: 'proj-1', signal: new AbortController().signal }
+    );
+    expect(result.success).toBe(true);
+    expect(result.contentItems).toEqual([
+      { type: 'inputText', text: 'ok' },
+      { type: 'inputImage', imageUrl: 'data:image/jpeg;base64,bbbb' }
+    ]);
+  });
+
   it('stringifies a successful object result', async () => {
     const result = await invokePluginAgentTool(
       [source({ pluginId: 'sf', tools: [tool('sf_soql', async (input) => ({ ok: true, input }))] })],
@@ -165,6 +277,23 @@ describe('invokePluginAgentTool', () => {
     );
     expect(result.success).toBe(false);
     expect(result.contentItems[0]).toMatchObject({ type: 'inputText', text: expect.stringContaining('timeout') });
+  });
+
+  it('marks { isError: true } results as unsuccessful and joins content text', async () => {
+    const result = await invokePluginAgentTool(
+      [source({
+        pluginId: 'workflows',
+        tools: [tool('zcc_workflow_run', async () => ({
+          content: [{ type: 'text', text: 'Exactly one workflow source is required' }],
+          isError: true
+        }))]
+      })],
+      'zcc_workflow_run',
+      {},
+      { threadId: 'thr-1', projectId: 'proj-1', signal: new AbortController().signal }
+    );
+    expect(result.success).toBe(false);
+    expect(result.contentItems[0]?.text).toBe('Exactly one workflow source is required');
   });
 
   it('returns a string result as-is', async () => {
@@ -194,6 +323,26 @@ describe('invokePluginAgentTool', () => {
     );
     expect(result.success).toBe(false);
     expect(result.contentItems[0]?.text).toMatch(/no org/);
+  });
+
+  it('rejects invalid arguments before execute when parameters are a zod schema', async () => {
+    const record = normalizeRegisteredAgentTool({
+      pluginId: 'notes',
+      tool: {
+        name: 'note_search',
+        description: 'Search',
+        parameters: z.object({ q: z.string().min(1) }),
+        execute: async () => 'ok'
+      }
+    });
+    const result = await invokePluginAgentTool(
+      [source({ pluginId: 'notes', tools: [record] })],
+      'note_search',
+      { q: '' },
+      { threadId: 'thr-1', projectId: 'proj-1', signal: new AbortController().signal }
+    );
+    expect(result.success).toBe(false);
+    expect(result.contentItems[0]?.text).toMatch(/Invalid arguments/);
   });
 
   it('reports unsupported tools', async () => {

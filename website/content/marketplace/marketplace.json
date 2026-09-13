@@ -74,6 +74,29 @@
       }
     },
     {
+      "id": "browser-automation",
+      "displayName": "Browser Automation",
+      "description": "Persistent browser scripts on desktop or enrolled hosts.",
+      "icon": {
+        "lucide": "Globe"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/browser-automation",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
       "id": "harness-claude",
       "displayName": "Claude Code CLI Agent",
       "description": "CLI Agent TUI for the native claude coding CLI.",
@@ -375,7 +398,7 @@
     {
       "id": "memory",
       "displayName": "Memory",
-      "description": "Durable global and project memories the agent can search and update.",
+      "description": "Provider-independent durable memory for agents. We recommend disabling provider-native memory when using this plugin.",
       "icon": {
         "lucide": "Brain"
       },
@@ -651,7 +674,7 @@
     {
       "id": "tasks",
       "displayName": "Tasks",
-      "description": "Plan and track work: a sidebar panel, `zcc tasks`, and a generated-skill-friendly command.",
+      "description": "Plan and track work in a list or board: keys, statuses, priorities, and `zcc tasks`.",
       "icon": {
         "lucide": "ListTodo"
       },
@@ -674,7 +697,7 @@
     {
       "id": "workflows",
       "displayName": "Workflows",
-      "description": "Inline workflow cards in assistant messages and a composer plus-menu.",
+      "description": "Author JavaScript workflows that orchestrate hidden worker threads, with resume, CLI, and live progress.",
       "icon": {
         "lucide": "GitBranch"
       },

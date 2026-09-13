@@ -496,6 +496,7 @@ export async function listMarketplace(
       mcpServers: b.mcpServers,
       extra: b.extra,
       tags: b.tags ?? ['official'],
+      category: b.category,
       installed: installedSet.has(b.id) || installed !== null,
       installedVersion: installed?.version,
       hasUpdate: false,
@@ -544,6 +545,7 @@ export interface BundledMarketplaceInput {
   mcpServers?: Array<{ name: string; alwaysOn?: boolean }>;
   extra?: Record<string, unknown>;
   tags?: string[];
+  category?: string;
 }
 
 /**

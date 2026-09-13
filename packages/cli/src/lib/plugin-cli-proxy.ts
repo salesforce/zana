@@ -40,6 +40,21 @@ function err(message: string, exitCode = 1): CliResult {
   return { exitCode, stdout: '', stderr: `Error: ${message}\n` };
 }
 
+function pluginCliContextFromEnv(cwd = process.cwd()): {
+  cwd: string;
+  projectId?: string;
+  threadId?: string;
+} {
+  const projectId = process.env.ZCC_PROJECT_ID ?? process.env.BB_PROJECT_ID;
+  const threadId =
+    process.env.ZCC_THREAD_ID ?? process.env.ZCC_SESSION_ID ?? process.env.BB_THREAD_ID;
+  return {
+    cwd,
+    ...(projectId ? { projectId } : {}),
+    ...(threadId ? { threadId } : {})
+  };
+}
+
 function renderCliResult(
   value: unknown,
   jsonOutput: boolean
@@ -101,7 +116,7 @@ export async function proxyPluginCliCommand(
   const ran = await callControlPlane({
     dataDir,
     op: 'plugin.cli',
-    args: { id: match.pluginId, argv }
+    args: { id: match.pluginId, argv, ...pluginCliContextFromEnv() }
   });
   if (!ran.ok) {
     return err(ran.message ?? ran.code ?? 'plugin CLI failed', 1);
@@ -121,7 +136,7 @@ export async function runExplicitPluginCli(
   const ran = await callControlPlane({
     dataDir,
     op: 'plugin.cli',
-    args: { id: pluginId, argv }
+    args: { id: pluginId, argv, ...pluginCliContextFromEnv() }
   });
   if (!ran.ok) {
     return err(ran.message ?? ran.code ?? 'plugin CLI failed', 1);

@@ -253,7 +253,8 @@ async function flushChildThreadTurnNotificationBatch(
   try {
     await queueParentSystemMessage(ctx, {
       input: buildChildThreadTurnStatusBatchInput({ items: batch.items }),
-      parentThreadId
+      parentThreadId,
+      senderThreadId: batch.items[0]?.childThread.id
     });
   } catch (error) {
     console.info(JSON.stringify({
@@ -325,7 +326,8 @@ export async function queueChildThreadNeedsAttentionNotificationBestEffort(
         blockerSummary: args.blockerSummary,
         childThread: args.childThread
       }),
-      parentThreadId: args.parentThreadId
+      parentThreadId: args.parentThreadId,
+      senderThreadId: args.childThread.id
     });
   } catch (error) {
     console.info(JSON.stringify({

@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs';
 
 const view = readFileSync(new URL('./ExtensionsView.tsx', import.meta.url), 'utf8');
 const marketplace = readFileSync(new URL('./MarketplaceView.tsx', import.meta.url), 'utf8');
+const hero = readFileSync(
+  new URL('../../components/plugin/browse-hero/BrowseHeroCarousel.tsx', import.meta.url),
+  'utf8'
+);
 const hub = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
 
@@ -64,7 +68,7 @@ describe('ExtensionsView aurora background', () => {
 
   it('scrolls only the plugin list on Browse and Installed', () => {
     expect(marketplace).toContain('className="ext-market-scroller"');
-    expect(marketplace).toContain('className="ext-market-list"');
+    expect(marketplace).toContain('plugin-browse-shelves');
     expect(hub).toContain('className="ext-installed-scroller"');
     expect(hub).toContain('className="ext-installed-panel"');
     expect(css).toContain(
@@ -87,13 +91,14 @@ describe('ExtensionsView aurora background', () => {
 
   it('keeps Browse Create a plugin on the page with an example card grid', () => {
     expect(marketplace).toContain("searchParams.get('view') === 'create'");
-    expect(marketplace).toContain('HomeAgentComposer');
+    expect(marketplace).toContain('BrowseHeroCarousel');
+    expect(hero).toContain('HomeAgentComposer');
+    expect(hero).toContain('Turn ZCC into');
     expect(marketplace).toContain('Back to Browse');
     expect(marketplace).toContain('ext-install-split');
+    expect(marketplace).toContain('BrowseArchetypeCards');
     expect(marketplace).not.toContain('onCreate');
-    expect(css).toContain(
-      '.create-plugin-examples {\n  display: grid;\n  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));'
-    );
+    expect(css).toContain('.ext-browse-archetypes {\n  display: grid;');
   });
 
   it('surfaces plugin enable/disable failures instead of swallowing them', () => {

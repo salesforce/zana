@@ -106,6 +106,13 @@ export function threadProviderIdForFamily(family: string): string | null {
   return null;
 }
 
+export function threadPermissionMode(
+  mode: string
+): 'accept-edits' | 'auto' | 'full' | undefined {
+  if (mode === 'accept-edits' || mode === 'auto' || mode === 'full') return mode;
+  return undefined;
+}
+
 export function familyForThreadProviderId(providerId: string): HarnessFamily | null {
   for (const [family, id] of Object.entries(THREAD_PROVIDER_BY_FAMILY) as Array<[HarnessFamily, string]>) {
     if (id === providerId) return family;

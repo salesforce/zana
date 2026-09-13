@@ -35,4 +35,4 @@ thread's panel.
 
 - You only need the contents yourself → `Read`.
 - You want to surface a durable deliverable in the inbox → `inbox_push` with `docs`.
-- You want the user to watch a web page → `browser_open` (`zcc-browser`).
+- You want the user to watch a web page → install the **Browser Automation** plugin and use `zcc browser` / `zcc guide browser`. Do not call `browser_open`.

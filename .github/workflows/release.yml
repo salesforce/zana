@@ -104,10 +104,10 @@ jobs:
           ZCC_RELAY_TOKEN: ${{ secrets.ZCC_RELAY_TOKEN }}
           ZCC_POSTHOG_API_KEY: ${{ secrets.ZCC_POSTHOG_API_KEY }}
 
-      # `pnpm run build` → prebuild → ensure-better-sqlite3 compiles SQLite for
-      # Node (vitest / listen.ts). Unpackaged Electron forks a utilityProcess
-      # that loads the same .node with Electron's ABI (148 vs Node 22's 127),
-      # so rebuild for Electron before the smoke launch.
+      # `pnpm run build` → prebuild → ensure-better-sqlite3 leaves SQLite on the
+      # Node ABI (vitest / listen.ts) and caches it. Unpackaged Electron forks a
+      # utilityProcess that needs the Electron ABI, so flip sqlite (cache copy
+      # after the first compile) before the smoke launch.
       - name: Rebuild native modules for Electron
         run: pnpm run rebuild:electron
 

@@ -12,7 +12,13 @@ import {
   unarchiveConversationThread,
   type ConversationThreadRow
 } from '@zana-ai/zcc-db';
-import { copyForkSourceHistory, describeCopiedForkStart, resolveConversationForkPoint } from './conversation-fork-history.js';
+import {
+  buildForkTranscriptSeed,
+  canCloneProviderSession,
+  copyForkSourceHistory,
+  describeCopiedForkStart,
+  resolveConversationForkPoint
+} from './conversation-fork-history.js';
 import {
   deferConversationSend,
   dropDeferredConversationMessages,
@@ -42,6 +48,7 @@ import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
 import { recoverConversationProviderThreadId } from './conversation-provider-identity.js';
 import { destroyEnvironmentIfIdle } from '../environments/environment-cleanup.js';
+import { revokeThreadDesktopBrowserControl } from '../desktop-browsers.js';
 import {
   isUnknownThreadHostError,
   resumeConversationOnHost,
@@ -269,7 +276,7 @@ async function dispatchTurnSubmit(
         }
       },
       onError: (error) => {
-        void recoverOrSettleTurnSubmit(ctx, args, error).catch(() => undefined);
+        void recoverOrSettleTurnSubmit(ctx, args, error, 'thread.start').catch(() => undefined);
       }
     });
     return;
@@ -287,7 +294,7 @@ async function dispatchTurnSubmit(
     hostId: args.thread.hostId,
     command,
     onError: (error) => {
-      void recoverOrSettleTurnSubmit(ctx, args, error).catch(() => undefined);
+      void recoverOrSettleTurnSubmit(ctx, args, error, 'turn.submit').catch(() => undefined);
     }
   });
 }
@@ -303,7 +310,8 @@ async function recoverOrSettleTurnSubmit(
     input: unknown;
     drain: boolean;
   },
-  error: unknown
+  error: unknown,
+  commandType: 'thread.start' | 'turn.submit'
 ): Promise<void> {
   if (isHostOfflineError(error) && !isHostRpcTimeout(error) && !args.drain) {
     deferConversationSend(ctx, {
@@ -347,7 +355,7 @@ async function recoverOrSettleTurnSubmit(
   }
   settleLiveTurnCommandFailure(ctx, {
     thread: args.thread,
-    commandType: 'turn.submit',
+    commandType,
     clientRequestId: args.clientRequestId,
     error
   });
@@ -361,6 +369,7 @@ export async function stopConversation(
   if (!thread) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
+  await revokeThreadDesktopBrowserControl(ctx, thread.id).catch(() => {});
   const openTurn = findOpenConversationTurn(ctx.db, thread.id);
   const hasLiveRuntime = thread.status === 'active'
     || thread.status === 'starting'
@@ -485,6 +494,7 @@ export async function archiveConversation(
 ): Promise<boolean> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) return false;
+  await revokeThreadDesktopBrowserControl(ctx, thread.id).catch(() => {});
   if (!options.skipEnvironmentCleanup) {
     const descendants = collectConversationArchiveDescendants(ctx, thread);
     for (const child of descendants) {
@@ -563,9 +573,10 @@ export async function forkConversation(
   if (!thread.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
+  const forkCapability = getThreadProvider(thread.providerId)?.capabilities.fork;
   resolveConversationForkPoint({
     events: listConversationThreadEvents(ctx.db, thread.id),
-    forkCapability: getThreadProvider(thread.providerId)?.capabilities.fork,
+    forkCapability,
     sourceProviderThreadId: thread.providerThreadId,
     sourceSeqEnd: options?.sourceSeqEnd
   });
@@ -582,12 +593,16 @@ export async function forkConversation(
     originPluginId: options?.originPluginId ?? null,
     visibility: options?.visibility ?? 'visible'
   });
-  copyForkSourceHistory(ctx.db, {
+  const copied = copyForkSourceHistory(ctx.db, {
     sourceThreadId: thread.id,
     targetThreadId: forked.id,
     sourceSeqEnd: options?.sourceSeqEnd
   });
-  const seed = Array.isArray(options?.agentContextSeed) ? options.agentContextSeed : [];
+  const pluginSeed = Array.isArray(options?.agentContextSeed) ? options.agentContextSeed : [];
+  const transcript = canCloneProviderSession(forkCapability)
+    ? null
+    : buildForkTranscriptSeed(copied);
+  const seed = transcript ? [transcript, ...pluginSeed] : pluginSeed;
   if (seed.length > 0) {
     appendClientTurnRequested(ctx, {
       threadId: forked.id,

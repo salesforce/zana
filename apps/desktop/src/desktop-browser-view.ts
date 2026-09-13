@@ -1,22 +1,26 @@
+import { randomUUID } from 'node:crypto';
 import { Menu, WebContentsView, session, type Session, type WebContents } from 'electron';
+import { captureDesktopBrowserPage } from './desktop-browser-capture.js';
 import {
-  DESKTOP_BROWSER_MAX_EVAL_SCRIPT_LENGTH,
   DESKTOP_BROWSER_MAX_SNAPSHOT_DATA_URL_LENGTH,
   DESKTOP_BROWSER_MAX_TITLE_LENGTH,
-  DESKTOP_BROWSER_MAX_TYPED_TEXT_LENGTH,
   DESKTOP_BROWSER_MAX_URL_LENGTH,
   clampDesktopBrowserViewBounds,
   type DesktopBrowserAttachRequest,
   type DesktopBrowserNavigateRequest,
   type DesktopBrowserOpenTabRequest,
   type DesktopBrowserScopedOpenTabRequest,
+  type DesktopBrowserFindInPageRequest,
+  type DesktopBrowserFindResult,
   type DesktopBrowserSetBoundsRequest,
   type DesktopBrowserSetVisibleRequest,
   type DesktopBrowserSnapshot,
   type DesktopBrowserState,
+  type DesktopBrowserStopFindInPageRequest,
   type DesktopBrowserViewBounds,
   type DesktopBrowserViewportBounds
 } from '@zana-ai/zcc-desktop-contract';
+import type { AppCommandId, AppShortcutInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import {
   evaluatePopupRate,
@@ -24,7 +28,7 @@ import {
   isAllowedBrowserUrl,
   resolveWindowOpenAction
 } from './desktop-browser-policy.js';
-import { isPendingAutomationTab, partitionForBrowserTab } from './desktop-browser-thread-scope.js';
+import { isPendingAutomationTab, hashedAutomationPartition } from './desktop-browser-thread-scope.js';
 
 const POPUP_RATE_WINDOW_MS = 10_000;
 const POPUP_RATE_MAX_IN_WINDOW = 3;
@@ -40,9 +44,23 @@ function truncate(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
 }
 
+export type DesktopBrowserTabProfile =
+  | { kind: 'personal' }
+  | { kind: 'automation'; id: string };
+
+export interface DesktopBrowserNativeTab extends DesktopBrowserState {
+  threadId: string;
+  generation: string;
+  profile: DesktopBrowserTabProfile;
+  presentation: 'hidden' | 'reveal';
+}
+
 interface BrowserViewEntry {
   view: WebContentsView;
   hostWindow: DesktopBrowserHostWindow;
+  threadId: string;
+  generation: string;
+  profile: DesktopBrowserTabProfile;
   lastErrorText: string | null;
   desiredBounds: DesktopBrowserViewBounds;
   popupTimestamps: number[];
@@ -51,13 +69,18 @@ interface BrowserViewEntry {
   rendererRecoveryTimer: ReturnType<typeof setTimeout> | null;
   visible: boolean;
   automationTargetId: string | null;
+  activeFindRequestId: number | null;
+  suppressNextFocusNotification: boolean;
 }
 
 export type DesktopBrowserHostWebContentsPayload =
   | DesktopBrowserState
   | DesktopBrowserOpenTabRequest
   | DesktopBrowserScopedOpenTabRequest
-  | DesktopBrowserSnapshot;
+  | DesktopBrowserSnapshot
+  | DesktopBrowserFindResult
+  | { tabId: string }
+  | AppCommandId;
 
 export interface DesktopBrowserHostContentBounds {
   height: number;
@@ -101,6 +124,31 @@ export interface DesktopBrowserAutomationSnapshot {
 }
 
 export interface DesktopBrowserViewManager {
+  createTab(args: {
+    hostWindow: DesktopBrowserHostWindow;
+    tabId: string;
+    threadId: string;
+    url: string;
+    profile: DesktopBrowserTabProfile;
+    viewport: DesktopBrowserViewportBounds;
+  }): DesktopBrowserNativeTab;
+  listTabs(args: { hostWebContentsId: number; threadId: string | null }): DesktopBrowserNativeTab[];
+  closeTab(args: { hostWebContentsId: number; threadId: string; tabId: string; generation: string }): void;
+  captureTab(args: {
+    hostWebContentsId: number;
+    threadId: string;
+    tabId: string;
+    generation: string;
+    maxWidth: number;
+    maxHeight: number;
+    quality: number;
+  }): Promise<{ data: Buffer; width: number; height: number }>;
+  getAutomationTabs(args: {
+    hostWebContentsId: number;
+    threadId: string;
+  }): Array<{ tabId: string; webContents: WebContents }>;
+  subscribeAutomationTabs(listener: () => void): () => void;
+  profileSession(profile: DesktopBrowserTabProfile): Session;
   attach(args: HostScopedRequestArgs<DesktopBrowserAttachRequest>): void;
   detach(args: HostScopedTabArgs): void;
   navigate(args: HostScopedRequestArgs<DesktopBrowserNavigateRequest>): void;
@@ -110,6 +158,10 @@ export interface DesktopBrowserViewManager {
   stop(args: HostScopedTabArgs): void;
   setBounds(args: HostScopedRequestArgs<DesktopBrowserSetBoundsRequest>): void;
   setVisible(args: HostScopedRequestArgs<DesktopBrowserSetVisibleRequest>): void;
+  setVisibleWithoutFocus(args: HostScopedRequestArgs<DesktopBrowserSetVisibleRequest>): void;
+  focus(args: HostScopedTabArgs): void;
+  findInPage(args: HostScopedRequestArgs<DesktopBrowserFindInPageRequest>): void;
+  stopFindInPage(args: HostScopedRequestArgs<DesktopBrowserStopFindInPageRequest>): void;
   beginWindowResize(hostWindow: DesktopBrowserHostWindow): void;
   endWindowResize(hostWindow: DesktopBrowserHostWindow): void;
   releaseWindow(hostWebContentsId: number): void;
@@ -118,9 +170,6 @@ export interface DesktopBrowserViewManager {
   unregisterAutomationTarget(targetId: string): boolean;
   listAutomationTargets(): Array<{ targetId: string; tabId: string; url: string; title: string | null }>;
   snapshotAutomationTarget(targetId: string): Promise<DesktopBrowserAutomationSnapshot>;
-  clickAutomationTarget(targetId: string, args: { selector?: string; x?: number; y?: number }): Promise<void>;
-  typeAutomationTarget(targetId: string, args: { selector?: string; text: string }): Promise<void>;
-  evaluateAutomationTarget(targetId: string, script: string): Promise<unknown>;
   closeAutomationTarget(targetId: string): void;
 }
 
@@ -169,20 +218,43 @@ function buildBrowserState(tabId: string, entry: BrowserViewEntry): DesktopBrows
   };
 }
 
-async function ensureDebugger(webContents: WebContents): Promise<void> {
-  if (!webContents.debugger.isAttached()) {
-    webContents.debugger.attach('1.3');
-  }
+export interface DesktopBrowserAppCommandHooks {
+  dispatchAppCommand: (args: { command: AppCommandId; hostWebContentsId: number }) => void;
+  focusHostWebContents: (hostWebContentsId: number) => void;
+  resolveAppCommand: (input: AppShortcutInput) => AppCommandId | null;
 }
 
 export function createDesktopBrowserViewManager(options?: {
   partition?: string;
+  appCommands?: DesktopBrowserAppCommandHooks;
 }): DesktopBrowserViewManager {
   const partition = options?.partition ?? ZCC_BROWSER_PARTITION;
+  const appCommands = options?.appCommands;
   const entries = new Map<string, BrowserViewEntry>();
   const automationTargets = new Map<string, string>();
   const resizingHostIds = new Set<number>();
   const hardenedSessions = new Map<string, Session>();
+  const automationTabListeners = new Set<() => void>();
+
+  function notifyAutomationTabs(): void {
+    for (const listener of automationTabListeners) listener();
+  }
+
+  function partitionForProfile(profile: DesktopBrowserTabProfile): string {
+    return profile.kind === 'personal'
+      ? partition
+      : hashedAutomationPartition(profile.id);
+  }
+
+  function nativeTab(tabId: string, entry: BrowserViewEntry): DesktopBrowserNativeTab {
+    return {
+      ...buildBrowserState(tabId, entry),
+      threadId: entry.threadId,
+      generation: entry.generation,
+      profile: { ...entry.profile },
+      presentation: entry.visible ? 'reveal' : 'hidden'
+    };
+  }
 
   function isHostResizing(hostWindow: DesktopBrowserHostWindow): boolean {
     return resizingHostIds.has(hostWindow.webContents.id);
@@ -373,28 +445,79 @@ export function createDesktopBrowserViewManager(options?: {
       entry.lastErrorText = errorDescription.length > 0 ? errorDescription : 'Failed to load page';
       refresh();
     });
+    webContents.on('found-in-page', (_event, result) => {
+      if (result.requestId !== entry.activeFindRequestId) return;
+      send(hostWindow, IPC.browser.findResult, {
+        tabId,
+        requestId: result.requestId,
+        activeMatchOrdinal: result.activeMatchOrdinal,
+        matches: result.matches,
+        finalUpdate: result.finalUpdate
+      });
+    });
+    webContents.on('focus', () => {
+      if (entry.suppressNextFocusNotification) {
+        entry.suppressNextFocusNotification = false;
+        return;
+      }
+      send(hostWindow, IPC.browser.focused, { tabId });
+    });
+    if (appCommands) {
+      webContents.on('before-input-event', (event, input) => {
+        if (input.type !== 'keyDown' || input.isAutoRepeat || input.isComposing) return;
+        const command = appCommands.resolveAppCommand({
+          altKey: input.alt,
+          code: input.code,
+          ctrlKey: input.control,
+          key: input.key,
+          metaKey: input.meta,
+          shiftKey: input.shift
+        });
+        if (command === null) return;
+        event.preventDefault();
+        if (command === 'browser.focusLocation' || command === 'browser.find') {
+          appCommands.focusHostWebContents(hostWindow.webContents.id);
+        }
+        appCommands.dispatchAppCommand({
+          command,
+          hostWebContentsId: hostWindow.webContents.id
+        });
+      });
+    }
   }
 
   function createEntry(args: {
     desiredBounds: DesktopBrowserViewBounds;
     hostWindow: DesktopBrowserHostWindow;
     tabId: string;
-    sessionPartition: string;
+    threadId?: string;
+    profile?: DesktopBrowserTabProfile;
+    sessionPartition?: string;
   }): BrowserViewEntry {
-    ensureHardenedSession(args.sessionPartition);
+    const profile = args.profile ?? (
+      isPendingAutomationTab(args.tabId)
+        ? { kind: 'automation' as const, id: args.tabId }
+        : { kind: 'personal' as const }
+    );
+    const sessionPartition = args.sessionPartition ?? partitionForProfile(profile);
+    ensureHardenedSession(sessionPartition);
     const view = new WebContentsView({
       webPreferences: {
-        partition: args.sessionPartition,
+        partition: sessionPartition,
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
-        allowRunningInsecureContent: false
+        allowRunningInsecureContent: false,
+        backgroundThrottling: profile.kind === 'personal'
       }
     });
     const entry: BrowserViewEntry = {
       view,
       hostWindow: args.hostWindow,
+      threadId: args.threadId ?? '',
+      generation: randomUUID(),
+      profile,
       lastErrorText: null,
       desiredBounds: args.desiredBounds,
       popupTimestamps: [],
@@ -402,11 +525,14 @@ export function createDesktopBrowserViewManager(options?: {
       rendererRecoveryState: 'healthy',
       rendererRecoveryTimer: null,
       visible: false,
-      automationTargetId: null
+      automationTargetId: null,
+      activeFindRequestId: null,
+      suppressNextFocusNotification: false
     };
     wireWebContents(args.hostWindow, args.tabId, entry);
     args.hostWindow.contentView.addChildView(view);
     entries.set(browserViewKey(args.hostWindow, args.tabId), entry);
+    notifyAutomationTabs();
     return entry;
   }
 
@@ -435,12 +561,51 @@ export function createDesktopBrowserViewManager(options?: {
       }
       entry.view.webContents.close();
     }
+    notifyAutomationTabs();
   }
 
   function withEntry(args: HostScopedTabArgs, fn: (entry: BrowserViewEntry) => void): void {
     const entry = entries.get(browserViewKey(args.hostWindow, args.tabId));
     if (!entry || entry.view.webContents.isDestroyed()) return;
     fn(entry);
+  }
+
+  function hasOtherVisibleEntry(hostWindow: DesktopBrowserHostWindow, tabId: string): boolean {
+    const prefix = `${hostWindow.webContents.id}:`;
+    const currentKey = browserViewKey(hostWindow, tabId);
+    for (const [key, entry] of entries) {
+      if (key !== currentKey && key.startsWith(prefix) && entry.visible) return true;
+    }
+    return false;
+  }
+
+  function focusEntryWithoutNotifying(entry: BrowserViewEntry): void {
+    entry.suppressNextFocusNotification = true;
+    entry.view.webContents.focus();
+    setTimeout(() => {
+      entry.suppressNextFocusNotification = false;
+    }, 0);
+  }
+
+  function setEntryVisibility(
+    args: HostScopedRequestArgs<DesktopBrowserSetVisibleRequest>,
+    focusOnShow: boolean
+  ): void {
+    withEntry({ hostWindow: args.hostWindow, tabId: args.request.tabId }, (entry) => {
+      const wasVisible = entry.visible;
+      entry.visible = args.request.visible;
+      applyEntryVisibility(entry, args.hostWindow);
+      scheduleEntryRendererRecovery(entry, args.hostWindow, args.request.tabId);
+      if (
+        focusOnShow
+        && args.request.visible
+        && !wasVisible
+        && !hasOtherVisibleEntry(args.hostWindow, args.request.tabId)
+        && !entry.view.webContents.isDestroyed()
+      ) {
+        focusEntryWithoutNotifying(entry);
+      }
+    });
   }
 
   function findAutomationEntry(targetId: string): { key: string; entry: BrowserViewEntry } | null {
@@ -452,6 +617,94 @@ export function createDesktopBrowserViewManager(options?: {
   }
 
   return {
+    createTab(request) {
+      if (!isAllowedBrowserUrl(request.url)) throw new Error('Unsupported browser URL');
+      if (request.hostWindow.isDestroyed() || request.hostWindow.webContents.isDestroyed()) {
+        throw new Error('Desktop window is unavailable');
+      }
+      const key = browserViewKey(request.hostWindow, request.tabId);
+      if (entries.has(key)) throw new Error('Native browser tab already exists');
+      const entry = createEntry({
+        desiredBounds: { x: 0, y: 0, ...request.viewport },
+        hostWindow: request.hostWindow,
+        tabId: request.tabId,
+        threadId: request.threadId,
+        profile: request.profile
+      });
+      applyEntryDesiredBounds(entry, request.hostWindow);
+      applyEntryVisibility(entry, request.hostWindow);
+      loadIfNeeded(entry, request.url);
+      return nativeTab(request.tabId, entry);
+    },
+    listTabs({ hostWebContentsId, threadId }) {
+      const prefix = `${hostWebContentsId}:`;
+      const tabs: DesktopBrowserNativeTab[] = [];
+      for (const [key, entry] of entries) {
+        if (!key.startsWith(prefix) || entry.view.webContents.isDestroyed()) continue;
+        if (threadId !== null && entry.threadId !== threadId) continue;
+        tabs.push(nativeTab(key.slice(prefix.length), entry));
+      }
+      return tabs;
+    },
+    closeTab({ hostWebContentsId, tabId, generation }) {
+      const key = `${hostWebContentsId}:${tabId}`;
+      const entry = entries.get(key);
+      if (!entry || entry.generation !== generation) return;
+      destroyEntry(entry.hostWindow, key);
+    },
+    async captureTab(request) {
+      const key = `${request.hostWebContentsId}:${request.tabId}`;
+      const entry = entries.get(key);
+      if (!entry || entry.generation !== request.generation || entry.view.webContents.isDestroyed()) {
+        throw new Error('Native browser tab is unavailable');
+      }
+      if (
+        ![request.maxWidth, request.maxHeight].every((size) => Number.isInteger(size) && size > 0 && size <= 4096)
+        || !Number.isInteger(request.quality)
+        || request.quality < 1
+        || request.quality > 100
+      ) {
+        throw new Error('Invalid browser capture dimensions or quality');
+      }
+      const image = await captureDesktopBrowserPage(entry.view.webContents);
+      if (image.isEmpty()) throw new Error('Native browser capture is empty');
+      const size = image.getSize();
+      const scale = Math.min(1, request.maxWidth / size.width, request.maxHeight / size.height);
+      const resized = scale < 1
+        ? image.resize({
+          width: Math.max(1, Math.round(size.width * scale)),
+          height: Math.max(1, Math.round(size.height * scale))
+        })
+        : image;
+      const data = resized.toJPEG(request.quality);
+      if (data.byteLength > 8 * 1024 * 1024) {
+        throw new Error('Native browser capture exceeds the size limit');
+      }
+      return { data, ...resized.getSize() };
+    },
+    getAutomationTabs({ hostWebContentsId, threadId }) {
+      const prefix = `${hostWebContentsId}:`;
+      const tabs: Array<{ tabId: string; webContents: WebContents }> = [];
+      for (const [key, entry] of entries) {
+        if (
+          key.startsWith(prefix)
+          && entry.threadId === threadId
+          && !entry.view.webContents.isDestroyed()
+        ) {
+          tabs.push({ tabId: key.slice(prefix.length), webContents: entry.view.webContents });
+        }
+      }
+      return tabs;
+    },
+    subscribeAutomationTabs(listener) {
+      automationTabListeners.add(listener);
+      return () => {
+        automationTabListeners.delete(listener);
+      };
+    },
+    profileSession(profile) {
+      return ensureHardenedSession(partitionForProfile(profile));
+    },
     attach({ hostWindow, request }) {
       const key = browserViewKey(hostWindow, request.tabId);
       const existing = entries.get(key) ?? null;
@@ -460,8 +713,9 @@ export function createDesktopBrowserViewManager(options?: {
         desiredBounds: request.bounds,
         hostWindow,
         tabId: request.tabId,
-        sessionPartition: partitionForBrowserTab(isPendingAutomationTab(request.tabId), partition)
+        threadId: request.threadId
       });
+      if (request.threadId) entry.threadId = request.threadId;
       entry.desiredBounds = request.bounds;
       applyEntryDesiredBounds(entry, hostWindow);
       entry.visible = request.visible;
@@ -519,14 +773,26 @@ export function createDesktopBrowserViewManager(options?: {
       });
     },
     setVisible({ hostWindow, request }) {
+      setEntryVisibility({ hostWindow, request }, true);
+    },
+    setVisibleWithoutFocus({ hostWindow, request }) {
+      setEntryVisibility({ hostWindow, request }, false);
+    },
+    focus({ hostWindow, tabId }) {
+      withEntry({ hostWindow, tabId }, focusEntryWithoutNotifying);
+    },
+    findInPage({ hostWindow, request }) {
       withEntry({ hostWindow, tabId: request.tabId }, (entry) => {
-        const wasVisible = entry.visible;
-        entry.visible = request.visible;
-        applyEntryVisibility(entry, hostWindow);
-        scheduleEntryRendererRecovery(entry, hostWindow, request.tabId);
-        if (request.visible && !wasVisible && !entry.view.webContents.isDestroyed()) {
-          entry.view.webContents.focus();
-        }
+        entry.activeFindRequestId = entry.view.webContents.findInPage(request.text, {
+          forward: request.forward,
+          findNext: request.newSession
+        });
+      });
+    },
+    stopFindInPage({ hostWindow, request }) {
+      withEntry({ hostWindow, tabId: request.tabId }, (entry) => {
+        entry.activeFindRequestId = null;
+        entry.view.webContents.stopFindInPage(request.action);
       });
     },
     beginWindowResize(hostWindow) {
@@ -643,82 +909,6 @@ export function createDesktopBrowserViewManager(options?: {
         title: webContents.getTitle() || null,
         dataUrl
       };
-    },
-    async clickAutomationTarget(targetId, args) {
-      const found = findAutomationEntry(targetId);
-      if (!found) throw new Error('unknown automation target');
-      const webContents = found.entry.view.webContents;
-      await ensureDebugger(webContents);
-      let x = args.x;
-      let y = args.y;
-      if (args.selector) {
-        const result = await webContents.debugger.sendCommand('Runtime.evaluate', {
-          expression: `(() => { const el = document.querySelector(${JSON.stringify(args.selector)}); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
-          returnByValue: true
-        }) as { result?: { value?: { x: number; y: number } | null } };
-        const point = result.result?.value;
-        if (!point) throw new Error('selector did not match');
-        x = point.x;
-        y = point.y;
-      }
-      if (typeof x !== 'number' || typeof y !== 'number') {
-        throw new Error('click requires a selector or coordinates');
-      }
-      await webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
-        type: 'mousePressed',
-        x,
-        y,
-        button: 'left',
-        clickCount: 1
-      });
-      await webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
-        type: 'mouseReleased',
-        x,
-        y,
-        button: 'left',
-        clickCount: 1
-      });
-    },
-    async typeAutomationTarget(targetId, args) {
-      const found = findAutomationEntry(targetId);
-      if (!found) throw new Error('unknown automation target');
-      if (args.text.length > DESKTOP_BROWSER_MAX_TYPED_TEXT_LENGTH) {
-        throw new Error('typed text exceeds cap');
-      }
-      const webContents = found.entry.view.webContents;
-      await ensureDebugger(webContents);
-      if (args.selector) {
-        await webContents.debugger.sendCommand('Runtime.evaluate', {
-          expression: `(() => { const el = document.querySelector(${JSON.stringify(args.selector)}); if (!el) throw new Error('selector did not match'); el.focus(); return true; })()`
-        });
-      }
-      for (const char of args.text) {
-        await webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
-          type: 'keyDown',
-          text: char
-        });
-        await webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
-          type: 'keyUp',
-          text: char
-        });
-      }
-    },
-    async evaluateAutomationTarget(targetId, script) {
-      const found = findAutomationEntry(targetId);
-      if (!found) throw new Error('unknown automation target');
-      if (script.length > DESKTOP_BROWSER_MAX_EVAL_SCRIPT_LENGTH) {
-        throw new Error('eval script exceeds cap');
-      }
-      const webContents = found.entry.view.webContents;
-      await ensureDebugger(webContents);
-      const result = await webContents.debugger.sendCommand('Runtime.evaluate', {
-        expression: script,
-        returnByValue: true
-      }) as { result?: { value?: unknown }; exceptionDetails?: { text?: string } };
-      if (result.exceptionDetails) {
-        throw new Error(result.exceptionDetails.text ?? 'eval failed');
-      }
-      return result.result?.value ?? null;
     },
     closeAutomationTarget(targetId) {
       const found = findAutomationEntry(targetId);

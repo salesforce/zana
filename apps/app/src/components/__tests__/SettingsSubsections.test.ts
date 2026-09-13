@@ -113,6 +113,25 @@ describe('Settings subsection navigation', () => {
     ]);
   });
 
+  it('lists Browsers as its own Settings section under Configuration', () => {
+    const ids = SETTINGS_SECTIONS.map((section) => section.id);
+    expect(ids).toContain('browser');
+    expect(ids.indexOf('inbox')).toBeLessThan(ids.indexOf('browser'));
+    expect(SETTINGS_SECTIONS.find((section) => section.id === 'browser')).toMatchObject({
+      label: 'Browsers',
+      group: 'config'
+    });
+    expect(SETTINGS_SUBSECTIONS.browser).toEqual([
+      { id: 'browsers', label: 'Browsers' }
+    ]);
+    const panel = readFileSync(
+      fileURLToPath(new URL('../../views/settings/SettingsView.tsx', import.meta.url)),
+      'utf8'
+    );
+    expect(panel).toContain("import { BrowserSettingsSection } from '@/components/settings/BrowserSettingsSection'");
+    expect(panel).toContain("tab === 'browser'");
+  });
+
   it('groups Machines and Connectivity under Remote', () => {
     expect(SETTINGS_GROUPS.map((group) => group.id)).toEqual([
       'config',

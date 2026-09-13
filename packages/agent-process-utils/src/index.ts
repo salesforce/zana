@@ -2,7 +2,7 @@ export * from "./plugin-process-paths.js";
 import type { ChildProcess, StdioOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { lstat, readdir, readlink, realpath } from "node:fs/promises";
+import { lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import crossSpawn from "cross-spawn";
@@ -252,18 +252,39 @@ export function stopProcessGroupLeaderFirst(args: {
   });
 }
 
-interface ProcessWithCwd {
+export const WORKSPACE_PROCESS_LIST_CAP = 200;
+export const WORKSPACE_PROCESS_COMMAND_MAX = 200;
+
+export interface ProcessWithCwd {
   pid: number;
   cwd: string;
+  command: string;
 }
 
-function isPathUnderDirectory(candidate: string, directory: string): boolean {
+export function isPathUnderDirectory(candidate: string, directory: string): boolean {
   const normalized = candidate.endsWith(" (deleted)")
     ? candidate.slice(0, -" (deleted)".length)
     : candidate;
   return (
     normalized === directory || normalized.startsWith(`${directory}${sep}`)
   );
+}
+
+function truncateCommand(command: string): string {
+  return command.trim().slice(0, WORKSPACE_PROCESS_COMMAND_MAX);
+}
+
+async function readLinuxCommand(pid: number): Promise<string> {
+  try {
+    const cmdline = await readFile(`/proc/${pid}/cmdline`);
+    const text = cmdline.toString("utf8").replace(/\0/g, " ").trim();
+    if (text) return truncateCommand(text);
+  } catch {}
+  try {
+    return truncateCommand(await readFile(`/proc/${pid}/comm`, "utf8"));
+  } catch {
+    return "";
+  }
 }
 
 async function listLinuxProcessCwds(): Promise<ProcessWithCwd[]> {
@@ -274,7 +295,8 @@ async function listLinuxProcessCwds(): Promise<ProcessWithCwd[]> {
       if (!/^\d+$/.test(entry)) return;
       try {
         const cwd = await readlink(`/proc/${entry}/cwd`);
-        results.push({ pid: Number(entry), cwd });
+        const pid = Number(entry);
+        results.push({ pid, cwd, command: await readLinuxCommand(pid) });
       } catch {}
     }),
   );
@@ -284,7 +306,7 @@ async function listLinuxProcessCwds(): Promise<ProcessWithCwd[]> {
 async function listLsofProcessCwds(): Promise<ProcessWithCwd[]> {
   const child = spawnPortableOutputProcess({
     command: "lsof",
-    args: ["-a", "-d", "cwd", "-F", "pn", "-w", "-n"],
+    args: ["-a", "-d", "cwd", "-F", "pcn", "-w", "-n"],
   });
   const chunks: Buffer[] = [];
   child.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
@@ -295,10 +317,15 @@ async function listLsofProcessCwds(): Promise<ProcessWithCwd[]> {
   });
   const results: ProcessWithCwd[] = [];
   let pid: number | null = null;
+  let command = "";
   for (const line of Buffer.concat(chunks).toString("utf8").split("\n")) {
-    if (line.startsWith("p")) pid = Number(line.slice(1));
-    else if (line.startsWith("n") && pid !== null) {
-      results.push({ pid, cwd: line.slice(1) });
+    if (line.startsWith("p")) {
+      pid = Number(line.slice(1));
+      command = "";
+    } else if (line.startsWith("c") && pid !== null) {
+      command = truncateCommand(line.slice(1));
+    } else if (line.startsWith("n") && pid !== null) {
+      results.push({ pid, cwd: line.slice(1), command });
     }
   }
   return results;
@@ -361,16 +388,29 @@ function signalProcesses(
   }
 }
 
+function filterTargetsByPid(
+  targets: ProcessWithCwd[],
+  pids: readonly number[] | undefined,
+): ProcessWithCwd[] {
+  if (!pids) return targets;
+  const wanted = new Set(pids);
+  return targets.filter((target) => wanted.has(target.pid));
+}
+
 export async function killProcessesWithCwdUnder(args: {
   directory: string;
   graceMs?: number;
+  pids?: readonly number[];
 }): Promise<ProcessWithCwd[]> {
   const graceMs = args.graceMs ?? 2000;
   const signalled = new Map<number, ProcessWithCwd>();
   for (let round = 0; round < MAX_CWD_SWEEP_ROUNDS; round += 1) {
-    const targets = await listProcessesWithCwdUnder({
-      directory: args.directory,
-    });
+    const targets = filterTargetsByPid(
+      await listProcessesWithCwdUnder({
+        directory: args.directory,
+      }),
+      args.pids,
+    );
     if (targets.length === 0) break;
     signalProcesses(targets, "SIGTERM", signalled);
     const deadline = Date.now() + graceMs;
@@ -380,9 +420,12 @@ export async function killProcessesWithCwdUnder(args: {
     ) {
       await delay(50);
     }
-    const survivors = await listProcessesWithCwdUnder({
-      directory: args.directory,
-    });
+    const survivors = filterTargetsByPid(
+      await listProcessesWithCwdUnder({
+        directory: args.directory,
+      }),
+      args.pids,
+    );
     if (survivors.length === 0) break;
     signalProcesses(survivors, "SIGKILL", signalled);
     await delay(50);

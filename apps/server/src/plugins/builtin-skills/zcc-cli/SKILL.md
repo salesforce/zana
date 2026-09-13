@@ -91,7 +91,7 @@ aliases (aliases print a one-line warning on stderr).
 
 ```bash
 zcc thread list [--project <id>] [--json]
-zcc thread spawn --project <id> --prompt "…" [--provider <id>] [--wait] [--timeout 5m]
+zcc thread spawn --project <id> --prompt "…" [--provider <id>] [--acp-mode <mode>] [--reasoning-level <level>] [--permission-mode <mode>] [--wait] [--timeout 5m]
 zcc thread show <id>
 zcc thread log <id>
 zcc thread tell <id> "…"
@@ -109,7 +109,9 @@ zcc thread interactions <id>
 hang on leftover Vite. Use `--until quiet` to wait until
 `activity.activeBackgroundCommandCount` is 0. Inspect with
 `zcc thread show --json` or `zcc thread background list`. Soft stop tells the
-agent to KillShell; `--force` is `thread stop` (detached processes can leak).
+agent to KillShell; `--force` is `thread stop` (detached processes can leak). List leftover
+servers with `zcc project processes <id>` and stop selected pids with
+`zcc project processes kill <id> --pid <pid>`.
 
 Give spawned threads a clear objective, constraints, deliverable, and what to
 report back. Use `--` before a prompt that contains flag-like tokens:
@@ -136,6 +138,8 @@ zcc project create --path <absolute-path> [--host <id>]
 zcc project files <id> [--query <text>]
 zcc project content <id> <path>
 zcc project skills <id>
+zcc project processes list <id>
+zcc project processes kill <id> --pid <pid>
 zcc projects ls                 # alias of project list
 
 zcc skill list
@@ -177,6 +181,11 @@ and `~/.agents/skills` so agents *outside* ZCC can drive the CLI.
 
 ```bash
 zcc environment status|diff|diff-files|pull-request <id>
+zcc environment processes list|kill <id> [--pid <pid>]
+zcc browser instances --host <id> [--json]
+zcc browser tabs|create|acquire|connection|release|reveal|capture|close|watch --host --instance --generation --thread
+zcc browser import-sources|import-cookies --host --instance --generation
+zcc file read <path> --host <id> [--root <path>] [--json]
 
 zcc inbox ls [--project ID] [--json]
 zcc inbox show <id>
@@ -194,8 +203,8 @@ zcc team status|wait|answer|stop <id>
 Both modes create durable execution IDs. `freeform` infers a plan from the goal;
 `structured` treats the goal as a provided plan.
 
-Team launch, answer, and stop require native operator confirmation in Electron
-main. Agent-class callers can inspect status but cannot mutate team execution.
+Team launch, answer, and stop are operator-only (control-socket token). Agent-class
+callers can inspect status but cannot mutate team execution.
 
 Inbox mutations for agents are MCP (`inbox_push` / `inbox_search`) via the
 `zcc-inbox` skill, not this CLI. Schedule fire/toggle for agents is also MCP
@@ -224,9 +233,39 @@ Core command names always win over a plugin verb. `zcc <name>` and
 ## Guide chapters
 
 `zcc guide` (and `zcc guide threads`, `projects`, `machines`, `terminals`,
-`plugins`, `automations`, `agent-configuration`, `environments`) works with no
+`plugins`, `automations`, `agent-configuration`, `environments`, `browser`) works with no
 app. Keep this skill, the matching chapter, and the command implementation in
 sync — see `docs/cli-guide-and-skill.md`.
+
+---
+
+## Live control
+
+Attach to the running app without Playwright. The same `@zana-ai/zcc-control`
+client powers live tests and these operator verbs. Operator launches are
+**untagged** (your title, visible threads, no live-run journal). Live tests tag
+titles `[zcc-live:<runId>]` and janitor them:
+
+```bash
+zcc thread spawn --project <id> --prompt "…" [--provider <id>] [--model <id>] [--acp-mode <mode>] [--reasoning-level <level>] [--wait]
+zcc agent launch --project <id> --prompt "…" [--profile claude] [--persona <id>] [--title]
+                 [--execution-state plan|interactive|accept-edits|autonomous]
+                 [--model-level low|medium|high|extra-high] [--role <id>] [--wait] [--timeout]
+zcc agent wait <id> [--until idle|working|done] [--timeout]
+zcc agent reply <id> "…"
+zcc agent stop <id>
+zcc live cleanup --stale
+zcc live cleanup --tag <runId>
+zcc browser instances --host <id> --json
+```
+
+`--role` XOR `--model-level`. `zcc agent launch` uses product HTTP
+(`POST /api/v1/cli-agents`) and does **not** pop the native Allow dialog.
+Deprecated `zcc run` still goes through UDS and confirms. `zcc agent ls` and
+`zcc term reply` stay on the control plane. Desktop-browser product HTTP is
+`zcc browser` / `zcc.browsers` (`pnpm live:browser` against an attached
+Electron app). Do not run live control from a ZCC
+agent terminal (`FORBIDDEN_AGENT`). Details: `docs/control-sdk.md`.
 
 ---
 

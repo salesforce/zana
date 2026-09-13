@@ -17,6 +17,14 @@ export interface ConfigStoreOptions {
   configFile: string;
 }
 
+/** Never persist or serve a pair that hides both Modern and CLI Agent. */
+export function ensureComposerLaunchSurfaces<T extends Partial<AppConfig>>(config: T): T {
+  if (config.composerShowCliAgent === false && config.composerShowModern === false) {
+    return { ...config, composerShowCliAgent: true };
+  }
+  return config;
+}
+
 /**
  * Electron-free owner for the app-config JSON file. Compatibility normalization
  * remains injectable while the legacy store facade continues to expose its
@@ -61,19 +69,27 @@ export function createConfigStore(
     injectProductGuidance: true,
     injectRemoteInstructions: true,
     injectBundledSkills: true,
-    remoteDefaultPath: ''
+    remoteDefaultPath: '',
+    composerShowCliAgent: true,
+    composerShowModern: true,
+    composerShowAutonomousTeam: true,
+    teamJobLaunchEnabled: true
   });
 
   return {
     getConfig(): AppConfig {
       const stored = deps.normalizeConfig(readJsonRaw<Partial<AppConfig>>({}).value);
-      return deps.projectConfigCompatibility({ ...fallback(), ...stored, version: 1 });
+      return ensureComposerLaunchSurfaces(
+        deps.projectConfigCompatibility({ ...fallback(), ...stored, version: 1 })
+      );
     },
     setConfig(patch: Partial<AppConfig>): AppConfig {
       const disk = readJsonRaw<Partial<AppConfig>>({});
-      const current = deps.projectConfigCompatibility({ ...fallback(), ...deps.normalizeConfig(disk.value), version: 1 });
+      const current = ensureComposerLaunchSurfaces(
+        deps.projectConfigCompatibility({ ...fallback(), ...deps.normalizeConfig(disk.value), version: 1 })
+      );
       const normalizedPatch = deps.normalizeConfig(patch);
-      const next = { ...current, ...normalizedPatch, version: 1 as const };
+      const next = ensureComposerLaunchSurfaces({ ...current, ...normalizedPatch, version: 1 as const });
       const optionalHarnessKeys = [
         'defaultHarness', 'harnessRouting', 'claudeAppendSystemPrompt',
         'claudeExtraArgs', 'claudeAddDirs', 'claudeAllowedTools',

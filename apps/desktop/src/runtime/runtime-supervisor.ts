@@ -84,10 +84,14 @@ export interface RuntimeSupervisor {
   refreshMarketplace(url: string): Promise<unknown>;
   removeMarketplace(url: string): Promise<unknown>;
   pluginCliContributions(): Promise<unknown>;
-  runPluginCli(id: string, argv: string[]): Promise<unknown>;
+  runPluginCli(
+    id: string,
+    argv: string[],
+    context?: { projectId?: string; threadId?: string; cwd?: string }
+  ): Promise<unknown>;
   callPluginRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;
   getPluginSettings(pluginId: string): Promise<unknown>;
-  setPluginSettings(pluginId: string, values: Record<string, string | boolean | null>): Promise<unknown>;
+  setPluginSettings(pluginId: string, values: Record<string, string | number | boolean | null>): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -96,6 +100,8 @@ export interface StartRuntimeSupervisorOptions {
   dataDir?: string;
   runtimeDir?: string;
   version?: string;
+  /** Env vars for the product-server utility only — never the host-daemon, never process.env. */
+  extraEnv?: Record<string, string>;
 }
 
 function persistentHostId(dataDir?: string): string {
@@ -264,9 +270,9 @@ interface UtilityRuntime {
   request(operation: 'plugins-update', pluginId: string): Promise<unknown>;
   request(operation: 'plugins-call-rpc', pluginId: string, method: string, args?: unknown): Promise<unknown>;
   request(operation: 'plugins-settings-get', pluginId: string): Promise<unknown>;
-  request(operation: 'plugins-settings-set', pluginId: string, values: Record<string, string | boolean | null>): Promise<unknown>;
+  request(operation: 'plugins-settings-set', pluginId: string, values: Record<string, string | number | boolean | null>): Promise<unknown>;
   request(operation: 'plugins-cli-contributions'): Promise<unknown>;
-  request(operation: 'plugins-cli-run', pluginId: string, argv: string[]): Promise<unknown>;
+  request(operation: 'plugins-cli-run', pluginId: string, argv: string[], context?: { projectId?: string; threadId?: string; cwd?: string }): Promise<unknown>;
   request(operation: 'marketplace-list'): Promise<unknown>;
   request(operation: 'marketplace-add', url: string): Promise<unknown>;
   request(operation: 'marketplace-refresh', url: string): Promise<unknown>;
@@ -284,12 +290,13 @@ function processEnvRecord(): Record<string, string> {
 
 function startUtility(
   entry: string,
-  startMessage: unknown
+  startMessage: unknown,
+  extraEnv?: Record<string, string>
 ): Promise<{ child: UtilityChild; url: string; hostId?: string; instanceId?: string }> {
   return new Promise((resolveReady, rejectReady) => {
     const child = utilityProcess.fork(entry, [], {
       serviceName: `zcc-${entry}`,
-      env: processEnvRecord()
+      env: { ...processEnvRecord(), ...extraEnv }
     });
     let ready = false;
     let settled = false;
@@ -401,7 +408,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
       hostBinding: { hostId: host.hostId, instanceId: host.instanceId },
       bundledPluginsRoot: defaultBundledRoot(),
       version: options.version ?? ''
-    });
+    }, options.extraEnv);
   } catch (error) {
     host.child.kill();
     throw error;
@@ -556,7 +563,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     refreshMarketplace: (url) => server.request('marketplace-refresh', url),
     removeMarketplace: (url) => server.request('marketplace-remove', url),
     pluginCliContributions: () => server.request('plugins-cli-contributions'),
-    runPluginCli: (id, argv) => server.request('plugins-cli-run', id, argv),
+    runPluginCli: (id, argv, context) => server.request('plugins-cli-run', id, argv, context),
     callPluginRpc: (pluginId, method, args) => server.request('plugins-call-rpc', pluginId, method, args),
     getPluginSettings: (pluginId) => server.request('plugins-settings-get', pluginId),
     setPluginSettings: (pluginId, values) => server.request('plugins-settings-set', pluginId, values),
@@ -627,7 +634,7 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
     ...runtime,
     request(
       operation: 'app-version' | 'thread-live' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
-       ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | boolean | null>] | [string, string[]] | []
+       ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | []
     ) {
       const id = randomUUID();
       return new Promise<unknown>((resolveResult, rejectResult) => {
@@ -663,8 +670,20 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
           ...(operation === 'plugins-logs' ? { pluginId: args[0] as string, n: args[1] as number | undefined } : {}),
           ...(operation === 'plugins-search' ? { query: args[0] as string } : {}),
           ...(operation === 'plugins-call-rpc' ? { pluginId: args[0] as string, method: args[1] as string, args: args[2] } : {}),
-          ...(operation === 'plugins-settings-set' ? { pluginId: args[0] as string, values: args[1] as Record<string, string | boolean | null> } : {}),
-          ...(operation === 'plugins-cli-run' ? { pluginId: args[0] as string, argv: args[1] as string[] } : {}),
+          ...(operation === 'plugins-settings-set' ? { pluginId: args[0] as string, values: args[1] as Record<string, string | number | boolean | null> } : {}),
+          ...(operation === 'plugins-cli-run' ? {
+            pluginId: args[0] as string,
+            argv: args[1] as string[],
+            ...(((args[2] as { projectId?: string; threadId?: string; cwd?: string } | undefined)?.projectId)
+              ? { projectId: (args[2] as { projectId?: string }).projectId }
+              : {}),
+            ...(((args[2] as { threadId?: string } | undefined)?.threadId)
+              ? { threadId: (args[2] as { threadId?: string }).threadId }
+              : {}),
+            ...(((args[2] as { cwd?: string } | undefined)?.cwd)
+              ? { cwd: (args[2] as { cwd?: string }).cwd }
+              : {})
+          } : {}),
           ...(operation === 'marketplace-add' || operation === 'marketplace-refresh' || operation === 'marketplace-remove' ? { url: args[0] as string } : {})
         });
       });

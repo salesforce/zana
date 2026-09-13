@@ -112,4 +112,19 @@ describe('runtime supervisor', () => {
     expect(source).toContain("'relaunch'");
     expect(source).toContain('relaunchEnrolledHost');
   });
+
+  it('passes extraEnv only to the product-server utility, not process.env', () => {
+    const source = readFileSync(new URL('./runtime-supervisor.ts', import.meta.url), 'utf8');
+    expect(source).toContain('extraEnv');
+    expect(source).toContain('server-runtime.js');
+    expect(source).not.toMatch(/process\.env\.ZCC_PRODUCT_SERVER_CREDENTIAL\s*=/);
+  });
+
+  it('does not assign the product-server credential onto process.env', () => {
+    const source = readFileSync(new URL('../host.ts', import.meta.url), 'utf8');
+    expect(source).toContain('ZCC_PRODUCT_SERVER_CREDENTIAL');
+    expect(source).not.toMatch(/process\.env\.ZCC_PRODUCT_SERVER_CREDENTIAL\s*=/);
+    expect(source).toContain('extraEnv');
+    expect(source).toContain('delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL');
+  });
 });

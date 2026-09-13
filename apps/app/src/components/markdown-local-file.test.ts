@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { conversationFilePreviewPaths, parseLocalFileMarkdownHref } from './markdown-local-file.js';
+import {
+  conversationFilePreviewPaths,
+  parseInlineFileCodePath,
+  parseLocalFileMarkdownHref,
+  resolveThreadFilePreviewPath
+} from './markdown-local-file.js';
 import { parseThreadMentionHref, splitThreadMentionText } from './markdown-thread-mentions.js';
 
 describe('parseLocalFileMarkdownHref', () => {
@@ -48,6 +53,40 @@ describe('conversationFilePreviewPaths', () => {
       'Related: packages/cli/src/lib/run-cli.ts'
     ].join('\n');
     expect(conversationFilePreviewPaths(body)).toEqual([]);
+  });
+});
+
+describe('parseInlineFileCodePath', () => {
+  it('accepts bare filenames and slash paths with a letter-starting extension', () => {
+    expect(parseInlineFileCodePath('student-to-software-engineer.md')).toBe(
+      'student-to-software-engineer.md'
+    );
+    expect(parseInlineFileCodePath('`docs/guide.md`')).toBe('docs/guide.md');
+    expect(parseInlineFileCodePath('src/lib/foo.ts')).toBe('src/lib/foo.ts');
+    expect(parseInlineFileCodePath('package.json')).toBe('package.json');
+  });
+
+  it('rejects commands, version tokens, and parent-segment escapes', () => {
+    expect(parseInlineFileCodePath('true')).toBeNull();
+    expect(parseInlineFileCodePath('pnpm test')).toBeNull();
+    expect(parseInlineFileCodePath('v1.2.3')).toBeNull();
+    expect(parseInlineFileCodePath('../etc/passwd')).toBeNull();
+    expect(parseInlineFileCodePath('https://example.com/app.ts')).toBeNull();
+    expect(parseInlineFileCodePath('student-to-software-engineer.md\n')).toBeNull();
+  });
+});
+
+describe('resolveThreadFilePreviewPath', () => {
+  it('returns slash paths as-is and unmatched bare names as-is', () => {
+    expect(resolveThreadFilePreviewPath('docs/guide.md', ['other/guide.md'])).toBe('docs/guide.md');
+    expect(resolveThreadFilePreviewPath('notes.md')).toBe('notes.md');
+    expect(resolveThreadFilePreviewPath('true')).toBeNull();
+  });
+
+  it('maps a bare name onto the latest matching known path', () => {
+    expect(
+      resolveThreadFilePreviewPath('foo.md', ['src/a.ts', 'docs/foo.md', 'lib/foo.md'])
+    ).toBe('lib/foo.md');
   });
 });
 

@@ -21,7 +21,17 @@ import {
   Square,
   X
 } from 'lucide-react';
-import { clampDesktopBrowserViewBounds, type DesktopBrowserApi, type DesktopBrowserState, type DesktopBrowserViewBounds } from '@zana-ai/zcc-desktop-contract';
+import {
+  clampDesktopBrowserViewBounds,
+  DESKTOP_BROWSER_MAX_FIND_TEXT_LENGTH,
+  type DesktopBrowserApi,
+  type DesktopBrowserControlState,
+  type DesktopBrowserFindInPageRequest,
+  type DesktopBrowserState,
+  type DesktopBrowserViewBounds
+} from '@zana-ai/zcc-desktop-contract';
+import { BrowserFindBar, type BrowserFindMatches } from './BrowserFindBar.js';
+import { formatAppShortcut, shortcutForCommand } from '../../../lib/keyboard-shortcut-settings.js';
 import { getDesktopBrowserApi } from '../../../lib/desktop-browser.js';
 import { getBrowserUrlHost, getBrowserUrlSecurity, resolveBrowserAddressInput } from '../../../lib/browser-url.js';
 import { useBrowserHistory } from '../../../lib/browser-history.js';
@@ -215,6 +225,7 @@ export function BrowserTabContent({
   const desktopBrowser = useMemo<DesktopBrowserApi | null>(() => getDesktopBrowserApi(), []);
   const contentRef = useRef<HTMLDivElement>(null);
   const addressInputRef = useRef<HTMLInputElement>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
   const { entries: recent, recordVisit, clear: clearRecent } = useBrowserHistory(threadId);
   const [state, setState] = useState<DesktopBrowserState | null>(null);
   const [currentUrl, setCurrentUrl] = useState(initialUrl);
@@ -222,6 +233,14 @@ export function BrowserTabContent({
   const [isEditing, setIsEditing] = useState(false);
   const [resizeSnapshotUrl, setResizeSnapshotUrl] = useState<string | null>(null);
   const [attached, setAttached] = useState(false);
+  const [control, setControl] = useState<DesktopBrowserControlState['control']>(null);
+  const [isFindOpen, setIsFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findMatches, setFindMatches] = useState<BrowserFindMatches | null>(null);
+  const findShortcutLabel = formatAppShortcut(
+    { key: 'f', mod: true, meta: false, control: false, alt: false, shift: false },
+    typeof navigator === 'undefined' ? '' : navigator.platform
+  );
   const onUpdateRef = useRef(onUpdate);
   const recordVisitRef = useRef(recordVisit);
   onUpdateRef.current = onUpdate;
@@ -290,9 +309,25 @@ export function BrowserTabContent({
       if (snapshot.tabId !== tabId) return;
       setResizeSnapshotUrl(snapshot.dataUrl);
     });
+    const unsubscribeControl = desktopBrowser.onControl?.((next) => {
+      if (next.tabId !== tabId) return;
+      setControl(next.control);
+    });
+    const unsubscribeFind = desktopBrowser.onFindResult?.((result) => {
+      if (result.tabId !== tabId) return;
+      setFindMatches({
+        activeMatchOrdinal: result.activeMatchOrdinal,
+        matches: result.matches
+      });
+    });
+    void desktopBrowser.getControl?.(tabId).then((next) => {
+      if (next && next.tabId === tabId) setControl(next.control);
+    });
     return () => {
       unsubscribe();
       unsubscribeSnapshot?.();
+      unsubscribeControl?.();
+      unsubscribeFind?.();
       visibilityCoordinator?.release(tabId);
     };
   }, [automationTargetId, desktopBrowser, readBounds, tabId, threadId, visibilityCoordinator]);
@@ -348,6 +383,129 @@ export function BrowserTabContent({
     desktopBrowser?.reload(tabId);
   }, [desktopBrowser, state?.isLoading, tabId]);
 
+  const handleFocusLocation = useCallback(() => {
+    if (desktopBrowser === null) return false;
+    setAddressDraft(currentUrl);
+    setIsEditing(true);
+    addressInputRef.current?.focus({ preventScroll: true });
+    window.requestAnimationFrame(() => {
+      addressInputRef.current?.focus({ preventScroll: true });
+      addressInputRef.current?.select();
+    });
+    return true;
+  }, [currentUrl, desktopBrowser]);
+
+  const canFindInPage =
+    canShowNativeBrowserView
+    && desktopBrowser !== null
+    && desktopBrowser.findInPage !== undefined
+    && hasPage;
+
+  const runFind = useCallback((args: Omit<DesktopBrowserFindInPageRequest, 'tabId'>) => {
+    desktopBrowser?.findInPage?.({ tabId, ...args });
+  }, [desktopBrowser, tabId]);
+
+  const clearFind = useCallback(() => {
+    desktopBrowser?.stopFindInPage?.({ tabId, action: 'clearSelection' });
+    setFindMatches(null);
+  }, [desktopBrowser, tabId]);
+
+  const focusFindInput = useCallback(() => {
+    findInputRef.current?.focus({ preventScroll: true });
+    window.requestAnimationFrame(() => {
+      findInputRef.current?.focus({ preventScroll: true });
+      findInputRef.current?.select();
+    });
+  }, []);
+
+  const handleFindQueryChange = useCallback((rawQuery: string) => {
+    const query = rawQuery.slice(0, DESKTOP_BROWSER_MAX_FIND_TEXT_LENGTH);
+    setFindQuery(query);
+    if (query.length === 0) {
+      clearFind();
+      return;
+    }
+    runFind({ text: query, forward: true, newSession: true });
+  }, [clearFind, runFind]);
+
+  const handleFindNext = useCallback(() => {
+    if (findQuery.length === 0) return;
+    runFind({ text: findQuery, forward: true, newSession: false });
+  }, [findQuery, runFind]);
+
+  const handleFindPrevious = useCallback(() => {
+    if (findQuery.length === 0) return;
+    runFind({ text: findQuery, forward: false, newSession: false });
+  }, [findQuery, runFind]);
+
+  const handleCloseFind = useCallback(() => {
+    setIsFindOpen(false);
+    clearFind();
+  }, [clearFind]);
+
+  const handleOpenFind = useCallback(() => {
+    if (!canFindInPage) return false;
+    setIsFindOpen(true);
+    if (findQuery.length > 0) {
+      runFind({ text: findQuery, forward: true, newSession: true });
+    }
+    focusFindInput();
+    return true;
+  }, [canFindInPage, findQuery, focusFindInput, runFind]);
+
+  useEffect(() => {
+    if (isFindOpen && !canFindInPage) {
+      setIsFindOpen(false);
+      clearFind();
+    }
+  }, [canFindInPage, clearFind, isFindOpen]);
+
+  useEffect(() => {
+    if (desktopBrowser === null) return;
+    const unsubscribe = desktopBrowser.onAppCommand?.((command) => {
+      if (command === 'browser.find') handleOpenFind();
+      if (command === 'browser.focusLocation') handleFocusLocation();
+      if (command === 'browser.reload' && hasPage) desktopBrowser.reload(tabId);
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, [desktopBrowser, handleFocusLocation, handleOpenFind, hasPage, tabId]);
+
+  useEffect(() => {
+    if (!isViewVisible) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (shortcutForCommand('browser.find', event)) {
+        event.preventDefault();
+        handleOpenFind();
+        return;
+      }
+      if (shortcutForCommand('browser.focusLocation', event)) {
+        event.preventDefault();
+        handleFocusLocation();
+        return;
+      }
+      if (shortcutForCommand('browser.reload', event) && hasPage) {
+        event.preventDefault();
+        desktopBrowser?.reload(tabId);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [desktopBrowser, handleFocusLocation, handleOpenFind, hasPage, isViewVisible, tabId]);
+
+  const handleTakeOver = useCallback(() => {
+    void desktopBrowser?.releaseControl?.(tabId);
+    desktopBrowser?.focus?.(tabId);
+  }, [desktopBrowser, tabId]);
+
+  const handleStopControl = useCallback(() => {
+    void desktopBrowser?.releaseControl?.(tabId);
+    if (automationTargetId) onStopAutomation?.(automationTargetId);
+  }, [automationTargetId, desktopBrowser, onStopAutomation, tabId]);
+
+  const controllingLabel = control?.controllerLabel ?? (automationTargetId ? 'Agent' : null);
+
   if (desktopBrowser === null) {
     return (
       <div className="thread-browser-tab" data-testid="thread-browser-tab">
@@ -357,16 +515,22 @@ export function BrowserTabContent({
   }
 
   return (
-    <div className="thread-browser-tab" data-testid="thread-browser-tab">
-      {automationTargetId ? (
-        <div className="thread-browser-automation" data-testid="thread-browser-automation">
-          <span>Agent is controlling this page</span>
-          <button
-            type="button"
-            onClick={() => onStopAutomation?.(automationTargetId)}
-          >
-            <Square size={12} /> Stop
-          </button>
+    <div className="thread-browser-tab" data-testid="thread-browser-tab" data-app-browser="">
+      {controllingLabel ? (
+        <div
+          className="thread-browser-automation"
+          data-testid="thread-browser-automation"
+          role="status"
+        >
+          <span>{controllingLabel} is controlling this tab</span>
+          <div className="thread-browser-automation-actions">
+            <button type="button" onClick={handleStopControl}>
+              <Square size={12} /> Stop
+            </button>
+            <button type="button" data-testid="thread-browser-take-over" onClick={handleTakeOver}>
+              Take over
+            </button>
+          </div>
         </div>
       ) : null}
       <BrowserChrome
@@ -392,6 +556,18 @@ export function BrowserTabContent({
           if (currentUrl.length > 0) window.open(currentUrl, '_blank', 'noopener,noreferrer');
         }}
       />
+      {isFindOpen ? (
+        <BrowserFindBar
+          inputRef={findInputRef}
+          query={findQuery}
+          matches={findMatches}
+          onQueryChange={handleFindQueryChange}
+          onFindNext={handleFindNext}
+          onFindPrevious={handleFindPrevious}
+          onClose={handleCloseFind}
+          shortcutLabel={findShortcutLabel}
+        />
+      ) : null}
       <div ref={contentRef} className="thread-browser-view">
         {hasPageLoadError ? (
           <BrowserPageLoadError

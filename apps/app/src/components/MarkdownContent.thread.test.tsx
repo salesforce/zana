@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { DocContent, MarkdownContent } from './MarkdownContent.js';
 
@@ -54,5 +55,55 @@ describe('MarkdownContent thread extras', () => {
     expect(html).toContain('<h1');
     expect(html).toContain('<strong>');
     expect(html).not.toContain('**there**');
+  });
+
+  it('turns inline file chips into preview buttons when a thread is open', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        text="Wrote `student-to-software-engineer.md` with the 5 steps."
+        threadId="t1"
+        filePathHints={['docs/student-to-software-engineer.md']}
+      />
+    );
+    expect(html).toContain('inbox-md-file-chip');
+    expect(html).toContain('aria-label="Preview student-to-software-engineer.md"');
+    expect(html).toContain('title="docs/student-to-software-engineer.md"');
+    expect(html).toContain('student-to-software-engineer.md');
+  });
+
+  it('leaves inline file chips inert without a thread, when exporting, or when not a path', () => {
+    const inert = renderToStaticMarkup(
+      <MarkdownContent text="Wrote `student-to-software-engineer.md` with the 5 steps." />
+    );
+    expect(inert).toContain('<code>');
+    expect(inert).not.toContain('inbox-md-file-chip');
+
+    const exported = renderToStaticMarkup(
+      <MarkdownContent
+        exportable
+        text="Wrote `student-to-software-engineer.md` with the 5 steps."
+        threadId="t1"
+      />
+    );
+    expect(exported).not.toContain('inbox-md-file-chip');
+
+    const notAFile = renderToStaticMarkup(
+      <MarkdownContent text="Use `true` and `pnpm test`." threadId="t1" />
+    );
+    expect(notAFile).not.toContain('inbox-md-file-chip');
+    expect(notAFile).toContain('<code>');
+  });
+
+  it('does not turn fenced code into file chips', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent text={'```md\nstudent-to-software-engineer.md\n```'} threadId="t1" />
+    );
+    expect(html).not.toContain('inbox-md-file-chip');
+  });
+
+  it('styles clickable file chips like gold inline code', () => {
+    const css = readFileSync(new URL('../styles/global.css', import.meta.url), 'utf8');
+    expect(css).toContain('.inbox-md .inbox-md-file-chip');
+    expect(css).toContain('cursor: pointer');
   });
 });

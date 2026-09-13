@@ -15,6 +15,24 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
  * runs while still asserting the URL SHAPE and every flag around them.
  */
 
+/**
+ * Golden snapshots name harness CLIs by basename. `resolveHarnessCommand` may
+ * turn `claude` into `/Users/…/.local/bin/claude` or `/opt/homebrew/bin/codex`.
+ * Keep system shells and the scheduled supervisor path so `normalize()` can
+ * still tokenise them.
+ */
+function snapshotCommand(command: string): string {
+  if (!command.includes('/') && !command.includes('\\')) return command;
+  if (command.endsWith('scheduled-supervisor')) return command;
+  if (/^(\/bin\/|\/sbin\/|\/usr\/bin\/|\/usr\/sbin\/)/.test(command)) return command;
+  return command.replace(/.*[/\\]/, '') || command;
+}
+
+function snapshotSpawnArgs(command: string, args: string[]): string[] {
+  if (!command.endsWith('scheduled-supervisor') || args.length === 0) return args;
+  return [snapshotCommand(args[0]!), ...args.slice(1)];
+}
+
 interface SpawnCall {
   command: string;
   args: string[];
@@ -40,7 +58,8 @@ vi.mock('node-pty', () => ({
 // Deterministic MCP config path so the snapshot doesn't depend on ~/.zcc.
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string, extra?: string[]) =>
-    `/tmp/${id}/.mcp.json${extra?.length ? `?extra=${extra.join(',')}` : ''}`
+    `/tmp/${id}/.mcp.json${extra?.length ? `?extra=${extra.join(',')}` : ''}`,
+  alwaysOnPluginMcpAllowlist: () => []
 }));
 
 // tmux never wraps in tests (keep the bare argv), regardless of the host.
@@ -63,6 +82,8 @@ vi.mock('@zana-ai/zcc-llm', async (importOriginal) => {
 });
 
 import { PtyManager, applyHeapCeiling } from '../pty.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type {
   AppConfig,
   Persona,
@@ -223,8 +244,8 @@ describe('golden argv — local create() matrix', () => {
           const call = spawns[0];
           expect(
             normalize({
-              command: call.command,
-              args: call.args,
+              command: snapshotCommand(call.command),
+              args: snapshotSpawnArgs(call.command, call.args),
               sessionEnv: pickSessionEnv(call.env)
             })
           ).toMatchSnapshot();
@@ -267,6 +288,26 @@ describe('restored harness identity', () => {
   });
 });
 
+describe('spawn PATH for GUI launches', () => {
+  beforeEach(() => {
+    spawns.length = 0;
+  });
+
+  it('puts user CLI dirs on the child PATH', () => {
+    const mgr = new PtyManager();
+    mgr.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: BASE_CONFIG
+    });
+    const path = spawns[0]!.env.PATH ?? '';
+    expect(path.split(':')).toEqual(expect.arrayContaining([join(homedir(), '.local', 'bin')]));
+  });
+});
+
 describe('golden argv — auto-mode + overseer variants', () => {
   beforeEach(() => {
     spawns.length = 0;
@@ -285,7 +326,7 @@ describe('golden argv — auto-mode + overseer variants', () => {
     });
     const call = spawns[0];
     expect(
-      normalize({ command: call.command, args: call.args, sessionEnv: pickSessionEnv(call.env) })
+      normalize({ command: snapshotCommand(call.command), args: snapshotSpawnArgs(call.command, call.args), sessionEnv: pickSessionEnv(call.env) })
     ).toMatchSnapshot();
   });
 
@@ -337,7 +378,7 @@ describe('golden argv — auto-mode + overseer variants', () => {
     });
     const call = spawns[0];
     expect(
-      normalize({ args: call.args, sessionEnv: pickSessionEnv(call.env) })
+      normalize({ args: snapshotSpawnArgs(call.command, call.args), sessionEnv: pickSessionEnv(call.env) })
     ).toMatchSnapshot();
   });
 
@@ -354,7 +395,7 @@ describe('golden argv — auto-mode + overseer variants', () => {
     });
     const call = spawns[0];
     expect(
-      normalize({ args: call.args, sessionEnv: pickSessionEnv(call.env) })
+      normalize({ args: snapshotSpawnArgs(call.command, call.args), sessionEnv: pickSessionEnv(call.env) })
     ).toMatchSnapshot();
   });
 
@@ -373,7 +414,7 @@ describe('golden argv — auto-mode + overseer variants', () => {
     });
     const call = spawns[0];
     expect(
-      normalize({ args: call.args, sessionEnv: pickSessionEnv(call.env) })
+      normalize({ args: snapshotSpawnArgs(call.command, call.args), sessionEnv: pickSessionEnv(call.env) })
     ).toMatchSnapshot();
   });
 
@@ -413,7 +454,7 @@ describe('golden argv — auto-mode + overseer variants', () => {
     });
     const call = spawns[0];
     expect(
-      normalize({ command: call.command, args: call.args, sessionEnv: pickSessionEnv(call.env) })
+      normalize({ command: snapshotCommand(call.command), args: snapshotSpawnArgs(call.command, call.args), sessionEnv: pickSessionEnv(call.env) })
     ).toMatchSnapshot();
   });
 

@@ -19,6 +19,8 @@
     "@zana-ai/zcc-desktop-contract": "workspace:*",
     "@zana-ai/zcc-domain": "workspace:*",
     "@zana-ai/zcc-host-daemon": "workspace:*",
-    "@zana-ai/zcc-server": "workspace:*"
+    "@zana-ai/zcc-host-daemon-contract": "workspace:*",
+    "@zana-ai/zcc-server": "workspace:*",
+    "ws": "^8.21.3"
   }
 }

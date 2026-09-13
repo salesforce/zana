@@ -25,6 +25,7 @@ import {
   rewritePromptPaths,
   stageRemoteComposerAttachments,
   type StageRemoteComposerAttachmentsInput,
+  threadPermissionMode,
   threadProviderIdForFamily,
   unrestrictedProfileId,
   withExecutionState,
@@ -70,6 +71,15 @@ describe('thread provider id mapping', () => {
     expect(familyForThreadProviderId('codex')).toBe('codex');
     expect(familyForThreadProviderId('acp-grok')).toBe('grok');
     expect(familyForThreadProviderId('unknown')).toBeNull();
+  });
+});
+
+describe('threadPermissionMode', () => {
+  it('passes through thread-create permission modes and drops CLI-only ids', () => {
+    expect(threadPermissionMode('accept-edits')).toBe('accept-edits');
+    expect(threadPermissionMode('auto')).toBe('auto');
+    expect(threadPermissionMode('full')).toBe('full');
+    expect(threadPermissionMode('default')).toBeUndefined();
   });
 });
 

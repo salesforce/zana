@@ -105,6 +105,8 @@ describe('thread / legacy isolation', () => {
     expect(home).not.toContain('product.teams.launchAutonomous');
     expect(home).not.toContain('product.teams.startJob');
     expect(legacy).toContain('createTerminal');
+    expect(legacy).not.toContain('product.threads.create');
+    expect(legacy).not.toContain('shouldLaunchManagedThread');
     expect(legacy).toContain('buildLaunchArgs');
     expect(legacy).toContain("from './legacy-agent-home.js'");
     expect(legacy).toContain('cliAgentModelOptions');

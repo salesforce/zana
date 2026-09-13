@@ -1,11 +1,12 @@
 import { pathToFileURL } from 'node:url';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type {
   PluginAgentConfigureContext,
   PluginAgentConfigureResult,
-  PluginAgentToolRegistration,
+  PluginAgentToolRecord,
   PluginCliExecutionResult,
   PluginCliRegistration,
   PluginCliCommandInfo,
@@ -21,7 +22,14 @@ import type {
   PluginMentionTrigger,
   PluginSettingDescriptor,
   PluginSettingValue,
+  PluginSdkEnvironment,
+  PluginSdkExecutionOptions,
+  PluginSdkFileReadResult,
+  PluginSdkModelCatalog,
+  PluginSdkProviderInfo,
   PluginSdkThreadEventRow,
+  PluginSdkThreadOutput,
+  PluginSdkThreadSpawnArgs,
   PluginSdkThreadSummary,
   PluginThreadEvent,
   PluginThreadEventName,
@@ -31,9 +39,9 @@ import type {
 import {
   PLUGIN_MENTION_TRIGGERS,
   enforcePluginCliOutputLimit,
-  isPluginHostEntryDefinition,
-  parsePluginAgentToolPresentation
+  isPluginHostEntryDefinition
 } from '@zana-ai/zcc-plugin-sdk/server';
+import { normalizeRegisteredAgentTool } from '@zana-ai/zcc-plugin-sdk/internal/host-policy';
 import {
   PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES,
   PLUGIN_INTERACTION_MAX_TITLE_LENGTH,
@@ -42,6 +50,18 @@ import {
   type JsonValue
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
+import {
+  acquireDesktopBrowserControl,
+  captureDesktopBrowserTab,
+  createDesktopBrowserTab,
+  desktopBrowserTabAction,
+  importDesktopBrowserCookies,
+  listDesktopBrowserImportSources,
+  listDesktopBrowserInstances,
+  listDesktopBrowserTabs,
+  openDesktopBrowserConnection,
+  releaseDesktopBrowserControl
+} from '../services/desktop-browsers.js';
 import { cronMatches, cronMinuteKey } from '@zana-ai/zcc-plugin-sdk';
 import {
   bindPluginServices,
@@ -58,6 +78,50 @@ import {
 export const HOST_ZCC_VERSION = '2.1.1';
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
 export const FACTORY_TIMEOUT_MS = 10_000;
+
+function applyPluginSqliteMigrations(
+  runScript: (sql: string) => void,
+  prepare: PluginDatabase['prepare'],
+  transaction: PluginDatabase['transaction'],
+  statements: readonly string[]
+): void {
+  runScript(
+    'CREATE TABLE IF NOT EXISTS _zcc_migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL, statement_hash TEXT)'
+  );
+  const hashes = statements.map((statement) => createHash('sha256').update(statement).digest('hex'));
+  const rows = prepare('SELECT id, statement_hash FROM _zcc_migrations ORDER BY id').all() as Array<{
+    id: number;
+    statement_hash: string | null;
+  }>;
+  const applied = new Map(rows.map((row) => [row.id, row.statement_hash]));
+  hashes.forEach((hash, index) => {
+    const recorded = applied.get(index);
+    if (recorded && recorded !== hash) {
+      throw new Error(
+        `migration ${index} does not match the recorded statement; append a new migration instead of changing or reusing an index`
+      );
+    }
+  });
+  const record = prepare('INSERT INTO _zcc_migrations (id, applied_at, statement_hash) VALUES (?, ?, ?)');
+  transaction(() => {
+    statements.forEach((statement, index) => {
+      if (applied.has(index)) return;
+      const savepoint = `zcc_m${index}`;
+      runScript(`SAVEPOINT ${savepoint}`);
+      try {
+        runScript(statement);
+        runScript(`RELEASE SAVEPOINT ${savepoint}`);
+      } catch (error) {
+        runScript(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        runScript(`RELEASE SAVEPOINT ${savepoint}`);
+        const message = error instanceof Error ? error.message : String(error);
+        // Recover DBs that already applied ALTER ADD COLUMN before migrate became incremental.
+        if (!/duplicate column name/i.test(message)) throw error;
+      }
+      record.run(index, Date.now(), hashes[index]);
+    });
+  });
+}
 
 export type PluginRuntimeStatus =
   | 'running'
@@ -84,7 +148,7 @@ export interface PluginHandle {
   mentionProviders: Array<PluginMentionProviderRegistration & { pluginId: string }>;
   cli: { registration: PluginCliRegistration | null };
   httpRoutes: PluginHttpRouteRecord[];
-  agentTools: PluginAgentToolRegistration[];
+  agentTools: PluginAgentToolRecord[];
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
   getSettings(): {
     descriptors: Record<string, PluginSettingDescriptor>;
@@ -162,13 +226,7 @@ export function createPluginApi(
     }) => Promise<PluginInteractionResult>;
     interruptPluginInteractions?: (pluginId: string) => void;
     onNeedsConfiguration?: (message: string) => void;
-    spawnThread?: (args: {
-      pluginId: string;
-      projectId: string;
-      prompt: string;
-      providerId?: string;
-      parentThreadId?: string;
-    }) => Promise<{ id: string }>;
+    spawnThread?: (args: PluginSdkThreadSpawnArgs & { pluginId: string }) => Promise<{ id: string }>;
     getThread?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkThreadSummary | null>;
     listThreadEvents?: (args: {
       pluginId: string;
@@ -177,7 +235,29 @@ export function createPluginApi(
       types?: readonly string[];
       order?: 'asc' | 'desc';
     }) => Promise<PluginSdkThreadEventRow[]>;
-    sendThread?: (args: { pluginId: string; threadId: string; prompt: string }) => Promise<{ id: string }>;
+    sendThread?: (args: {
+      pluginId: string;
+      threadId: string;
+      prompt: string;
+      visibility?: 'visible' | 'agent-only';
+      mode?: 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
+    }) => Promise<{ id: string }>;
+    stopThread?: (args: { pluginId: string; threadId: string }) => Promise<{ ok: true }>;
+    threadOutput?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkThreadOutput>;
+    defaultExecutionOptions?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkExecutionOptions>;
+    getEnvironment?: (args: { pluginId: string; environmentId: string }) => Promise<PluginSdkEnvironment>;
+    readWorkspaceFile?: (args: {
+      pluginId: string;
+      hostId: string;
+      path: string;
+      rootPath: string;
+    }) => Promise<PluginSdkFileReadResult>;
+    listProviders?: (args: { pluginId: string; environmentId?: string }) => Promise<PluginSdkProviderInfo[]>;
+    loadProviderModels?: (args: {
+      pluginId: string;
+      environmentId?: string;
+      providerId: string;
+    }) => Promise<PluginSdkModelCatalog>;
     archiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
     forkThread?: (args: {
       pluginId: string;
@@ -206,10 +286,12 @@ export function createPluginApi(
     unarchiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
     pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
     listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
+    productContext?: import('../http/product-context.js').ProductHttpContext;
     hostEntryPath?: string | null;
     hostCall?: (method: string, input?: unknown, hostId?: string) => Promise<unknown>;
     dataDir?: string;
     services?: PluginServicesRegistry;
+    isAgentToolNameTaken?: (name: string) => string | undefined;
   }
 ): PluginHandle {
   mkdirSync(kvDir, { recursive: true });
@@ -222,6 +304,7 @@ export function createPluginApi(
   const agentConfigurers: PluginHandle['agentConfigurers'] = [];
   const mentionProviders: PluginHandle['mentionProviders'] = [];
   const hostMethods = new Map<string, (input: unknown) => unknown | Promise<unknown>>();
+  const hostWorkerExitHandlers: Array<(event: { readonly hostId: string }) => void | Promise<void>> = [];
   let hostEntryLoaded: Promise<void> | null = null;
   const settingListeners: Array<(next: Record<string, PluginSettingValue | undefined>) => void> = [];
   const realtimeListeners = new Set<(event: string, payload: unknown) => void>();
@@ -229,7 +312,7 @@ export function createPluginApi(
   let stale = false;
   const cliRecord: { registration: PluginCliRegistration | null } = { registration: null };
   const httpRoutes: PluginHttpRouteRecord[] = [];
-  const agentTools: PluginAgentToolRegistration[] = [];
+  const agentTools: PluginAgentToolRecord[] = [];
   const threadEventHandlers: Array<{
     name: PluginThreadEventName;
     handler: (event: PluginThreadEvent) => void | Promise<void>;
@@ -360,7 +443,7 @@ export function createPluginApi(
           runScript,
           prepare: (sql) => db.prepare(sql),
           migrate: (statements) => {
-            for (const statement of statements) runScript(statement);
+            applyPluginSqliteMigrations(runScript, (sql) => db.prepare(sql), (fn) => beginTxn.call(db, fn)(), statements);
           },
           transaction: <T>(fn: () => T): T => beginTxn.call(db, fn)() as T
         };
@@ -428,7 +511,31 @@ export function createPluginApi(
           if (!options?.spawnThread) {
             throw new Error('zcc.sdk is not available in this runtime');
           }
-          return options.spawnThread({ pluginId, ...args });
+          const projectId = typeof args?.projectId === 'string' ? args.projectId.trim() : '';
+          const prompt = typeof args?.prompt === 'string' ? args.prompt : '';
+          if (!projectId) throw new Error('projectId is required');
+          if (!prompt.trim()) throw new Error('prompt is required');
+          return options.spawnThread({
+            pluginId,
+            projectId,
+            prompt,
+            ...(typeof args?.providerId === 'string' && args.providerId.trim() ? { providerId: args.providerId.trim() } : {}),
+            ...(typeof args?.parentThreadId === 'string' && args.parentThreadId.trim()
+              ? { parentThreadId: args.parentThreadId.trim() }
+              : {}),
+            ...(typeof args?.title === 'string' && args.title.trim() ? { title: args.title.trim() } : {}),
+            ...(typeof args?.model === 'string' && args.model.trim() ? { model: args.model.trim() } : {}),
+            ...(typeof args?.reasoningLevel === 'string' && args.reasoningLevel.trim()
+              ? { reasoningLevel: args.reasoningLevel.trim() }
+              : {}),
+            ...(args?.permissionMode === 'accept-edits' || args?.permissionMode === 'auto' || args?.permissionMode === 'full'
+              ? { permissionMode: args.permissionMode }
+              : {}),
+            ...(args?.visibility === 'hidden' || args?.visibility === 'visible' ? { visibility: args.visibility } : {}),
+            ...(args?.environment?.kind === 'reuse' && typeof args.environment.environmentId === 'string'
+              ? { environment: { kind: 'reuse', environmentId: args.environment.environmentId } }
+              : {})
+          });
         },
         get: async (args) => {
           assertLive();
@@ -465,7 +572,50 @@ export function createPluginApi(
           const prompt = typeof args?.prompt === 'string' ? args.prompt : '';
           if (!threadId) throw new Error('threadId is required');
           if (!prompt.trim()) throw new Error('prompt is required');
-          return options.sendThread({ pluginId, threadId, prompt });
+          const visibility = args?.visibility === 'agent-only' || args?.visibility === 'visible'
+            ? args.visibility
+            : undefined;
+          const mode = args?.mode === 'start'
+            || args?.mode === 'auto'
+            || args?.mode === 'steer'
+            || args?.mode === 'queue-if-active'
+            || args?.mode === 'steer-if-active'
+            ? args.mode
+            : undefined;
+          return options.sendThread({
+            pluginId,
+            threadId,
+            prompt,
+            ...(visibility ? { visibility } : {}),
+            ...(mode ? { mode } : {})
+          });
+        },
+        stop: async (args) => {
+          assertLive();
+          if (!options?.stopThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          return options.stopThread({ pluginId, threadId });
+        },
+        output: async (args) => {
+          assertLive();
+          if (!options?.threadOutput) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          return options.threadOutput({ pluginId, threadId });
+        },
+        defaultExecutionOptions: async (args) => {
+          assertLive();
+          if (!options?.defaultExecutionOptions) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          return options.defaultExecutionOptions({ pluginId, threadId });
         },
         archive: async (args) => {
           assertLive();
@@ -585,6 +735,170 @@ export function createPluginApi(
           }
           return options.listProjects({ pluginId });
         }
+      },
+      environments: {
+        get: async (args) => {
+          assertLive();
+          if (!options?.getEnvironment) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const environmentId = typeof args?.environmentId === 'string' ? args.environmentId.trim() : '';
+          if (!environmentId) throw new Error('environmentId is required');
+          return options.getEnvironment({ pluginId, environmentId });
+        }
+      },
+      files: {
+        read: async (args) => {
+          assertLive();
+          if (!options?.readWorkspaceFile) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const hostId = typeof args?.hostId === 'string' ? args.hostId.trim() : '';
+          const path = typeof args?.path === 'string' ? args.path : '';
+          const rootPath = typeof args?.rootPath === 'string' ? args.rootPath : '';
+          if (!hostId) throw new Error('hostId is required');
+          if (!path.trim()) throw new Error('path is required');
+          return options.readWorkspaceFile({ pluginId, hostId, path, rootPath });
+        }
+      },
+      providers: {
+        list: async (args) => {
+          assertLive();
+          if (!options?.listProviders) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const environmentId = typeof args?.environmentId === 'string' && args.environmentId.trim()
+            ? args.environmentId.trim()
+            : undefined;
+          return options.listProviders({ pluginId, ...(environmentId ? { environmentId } : {}) });
+        },
+        models: async (args) => {
+          assertLive();
+          if (!options?.loadProviderModels) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const providerId = typeof args?.providerId === 'string' ? args.providerId.trim() : '';
+          if (!providerId) throw new Error('providerId is required');
+          const environmentId = typeof args?.environmentId === 'string' && args.environmentId.trim()
+            ? args.environmentId.trim()
+            : undefined;
+          return options.loadProviderModels({
+            pluginId,
+            providerId,
+            ...(environmentId ? { environmentId } : {})
+          });
+        }
+      },
+      experimental_desktopBrowsers: {
+        listInstances: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return listDesktopBrowserInstances(options.productContext, input.hostId);
+        },
+        listTabs: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return listDesktopBrowserTabs(options.productContext, input);
+        },
+        createTab: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return createDesktopBrowserTab(options.productContext, {
+            ...input,
+            url: input.url ?? 'about:blank',
+            presentation: input.presentation ?? 'hidden'
+          });
+        },
+        acquireControl: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return acquireDesktopBrowserControl(options.productContext, {
+            ...input,
+            ttlMs: input.ttlMs ?? 300000,
+            allowPersonal: input.allowPersonal ?? false
+          });
+        },
+        openConnection: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return openDesktopBrowserConnection(options.productContext, input);
+        },
+        releaseControl: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return releaseDesktopBrowserControl(options.productContext, input);
+        },
+        revealTab: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          await desktopBrowserTabAction(options.productContext, input, 'reveal');
+          return { ok: true as const };
+        },
+        closeTab: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          await desktopBrowserTabAction(options.productContext, input, 'close');
+          return { ok: true as const };
+        },
+        captureTab: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          const result = await captureDesktopBrowserTab(options.productContext, input);
+          if (!('base64' in result)) throw new Error('Desktop did not return a screenshot');
+          return result;
+        },
+        listImportSources: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return listDesktopBrowserImportSources(options.productContext, input);
+        },
+        importCookies: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return importDesktopBrowserCookies(options.productContext, {
+            ...input,
+            profile: input.profile ?? { kind: 'personal' }
+          });
+        },
+        subscribe(input) {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          const product = options.productContext;
+          let disposed = false;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          let previous = '';
+          const scope = {
+            hostId: input.hostId,
+            instanceId: input.instanceId,
+            generation: input.generation,
+            threadId: input.threadId
+          };
+          const poll = async () => {
+            try {
+              const result = await listDesktopBrowserTabs(product, scope);
+              const serialized = JSON.stringify(result);
+              if (!disposed && serialized !== previous) {
+                previous = serialized;
+                input.onChange(result);
+              }
+            } catch (error) {
+              if (!disposed) input.onError(error instanceof Error ? error : new Error(String(error)));
+            } finally {
+              if (!disposed) {
+                timer = setTimeout(() => {
+                  void poll();
+                }, 2000);
+              }
+            }
+          };
+          void poll();
+          return {
+            dispose() {
+              disposed = true;
+              clearTimeout(timer);
+            }
+          };
+        }
       }
     },
     host: {
@@ -602,13 +916,20 @@ export function createPluginApi(
         return {
           call: async (method, input, callOptions) => {
             assertLive();
-            if (options?.hostCall) return options.hostCall(method, input, callOptions.hostId);
+            if (options?.hostCall) return options.hostCall(method, input, callOptions?.hostId);
             await ensureHostEntry();
             const handler = hostMethods.get(method);
             if (!handler) {
               throw new Error(`zcc.host method is not available: ${method}`);
             }
             return handler(input);
+          },
+          experimental_onWorkerExit(handler) {
+            hostWorkerExitHandlers.push(handler);
+            return () => {
+              const index = hostWorkerExitHandlers.indexOf(handler);
+              if (index >= 0) hostWorkerExitHandlers.splice(index, 1);
+            };
           }
         };
       }
@@ -680,11 +1001,21 @@ export function createPluginApi(
       },
       registerTool: (registration) => {
         assertLive();
-        if (!registration?.name || typeof registration.execute !== 'function') {
-          throw new Error('agents.registerTool requires name and execute');
+        const record = normalizeRegisteredAgentTool({
+          pluginId,
+          tool: registration
+        });
+        const owner = options?.isAgentToolNameTaken?.(record.name);
+        if (owner !== undefined && owner !== pluginId) {
+          options?.onNeedsConfiguration?.(
+            `tool "${record.name}" is already registered by plugin "${owner}" — not registered`
+          );
+          return;
         }
-        const presentation = parsePluginAgentToolPresentation(registration.name, registration.presentation);
-        agentTools.push(presentation ? { ...registration, presentation } : registration);
+        if (agentTools.some((existing) => existing.name === record.name)) {
+          throw new Error(`tool "${record.name}" is already registered`);
+        }
+        agentTools.push(record);
       },
       experimental_registerProvider: (declaration) => {
         assertLive();
@@ -831,7 +1162,8 @@ export function createPluginApi(
 
 export async function runPluginCli(
   handle: PluginHandle,
-  argv: string[]
+  argv: string[],
+  context?: { projectId?: string; threadId?: string; cwd?: string }
 ): Promise<PluginCliExecutionResult> {
   const registration = handle.cli.registration;
   if (!registration) {
@@ -839,7 +1171,10 @@ export async function runPluginCli(
   }
   const result = await registration.run(argv, {
     pluginId: handle.api.pluginId,
-    argv
+    argv,
+    ...(context?.projectId ? { projectId: context.projectId } : {}),
+    ...(context?.threadId ? { threadId: context.threadId } : {}),
+    ...(context?.cwd ? { cwd: context.cwd } : {})
   });
   return enforcePluginCliOutputLimit(result);
 }

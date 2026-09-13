@@ -58,6 +58,9 @@ describe('route path helpers', () => {
       '/projects/p1/salesforce%3Aagent-script'
     );
     expect(getPluginDetailRoutePath('github')).toBe('/extensions/plugins/github');
+    expect(getPluginDetailRoutePath('github', { view: 'installed' })).toBe(
+      '/extensions/plugins/github?view=installed'
+    );
     expect(
       getPluginPanelRoutePath({ pluginId: 'docs', path: DEFAULT_PLUGIN_PANEL_PATH, subPath: 'a/b' })
     ).toBe('/plugins/docs/panel/a/b');
@@ -66,7 +69,9 @@ describe('route path helpers', () => {
   it('maps extensions tabs onto the plugins/skills/mcp tree', () => {
     expect(getExtensionsTabRoutePath('marketplace')).toBe(TOOLS_PLUGIN_BROWSE_ROUTE_PATH);
     expect(getExtensionsTabRoutePath('installed')).toBe(TOOLS_PLUGINS_ROUTE_PATH);
-    expect(getExtensionsTabRoutePath('installed', 'slack')).toBe('/extensions/plugins/slack');
+    expect(getExtensionsTabRoutePath('installed', 'slack')).toBe(
+      '/extensions/plugins/slack?view=installed'
+    );
     expect(getExtensionsTabRoutePath('skills')).toBe(TOOLS_SKILLS_ROUTE_PATH);
     expect(getExtensionsTabRoutePath('mcp')).toBe('/extensions/mcp');
     expect(

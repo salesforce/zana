@@ -12,7 +12,7 @@ export function PluginSettingsForm({
   snap: PluginSettingsSnapshot;
   busy: boolean;
   error: string | null;
-  onSave: (key: string, value: string | boolean | undefined) => void;
+  onSave: (key: string, value: string | number | boolean | undefined) => void;
 }) {
   return (
     <section className="settings-section">
@@ -29,6 +29,30 @@ export function PluginSettingsForm({
               disabled={busy}
               onChange={(next) => onSave(key, next)}
             />
+          );
+        }
+        if (descriptor.type === 'number') {
+          return (
+            <label key={key} className="settings-field">
+              <span>{descriptor.label}</span>
+              {descriptor.description ? <span className="settings-help">{descriptor.description}</span> : null}
+              <input
+                type="number"
+                value={typeof value === 'number' ? value : ''}
+                disabled={busy}
+                min={descriptor.min}
+                max={descriptor.max}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  if (next === '') {
+                    onSave(key, undefined);
+                    return;
+                  }
+                  const parsed = Number(next);
+                  if (Number.isFinite(parsed)) onSave(key, parsed);
+                }}
+              />
+            </label>
           );
         }
         if (descriptor.type === 'select' && descriptor.options) {
@@ -100,7 +124,7 @@ export function PluginDefinedSettings({ pluginId }: { pluginId: string }) {
 
   if (!snap || Object.keys(snap.descriptors).length === 0) return null;
 
-  const save = async (key: string, value: string | boolean | undefined) => {
+  const save = async (key: string, value: string | number | boolean | undefined) => {
     setBusy(true);
     setError(null);
     try {

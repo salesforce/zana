@@ -18,7 +18,7 @@ import {
   rewriteLocalhostLinkHref
 } from '../lib/localhost-link-rewrite-preference.js';
 import { handleHttpLinkClick } from '../lib/in-app-browser-link-preference.js';
-import { parseLocalFileMarkdownHref } from './markdown-local-file.js';
+import { parseLocalFileMarkdownHref, resolveThreadFilePreviewPath } from './markdown-local-file.js';
 import { parseThreadMentionHref, remarkThreadMentions } from './markdown-thread-mentions.js';
 import { dispatchThreadOpenFile } from './thread/secondary-panel/useThreadOpenFileSignal.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
@@ -145,7 +145,8 @@ export const MarkdownContent = memo(function MarkdownContent({
   breaks = false,
   threadMentions = false,
   threadId,
-  projectId
+  projectId,
+  filePathHints
 }: {
   text: string;
   mermaidTheme?: 'dark' | 'default';
@@ -154,6 +155,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   threadMentions?: boolean;
   threadId?: string;
   projectId?: string | null;
+  filePathHints?: readonly string[];
 }) {
   const body = unwrapBareFence(text);
   const [rewriteLocalhost] = useBooleanPreference(
@@ -253,6 +255,34 @@ export const MarkdownContent = memo(function MarkdownContent({
               return <MermaidDiagram key={mermaid} code={mermaid} theme={mermaidTheme} exportable={exportable} />;
             return <pre {...props} />;
           },
+          code: (props) => {
+            const className = typeof props.className === 'string' ? props.className : '';
+            const fenced = /(^|\s)language-/.test(className) || /(^|\s)hljs(\s|$)/.test(className);
+            const token = inlineCodeText(props.children);
+            const path = !fenced && !exportable && threadId
+              ? resolveThreadFilePreviewPath(token, filePathHints)
+              : null;
+            if (path && threadId) {
+              const name = path.split(/[/\\]/u).pop() ?? path;
+              return (
+                <button
+                  type="button"
+                  className="inbox-md-file-chip"
+                  data-testid="inbox-md-file-chip"
+                  aria-label={`Preview ${name}`}
+                  title={path}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    dispatchThreadOpenFile(threadId, path);
+                  }}
+                >
+                  {props.children}
+                </button>
+              );
+            }
+            return <code className={className || undefined}>{props.children}</code>;
+          },
           img: (props) => {
             const raw = typeof props.src === 'string' ? props.src : '';
             const src = conversationImageSrc(projectId, raw) ?? (/^(https?:|data:image\/|blob:)/iu.test(raw) ? raw : null);
@@ -295,6 +325,12 @@ export const MarkdownContent = memo(function MarkdownContent({
     </>
   );
 });
+
+function inlineCodeText(children: ReactNode): string {
+  if (typeof children === 'string' || typeof children === 'number') return String(children);
+  if (Array.isArray(children)) return children.map(inlineCodeText).join('');
+  return '';
+}
 
 /**
  * Given the children of a markdown `<pre>` (which react-markdown renders as a

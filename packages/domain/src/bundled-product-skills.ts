@@ -6,7 +6,6 @@
 export const BUNDLED_PRODUCT_SKILLS = [
   { id: 'zcc-cli', label: 'CLI' },
   { id: 'zcc-inbox', label: 'Inbox' },
-  { id: 'zcc-browser', label: 'Browser' },
   { id: 'zcc-center', label: 'Center' },
   { id: 'zcc-plugin-authoring', label: 'Plugin authoring' },
   { id: 'extension-creator', label: 'Extension creator' },

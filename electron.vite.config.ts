@@ -101,6 +101,14 @@ const sdkAlias = [
     replacement: resolve(__dirname, 'apps/host-daemon/src/$1.ts')
   },
   {
+    find: /^@zana-ai\/zcc-host-daemon-contract$/,
+    replacement: resolve(__dirname, 'packages/host-daemon-contract/src/index.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-host-daemon-contract\/(.*)$/,
+    replacement: resolve(__dirname, 'packages/host-daemon-contract/src/$1.ts')
+  },
+  {
     find: /^@zana-ai\/zcc-plugin-sdk$/,
     replacement: resolve(__dirname, 'packages/plugin-sdk/src/index.ts')
   },

@@ -7,6 +7,7 @@ import { DEFAULT_DEV_APP_PORT, serverPortFromEnv } from './ports.js';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { standaloneModernTeamLaunchSource } from '../services/agents/modern-team-launch-config.js';
 import { createTeamOpsViaControl } from './team-ops-via-control.js';
+import { createCliAgentOpsViaControl } from './cli-agent-ops.js';
 
 const port = serverPortFromEnv();
 const dataDir = resolveZccDataDir();
@@ -34,6 +35,7 @@ const host = await startProductServer({
   }
 });
 host.ctx.teamOps = createTeamOpsViaControl(dataDir);
+host.ctx.cliAgentOps = createCliAgentOpsViaControl(dataDir);
 await attachProductPluginService(host.ctx, {
   hostAgentToolSource: standaloneModernTeamLaunchSource(
     dataDir,

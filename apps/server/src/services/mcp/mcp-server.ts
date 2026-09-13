@@ -42,7 +42,6 @@ import { resolveDoc } from '../projects/fs.js';
 import { registerInboxPushTool } from '../inbox/inbox-mcp-tool.js';
 import { registerInboxAskTool } from '../inbox/inbox-ask-mcp-tool.js';
 import { registerInboxSearchTool } from '../inbox/inbox-search-mcp-tool.js';
-import { registerBrowserAutomationTools } from '../threads/browser-mcp-tools.js';
 import { registerPreviewFileTool } from '../threads/preview-file-mcp-tool.js';
 import { registerRemoteExecTool, type RegisterRemoteExecOpts } from '@zana-ai/zcc-host-daemon/remote-exec-mcp-tool';
 import {
@@ -623,7 +622,6 @@ function buildProjectMcpServer(opts: {
     projectId: opts.projectId,
     inboxStore: opts.inboxStore
   });
-  registerBrowserAutomationTools(mcp, { threadId: opts.sessionId ?? null });
   if (opts.sessionId) {
     registerPreviewFileTool(mcp, {
       threadId: opts.sessionId,

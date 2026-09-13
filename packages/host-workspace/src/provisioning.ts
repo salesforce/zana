@@ -19,6 +19,7 @@ import { WorkspaceError } from './error.js';
 import { withCheckoutMutationLock } from './checkout-mutation-lock.js';
 import { withWorktreeMetadataLock } from './worktree-metadata-lock.js';
 import { copyWorktreeIncludeFiles } from './worktree-include.js';
+import { killProcessesWithCwdUnder } from '@zana-ai/zcc-agent-process-utils';
 
 export interface CreateWorktreeArgs {
   sourcePath: string;
@@ -131,13 +132,19 @@ export async function removeWorktree(args: {
   sourcePath?: string;
   force?: boolean;
 }): Promise<void> {
+  await killProcessesWithCwdUnder({ directory: args.path });
   const cwd = args.sourcePath ?? args.path;
-  await withCheckoutMutationLock(cwd, () =>
-    withWorktreeMetadataLock(cwd, async () => {
-      await runGit(cwd, ['worktree', 'remove', ...(args.force ? ['--force'] : []), args.path], { allowFail: true });
-      await rm(args.path, { recursive: true, force: true });
-    })
-  );
+  try {
+    await withCheckoutMutationLock(cwd, () =>
+      withWorktreeMetadataLock(cwd, async () => {
+        await runGit(cwd, ['worktree', 'remove', ...(args.force ? ['--force'] : []), args.path], { allowFail: true });
+      })
+    );
+  } catch {
+    // Git metadata cleanup is best-effort. Destroy still removes the checkout
+    // directory so a missing cwd / PATH cannot leave an orphan worktree.
+  }
+  await rm(args.path, { recursive: true, force: true });
 }
 
 export async function ensurePersonalWorkspace(targetPath: string): Promise<{ path: string }> {

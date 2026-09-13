@@ -74,6 +74,14 @@ export {
   type MarketplaceEntry,
   type MarketplaceCatalogRow
 } from './plugin-marketplace.js';
+export {
+  PLUGIN_STORE_CATEGORIES,
+  PLUGIN_STORE_CATEGORY_NAMES,
+  categoryFromMarketplaceFields,
+  resolvePluginStoreCategory,
+  type PluginStoreCategoryName
+} from './plugin-store-category.js';
+
 
 export type * from './harness.js';
 export * from './project.js';

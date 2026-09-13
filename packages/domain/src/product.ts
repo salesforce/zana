@@ -1374,9 +1374,10 @@ export interface TerminalSession {
    */
   worktree?: SessionWorktree;
   /**
-   * Host-owned Environment this session runs in (thread-create / worktree picker).
-   * Distinct from {@link environment} (sandbox/microvm). Used for git actions
-   * and destroy-on-last-thread. Absent on a legacy Electron `terminals.create`.
+   * Host-owned Environment this session runs in (CLI Agent New worktree / reuse /
+   * personal, or a thread that stamped the same id). Distinct from
+   * {@link environment} (sandbox/microvm). Used for git actions and
+   * destroy-on-last-session. Absent on a project-root / Quick Agent launch.
    */
   workspaceEnvironmentId?: string;
   /**
@@ -1801,6 +1802,19 @@ export interface AppConfig {
    *  subgroups ('project', default) or a flat chronological stream ('time'). */
   inboxGrouping?: 'project' | 'time';
   listPaneWidth?: number;
+  /**
+   * Sidebar list-rail section collapse map (Scheduler/Settings keys).
+   * Absent key = expanded. Migrated once from `zcc.collapsedSections`.
+   */
+  collapsedSections?: Record<string, boolean>;
+  /** Hide projects with no live sessions in the Projects rail. */
+  hideIdleProjects?: boolean;
+  /** Hide projects with no schedules in the Scheduler rail. */
+  hideSchedulelessProjects?: boolean;
+  /** Global sidebar destination order (plugin + core nav ids). */
+  sidebarNavOrder?: string[];
+  /** Project-window sidebar destination order. */
+  projectSidebarNavOrder?: string[];
   /** Nav sidebar width in px. Absent ⇒ CSS default (256). Clamped [256, 480]. */
   sidebarWidth?: number;
   windowBounds?: { x?: number; y?: number; width: number; height: number };
@@ -2848,6 +2862,15 @@ export interface CreateTerminalRequest {
    */
   worktree?: boolean | { branch?: string };
   /**
+   * Workspace provision choice for a CLI Agent launch (New worktree / reuse /
+   * personal). Main (or the product HTTP terminals handler) provisions a host
+   * Environment first, then spawns the PTY in that checkout. Distinct from
+   * {@link worktree} (legacy `~/zcc-worktrees` isolation) and from
+   * {@link environment} (sandbox/microvm). Unmanaged / omitted ⇒ project root.
+   * Quick Agent must omit this and use {@link isolateScratch} instead.
+   */
+  workspace?: import('./environment.js').SpawnEnvironmentChoice;
+  /**
    * RESOLVED worktree (main-internal, never sent by the renderer). Set only by
    * the `terminals:create` handler after it has successfully minted/adopted the
    * worktree for {@link worktree}: carries the realpath'd checkout path + branch
@@ -2857,6 +2880,13 @@ export interface CreateTerminalRequest {
    * MUST be ignored/overwritten by the handler.
    */
   worktreeInfo?: SessionWorktree;
+  /**
+   * Host Environment this CLI Agent was provisioned into (main-internal after
+   * {@link workspace} provision). Stamp onto {@link TerminalSession.workspaceEnvironmentId}
+   * so git actions / destroy-on-last-session work. A renderer-supplied value is
+   * untrusted and MUST be stripped.
+   */
+  workspaceEnvironmentId?: string;
   /**
    * Optional opening prompt for claude-family profiles — appended as the
    * positional `[prompt]` argv element so the spawned interactive session runs
@@ -4830,16 +4860,18 @@ export interface PluginSettingsSnapshot {
   descriptors: Record<
     string,
     {
-      type: 'string' | 'boolean' | 'select' | 'project';
+      type: 'string' | 'boolean' | 'number' | 'select' | 'project';
       label: string;
       description?: string;
       secret?: true;
       multiline?: true;
       options?: string[];
-      default?: string | boolean;
+      default?: string | number | boolean;
+      min?: number;
+      max?: number;
     }
   >;
-  values: Record<string, string | boolean | undefined>;
+  values: Record<string, string | number | boolean | undefined>;
 }
 
 /**
@@ -5180,6 +5212,8 @@ export interface MarketplaceEntry {
   mcpServers?: Array<{ name: string; alwaysOn?: boolean }>;
   extra?: Record<string, unknown>;
   tags?: string[];
+  /** Curated store shelf, when known (bundled plugins always set this). */
+  category?: string;
 }
 
 export type McpSource = 'user' | 'plugin' | 'project';

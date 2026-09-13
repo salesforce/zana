@@ -2,11 +2,20 @@ const BLOCKED_SCHEMES = /^(https?|mailto|tel|data|javascript|blob):/iu;
 const PATH_LINE_PREFIX = /^(?:file|path)\s*:\s+/iu;
 const PREVIEW_PATH_LINE_CAP = 8;
 const PREVIEW_PATH_CAP = 3;
+const INLINE_FILE_EXT = /\.[A-Za-z][A-Za-z0-9]{0,11}$/u;
+
+function fileBaseName(path: string): string {
+  return path.split(/[/\\]/u).pop() ?? path;
+}
 
 function looksLikeFilePath(path: string): boolean {
   if (!path || path.includes('..')) return false;
-  const base = path.split(/[/\\]/u).pop() ?? '';
-  return /\.[A-Za-z0-9]{1,12}$/u.test(base);
+  return /\.[A-Za-z0-9]{1,12}$/u.test(fileBaseName(path));
+}
+
+function looksLikeInlineFileCode(path: string): boolean {
+  if (!path || path.includes('..') || /\s/u.test(path)) return false;
+  return INLINE_FILE_EXT.test(fileBaseName(path));
 }
 
 function stripPathDecorators(raw: string): string {
@@ -63,4 +72,37 @@ export function conversationFilePreviewPaths(
     if (out.length >= PREVIEW_PATH_CAP) break;
   }
   return out;
+}
+
+/**
+ * Inline ``code`` that looks like a workspace file (bare `notes.md` or
+ * `src/foo.ts`). Stricter than {@link parseLocalFileMarkdownHref}: letter-starting
+ * extension, no spaces, no `..`. Used to turn gold chips into file-preview opens.
+ */
+export function parseInlineFileCodePath(text: string | undefined): string | null {
+  if (!text || /[\r\n]/u.test(text)) return null;
+  const path = stripPathDecorators(text);
+  if (!path || path.startsWith('#') || BLOCKED_SCHEMES.test(path)) return null;
+  return looksLikeInlineFileCode(path) ? path : null;
+}
+
+/**
+ * Map an inline file token onto a known workspace path. Bare names take the
+ * latest matching basename from `knownPaths` (file-change / file-read rows);
+ * slash paths and unmatched names pass through as-is.
+ */
+export function resolveThreadFilePreviewPath(
+  token: string,
+  knownPaths: readonly string[] = []
+): string | null {
+  const parsed = parseInlineFileCodePath(token);
+  if (!parsed) return null;
+  if (/[/\\]/u.test(parsed)) return parsed;
+  const base = fileBaseName(parsed);
+  for (let i = knownPaths.length - 1; i >= 0; i--) {
+    const path = knownPaths[i];
+    if (!path) continue;
+    if (fileBaseName(path) === base) return path;
+  }
+  return parsed;
 }

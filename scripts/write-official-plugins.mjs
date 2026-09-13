@@ -182,62 +182,9 @@ writePlugin('automations', {
   'src/plugin-contract.test.ts': testFile('automations', `expect(set.settingsSections[0]?.id).toBe('automations');`)
 });
 
-writePlugin('memory', {
-  'package.json': pkg('memory', 'Memory', 'Standing notes contributed to later threads, with @memory mentions.', 'Brain'),
-  'server.mjs': `export default function plugin(zcc) {
-  const settings = zcc.settings.define({
-    notes: { type: 'string', label: 'Memory notes', default: '' }
-  });
-  const apply = async () => {
-    const values = await settings.get();
-    zcc.agents.contributeInstructions(typeof values.notes === 'string' ? values.notes : '');
-  };
-  settings.onChange(() => {
-    void apply();
-  });
-  void apply();
-  zcc.agents.configure(async () => {
-    const values = await settings.get();
-    const text = typeof values.notes === 'string' ? values.notes.trim() : '';
-    return text ? { instructions: text } : {};
-  });
-  zcc.ui.registerMentionProvider({
-    id: 'memory',
-    label: 'Memory',
-    search: async (ctx) => {
-      const query = typeof ctx === 'string' ? ctx : ctx.query;
-      const values = await settings.get();
-      const notes = typeof values.notes === 'string' ? values.notes : '';
-      if (!notes.trim()) return [];
-      if (query && !notes.toLowerCase().includes(query.toLowerCase())) return [];
-      return [{ id: 'notes', label: 'Memory notes', insertText: notes.slice(0, 80) }];
-    },
-    resolve: async () => {
-      const values = await settings.get();
-      const notes = typeof values.notes === 'string' ? values.notes.trim() : '';
-      if (!notes) throw new Error('memory notes are empty');
-      return { context: `# Memory notes\n\n${notes}` };
-    }
-  });
-}
-`,
-  'app.js': `export default {
-  __zccPluginApp: true,
-  setup(app) {
-    app.slots.settingsSection({
-      id: 'memory',
-      title: 'Memory',
-      component: function Section(props) {
-        const React = globalThis.__ZCC_HOST_REACT__;
-        if (!React) return null;
-        return React.createElement('p', null, 'Notes live in plugin settings.', props.pluginId);
-      }
-    });
-  }
-};
-`,
-  'src/plugin-contract.test.ts': testFile('memory', `expect(set.settingsSections[0]?.id).toBe('memory');`)
-});
+// Memory is a first-class official plugin (SQLite store, CLI, catalog injection).
+// Do not regenerate plugins/memory from this scaffold — that would overwrite
+// the durable-memory implementation with the obsolete notes/@memory stub.
 
 writePlugin('secrets', {
   'package.json': pkg('secrets', 'Secrets', 'Host-local secret string settings. Values never appear in the plugin snapshot.', 'KeyRound'),

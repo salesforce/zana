@@ -21,7 +21,9 @@ Core concepts:
 Prefer --json when command output will drive follow-up work.
 Run zcc guide <chapter> for command details.
 
-Chapters: threads, projects, machines, terminals, plugins, automations, agent-configuration, environments.
+Chapters: threads, projects, machines, terminals, plugins, automations, agent-configuration, environments, browser.
+
+Live control (attach to a running app, no Playwright): zcc thread spawn and zcc agent launch share @zana-ai/zcc-control. Operator launches are untagged. Flags: thread --provider --model --acp-mode --reasoning-level --permission-mode; agent --execution-state --model-level --role (XOR model-level) --wait. zcc agent wait|reply|stop drive a CLI Agent. zcc browser instances|tabs|create|acquire|connection|release|reveal|capture|close|import-sources share the same client (pnpm live:browser). zcc live cleanup --stale janitors tagged [zcc-live:<runId>] test sessions. See docs/control-sdk.md.
 `
   },
   {
@@ -30,7 +32,7 @@ Chapters: threads, projects, machines, terminals, plugins, automations, agent-co
     content: `zcc thread is the primary agent surface.
 
   zcc thread list [--project <id>]
-  zcc thread spawn --project <id> --prompt "..." [--provider <id>] [--wait]
+  zcc thread spawn --project <id> --prompt "..." [--provider <id>] [--model <id>] [--acp-mode <mode>] [--reasoning-level <level>] [--permission-mode <mode>] [--wait]
   zcc thread show <id>
   zcc thread log <id>
   zcc thread tell <id> "..."
@@ -57,6 +59,8 @@ Give spawned threads a clear objective, constraints, deliverable, and what to re
   zcc project files <id> [--query <text>]
   zcc project content <id> <path>
   zcc project skills <id>
+  zcc project processes list <id>
+  zcc project processes kill <id> --pid <pid>
 
 zcc projects ls remains as an alias of project list.
 `
@@ -146,6 +150,37 @@ Settings writes apply to subsequent launches only.
   zcc environment diff <id>
   zcc environment diff-files <id>
   zcc environment pull-request <id>
+  zcc environment processes list <id>
+  zcc environment processes kill <id> --pid <pid>
+`
+  },
+  {
+    id: 'browser',
+    title: 'Browser',
+    content: `zcc browser is the experimental core API for automation integrations controlling ZCC desktop tabs. The Browser Automation plugin adds its own script/session commands; another plugin can use the same core connection independently.
+
+Start with \`zcc browser instances --host <host-id> --json\`. For every tab/control operation provide \`--host <host-id> --instance <instance-id> --generation <generation> --thread <thread-id>\`. The browser host can differ from the agent host. Never infer an active desktop window.
+
+- \`tabs\`: list native tabs and their control state.
+- \`create [--url <http(s)-url>] [--reveal]\`: create a tab with a separate automation profile. Defaults: hidden, about:blank.
+- \`acquire <tab-ids...> --controller <label> [--ttl-ms <ms>] [--allow-personal]\`: acquire exclusive tab control. If the owning thread is already focused, open the side panel and select the first tab. Default expiry is five minutes, maximum thirty minutes. Personal tabs require the explicit handoff flag.
+- \`connection <lease-id> --output <new-file>\`: write private connection JSON with mode 0600 on the CLI host. The loopback WebSocket endpoint is usable only on the browser host. Pass it privately to an integration worker; never expose it through a shared port or chat output.
+- \`release <lease-id>\`: revoke automation while keeping tabs open.
+- \`reveal <tab-id>\`: open the side panel and select the existing native tab only if its thread is already focused.
+- \`capture <tab-id> --output <new-file>\`: save a bounded JPEG to the CLI host without focusing the tab.
+- \`close <tab-id>\`: explicitly close that native tab.
+- \`watch\`: print changed tab snapshots every two seconds until interrupted.
+
+Cookie import copies signed-in sessions from a browser installed on the desktop host into a ZCC browser profile. These two commands take \`--host\`, \`--instance\`, and \`--generation\` but no \`--thread\`:
+
+- \`import-sources\`: list importable browsers (Chrome, Chromium, Edge, Brave, Vivaldi, Opera, Arc, Firefox, Safari).
+- \`import-cookies --from <source-id> --profile <directory> [--into personal|automation:<profile-id>]\`: copy that profile's cookies into the personal ZCC browser (default) or a named automation profile.
+
+All commands support JSON output. In plugin code use \`zcc.sdk.experimental_desktopBrowsers\`. Stop/Take over revokes native control; stopping the owning thread also releases its server control leases.
+
+Use \`zcc file read <path> --host <id> [--root <path>] --json\` to fetch screenshots and other files from the browser host.
+
+Cloud browsers are not supported. Headless Chrome on an enrolled host belongs to the Browser Automation plugin.
 `
   }
 ];

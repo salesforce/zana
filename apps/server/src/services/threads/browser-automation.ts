@@ -21,9 +21,6 @@ export interface BrowserAutomationHost {
     title: string | null;
     dataUrl: string | null;
   }>;
-  click(targetId: string, args: { selector?: string; x?: number; y?: number }, threadId?: string): Promise<void>;
-  type(targetId: string, args: { selector?: string; text: string }, threadId?: string): Promise<void>;
-  evaluate(targetId: string, script: string, threadId?: string): Promise<unknown>;
   close(targetId: string, threadId?: string): Promise<void>;
 }
 

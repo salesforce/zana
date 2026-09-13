@@ -1,112 +1,28 @@
-/** Official Tasks plugin — panel + `zcc tasks` + skill. */
-export default function plugin(zcc) {
-  const KEY = 'items';
-
-  async function all() {
-    return (await zcc.storage.kv.get(KEY)) ?? [];
-  }
-
-  async function save(items) {
-    await zcc.storage.kv.set(KEY, items);
-    return items;
-  }
-
-  zcc.rpc.method('list', async () => ({ items: await all() }));
-  zcc.rpc.method('add', async (args) => {
-    const title = typeof args?.title === 'string' ? args.title.trim() : '';
-    if (!title) throw new Error('title is required');
-    const items = await all();
-    const item = { id: `${Date.now()}`, title, done: false };
-    items.push(item);
-    await save(items);
-    return item;
-  });
-  zcc.rpc.method('toggle', async (args) => {
-    const id = typeof args?.id === 'string' ? args.id : '';
-    const items = await all();
-    const item = items.find((row) => row.id === id);
-    if (!item) throw new Error('task not found');
-    item.done = !item.done;
-    await save(items);
-    return item;
-  });
-
-  zcc.ui.registerMentionProvider({
-    id: 'task',
-    label: 'Tasks',
-    async search({ query }) {
-      const items = await all();
-      const needle = typeof query === 'string' ? query.trim().toLowerCase() : '';
-      return items
-        .filter((item) => !needle || item.title.toLowerCase().includes(needle) || item.id.includes(needle))
-        .slice(0, 20)
-        .map((item) => ({
-          id: item.id,
-          label: item.title,
-          insertText: `@${item.title}`
-        }));
-    },
-    async resolve(itemId) {
-      const items = await all();
-      const item = items.find((row) => row.id === itemId);
-      if (!item) throw new Error(`unknown task: ${itemId}`);
-      return {
-        context: [
-          `# Task ${item.title}`,
-          '',
-          `Status: ${item.done ? 'done' : 'open'}`,
-          `Id: ${item.id}`,
-          '',
-          'Act on this task with `zcc tasks` (list / add / done).'
-        ].join('\n')
-      };
-    }
-  });
-
-  zcc.cli.register({
-    name: 'tasks',
-    summary: 'Plan and track work',
-    commands: [
-      { name: 'list', summary: 'List tasks', usage: 'zcc tasks list' },
-      { name: 'add', summary: 'Add a task', usage: 'zcc tasks add <title>' },
-      { name: 'done', summary: 'Toggle a task', usage: 'zcc tasks done <id>' }
-    ],
-    async run(argv) {
-      const [command, ...rest] = argv;
-      if (!command || command === 'list' || command === '--help' || command === '-h') {
-        const items = await all();
-        if (command === '--help' || command === '-h') {
-          return {
-            exitCode: 0,
-            stdout: 'zcc tasks list\nzcc tasks add <title>\nzcc tasks done <id>\n'
-          };
-        }
-        if (items.length === 0) return { exitCode: 0, stdout: 'No tasks.\n' };
-        return {
-          exitCode: 0,
-          stdout: items.map((item) => `${item.done ? 'x' : ' '} ${item.id}  ${item.title}`).join('\n') + '\n'
-        };
-      }
-      if (command === 'add') {
-        const title = rest.join(' ').trim();
-        if (!title) return { exitCode: 2, stderr: 'zcc tasks add requires a title\n' };
-        const items = await all();
-        const created = { id: `${Date.now()}`, title, done: false };
-        items.push(created);
-        await save(items);
-        return { exitCode: 0, stdout: `${created.id}  ${created.title}\n` };
-      }
-      if (command === 'done') {
-        const id = rest[0];
-        if (!id) return { exitCode: 2, stderr: 'zcc tasks done requires an id\n' };
-        const items = await all();
-        const item = items.find((row) => row.id === id);
-        if (!item) return { exitCode: 3, stderr: `task not found: ${id}\n` };
-        item.done = !item.done;
-        await save(items);
-        return { exitCode: 0, stdout: `${item.done ? 'done' : 'open'}  ${item.id}  ${item.title}\n` };
-      }
-      return { exitCode: 2, stderr: `unknown command: ${command}; run zcc tasks --help\n` };
-    }
-  });
-}
+import { createRequire as __createRequire } from "node:module";
+import { dirname as __pathDirname } from "node:path";
+import { fileURLToPath as __fileURLToPath } from "node:url";
+const require = __createRequire(import.meta.url);
+var __filename = __fileURLToPath(import.meta.url);
+var __dirname = __pathDirname(__filename);
+var U=["backlog","todo","in_progress","in_review","done","canceled"],z=["urgent","high","medium","low","none"];var P="tasks-changed",D="store",F="items";function w(t){return typeof t=="string"&&U.includes(t)}function L(t){return typeof t=="string"&&z.includes(t)}function p(t){return{...t,done:t.status==="done"}}function M(t){return`TSK-${t}`}function I(t){return t!==null&&typeof t=="object"&&!Array.isArray(t)?t:null}function S(t,n=""){return typeof t=="string"?t:n}function x(t,n){return typeof t=="number"&&Number.isFinite(t)?t:n}function Y(t){return typeof t!="string"||!/^\d{4}-\d{2}-\d{2}$/.test(t)?null:t}function _(t,n,a){let i=I(t);if(!i)return null;let d=S(i.title).trim();if(!d)return null;let s=S(i.id)||`legacy-${n}`,e=i.done===!0,r=w(i.status)?i.status:e?"done":"todo";return{id:s,key:S(i.key)||M(n),title:d,description:S(i.description),status:r,priority:L(i.priority)?i.priority:"none",dueDate:Y(i.dueDate),createdAt:x(i.createdAt,a),updatedAt:x(i.updatedAt,a),order:x(i.order,n)}}function C(){return{version:2,nextSeq:1,items:[]}}function b(t,n=Date.now()){if(t==null)return C();if(Array.isArray(t)){let e=[],r=1;for(let o of t){let u=_(o,r,n);u&&(e.push(u),r+=1)}return{version:2,nextSeq:r,items:e}}let a=I(t);if(!a)return C();let i=Array.isArray(a.items)?a.items:[],d=[],s=Math.max(1,Math.floor(x(a.nextSeq,1)));for(let e of i){let r=_(e,s,n);if(!r)continue;d.push(r);let o=Number.parseInt(r.key.split("-")[1]??"",10);Number.isFinite(o)&&o>=s&&(s=o+1)}return{version:2,nextSeq:s,items:d}}function E(t,n){let a=t.title.trim();if(!a)throw new Error("title is required");let i=n.now??Date.now(),d=n.nextSeq;return{task:{id:t.id??globalThis.crypto?.randomUUID?.()??`task-${i}-${d}`,key:M(d),title:a,description:(t.description??"").trim(),status:t.status??"todo",priority:t.priority??"none",dueDate:t.dueDate??null,createdAt:i,updatedAt:i,order:i},nextSeq:d+1}}function f(t,n){let a=n.trim();if(!a)return;let i=a.toUpperCase();return t.items.find(d=>d.id===a||d.key.toUpperCase()===i)}function $(t,n,a=Date.now()){let i={...t,updatedAt:a};if(typeof n.title=="string"){let d=n.title.trim();if(!d)throw new Error("title is required");i.title=d}return typeof n.description=="string"&&(i.description=n.description),n.status!==void 0&&(i.status=n.status),n.priority!==void 0&&(i.priority=n.priority),n.dueDate!==void 0&&(i.dueDate=n.dueDate),typeof n.order=="number"&&Number.isFinite(n.order)&&(i.order=n.order),i}function R(t,n=Date.now()){return{...t,status:t.status==="done"?"todo":"done",updatedAt:n}}function q(t,n,a,i,d=Date.now()){let s=t.find(l=>l.id===n);if(!s)return[...t];let e=t.filter(l=>l.id!==n),r=e.filter(l=>l.status===a),o=e.filter(l=>l.status!==a),u=Math.max(0,Math.min(i,r.length)),c=[...r];return c.splice(u,0,{...s,status:a,updatedAt:d}),[...o,...c.map((l,T)=>({...l,order:T,updatedAt:d}))]}function N(t){let n=t.status.padEnd(11," "),a=t.priority==="none"?"     ":t.priority.padEnd(6," ");return`${t.key.padEnd(8," ")} ${n} ${a} ${t.title}`}function O(){return["zcc tasks list [--status <status>] [--priority <priority>]","zcc tasks add <title> [--status <status>] [--priority <priority>] [--due YYYY-MM-DD]","zcc tasks show <key-or-id>","zcc tasks update <key-or-id> [--title <title>] [--status <status>] [--priority <priority>] [--due YYYY-MM-DD]","zcc tasks done <key-or-id>",""].join(`
+`)}function K(t){let n={},a=[],i=!1;for(let s=0;s<t.length;s+=1){let e=t[s]??"";if(e==="--help"||e==="-h"){i=!0;continue}if(e.startsWith("--")&&e.length>2){let r=e.slice(2),o=t[s+1];o&&!o.startsWith("--")?(n[r]=o,s+=1):n[r]="true";continue}a.push(e)}return{command:a[0]??"list",rest:a.slice(1),flags:n,help:i}}function m(t){if(t===void 0)return;let n=t.trim().toLowerCase().replace(/[-\s]/g,"_");if(n==="inprogress")return"in_progress";if(n==="inreview")return"in_review";if(!w(n))throw new Error(`unknown status: ${t}`);return n}function k(t){if(t===void 0)return;let n=t.trim().toLowerCase();if(n==="no"||n==="none")return"none";if(!L(n))throw new Error(`unknown priority: ${t}`);return n}function y(t){if(t===void 0)return;if(t===""||t==="none"||t==="clear")return null;let n=Y(t);if(!n)throw new Error(`due date must be YYYY-MM-DD, got ${t}`);return n}function A(t){return t!==null&&typeof t=="object"&&!Array.isArray(t)?t:{}}function g(t){let n=A(t),a=n.id??n.key;return typeof a=="string"?a.trim():""}function B(t){async function n(){let s=await t.storage.kv.get(D);if(s!=null)return b(s);let e=await t.storage.kv.get(F);return b(e)}async function a(s){return await t.storage.kv.set(D,s),t.realtime.publish(P,{count:s.items.length}),s}function i(s,e){let r=f(s,e);if(!r)throw new Error(`task not found: ${e}`);return r}function d(s,e){return{...s,items:s.items.map(r=>r.id===e.id?e:r)}}t.rpc.method("list",async()=>({items:(await n()).items.map(p)})),t.rpc.method("get",async s=>{let e=await n();return{task:p(i(e,g(s)))}}),t.rpc.method("add",async s=>{let e=A(s),r=await n();if(r.items.length>=500)throw new Error(`task limit is ${500}`);let{task:o,nextSeq:u}=E({title:typeof e.title=="string"?e.title:"",description:typeof e.description=="string"?e.description:"",status:m(typeof e.status=="string"?e.status:void 0),priority:k(typeof e.priority=="string"?e.priority:void 0),dueDate:y(typeof e.dueDate=="string"?e.dueDate:void 0)??null},{nextSeq:r.nextSeq});return await a({version:r.version,nextSeq:u,items:[...r.items,o]}),p(o)}),t.rpc.method("update",async s=>{let e=A(s),r=await n(),o=i(r,g(s)),u=$(o,{title:typeof e.title=="string"?e.title:void 0,description:typeof e.description=="string"?e.description:void 0,status:m(typeof e.status=="string"?e.status:void 0),priority:k(typeof e.priority=="string"?e.priority:void 0),dueDate:y(typeof e.dueDate=="string"?e.dueDate:e.dueDate===null?"clear":void 0),order:typeof e.order=="number"?e.order:void 0});return await a(d(r,u)),p(u)}),t.rpc.method("toggle",async s=>{let e=await n(),r=R(i(e,g(s)));return await a(d(e,r)),p(r)}),t.rpc.method("remove",async s=>{let e=await n(),r=i(e,g(s));return await a({...e,items:e.items.filter(o=>o.id!==r.id)}),{ok:!0,id:r.id}}),t.rpc.method("boardMove",async s=>{let e=A(s),r=g(s),o=m(typeof e.status=="string"?e.status:void 0);if(!o||!w(o))throw new Error("status is required");let u=typeof e.index=="number"&&Number.isFinite(e.index)?e.index:0,c=await n();i(c,r);let l=q(c.items,f(c,r).id,o,u);await a({...c,items:l});let T=f({...c,items:l},r);return{task:T?p(T):null}}),t.rpc.method("badge",async()=>{let e=(await n()).items.filter(r=>r.status!=="done"&&r.status!=="canceled").length;return{count:e>0?e:null}}),t.ui.registerMentionProvider({id:"task",label:"Tasks",async search({query:s}){let e=await n(),r=typeof s=="string"?s.trim().toLowerCase():"";return e.items.filter(o=>!r||o.title.toLowerCase().includes(r)||o.key.toLowerCase().includes(r)||o.id.includes(r)).slice(0,20).map(o=>({id:o.id,label:`${o.key} ${o.title}`,insertText:`::task{key="${o.key}"}`}))},async resolve(s){let e=await n(),r=i(e,s);return{context:[`# ${r.key} ${r.title}`,"",`Status: ${r.status}`,`Priority: ${r.priority}`,r.dueDate?`Due: ${r.dueDate}`:"","",r.description||"_No description._","","Act on this task with `zcc tasks` (list / show / update / done)."].filter(o=>o!=="").join(`
+`)}}}),t.cli.register({name:"tasks",summary:"Plan and track work",commands:[{name:"list",summary:"List tasks",usage:"zcc tasks list [--status] [--priority]"},{name:"add",summary:"Add a task",usage:"zcc tasks add <title>"},{name:"show",summary:"Show a task",usage:"zcc tasks show <key-or-id>"},{name:"update",summary:"Update a task",usage:"zcc tasks update <key-or-id>"},{name:"done",summary:"Toggle done",usage:"zcc tasks done <key-or-id>"}],async run(s){let e=K(s);if(e.help||e.command==="help")return{exitCode:0,stdout:O()};try{if(e.command==="list"){let r=await n(),o=m(e.flags.status),u=k(e.flags.priority),c=r.items.filter(l=>!(o&&l.status!==o||u&&l.priority!==u));return c.length===0?{exitCode:0,stdout:`No tasks.
+`}:{exitCode:0,stdout:`${c.map(N).join(`
+`)}
+`}}if(e.command==="add"){let r=e.rest.join(" ").trim();if(!r)return{exitCode:2,stderr:`zcc tasks add requires a title
+`};let o=await n();if(o.items.length>=500)return{exitCode:2,stderr:`task limit is ${500}
+`};let{task:u,nextSeq:c}=E({title:r,status:m(e.flags.status),priority:k(e.flags.priority),dueDate:y(e.flags.due)??null},{nextSeq:o.nextSeq});return await a({version:o.version,nextSeq:c,items:[...o.items,u]}),{exitCode:0,stdout:`${u.key}  ${u.title}
+`}}if(e.command==="show"){let r=e.rest[0];if(!r)return{exitCode:2,stderr:`zcc tasks show requires a key
+`};let o=await n(),u=f(o,r);return u?{exitCode:0,stdout:`${[`${u.key}  ${u.title}`,`status    ${u.status}`,`priority  ${u.priority}`,u.dueDate?`due       ${u.dueDate}`:null,u.description?`
+${u.description}`:null,""].filter(l=>l!==null).join(`
+`)}
+`}:{exitCode:3,stderr:`task not found: ${r}
+`}}if(e.command==="update"){let r=e.rest[0];if(!r)return{exitCode:2,stderr:`zcc tasks update requires a key
+`};let o=await n(),u=f(o,r);if(!u)return{exitCode:3,stderr:`task not found: ${r}
+`};let c=$(u,{title:e.flags.title,status:m(e.flags.status),priority:k(e.flags.priority),dueDate:y(e.flags.due)});return await a(d(o,c)),{exitCode:0,stdout:`${c.key}  ${c.status}  ${c.title}
+`}}if(e.command==="done"){let r=e.rest[0];if(!r)return{exitCode:2,stderr:`zcc tasks done requires a key
+`};let o=await n(),u=f(o,r);if(!u)return{exitCode:3,stderr:`task not found: ${r}
+`};let c=R(u);return await a(d(o,c)),{exitCode:0,stdout:`${c.status}  ${c.key}  ${c.title}
+`}}return{exitCode:2,stderr:`unknown command: ${e.command}; run zcc tasks --help
+`}}catch(r){return{exitCode:2,stderr:`${r instanceof Error?r.message:String(r)}
+`}}}})}export{B as default};

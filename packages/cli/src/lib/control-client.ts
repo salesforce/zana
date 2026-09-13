@@ -9,7 +9,7 @@
  * Caller-class attestation: an app terminal receives `ZCC_SESSION_ID` plus a
  * session-bound `ZCC_SESSION_TOKEN`. We forward both; main verifies the token
  * before granting the bounded orchestrator surface. A human shell has neither
- * and reaches mutations only through main's native confirmation ceremony.
+ * and is operator-class: the control-socket token is the gate.
  */
 
 import { connect } from 'node:net';

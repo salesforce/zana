@@ -29,7 +29,8 @@
  */
 
 import { controlCredentialForSession } from '@zana-ai/zcc-host-daemon/control-credential';
-import type { PluginAgentToolContext, PluginAgentToolRegistration } from '@zana-ai/zcc-plugin-sdk/server';
+import type { PluginAgentToolContext } from '@zana-ai/zcc-plugin-sdk/server';
+import { jsonSchemaAgentToolRecord } from '@zana-ai/zcc-plugin-sdk/internal/host-policy';
 import { LAUNCH_TEAM_DESCRIPTION } from './launch-team-mcp-tool.js';
 import type { PluginAgentToolSource } from '../../plugins/plugin-agent-tools.js';
 
@@ -270,10 +271,10 @@ async function defaultCallMcpTool({ url, name, input, signal }: CallMcpToolArgs)
   return { ok: !result?.isError, text: extractText(result) };
 }
 
-function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps): PluginAgentToolRegistration {
+function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps) {
   const credentialFor = deps.credentialFor ?? controlCredentialForSession;
   const callMcpTool = deps.callMcpTool ?? defaultCallMcpTool;
-  return {
+  return jsonSchemaAgentToolRecord({
     name: def.name,
     description: def.description,
     inputSchema: def.inputSchema,
@@ -300,7 +301,7 @@ function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps): PluginAgentT
         return { ok: false, message: `${def.name} failed: ${error instanceof Error ? error.message : String(error)}` };
       }
     }
-  };
+  });
 }
 
 /**

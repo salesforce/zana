@@ -7,6 +7,7 @@ import { useRemoteStartPathInspection } from '../../../lib/remote-start-path-ins
 import { useData } from '../../../store.js';
 import { useThreads } from '../../../thread-store.js';
 import {
+  EnvironmentActions,
   workspaceFileBasename,
   workspaceFileKindLetter,
   workspaceStatusPresentation
@@ -48,6 +49,7 @@ export function ThreadInfoRows({
   remoteDirectory = null,
   machineName = null,
   startPathSource = null,
+  header,
   children
 }: {
   isWorktree: boolean;
@@ -65,6 +67,7 @@ export function ThreadInfoRows({
   remoteDirectory?: string | null;
   machineName?: string | null;
   startPathSource?: string | null;
+  header?: ReactNode;
   children?: ReactNode;
 }) {
   const gitLabel = remoteToolProxy ? null : workspaceStatusPresentation(workspaceStatus).label;
@@ -83,6 +86,7 @@ export function ThreadInfoRows({
 
   return (
     <div className="thread-info-content" data-testid="thread-info-tab">
+      {header}
       <InfoRow icon={<Box size={14} />} label="Environment" testId="thread-info-environment">
         {threadInfoEnvironmentLabel(isWorktree, environmentName, remoteToolProxy)}
       </InfoRow>
@@ -302,6 +306,7 @@ export function ThreadInfoContent({
       remoteDirectory={remoteDirectory}
       machineName={inspection?.machineName ?? null}
       startPathSource={inspection?.sourceLabel ?? null}
+      header={<EnvironmentActions environmentId={environmentId} />}
     >
       <ThreadStorageBrowser threadId={threadId} onOpenFile={onOpenStorageFile} />
     </ThreadInfoRows>

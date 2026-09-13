@@ -32,21 +32,25 @@ import {
 } from 'lucide-react';
 import { EXTENSION_PERMISSIONS } from '@zana-ai/zcc-extension-sdk';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
-import type { ExtensionEntry, PluginAppEntry } from '@zana-ai/zcc-domain/product';
+import type { ExtensionEntry, MarketplaceEntry, PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { useMergedModules } from '@/modules';
 import { getHost } from '@/modules/ModulePanelHost';
 import { resolveIcon } from '@/lib/resolveIcon';
+import { appNavigate } from '@/lib/app-navigate';
+import { getPluginDetailRoutePath } from '@/lib/route-paths';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PERMISSION_LABELS, pluginCapabilityLines } from '@/components/ExtensionConsent';
 import { createPluginComposeNavigation } from '@/lib/compose-prompt-seed';
 import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
 import { requestComposerCommandsReload } from '@/lib/composer-commands-reload';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
-import { Marketplace } from '@/views/extensions/MarketplaceView';
 import { PluginDefinedSettings } from '@/plugins/PluginDefinedSettings';
 import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { listSettingsSections, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { PluginHubIncludes } from './PluginHubIncludes.js';
+import { PluginBrowseSplit } from './PluginBrowseSplit.js';
+import { PluginMoreFromAuthor } from './CatalogPluginDetail.js';
+import { installedNotRunning, installedRuntimeStatus } from './installed-row-status.js';
 import { useUi } from '@/store';
 import {
   buildHubRows,
@@ -102,6 +106,7 @@ export function ExtensionsHub({
 } = {}) {
   const [uncontrolledTab, setUncontrolledTab] = useState<HubTab>(initialTab);
   const tab = controlledTab ?? uncontrolledTab;
+  const catalogPluginId = useUi((s) => (tab === 'marketplace' ? s.settingsExtensionId : null));
   const [reloading, setReloading] = useState(false);
   const [redeploying, setRedeploying] = useState(false);
   const [redeployNote, setRedeployNote] = useState<string | null>(null);
@@ -246,7 +251,8 @@ export function ExtensionsHub({
       {tab === 'installed' ? (
         <InstalledView toolbarExtra={showTabs ? undefined : maintenanceActions} />
       ) : (
-        <Marketplace
+        <PluginBrowseSplit
+          pluginId={catalogPluginId}
           toolbarExtra={showTabs ? undefined : maintenanceActions}
         />
       )}
@@ -526,8 +532,21 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
   const availableVersion = pluginAvailableVersion(row);
   const publisher = installedPublisher(row);
   const pill = publisherLabel(publisher);
-  const description = rowDescription(row);
+  const runtime = installedRuntimeStatus(row);
+  const notRunning =
+    enabled === true &&
+    installedNotRunning({
+      ...row,
+      plugin: row.plugin ? { ...row.plugin, enabled: true } : null
+    });
+  const description = runtime?.detail ?? rowDescription(row);
   const Icon = resolveIcon(displayIcon(row.module.icon));
+  const runtimeToneClass =
+    runtime?.tone === 'error'
+      ? 'ext-installed-status--error'
+      : runtime?.tone === 'warning'
+        ? 'ext-installed-status--warning'
+        : 'ext-installed-status--muted';
 
   const toggle = (next: boolean) => {
     if (!canToggle) return;
@@ -574,8 +593,9 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
         onClick={onOpen}
         aria-label={`${row.module.title} plugin details`}
       >
-        <span className="ext-installed-icon">
-          <Icon size={14} />
+        <span className={`ext-installed-icon${runtime ? ` is-${runtime.tone}` : ''}`}>
+          <Icon size={18} />
+          {runtime ? <span className="ext-installed-icon-badge" aria-hidden="true" /> : null}
         </span>
         <span className="ext-installed-row-body">
           <span className="ext-installed-row-head">
@@ -585,9 +605,14 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
                 {pill}
               </span>
             )}
-            {availableVersion && (
-              <span className="ext-installed-pill ext-market-item-source--update">Update</span>
-            )}
+            {runtime ? (
+              <span
+                data-testid={`plugin-runtime-status-${row.module.id}`}
+                className={`ext-installed-status ${runtimeToneClass}`}
+              >
+                {runtime.label}
+              </span>
+            ) : null}
           </span>
           {description ? <span className="ext-installed-row-desc">{description}</span> : null}
         </span>
@@ -596,7 +621,7 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
         {availableVersion ? (
           <button
             type="button"
-            className="settings-btn ext-installed-update"
+            className="ext-installed-update-signal"
             disabled={updating}
             onClick={(event) => {
               event.stopPropagation();
@@ -604,18 +629,29 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
             }}
             title={`Update to ${availableVersion}`}
             aria-label={`Update ${row.module.title} to ${availableVersion}`}
+            data-testid={`plugin-update-signal-${row.module.id}`}
           >
-            {updating ? 'Updating…' : 'Update'}
+            <ArrowUpCircle size={14} />
           </button>
         ) : null}
         {canToggle ? (
           <label className="ext-installed-switch" title={enabled ? 'Disable' : 'Enable'}>
+            {notRunning ? (
+              <span
+                data-testid={`plugin-not-running-${row.module.id}`}
+                className={`ext-installed-not-running ${runtimeToneClass}`}
+              >
+                not running
+              </span>
+            ) : null}
             <input
               type="checkbox"
               role="switch"
               checked={enabled}
               disabled={pending !== null}
-              aria-label={`${enabled ? 'Disable' : 'Enable'} ${row.module.title}`}
+              aria-label={`${enabled ? 'Disable' : 'Enable'} ${row.module.title}${
+                notRunning ? ` (${row.plugin?.status}, not running)` : ''
+              }`}
               onChange={(e) => toggle(e.target.checked)}
             />
             <span className="ext-installed-switch-ui" aria-hidden="true" />
@@ -731,6 +767,16 @@ function ExtensionDetail({ row }: { row: HubRow }) {
     listSettingsSections,
     listSettingsSections
   ).some((section) => section.pluginId === module.id);
+  const [catalog, setCatalog] = useState<MarketplaceEntry[]>([]);
+
+  useEffect(() => {
+    product.extensions
+      .marketplaceList()
+      .then((res) => {
+        if (res.ok) setCatalog(res.value);
+      })
+      .catch(() => {});
+  }, [module.id]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || window.location.hash !== '#plugin-configure') return;
@@ -738,10 +784,20 @@ function ExtensionDetail({ row }: { row: HubRow }) {
     document.getElementById('plugin-configure')?.focus();
   }, [module.id]);
 
+  const catalogEntry = catalog.find((item) => item.id === module.id) ?? null;
+
   return (
     <>
       <AboutCard row={row} />
       {plugin ? <PluginHubIncludes plugin={plugin} /> : entry ? <InstallConfirmationCard entry={entry} /> : null}
+      {catalogEntry ? (
+        <PluginMoreFromAuthor
+          entry={catalogEntry}
+          catalog={catalog}
+          onOpen={(next) => appNavigate(getPluginDetailRoutePath(next.id))}
+          onInstall={(next) => appNavigate(getPluginDetailRoutePath(next.id))}
+        />
+      ) : null}
       <div id="plugin-configure" tabIndex={-1}>
         <PluginDefinedSettings pluginId={module.id} />
         <PluginSettingsSections pluginId={module.id} />
@@ -927,6 +983,7 @@ function AboutCard({ row }: { row: HubRow }) {
   const { module, entry, plugin } = row;
   const Icon = resolveIcon(displayIcon(module.icon));
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [aboutMenuOpen, setAboutMenuOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
@@ -1067,12 +1124,18 @@ function AboutCard({ row }: { row: HubRow }) {
     <section className="settings-section ext-hub-about">
       <div className="ext-hub-about-head">
         <span className="ext-hub-about-icon-wrap">
-          <Icon size={20} className="ext-hub-about-icon" />
+          <Icon size={28} className="ext-hub-about-icon" />
         </span>
         <div className="ext-hub-about-titles">
           <h3>
             {module.title}
             {isLocal && <span className="ext-local-chip">Local</span>}
+            {plugin?.provenance === 'builtin' && (
+              <span className="ext-installed-pill ext-market-item-source--official">Official</span>
+            )}
+            {plugin?.provenance === 'catalog' && (
+              <span className="ext-installed-pill ext-market-item-source--community">Community</span>
+            )}
           </h3>
           <p className="settings-help">
             {isLocal
@@ -1088,12 +1151,53 @@ function AboutCard({ row }: { row: HubRow }) {
                       : 'Built-in module'}
           </p>
         </div>
+        {canToggle && (
+          <label className="ext-installed-switch ext-hub-about-switch" title={enabled ? 'Disable' : 'Enable'}>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={enabled}
+              aria-label={`${enabled ? 'Disable' : 'Enable'} ${module.title}`}
+              onChange={toggleEnabled}
+            />
+            <span className="ext-installed-switch-ui" aria-hidden="true" />
+          </label>
+        )}
         {canOpenPanel && (
           <button type="button" className="settings-btn primary ext-hub-about-open" onClick={openPanel}>
             <ExternalLink size={14} />
             Open
           </button>
         )}
+        {canUninstall ? (
+          <div className="ext-hub-more-wrap">
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="More plugin actions"
+              aria-haspopup="menu"
+              aria-expanded={aboutMenuOpen}
+              onClick={() => setAboutMenuOpen((open) => !open)}
+            >
+              <MoreHorizontal size={14} />
+            </button>
+            {aboutMenuOpen ? (
+              <div className="ext-hub-more-menu" role="menu" aria-label="Plugin actions">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAboutMenuOpen(false);
+                    setConfirmRemove(true);
+                  }}
+                >
+                  <Trash2 size={14} />
+                  Uninstall
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <div className="ext-hub-about-grid">
         <span className="ext-hub-about-key">Status</span>

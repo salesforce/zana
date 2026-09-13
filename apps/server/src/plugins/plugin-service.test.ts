@@ -894,23 +894,27 @@ describe('PluginService', () => {
     expect(service.get('docs')?.id).toBe('docs');
   });
 
-  it('reclaims a leftover uninstall tombstone for promoted Claude and Codex providers once', async () => {
+  it('reclaims leftover uninstall tombstones for promoted Claude, Codex, and Memory once', async () => {
     const dataDir = root();
     const bundled = root();
     writePlugin(join(bundled, 'docs'), 'docs');
     writePlugin(join(bundled, 'provider-claude-code'), 'provider-claude-code');
     writePlugin(join(bundled, 'provider-codex'), 'provider-codex');
+    writePlugin(join(bundled, 'memory'), 'memory');
     const tombstones = createPluginUninstalledStore({ file: pluginUninstalledPath(dataDir) });
     await tombstones.add('provider-claude-code');
     await tombstones.add('provider-codex');
+    await tombstones.add('memory');
     const service = createPluginService({ dataDir, bundledRoot: bundled });
     await service.reconcileBuiltins();
     expect(service.get('provider-claude-code')?.id).toBe('provider-claude-code');
     expect(service.get('provider-codex')?.id).toBe('provider-codex');
-    await service.remove('provider-claude-code');
+    expect(service.get('memory')?.id).toBe('memory');
+    await service.remove('memory');
     const again = await service.reconcileBuiltins();
-    expect(again.map((row) => row.id)).not.toContain('provider-claude-code');
-    expect(service.get('provider-claude-code')).toBeUndefined();
+    expect(again.map((row) => row.id)).not.toContain('memory');
+    expect(service.get('memory')).toBeUndefined();
+    expect(service.get('provider-claude-code')?.id).toBe('provider-claude-code');
     expect(service.get('provider-codex')?.id).toBe('provider-codex');
   });
 
@@ -1031,6 +1035,8 @@ describe('listBundledPluginCatalog', () => {
     const pluginsRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
     const out = listBundledPluginCatalog(pluginsRoot);
     expect(out.some((entry) => entry.id === 'docs' && entry.title === 'Docs')).toBe(true);
+    expect(out.find((entry) => entry.id === 'docs')?.category).toBe('Context & knowledge');
+    expect(out.find((entry) => entry.id === 'tasks')?.category).toBe('Workflow management');
     expect(out.map((entry) => entry.id)).toEqual(
       expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'salesforce', 'pr-monitor', 'plugin-guide'])
     );
@@ -1058,12 +1064,13 @@ describe('listBundledPluginCatalog', () => {
         zcc.agents.registerTool({
           name: 'echo_tool',
           description: 'Echo',
-          inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+          parameters: { type: 'object', properties: { text: { type: 'string' } } },
           execute: async (input) => ({ ok: true, input })
         });
         zcc.agents.registerTool({
           name: 'hidden_tool',
           description: 'Hidden',
+          parameters: { type: 'object' },
           execute: async () => ({ ok: true })
         });
         zcc.agents.configure(({ projectId }) => {

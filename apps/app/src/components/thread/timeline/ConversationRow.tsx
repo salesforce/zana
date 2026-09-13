@@ -50,7 +50,8 @@ export const ConversationRow = memo(function ConversationRow({
   onFork,
   messageActions,
   includePluginMessageActions = true,
-  planExecution
+  planExecution,
+  filePathHints
 }: {
   row: Extract<ThreadTimelineViewRow, { kind: 'conversation' }>;
   onCopy?: (text: string) => void;
@@ -63,6 +64,7 @@ export const ConversationRow = memo(function ConversationRow({
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
   planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
+  filePathHints?: readonly string[];
 }) {
   const testId = row.role === 'assistant' ? 'thread-assistant-text' : 'thread-user-text';
   const mentions = row.role === 'user' ? row.mentions : [];
@@ -305,6 +307,7 @@ export const ConversationRow = memo(function ConversationRow({
                     projectId={projectId}
                     messageId={row.id}
                     threadMentions
+                    filePathHints={filePathHints}
                   />
                   <div className="thread-timeline-streaming-tail" data-testid="thread-streaming-tail">
                     <PluginMarkdownDirectives
@@ -313,6 +316,7 @@ export const ConversationRow = memo(function ConversationRow({
                       projectId={projectId}
                       messageId={`${row.id}:tail`}
                       threadMentions
+                      filePathHints={filePathHints}
                     />
                   </div>
                 </>
@@ -323,10 +327,11 @@ export const ConversationRow = memo(function ConversationRow({
                   projectId={projectId}
                   messageId={row.id}
                   threadMentions
+                  filePathHints={filePathHints}
                 />
               )
             ) : (
-              <MarkdownContent text={visibleText} breaks threadId={threadId} projectId={projectId} />
+              <MarkdownContent text={visibleText} breaks threadId={threadId} projectId={projectId} filePathHints={filePathHints} />
             )
           ) : null}
           {(threadId && previewPaths.length > 0 && !editing)

@@ -103,8 +103,10 @@ const CLI_WORK_MODE_ENTRIES = composerModeEntries({
 });
 
 /**
- * Home PTY launch surface. Thread create stays in ThreadCommandComposer;
- * this file is the only home-page caller of `createTerminal`.
+ * Home PTY launch surface. CLI Agent always uses `createTerminal` — including
+ * New worktree / reuse / personal. Managed checkouts are provisioned on
+ * terminals.create (same host Environment as Modern threads) so we never mix
+ * a CLI Agent pick onto the threads stack.
  */
 export function LegacyAgentHomeComposer({
   project: pinnedProject,
@@ -630,7 +632,10 @@ export function LegacyAgentHomeComposer({
         harnessRouting: merged.harnessRouting,
         personaId: personaId || undefined,
         profileSource: selectionProvenance === 'automatic' ? 'seeded-default' : 'explicit',
-        workspace: project.quickAgent ? { kind: 'personal' } : workspace,
+        // Quick Agent stays isolateScratch under the scratch project — never a
+        // managed Environment. CLI Agent New worktree / reuse / personal rides
+        // `workspace` so terminals.create can provision, then spawn a PTY.
+        workspace: project.quickAgent ? undefined : workspace,
         isolateScratch: project.quickAgent ? args.title || true : undefined,
         onError: setError
       });

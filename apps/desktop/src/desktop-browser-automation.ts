@@ -1,17 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { BrowserWindow } from 'electron';
-import { IPC } from '@zana-ai/zcc-desktop-contract';
+import type {
+  DesktopBrowserCommand,
+  DesktopBrowserResult
+} from '@zana-ai/zcc-host-daemon-contract';
 import { isAllowedBrowserUrl } from './desktop-browser-policy.js';
 import {
-  assertAutomationTargetThread,
-  filterAutomationTargetsForThread,
   forgetPendingAutomationTab,
-  HIDDEN_AUTOMATION_VIEW_BOUNDS,
-  pickLiveBrowserWindow,
-  rememberPendingAutomationTab,
-  shouldBroadcastAutomationOpen
+  rememberPendingAutomationTab
 } from './desktop-browser-thread-scope.js';
-import type { DesktopBrowserViewManager } from './desktop-browser-view.js';
+import type { DesktopBrowserBroker } from './desktop-browser-broker.js';
 
 export interface BrowserAutomationCommandHost {
   open(args: { threadId: string; url: string; visible: boolean }): Promise<{ targetId: string; tabId: string }>;
@@ -23,9 +20,6 @@ export interface BrowserAutomationCommandHost {
     title: string | null;
     dataUrl: string | null;
   }>;
-  click(targetId: string, args: { selector?: string; x?: number; y?: number }, threadId?: string): Promise<void>;
-  type(targetId: string, args: { selector?: string; text: string }, threadId?: string): Promise<void>;
-  evaluate(targetId: string, script: string, threadId?: string): Promise<unknown>;
   close(targetId: string, threadId?: string): Promise<void>;
 }
 
@@ -57,84 +51,110 @@ export function unbindAutomationTargetThread(targetId: string): void {
   forgetTarget(targetId);
 }
 
+function requireInstance(broker: DesktopBrowserBroker) {
+  const [instance] = broker.listInstances();
+  if (!instance) {
+    throw new Error('No connected app window can host a browser tab. Is the desktop app open?');
+  }
+  return instance;
+}
+
+function assertOwned(targetId: string, threadId?: string): string {
+  const owned = threadByTarget.get(targetId);
+  if (threadId && owned && owned !== threadId) {
+    throw new Error('unknown automation target');
+  }
+  return owned ?? threadId ?? '';
+}
+
+async function execute<T extends DesktopBrowserCommand>(
+  broker: DesktopBrowserBroker,
+  command: T
+): Promise<Extract<DesktopBrowserResult, object>> {
+  return broker.execute(command);
+}
+
 export function createDesktopBrowserAutomationHost(
-  manager: DesktopBrowserViewManager
+  broker: DesktopBrowserBroker
 ): BrowserAutomationCommandHost {
   return {
     async open({ threadId, url, visible }) {
       if (url.length > 0 && !isAllowedBrowserUrl(url)) {
         throw new Error('URL is not allowed');
       }
-      const targetId = `browser-auto:${randomUUID()}`;
+      const instance = requireInstance(broker);
       const tabId = `browser:${randomUUID()}`;
-      rememberTarget(targetId, threadId, tabId);
-      const payload = { threadId, tabId, targetId, url };
-      if (!shouldBroadcastAutomationOpen(visible)) {
-        const hostWindow = pickLiveBrowserWindow(BrowserWindow.getAllWindows());
-        if (hostWindow === null) {
-          forgetTarget(targetId);
-          throw new Error('No connected app window can host a hidden browser tab. Is the desktop app open?');
-        }
-        try {
-          manager.attach({
-            hostWindow,
-            request: {
-              tabId,
-              url,
-              bounds: { ...HIDDEN_AUTOMATION_VIEW_BOUNDS },
-              visible: false
-            }
-          });
-          const ok = manager.registerAutomationTarget({
-            tabId,
-            targetId,
-            hostWebContentsId: hostWindow.webContents.id
-          });
-          if (!ok) {
-            manager.detach({ hostWindow, tabId });
-            throw new Error('Failed to attach a hidden browser tab');
-          }
-          return { targetId, tabId };
-        } catch (err) {
-          forgetTarget(targetId);
-          throw err;
-        }
+      rememberTarget(tabId, threadId, tabId);
+      try {
+        await execute(broker, {
+          type: 'desktop.browser.create_tab',
+          instanceId: instance.instanceId,
+          generation: instance.generation,
+          threadId,
+          tabId,
+          url: url.length > 0 ? url : 'about:blank',
+          profile: { kind: 'automation', id: tabId },
+          presentation: visible ? 'reveal' : 'hidden'
+        });
+        return { targetId: tabId, tabId };
+      } catch (err) {
+        forgetTarget(tabId);
+        throw err;
       }
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-          win.webContents.send(IPC.browser.automationOpen, payload);
-        }
-      }
-      const deadline = Date.now() + 8_000;
-      while (Date.now() < deadline) {
-        const listed = manager.listAutomationTargets().find((row) => row.targetId === targetId);
-        if (listed) return { targetId, tabId };
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      return { targetId, tabId };
     },
     async list(threadId) {
-      return filterAutomationTargetsForThread(manager.listAutomationTargets(), threadByTarget, threadId);
+      if (!threadId) return [];
+      const instance = requireInstance(broker);
+      const result = await execute(broker, {
+        type: 'desktop.browser.list_tabs',
+        instanceId: instance.instanceId,
+        generation: instance.generation,
+        threadId
+      });
+      if (!('tabs' in result)) return [];
+      return result.tabs.map((tab) => ({
+        targetId: tab.tabId,
+        tabId: tab.tabId,
+        url: tab.url,
+        title: tab.title || null
+      }));
     },
     async snapshot(targetId, threadId) {
-      assertAutomationTargetThread(targetId, threadByTarget, threadId);
-      return manager.snapshotAutomationTarget(targetId);
-    },
-    async click(targetId, args, threadId) {
-      assertAutomationTargetThread(targetId, threadByTarget, threadId);
-      await manager.clickAutomationTarget(targetId, args);
-    },
-    async type(targetId, args, threadId) {
-      assertAutomationTargetThread(targetId, threadByTarget, threadId);
-      await manager.typeAutomationTarget(targetId, args);
-    },
-    async evaluate(targetId, script, threadId) {
-      assertAutomationTargetThread(targetId, threadByTarget, threadId);
-      return manager.evaluateAutomationTarget(targetId, script);
+      const ownedThread = assertOwned(targetId, threadId);
+      if (!ownedThread) throw new Error('unknown automation target');
+      const instance = requireInstance(broker);
+      const result = await execute(broker, {
+        type: 'desktop.browser.capture_tab',
+        instanceId: instance.instanceId,
+        generation: instance.generation,
+        threadId: ownedThread,
+        tabId: targetId
+      });
+      if (!('base64' in result)) throw new Error('Native browser capture failed');
+      const listed = await this.list(ownedThread);
+      const tab = listed.find((row) => row.tabId === targetId);
+      return {
+        targetId,
+        tabId: targetId,
+        url: tab?.url ?? '',
+        title: tab?.title ?? null,
+        dataUrl: `data:image/jpeg;base64,${result.base64}`
+      };
     },
     async close(targetId, threadId) {
-      assertAutomationTargetThread(targetId, threadByTarget, threadId);
-      manager.closeAutomationTarget(targetId);
+      const ownedThread = assertOwned(targetId, threadId);
+      if (!ownedThread) {
+        forgetTarget(targetId);
+        return;
+      }
+      const instance = requireInstance(broker);
+      await execute(broker, {
+        type: 'desktop.browser.close_tab',
+        instanceId: instance.instanceId,
+        generation: instance.generation,
+        threadId: ownedThread,
+        tabId: targetId
+      });
       forgetTarget(targetId);
     }
   };

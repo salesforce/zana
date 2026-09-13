@@ -64,6 +64,15 @@ describe('composer surface flags', () => {
     expect(composerSurfacesFromConfig({ composerShowAutonomousTeam: false, teamJobLaunchEnabled: false }).showTeam).toBe(false);
   });
 
+  it('repairs a persisted both-off pair to keep CLI Agent on', () => {
+    expect(composerSurfacesFromConfig({
+      composerShowCliAgent: false,
+      composerShowModern: false,
+      composerShowAutonomousTeam: false,
+      teamJobLaunchEnabled: false
+    })).toEqual({ showCliAgent: true, showModern: false, showTeam: false });
+  });
+
   it('keeps one single-agent surface and hides Team until teams exist', () => {
     const normalized = normalizeComposerSurfaces({ showCliAgent: false, showModern: false, showTeam: true });
     expect(normalized).toEqual({ showCliAgent: true, showModern: false, showTeam: true });

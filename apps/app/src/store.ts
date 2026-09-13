@@ -50,6 +50,11 @@ import { closeFollowupProgressMessage, runCloseIdleAgents } from './lib/close-id
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
+import {
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem
+} from './lib/safe-local-storage.js';
 import { product } from './lib/product-client.js';
 import { subscribeProductEvent } from './lib/product-ws.js';
 import { prefetchThreadModelCatalog, reloadThreadModelCatalog } from './components/thread/pickers/thread-model-catalog.js';
@@ -189,6 +194,7 @@ export type SettingsTab =
   | 'machines'
   | 'connectivity'
   | 'inbox'
+  | 'browser'
   | (string & {});
 
 /** The focused top-level Extensions workspace page. */
@@ -518,25 +524,25 @@ interface UiState {
   setExplorerTreeMode: (projectId: string, mode: 'files' | 'changes') => void;
   toggleExplorerTreeMode: (projectId: string) => void;
   // sidebar: collapsed to an icon rail (labels hidden) to save horizontal
-  // space. Persisted in localStorage so it survives reloads.
+  // space. Persisted per-window in localStorage so a project window's rail
+  // doesn't bleed into the main window.
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
   // sidebar: when true, the Projects list hides projects that have no live
-  // (non-exited or background) sessions, so a long rail collapses to just the
-  // ones with running agents. Persisted in localStorage so it survives reloads.
+  // (non-exited or background) sessions. Persisted on AppConfig.
   hideIdleProjects: boolean;
   toggleHideIdleProjects: () => void;
   // scheduler rail: when true, the Project section hides projects that have no
-  // schedules defined, so the list collapses to just the ones with work.
-  // Persisted in localStorage so it survives reloads.
+  // schedules defined. Persisted on AppConfig.
   hideSchedulelessProjects: boolean;
   toggleHideSchedulelessProjects: () => void;
   // sidebar: per-section collapse state in the list rail (Scheduler/Settings),
-  // keyed by a stable section id like 'scheduler:groups'. Collapsed sections
-  // hide their rows so a long rail stays scannable. Persisted in localStorage
-  // as a JSON map. Absent key = expanded (the default).
+  // keyed by a stable section id like 'scheduler:groups'. Persisted on AppConfig.
   collapsedSections: Record<string, boolean>;
   toggleSection: (key: string) => void;
+  sidebarNavOrder: unknown;
+  projectSidebarNavOrder: unknown;
+  setSidebarNavOrder: (storageKey: string, order: string[]) => void;
   setNav: (n: NavId) => void;
   /** Cross-panel deep-link prefilter: a Plugin row's "4 skills" chip writes
    *  `catalogueFilter.skills = pluginName`, then navs to skills. The skills
@@ -795,11 +801,11 @@ function mirroredConfigFlags(config: AppConfig) {
     reviewerApprovalMode: config.reviewerApprovalMode ?? 'ask',
     worktreeIsolationDefault: config.worktreeIsolationDefault ?? false,
     suggestionsEnabled: config.suggestionsEnabled ?? false,
-    harnessCursorEnabled: config.harnessCursorEnabled ?? false,
-    harnessCodexEnabled: config.harnessCodexEnabled ?? false,
-    harnessPiEnabled: config.harnessPiEnabled ?? false,
-    harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
-    harnessGrokEnabled: config.harnessGrokEnabled ?? false,
+    harnessCursorEnabled: config.harnessCursorEnabled !== false,
+    harnessCodexEnabled: config.harnessCodexEnabled !== false,
+    harnessPiEnabled: config.harnessPiEnabled !== false,
+    harnessOpenCodeEnabled: config.harnessOpenCodeEnabled !== false,
+    harnessGrokEnabled: config.harnessGrokEnabled !== false,
     nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
     teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false,
@@ -814,15 +820,67 @@ function mirroredConfigFlags(config: AppConfig) {
 // Restore the per-section collapse map persisted by toggleSection. A malformed
 // or missing value just yields an empty map (everything expanded).
 function readCollapsedSections(): Record<string, boolean> {
-  if (typeof localStorage === 'undefined') return {};
   try {
-    const raw = localStorage.getItem('zcc.collapsedSections');
+    const raw = readLocalStorageItem('zcc.collapsedSections');
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
     return {};
   }
+}
+
+function persistSidebarChrome(patch: Partial<AppConfig>) {
+  product.config.set(patch).catch(() => {});
+}
+
+let collapsedSectionsTimer: number | null = null;
+function persistCollapsedSections(next: Record<string, boolean>) {
+  if (collapsedSectionsTimer !== null) window.clearTimeout(collapsedSectionsTimer);
+  collapsedSectionsTimer = window.setTimeout(() => {
+    collapsedSectionsTimer = null;
+    persistSidebarChrome({ collapsedSections: next });
+  }, 200);
+}
+
+function readStoredNavOrder(key: string): unknown {
+  try {
+    const raw = readLocalStorageItem(key);
+    if (raw == null) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function consumeLocalSidebarChrome(config: AppConfig): Partial<AppConfig> {
+  const patch: Partial<AppConfig> = {};
+  if (config.collapsedSections === undefined) {
+    const local = readCollapsedSections();
+    if (Object.keys(local).length > 0) patch.collapsedSections = local;
+  }
+  if (config.hideIdleProjects === undefined && readLocalStorageItem('zcc.hideIdleProjects') === '1') {
+    patch.hideIdleProjects = true;
+  }
+  if (config.hideSchedulelessProjects === undefined && readLocalStorageItem('zcc.hideSchedulelessProjects') === '1') {
+    patch.hideSchedulelessProjects = true;
+  }
+  if (config.sidebarNavOrder === undefined) {
+    const local = readStoredNavOrder('zcc.sidebarNavOrder');
+    if (Array.isArray(local) && local.length > 0) patch.sidebarNavOrder = local.filter((id): id is string => typeof id === 'string');
+  }
+  if (config.projectSidebarNavOrder === undefined) {
+    const local = readStoredNavOrder('zcc.projectSidebarNavOrder');
+    if (Array.isArray(local) && local.length > 0) {
+      patch.projectSidebarNavOrder = local.filter((id): id is string => typeof id === 'string');
+    }
+  }
+  removeLocalStorageItem('zcc.collapsedSections');
+  removeLocalStorageItem('zcc.hideIdleProjects');
+  removeLocalStorageItem('zcc.hideSchedulelessProjects');
+  removeLocalStorageItem('zcc.sidebarNavOrder');
+  removeLocalStorageItem('zcc.projectSidebarNavOrder');
+  return patch;
 }
 
 // Debounced write of projectView -> AppConfig.projectViews.
@@ -882,7 +940,7 @@ function applyDestination(
   extra?: Partial<UiState>
 ) {
   const url = new URL(path, 'http://zcc.local');
-  const decoded = decodeRoutePath(url.pathname, url.hash);
+  const decoded = decodeRoutePath(url.pathname, url.hash, url.search);
   set((s) => {
     const keepFocus =
       s.focusedProjectId != null &&
@@ -953,46 +1011,26 @@ export const useUi = create<UiState>((set, get) => ({
   projectExpanded: {},
   splitLayout: {},
   splitTabIds: {},
-  favoritesDrawerOpen:
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem('zcc.favoritesDrawerOpen') === '1',
+  favoritesDrawerOpen: readLocalStorageItem('zcc.favoritesDrawerOpen') === '1',
   toggleFavoritesDrawer: () =>
     set((s) => {
       const next = !s.favoritesDrawerOpen;
-      try {
-        localStorage.setItem('zcc.favoritesDrawerOpen', next ? '1' : '0');
-      } catch {
-        // ignore quota errors
-      }
+      writeLocalStorageItem('zcc.favoritesDrawerOpen', next ? '1' : '0');
       return { favoritesDrawerOpen: next };
     }),
   setFavoritesDrawerOpen: (open) => {
-    try {
-      localStorage.setItem('zcc.favoritesDrawerOpen', open ? '1' : '0');
-    } catch {
-      // ignore quota errors
-    }
+    writeLocalStorageItem('zcc.favoritesDrawerOpen', open ? '1' : '0');
     set({ favoritesDrawerOpen: open });
   },
-  notificationsDrawerOpen:
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem('zcc.notificationsDrawerOpen') === '1',
+  notificationsDrawerOpen: readLocalStorageItem('zcc.notificationsDrawerOpen') === '1',
   toggleNotificationsDrawer: () =>
     set((s) => {
       const next = !s.notificationsDrawerOpen;
-      try {
-        localStorage.setItem('zcc.notificationsDrawerOpen', next ? '1' : '0');
-      } catch {
-        // ignore quota errors
-      }
+      writeLocalStorageItem('zcc.notificationsDrawerOpen', next ? '1' : '0');
       return { notificationsDrawerOpen: next };
     }),
   setNotificationsDrawerOpen: (open) => {
-    try {
-      localStorage.setItem('zcc.notificationsDrawerOpen', open ? '1' : '0');
-    } catch {
-      // ignore quota errors
-    }
+    writeLocalStorageItem('zcc.notificationsDrawerOpen', open ? '1' : '0');
     set({ notificationsDrawerOpen: open });
   },
   hostInstallDrawer: EMPTY_HOST_INSTALL_DRAWER,
@@ -1012,56 +1050,45 @@ export const useUi = create<UiState>((set, get) => ({
   setHostInstallDrawerOpen: (open) => set((s) => ({
     hostInstallDrawer: { ...s.hostInstallDrawer, open }
   })),
-  sidebarCollapsed:
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem(sidebarCollapsedKey()) === '1',
+  sidebarCollapsed: readLocalStorageItem(sidebarCollapsedKey()) === '1',
   toggleSidebar: () =>
     set((s) => {
       const next = !s.sidebarCollapsed;
-      try {
-        localStorage.setItem(sidebarCollapsedKey(), next ? '1' : '0');
-      } catch {
-        // ignore quota errors
-      }
+      writeLocalStorageItem(sidebarCollapsedKey(), next ? '1' : '0');
       return { sidebarCollapsed: next };
     }),
-  hideIdleProjects:
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem('zcc.hideIdleProjects') === '1',
+  hideIdleProjects: readLocalStorageItem('zcc.hideIdleProjects') === '1',
   toggleHideIdleProjects: () =>
     set((s) => {
       const next = !s.hideIdleProjects;
-      try {
-        localStorage.setItem('zcc.hideIdleProjects', next ? '1' : '0');
-      } catch {
-        // ignore quota errors
-      }
+      persistSidebarChrome({ hideIdleProjects: next });
       return { hideIdleProjects: next };
     }),
-  hideSchedulelessProjects:
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem('zcc.hideSchedulelessProjects') === '1',
+  hideSchedulelessProjects: readLocalStorageItem('zcc.hideSchedulelessProjects') === '1',
   toggleHideSchedulelessProjects: () =>
     set((s) => {
       const next = !s.hideSchedulelessProjects;
-      try {
-        localStorage.setItem('zcc.hideSchedulelessProjects', next ? '1' : '0');
-      } catch {
-        // ignore quota errors
-      }
+      persistSidebarChrome({ hideSchedulelessProjects: next });
       return { hideSchedulelessProjects: next };
     }),
   collapsedSections: readCollapsedSections(),
   toggleSection: (key) =>
     set((s) => {
       const next = { ...s.collapsedSections, [key]: !s.collapsedSections[key] };
-      try {
-        localStorage.setItem('zcc.collapsedSections', JSON.stringify(next));
-      } catch {
-        // ignore quota errors
-      }
+      persistCollapsedSections(next);
       return { collapsedSections: next };
     }),
+  sidebarNavOrder: readStoredNavOrder('zcc.sidebarNavOrder'),
+  projectSidebarNavOrder: readStoredNavOrder('zcc.projectSidebarNavOrder'),
+  setSidebarNavOrder: (storageKey, order) => {
+    if (storageKey === 'zcc.projectSidebarNavOrder') {
+      persistSidebarChrome({ projectSidebarNavOrder: order });
+      set({ projectSidebarNavOrder: order });
+      return;
+    }
+    persistSidebarChrome({ sidebarNavOrder: order });
+    set({ sidebarNavOrder: order });
+  },
   // Entering the scheduler always lands on Overview — the cross-scope summary
   // is the right "home" when you click in. Switching to global/project scope
   // happens inside the panel via setSchedulerTab, so this only resets on
@@ -1162,7 +1189,7 @@ export const useUi = create<UiState>((set, get) => ({
   setExtensionsTab: (extensionsTab) =>
     applyDestination(set, getExtensionsTabRoutePath(extensionsTab)),
   setSettingsExtensionId: (settingsExtensionId) => set({ settingsExtensionId }),
-  selectSettingsExtension: (id) => applyDestination(set, getPluginDetailRoutePath(id)),
+  selectSettingsExtension: (id) => applyDestination(set, getPluginDetailRoutePath(id, { view: 'installed' })),
   settingsAnchor: null,
   setSettingsAnchor: (settingsAnchor) => set({ settingsAnchor }),
   setSchedulerTab: (schedulerTab) => set({ schedulerTab }),
@@ -1692,7 +1719,7 @@ interface DataState {
        *  project and launches the agent there. Ignored for remote/scratch/non-repo
        *  projects. See {@link CreateTerminalRequest.worktree}. */
       worktree?: boolean | { branch?: string };
-      /** Workspace provision choice for host-thread spawn (browser / product API). */
+      /** Workspace provision choice for CLI Agent New worktree / reuse / personal. */
       workspace?: import('@zana-ai/zcc-domain').SpawnEnvironmentChoice;
       prompt?: string;
       personaId?: string;
@@ -1938,6 +1965,16 @@ export function sortProjectsAlphabetically(projects: Project[]): Project[] {
   return projects.slice().sort((a, b) => {
     const byName = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
     return byName !== 0 ? byName : a.path.localeCompare(b.path, undefined, { sensitivity: 'base' });
+  });
+}
+
+function applySidebarChrome(config: AppConfig) {
+  useUi.setState({
+    hideIdleProjects: config.hideIdleProjects === true,
+    hideSchedulelessProjects: config.hideSchedulelessProjects === true,
+    collapsedSections: config.collapsedSections ?? {},
+    sidebarNavOrder: config.sidebarNavOrder ?? null,
+    projectSidebarNavOrder: config.projectSidebarNavOrder ?? null
   });
 }
 
@@ -2261,6 +2298,11 @@ export const useData = create<DataState>((set, get) => ({
       if (typeof config.sidebarWidth === 'number') {
         applySidebarWidth(config.sidebarWidth);
       }
+      const chromePatch = consumeLocalSidebarChrome(config);
+      if (Object.keys(chromePatch).length > 0) {
+        void product.config.set(chromePatch);
+      }
+      applySidebarChrome({ ...config, ...chromePatch });
       // Live config sync across windows: main broadcasts `config:onChanged` to
       // EVERY window after any `config:set`, so a feature toggled off in one
       // window (e.g. Follow-ups) flips this window's mirrored gate at once
@@ -2275,6 +2317,7 @@ export const useData = create<DataState>((set, get) => ({
         if (typeof next.sidebarWidth === 'number') {
           applySidebarWidth(next.sidebarWidth);
         }
+        applySidebarChrome(next);
       });
       const views = config.projectViews ?? config.workspaceModes;
       if (views) {
@@ -3136,6 +3179,7 @@ export const useData = create<DataState>((set, get) => ({
         cwd: opts?.cwd,
         isolateScratch: opts?.isolateScratch,
         worktree: opts?.worktree,
+        workspace: opts?.workspace,
         prompt: opts?.prompt,
         environment: opts?.environment,
         sandboxDenyNetwork: opts?.sandboxDenyNetwork,

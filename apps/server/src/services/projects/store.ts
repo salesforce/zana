@@ -789,6 +789,38 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.listPaneWidth === 'number' && Number.isFinite(input.listPaneWidth)) {
     normalized.listPaneWidth = Math.max(200, Math.min(600, Math.round(input.listPaneWidth)));
   }
+  if (input.collapsedSections && typeof input.collapsedSections === 'object' && !Array.isArray(input.collapsedSections)) {
+    const collapsed: Record<string, boolean> = {};
+    for (const [key, value] of Object.entries(input.collapsedSections)) {
+      if (typeof key !== 'string' || !key.trim() || key.length > 128) continue;
+      if (typeof value !== 'boolean') continue;
+      collapsed[key] = value;
+      if (Object.keys(collapsed).length >= 200) break;
+    }
+    normalized.collapsedSections = collapsed;
+  }
+  if (typeof input.hideIdleProjects === 'boolean') {
+    normalized.hideIdleProjects = input.hideIdleProjects;
+  }
+  if (typeof input.hideSchedulelessProjects === 'boolean') {
+    normalized.hideSchedulelessProjects = input.hideSchedulelessProjects;
+  }
+  const normalizeNavOrder = (value: unknown): string[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const ids = value
+      .filter((entry): entry is string => typeof entry === 'string')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0 && entry.length <= 256);
+    return [...new Set(ids)].slice(0, 200);
+  };
+  if ('sidebarNavOrder' in input) {
+    const order = normalizeNavOrder(input.sidebarNavOrder);
+    if (order) normalized.sidebarNavOrder = order;
+  }
+  if ('projectSidebarNavOrder' in input) {
+    const order = normalizeNavOrder(input.projectSidebarNavOrder);
+    if (order) normalized.projectSidebarNavOrder = order;
+  }
   if (typeof input.sidebarWidth === 'number' && Number.isFinite(input.sidebarWidth)) {
     normalized.sidebarWidth = Math.max(256, Math.min(480, Math.round(input.sidebarWidth)));
   }
@@ -1000,6 +1032,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.composerShowAutonomousTeam === 'boolean') {
     normalized.composerShowAutonomousTeam = input.composerShowAutonomousTeam;
+  }
+  if (normalized.composerShowCliAgent === false && normalized.composerShowModern === false) {
+    normalized.composerShowCliAgent = true;
   }
   if (typeof input.goalsEnabled === 'boolean') {
     normalized.goalsEnabled = input.goalsEnabled;

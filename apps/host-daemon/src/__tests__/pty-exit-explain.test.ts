@@ -43,10 +43,11 @@ vi.mock('node-pty', () => ({
 }));
 
 vi.mock('../mcp-config.js', () => ({
-  ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`
+  ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
+  alwaysOnPluginMcpAllowlist: () => []
 }));
 
-import { PtyManager } from '../pty.js';
+import { PtyManager, PTY_RECENT_EXITED_CAP } from '../pty.js';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 
 const CONFIG: AppConfig = {
@@ -95,6 +96,11 @@ describe('PtyManager.finalizeExit — provider exit explanation', () => {
     expect(exitIdx).toBeGreaterThan(explainIdx);
     expect(explanation).toContain('\x1b[31m');
     expect(mgr.getSession(session.id)).toBeNull();
+    expect(mgr.getRememberedSession(session.id)).toMatchObject({
+      id: session.id,
+      status: 'exited',
+      exitCode: 64
+    });
   });
 
   it('stays silent on a clean exit (code 0)', () => {
@@ -121,6 +127,30 @@ describe('PtyManager.finalizeExit — provider exit explanation', () => {
     expect(explanation).toBeUndefined();
   });
 
+  it('remembers exited sessions up to the retention cap without keeping them live', () => {
+    const mgr = new PtyManager();
+    const ids: string[] = [];
+    for (let i = 0; i <= PTY_RECENT_EXITED_CAP; i++) {
+      const session = mgr.create({
+        projectId: 'p1',
+        profile: 'shell',
+        cwd: '/tmp',
+        cols: 80,
+        rows: 24,
+        config: CONFIG
+      });
+      ids.push(session.id);
+      spawned[spawned.length - 1]!.exitCb?.({ exitCode: 0 });
+      expect(mgr.getSession(session.id)).toBeNull();
+    }
+    expect(mgr.getRememberedSession(ids[0]!)).toBeNull();
+    expect(mgr.getRememberedSession(ids[ids.length - 1]!)).toMatchObject({
+      id: ids[ids.length - 1],
+      status: 'exited',
+      exitCode: 0
+    });
+  });
+
   it('persists opted-in spawn, output, signal, and exit diagnostics', () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-pty-diagnostic-'));
     process.env.ZCC_DEBUG_YOLO_CAPTURE = dir;
@@ -134,7 +164,8 @@ describe('PtyManager.finalizeExit — provider exit explanation', () => {
 
       const events = readFileSync(join(dir, `${session.id}.jsonl`), 'utf8')
         .trim().split('\n').map((line) => JSON.parse(line));
-      expect(events[0]).toMatchObject({ event: 'spawn', command: 'opencode', cwd: '/tmp', profile: 'opencode' });
+      expect(events[0]).toMatchObject({ event: 'spawn', cwd: '/tmp', profile: 'opencode' });
+      expect(String(events[0].command).replace(/.*[/\\]/, '')).toBe('opencode');
       expect(events).toContainEqual(expect.objectContaining({ event: 'data', data: 'startup failed' }));
       expect(events.at(-1)).toMatchObject({ event: 'exit', exitCode: 17, signal: 9 });
     } finally {

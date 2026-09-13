@@ -3,6 +3,15 @@ import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PLUGIN_SDK_API_MAJOR, PLUGIN_SDK_VERSION, derivePluginId } from '@zana-ai/zcc-plugin-sdk';
 
+const NODE_ESM_REQUIRE_BANNER = [
+  'import { createRequire as __createRequire } from "node:module";',
+  'import { dirname as __pathDirname } from "node:path";',
+  'import { fileURLToPath as __fileURLToPath } from "node:url";',
+  'const require = __createRequire(import.meta.url);',
+  'var __filename = __fileURLToPath(import.meta.url);',
+  'var __dirname = __pathDirname(__filename);'
+].join('\n');
+
 export interface PluginArtifactMeta {
   sdkMajor: number;
   sdkVersion: string;
@@ -165,6 +174,7 @@ async function bundle(opts: {
       logLevel: 'silent',
       loader: opts.platform === 'browser' ? { '.css': 'text' } : undefined,
       plugins: opts.platform === 'browser' ? [hostReactPlugin(), hostPluginSdkPlugin()] : undefined,
+      banner: opts.platform === 'node' ? { js: NODE_ESM_REQUIRE_BANNER } : undefined,
       external:
         opts.platform === 'node'
           ? ['@zana-ai/zcc-plugin-sdk', '@zana-ai/zcc-plugin-sdk/server']

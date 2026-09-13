@@ -67,6 +67,8 @@ export function ProjectSettingsView({
         <ProjectWorktreeSettings project={project} onSaved={onSaved} />
       )}
 
+      <ProjectProcessesSection project={project} />
+
       <ProjectExecutionConsentSettings project={project} onSaved={onSaved} />
 
     </>
@@ -136,6 +138,185 @@ export function ProjectExecutionConsentSettings({
         revokingId={revokingId}
         onRevoke={(grant) => void revoke(grant)}
       />
+      {error && <p className="modal-error" role="alert">{error}</p>}
+    </Section>
+  );
+}
+
+export interface ProjectProcessRow {
+  pid: number;
+  cwd: string;
+  command: string;
+}
+
+export function ProjectProcessList({
+  processes,
+  selected,
+  killing,
+  onToggle,
+  onKillSelected
+}: {
+  processes: ProjectProcessRow[];
+  selected: ReadonlySet<number>;
+  killing: boolean;
+  onToggle: (pid: number) => void;
+  onKillSelected: () => void;
+}) {
+  if (processes.length === 0) {
+    return (
+      <p className="settings-help" role="status">
+        No running processes with a working directory in this project.
+      </p>
+    );
+  }
+  return (
+    <>
+      <ul className="settings-list" aria-label="Running processes">
+        {processes.map((row) => {
+          const checked = selected.has(row.pid);
+          return (
+            <li className="settings-list-row project-process-row" key={row.pid}>
+              <label className="project-process-label">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={killing}
+                  aria-label={`Select process ${row.pid} ${row.command || row.cwd}`}
+                  onChange={() => onToggle(row.pid)}
+                />
+                <span className="settings-list-name project-process-pid">{row.pid}</span>
+                <span className="project-process-command" title={row.command || row.cwd}>
+                  {row.command || '(unknown)'}
+                </span>
+                <span className="settings-help project-process-cwd" title={row.cwd}>{row.cwd}</span>
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="settings-btn-row">
+        <button
+          type="button"
+          className="settings-btn danger"
+          disabled={killing || selected.size === 0}
+          onClick={onKillSelected}
+        >
+          {killing ? 'Stopping...' : 'Kill selected'}
+        </button>
+      </div>
+    </>
+  );
+}
+
+export function ProjectProcessesSection({ project }: { project: Project }) {
+  const pushToast = useUi((s) => s.pushToast);
+  const [processes, setProcesses] = useState<ProjectProcessRow[] | null>(null);
+  const [supported, setSupported] = useState(true);
+  const [truncated, setTruncated] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [killing, setKilling] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      const result = await product.projects.listProcesses(project.id);
+      setSupported(result.supported);
+      setTruncated(result.truncated);
+      setProcesses(result.processes);
+      setSelected((current) => {
+        const live = new Set(result.processes.map((row) => row.pid));
+        return new Set([...current].filter((pid) => live.has(pid)));
+      });
+    } catch (cause) {
+      setProcesses([]);
+      setError(cause instanceof Error ? cause.message : 'Failed to list processes');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [project.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setProcesses(null);
+    setSelected(new Set());
+    setError(null);
+    product.projects.listProcesses(project.id)
+      .then((result) => {
+        if (cancelled) return;
+        setSupported(result.supported);
+        setTruncated(result.truncated);
+        setProcesses(result.processes);
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        setProcesses([]);
+        setError(cause instanceof Error ? cause.message : 'Failed to list processes');
+      });
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  const toggle = (pid: number) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(pid)) next.delete(pid);
+      else next.add(pid);
+      return next;
+    });
+  };
+
+  const killSelected = async () => {
+    const pids = [...selected];
+    if (pids.length === 0 || killing) return;
+    setKilling(true);
+    setError(null);
+    try {
+      await product.projects.killProcesses(project.id, pids);
+      await load();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Failed to stop processes';
+      setError(message);
+      pushToast(message, 'error');
+    } finally {
+      setKilling(false);
+    }
+  };
+
+  return (
+    <Section
+      title="Running processes"
+      help="Processes whose current working directory is inside this project. Archiving a conversation does not stop leftover servers here; stop selected processes explicitly."
+    >
+      <div className="settings-btn-row">
+        <button
+          type="button"
+          className="settings-btn"
+          disabled={refreshing || killing || processes === null}
+          onClick={() => void load()}
+        >
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+      {processes === null ? (
+        <StencilForm label="Loading running processes" />
+      ) : !supported ? (
+        <p className="settings-help" role="status">
+          Process listing is not available on this host.
+        </p>
+      ) : (
+        <ProjectProcessList
+          processes={processes}
+          selected={selected}
+          killing={killing}
+          onToggle={toggle}
+          onKillSelected={() => void killSelected()}
+        />
+      )}
+      {truncated && (
+        <p className="settings-help">Showing the first 200 processes.</p>
+      )}
       {error && <p className="modal-error" role="alert">{error}</p>}
     </Section>
   );

@@ -66,8 +66,8 @@ this list fails CI):
 - `zcc.log` — `debug` / `info` / `warn` / `error`.
 - `zcc.settings` — `define({ key: { type, label, default? } })` returns
   `{ get(), onChange(listener) }`. Descriptor types:
-  `type: "string"`, `type: "boolean"`, `type: "select"` (needs `options`),
-  `type: "project"`. String settings may set `secret: true`.
+   `type: "string"`, `type: "boolean"`, `type: "number"`, `type: "select"` (needs `options`),
+   `type: "project"`. String settings may set `secret: true`.
 - `zcc.storage` — `storage.kv` (`get` / `set` / `delete` / `list`) and
   `storage.database()` (per-plugin SQLite under `<dataDir>/plugins/<id>/`).
   `database().runScript(sql)`, `prepare(sql)`, `migrate(statements)`, `transaction(fn)`.
@@ -85,11 +85,18 @@ this list fails CI):
   `name` matches `^[a-z0-9-]+$`. Core `zcc` names always win. Combined
   stdout/stderr is capped at 1MiB (`plugin_cli_output_too_large`, never clipped).
 - `zcc.agents` — `contributeInstructions(text | (ctx) => string | null)`, `contributeSkills(rootPaths)`,
-  `registerTool({ name, description, inputSchema?, presentation?, execute })`,
+  `registerTool({ name, description, parameters, presentation?, instructions?, execute })`,
   `experimental_registerProvider(declaration)`,
   `experimental_registerPtyHarness(declaration)`,
   `configure(provider)` (returns optional `{ tools, skills, instructions }`
-  folded into the generated plugin-instructions skill).
+  folded into the generated plugin-instructions skill). `provider` receives
+  thread / project / environment / host / provider / `origin` (including
+  `origin.pluginId` when the thread was spawned by a plugin) — use that to
+  give workers a different tool set than authors. Tool names may also be
+  `{ name, parameters }` to override the JSON Schema for that session.
+  `parameters` on `registerTool` is a Zod schema or JSON-schema object.
+  Conversation threads inject these tools via bb-bridge; CLI Agent / PTY
+  needs `zcc.mcpServers` instead.
 - `zcc.events` — `events.on(name, handler)` for thread lifecycle.
   Names: `"thread.created"`, `"thread.active"`, `"thread.idle"`,
   `"thread.failed"`, `"thread.archived"`, `"thread.deleted"`.
@@ -102,9 +109,12 @@ this list fails CI):
   threadId? }` and returns `{ id, label, insertText? }[]`. `resolve` returns
   `{ context }` that the host appends as agent-only text at send.
 - `zcc.status` — `status.needsConfiguration(message)`.
-- `zcc.sdk` — product SDK. `sdk.threads.spawn({ projectId, prompt, providerId?, parentThreadId? })`
-  attributes the thread to this plugin. `sdk.threads.archive` / `fork` /
-  `unarchive` take `{ threadId }`. `sdk.inbox.push({ projectId, comments })`
+- `zcc.sdk` — product SDK. `sdk.threads.spawn({ projectId, prompt, providerId?, parentThreadId?, title?, model?, permissionMode?, visibility?, environment? })`
+  attributes the thread to this plugin. Hidden workers use `visibility: "hidden"`.
+  `sdk.threads.output` / `stop` / `defaultExecutionOptions` take `{ threadId }`.
+  `sdk.threads.archive` / `fork` / `unarchive` take `{ threadId }`.
+  `sdk.environments.get({ environmentId })` and `sdk.files.read({ hostId, path, rootPath })`
+  confine file reads to a workspace root. `sdk.inbox.push({ projectId, comments })`
   appends to the product inbox after the host confines `projectId` to a
   registered project. `sdk.projects.list()` returns `{ id, name, path? }[]`.
   Throws when the host has not wired the called member.
@@ -132,6 +142,7 @@ export default async function plugin(zcc) {
   zcc.agents.registerTool({
     name: 'gus_query',
     description: 'SOQL against GUS via the shared Salesforce session',
+    parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
     execute: async (input) => {
       const page = await sf.query(input.query);
       return page.records;

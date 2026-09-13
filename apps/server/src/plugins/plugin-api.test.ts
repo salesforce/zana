@@ -186,6 +186,7 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       handle.api.agents.registerTool({
         name: 'echo',
         description: 'Echo',
+        parameters: { type: 'object', properties: {} },
         execute: async (input) => input
       });
       expect(handle.agentTools[0]?.name).toBe('echo');
@@ -199,6 +200,25 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         id: 'thr-spawned'
       });
       expect(spawnThread).toHaveBeenCalledWith({ pluginId: 'demo', projectId: 'p', prompt: 'hi' });
+      await expect(handle.api.sdk.threads.spawn({
+        projectId: 'p',
+        prompt: 'work',
+        visibility: 'hidden',
+        environment: { kind: 'reuse', environmentId: '11111111-1111-1111-1111-111111111111' },
+        title: 'Review · 1',
+        model: 'opus',
+        permissionMode: 'accept-edits'
+      })).resolves.toEqual({ id: 'thr-spawned' });
+      expect(spawnThread).toHaveBeenCalledWith({
+        pluginId: 'demo',
+        projectId: 'p',
+        prompt: 'work',
+        visibility: 'hidden',
+        environment: { kind: 'reuse', environmentId: '11111111-1111-1111-1111-111111111111' },
+        title: 'Review · 1',
+        model: 'opus',
+        permissionMode: 'accept-edits'
+      });
       await expect(handle.api.host.experimental_call('keep-awake')).rejects.toThrow(/not available/);
       const bare = createPluginApi('bare', dir);
       await expect(bare.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi' })).rejects.toThrow(
@@ -468,6 +488,47 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('applies sqlite migrations once so ALTER ADD COLUMN survives reload', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-migrate-'));
+    try {
+      const handle = createPluginApi('migratedemo', dir);
+      const statements = [
+        'CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY);',
+        'ALTER TABLE items ADD COLUMN title TEXT NOT NULL DEFAULT "";'
+      ];
+      handle.api.storage.database().migrate(statements);
+      handle.api.storage.database().migrate(statements);
+      handle.api.storage.database().prepare('INSERT INTO items (id, title) VALUES (?, ?)').run('1', 'Loop');
+      expect(handle.api.storage.database().prepare('SELECT title FROM items WHERE id = ?').get('1')).toEqual({
+        title: 'Loop'
+      });
+      await handle.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('adopts sqlite schemas that already applied ALTER ADD COLUMN without a migration book', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-migrate-adopt-'));
+    try {
+      const handle = createPluginApi('migrateadopt', dir);
+      const database = handle.api.storage.database();
+      database.runScript('CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY);');
+      database.runScript('ALTER TABLE items ADD COLUMN title TEXT NOT NULL DEFAULT "";');
+      const statements = [
+        'CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY);',
+        'ALTER TABLE items ADD COLUMN title TEXT NOT NULL DEFAULT "";'
+      ];
+      database.migrate(statements);
+      database.migrate(statements);
+      database.prepare('INSERT INTO items (id, title) VALUES (?, ?)').run('1', 'Adopted');
+      expect(database.prepare('SELECT title FROM items WHERE id = ?').get('1')).toEqual({ title: 'Adopted' });
+      await handle.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('resolveCreateJiti', () => {
@@ -571,6 +632,70 @@ describe('plugin services', () => {
         /unavailable/
       );
       await beta.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('agents.registerTool', () => {
+  it('converts zod parameters, rejects reserved names, and refuses duplicates', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-tools-'));
+    try {
+      const handle = createPluginApi('demo', dir);
+      handle.api.agents.registerTool({
+        name: 'echo_tool',
+        description: 'Echo',
+        parameters: { type: 'object', properties: { q: { type: 'string' } } },
+        execute: async (input) => input
+      });
+      expect(handle.agentTools[0]?.inputSchema).toMatchObject({ type: 'object' });
+      expect(handle.agentTools[0]?.parse({ q: 'hi' })).toEqual({ ok: true, value: { q: 'hi' } });
+      expect(() => handle.api.agents.registerTool({
+        name: 'echo_tool',
+        description: 'Echo again',
+        parameters: { type: 'object' },
+        execute: async () => undefined
+      })).toThrow(/already registered/);
+      expect(() => handle.api.agents.registerTool({
+        name: 'inbox_push',
+        description: 'shadow',
+        parameters: { type: 'object' },
+        execute: async () => undefined
+      })).toThrow(/built-in ZCC tool/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts inputSchema as a deprecated alias and skips a cross-plugin collision', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-tools-alias-'));
+    try {
+      const seen: string[] = [];
+      const handle = createPluginApi('demo', dir, {
+        isAgentToolNameTaken: (name) => (name === 'shared_tool' ? 'other' : undefined),
+        onNeedsConfiguration: (message) => seen.push(message)
+      });
+      handle.api.agents.registerTool({
+        name: 'legacy_echo',
+        description: 'Echo',
+        inputSchema: { type: 'object', properties: { q: { type: 'string' } } },
+        execute: async (input) => input
+      });
+      expect(handle.agentTools[0]?.name).toBe('legacy_echo');
+      handle.api.agents.registerTool({
+        name: 'shared_tool',
+        description: 'Taken',
+        parameters: { type: 'object' },
+        execute: async () => undefined
+      });
+      expect(handle.agentTools.map((tool) => tool.name)).toEqual(['legacy_echo']);
+      expect(seen[0]).toMatch(/already registered by plugin "other"/);
+      expect(() => handle.api.agents.registerTool({
+        name: 'no_schema',
+        description: 'Missing schema',
+        execute: async () => undefined
+      })).toThrow(/parameters must be a zod schema or a JSON-schema object/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -28,6 +28,7 @@ const DOCS = [
   { slug: 'using-zana', title: 'Using Zana Command Center', source: 'docs/using-zana.md', group: 'Start' },
   { slug: 'multiple-devices', title: 'Using Zana on multiple machines', source: 'docs/multiple-devices.md', group: 'Start' },
   { slug: 'cli', title: 'The zcc CLI', source: 'docs/cli.md', group: 'Start' },
+  { slug: 'control-sdk', title: 'Control SDK', source: 'docs/control-sdk.md', group: 'Start' },
   { slug: 'extensions-quickstart', title: 'Build your first plugin', source: 'docs/extensions-quickstart.md', group: 'Plugins' },
   { slug: 'extensions', title: 'Plugins overview', source: 'docs/extensions.md', group: 'Plugins' },
   { slug: 'extensions-authoring', title: 'Authoring plugins', source: 'docs/extensions-authoring.md', group: 'Plugins' },

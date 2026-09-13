@@ -12,6 +12,7 @@ export function ThreadSecondaryPanel({
   state,
   showDiffPin,
   showPlanPin,
+  showInfoPin = true,
   children,
   footer,
   onSelectInfo,
@@ -27,6 +28,7 @@ export function ThreadSecondaryPanel({
   state: ThreadSecondaryPanelState;
   showDiffPin?: boolean;
   showPlanPin?: boolean;
+  showInfoPin?: boolean;
   children: ReactNode;
   footer?: ReactNode;
   onSelectInfo: () => void;
@@ -71,16 +73,18 @@ export function ThreadSecondaryPanel({
       />
       <div className="thread-secondary-chrome" data-testid="thread-secondary-chrome">
         <div className="thread-secondary-pins">
-          <button
-            type="button"
-            className="thread-secondary-pin"
-            aria-label="Show info"
-            aria-pressed={pin === 'info'}
-            data-testid="thread-info-pin"
-            onClick={onSelectInfo}
-          >
-            <Info size={15} />
-          </button>
+          {showInfoPin ? (
+            <button
+              type="button"
+              className="thread-secondary-pin"
+              aria-label="Show info"
+              aria-pressed={pin === 'info'}
+              data-testid="thread-info-pin"
+              onClick={onSelectInfo}
+            >
+              <Info size={15} />
+            </button>
+          ) : null}
           {showDiffPin ? (
             <button
               type="button"

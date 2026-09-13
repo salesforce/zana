@@ -14,7 +14,8 @@ export function PluginMarkdownDirectives({
   projectId,
   messageId,
   threadMentions = false,
-  openWorkspaceFile
+  openWorkspaceFile,
+  filePathHints
 }: {
   text: string;
   threadId?: string;
@@ -22,6 +23,7 @@ export function PluginMarkdownDirectives({
   messageId: string;
   threadMentions?: boolean;
   openWorkspaceFile?: ((path: string) => boolean) | null;
+  filePathHints?: readonly string[];
 }) {
   const registrations = useSyncExternalStore(
     subscribePluginSlots,
@@ -36,6 +38,7 @@ export function PluginMarkdownDirectives({
         threadId={threadId}
         projectId={projectId}
         threadMentions={threadMentions}
+        filePathHints={filePathHints}
       />
     );
   }
@@ -56,6 +59,7 @@ export function PluginMarkdownDirectives({
         threadId={threadId}
         projectId={projectId}
         threadMentions={threadMentions}
+        filePathHints={filePathHints}
       />
     );
   }
@@ -70,6 +74,7 @@ export function PluginMarkdownDirectives({
               threadId={threadId}
               projectId={projectId}
               threadMentions={threadMentions}
+              filePathHints={filePathHints}
             />
           ) : (
             <Fragment key={`md-${index}`} />

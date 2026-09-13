@@ -103,10 +103,10 @@ function param(match: ReturnType<typeof matchPath>, name: string): string | unde
 }
 
 /**
- * Pure pathname (+ optional hash) → shell destination. The only decoder the
- * URL layer uses; keep matching order so static segments win over params.
+ * Pure pathname (+ optional hash/search) → shell destination. The only decoder
+ * the URL layer uses; keep matching order so static segments win over params.
  */
-export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
+export function decodeRoutePath(pathname: string, hash = '', search = ''): DecodedRoute {
   const anchor = hashAnchor(hash);
 
   if (pathname === APP_ROOT_ROUTE_PATH) {
@@ -230,10 +230,13 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
   const pluginDetail = matchPath(TOOLS_PLUGIN_DETAIL_ROUTE_PATH, pathname);
   if (pluginDetail) {
     const pluginId = param(pluginDetail, 'pluginId');
+    const view = new URLSearchParams(
+      search.startsWith('?') ? search.slice(1) : search
+    ).get('view');
     return {
       ...DEFAULT_DECODED,
       nav: 'extensions',
-      extensionsTab: 'installed',
+      extensionsTab: view === 'installed' ? 'installed' : 'marketplace',
       settingsExtensionId: pluginId ?? null
     };
   }
@@ -393,7 +396,7 @@ export function scopedWindowLockReplace(
   location: { pathname: string; search: string; hash: string },
   lockId: string
 ): { pathname: string; search: string; hash: string } | null {
-  const decoded = decodeRoutePath(location.pathname, location.hash);
+  const decoded = decodeRoutePath(location.pathname, location.hash, location.search);
   if (decoded.focusedProjectId === lockId) return null;
   const params = new URLSearchParams(
     location.search.startsWith('?') ? location.search.slice(1) : location.search

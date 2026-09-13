@@ -65,6 +65,24 @@ describe('normalizeConfig — sidebarWidth', () => {
   });
 });
 
+describe('normalizeConfig — sidebar chrome', () => {
+  it('keeps collapse maps, hide flags, and nav order', () => {
+    expect(normalizeConfig({
+      collapsedSections: { 'scheduler:groups': true, skip: 'nope' as never },
+      hideIdleProjects: true,
+      hideSchedulelessProjects: false,
+      sidebarNavOrder: ['home', 'inbox', 'home', ''],
+      projectSidebarNavOrder: ['agents']
+    })).toEqual(expect.objectContaining({
+      collapsedSections: { 'scheduler:groups': true },
+      hideIdleProjects: true,
+      hideSchedulelessProjects: false,
+      sidebarNavOrder: ['home', 'inbox'],
+      projectSidebarNavOrder: ['agents']
+    }));
+  });
+});
+
 describe('normalizeConfig — Team organization', () => {
   it('preserves supported organization modes', () => {
     expect(normalizeConfig({
@@ -387,6 +405,15 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ composerShowModern: 1 }).composerShowModern).toBeUndefined();
     // @ts-expect-error intentional bad input
     expect(normalizeConfig({ composerShowAutonomousTeam: 'yes' }).composerShowAutonomousTeam).toBeUndefined();
+  });
+
+  it('repairs a both-off composer launch-surface pair to keep CLI Agent on', () => {
+    expect(normalizeConfig({
+      composerShowCliAgent: false,
+      composerShowModern: false
+    })).toMatchObject({ composerShowCliAgent: true, composerShowModern: false });
+    expect(normalizeConfig({ composerShowCliAgent: false }).composerShowCliAgent).toBe(false);
+    expect(normalizeConfig({ composerShowModern: false }).composerShowModern).toBe(false);
   });
 
   it('passes through a boolean suggestionsEnabled, drops non-booleans', () => {

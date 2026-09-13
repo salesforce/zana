@@ -174,7 +174,8 @@ vi.mock('electron', () => ({
 vi.mock('../../../../../desktop/src/updater.js', () => ({ createUpdater: () => ({}) }));
 vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
-  ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json'
+  ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json',
+  alwaysOnPluginMcpAllowlist: () => []
 }));
 
 // launchTeam's execution preflight probes each harness's installed CLI version

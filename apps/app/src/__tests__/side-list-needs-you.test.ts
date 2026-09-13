@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import type { IdleTriageResult } from '@zana-ai/zcc-domain/product';
-import { sideListNeedsYou } from '../components/listpane/AgentsList.js';
+import { sideListNeedsYou, sideListWorking } from '../components/listpane/AgentsList.js';
 
 /**
  * The left-side AgentsListPane "Needs you" group. Contract:
- *  - `blocked` is ALWAYS "Needs you" (a real permission prompt / question),
- *    regardless of the optional setting.
+ *  - Foreground `blocked` is ALWAYS "Needs you" (a real permission prompt /
+ *    question), regardless of the optional setting.
+ *  - Scheduled/headless blocked is NOT "Needs you" — same remap as the board
+ *    (those cards sit in Working).
  *  - A triage-flagged idle agent is promoted to "Needs you" ONLY when the
  *    `agentListNeedsYouFromTriage` setting is on; otherwise it stays Idle.
  *  - A `working` agent is never "Needs you" here (it has its own group).
@@ -20,9 +22,18 @@ const awaitingReply: IdleTriageResult = {
 };
 
 describe('sideListNeedsYou', () => {
-  it('blocked is always Needs you, setting off or on', () => {
+  it('foreground blocked is always Needs you, setting off or on', () => {
     expect(sideListNeedsYou({ state: 'blocked' }, false, 'medium')).toBe(true);
     expect(sideListNeedsYou({ state: 'blocked' }, true, 'medium')).toBe(true);
+  });
+
+  it('blocked scheduled/headless is not Needs you; it remaps to Working', () => {
+    expect(sideListNeedsYou({ state: 'blocked', session: { scheduled: true } }, true, 'high')).toBe(false);
+    expect(sideListNeedsYou({ state: 'blocked', session: { headless: true } }, true, 'high')).toBe(false);
+    expect(sideListWorking({ state: 'blocked', session: { scheduled: true } })).toBe(true);
+    expect(sideListWorking({ state: 'blocked', session: { headless: true } })).toBe(true);
+    expect(sideListWorking({ state: 'blocked' })).toBe(false);
+    expect(sideListWorking({ state: 'working' })).toBe(true);
   });
 
   it('a triaged idle agent is NOT promoted when the setting is OFF', () => {

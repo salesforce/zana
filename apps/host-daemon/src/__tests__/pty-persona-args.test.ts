@@ -35,7 +35,8 @@ vi.mock('node-pty', () => ({
 // Keep claude-profile spawns from writing a real ~/.zcc/mcp file.
 vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string, extra?: string[]) =>
-    `/tmp/${id}/.mcp.json${extra?.length ? `?extra=${extra.join(',')}` : ''}`
+    `/tmp/${id}/.mcp.json${extra?.length ? `?extra=${extra.join(',')}` : ''}`,
+  alwaysOnPluginMcpAllowlist: () => ['mcp__plugin_example_browser']
 }));
 
 import { PtyManager, personaArgs_build } from '../pty.js';
@@ -436,6 +437,7 @@ describe('PtyManager.create — trustZccToolsEnabled (whole-server pre-approval)
     const tools = argv[idx + 1].split(',');
     // The whole-server wildcard covers every current + future zcc-inbox tool.
     expect(tools).toContain('mcp__zcc-inbox');
+    expect(tools).toContain('mcp__plugin_example_browser');
     // The narrow per-tool entries are replaced by the wildcard, not appended
     // alongside it (no redundant scoping).
     expect(tools).not.toContain('mcp__zcc-inbox__inbox_push');
@@ -463,6 +465,7 @@ describe('PtyManager.create — trustZccToolsEnabled (whole-server pre-approval)
     expect(tools).toContain('mcp__zcc-inbox__preview_file');
     expect(tools).not.toContain('mcp__zcc-inbox');
     expect(tools).not.toContain('mcp__zcc-inbox__library_remove');
+    expect(tools).not.toContain('mcp__plugin_example_browser');
   });
 });
 

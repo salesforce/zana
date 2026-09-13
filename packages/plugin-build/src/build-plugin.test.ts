@@ -1,8 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildPluginApp } from './build-plugin.js';
+import { buildPluginApp, buildPluginServer } from './build-plugin.js';
 
 const dirs: string[] = [];
 
@@ -112,5 +113,38 @@ export default definePluginApp((app) => {
     expect(js).toContain('readableName');
     expect(js).toContain('sourceMappingURL=app.js.map');
     expect(readFileSync(join(dir, 'app.js.map'), 'utf8')).toMatch(/app\.tsx/);
+  });
+});
+
+describe('buildPluginServer', () => {
+  it('shims CJS require so bundled Ajv-style deps can load in ESM', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-server-cjs-'));
+    dirs.push(dir);
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: '@zcc-ext/cjs-demo', version: '0.0.1' })
+    );
+    writeFileSync(
+      join(dir, 'fs-dep.cjs'),
+      `const fs = require('fs');
+module.exports = { ok: typeof fs.readFileSync === 'function' };
+`
+    );
+    writeFileSync(
+      join(dir, 'server.ts'),
+      `import dep from './fs-dep.cjs';
+export default function plugin() {
+  return dep.ok;
+}
+`
+    );
+    const result = await buildPluginServer(dir, '1.0.0');
+    expect(result?.jsPath).toBe(join(dir, 'server.mjs'));
+    const js = readFileSync(join(dir, 'server.mjs'), 'utf8');
+    expect(js).toContain('createRequire as __createRequire');
+    const loaded = (await import(`${pathToFileURL(result!.jsPath).href}?t=${Date.now()}`)) as {
+      default: () => boolean;
+    };
+    expect(loaded.default()).toBe(true);
   });
 });

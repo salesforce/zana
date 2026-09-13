@@ -1,4 +1,4 @@
-import { cloneElement, useEffect, useRef, useState, type HTMLAttributes, type ReactElement } from 'react';
+import { cloneElement, useRef, type HTMLAttributes, type ReactElement } from 'react';
 import {
   KeyboardSensor,
   PointerSensor,
@@ -20,6 +20,7 @@ import {
   PROJECT_SESSIONS_SECTION_SORT_ID,
   TRAILING_PROJECT_NAV_IDS
 } from './sidebarNavOrder.js';
+import { useUi } from '../store.js';
 
 export { PROJECTS_SECTION_SORT_ID, PROJECT_SESSIONS_SECTION_SORT_ID, TRAILING_PROJECT_NAV_IDS };
 /** @deprecated Use {@link PROJECTS_SECTION_SORT_ID}. */
@@ -94,15 +95,6 @@ const navCollisionDetection: CollisionDetection = (args) => {
   return pointerCollisions.length > 0 ? pointerCollisions : closestCenter(args);
 };
 
-function readStoredNavOrder(key: string): unknown {
-  if (typeof localStorage === 'undefined') return null;
-  try {
-    return JSON.parse(localStorage.getItem(key) ?? 'null');
-  } catch {
-    return null;
-  }
-}
-
 /** Shared drag-and-drop order for the global Sidebar and the project rail. */
 export function useSortableSidebarNav(
   storageKey: string,
@@ -110,25 +102,14 @@ export function useSortableSidebarNav(
   pinnedIds: readonly string[],
   trailingIds: readonly string[] = []
 ) {
-  const [storedNavOrder, setStoredNavOrder] = useState(() => readStoredNavOrder(storageKey));
+  const storedNavOrder = useUi((s) =>
+    storageKey === PROJECT_NAV_ORDER_KEY ? s.projectSidebarNavOrder : s.sidebarNavOrder
+  );
   const suppressNavClickRef = useRef(false);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
-
-  useEffect(() => {
-    const onStorage = (event: StorageEvent) => {
-      if (event.key !== storageKey) return;
-      try {
-        setStoredNavOrder(JSON.parse(event.newValue ?? 'null'));
-      } catch {
-        setStoredNavOrder(null);
-      }
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, [storageKey]);
 
   const orderedNavIds = normalizeSidebarNavOrder(storedNavOrder, availableIds, pinnedIds, trailingIds);
   const pinnedSet = new Set(pinnedIds);
@@ -153,10 +134,7 @@ export function useSortableSidebarNav(
       pinnedIds,
       trailingIds
     );
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(storageKey, JSON.stringify(next));
-    }
-    setStoredNavOrder(next);
+    useUi.getState().setSidebarNavOrder(storageKey, next);
   };
 
   const onDragStart = ({ activatorEvent }: DragStartEvent) => {

@@ -6,6 +6,8 @@ import {
   classifyModelListError,
   isThreadProviderOffered,
   modelsForThreadProvider,
+  pluginHostModelCatalog,
+  resolvePluginDefaultExecutionOptions,
   selectedOnlyModelsForThreadProvider,
   threadProviderFamily
 } from './thread-execution-options.js';
@@ -358,5 +360,66 @@ describe('classifyModelListError', () => {
     expect(classifyModelListError(new Error('spawn cursor-agent ENOENT'))).toBe('missing_executable');
     expect(classifyModelListError(new Error('host rpc timed out: provider.list_models'))).toBe('timeout');
     expect(classifyModelListError(new Error('bridge crashed'))).toBe('failed');
+  });
+});
+
+describe('plugin host default execution options', () => {
+  const previousFake = process.env.ZCC_FAKE_PROVIDER;
+
+  beforeEach(() => {
+    process.env.ZCC_FAKE_PROVIDER = '1';
+  });
+
+  afterEach(() => {
+    if (previousFake === undefined) delete process.env.ZCC_FAKE_PROVIDER;
+    else process.env.ZCC_FAKE_PROVIDER = previousFake;
+  });
+
+  it('exposes the fake static catalog instead of the provider id', () => {
+    const catalog = pluginHostModelCatalog('fake');
+    expect(catalog.models.map((row) => row.model)).toEqual(['fake-model']);
+    expect(catalog.models[0]?.isDefault).toBe(true);
+    expect(catalog.models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high'
+    ]);
+    expect(catalog.modelLoadError).toBeNull();
+  });
+
+  it('picks a fake-legal model, reasoning level, and permission mode', () => {
+    expect(resolvePluginDefaultExecutionOptions({
+      providerId: 'fake',
+      lastModel: null,
+      lastReasoningLevel: null
+    })).toEqual({
+      model: 'fake-model',
+      reasoningLevel: 'medium',
+      permissionMode: 'full'
+    });
+  });
+
+  it('keeps a prior model when it is still in the catalog', () => {
+    expect(resolvePluginDefaultExecutionOptions({
+      providerId: 'fake',
+      lastModel: 'fake-model',
+      lastReasoningLevel: 'low'
+    })).toEqual({
+      model: 'fake-model',
+      reasoningLevel: 'low',
+      permissionMode: 'full'
+    });
+  });
+
+  it('does not inherit an unsupported model, reasoning level, or accept-edits permission', () => {
+    expect(resolvePluginDefaultExecutionOptions({
+      providerId: 'fake',
+      lastModel: 'fake',
+      lastReasoningLevel: 'none'
+    })).toEqual({
+      model: 'fake-model',
+      reasoningLevel: 'medium',
+      permissionMode: 'full'
+    });
   });
 });

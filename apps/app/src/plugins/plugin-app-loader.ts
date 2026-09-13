@@ -1,5 +1,6 @@
 import { product } from '../lib/product-client.js';
 import type { PluginHostBridge } from '@zana-ai/zcc-plugin-sdk';
+import { installPluginRuntime } from './plugin-runtime.js';
 import type {
   PluginSettingDescriptor,
   PluginSettingsSnapshot as SdkPluginSettingsSnapshot
@@ -222,6 +223,15 @@ function toSdkSettingDescriptor(
         description: descriptor.description,
         default: typeof descriptor.default === 'boolean' ? descriptor.default : undefined
       };
+    case 'number':
+      return {
+        type: 'number',
+        label: descriptor.label,
+        description: descriptor.description,
+        default: typeof descriptor.default === 'number' ? descriptor.default : undefined,
+        min: typeof descriptor.min === 'number' ? descriptor.min : undefined,
+        max: typeof descriptor.max === 'number' ? descriptor.max : undefined
+      };
     case 'select':
       return {
         type: 'select',
@@ -258,7 +268,9 @@ export async function initPluginApps(): Promise<void> {
     }
   };
   (globalThis as { __ZCC_PLUGIN_HOST__?: PluginHostBridge }).__ZCC_PLUGIN_HOST__ = host;
-  const { installPluginRuntime } = await import('./plugin-runtime.js');
+  // Keep this a static import so composer/RPC hooks share the same React
+  // context objects as PluginComposerChrome (a dynamic import can duplicate
+  // module state in the production renderer chunk graph).
   installPluginRuntime();
   try {
     await reconcilePluginApps(await product.pluginApps.list());

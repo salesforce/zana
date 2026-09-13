@@ -8,5 +8,7 @@ describe('ThreadChat host wiring', () => {
     expect(source).toContain('leadingContent={props.leadingContent}');
     expect(source).toContain('messageActions={props.messageActions}');
     expect(source).toContain('includePluginMessageActions={props.includePluginMessageActions ?? false}');
+    expect(source).toContain('call: (method: string, args?: unknown) => callPluginRpc(pluginId, method, args)');
+    expect(source).toMatch(/useMemo\(\s*\(\) => \(\{[\s\S]*callPluginRpc\(pluginId/);
   });
 });

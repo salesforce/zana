@@ -1,9 +1,9 @@
 import type {
-  EnvironmentProvisionCommand,
   EnvironmentProvisionResult,
   ProviderStatusResult,
   ThreadStartResult
 } from '@zana-ai/zcc-contracts/host-rpc';
+import { provisionCommandFor } from '../services/threads/spawn-environment-provision.js';
 import {
   createEnvironment,
   createThread,
@@ -18,7 +18,6 @@ import {
   type ThreadRow
 } from '@zana-ai/zcc-db';
 import {
-  DEFAULT_SETUP_TIMEOUT_MS,
   buildManagedBranchName,
   type SpawnEnvironmentChoice
 } from '@zana-ai/zcc-domain';
@@ -159,45 +158,6 @@ function mapHostError(error: unknown): ThreadCreateError {
     return new ThreadCreateError(502, code, message);
   }
   return new ThreadCreateError(500, 'thread-create-failed', error instanceof Error ? error.message : String(error));
-}
-
-function provisionCommandFor(
-  environment: EnvironmentRow,
-  project: Project,
-  choice: SpawnEnvironmentChoice,
-  checkout: SpawnThreadInput['checkout'],
-  workspacePath: string
-): EnvironmentProvisionCommand {
-  if (choice.kind === 'personal') {
-    if (!environment.path) {
-      throw new ThreadCreateError(500, 'thread-create-failed', 'personal workspace path is missing');
-    }
-    return {
-      type: 'environment.provision',
-      environmentId: environment.id,
-      workspaceProvisionType: 'personal',
-      targetPath: environment.path
-    };
-  }
-  if (choice.kind === 'worktree') {
-    return {
-      type: 'environment.provision',
-      environmentId: environment.id,
-      workspaceProvisionType: 'managed-worktree',
-      sourcePath: project.path,
-      targetPath: environment.path!,
-      branchName: environment.branchName ?? buildManagedBranchName({ threadId: environment.id }),
-      baseBranch: environment.baseBranch,
-      setupTimeoutMs: DEFAULT_SETUP_TIMEOUT_MS
-    };
-  }
-  return {
-    type: 'environment.provision',
-    environmentId: environment.id,
-    workspaceProvisionType: 'unmanaged',
-    path: workspacePath,
-    checkout
-  };
 }
 
 function threadTitle(input: SpawnThreadInput, prompt: string[]): string {

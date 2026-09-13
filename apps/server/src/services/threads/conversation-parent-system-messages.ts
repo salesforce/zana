@@ -72,7 +72,7 @@ export function buildParentSystemInputFromSegments(args: {
 
 export async function queueParentSystemMessage(
   ctx: ProductHttpContext,
-  args: { input: PromptInput[]; parentThreadId: string }
+  args: { input: PromptInput[]; parentThreadId: string; senderThreadId?: string }
 ): Promise<boolean> {
   const parentThread = getConversationThread(ctx.db, args.parentThreadId);
   if (!parentThread || parentThread.archivedAt !== null) return false;
@@ -80,7 +80,8 @@ export async function queueParentSystemMessage(
     deferConversationSend(ctx, {
       threadId: parentThread.id,
       input: args.input,
-      mode: 'auto'
+      mode: 'auto',
+      ...(args.senderThreadId ? { senderThreadId: args.senderThreadId } : {})
     });
     return true;
   }

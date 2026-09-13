@@ -141,6 +141,15 @@ describe('listen.ts', () => {
     expect(source).toContain('createQueuedMessage');
     expect(source).toContain('listQueuedMessages');
     expect(source).toContain('originPluginId: pluginId');
+    expect(source).toContain('stopThread:');
+    expect(source).toContain('threadOutput:');
+    expect(source).toContain('defaultExecutionOptions:');
+    expect(source).toContain('resolvePluginDefaultExecutionOptions');
+    expect(source).toContain('pluginHostModelCatalog');
+    expect(source).toContain('readLastThreadExecution');
+    expect(source).toContain('readWorkspaceFile:');
+    expect(source).toContain('conversationThreadOutput');
+    expect(source).toContain('visibility');
   });
 });
 

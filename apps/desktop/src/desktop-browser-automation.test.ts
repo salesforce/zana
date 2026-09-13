@@ -1,177 +1,115 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { IPC, parseDesktopBrowserAutomationOpenRequest } from '@zana-ai/zcc-desktop-contract';
-import { HIDDEN_AUTOMATION_VIEW_BOUNDS } from './desktop-browser-thread-scope.js';
+import type { DesktopBrowserCommand } from '@zana-ai/zcc-host-daemon-contract';
+import { createDesktopBrowserAutomationHost } from './desktop-browser-automation.js';
+import type { DesktopBrowserBroker } from './desktop-browser-broker.js';
 
-const electronStub = vi.hoisted(() => {
-  const send = vi.fn();
-  const liveWindow = {
-    isDestroyed: () => false,
-    isFocused: () => true,
-    webContents: {
-      id: 7,
-      isDestroyed: () => false,
-      send
-    }
-  };
+function stubBroker(execute: DesktopBrowserBroker['execute']): DesktopBrowserBroker {
   return {
-    send,
-    liveWindow,
-    getAllWindows: vi.fn(() => [liveWindow])
-  };
-});
-
-vi.mock('electron', () => ({
-  BrowserWindow: {
-    getAllWindows: electronStub.getAllWindows
-  }
-}));
-
-import {
-  bindAutomationTargetThread,
-  createDesktopBrowserAutomationHost,
-  isPendingAutomationTab,
-  unbindAutomationTargetThread
-} from './desktop-browser-automation.js';
-import type { DesktopBrowserViewManager } from './desktop-browser-view.js';
-
-function stubManager(overrides: Partial<DesktopBrowserViewManager> = {}): DesktopBrowserViewManager {
-  return {
-    attach: vi.fn(),
-    detach: vi.fn(),
-    navigate: vi.fn(),
-    goBack: vi.fn(),
-    goForward: vi.fn(),
-    reload: vi.fn(),
-    stop: vi.fn(),
-    setBounds: vi.fn(),
-    setVisible: vi.fn(),
-    beginWindowResize: vi.fn(),
-    endWindowResize: vi.fn(),
+    registerWindow: vi.fn(),
     releaseWindow: vi.fn(),
-    destroyAll: vi.fn(),
-    registerAutomationTarget: vi.fn(() => true),
-    unregisterAutomationTarget: vi.fn(() => true),
-    listAutomationTargets: vi.fn(() => []),
-    snapshotAutomationTarget: vi.fn(),
-    clickAutomationTarget: vi.fn(),
-    typeAutomationTarget: vi.fn(),
-    evaluateAutomationTarget: vi.fn(),
-    closeAutomationTarget: vi.fn(),
-    ...overrides
-  } as DesktopBrowserViewManager;
+    listInstances: () => [{ instanceId: 'inst', generation: 'gen', label: 'window' }],
+    setHostId: vi.fn(),
+    resetServer: vi.fn(),
+    getTarget: () => null,
+    getControl: () => null,
+    takeOver: vi.fn(),
+    subscribe: () => () => undefined,
+    subscribeInstances: () => () => undefined,
+    execute,
+    dispose: vi.fn()
+  } as unknown as DesktopBrowserBroker;
 }
 
 describe('desktop browser automation host', () => {
   afterEach(() => {
-    electronStub.send.mockReset();
-    electronStub.getAllWindows.mockReset();
-    electronStub.getAllWindows.mockImplementation(() => [electronStub.liveWindow]);
+    vi.restoreAllMocks();
   });
 
-  it('marks pending automation tab ids from rememberTarget', () => {
-    bindAutomationTargetThread('browser-auto:t', 'thr-1', 'browser:auto');
-    expect(isPendingAutomationTab('browser:auto')).toBe(true);
-    expect(isPendingAutomationTab('browser:personal')).toBe(false);
-    unbindAutomationTargetThread('browser-auto:t');
-    expect(isPendingAutomationTab('browser:auto')).toBe(false);
-  });
-
-  it('replaces a pending tab id when the same target is rebound', () => {
-    bindAutomationTargetThread('browser-auto:t', 'thr-1', 'browser:a');
-    bindAutomationTargetThread('browser-auto:t', 'thr-1', 'browser:b');
-    expect(isPendingAutomationTab('browser:a')).toBe(false);
-    expect(isPendingAutomationTab('browser:b')).toBe(true);
-    unbindAutomationTargetThread('browser-auto:t');
-  });
-
-  it('hidden open attaches on main without broadcasting automationOpen', async () => {
-    const manager = stubManager();
-    const host = createDesktopBrowserAutomationHost(manager);
-    const result = await host.open({
-      threadId: 'thr-1',
-      url: 'https://example.com',
-      visible: false
+  it('creates an automation tab through the broker and reveals when visible', async () => {
+    const execute = vi.fn(async (command: DesktopBrowserCommand) => {
+      if (command.type !== 'desktop.browser.create_tab') throw new Error(command.type);
+      return {
+        tab: {
+          tabId: command.tabId,
+          threadId: command.threadId,
+          url: command.url,
+          title: '',
+          control: null,
+          profile: command.profile,
+          presentation: command.presentation
+        }
+      };
     });
-    expect(manager.attach).toHaveBeenCalledWith({
-      hostWindow: electronStub.liveWindow,
-      request: {
-        tabId: result.tabId,
-        url: 'https://example.com',
-        bounds: HIDDEN_AUTOMATION_VIEW_BOUNDS,
-        visible: false
-      }
-    });
-    expect(manager.registerAutomationTarget).toHaveBeenCalledWith({
-      tabId: result.tabId,
-      targetId: result.targetId,
-      hostWebContentsId: 7
-    });
-    expect(electronStub.send).not.toHaveBeenCalled();
-    expect(isPendingAutomationTab(result.tabId)).toBe(true);
-    unbindAutomationTargetThread(result.targetId);
-  });
-
-  it('visible open broadcasts the frozen automationOpen shape', async () => {
-    const listed: Array<{ targetId: string; tabId: string; url: string; title: string | null }> = [];
-    const manager = stubManager({
-      listAutomationTargets: () => listed
-    });
-    electronStub.send.mockImplementation((_channel: string, payload: { targetId: string; tabId: string; url: string }) => {
-      listed.push({ targetId: payload.targetId, tabId: payload.tabId, url: payload.url, title: null });
-    });
-    const host = createDesktopBrowserAutomationHost(manager);
+    const host = createDesktopBrowserAutomationHost(stubBroker(execute));
     const result = await host.open({
       threadId: 'thr-1',
       url: 'https://example.com',
       visible: true
     });
-    expect(manager.attach).not.toHaveBeenCalled();
-    expect(electronStub.send).toHaveBeenCalledTimes(1);
-    const [channel, payload] = electronStub.send.mock.calls[0] as [string, unknown];
-    expect(channel).toBe(IPC.browser.automationOpen);
-    expect(parseDesktopBrowserAutomationOpenRequest(payload).success).toBe(true);
-    expect(payload).toEqual({
+    expect(result.tabId).toBe(result.targetId);
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'desktop.browser.create_tab',
       threadId: 'thr-1',
-      tabId: result.tabId,
-      targetId: result.targetId,
-      url: 'https://example.com'
+      url: 'https://example.com',
+      presentation: 'reveal',
+      profile: { kind: 'automation', id: result.tabId }
+    }));
+  });
+
+  it('hides off-screen opens', async () => {
+    const execute = vi.fn(async (command: DesktopBrowserCommand) => {
+      if (command.type !== 'desktop.browser.create_tab') throw new Error(command.type);
+      return {
+        tab: {
+          tabId: command.tabId,
+          threadId: command.threadId,
+          url: command.url,
+          title: '',
+          control: null,
+          profile: command.profile,
+          presentation: command.presentation
+        }
+      };
     });
-    expect(payload).not.toHaveProperty('visible');
-    unbindAutomationTargetThread(result.targetId);
+    const host = createDesktopBrowserAutomationHost(stubBroker(execute));
+    await host.open({ threadId: 'thr-1', url: 'https://example.com', visible: false });
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ presentation: 'hidden' }));
   });
 
-  it('hidden open fails clearly when no window exists', async () => {
-    electronStub.getAllWindows.mockImplementation(() => []);
-    const manager = stubManager();
-    const host = createDesktopBrowserAutomationHost(manager);
-    await expect(
-      host.open({ threadId: 'thr-1', url: 'https://example.com', visible: false })
-    ).rejects.toThrow(/No connected app window can host a hidden browser tab/);
-    expect(manager.attach).not.toHaveBeenCalled();
-  });
-
-  it('rejects a disallowed URL before attaching or broadcasting', async () => {
-    const manager = stubManager();
-    const host = createDesktopBrowserAutomationHost(manager);
+  it('rejects a disallowed URL before talking to the broker', async () => {
+    const execute = vi.fn();
+    const host = createDesktopBrowserAutomationHost(stubBroker(execute));
     await expect(
       host.open({ threadId: 'thr-1', url: 'file:///etc/passwd', visible: true })
     ).rejects.toThrow(/URL is not allowed/);
-    expect(manager.attach).not.toHaveBeenCalled();
-    expect(electronStub.send).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
-  it('detaches when a hidden attach cannot register the target', async () => {
-    const manager = stubManager({
-      registerAutomationTarget: vi.fn(() => false)
+  it('lists and closes through the broker', async () => {
+    const execute = vi.fn(async (command: DesktopBrowserCommand) => {
+      if (command.type === 'desktop.browser.list_tabs') {
+        return {
+          tabs: [{
+            tabId: 'browser:1',
+            threadId: 'thr-1',
+            url: 'https://a.test',
+            title: 'A',
+            control: null,
+            profile: { kind: 'automation' as const, id: 'browser:1' },
+            presentation: 'reveal' as const
+          }]
+        };
+      }
+      if (command.type === 'desktop.browser.close_tab') return { ok: true as const };
+      throw new Error(command.type);
     });
-    const host = createDesktopBrowserAutomationHost(manager);
-    await expect(
-      host.open({ threadId: 'thr-1', url: 'https://example.com', visible: false })
-    ).rejects.toThrow(/Failed to attach a hidden browser tab/);
-    expect(manager.detach).toHaveBeenCalledOnce();
-    const request = (manager.attach as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
-      request: { tabId: string };
-    };
-    expect(isPendingAutomationTab(request.request.tabId)).toBe(false);
+    const host = createDesktopBrowserAutomationHost(stubBroker(execute));
+    const listed = await host.list('thr-1');
+    expect(listed[0]?.tabId).toBe('browser:1');
+    await host.close('browser:1', 'thr-1');
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'desktop.browser.close_tab',
+      tabId: 'browser:1'
+    }));
   });
 });

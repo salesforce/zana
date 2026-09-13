@@ -13,9 +13,10 @@ const { snap } = vi.hoisted(() => ({
     descriptors: {
       enabled: { type: 'boolean' as const, label: 'Enabled' },
       mode: { type: 'select' as const, label: 'Mode', options: ['fast', 'slow'] },
-      token: { type: 'string' as const, label: 'Token', secret: true as const }
+      token: { type: 'string' as const, label: 'Token', secret: true as const },
+      limit: { type: 'number' as const, label: 'Limit', min: 1, max: 32 }
     },
-    values: { enabled: true, mode: 'fast', token: 'secret' }
+    values: { enabled: true, mode: 'fast', token: 'secret', limit: 4 }
   }
 }));
 
@@ -40,6 +41,8 @@ describe('PluginSettingsForm', () => {
     expect(html).not.toContain('type="checkbox"');
     expect(html).toContain('fast');
     expect(html).toContain('type="password"');
+    expect(html).toContain('type="number"');
+    expect(html).toContain('Limit');
   });
 
   it('shows an error', () => {

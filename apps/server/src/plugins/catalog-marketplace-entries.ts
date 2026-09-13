@@ -1,4 +1,4 @@
-import type { MarketplaceEntry as CatalogPlugin } from '@zana-ai/zcc-domain';
+import { categoryFromMarketplaceFields, type MarketplaceEntry as CatalogPlugin } from '@zana-ai/zcc-domain';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { marketplaceInstallSpec } from './marketplace.js';
 import type { MarketplaceCatalogRow } from './marketplace-store.js';
@@ -78,7 +78,8 @@ function toMarketplaceEntry(
     hasUpdate: false,
     compatible: true,
     source: 'marketplace',
-    tags: catalog.official ? ['official'] : ['community']
+    tags: catalog.official ? ['official'] : ['community'],
+    category: categoryFromMarketplaceFields({ tags: plugin.tags })
   };
 }
 

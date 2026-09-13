@@ -1372,6 +1372,154 @@ describe('product HTTP', () => {
       patches: [{ path: 'src/a.ts', truncated: false }]
     });
   });
+
+  it('lists and kills confined workspace processes', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-procs-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-proc-root-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [{ id: 'proj-1', name: 'Alpha', path: projectRoot, createdAt: 1, lastActiveAt: 1 }]
+      })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: projectRoot,
+      status: 'ready',
+      workspaceProvisionType: 'unmanaged'
+    });
+    const rpc = vi.fn(async (input: { command: { type: string; pids?: number[]; workspacePath?: string } }) => {
+      if (input.command.type === 'workspace.processes.list') {
+        return {
+          processes: [{ pid: 4242, cwd: projectRoot, command: 'vite' }],
+          truncated: false,
+          supported: true
+        };
+      }
+      if (input.command.type === 'workspace.processes.kill') {
+        return {
+          killed: (input.command.pids ?? []).map((pid) => ({ pid, cwd: projectRoot, command: 'vite' }))
+        };
+      }
+      throw new Error(`unexpected command ${input.command.type}`);
+    });
+    server.ctx.hostHub.connectedHostIds = () => [host.id];
+    server.ctx.hostHub.resolveHostId = () => host.id;
+    server.ctx.hostHub.callHostOnlineRpc = rpc;
+
+    const missing = await fetch(`${server.url}api/v1/projects/missing/processes`);
+    expect(missing.status).toBe(404);
+
+    const listed = await fetch(`${server.url}api/v1/projects/proj-1/processes`);
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({
+      processes: [{ pid: 4242, command: 'vite' }],
+      supported: true
+    });
+
+    const implicit = await fetch(`${server.url}api/v1/projects/proj-1/processes/kill`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    expect(implicit.status).toBe(400);
+
+    const killed = await fetch(`${server.url}api/v1/environments/${environment.id}/processes/kill`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pids: [4242] })
+    });
+    expect(killed.status).toBe(200);
+    await expect(killed.json()).resolves.toMatchObject({
+      killed: [{ pid: 4242, command: 'vite' }]
+    });
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'workspace.processes.kill',
+        pids: [4242],
+        workspacePath: projectRoot
+      })
+    }));
+
+    const unknownEnv = await fetch(`${server.url}api/v1/environments/missing/processes`);
+    expect(unknownEnv.status).toBe(404);
+  });
+
+  it('provisions a project environment without creating a thread', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-env-provision-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-env-project-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({
+      version: 1,
+      projects: [{
+        id: 'proj-1',
+        name: 'Alpha',
+        path: projectRoot,
+        createdAt: 1,
+        lastActiveAt: 1
+      }]
+    }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const invalid = await fetch(`${server.url}api/v1/projects/proj-1/environments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: { kind: 'nope' } })
+    });
+    expect(invalid.status).toBe(400);
+
+    const unknown = await fetch(`${server.url}api/v1/projects/missing/environments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: { kind: 'worktree' } })
+    });
+    expect(unknown.status).toBe(404);
+
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const targetPath = join(dataDir, 'worktrees', 'env-cli', 'repo');
+    server.ctx.hostHub.connectedHostIds = () => [host.id];
+    server.ctx.hostHub.resolveHostId = () => host.id;
+    server.ctx.hostHub.ensureHostSessionReady = () => ({}) as never;
+    server.ctx.hostHub.callHostOnlineRpc = vi.fn(async (input: { command: { type: string; targetPath?: string } }) => {
+      if (input.command.type === 'host.browse_directory') {
+        return { directory: projectRoot };
+      }
+      if (input.command.type === 'environment.provision') {
+        return {
+          path: input.command.targetPath ?? targetPath,
+          isGitRepo: true,
+          isWorktree: true,
+          branchName: 'zcc/env',
+          defaultBranch: 'main'
+        };
+      }
+      throw new Error(`unexpected command ${input.command.type}`);
+    });
+
+    const created = await fetch(`${server.url}api/v1/projects/proj-1/environments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: { kind: 'worktree' }, hostId: host.id })
+    });
+    expect(created.status).toBe(201);
+    const body = await created.json() as {
+      environment: { id: string; path: string; workspaceProvisionType: string; projectId: string };
+    };
+    expect(body.environment.projectId).toBe('proj-1');
+    expect(body.environment.workspaceProvisionType).toBe('managed-worktree');
+    expect(body.environment.path).toContain('/worktrees/');
+    const threads = await fetch(`${server.url}api/v1/threads`);
+    const threadBody = await threads.json() as { threads?: unknown[] };
+    expect(threadBody.threads ?? []).toEqual([]);
+  });
 });
 
 describe('product HTTP thread reasoning', () => {
@@ -2097,4 +2245,196 @@ describe('product HTTP thread tabs', () => {
     expect(again.readIds['inb-2']).toBeUndefined();
     expect(again.readIds['inb-1']).toBe(true);
   });
+
+  it('waits for a matching thread event', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-event-wait-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+    appendConversationThreadEvent(server.ctx.db, { threadId: thread.id, type: 'turn/completed' });
+    const found = await fetch(
+      `${server.url}api/v1/threads/${thread.id}/events/wait?type=${encodeURIComponent('turn/completed')}&waitMs=200`
+    );
+    expect(found.status).toBe(200);
+    await expect(found.json()).resolves.toMatchObject({ type: 'turn/completed', threadId: thread.id });
+    const missing = await fetch(
+      `${server.url}api/v1/threads/${thread.id}/events/wait?type=never-happens&waitMs=50`
+    );
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toBeNull();
+  });
+
+  it('launches and lists CLI agents through the product-server ops', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-cli-agent-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-cli-agent-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [{ id: 'proj-1', name: 'Alpha', path: projectRoot, createdAt: 1, lastActiveAt: 1 }]
+      })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const session = {
+      id: 's1',
+      projectId: 'proj-1',
+      profile: 'claude' as const,
+      title: '[zcc-live:run1] hi',
+      cwd: projectRoot,
+      status: 'running' as const,
+      createdAt: 1
+    };
+    const create = vi.fn(async () => ({ ok: true as const, value: session }));
+    const status = vi.fn(async () => ({ ok: true as const, value: { sessionId: 's1', state: 'idle' } }));
+    const list = vi.fn(async () => ({ ok: true as const, value: [session] }));
+    const get = vi.fn(async () => ({ ok: true as const, value: session }));
+    const reply = vi.fn(async () => ({ ok: true as const, value: true }));
+    const close = vi.fn(async () => ({ ok: true as const, value: true }));
+    server.ctx.cliAgentOps = { create, status, list, get, reply, close };
+
+    const created = await fetch(`${server.url}api/v1/cli-agents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-1', profile: 'claude', prompt: 'hi', title: '[zcc-live:run1] hi' })
+    });
+    expect(created.status).toBe(201);
+    await expect(created.json()).resolves.toMatchObject({
+      ok: true,
+      session: { id: 's1', status: 'idle', projectId: 'proj-1' }
+    });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'proj-1', profile: 'claude' }));
+
+    const listed = await fetch(`${server.url}api/v1/cli-agents?tag=run1`).then((r) => r.json());
+    expect(listed.sessions[0].id).toBe('s1');
+
+    const shown = await fetch(`${server.url}api/v1/cli-agents/s1`).then((r) => r.json());
+    expect(shown.session.status).toBe('idle');
+    expect(get).toHaveBeenCalledWith('s1');
+
+    const replied = await fetch(`${server.url}api/v1/cli-agents/s1/reply`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'again' })
+    });
+    expect(replied.status).toBe(200);
+    expect(reply).toHaveBeenCalledWith('s1', 'again');
+
+    const stopped = await fetch(`${server.url}api/v1/cli-agents/s1/stop`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(stopped.status).toBe(200);
+    expect(close).toHaveBeenCalledWith('s1');
+  });
+
+  it('looks up a live CLI agent by id without scanning term.list', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-cli-agent-get-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-cli-agent-get-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [{ id: 'proj-1', name: 'Alpha', path: projectRoot, createdAt: 1, lastActiveAt: 1 }]
+      })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const session = {
+      id: 's-live',
+      projectId: 'proj-1',
+      profile: 'claude' as const,
+      title: 'live',
+      cwd: projectRoot,
+      status: 'running' as const,
+      createdAt: 1
+    };
+    const list = vi.fn(async () => ({ ok: true as const, value: [] }));
+    const get = vi.fn(async () => ({ ok: true as const, value: session }));
+    const status = vi.fn(async () => ({ ok: true as const, value: { sessionId: 's-live', state: 'working' } }));
+    server.ctx.cliAgentOps = {
+      create: vi.fn(),
+      status,
+      list,
+      get,
+      reply: vi.fn(),
+      close: vi.fn()
+    };
+    const shown = await fetch(`${server.url}api/v1/cli-agents/s-live`);
+    expect(shown.status).toBe(200);
+    await expect(shown.json()).resolves.toMatchObject({
+      session: { id: 's-live', status: 'working', projectId: 'proj-1' }
+    });
+    expect(get).toHaveBeenCalledWith('s-live');
+    expect(list).not.toHaveBeenCalled();
+
+    get.mockResolvedValueOnce({ ok: false as const, code: 'NOT_FOUND', message: 'no live session: gone' });
+    const missing = await fetch(`${server.url}api/v1/cli-agents/gone`);
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('reports a remembered exited CLI agent as exited when agent-status is already gone', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-cli-agent-exited-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-cli-agent-exited-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [{ id: 'proj-1', name: 'Alpha', path: projectRoot, createdAt: 1, lastActiveAt: 1 }]
+      })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const session = {
+      id: 's-exited',
+      projectId: 'proj-1',
+      profile: 'claude' as const,
+      title: 'gone',
+      cwd: projectRoot,
+      status: 'exited' as const,
+      createdAt: 1,
+      exitCode: 1
+    };
+    server.ctx.cliAgentOps = {
+      create: vi.fn(),
+      status: vi.fn(async () => ({ ok: true as const, value: { sessionId: 's-exited', state: 'unknown' } })),
+      list: vi.fn(),
+      get: vi.fn(async () => ({ ok: true as const, value: session })),
+      reply: vi.fn(),
+      close: vi.fn(async () => ({ ok: true as const, value: true }))
+    };
+    const shown = await fetch(`${server.url}api/v1/cli-agents/s-exited`);
+    expect(shown.status).toBe(200);
+    await expect(shown.json()).resolves.toMatchObject({
+      session: { id: 's-exited', status: 'exited' }
+    });
+    const stopped = await fetch(`${server.url}api/v1/cli-agents/s-exited/stop`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(stopped.status).toBe(200);
+  });
 });
+

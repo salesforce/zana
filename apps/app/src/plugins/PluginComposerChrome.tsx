@@ -147,7 +147,13 @@ export function PluginComposerChrome({
               pluginId={row.pluginId}
               generation={row.generation}
             >
-              <div className={`plugin-composer-banner is-${banner.chrome ?? 'card'}`}>
+              <div
+                className={`plugin-composer-banner is-${banner.chrome ?? 'card'}`}
+                data-composer-scope={scope.kind}
+                data-composer-thread={
+                  scope.kind === 'thread' || scope.kind === 'queued-message' ? scope.threadId : ''
+                }
+              >
                 <Banner />
               </div>
             </PluginSlotBoundary>

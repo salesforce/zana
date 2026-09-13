@@ -79,6 +79,7 @@ import {
 } from './injected-skill-roots.js';
 import { applyBundledPosthogApiKey } from '../bundled-posthog-api-key.js';
 import type {
+  PluginAgentConfigureContext,
   PluginAgentToolContext,
   PluginCliExecutionResult,
   PluginHttpRequest,
@@ -126,7 +127,7 @@ export interface PluginService {
   stop(): void;
   snapshot(): PluginUiSnapshot[];
   agentContributions(): PluginAgentContribution[];
-  sessionTools(ctx: { threadId: string; projectId: string }): Promise<PluginSessionTools>;
+  sessionTools(ctx: PluginAgentConfigureContext): Promise<PluginSessionTools>;
   invokeAgentTool(args: {
     name: string;
     input: unknown;
@@ -160,7 +161,7 @@ export interface PluginService {
     pluginId: string;
     itemId: string;
   }): Promise<{ ok: true; context: string } | { ok: false; error: string }>;
-  runCliCommand(id: string, argv: string[]): Promise<PluginCliExecutionResult>;
+  runCliCommand(id: string, argv: string[], context?: { projectId?: string; threadId?: string; cwd?: string }): Promise<PluginCliExecutionResult>;
   dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
   readLogs(id: string, tail?: number): Promise<string[]>;
@@ -265,13 +266,7 @@ export interface PluginServiceOptions {
     signal?: AbortSignal;
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginInteractionResult>;
   interruptPluginInteractions?: (pluginId: string) => void;
-  spawnThread?: (args: {
-    pluginId: string;
-    projectId: string;
-    prompt: string;
-    providerId?: string;
-    parentThreadId?: string;
-  }) => Promise<{ id: string }>;
+  spawnThread?: (args: import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSpawnArgs & { pluginId: string }) => Promise<{ id: string }>;
   getThread?: (args: { pluginId: string; threadId: string }) => Promise<
     import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSummary | null
   >;
@@ -282,7 +277,37 @@ export interface PluginServiceOptions {
     types?: readonly string[];
     order?: 'asc' | 'desc';
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadEventRow[]>;
-  sendThread?: (args: { pluginId: string; threadId: string; prompt: string }) => Promise<{ id: string }>;
+  sendThread?: (args: {
+    pluginId: string;
+    threadId: string;
+    prompt: string;
+    visibility?: 'visible' | 'agent-only';
+    mode?: 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
+  }) => Promise<{ id: string }>;
+  stopThread?: (args: { pluginId: string; threadId: string }) => Promise<{ ok: true }>;
+  threadOutput?: (args: { pluginId: string; threadId: string }) => Promise<
+    import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadOutput
+  >;
+  defaultExecutionOptions?: (args: { pluginId: string; threadId: string }) => Promise<
+    import('@zana-ai/zcc-plugin-sdk/server').PluginSdkExecutionOptions
+  >;
+  getEnvironment?: (args: { pluginId: string; environmentId: string }) => Promise<
+    import('@zana-ai/zcc-plugin-sdk/server').PluginSdkEnvironment
+  >;
+  readWorkspaceFile?: (args: {
+    pluginId: string;
+    hostId: string;
+    path: string;
+    rootPath: string;
+  }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkFileReadResult>;
+  listProviders?: (args: { pluginId: string; environmentId?: string }) => Promise<
+    import('@zana-ai/zcc-plugin-sdk/server').PluginSdkProviderInfo[]
+  >;
+  loadProviderModels?: (args: {
+    pluginId: string;
+    environmentId?: string;
+    providerId: string;
+  }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkModelCatalog>;
   archiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
   forkThread?: (args: {
     pluginId: string;
@@ -311,6 +336,7 @@ export interface PluginServiceOptions {
   unarchiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
   pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
   listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
+  productContext?: import('../http/product-context.js').ProductHttpContext;
   /** Shared live host-artifact map; omitted tests get a private registry. */
   pluginHostArtifacts?: PluginHostArtifactRegistry;
   /**
@@ -811,6 +837,13 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       getThread: opts.getThread,
       listThreadEvents: opts.listThreadEvents,
       sendThread: opts.sendThread,
+      stopThread: opts.stopThread,
+      threadOutput: opts.threadOutput,
+      defaultExecutionOptions: opts.defaultExecutionOptions,
+      getEnvironment: opts.getEnvironment,
+      readWorkspaceFile: opts.readWorkspaceFile,
+      listProviders: opts.listProviders,
+      loadProviderModels: opts.loadProviderModels,
       archiveThread: opts.archiveThread,
       forkThread: opts.forkThread,
       listThreads: opts.listThreads,
@@ -819,11 +852,18 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       unarchiveThread: opts.unarchiveThread,
       pushInbox: opts.pushInbox,
       listProjects: opts.listProjects,
+      productContext: opts.productContext,
       dataDir: opts.dataDir,
       onNeedsConfiguration: (message) => {
         configurationMessage = message;
       },
       services: servicesRegistry,
+      isAgentToolNameTaken: (name) => {
+        for (const [id, current] of live) {
+          if (current.handle?.agentTools.some((tool) => tool.name === name)) return id;
+        }
+        return undefined;
+      },
       hostEntryPath: (() => {
         try {
           const manifest = loadManifestFromDir(row.rootDir);
@@ -1423,13 +1463,13 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     cliContributions,
     mentionProviders,
     resolveMention,
-    async runCliCommand(id, argv) {
+    async runCliCommand(id, argv, context) {
       const byId = live.get(id)?.handle;
-      if (byId) return runPluginCli(byId, argv);
+      if (byId) return runPluginCli(byId, argv, context);
       const named = cliContributions().find((row) => row.name === id || row.pluginId === id);
       const handle = named ? live.get(named.pluginId)?.handle : undefined;
       if (!handle) throw new Error(`plugin not running: ${id}`);
-      return runPluginCli(handle, argv);
+      return runPluginCli(handle, argv, context);
     },
     async dispatchHttp(pluginId, request) {
       const routes = live.get(pluginId)?.handle?.httpRoutes ?? [];
@@ -1657,6 +1697,7 @@ export interface BundledPluginCatalogEntry {
   mcpServers?: Array<{ name: string; alwaysOn?: boolean }>;
   extra?: Record<string, unknown>;
   tags?: string[];
+  category?: string;
 }
 
 /**
@@ -1699,7 +1740,8 @@ export function listBundledPluginCatalog(
             alwaysOn: server.alwaysOn
           })),
           extra: Object.keys(manifest.extra).length > 0 ? manifest.extra : undefined,
-          tags: ['official']
+          tags: ['official'],
+          category: bundledPluginByName(name)?.category
         });
       } catch (err) {
         log?.(`listBundledPluginCatalog:${name}`, err);

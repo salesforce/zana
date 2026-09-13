@@ -24,7 +24,10 @@ export const REMAPPABLE_COMMANDS: Array<{
   { command: 'thread.search', label: 'Command palette', help: 'Open the command palette.' },
   { command: 'file.quickOpen', label: 'Quick Open', help: 'Open a file in the selected project.' },
   { command: 'sidebar.toggle', label: 'Toggle explorer', help: 'Switch between terminals and the file explorer.' },
-  { command: 'settings.open', label: 'Settings', help: 'Open or close Settings.' }
+  { command: 'settings.open', label: 'Settings', help: 'Open or close Settings.' },
+  { command: 'browser.focusLocation', label: 'Browser address bar', help: 'Focus the in-app browser address bar.' },
+  { command: 'browser.find', label: 'Find in page', help: 'Find text in the in-app browser tab.' },
+  { command: 'browser.reload', label: 'Reload browser tab', help: 'Reload the in-app browser tab.' }
 ];
 
 export const DEFAULT_APP_KEYBINDINGS: AppDefaultKeybindings = [
@@ -57,6 +60,24 @@ export const DEFAULT_APP_KEYBINDINGS: AppDefaultKeybindings = [
     desktopOnly: false,
     shortcut: { key: ',', mod: true, meta: false, control: false, alt: false, shift: false },
     when: { all: [], none: [] }
+  },
+  {
+    command: 'browser.focusLocation',
+    desktopOnly: true,
+    shortcut: { key: 'l', mod: true, meta: false, control: false, alt: false, shift: false },
+    when: { all: ['mainSurface', 'browserFocus'], none: ['modalOpen'] }
+  },
+  {
+    command: 'browser.reload',
+    desktopOnly: true,
+    shortcut: { key: 'r', mod: true, meta: false, control: false, alt: false, shift: false },
+    when: { all: ['mainSurface', 'browserFocus'], none: ['modalOpen'] }
+  },
+  {
+    command: 'browser.find',
+    desktopOnly: true,
+    shortcut: { key: 'f', mod: true, meta: false, control: false, alt: false, shift: false },
+    when: { all: ['mainSurface', 'browserFocus'], none: ['modalOpen'] }
   }
 ];
 

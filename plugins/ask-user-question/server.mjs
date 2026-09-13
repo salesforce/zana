@@ -4,6 +4,7 @@ export default function plugin(zcc) {
     name: 'ask_user_question',
     description:
       'Ask the operator a structured multiple-choice question and wait for the answer. Use when you need a decision.',
+    parameters: { type: 'object' },
     async execute(input, ctx) {
       const result = await zcc.ui.requestInput({
         threadId: ctx.threadId,

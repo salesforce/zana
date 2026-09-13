@@ -9,6 +9,26 @@ export function flagValue(args: string[], flag: string): string | undefined {
   return v === '' ? undefined : v;
 }
 
+export function flagValues(args: string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i]!;
+    if (token === flag) {
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith('--') && next !== '') {
+        values.push(next);
+        i += 1;
+      }
+      continue;
+    }
+    if (token.startsWith(`${flag}=`)) {
+      const value = token.slice(flag.length + 1);
+      if (value) values.push(value);
+    }
+  }
+  return values;
+}
+
 export function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
 }

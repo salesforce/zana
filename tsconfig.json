@@ -39,7 +39,9 @@
       "@zana-ai/zcc-contracts/canonical-json": ["./packages/contracts/src/canonical-json.ts"],
       "@zana-ai/zcc-contracts/host-rpc": ["./packages/contracts/src/host-rpc.ts"],
       "@zana-ai/zcc-db": ["./packages/db/src/index.ts"],
-      "@zana-ai/zcc-host-workspace": ["./packages/host-workspace/src/index.ts"]
+      "@zana-ai/zcc-host-workspace": ["./packages/host-workspace/src/index.ts"],
+    "@zana-ai/zcc-control": ["./packages/control-sdk/src/index.ts"],
+    "@zana-ai/zcc-control/testing": ["./packages/control-sdk/src/testing/index.ts"]
     }
   },
   "include": [

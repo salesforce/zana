@@ -57,7 +57,7 @@ export function useRouteSync(): void {
   }, [location.hash, location.pathname, location.search, navigate]);
 
   useEffect(() => {
-    const decoded = decodeRoutePath(location.pathname, location.hash);
+    const decoded = decodeRoutePath(location.pathname, location.hash, location.search);
     const current = useUi.getState();
     const keepFocus =
       current.focusedProjectId != null &&
@@ -106,5 +106,5 @@ export function useRouteSync(): void {
     if (patch.focusedProjectId !== undefined) {
       product.config.set({ focusedProjectId: patch.focusedProjectId }).catch(() => {});
     }
-  }, [location.hash, location.pathname]);
+  }, [location.hash, location.pathname, location.search]);
 }

@@ -20,6 +20,10 @@ import {
   InteractiveRequestRegistryError
 } from './interactive-request-registry.js';
 import { joinServerWsUrl } from './server-url.js';
+import {
+  startDesktopBrowserBroker,
+  type DesktopBrowserBroker
+} from './desktop-browser-broker.js';
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 5_000];
 const HEARTBEAT_MS = 15_000;
@@ -178,6 +182,26 @@ export function startEnrolledHostConnection(options: {
   })();
   runtime.emit = (event: HostEventEnvelope) => sink.emit(event);
 
+  let desktopBrowserBroker: DesktopBrowserBroker | null = null;
+  const brokerTask = !options.runtime && options.dataDir
+    ? startDesktopBrowserBroker({
+      dataDir: options.dataDir,
+      hostId: options.hostId,
+      serverUrl: options.serverUrl,
+      onChanged: (event) => {
+        sink.emit({ kind: 'desktop.browser.changed', payload: event });
+      }
+    }).then((broker) => {
+      if (closed) {
+        return broker.close().then(() => null);
+      }
+      desktopBrowserBroker = broker;
+      runtime.desktopBrowserBroker = broker;
+      if (socket?.readyState === WebSocket.OPEN) broker.setConnected(true);
+      return broker;
+    }).catch(() => null)
+    : Promise.resolve(null);
+
   function connect(): void {
     if (closed) return;
     const next = new WebSocket(wsUrl);
@@ -208,6 +232,7 @@ export function startEnrolledHostConnection(options: {
       if (parsed && typeof parsed === 'object' && (parsed as { type?: string }).type === 'host.hello-ok') {
         const ack = HostHelloOkMessageSchema.safeParse(parsed);
         if (ack.success && ack.data.hostId === options.hostId) {
+          desktopBrowserBroker?.setConnected(true);
           markReady();
         }
         return;
@@ -224,6 +249,7 @@ export function startEnrolledHostConnection(options: {
         clearInterval(heartbeatTimer);
         heartbeatTimer = null;
       }
+      desktopBrowserBroker?.setConnected(false);
       options.onSocketClose?.(event.code);
       if (!readySettled) {
         markReady(new Error('host websocket closed before hello'));
@@ -254,6 +280,10 @@ export function startEnrolledHostConnection(options: {
       await sink.dispose();
       socket?.close();
       socket = null;
+      const broker = desktopBrowserBroker ?? await brokerTask;
+      desktopBrowserBroker = null;
+      runtime.desktopBrowserBroker = undefined;
+      await broker?.close();
     }
   };
 }

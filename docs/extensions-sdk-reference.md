@@ -10,14 +10,15 @@ Handed to `export default function plugin(zcc)`.
 | --- | --- |
 | `pluginId` | Derived id |
 | `log` | debug/info/warn/error |
-| `settings.define` | Declarative settings the host/CLI can render |
+| `settings.define` | Declarative settings the host/CLI can render (`string` / `boolean` / `number` / `select` / `project`) |
 | `storage.kv` | Per-plugin KV |
 | `rpc.method` | Renderer/host RPC |
 | `realtime.publish` | Events |
 | `background.service` / `schedule` | Long-running work |
-| `agents.contributeInstructions` / `contributeSkills` | Agent capabilities |
+| `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` |
 | `ui.requestInput` | Host prompt |
 | `status.needsConfiguration` | Degraded-until-configured |
+| `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: hidden attributed spawn, `output`/`stop`, confined host file read |
 | `services.provide` / `services.use` / `services.has` | Experimental plugin-to-plugin SDK (live proxy; `has` after `provide`; `service_unavailable` until provided) |
 | `onDispose` | LIFO teardown |
 
@@ -97,6 +98,7 @@ Headless (no pixels), plus picker chrome:
 - `mcp` — `zcc.mcpServers`
 - `settings-define` — `zcc.settings.define`
 - `background` — `zcc.background.service` / `schedule`
+- `desktop-browsers` — `zcc.sdk.experimental_desktopBrowsers` (experimental; first-party Browser Automation)
 - `contentScripts` — `contentScripts.register`
 - `experimental_providerIcon` — picker glyph for a provider id
 
@@ -113,11 +115,11 @@ host chrome, not a plugin.
 | Field | Meaning |
 | --- | --- |
 | `skills` | Directory roots (BB). Default `["skills"]`; `[]` opts out. Each child dir with a regular `SKILL.md` is a skill named after the folder. |
-| `mcpServers` | Map of Claude CLI MCP servers. stdio `command` is basename-only; relative `args` are rewritten to contained paths. |
+| `mcpServers` | Map of Claude CLI MCP servers for PTY / CLI Agent (`--mcp-config`). stdio `command` is basename-only; relative `args` are rewritten to contained paths. Conversation threads do not read this map — they get `zcc.agents.registerTool` via bb-bridge. |
 | `extra` | Opaque JSON object (≤32 keys, ≤8 KiB). Displayed on install; never synced as skills/MCP. |
 | `requires` | Other plugin ids this plugin consumes via `zcc.services.use`. Host topo-sorts load order. A missing required plugin marks the consumer `needs-configuration`. |
 
-Durable skills belong in `zcc.skills`. `agents.contributeSkills` is a runtime extra. There is no `registerMcpServer`.
+Durable skills belong in `zcc.skills`. `agents.contributeSkills` is a runtime extra. There is no `registerMcpServer`. `registerTool` (`parameters`: Zod or JSON Schema) is the conversation-thread tool path; `zcc.mcpServers` is the Claude CLI / PTY path.
 
 Do not put secrets in `extra`. Env values on `mcpServers` are written to `.mcp.json` only — the hub sees `envKeys`.
 

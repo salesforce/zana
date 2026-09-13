@@ -36,7 +36,6 @@ describe('host session tool policy', () => {
   });
 
   it('teaches the same SHARE names the skills already use', () => {
-    expect(HOST_SHARE_TOOL_NAMES).toContain('browser_open');
     expect(HOST_SHARE_TOOL_NAMES).toContain('inbox_push');
     expect(HOST_SHARE_TOOL_NAMES).toContain('inbox_search');
     expect(HOST_SHARE_TOOL_NAMES).toContain('suggest_action');
@@ -48,5 +47,14 @@ describe('host session tool policy', () => {
     expect(HOST_ADAPT_TOOL_NAMES).toContain('inbox_ask');
     expect(HOST_PTY_ONLY_TOOL_NAMES).toContain('schedule_report');
     expect(HOST_PTY_ONLY_TOOL_NAMES).toContain('register_agent');
+  });
+
+  it('reserves SHARE names so plugins cannot register colliding tools', async () => {
+    const { RESERVED_AGENT_TOOL_NAMES } = await import(
+      '@zana-ai/zcc-plugin-sdk/internal/host-policy'
+    );
+    expect(RESERVED_AGENT_TOOL_NAMES).toEqual(
+      expect.arrayContaining(['update_environment_directory', ...HOST_SHARE_TOOL_NAMES])
+    );
   });
 });
