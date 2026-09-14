@@ -5338,6 +5338,32 @@ export interface ProjectExecutionConsentGrant {
   expiresAt?: number;
 }
 
+export const EXECUTION_FAILURE_CODES = [
+  'UNKNOWN',
+  'WORK_FAILED',
+  'VALIDATION_FAILED',
+  'PERMISSION_DENIED',
+  'RESOURCE_EXHAUSTED',
+  'TRANSIENT'
+] as const;
+export type ExecutionFailureCode = typeof EXECUTION_FAILURE_CODES[number];
+export const EXECUTION_FAILURE_DETAIL_MAX_CHARS = 2_048;
+
+/** Source-backed baseline available before execution usage/cost attribution exists. */
+export interface ExecutionBaselineMetricsV1 {
+  version: 1;
+  terminalAt?: number;
+  wallDurationMs?: number;
+  workUnitCount: number;
+  completedWorkUnitCount: number;
+  failedWorkUnitCount: number;
+  skippedWorkUnitCount: number;
+  workAttemptCount: number;
+  blockerCount: number;
+  resolvedBlockerCount: number;
+  resolvedModels: Array<{ slotId: string; provider: string; model: string }>;
+}
+
 /** Non-secret execution status projected by main for one project Agent Board. */
 export interface ExecutionBoardProjection {
   executionId: string;
@@ -5370,10 +5396,19 @@ export interface ExecutionBoardProjection {
   work?: {
     total: number;
     completed: number;
-    counts: Record<'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED', number>;
-    assignments: Array<{ workUnitId: string; title: string; slotId?: string; state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED'; result?: string }>;
+    counts: Record<'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED', number>;
+    assignments: Array<{
+      workUnitId: string;
+      title: string;
+      slotId?: string;
+      state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
+      failureCode?: ExecutionFailureCode;
+      failureDetail?: string;
+      result?: string;
+    }>;
     rosterSlotIds: string[];
   };
+  baselineMetrics?: ExecutionBaselineMetricsV1;
   currentBlocker?: {
     id: string;
     workUnitId: string;

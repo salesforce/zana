@@ -101,7 +101,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         const assignedSlotId = assignmentDrafts[assignment.workUnitId] ?? assignment.slotId ?? execution.work?.rosterSlotIds[0] ?? '';
         return <div key={assignment.workUnitId}>
           {assignment.title} → {assignment.slotId ?? 'unassigned'} · {assignment.state}
-          {(assignment.state === 'FAILED' || assignment.state === 'BLOCKED') && <>
+          {!isTerminal && (assignment.state === 'FAILED' || assignment.state === 'BLOCKED') && <>
             <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>
               <option value="">Unassigned</option>{execution.work?.rosterSlotIds.map((slotId) => <option key={slotId} value={slotId}>{slotId}</option>)}
             </select>

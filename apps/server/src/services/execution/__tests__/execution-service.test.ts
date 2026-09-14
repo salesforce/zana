@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ExecutionService, type ExecutionRequestV1, SquadExecutionService, deriveJobTitle, dependencyResultsSection, MAX_DEP_RESULT_CHARS, AUTO_FINALIZE_SUMMARY } from '../service.js';
+import { ExecutionService, type ExecutionRequestV1, SquadExecutionService, deriveJobTitle, dependencyResultsSection, MAX_DEP_RESULT_CHARS, AUTO_FAIL_SUMMARY, AUTO_FINALIZE_SUMMARY } from '../service.js';
 import { createExecutionStore, type ExecutionRecord } from '../store.js';
 import { createExecutionArtifactStore } from '../artifact-store.js';
 import { createResumeGrantStore } from '../resume-grant-store.js';
@@ -291,6 +291,25 @@ describe('SquadExecutionService', () => {
     expect(replyToSession).not.toHaveBeenCalledWith('worker-1', expect.stringContaining('assigned work unit `a`'));
   }));
 
+  it('returns a claim to READY when assignment delivery fails', async () => fixture(async (filePath) => {
+    const deliverToWorker = vi.fn(() => false);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, deliverToWorker,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2,
+        slots: [{ slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1' }]
+      } } })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }
+    ] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await expect(service.dispatchReady(coordinator)).resolves.toMatchObject({ ok: true });
+    expect(deliverToWorker).toHaveBeenCalledTimes(1);
+    expect((await store.get('execution-1'))?.workUnits?.[0]).toMatchObject({ state: 'READY', attempt: 1 });
+  }));
+
   it('lets execution owner retry, release, and reassign eligible work only within durable roster', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new SquadExecutionService(deps(filePath, { store, authorizeTeamLaunch: () => ({ ok: true as const, value: {
@@ -299,7 +318,10 @@ describe('SquadExecutionService', () => {
         { slotId: 'slot-1', personaId: 'persona', authorizationIdDigest: 'digest-1' },
         { slotId: 'slot-2', personaId: 'persona', authorizationIdDigest: 'digest-2' }
       ] }
-    } }) }));
+    } }), getTeamLaunch: async () => ({ workers: [
+      { slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' },
+      { slotId: 'slot-2', sessionId: 'worker-2', projectId: 'project-1' }
+    ] }) }));
     await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
     let record = await store.get('execution-1');
     if (!record) throw new Error('missing execution');
@@ -322,11 +344,61 @@ describe('SquadExecutionService', () => {
     await expect(board.retryWorkFromBoard('owner', 'project-1', record.id, record.stateVersion, 'failed', 'forged')).resolves.toMatchObject({ ok: false, code: 'INVALID' });
     const retried = await board.retryWorkFromBoard('owner', 'project-1', record.id, record.stateVersion, 'failed', 'slot-2') as { ok: true; value: typeof record };
     expect(retried.value.workUnits).toContainEqual(expect.objectContaining({ id: 'failed', state: 'READY', assignedSlotId: 'slot-2' }));
-    const released = await board.releaseWorkFromBoard('owner', 'project-1', record.id, retried.value.stateVersion, 'claimed') as { ok: true; value: typeof record };
-    expect(released.value.workUnits?.find((unit) => unit.id === 'claimed')).toMatchObject({ id: 'claimed', state: 'READY' });
-    expect(released.value.workUnits?.find((unit) => unit.id === 'claimed')).not.toHaveProperty('assignedSlotId');
-    const reassigned = await board.reassignWorkFromBoard('owner', 'project-1', record.id, released.value.stateVersion, 'ready', 'slot-1') as { ok: true; value: typeof record };
-    expect(reassigned.value.workUnits).toContainEqual(expect.objectContaining({ id: 'ready', state: 'READY', assignedSlotId: 'slot-1' }));
+    record = (await store.get(record.id))!;
+    expect(record.workUnits).toContainEqual(expect.objectContaining({ id: 'failed', state: 'CLAIMED', assignedSlotId: 'slot-2' }));
+    const released = await board.releaseWorkFromBoard('owner', 'project-1', record.id, record.stateVersion, 'claimed') as { ok: true; value: typeof record };
+    expect(released.ok).toBe(true);
+    record = (await store.get(record.id))!;
+    expect(record.workUnits?.find((unit) => unit.id === 'claimed')).toMatchObject({ id: 'claimed', state: 'CLAIMED', assignedSlotId: 'slot-1' });
+    const failed = record.workUnits?.find((unit) => unit.id === 'failed');
+    if (!failed) throw new Error('missing retried unit');
+    record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: failed.assignedSlotId! }, failed.id, 'done');
+    const ready = record.workUnits?.find((unit) => unit.id === 'ready');
+    if (!ready) throw new Error('missing ready unit');
+    const reassigned = await board.reassignWorkFromBoard('owner', 'project-1', record.id, record.stateVersion, ready.id, 'slot-2') as { ok: true; value: typeof record };
+    expect(reassigned.ok).toBe(true);
+    expect((await store.get(record.id))?.workUnits).toContainEqual(expect.objectContaining({ id: 'ready', state: 'CLAIMED', assignedSlotId: 'slot-2' }));
+  }));
+
+  it('dispatches an independent sibling after typed failure and settles failed DAG after runnable work completes', async () => fixture(async (filePath) => {
+    const deliverToWorker = vi.fn(() => true);
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true as const, value: { canceledSessionIds: [], pendingSessionIds: [] } }));
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, deliverToWorker, cancelTeamLaunch,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1' },
+          { slotId: 'slot-2', personaId: 'worker', authorizationIdDigest: 'w2' }
+        ] } } }),
+      getTeamLaunch: async () => ({ workers: [
+        { slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' },
+        { slotId: 'slot-2', sessionId: 'worker-2', projectId: 'project-1' }
+      ] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [
+      { id: 'root', title: 'Root', task: 'root', dependencies: [], files: ['root.txt'], verification: ['check'] },
+      { id: 'dependent', title: 'Dependent', task: 'dependent', dependencies: ['root'], files: ['dependent.txt'], verification: ['check'] },
+      { id: 'independent', title: 'Independent', task: 'independent', dependencies: [], files: ['independent.txt'], verification: ['check'] }
+    ] });
+    let record = (await store.get('execution-1'))!;
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'root', 'slot-1');
+    const worker1 = { executionId: record.id, projectId: record.projectId, slotId: 'slot-1', role: 'worker' as const };
+    await expect(service.failWork(worker1, 'root', 'tests failed', 'VALIDATION_FAILED')).resolves.toMatchObject({ ok: true });
+    record = (await store.get(record.id))!;
+    expect(record.workUnits).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'root', state: 'FAILED', failureCode: 'VALIDATION_FAILED' }),
+      expect.objectContaining({ id: 'dependent', state: 'SKIPPED' }),
+      expect.objectContaining({ id: 'independent', state: 'CLAIMED', assignedSlotId: 'slot-2' })
+    ]));
+    expect(deliverToWorker).toHaveBeenCalledTimes(1);
+    expect(deliverToWorker).toHaveBeenCalledWith('worker-2', expect.stringContaining('`independent`'));
+    await service.completeWork({ ...worker1, slotId: 'slot-2' }, 'independent', 'done');
+    record = (await store.get(record.id))!;
+    expect(record.state).toBe('FAILED');
+    expect(record.finalSummary).toBeUndefined();
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('owner', 'request-1');
+    expect((await service.events('owner', 'project-1', record.id)).events).toContainEqual(expect.objectContaining({ summary: AUTO_FAIL_SUMMARY }));
   }));
 
   it('accepts producer events and artifacts from bound cohort and stamps authority server-side', async () => fixture(async (filePath) => {

@@ -254,7 +254,8 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export function makeJobTeamCoordinatorBinary(): FakeAgentBinary {
+export function makeJobTeamCoordinatorBinary(options: { scenario?: 'success' | 'failed-dag' } = {}): FakeAgentBinary {
+  const failedDag = options.scenario === 'failed-dag';
   const script = String.raw`#!/usr/bin/env node
 'use strict';
 const fs = require('fs');
@@ -283,6 +284,7 @@ const EXECUTION_ID = execMatch ? execMatch[1] : null;
 const IS_ORCHESTRATOR = /coordinator of Team/.test(PROMPT);
 const IS_WORKER = /worker standby/.test(PROMPT);
 const IS_OWNER = /E2E start Job Team/.test(PROMPT);
+const FAILED_DAG = ${JSON.stringify(failedDag)};
 
 const ROLE = IS_ORCHESTRATOR ? 'ORCH' : IS_WORKER ? 'WORK' : IS_OWNER ? 'OWNR' : 'UNKN';
 // Progress goes to stderr (Playwright captures it on failure) and a per-process
@@ -347,12 +349,18 @@ async function status() {
   return snap && snap.execution ? snap.execution : null;
 }
 
-const PLAN = [
+const SUCCESS_PLAN = [
   { id: 'home', title: 'Write Home', task: 'Create home.txt containing HOME: ready', dependencies: [], files: ['home.txt'], verification: ['home.txt present'] },
   { id: 'about', title: 'Write About', task: 'Create about.txt containing ABOUT: ready', dependencies: [], files: ['about.txt'], verification: ['about.txt present'] },
   { id: 'navigation-label', title: 'Ask Navigation Label', task: 'Raise a durable human question with two label choices', dependencies: ['home', 'about'], readOnly: true, verification: ['durable question answered'] },
   { id: 'assemble', title: 'Assemble Result', task: 'Write result.txt from both worker outputs and the chosen label', dependencies: ['navigation-label'], files: ['result.txt'], verification: ['cat result.txt'] }
 ];
+const FAILED_DAG_PLAN = [
+  { id: 'fail-root', title: 'Fail Root', task: 'Fail with a typed validation error', dependencies: [], readOnly: true, verification: ['failure recorded'] },
+  { id: 'dependent', title: 'Dependent', task: 'Must not run after fail-root fails', dependencies: ['fail-root'], readOnly: true, verification: ['state is skipped'] },
+  { id: 'independent', title: 'Independent', task: 'Complete despite the failed sibling branch', dependencies: [], readOnly: true, verification: ['independent.txt present'] }
+];
+const PLAN = FAILED_DAG ? FAILED_DAG_PLAN : SUCCESS_PLAN;
 
 async function owner() {
   log('owner start');
@@ -400,7 +408,7 @@ async function orchestrator() {
   // transition the execution to COMPLETED once the terminal unit completes.
   for (let i = 0; i < 900; i++) {
     const exec = await status().catch(function () { return null; });
-    if (exec && exec.state === 'COMPLETED') { log('engine auto-finalized', exec.finalSummary || ''); break; }
+    if (exec && (exec.state === 'COMPLETED' || exec.state === 'FAILED')) { log('engine auto-settled', exec.state, exec.finalSummary || ''); break; }
     await sleep(500);
   }
   await hold();
@@ -461,7 +469,14 @@ async function handleNavigationLabel() {
 async function doUnit(unitId) {
   log('assigned', unitId);
   try {
-    if (unitId === 'home') {
+    if (unitId === 'fail-root') {
+      await mcp('execution.work.fail', { executionId: EXECUTION_ID, workUnitId: unitId, failureCode: 'VALIDATION_FAILED', failure: 'Deterministic E2E validation failure' });
+    } else if (unitId === 'independent') {
+      fs.writeFileSync(path.join(CWD, 'independent.txt'), 'independent completed\n');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'independent completed' });
+    } else if (unitId === 'dependent') {
+      throw new Error('dependent work was dispatched after its dependency failed');
+    } else if (unitId === 'home') {
       fs.writeFileSync(path.join(CWD, 'home.txt'), 'HOME: ready\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'home', result: 'HOME: ready' });
     } else if (unitId === 'about') {

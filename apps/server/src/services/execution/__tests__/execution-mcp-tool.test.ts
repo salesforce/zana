@@ -638,7 +638,7 @@ describe('execution MCP tools', () => {
       ['execution.work.claim', { executionId: 'execution-1', workUnitId: 'unit-1' }],
       ['execution.work.assign', { executionId: 'execution-1', workUnitId: 'unit-1', assignedSlotId: 'slot-1' }],
       ['execution.work.complete', { executionId: 'execution-1', workUnitId: 'unit-1', result: 'done' }],
-      ['execution.work.fail', { executionId: 'execution-1', workUnitId: 'unit-1', failure: 'failed' }],
+      ['execution.work.fail', { executionId: 'execution-1', workUnitId: 'unit-1', failure: 'failed', failureCode: 'TRANSIENT' }],
       ['execution.work.block', { executionId: 'execution-1', workUnitId: 'unit-1', blockerId: 'blocker-1', question: 'Need input?' }],
       ['execution.work.release', { executionId: 'execution-1', workUnitId: 'unit-1' }],
       ['execution.work.retry', { executionId: 'execution-1', workUnitId: 'unit-1' }],
@@ -654,6 +654,7 @@ describe('execution MCP tools', () => {
       expect(result, name).toMatchObject({ isError: true });
       expect(text(result), name).toContain('role is not authorized');
     }
+    expect(execution.failWork).toHaveBeenCalledWith(binding, 'unit-1', 'failed', 'TRANSIENT');
   });
 
   it('maps unbound service failures and missing reads to explicit tool errors', async () => {

@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 
 const JOBTEAM_SPECS = [
   'e2e/job-team-launch-ui.spec.ts',
+  'e2e/job-team-failed-dag.spec.ts',
   'e2e/cli-agent-job-team-run.spec.ts',
   'e2e/modern-owner-job-team-run.spec.ts'
 ];
