@@ -4,6 +4,7 @@ import {
   composerProjectOptions,
   DEFAULT_COMPOSER_WORKSPACE_LABEL,
   isRemoteWorkspaceProject,
+  isScratchWorkspaceProject,
   preferredComposerProjectId,
   resolveComposerProjectId,
   scratchWorkspaceProject,
@@ -21,6 +22,15 @@ describe('scratchWorkspaceProject', () => {
 
   it('falls back to a project named zcc-workspace when the flag is missing', () => {
     expect(scratchWorkspaceProject([coreRepo, { id: 'ws', name: SCRATCH_WORKSPACE_NAME }])?.id).toBe('ws');
+  });
+});
+
+describe('isScratchWorkspaceProject', () => {
+  it('matches the quickAgent flag, the scratch folder name, and the legacy folder name', () => {
+    expect(isScratchWorkspaceProject(scratch)).toBe(true);
+    expect(isScratchWorkspaceProject({ name: SCRATCH_WORKSPACE_NAME })).toBe(true);
+    expect(isScratchWorkspaceProject({ name: 'cc-workspace' })).toBe(true);
+    expect(isScratchWorkspaceProject(alpha)).toBe(false);
   });
 });
 

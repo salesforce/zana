@@ -10,7 +10,7 @@
  *
  * Background: `plugins/*` houses first-party plugin source (currently `plugins/docs`).
  * bundle — they are built + packaged + installed into `~/.zcc/extensions/<id>` at
- * runtime (dev: via `seed-extensions.mjs` in predev/prestart; prod: via the
+ * runtime (dev: via `seed-extensions.mjs` in predev/prebuild; prod: via the
  * extension installer + marketplace). Core discovers them at runtime via
  * `discovery.ts` scanning `~/.zcc/extensions`, loads them out-of-process via
  * `utilityProcess`, and gates them via the permission broker. Core never imports
@@ -203,7 +203,7 @@ describe('Core-extension separation guard', () => {
     expect(existsSync(join(pluginsRoot, 'zana-hub'))).toBe(false);
   });
 
-  it('seed-extensions.mjs runs in predev/prestart/prebuild, not inlined in dist scripts', () => {
+  it('seed-extensions.mjs runs in predev/prebuild, not inlined in dist scripts', () => {
     // First-party plugins under plugins/ compile via seed-extensions (app.js +
     // static playground assets). prebuild must seed so electron-builder
     // extraResources copies playground/dist. dist/release still call `build`,
@@ -213,8 +213,8 @@ describe('Core-extension separation guard', () => {
     const { scripts } = pkg;
 
     expect(scripts.predev).toContain('seed-extensions.mjs');
-    expect(scripts.prestart).toContain('seed-extensions.mjs');
     expect(scripts.prebuild).toContain('seed-extensions.mjs');
+    expect(scripts.prestart).toBeUndefined();
 
     expect(scripts.build).not.toContain('seed-extensions');
     expect(scripts.dist).not.toContain('seed-extensions');

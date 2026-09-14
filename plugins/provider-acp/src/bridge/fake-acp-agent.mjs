@@ -54,6 +54,10 @@
  * - FAKE_ACP_LAUNCH_LOG      → append one line per process launch (used to
  *                              count model-discovery spawns in cache/TTL tests)
  * - FAKE_ACP_PROMPT_LOG      → append one JSON-encoded prompt text per request
+ * - FAKE_ACP_REPLAY_INSTRUCTION_ECHO=1
+ *                            → emit the prompt text as the first
+ *                              agent_message_chunk (Mastra Code echo), then
+ *                              "Hi."
  * - FAKE_ACP_PROMPT_ERROR=1  → reject every session/prompt request
  * - FAKE_ACP_COMPACT_STOP_REASON
  *                            → stop reason returned for /compact
@@ -393,7 +397,10 @@ async function handlePrompt(message) {
     return;
   }
 
-  if (text === "/compact") {
+  if (process.env.FAKE_ACP_REPLAY_INSTRUCTION_ECHO === "1") {
+    notifyUpdate(messageChunk(text));
+    notifyUpdate(messageChunk("Hi."));
+  } else if (text === "/compact") {
     // OpenCode treats this exact prompt as a provider-local control.
   } else if (text.includes("announce-mcp-tool")) {
     notifyUpdate({

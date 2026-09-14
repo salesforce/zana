@@ -44,6 +44,8 @@ describe('HomeAgentComposer layout', () => {
     expect(source).toContain('onComposerProjectIdChange={setComposerProjectId}');
     expect(source).not.toContain('cliRemoteToolProxy');
     expect(source).not.toContain('onCliRemoteToolProxyChange');
+    expect(source).not.toContain('onLaunched');
+    expect(source).not.toContain('enterProjectFocus');
   });
 
   it('delegates Shift+Tab mode cycling to the shared thread helper', () => {

@@ -16,6 +16,7 @@ import {
 import type { ScheduledTask, Project, ScheduleRun } from '@zana-ai/zcc-domain/product';
 import { useData } from '../../store.js';
 import { KpiCard } from './KpiCard.js';
+import { ProjectDot } from '../listpane/ProjectDot.js';
 import {
   formatRelative,
   formatDuration,
@@ -554,10 +555,7 @@ export function SchedulerOverview({
           <ul className="overview-projects">
             {projectStats.map((s) => (
               <li key={s.project.id} className="overview-project-row">
-                <span
-                  className="project-dot"
-                  style={s.project.color ? { background: s.project.color } : undefined}
-                />
+                <ProjectDot project={s.project} />
                 {onOpenProject ? (
                   <button
                     type="button"

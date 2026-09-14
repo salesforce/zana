@@ -2290,6 +2290,13 @@ export interface AppConfig {
    */
   composerShowAutonomousTeam?: boolean;
   /**
+   * Launch-surface default revision. Rev {@link COMPOSER_LAUNCH_SURFACES_REV}
+   * resets leftover CLI-only (Modern+Team off from the old both-off healer)
+   * to all-on once. After this is persisted, hiding Modern or Team is a real
+   * opt-out and must not be re-healed.
+   */
+  composerLaunchSurfacesRev?: number;
+  /**
    * Master switch for the EXPERIMENTAL Goals feature: when ON, the "Goals"
    * project-scoped nav tab appears (persistent objectives with falsifiable
    * success criteria that spawn worker sessions and self-evaluate). Under
@@ -2686,6 +2693,9 @@ export const AUTO_CLOSE_IDLE_DEFAULTS = {
   minMinutes: 1,
   maxMinutes: 240
 } as const;
+
+/** Launch-surface default revision. See {@link AppConfig.composerLaunchSurfacesRev}. */
+export const COMPOSER_LAUNCH_SURFACES_REV = 2;
 
 /** Which `.claude/settings*.json` file we're reading or writing. */
 export type ClaudeSettingsScope = 'shared' | 'local';

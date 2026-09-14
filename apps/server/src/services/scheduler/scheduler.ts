@@ -13,6 +13,7 @@ import { MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseEvery as parseEveryShared } from
 import { nextCronRunAt } from '@zana-ai/zcc-domain/parse-cron';
 import { isCronCadence, validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
 import { providerCapabilities, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
+import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
 import type { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import type { LaunchTerminal } from '../launch/terminal-launcher.js';
 import type { IInboxStore } from '../inbox/inbox-store.js';
@@ -740,16 +741,20 @@ export class SchedulerManager extends EventEmitter {
       // a visible tab on demand. Keeps the tab strip clean for fleets of runs.
       headless: true,
       // Marks this as a scheduled run so pty appends the schedule_report
-      // system-prompt guidance (and only for scheduled spawns).
+      // system-prompt guidance (and only for scheduled spawns). Unattended:
+      // default-posture profiles remap onto the adapter's yolo sibling, and
+      // inherited interactive/plan/accept-edits execution is replaced so the
+      // fire cannot stall asking the user.
       scheduled: true,
       // Bake the schedule's loudness into the session so an agent-initiated
       // inbox_push during this run is stamped (or dropped, when silent) with
       // the right level — independent of later edits to the schedule.
       inboxLevel: live.task.inboxLevel ?? 'quiet'
     } as const;
+    const unattendedLaunch = applyUnattendedScheduledLaunch(launchOptions);
     let launched;
     try {
-      launched = this.deps.launchTerminal(launchOptions, { kind: 'schedule', id: `schedule:${live.task.id}` });
+      launched = this.deps.launchTerminal(unattendedLaunch, { kind: 'schedule', id: `schedule:${live.task.id}` });
     } catch (err) {
       this.recordLaunchFailure(id, runId, live, opts, err);
       return;

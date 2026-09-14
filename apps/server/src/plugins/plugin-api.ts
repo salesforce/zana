@@ -1,4 +1,5 @@
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import * as jitiModule from 'jiti';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -1403,20 +1404,27 @@ export function resolveCreateJiti(mod: unknown): CreateJitiFn {
   throw new Error('jiti createJiti is unavailable');
 }
 
-/** Require specifiers that can see `apps/server`'s jiti from Electron `out/main`. */
+/** Require specifiers that can see `jiti` from Electron `out/main` and a packed asar. */
 export function jitiRequireIds(cwd = process.cwd(), metaUrl = import.meta.url): string[] {
-  return [
+  const ids = [
     metaUrl,
     pathToFileURL(join(cwd, 'package.json')).href,
     pathToFileURL(join(cwd, 'apps', 'server', 'package.json')).href
   ];
+  try {
+    ids.push(pathToFileURL(join(dirname(fileURLToPath(metaUrl)), '..', '..', 'package.json')).href);
+  } catch {
+    /* import.meta.url may not be a file URL */
+  }
+  return [...new Set(ids)];
 }
 
 export async function loadCreateJiti(
   importJiti: () => Promise<unknown> = () => import('jiti'),
-  requireIds: readonly string[] = jitiRequireIds()
+  requireIds: readonly string[] = jitiRequireIds(),
+  bundledJiti: unknown = jitiModule
 ): Promise<CreateJitiFn> {
-  const attempts: unknown[] = [];
+  const attempts: unknown[] = [bundledJiti];
   try {
     attempts.push(await importJiti());
   } catch {

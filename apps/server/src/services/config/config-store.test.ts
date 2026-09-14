@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig } from '@zana-ai/zcc-domain/product';
 import { createConfigStore } from '@zana-ai/zcc-server';
 
 describe('createConfigStore', () => {
@@ -35,7 +35,7 @@ describe('createConfigStore', () => {
     });
   });
 
-  it('defaults composer launch surfaces on and refuses a both-off pair', () => {
+  it('defaults composer launch surfaces on and migrates leftover CLI-only once', () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-surfaces-'));
     const configFile = join(homeDir, '.zcc', 'config.json');
     const config = createConfigStore(
@@ -58,19 +58,54 @@ describe('createConfigStore', () => {
     mkdirSync(dirname(configFile), { recursive: true });
     writeFileSync(configFile, JSON.stringify({
       version: 1,
-      composerShowCliAgent: false,
+      composerShowCliAgent: true,
       composerShowModern: false,
-      composerShowAutonomousTeam: false
+      composerShowAutonomousTeam: false,
+      teamJobLaunchEnabled: false
     }));
     expect(config.getConfig()).toMatchObject({
       composerShowCliAgent: true,
-      composerShowModern: false
+      composerShowModern: true,
+      composerShowAutonomousTeam: true,
+      teamJobLaunchEnabled: true,
+      composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV
+    });
+    expect(JSON.parse(readFileSync(configFile, 'utf8')) as AppConfig).toMatchObject({
+      composerShowCliAgent: true,
+      composerShowModern: true,
+      composerShowAutonomousTeam: true,
+      teamJobLaunchEnabled: true,
+      composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV
+    });
+
+    config.setConfig({ composerShowModern: false });
+    expect(JSON.parse(readFileSync(configFile, 'utf8')) as AppConfig).toMatchObject({
+      composerShowCliAgent: true,
+      composerShowModern: false,
+      composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV
+    });
+
+    config.setConfig({
+      composerShowCliAgent: true,
+      composerShowModern: false,
+      composerShowAutonomousTeam: false,
+      teamJobLaunchEnabled: false
+    });
+    expect(JSON.parse(readFileSync(configFile, 'utf8')) as AppConfig).toMatchObject({
+      composerShowCliAgent: true,
+      composerShowModern: false,
+      composerShowAutonomousTeam: false,
+      teamJobLaunchEnabled: false,
+      composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV
     });
 
     config.setConfig({ composerShowCliAgent: false, composerShowModern: false });
     expect(JSON.parse(readFileSync(configFile, 'utf8')) as AppConfig).toMatchObject({
       composerShowCliAgent: true,
-      composerShowModern: false
+      composerShowModern: true,
+      composerShowAutonomousTeam: true,
+      teamJobLaunchEnabled: true,
+      composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV
     });
   });
 

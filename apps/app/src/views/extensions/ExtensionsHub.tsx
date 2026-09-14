@@ -52,6 +52,7 @@ import { PluginBrowseSplit } from './PluginBrowseSplit.js';
 import { PluginMoreFromAuthor, PluginOverviewLead, PluginReleaseSection, PluginDetailsSection } from './CatalogPluginDetail.js';
 import { PluginOverviewMarkdown } from './PluginOverviewMarkdown.js';
 import { installedNotRunning, installedRuntimeStatus } from './installed-row-status.js';
+import { summarizePluginHealthDetail } from './plugin-health.js';
 import { useUi } from '@/store';
 import {
   buildHubRows,
@@ -540,7 +541,8 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
       ...row,
       plugin: row.plugin ? { ...row.plugin, enabled: true } : null
     });
-  const description = runtime?.detail ?? rowDescription(row);
+  const health = summarizePluginHealthDetail(runtime?.detail);
+  const description = health.summary || rowDescription(row);
   const Icon = resolveIcon(displayIcon(row.module.icon));
   const runtimeToneClass =
     runtime?.tone === 'error'
@@ -635,16 +637,16 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
             <ArrowUpCircle size={14} />
           </button>
         ) : null}
+        {notRunning && !runtime ? (
+          <span
+            data-testid={`plugin-not-running-${row.module.id}`}
+            className={`ext-installed-not-running ${runtimeToneClass}`}
+          >
+            not running
+          </span>
+        ) : null}
         {canToggle ? (
           <label className="ext-installed-switch" title={enabled ? 'Disable' : 'Enable'}>
-            {notRunning ? (
-              <span
-                data-testid={`plugin-not-running-${row.module.id}`}
-                className={`ext-installed-not-running ${runtimeToneClass}`}
-              >
-                not running
-              </span>
-            ) : null}
             <input
               type="checkbox"
               role="switch"
@@ -1002,6 +1004,7 @@ function PermissionsCard({ entry }: { entry: ExtensionEntry }) {
 /** Generic, core-owned header: title, provenance, version/status, enable + reveal. */
 function AboutCard({ row }: { row: HubRow }) {
   const { module, entry, plugin } = row;
+  const healthCopy = summarizePluginHealthDetail(plugin?.statusDetail);
   const Icon = resolveIcon(displayIcon(module.icon));
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [aboutMenuOpen, setAboutMenuOpen] = useState(false);
@@ -1343,15 +1346,18 @@ function AboutCard({ row }: { row: HubRow }) {
           action pushed to the far right and separated by a hairline so it can't
           be hit by muscle memory. Confirm/Cancel replace Uninstall in place. */}
       {plugin && (plugin.status === 'degraded' || plugin.status === 'needs-configuration' || plugin.statusDetail) ? (
-        <div className="ext-actions-group">
+        <div className="ext-actions-group ext-plugin-health" data-testid="plugin-health">
           <div className="ext-actions-group-head">
             <span className="ext-actions-group-title">Health</span>
-            <span className="ext-actions-group-hint">
-              {plugin.statusDetail ??
+            <span className="ext-plugin-health-summary">
+              {healthCopy.summary ||
                 (plugin.status === 'needs-configuration'
                   ? 'This plugin needs configuration before it can run fully.'
                   : 'Reload the plugin process without restarting the app.')}
             </span>
+            {healthCopy.technical && healthCopy.technical !== healthCopy.summary ? (
+              <pre className="ext-plugin-health-detail">{healthCopy.technical}</pre>
+            ) : null}
           </div>
           <div className="ext-actions">
             <button type="button" className="settings-btn" onClick={() => void reloadPlugin()} disabled={pluginReloading}>

@@ -42,7 +42,7 @@ await zcc.cleanup();
 ```
 
 `Zcc.connect()` **attaches** to a running app. It probes
-`http://127.0.0.1:8780` (packaged / `pnpm dev:prod`) then `:8781`
+`http://127.0.0.1:8780` (packaged / `pnpm start`) then `:8781`
 (`pnpm dev` + `~/.zcc-dev`). If both answer, set `ZCC_SERVER_URL`.
 
 `Zcc.launch({ isolated: true })` starts **server + enrolled host-daemon** in a

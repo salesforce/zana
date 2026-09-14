@@ -664,19 +664,30 @@ describe('resolveCreateJiti', () => {
   });
 
   it('fails when neither import nor require lookup yields createJiti', async () => {
-    await expect(loadCreateJiti(async () => ({}), [])).rejects.toThrow(/unavailable/);
+    await expect(loadCreateJiti(async () => ({}), [], null)).rejects.toThrow(/unavailable/);
+  });
+
+  it('uses the bundled jiti module when dynamic import and require both miss', async () => {
+    const createJiti = await loadCreateJiti(async () => ({}), []);
+    expect(typeof createJiti).toBe('function');
   });
 
   it('finds jiti when createRequire(import.meta.url) is an Electron out/main bundle', async () => {
-    const bundleUrl = pathToFileURL(join(tmpdir(), 'out', 'main', 'server-runtime.js')).href;
+    const tmp = tmpdir();
+    const bundleUrl = pathToFileURL(join(tmp, 'out', 'main', 'server-runtime.js')).href;
     expect(jitiRequireIds('/repo', bundleUrl)).toEqual([
       bundleUrl,
       pathToFileURL('/repo/package.json').href,
-      pathToFileURL(join('/repo', 'apps', 'server', 'package.json')).href
+      pathToFileURL(join('/repo', 'apps', 'server', 'package.json')).href,
+      pathToFileURL(join(tmp, 'package.json')).href
     ]);
-    const createJiti = await loadCreateJiti(async () => {
-      throw new Error('esm import missing in utility process');
-    }, jitiRequireIds(process.cwd(), bundleUrl));
+    const createJiti = await loadCreateJiti(
+      async () => {
+        throw new Error('esm import missing in utility process');
+      },
+      jitiRequireIds(process.cwd(), bundleUrl),
+      null
+    );
     expect(typeof createJiti).toBe('function');
   });
 });

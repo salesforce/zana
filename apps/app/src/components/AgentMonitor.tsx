@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import type { AgentState, ExecutionBoardProjection } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, usePersonas } from '../store.js';
-import { useNavigate } from 'react-router-dom';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { AGENT_MONITOR_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
@@ -293,14 +292,13 @@ interface RowProps {
 function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onContextMenu }: RowProps) {
   const personas = usePersonas((s) => s.personas);
   const terminals = useData((s) => s.terminals);
-  const navigate = useNavigate();
   if (item.kind === 'schedule') {
     return (
       <button
         type="button"
         className={`agent-monitor-row is-schedule lane-${laneKey} ${active ? 'active' : ''}${item.task.enabled ? '' : ' exited'}`}
         data-kind="schedule"
-        onClick={() => openScheduleFromAgents(item.task, terminals, navigate)}
+        onClick={() => openScheduleFromAgents(item.task, terminals)}
         onContextMenu={onContextMenu}
         title={`${item.title} · ${item.projectName}`}
       >

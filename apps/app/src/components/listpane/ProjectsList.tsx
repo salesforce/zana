@@ -54,6 +54,7 @@ import { getAgentSessionRoutePath, getThreadRoutePath } from '../../lib/route-pa
 import { railThreadsForProject, threadIsLiveForRail } from '../fleet-item.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../lib/suppress-post-drag-click.js';
 import { composerProjectLabel, isRemoteWorkspaceProject } from '../composer-project-default.js';
+import { ProjectDot } from './ProjectDot.js';
 import { resolveIcon } from '../../lib/resolveIcon.js';
 import { listCreateProjectActions, listProjectMenuActions, subscribePluginSlots } from '../../plugins/plugin-slots.js';
 import { createProjectActionContext, projectMenuNavigateContext } from '../../plugins/plugin-nav-href.js';
@@ -636,13 +637,7 @@ export function ProjectsList({
                 .filter(Boolean)
                 .join('\n');
               const hasUnread = listedTerminals(terminals[p.id]).some((t) => unread[t.id]);
-              const projectDot = (
-                <span
-                  className={`project-dot ${hasUnread ? 'unread' : ''}`}
-                  style={p.color ? { background: p.color } : undefined}
-                  title={hasUnread ? 'New activity' : undefined}
-                />
-              );
+              const projectDot = <ProjectDot project={p} unread={hasUnread} />;
               const projectMeta = (
                 <span className="project-meta project-meta--inline" title={tooltip || undefined}>
                   <span className="project-name">{displayName}</span>

@@ -56,6 +56,7 @@ import {
 } from "./tool-classification.js";
 import { resolveAcpToolCallPath } from "./tool-call-operation.js";
 import { acpVisibilityMetadata } from "./visibility.js";
+import { createSystemInstructionEchoStripper } from "./system-instruction-echo.js";
 import {
   acpAgentMessageChunkUpdateSchema,
   acpAgentThoughtChunkUpdateSchema,
@@ -170,6 +171,7 @@ export function createAcpDeltaTranslator(
 ) {
   const dialect = options.dialect ?? GENERIC_ACP_DIALECT;
   const pathOptions = { cwd: options.cwd };
+  const instructionEcho = createSystemInstructionEchoStripper();
   const mergedToolCalls = new Map<string, AcpOpenToolCall>();
 
   let injectedToolsByName = new Map<string, AcpInjectedTool>();
@@ -602,11 +604,15 @@ export function createAcpDeltaTranslator(
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
         const parsed = acpAgentMessageChunkUpdateSchema.safeParse(update);
-        const text = parsed.success
+        const rawText = parsed.success
           ? extractAcpContentText(parsed.data.content)
           : undefined;
-        if (text === undefined) {
+        if (rawText === undefined) {
           return suppressedUnhandled(rawEvent);
+        }
+        const text = instructionEcho.consume(rawText);
+        if (text.length === 0) {
+          return [];
         }
         return [
           closeThoughtStream(),
@@ -827,6 +833,7 @@ export function createAcpDeltaTranslator(
     stopReason: AcpStopReason,
     context: AcpDeltaTranslationContext | undefined,
   ): ThreadDelta[] {
+    instructionEcho.finish();
     const status = turnStatusForStopReason(stopReason);
     return [
       ...flushOpenTurnWork(context, itemStatusForTurnStatus(status)),
@@ -1118,7 +1125,12 @@ export function createAcpDeltaTranslator(
     return injectedToolBindings.get(callKey({ threadId }, toolCallId));
   }
 
+  function armSystemInstructionEcho(expectedEcho: string): void {
+    instructionEcho.arm(expectedEcho);
+  }
+
   return {
+    armSystemInstructionEcho,
     configureInjectedTools,
     getInjectedToolBinding,
     noteDelegationReport,

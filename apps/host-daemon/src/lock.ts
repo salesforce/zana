@@ -65,7 +65,7 @@ function unlinkIfOwner(lockPath: string, pid: number): void {
 /**
  * Exclusive lock for one enrolled host-daemon per data dir. A stale lock
  * (dead pid) is replaced. `steal: true` is for the desktop co-started daemon:
- * it must take over ~/.zcc even if a leftover `enroll-entry` from `pnpm start`
+ * it must take over ~/.zcc even if a leftover `enroll-entry` from `pnpm dev`
  * still holds the file, otherwise this machine stays Offline in the app that
  * the user is actually looking at.
  */

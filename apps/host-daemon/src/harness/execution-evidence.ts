@@ -4,7 +4,7 @@ import type {
   HarnessScope
 } from '@zana-ai/zcc-domain/harness-adapter';
 import { createHash } from 'node:crypto';
-import { compareVersions } from '@zana-ai/zcc-domain';
+import { versionFloorDecision } from './version-floor.js';
 
 export interface ExecutionEvidenceFixture {
   id: string;
@@ -74,14 +74,8 @@ export function evaluateExecutionEvidence(
   if (evidence.status !== 'approved') {
     return { classification: 'unavailable', reason: `${evidence.status} evidence` };
   }
-  if (!input.cliVersion || compareVersions(input.cliVersion, evidence.cliVersion) < 0) {
-    return {
-      classification: 'unavailable',
-      reason: input.cliVersion
-        ? `CLI version below reviewed floor (installed ${input.cliVersion}, requires >= ${evidence.cliVersion})`
-        : 'CLI version below reviewed floor (installed version could not be determined)'
-    };
-  }
+  const floor = versionFloorDecision(input.cliVersion, evidence.cliVersion);
+  if (!floor.ok) return { classification: 'unavailable', reason: floor.reason };
   if (!target.scopes.includes(input.scope) || !evidence.scopes.includes(input.scope)) {
     return { classification: 'unavailable', reason: 'scope mismatch' };
   }

@@ -42,6 +42,7 @@ describe('Settings subsection navigation', () => {
     expect(panel).toContain("import { ComposerSettingsView } from '@/views/settings/ComposerSettingsView'");
     expect(panel).toContain("tab === 'composer'");
     expect(panel).toContain('<ComposerSettingsView');
+    expect(panel).toContain('product.config.onChanged');
     const agents = readFileSync(
       fileURLToPath(new URL('../../views/settings/AgentsSettingsView.tsx', import.meta.url)),
       'utf8'

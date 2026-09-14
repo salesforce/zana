@@ -646,7 +646,6 @@ export function LegacyAgentHomeComposer({
       if (onLaunched) {
         onLaunched(session, project.id);
       } else {
-        useUi.getState().enterProjectFocus(project.id);
         selectTab(project.id, session.id);
         if (!onClose) useUi.getState().openAgentModal(session.id, project.id);
       }

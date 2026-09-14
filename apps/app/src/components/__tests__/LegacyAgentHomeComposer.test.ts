@@ -267,4 +267,16 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('if (field.typeaheadOpen && field.suggestions.length > 0) return;');
     expect(source).not.toContain('if (field.typeaheadOpen) return;');
   });
+
+  it('stays on the current surface after CLI create instead of entering project view', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).not.toContain('enterProjectFocus');
+    const launchStart = source.indexOf('if (onLaunched) {');
+    expect(launchStart).toBeGreaterThan(-1);
+    const launchBlock = source.slice(launchStart, source.indexOf('onClose?.();', launchStart));
+    expect(launchBlock).toContain('onLaunched(session, project.id)');
+    expect(launchBlock).toContain('selectTab(project.id, session.id)');
+    expect(launchBlock).toContain('if (!onClose) useUi.getState().openAgentModal(session.id, project.id)');
+    expect(launchBlock).not.toContain('enterProjectFocus');
+  });
 });

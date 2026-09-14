@@ -17,8 +17,10 @@ export function isRemoteWorkspaceProject(
   return Boolean(project?.remote) || Boolean(project?.hostId);
 }
 
-export function isScratchWorkspaceProject(project: ComposerProject): boolean {
-  return Boolean(project.quickAgent) || project.name === SCRATCH_WORKSPACE_NAME;
+export function isScratchWorkspaceProject(
+  project: Pick<Project, 'name' | 'quickAgent'>
+): boolean {
+  return Boolean(project.quickAgent) || SCRATCH_FOLDER_NAMES.has(project.name);
 }
 
 export function scratchWorkspaceProject(

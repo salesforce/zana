@@ -59,7 +59,7 @@ To drive isolated `pnpm dev` (`~/.zcc-dev` on port 8781):
 ZCC_DATA_DIR="$HOME/.zcc-dev" ZCC_SERVER_URL=http://127.0.0.1:8781 zcc status --json
 ```
 
-`pnpm dev:prod` shares the packaged workspace; plain `zcc` is the right client.
+`pnpm start` launches the packaged app (`~/.zcc` on port `8780`); plain `zcc` is the right client.
 
 ---
 

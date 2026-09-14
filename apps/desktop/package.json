@@ -6,7 +6,6 @@
   "description": "ZCC Electron shell and native desktop integration.",
   "scripts": {
     "dev": "pnpm --dir ../.. exec electron-vite dev",
-    "start": "pnpm --dir ../.. run prestart && pnpm --dir ../.. exec electron-vite dev",
     "build": "pnpm --dir ../.. run prebuild && pnpm --dir ../.. exec electron-vite build",
     "typecheck": "pnpm --dir ../.. exec tsc --noEmit -p apps/desktop/tsconfig.json",
     "test": "pnpm --dir ../.. exec vitest run --config apps/desktop/vitest.config.ts",

@@ -24,4 +24,8 @@ describe('InboxDetail attention layout', () => {
     expect(source).not.toContain('inbox-detail-meta-id');
     expect(source).not.toContain('InboxGuidance');
   });
+
+  it('opens the agent inspector after spawn without leaving the inbox', () => {
+    expect(source).toContain('onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}');
+  });
 });

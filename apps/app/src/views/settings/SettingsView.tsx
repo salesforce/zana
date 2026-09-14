@@ -199,8 +199,20 @@ export function SettingsView() {
   const [homedir, setHomedir] = useState<string>('');
 
   useEffect(() => {
-    product.config.get().then(setConfig).catch(() => {});
-    product.app.homedir().then(setHomedir).catch(() => {});
+    let cancelled = false;
+    product.config.get().then((next) => {
+      if (!cancelled) setConfig(next);
+    }).catch(() => {});
+    product.app.homedir().then((next) => {
+      if (!cancelled) setHomedir(next);
+    }).catch(() => {});
+    const unsub = product.config.onChanged((next) => {
+      if (!cancelled) setConfig(next);
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, []);
 
   const markSaved = useCallback(() => {

@@ -722,6 +722,7 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
         <AgentLauncher
           project={aliveProject}
           initialPrompt={buildSpawnPrompt(entry)}
+          onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}
           onClose={() => setLauncherOpen(false)}
         />
       )}

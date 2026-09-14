@@ -91,6 +91,15 @@ describe('ExtensionsView plugin catalogue', () => {
     expect(css).toContain('.ext-install-split > .settings-btn:first-of-type {\n  border-radius: 8px 0 0 8px;');
   });
 
+  it('keeps primary button hover on the accent fill so the label stays readable', () => {
+    expect(css).toContain(
+      '.settings-btn:hover:not(:disabled):not(.primary):not(.settings-btn--primary) {\n  background: var(--bg-hover);'
+    );
+    expect(css).toContain(
+      '.settings-btn.primary:hover:not(:disabled),\n.settings-btn--primary:hover:not(:disabled) {\n  color: #fff;\n  background: color-mix(in srgb, var(--accent) 88%, #000);'
+    );
+  });
+
   it('keeps Browse Create a plugin on the page with an example card grid', () => {
     expect(marketplace).toContain("searchParams.get('view') === 'create'");
     expect(marketplace).toContain('BrowseHeroCarousel');
@@ -119,6 +128,22 @@ describe('ExtensionsView plugin catalogue', () => {
     expect(marketplace).not.toContain("install({ kind: 'localDir' }).catch(() => {})");
     expect(marketplace).not.toContain("install({ kind: 'localArchive' }).catch(() => {})");
     expect(marketplace).not.toContain("install({ kind: 'npm', spec }).catch(() => {})");
+  });
+
+  it('does not stuff not-running into the 36px enable switch', () => {
+    expect(hub).toContain('notRunning && !runtime');
+    expect(hub).toContain('data-testid={`plugin-not-running-${row.module.id}`}');
+    const switchBlock = hub.slice(hub.indexOf('className="ext-installed-switch"'));
+    expect(switchBlock.startsWith('className="ext-installed-switch"')).toBe(true);
+    expect(switchBlock.slice(0, 400)).not.toContain('plugin-not-running');
+  });
+
+  it('renders plugin health as a wrapping callout instead of a hint dump', () => {
+    expect(hub).toContain('ext-plugin-health');
+    expect(hub).toContain('ext-plugin-health-summary');
+    expect(hub).toContain('ext-plugin-health-detail');
+    expect(css).toContain('.ext-plugin-health-detail {\n  margin: 8px 0 0;');
+    expect(css).toContain('overflow-wrap: anywhere;');
   });
 
   it('opens plugin details from the trailing chevron as well as the row', () => {

@@ -244,6 +244,65 @@ describe('PtyManager.create — autonomous team runs (yolo base)', () => {
   });
 });
 
+describe('PtyManager.create — scheduled runs are unattended', () => {
+  beforeEach(() => {
+    spawned.length = 0;
+  });
+
+  it('remaps a default claude schedule onto yolo and denies AskUserQuestion', () => {
+    const mgr = new PtyManager();
+    mgr.create({
+      projectId: 'p1',
+      profile: 'claude',
+      cwd: '/tmp',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      scheduled: true
+    });
+    const argv = spawned[0].args;
+    expect(argv).toContain('--dangerously-skip-permissions');
+    expect(argv).not.toContain('--permission-mode');
+    expect(flagValue(argv, '--disallowedTools')).toContain('AskUserQuestion');
+  });
+
+  it('does not inherit a prompting persona permission mode', () => {
+    const mgr = new PtyManager();
+    mgr.create({
+      projectId: 'p1',
+      profile: 'claude',
+      cwd: '/tmp',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      scheduled: true,
+      persona: {
+        id: 'p',
+        name: 'P',
+        baseProfile: 'claude',
+        permissionMode: 'plan'
+      }
+    });
+    const argv = spawned[0].args;
+    expect(argv).toContain('--dangerously-skip-permissions');
+    expect(flagValue(argv, '--permission-mode')).toBeUndefined();
+  });
+
+  it('remaps cursor onto --force so the TUI cannot prompt', () => {
+    const mgr = new PtyManager();
+    mgr.create({
+      projectId: 'p1',
+      profile: 'cursor',
+      cwd: '/tmp',
+      cols: 80,
+      rows: 24,
+      config: CONFIG,
+      scheduled: true
+    });
+    expect(spawned[0].args).toContain('--force');
+  });
+});
+
 describe('extractPinnedSessionId', () => {
   it('recovers a UUID from --resume <uuid>', () => {
     expect(extractPinnedSessionId(['--resume', UUID])).toBe(UUID);

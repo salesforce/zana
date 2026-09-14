@@ -171,7 +171,11 @@ export default defineConfig({
       __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify(bundledRelayToken()),
       __ZCC_BUNDLED_POSTHOG_API_KEY__: JSON.stringify(bundledPosthogApiKey())
     },
-    plugins: [externalizeDepsPlugin({ exclude: ['jiti'] })],
+    // Leave jiti external. Rolldown emits an empty `jiti-*.js` chunk when it is
+    // bundled (`exclude: ['jiti']`), and the static `import * as jiti from 'jiti'`
+    // then crashes Electron before a window opens. Root `package.json` still
+    // lists jiti so asar `require('jiti')` works in the packaged app.
+    plugins: [externalizeDepsPlugin()],
     resolve: { alias: sdkAlias, conditions: ['source'] },
     build: {
       // Pin this absolutely. Vite 8/rolldown has dumped named entries

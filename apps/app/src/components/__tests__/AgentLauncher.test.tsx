@@ -155,3 +155,23 @@ describe('launcher composer project', () => {
     expect(teamBlock).toContain('composerProjectId');
   });
 });
+
+describe('launcher post-launch stay-put', () => {
+  it('documents stay-put as the omitted-callback default, not project redirect', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('OVERRIDES the default stay-put');
+    expect(source).not.toContain('redirect-into-the-project');
+    expect(source).not.toContain('default redirect (select the project + focus its tab)');
+  });
+
+  it('opens the inspector from Inbox and Library spawn without entering project view', () => {
+    const modal = 'onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}';
+    for (const file of [
+      new URL('../InboxDetail.tsx', import.meta.url),
+      new URL('../../views/library/LibraryView.tsx', import.meta.url),
+      new URL('../../views/library/LibraryPanel.tsx', import.meta.url)
+    ]) {
+      expect(readFileSync(file, 'utf8'), file.pathname).toContain(modal);
+    }
+  });
+});

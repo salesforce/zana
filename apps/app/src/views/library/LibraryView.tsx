@@ -866,6 +866,7 @@ export function LibraryView({ project, deepLink = null }: Props) {
         <AgentLauncher
           project={project}
           initialPrompt={buildSpawnPrompt(selectedDoc)}
+          onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}
           onClose={() => setLauncherOpen(false)}
         />
       )}

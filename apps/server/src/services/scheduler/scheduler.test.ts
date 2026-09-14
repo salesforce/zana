@@ -196,7 +196,7 @@ describe('SchedulerManager.fire — headless spawn', () => {
     manager.runNow(task.id);
     expect(ptys.createCalls).toHaveLength(1);
     const call = ptys.createCalls[0];
-    expect(call.profile).toBe('claude');
+    expect(call.profile).toBe('claude-yolo');
     expect(call.extraArgs).toEqual(['say hello']);
   });
 
@@ -286,6 +286,21 @@ describe('SchedulerManager.fire — headless spawn', () => {
     const call = ptys.createCalls[0];
     expect(call.headless).toBe(true);
     expect(call.logPath).toBeUndefined();
+  });
+
+  it('forces unattended yolo/autonomous execution so the fire cannot prompt', () => {
+    const { manager, ptys, task } = makeManager({ prompt: 'hi' });
+    manager.runNow(task.id);
+    const call = ptys.createCalls[0];
+    expect(call.scheduled).toBe(true);
+    expect(call.profile).toBe('claude-yolo');
+  });
+
+  it('remaps grok onto grok-yolo (no autonomous execution mapping)', () => {
+    const { manager, ptys, task } = makeManager({ profile: 'grok', prompt: 'hi' });
+    manager.runNow(task.id);
+    expect(ptys.createCalls[0].profile).toBe('grok-yolo');
+    expect(ptys.createCalls[0].harnessRouting).toBeUndefined();
   });
 
   it('does not register a data listener (no TUI keystroke driving)', () => {

@@ -77,11 +77,11 @@ interface Props {
    */
   backgroundTabs?: TerminalSession[];
   /**
-   * Post-launch behavior. When provided, it OVERRIDES the default
-   * redirect-into-the-project — the launcher calls it with the freshly created
-   * session + its project id and does NOT navigate. The Agents (global) view
-   * uses this to pop the agent-inspector modal instead of leaving the board.
-   * When omitted, the default redirect (select the project + focus its tab) runs.
+   * Post-launch behavior. When provided, it OVERRIDES the default stay-put
+   * path — the launcher calls it with the freshly created session + its
+   * project id. The Agents (global) view uses this to pop the agent-inspector
+   * modal instead of leaving the board. When omitted, the default selects the
+   * new tab and opens the inspector without entering project view.
    */
   onLaunched?: (session: TerminalSession, projectId: string) => void;
   /**

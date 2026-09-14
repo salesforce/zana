@@ -25,17 +25,22 @@ export function openScheduledLive(
 }
 
 /**
- * Agent View: a running job opens its live page; an armed job with no live
- * session opens the schedule editor.
+ * Agent View: a running job peeks its inspector modal; an armed job with no
+ * live session opens the schedule editor. Scheduler Overview uses
+ * {@link openScheduledLive} for a first-class page instead.
  */
 export function openScheduleFromAgents(
   task: ScheduledTask,
-  terminals: Record<string, TerminalSession[] | undefined>,
-  navigate: (to: string) => void
+  terminals: Record<string, TerminalSession[] | undefined>
 ): void {
   const sessionId = liveSessionIdForTask(task, terminals);
   if (sessionId) {
-    openScheduledLive(task.projectId, sessionId, navigate);
+    const ui = useUi.getState();
+    if (useThreads.getState().threads.some((row) => row.id === sessionId)) {
+      ui.openThreadModal(sessionId);
+      return;
+    }
+    ui.openAgentModal(sessionId, task.projectId);
     return;
   }
   useUi.getState().revealSchedule(task.id);

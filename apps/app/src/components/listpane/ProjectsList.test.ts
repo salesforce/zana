@@ -58,6 +58,7 @@ describe('project-row workspace actions', () => {
     expect(source).toContain('<span className="project-name">{displayName}</span>');
     expect(source).toContain('isRemoteWorkspaceProject(p)');
     expect(source).toContain('className="project-remote-icon"');
+    expect(source).toContain('<ProjectDot project={p} unread={hasUnread} />');
   });
 
   it('opens the shared agent lifecycle menu from a nested session row', () => {

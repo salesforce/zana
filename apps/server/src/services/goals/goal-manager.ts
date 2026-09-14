@@ -15,6 +15,7 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import { providerCapabilities, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import type { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
+import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
 import type { LaunchTerminal } from '../launch/terminal-launcher.js';
 import type { TranscriptRef } from '../followups/idle-triage.js';
 import type { IInboxStore } from '../inbox/inbox-store.js';
@@ -575,9 +576,10 @@ export class GoalManager extends EventEmitter {
       // per-iteration sessions stay silent rather than each spamming the inbox.
       inboxLevel: 'silent'
     } as const;
+    const unattendedLaunch = applyUnattendedScheduledLaunch(launchOptions);
     let launched;
     try {
-      launched = this.deps.launchTerminal(launchOptions, { kind: 'automation', id: `goal:${goal.id}` });
+      launched = this.deps.launchTerminal(unattendedLaunch, { kind: 'automation', id: `goal:${goal.id}` });
     } catch (err) {
       this.recordLaunchFailure(id, iterId, startedAt, live, err);
       return;

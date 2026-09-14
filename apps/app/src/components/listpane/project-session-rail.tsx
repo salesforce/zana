@@ -15,6 +15,7 @@ import { useRouteState } from '../../hooks/useRouteState.js';
 import { getAgentSessionRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { railThreadsForProject } from '../fleet-item.js';
 import { composerProjectLabel, isRemoteWorkspaceProject } from '../composer-project-default.js';
+import { ProjectDot } from './ProjectDot.js';
 import {
   AgentCardMenu,
   clampMenuAnchor,
@@ -151,11 +152,7 @@ export function ProjectSessionRail({
         hidden={collapsed}
       >
         <div className="project-item">
-          <span
-            className={`project-dot ${hasUnread ? 'unread' : ''}`}
-            style={project.color ? { background: project.color } : undefined}
-            title={hasUnread ? 'New activity' : undefined}
-          />
+          <ProjectDot project={project} unread={hasUnread} />
           <span className="project-meta project-meta--inline">
             <span className="project-name">{displayName}</span>
             {isRemoteWorkspaceProject(project) && (

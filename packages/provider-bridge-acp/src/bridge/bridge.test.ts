@@ -2010,6 +2010,22 @@ describe("acp bridge", () => {
     );
   });
 
+  it("hides a leading system-instruction prompt echo from the assistant stream", async () => {
+    const { providerThreadId } = await startThread({
+      instructions: "Be terse.",
+      envVars: { FAKE_ACP_REPLAY_INSTRUCTION_ECHO: "1" },
+    });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "hi", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    const texts = agentMessageTexts();
+    expect(texts.at(-1)).toBe("Hi.");
+    expect(texts.join("")).not.toContain("<system_instructions>");
+  });
+
   it("auto-allows permission requests in full mode", async () => {
     const { providerThreadId } = await startThread({ permissionMode: "full" });
     const turnId = sendTurnRequest("turn/start", providerThreadId, {

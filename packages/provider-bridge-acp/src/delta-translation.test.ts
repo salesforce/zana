@@ -138,6 +138,39 @@ describe("acp delta translation (bridge-shared invariants)", () => {
     expect(harness.openTurnId()).toBe("");
   });
 
+  it("drops a leading system-instruction prompt echo from agent_message_chunk", () => {
+    const harness = createHarness();
+    const echo =
+      "<system_instructions>\nBe terse.\n</system_instructions>\nhello";
+    harness.translator.armSystemInstructionEcho(echo);
+    harness.translate(turnStartedEvent());
+
+    const swallowed = harness.translator.translateAcpEvent(
+      updateEvent({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: echo },
+      }),
+      { threadId: THREAD_ID },
+    );
+    expect(swallowed.filter((delta) => delta.kind === "item.textDelta")).toEqual(
+      [],
+    );
+
+    const reply = harness.translator.translateAcpEvent(
+      updateEvent({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Hi!" },
+      }),
+      { threadId: THREAD_ID },
+    );
+    expect(reply.filter((delta) => delta.kind === "item.textDelta")).toEqual([
+      expect.objectContaining({
+        kind: "item.textDelta",
+        text: "Hi!",
+      }),
+    ]);
+  });
+
   it("settles both items when a terminal tool_call_update changes the item type", () => {
     const harness = createHarness();
     harness.translate(turnStartedEvent());

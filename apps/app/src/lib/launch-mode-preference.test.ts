@@ -16,6 +16,7 @@ import {
   visibleLaunchModeCount,
   writeLaunchModePreference
 } from './launch-mode-preference.js';
+import { COMPOSER_LAUNCH_SURFACES_REV } from '@zana-ai/zcc-domain/product';
 
 function installMemoryStorage() {
   const store = new Map<string, string>();
@@ -64,20 +65,38 @@ describe('composer surface flags', () => {
     expect(composerSurfacesFromConfig({ composerShowAutonomousTeam: false, teamJobLaunchEnabled: false }).showTeam).toBe(false);
   });
 
-  it('repairs a persisted both-off pair to keep CLI Agent on', () => {
+  it('repairs a persisted both-off pair to all three on', () => {
     expect(composerSurfacesFromConfig({
       composerShowCliAgent: false,
       composerShowModern: false,
       composerShowAutonomousTeam: false,
       teamJobLaunchEnabled: false
+    })).toEqual({ showCliAgent: true, showModern: true, showTeam: true });
+  });
+
+  it('resets leftover CLI-only until the launch-surface rev is persisted', () => {
+    expect(composerSurfacesFromConfig({
+      composerShowCliAgent: true,
+      composerShowModern: false,
+      composerShowAutonomousTeam: false,
+      teamJobLaunchEnabled: false
+    })).toEqual({ showCliAgent: true, showModern: true, showTeam: true });
+    expect(composerSurfacesFromConfig({
+      composerShowCliAgent: true,
+      composerShowModern: false,
+      composerShowAutonomousTeam: false,
+      teamJobLaunchEnabled: false,
+      composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV
     })).toEqual({ showCliAgent: true, showModern: false, showTeam: false });
   });
 
   it('keeps one single-agent surface and hides Team until teams exist', () => {
-    const normalized = normalizeComposerSurfaces({ showCliAgent: false, showModern: false, showTeam: true });
+    const normalized = normalizeComposerSurfaces({ showCliAgent: true, showModern: false, showTeam: true });
     expect(normalized).toEqual({ showCliAgent: true, showModern: false, showTeam: true });
     expect(canDisableComposerSurface('agent', normalized)).toBe(false);
     expect(visibleComposerLaunchModes(normalized, { hasTeams: false }).showTeam).toBe(false);
+    expect(normalizeComposerSurfaces({ showCliAgent: false, showModern: false, showTeam: false }))
+      .toEqual({ showCliAgent: true, showModern: true, showTeam: true });
   });
 
   it('writes both legacy config keys for persisted compatibility', () => {

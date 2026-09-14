@@ -99,6 +99,7 @@ import { runStartupGate, type StartupState } from './startup-gate.js';
 import { DEFAULT_RENDERER_ZOOM_FACTOR } from './window/window-zoom.js';
 import { resolveLaunchSelection } from '@zana-ai/zcc-host-daemon/harness/launch-selection';
 import { resolveEffectiveHarnessDefault } from '@zana-ai/zcc-host-daemon/harness/effective-default';
+import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
 import { resolveExecutionState } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { listClaudeSessions } from '@zana-ai/zcc-server/services/projects/claude';
 import { listOpenCodeSessions } from '@zana-ai/zcc-server/services/projects/opencode-sessions';
@@ -3921,6 +3922,7 @@ async function launchBackgroundTerminal(
   opts: TerminalLaunchOptions,
   principal: LaunchPrincipalRef
 ): Promise<TerminalSession> {
+  opts = applyUnattendedScheduledLaunch(opts);
   const projects = store.listProjects();
   const project = projects.find((candidate) => candidate.id === opts.projectId);
   if (!project) throw new LaunchSpawnError('NOT_FOUND', 'project not found');
