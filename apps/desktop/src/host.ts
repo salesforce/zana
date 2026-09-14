@@ -93,6 +93,7 @@ import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/ex
 import { createExecutionConsentManagement } from '@zana-ai/zcc-host-daemon/harness/execution-consent-management';
 import { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
 import { runHarnessRoutingMigration } from '@zana-ai/zcc-server/services/harness-routing/migrator';
+import { reconcileOpenCodeStartupRouting, selectOpenCodeProbeCwd } from '@zana-ai/zcc-server/services/harness-routing/opencode-startup-reconciler';
 import { MigrationRepairRequiredError } from '@zana-ai/zcc-server/services/harness-routing/journal';
 import { runStartupGate, type StartupState } from './startup-gate.js';
 import { DEFAULT_RENDERER_ZOOM_FACTOR } from './window/window-zoom.js';
@@ -6200,6 +6201,30 @@ async function bootstrapNormal() {
     store.ensureQuickAgentProject();
   } catch (err) {
     logMainError('ensureQuickAgentProject', err);
+  }
+  try {
+    const openCodeProvider = providerFor('opencode');
+    if (openCodeProvider.discoverModelTargets) {
+      const config = store.getConfig();
+      const probeCwd = selectOpenCodeProbeCwd({
+        lastProjectId: config.lastProjectId,
+        projects: store.listProjects(),
+        pathExists: existsSync,
+        ensureScratchRoot: () => store.ensureScratchRoot()
+      });
+      void reconcileOpenCodeStartupRouting(probeCwd, {
+        snapshot: () => store.snapshotConfig(),
+        replaceConfig: (next, expectedHash) => store.replaceConfig(next, expectedHash),
+        discoverLiveModels: (input) => openCodeProvider.discoverModelTargets!(input),
+        catalogModels: openCodeProvider.adapter.descriptor.targets?.models
+      }).then((result) => {
+        if (result.outcome === 'cas-give-up') {
+          logMainError('reconcileOpenCodeStartupRouting', new Error(`cas-give-up cwd=${probeCwd}`));
+        }
+      }).catch((err) => logMainError('reconcileOpenCodeStartupRouting', err));
+    }
+  } catch (err) {
+    logMainError('reconcileOpenCodeStartupRouting', err);
   }
   // Warm each discovery-capable registration for local projects. The launcher
   // reads the harness-owned cache; only an explicit refresh bypasses it.

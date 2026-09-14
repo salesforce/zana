@@ -14,6 +14,7 @@ describe('Harness agent discovery startup warmup', () => {
     expect(warmup).toBeGreaterThan(ipc);
     expect(warmup).toBeGreaterThan(scratch);
     expect(scheduler).toBeGreaterThan(warmup);
+    expect(source.slice(scratch, warmup)).toContain('void reconcileOpenCodeStartupRouting(');
     expect(source.slice(warmup, scheduler)).toContain('if (project.remote) continue;');
     expect(source.slice(warmup, scheduler)).toContain('void registration.discoverAgentDescriptors({');
   });

@@ -3,7 +3,14 @@ import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { DEFAULT_TERMINAL_THEME } from '@zana-ai/zcc-domain/terminal-themes';
-import { atomicDurableWrite } from '../../durable-store.js';
+import { atomicDurableWrite, DurableWriteConflictError } from '../../durable-store.js';
+
+export { DurableWriteConflictError };
+
+export interface ConfigSnapshot {
+  config: AppConfig;
+  hash: string | null;
+}
 
 export interface ConfigStoreDependencies {
   normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig>;
@@ -76,42 +83,63 @@ export function createConfigStore(
     teamJobLaunchEnabled: true
   });
 
+  const hydrate = (raw: Partial<AppConfig>): AppConfig =>
+    ensureComposerLaunchSurfaces(
+      deps.projectConfigCompatibility({ ...fallback(), ...deps.normalizeConfig(raw), version: 1 })
+    );
+
+  const applyOptionalResets = (next: AppConfig, patch: Partial<AppConfig>, normalizedPatch: Partial<AppConfig>): AppConfig => {
+    const optionalHarnessKeys = [
+      'defaultHarness', 'harnessRouting', 'claudeAppendSystemPrompt',
+      'claudeExtraArgs', 'claudeAddDirs', 'claudeAllowedTools',
+      'claudeDeniedTools', 'defaultCodexSandbox', 'defaultCodexApproval',
+      'defaultExecutionState', 'piProvider', 'piModel', 'piThinking'
+    ] as const;
+    for (const key of optionalHarnessKeys) {
+      if (Object.prototype.hasOwnProperty.call(patch, key) && patch[key] === undefined) {
+        delete next[key];
+      }
+    }
+    for (const key of ['publicAppUrl', 'relayToken', 'relaySessionId'] as const) {
+      if (Object.prototype.hasOwnProperty.call(patch, key) && !patch[key]) {
+        delete next[key];
+      }
+      if (Object.prototype.hasOwnProperty.call(normalizedPatch, key) && !normalizedPatch[key]) {
+        delete next[key];
+      }
+    }
+    if (next.defaultHarness && !deps.harnessEnabled(next, next.defaultHarness)) {
+      delete next.defaultHarness;
+    }
+    return next;
+  };
+
   return {
     getConfig(): AppConfig {
-      const stored = deps.normalizeConfig(readJsonRaw<Partial<AppConfig>>({}).value);
-      return ensureComposerLaunchSurfaces(
-        deps.projectConfigCompatibility({ ...fallback(), ...stored, version: 1 })
-      );
+      return hydrate(readJsonRaw<Partial<AppConfig>>({}).value);
+    },
+    snapshot(): ConfigSnapshot {
+      const disk = readJsonRaw<Partial<AppConfig>>({});
+      return { config: hydrate(disk.value), hash: disk.hash };
+    },
+    replaceConfig(next: AppConfig, expectedHash: string | null): AppConfig {
+      const normalized = ensureComposerLaunchSurfaces({
+        ...hydrate({}),
+        ...deps.normalizeConfig(next),
+        version: 1 as const
+      });
+      writeConfig(deps.canonicalConfigForWrite(normalized), expectedHash);
+      return normalized;
     },
     setConfig(patch: Partial<AppConfig>): AppConfig {
       const disk = readJsonRaw<Partial<AppConfig>>({});
-      const current = ensureComposerLaunchSurfaces(
-        deps.projectConfigCompatibility({ ...fallback(), ...deps.normalizeConfig(disk.value), version: 1 })
-      );
+      const current = hydrate(disk.value);
       const normalizedPatch = deps.normalizeConfig(patch);
-      const next = ensureComposerLaunchSurfaces({ ...current, ...normalizedPatch, version: 1 as const });
-      const optionalHarnessKeys = [
-        'defaultHarness', 'harnessRouting', 'claudeAppendSystemPrompt',
-        'claudeExtraArgs', 'claudeAddDirs', 'claudeAllowedTools',
-        'claudeDeniedTools', 'defaultCodexSandbox', 'defaultCodexApproval',
-        'defaultExecutionState', 'piProvider', 'piModel', 'piThinking'
-      ] as const;
-      for (const key of optionalHarnessKeys) {
-        if (Object.prototype.hasOwnProperty.call(patch, key) && patch[key] === undefined) {
-          delete next[key];
-        }
-      }
-      for (const key of ['publicAppUrl', 'relayToken', 'relaySessionId'] as const) {
-        if (Object.prototype.hasOwnProperty.call(patch, key) && !patch[key]) {
-          delete next[key];
-        }
-        if (Object.prototype.hasOwnProperty.call(normalizedPatch, key) && !normalizedPatch[key]) {
-          delete next[key];
-        }
-      }
-      if (next.defaultHarness && !deps.harnessEnabled(next, next.defaultHarness)) {
-        delete next.defaultHarness;
-      }
+      const next = applyOptionalResets(
+        ensureComposerLaunchSurfaces({ ...current, ...normalizedPatch, version: 1 as const }),
+        patch,
+        normalizedPatch
+      );
       writeConfig(deps.canonicalConfigForWrite(next), disk.hash);
       return next;
     }

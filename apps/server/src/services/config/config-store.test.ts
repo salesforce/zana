@@ -73,4 +73,83 @@ describe('createConfigStore', () => {
       composerShowModern: false
     });
   });
+
+  it('exposes snapshot/replaceConfig CAS without overwriting unrelated fields', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-cas-'));
+    const configFile = join(homeDir, '.zcc', 'config.json');
+    const config = createConfigStore(
+      { homeDir, configFile },
+      {
+        normalizeConfig: (input) => input,
+        projectConfigCompatibility: (input) => input,
+        canonicalConfigForWrite: (input) => input,
+        harnessEnabled: (_input, id) => id === 'claude'
+      }
+    );
+
+    config.setConfig({
+      defaultHarness: 'claude',
+      theme: 'light',
+      harnessRouting: {
+        schemaVersion: 1,
+        byAdapter: {
+          opencode: { modelTargetId: 'aisuite/old' },
+          claude: { modelTargetId: 'keep-claude' }
+        }
+      }
+    });
+    const first = config.snapshot();
+    expect(first.hash).toEqual(expect.any(String));
+
+    const next = {
+      ...first.config,
+      harnessRouting: {
+        schemaVersion: 1 as const,
+        byAdapter: {
+          opencode: { modelTargetId: 'llmgw/old' },
+          claude: { modelTargetId: 'keep-claude' }
+        }
+      }
+    };
+    expect(config.replaceConfig(next, first.hash)).toMatchObject({
+      theme: 'light',
+      defaultHarness: 'claude',
+      harnessRouting: { byAdapter: { opencode: { modelTargetId: 'llmgw/old' } } }
+    });
+    expect(JSON.parse(readFileSync(configFile, 'utf8')) as AppConfig).toMatchObject({
+      theme: 'light',
+      defaultHarness: 'claude',
+      harnessRouting: {
+        byAdapter: {
+          opencode: { modelTargetId: 'llmgw/old' },
+          claude: { modelTargetId: 'keep-claude' }
+        }
+      }
+    });
+  });
+
+  it('rejects replaceConfig when the on-disk hash no longer matches', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-cas-stale-'));
+    const configFile = join(homeDir, '.zcc', 'config.json');
+    const config = createConfigStore(
+      { homeDir, configFile },
+      {
+        normalizeConfig: (input) => input,
+        projectConfigCompatibility: (input) => input,
+        canonicalConfigForWrite: (input) => input,
+        harnessEnabled: (_input, id) => id === 'claude'
+      }
+    );
+
+    config.setConfig({ theme: 'light' });
+    const stale = config.snapshot();
+    config.setConfig({ fontSize: 18 });
+    expect(() => config.replaceConfig({ ...stale.config, theme: 'dark' }, stale.hash)).toThrow(
+      /Durable write rejected: file changed outside serialized transaction/
+    );
+    expect(JSON.parse(readFileSync(configFile, 'utf8')) as AppConfig).toMatchObject({
+      theme: 'light',
+      fontSize: 18
+    });
+  });
 });

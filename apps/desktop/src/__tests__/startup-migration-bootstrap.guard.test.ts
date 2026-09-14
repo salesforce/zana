@@ -10,6 +10,9 @@ describe('startup migration bootstrap integration', () => {
     expect(source.match(/app\.whenReady\(\)\.then\(bootstrap\)/g)).toHaveLength(2);
     expect(source).toMatch(/async function bootstrap\(\) \{[\s\S]*registerStartupStateIpc\(\);[\s\S]*await runStartupMigration\(\);[\s\S]*\}/);
     expect(source).toMatch(/runStartupGate\(\{[\s\S]*migrate: \(\) => runHarnessRoutingMigration\(migrationDataDir\(\)\),[\s\S]*launchNormal: bootstrapNormal/);
+    expect(source).toContain('void reconcileOpenCodeStartupRouting(');
+    expect(source).toMatch(/try \{[\s\S]*void reconcileOpenCodeStartupRouting\([\s\S]*logMainError\('reconcileOpenCodeStartupRouting'/);
+    expect(source).toContain("if (result.outcome === 'cas-give-up')");
   });
 
   it('keeps owning config/provider reads inside normal bootstrap', () => {
