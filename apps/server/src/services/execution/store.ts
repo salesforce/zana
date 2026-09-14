@@ -125,7 +125,8 @@ export interface ExecutionRecord {
   finalSummary?: string;
   /** Coordinator intentionally stopped taking routine turns after initial dispatch. */
   coordinatorState?: 'ACTIVE' | 'PARKED';
-  coordinatorWake?: { message: string; createdAt: number };
+  coordinatorWakes?: Array<{ id: string; message: string; createdAt: number }>;
+  coordinatorWakeSequence?: number;
   coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
   origin?: import('@zana-ai/zcc-domain/product').LaunchOrigin;
   createdAt: number;
@@ -217,6 +218,7 @@ const MAX_FINAL_SUMMARY = 64 * 1024;
 const MAX_WORK_UNITS = 100;
 const MAX_UNIT_LIST = 100;
 const MAX_DELIVERIES_PER_EXECUTION = 128;
+const MAX_COORDINATOR_WAKES = 100;
 const MAX_DELIVERY_TEXT_BYTES = 16 * 1024;
 const MAX_DELIVERY_ERROR_BYTES = 1024;
 export const MAX_DELIVERY_ATTEMPTS = 8;
@@ -265,7 +267,8 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.deliveries === undefined || Array.isArray(record.deliveries) && record.deliveries.length <= MAX_DELIVERIES_PER_EXECUTION && record.deliveries.every(validExecutionDelivery))
     && (record.finalSummary === undefined || typeof record.finalSummary === 'string' && record.finalSummary.length > 0 && record.finalSummary.length <= MAX_FINAL_SUMMARY)
     && (record.coordinatorState === undefined || record.coordinatorState === 'ACTIVE' || record.coordinatorState === 'PARKED')
-    && (record.coordinatorWake === undefined || validString(record.coordinatorWake.message) && typeof record.coordinatorWake.createdAt === 'number')
+    && (record.coordinatorWakes === undefined || Array.isArray(record.coordinatorWakes) && record.coordinatorWakes.length <= MAX_COORDINATOR_WAKES && record.coordinatorWakes.every((wake) => validString(wake.id) && validString(wake.message) && typeof wake.createdAt === 'number'))
+    && (record.coordinatorWakeSequence === undefined || Number.isInteger(record.coordinatorWakeSequence) && record.coordinatorWakeSequence >= 0)
     && (record.coordinationMode === undefined || record.coordinationMode === 'interactive-team' || record.coordinationMode === 'autonomous-team' || record.coordinationMode === 'job-team' || record.coordinationMode === 'structured' || record.coordinationMode === 'freeform')
     && (record.origin === undefined || record.origin === 'explicit' || record.origin === 'scheduled' || record.origin === 'goal')
     && typeof record.createdAt === 'number' && typeof record.updatedAt === 'number'
@@ -462,6 +465,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         for (const record of parsed.records) {
           if (!record || typeof record !== 'object') continue;
           if (!Array.isArray(record.deliveries)) record.deliveries = [];
+          const legacyWake = (record as ExecutionRecord & { coordinatorWake?: { message: string; createdAt: number } }).coordinatorWake;
+          if (!Array.isArray(record.coordinatorWakes)) record.coordinatorWakes = legacyWake ? [{ id: `${record.id}:wake:1`, ...legacyWake }] : [];
+          record.coordinatorWakeSequence ??= record.coordinatorWakes.length;
+          delete (record as ExecutionRecord & { coordinatorWake?: unknown }).coordinatorWake;
           for (const delivery of record.deliveries) delivery.manualRetryCount ??= 0;
           record.recoveryGeneration ??= 0;
           const legacyRequest = record.request as ExecutionRequestSnapshotV1 & { goal?: string };
@@ -1318,21 +1325,6 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  async function setCoordinatorState(executionId: string, coordinatorState: 'ACTIVE' | 'PARKED'): Promise<ExecutionRecord> {
-    return storeQueue.run(async () => {
-      const snapshot = read();
-      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
-      if (!record) throw new Error('execution not found');
-      if (terminalStates.has(record.state) || record.coordinatorState === coordinatorState) return clone(record);
-      record.coordinatorState = coordinatorState;
-      record.stateVersion += 1;
-      record.updatedAt = now();
-      append(snapshot.state, record, record.state, 'info', `Coordinator ${coordinatorState.toLowerCase()}`, record.updatedAt, { kind: 'command' });
-      persist(snapshot.state, snapshot.hash);
-      return clone(record);
-    });
-  }
-
   async function queueCoordinatorWake(executionId: string, message: string): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
@@ -1341,22 +1333,27 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (terminalStates.has(record.state)) return clone(record);
       const boundedMessage = string(message, 'coordinator wake');
       record.coordinatorState = 'ACTIVE';
-      record.coordinatorWake = { message: boundedMessage, createdAt: now() };
+      record.coordinatorWakeSequence = (record.coordinatorWakeSequence ?? 0) + 1;
+      record.coordinatorWakes ??= [];
+      if (record.coordinatorWakes.length >= MAX_COORDINATOR_WAKES) throw new Error('coordinator wake queue is full');
+      const wake = { id: `${record.id}:wake:${record.coordinatorWakeSequence}`, message: boundedMessage, createdAt: now() };
+      record.coordinatorWakes.push(wake);
       record.stateVersion += 1;
-      record.updatedAt = record.coordinatorWake.createdAt;
+      record.updatedAt = wake.createdAt;
       append(snapshot.state, record, record.state, 'warning', 'Coordinator wake queued', record.updatedAt, { kind: 'command' });
       persist(snapshot.state, snapshot.hash);
       return clone(record);
     });
   }
 
-  async function acknowledgeCoordinatorWake(executionId: string, message: string): Promise<ExecutionRecord> {
+  async function acknowledgeCoordinatorWake(executionId: string, wakeId: string): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record) throw new Error('execution not found');
-      if (record.coordinatorWake?.message !== message) return clone(record);
-      record.coordinatorWake = undefined;
+      const wakeIndex = record.coordinatorWakes?.findIndex((wake) => wake.id === wakeId) ?? -1;
+      if (wakeIndex < 0) return clone(record);
+      record.coordinatorWakes!.splice(wakeIndex, 1);
       record.stateVersion += 1;
       record.updatedAt = now();
       append(snapshot.state, record, record.state, 'info', 'Coordinator wake delivered', record.updatedAt, { kind: 'command' });
@@ -1487,7 +1484,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, releaseUndelivered, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, setCoordinatorState, queueCoordinatorWake, acknowledgeCoordinatorWake, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, releaseUndelivered, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

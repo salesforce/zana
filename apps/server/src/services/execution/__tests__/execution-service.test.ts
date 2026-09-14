@@ -73,7 +73,8 @@ describe('deterministicTerminalSummary', () => {
       { eventType: 'outcome', summary: 'Verification report stored' } as never
     ]);
     expect(summary).toContain('# Execution failed');
-    expect(summary).toContain('- Build [COMPLETED]: built');
+    expect(summary).toContain('- Build [COMPLETED]');
+    expect(summary).not.toContain('built');
     expect(summary).toContain('- Verify [FAILED]: VALIDATION_FAILED');
     expect(summary).not.toContain('secret-value');
     expect(summary).toContain('Policy: FAILED - policy rejected');
@@ -228,10 +229,10 @@ describe('SquadExecutionService', () => {
     ['SEMANTIC_CONFLICT', 'SEMANTIC_CONFLICT'],
     ['POLICY_ESCALATION', 'POLICY_ESCALATION']
   ] as const)('wakes parked coordinator only for %s worker failure lane', async (failureCode, expected) => fixture(async (filePath) => {
-    const replyToSession = vi.fn(() => true);
+    const replyToSession = vi.fn(() => false);
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new SquadExecutionService(deps(filePath, {
-      store, replyToSession,
+      store, replyToSession, deliverToWorker: () => true,
       authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
         version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
           { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
@@ -244,7 +245,7 @@ describe('SquadExecutionService', () => {
     await service.dispatchReady(coordinator);
     replyToSession.mockClear();
     await service.failWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', 'needs judgment', failureCode);
-    expect((await store.get('execution-1'))?.coordinatorWake?.message).toContain(expected);
+    expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toContain(expected);
     expect(await store.get('execution-1')).toMatchObject({ state: 'RUNNING', coordinatorState: 'ACTIVE' });
   }));
 
@@ -264,17 +265,17 @@ describe('SquadExecutionService', () => {
     const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
     await service.dispatchReady(coordinator);
     await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Choose?' });
-    expect((await store.get('execution-1'))?.coordinatorWake?.message).toContain('HUMAN_BLOCKER');
+    expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toContain('HUMAN_BLOCKER');
     replyToSession.mockReturnValue(true);
     await service.drainCoordinatorWake('project-1', 'execution-1', 'coordinator');
-    expect((await store.get('execution-1'))?.coordinatorWake).toBeUndefined();
+    expect((await store.get('execution-1'))?.coordinatorWakes).toEqual([]);
   }));
 
-  it('delivers a durable wake immediately when coordinator is already idle', async () => fixture(async (filePath) => {
+  it('attempts immediate wake delivery without optional idle-state wiring', async () => fixture(async (filePath) => {
     const replyToSession = vi.fn(() => true);
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new SquadExecutionService(deps(filePath, {
-      store, replyToSession, isSessionIdle: () => true,
+      store, replyToSession,
       authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
         version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
           { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
@@ -288,11 +289,59 @@ describe('SquadExecutionService', () => {
     replyToSession.mockClear();
     await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Choose?' });
     expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('HUMAN_BLOCKER'));
-    expect((await store.get('execution-1'))?.coordinatorWake).toBeUndefined();
+    expect((await store.get('execution-1'))?.coordinatorWakes).toEqual([]);
+  }));
+
+  it('logs coordinator wake persistence and drain failures with execution context', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const logError = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, {
+      store: { ...store, queueCoordinatorWake: async () => { throw new Error('disk failed'); } },
+      logError,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.dispatchReady(coordinator);
+    await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Choose?' });
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('wake persistence failed for execution-1'), expect.any(Error));
+
+    const drain = new SquadExecutionService(deps(filePath, {
+      store: { ...store, getInProject: async () => { throw new Error('read failed'); } },
+      logError
+    }));
+    await drain.drainCoordinatorWake('project-1', 'execution-1', 'coordinator');
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('wake drain failed for execution-1'), expect.any(Error));
+  }));
+
+  it('delivers a durable wake immediately when coordinator is already idle', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.dispatchReady(coordinator);
+    replyToSession.mockClear();
+    await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Choose?' });
+    expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('HUMAN_BLOCKER'));
+    expect((await store.get('execution-1'))?.coordinatorWakes).toEqual([]);
   }));
 
   it('wakes parked coordinator for a human blocker', async () => fixture(async (filePath) => {
-    const replyToSession = vi.fn(() => true);
+    const replyToSession = vi.fn(() => false);
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new SquadExecutionService(deps(filePath, {
       store, replyToSession,
@@ -308,15 +357,15 @@ describe('SquadExecutionService', () => {
     await service.dispatchReady(coordinator);
     replyToSession.mockClear();
     await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Choose target?' });
-    expect((await store.get('execution-1'))?.coordinatorWake?.message).toContain('HUMAN_BLOCKER');
+    expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toContain('HUMAN_BLOCKER');
     expect(await store.get('execution-1')).toMatchObject({ coordinatorState: 'ACTIVE' });
   }));
 
   it('wakes parked coordinator for blocked policy evaluation', async () => fixture(async (filePath) => {
-    const replyToSession = vi.fn(() => true);
+    const replyToSession = vi.fn(() => false);
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new SquadExecutionService(deps(filePath, {
-      store, replyToSession,
+      store, replyToSession, deliverToWorker: () => true,
       authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
         version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
           { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
@@ -330,7 +379,7 @@ describe('SquadExecutionService', () => {
     await service.recordPolicyResult('project-1', 'execution-1', {
       version: 1, executionId: 'execution-1', attempt: 1, outputDigest: 'output', extensionDigest: 'extension', status: 'BLOCKED', summary: 'Approval required'
     });
-    expect((await store.get('execution-1'))?.coordinatorWake?.message).toContain('POLICY_ESCALATION');
+    expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toContain('POLICY_ESCALATION');
     expect(await store.get('execution-1')).toMatchObject({ coordinatorState: 'ACTIVE' });
   }));
 
@@ -399,7 +448,8 @@ describe('SquadExecutionService', () => {
     const record = await store.get('execution-1');
     expect(record?.state).toBe('COMPLETED');
     expect(record?.finalSummary).toContain('# Execution completed');
-    expect(record?.finalSummary).toContain('- A [COMPLETED]: done');
+    expect(record?.finalSummary).toContain('- A [COMPLETED]');
+    expect(record?.finalSummary).not.toContain('done');
     expect(cancelTeamLaunch).toHaveBeenCalledWith('owner', 'request-1');
   }));
 
@@ -430,7 +480,7 @@ describe('SquadExecutionService', () => {
     const deliverToWorker = vi.fn(() => false);
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new SquadExecutionService(deps(filePath, {
-      store, deliverToWorker,
+      store, deliverToWorker, replyToSession: () => false,
       authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
         version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2,
         slots: [{ slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1' }]
@@ -445,7 +495,7 @@ describe('SquadExecutionService', () => {
     expect(deliverToWorker).toHaveBeenCalledTimes(1);
     expect((await store.get('execution-1'))?.workUnits?.[0]).toMatchObject({ state: 'READY', attempt: 1 });
     expect(await store.get('execution-1')).toMatchObject({ coordinatorState: 'ACTIVE' });
-    expect((await store.get('execution-1'))?.coordinatorWake?.message).toContain('could not be delivered');
+    expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toContain('could not be delivered');
   }));
 
   it('lets execution owner retry, release, and reassign eligible work only within durable roster', async () => fixture(async (filePath) => {

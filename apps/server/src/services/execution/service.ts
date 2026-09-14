@@ -83,7 +83,7 @@ export interface ExecutionServiceDeps {
    */
   deliverToWorker?: (sessionId: string, text: string) => boolean;
   triggerDeliveryDrain?: (sessionId: string) => void;
-  isSessionIdle?: (sessionId: string) => boolean;
+  logError?: (message: string, error: unknown) => void;
   inbox?: { append: (input: InboxInput) => Promise<unknown> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
   resumeGrants?: ReturnType<typeof createResumeGrantStore>;
@@ -171,7 +171,7 @@ export function deterministicTerminalSummary(record: ExecutionRecord, artifacts:
     `Work units: ${(record.workUnits ?? []).filter((unit) => unit.state === 'COMPLETED').length} completed, ${(record.workUnits ?? []).filter((unit) => unit.state === 'FAILED').length} failed, ${(record.workUnits ?? []).filter((unit) => unit.state === 'SKIPPED').length} skipped.`
   ];
   for (const unit of record.workUnits ?? []) {
-    const detail = unit.state === 'COMPLETED' ? unit.result : unit.state === 'FAILED' ? unit.failureCode ?? 'UNKNOWN' : undefined;
+    const detail = unit.state === 'FAILED' ? unit.failureCode ?? 'UNKNOWN' : undefined;
     lines.push(`- ${unit.title} [${unit.state}]${detail ? `: ${detail.slice(0, TERMINAL_SUMMARY_ITEM_MAX_CHARS)}` : ''}`);
   }
   if (record.policyResult) lines.push('', `Policy: ${record.policyResult.status} - ${record.policyResult.summary.slice(0, TERMINAL_SUMMARY_ITEM_MAX_CHARS)}`);
@@ -947,29 +947,39 @@ export class ExecutionService {
   }
 
   private async wakeCoordinator(record: ExecutionRecord, message: string): Promise<void> {
+    const logError = this.deps.logError ?? ((context: string, error: unknown) => console.error(context, error));
+    let current: ExecutionRecord;
     try {
-      const current = await this.deps.store.queueCoordinatorWake(record.id, message);
+      current = await this.deps.store.queueCoordinatorWake(record.id, message);
+    } catch (error) {
+      logError(`execution coordinator wake persistence failed for ${record.id}`, error);
+      return;
+    }
+    try {
       const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(current.callerPrincipalId, current.teamLaunchRequestId));
       if (lifecycle?.orchestratorSessionId) {
-        if (this.deps.isSessionIdle?.(lifecycle.orchestratorSessionId)) {
-          await this.drainCoordinatorWake(record.projectId, record.id, lifecycle.orchestratorSessionId);
-        }
+        await this.drainCoordinatorWake(record.projectId, record.id, lifecycle.orchestratorSessionId);
         this.deps.triggerDeliveryDrain?.(lifecycle.orchestratorSessionId);
       }
-    } catch { /* escalation remains durable in work, blocker, or policy state */ }
+    } catch (error) {
+      logError(`execution coordinator wake delivery failed for ${record.id}`, error);
+    }
   }
 
   /** Main idle-edge hook retries a durable coordinator wake after busy/restart loss. */
   async drainCoordinatorWake(projectId: string, executionId: string, sessionId: string): Promise<void> {
-    const record = await this.deps.store.getInProject(projectId, executionId);
-    const wake = record?.coordinatorWake;
-    if (!record || !wake) return;
     try {
-      const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
-      if (lifecycle?.orchestratorSessionId === sessionId && this.deps.replyToSession(sessionId, wake.message)) {
-        await this.deps.store.acknowledgeCoordinatorWake(record.id, wake.message);
+      for (let delivered = 0; delivered < 100; delivered += 1) {
+        const record = await this.deps.store.getInProject(projectId, executionId);
+        const wake = record?.coordinatorWakes?.[0];
+        if (!record || !wake) return;
+        const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+        if (lifecycle?.orchestratorSessionId !== sessionId || !this.deps.replyToSession(sessionId, wake.message)) return;
+        await this.deps.store.acknowledgeCoordinatorWake(record.id, wake.id);
       }
-    } catch { /* next idle edge retries durable wake */ }
+    } catch (error) {
+      (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(`execution coordinator wake drain failed for ${executionId}`, error);
+    }
   }
 
   async stop(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number) {

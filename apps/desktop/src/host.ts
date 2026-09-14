@@ -4941,7 +4941,7 @@ const squadExecutionService = new SquadExecutionService({
   sources: executionSources,
   inbox: inboxStore,
   triggerDeliveryDrain: (sessionId) => executionDeliveryDrain.forceCheck(sessionId),
-  isSessionIdle: (sessionId) => agentStatus.get(sessionId) === 'idle',
+  logError: (message, error) => logMainError(message, error),
   authorizeTeamLaunch,
   launchTeam,
   getTeamLaunch: async (callerPrincipalId, launchRequestId) => {
