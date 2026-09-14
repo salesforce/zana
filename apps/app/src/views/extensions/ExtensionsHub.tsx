@@ -49,7 +49,8 @@ import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { listSettingsSections, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { PluginHubIncludes } from './PluginHubIncludes.js';
 import { PluginBrowseSplit } from './PluginBrowseSplit.js';
-import { PluginMoreFromAuthor } from './CatalogPluginDetail.js';
+import { PluginMoreFromAuthor, PluginOverviewLead, PluginReleaseSection, PluginDetailsSection } from './CatalogPluginDetail.js';
+import { PluginOverviewMarkdown } from './PluginOverviewMarkdown.js';
 import { installedNotRunning, installedRuntimeStatus } from './installed-row-status.js';
 import { useUi } from '@/store';
 import {
@@ -789,18 +790,38 @@ function ExtensionDetail({ row }: { row: HubRow }) {
   return (
     <>
       <AboutCard row={row} />
-      {plugin ? <PluginHubIncludes plugin={plugin} /> : entry ? <InstallConfirmationCard entry={entry} /> : null}
-      {catalogEntry ? (
-        <PluginMoreFromAuthor
-          entry={catalogEntry}
-          catalog={catalog}
-          onOpen={(next) => appNavigate(getPluginDetailRoutePath(next.id))}
-          onInstall={(next) => appNavigate(getPluginDetailRoutePath(next.id))}
-        />
+      {catalogEntry?.description || plugin?.description ? (
+        <PluginOverviewLead description={catalogEntry?.description || plugin?.description || ''} />
       ) : null}
-      <div id="plugin-configure" tabIndex={-1}>
-        <PluginDefinedSettings pluginId={module.id} />
-        <PluginSettingsSections pluginId={module.id} />
+      <div className="ext-plugin-detail-stack">
+        {catalogEntry?.overview ? (
+          <section className="ext-plugin-section" data-resource-detail-section="overview">
+            <h3>Overview</h3>
+            <PluginOverviewMarkdown markdown={catalogEntry.overview} />
+          </section>
+        ) : null}
+        {catalogEntry ? <PluginDetailsSection entry={catalogEntry} /> : null}
+        {catalogEntry ? (
+          <PluginMoreFromAuthor
+            entry={catalogEntry}
+            catalog={catalog}
+            onOpen={(next) => appNavigate(getPluginDetailRoutePath(next.id))}
+          />
+        ) : null}
+        <section
+          className="ext-plugin-section ext-plugin-section--config"
+          id="plugin-configure"
+          tabIndex={-1}
+        >
+          <h3>Configuration</h3>
+          <PluginDefinedSettings pluginId={module.id} />
+          <PluginSettingsSections pluginId={module.id} />
+        </section>
+        <PluginReleaseSection
+          version={entry?.manifest?.version ?? plugin?.npmResolvedVersion}
+          delivery="Updates with ZCC"
+        />
+        {plugin ? <PluginHubIncludes plugin={plugin} /> : entry ? <InstallConfirmationCard entry={entry} /> : null}
       </div>
       {module.loadError ? (
         <section className="settings-section">

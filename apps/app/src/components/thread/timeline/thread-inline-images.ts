@@ -1,3 +1,6 @@
+import { conversationImageSrc } from '../../../lib/prompt-attachments.js';
+import type { ThreadLightboxItem } from './thread-image-lightbox.js';
+
 const IMAGE_EXT = /\.(?:png|jpe?g|gif|webp|bmp|avif|svg)$/iu;
 const SAFE_IMAGE_DATA_URL =
   /^data:image\/[a-z0-9.+-]+(?:;[\w.=+-]+)*,/iu;
@@ -88,6 +91,25 @@ export function extractInlineThreadImages(text: string): {
     text: next.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim(),
     images
   };
+}
+
+export function collectMarkdownLightboxItems(
+  text: string,
+  projectId?: string | null
+): ThreadLightboxItem[] {
+  const items: ThreadLightboxItem[] = [];
+  const seen = new Set<string>();
+  for (const match of text.matchAll(MARKDOWN_IMAGE)) {
+    const alt = (match[1] ?? '').trim();
+    const raw = (match[3] ?? '').trim();
+    const decoded = decodeMarkdownImageSrc(raw);
+    const src = conversationImageSrc(projectId, decoded)
+      ?? (/^(https?:|data:image\/|blob:)/iu.test(decoded) ? decoded : null);
+    if (!src || seen.has(src)) continue;
+    seen.add(src);
+    items.push({ src, alt: alt || threadImageStubLabel(decoded) });
+  }
+  return items;
 }
 
 export function transformMarkdownMediaUrl(

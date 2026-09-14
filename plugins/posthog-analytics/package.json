@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Anonymous usage analytics for Zana: agent activity only, never prompts or replies. Opt out anytime, or use your own PostHog project.",
+  "description": "Anonymous usage analytics. Never sends prompts or replies.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
   "zcc": {
     "name": "PostHog Analytics",
-    "description": "Anonymous usage analytics for Zana: agent activity only, never prompts or replies. Opt out anytime, or use your own PostHog project.",
+    "description": "Anonymous usage analytics. Never sends prompts or replies.",
     "branding": {
       "icon": "LineChart"
     },

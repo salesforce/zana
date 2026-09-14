@@ -26,6 +26,14 @@ export {
   isPluginId
 } from './plugin-id.js';
 export {
+  PLUGIN_METADATA_MAX_BYTES,
+  deepFreezePluginMetadata,
+  exceedsPluginMetadataLimit,
+  parsePersistedPluginMetadata,
+  pluginMetadataSchema,
+  validatePluginMetadata
+} from './bb-thread/plugin-metadata.js';
+export {
   compareVersions,
   parseVersion,
   satisfiesRange
@@ -74,6 +82,11 @@ export {
   type MarketplaceEntry,
   type MarketplaceCatalogRow
 } from './plugin-marketplace.js';
+export {
+  MARKETPLACE_OVERVIEW_MAX_CHARS,
+  normalizePluginOverviewText,
+  parsePluginOverviewMarkdown
+} from './plugin-overview.js';
 export {
   PLUGIN_STORE_CATEGORIES,
   PLUGIN_STORE_CATEGORY_NAMES,

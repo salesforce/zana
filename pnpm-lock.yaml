@@ -1140,7 +1140,32 @@ importers:
 
   plugins/custom-instructions: {}
 
-  plugins/docs: {}
+  plugins/docs:
+    devDependencies:
+      '@testing-library/dom':
+        specifier: ^10.4.1
+        version: 10.4.1
+      '@testing-library/react':
+        specifier: ^16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@types/react':
+        specifier: ^19.2.18
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.2.4
+        version: 19.2.4(@types/react@19.2.18)
+      '@zana-ai/zcc-plugin-build':
+        specifier: workspace:*
+        version: link:../../packages/plugin-build
+      happy-dom:
+        specifier: ^20.10.6
+        version: 20.11.6
+      react:
+        specifier: ^19.2.4
+        version: 19.2.8
+      react-dom:
+        specifier: ^19.2.4
+        version: 19.2.8(react@19.2.8)
 
   plugins/github: {}
 
@@ -1172,6 +1197,15 @@ importers:
         version: 7.0.2
 
   plugins/harness-grok:
+    devDependencies:
+      '@zana-ai/zcc-plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  plugins/harness-mastracode:
     devDependencies:
       '@zana-ai/zcc-plugin-sdk':
         specifier: workspace:*

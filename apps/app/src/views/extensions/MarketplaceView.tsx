@@ -261,8 +261,21 @@ export function MarketplaceView({
   };
   const backToBrowse = () => {
     setComposing(false);
+    setHeroRequest(null);
     setSearchParams({});
   };
+  const onComposingChange = useCallback(
+    (next: boolean) => {
+      setComposing(next);
+      if (next) {
+        setSearchParams({ view: 'create' });
+        return;
+      }
+      setHeroRequest(null);
+      if (searchParams.get('view') === 'create') setSearchParams({});
+    },
+    [searchParams, setSearchParams]
+  );
 
   const hasCatalog = !!entries && entries.length > 0;
   const confirmDialog = pendingConfirm ? (
@@ -418,11 +431,7 @@ export function MarketplaceView({
           composing={composing}
           prompt={prompt}
           onPromptChange={setPrompt}
-          onComposingChange={(next) => {
-            setComposing(next);
-            if (next) setSearchParams({ view: 'create' });
-            else if (searchParams.get('view') === 'create') setSearchParams({});
-          }}
+          onComposingChange={onComposingChange}
           openRequest={heroRequest}
         />
 
@@ -551,6 +560,26 @@ export function MarketplaceView({
                   </button>
                 </div>
                 <div className="settings-btn-row">
+                  <label className="ext-browse-category-select">
+                    <span className="sr-only">Filter by category</span>
+                    <select
+                      value={categoryFilters[0] ?? ''}
+                      aria-label="All categories"
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setCategoryFilters(value ? [value] : []);
+                      }}
+                    >
+                      <option value="">All categories</option>
+                      {categoryOptions
+                        .filter((option) => option.id !== 'all')
+                        .map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
                   <button
                     type="button"
                     className={`settings-btn${sort === null ? ' is-active' : ''}`}
@@ -589,30 +618,6 @@ export function MarketplaceView({
                     {filter.label}
                   </button>
                 ))}
-              </div>
-            )}
-
-            {hasCatalog && categoryOptions.length > 1 && (
-              <div className="ext-market-tags" role="group" aria-label="Filter by category">
-                {categoryOptions.map((option) => {
-                  const active = categoryFilters.includes(option.id);
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={`ext-market-tag ${active ? 'is-active' : ''}`}
-                      onClick={() =>
-                        setCategoryFilters((current) =>
-                          current.includes(option.id)
-                            ? current.filter((id) => id !== option.id)
-                            : [...current, option.id]
-                        )
-                      }
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
               </div>
             )}
 

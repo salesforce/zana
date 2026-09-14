@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Blocks } from 'lucide-react';
 import { HomeAgentComposer } from '../../HomeAgentComposer.js';
 import { CREATE_PLUGIN_PROMPT } from '../../../lib/create-resource-prompts.js';
 import { MiniAppScene } from './MiniAppScenes.js';
 import {
+  applyBrowseHeroOpenRequest,
   BROWSE_HERO_ARCHETYPES,
   browseHeroPrompt,
   type BrowseHeroArchetype
 } from './browse-hero-archetypes.js';
+
+export const BROWSE_HERO_DESCRIPTION =
+  'Plugins add app surfaces, commands, services, schedules, and skills to ZCC. Install an official plugin, or describe your own and build it from a prompt.';
 
 export function BrowseHeroCarousel({
   composing,
@@ -26,6 +30,8 @@ export function BrowseHeroCarousel({
   const [index, setIndex] = useState(0);
   const archetypes = BROWSE_HERO_ARCHETYPES;
   const active = archetypes[index] ?? archetypes[0]!;
+  const mid = Math.ceil(archetypes.length / 2);
+  const appliedNonceRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (reducedMotion || composing) return;
@@ -36,8 +42,10 @@ export function BrowseHeroCarousel({
   }, [archetypes.length, composing, reducedMotion]);
 
   useEffect(() => {
-    if (!openRequest) return;
-    if (openRequest.seed) onPromptChange(openRequest.seed);
+    const next = applyBrowseHeroOpenRequest(openRequest, appliedNonceRef.current);
+    appliedNonceRef.current = next.nonce;
+    if (!next.enterCompose) return;
+    if (next.seed) onPromptChange(next.seed);
     onComposingChange(true);
   }, [onComposingChange, onPromptChange, openRequest]);
 
@@ -45,45 +53,85 @@ export function BrowseHeroCarousel({
 
   return (
     <section className="ext-browse-hero" aria-label="What you can build with plugins">
-      <div className="ext-browse-hero-copy">
-        <h2 className="ext-browse-hero-headline">
-          Turn ZCC into <span className="ext-browse-hero-noun">{noun}</span>
-        </h2>
-        <p className="ext-browse-hero-hook">
-          {composing
-            ? 'Describe the plugin you want. The thread scaffolds it in this project, then you install and iterate.'
-            : active.hook}
-        </p>
-        <div
-          className="ext-browse-hero-composer"
-          onFocusCapture={() => onComposingChange(true)}
-        >
+      <h2 className="ext-browse-hero-headline">
+        Turn ZCC into <span className="ext-browse-hero-noun">{noun}</span>
+      </h2>
+      <p className="ext-browse-hero-hook">
+        {composing
+          ? 'Describe the plugin you want. The thread scaffolds it in this project, then you install and iterate.'
+          : BROWSE_HERO_DESCRIPTION}
+      </p>
+      {composing ? (
+        <div className="ext-browse-hero-composer">
           <HomeAgentComposer
             key={prompt}
             initialText={prompt || CREATE_PLUGIN_PROMPT}
             autoFocus={composing}
           />
         </div>
-        <div className="ext-browse-hero-tabs" role="tablist" aria-label="Plugin examples">
-          {archetypes.map((archetype, tabIndex) => (
-            <button
-              key={archetype.id}
-              type="button"
-              role="tab"
-              aria-selected={tabIndex === index}
-              className={`ext-browse-hero-tab${tabIndex === index ? ' is-active' : ''}`}
-              onClick={() => {
-                setIndex(tabIndex);
-                onComposingChange(false);
-              }}
-            >
-              {archetype.title}
-            </button>
-          ))}
-        </div>
-      </div>
-      <ShowcaseFrame archetype={active} reducedMotion={reducedMotion} />
+      ) : (
+        <>
+          <div className="ext-browse-hero-stage">
+            <div className="ext-browse-hero-chips" role="tablist" aria-label="Plugin examples">
+              {archetypes.slice(0, mid).map((archetype, tabIndex) => (
+                <HeroChip
+                  key={archetype.id}
+                  archetype={archetype}
+                  selected={tabIndex === index}
+                  onSelect={() => setIndex(tabIndex)}
+                />
+              ))}
+            </div>
+            <ShowcaseFrame archetype={active} reducedMotion={reducedMotion} />
+            <div className="ext-browse-hero-chips" role="tablist" aria-label="More plugin examples">
+              {archetypes.slice(mid).map((archetype, offset) => {
+                const tabIndex = mid + offset;
+                return (
+                  <HeroChip
+                    key={archetype.id}
+                    archetype={archetype}
+                    selected={tabIndex === index}
+                    onSelect={() => setIndex(tabIndex)}
+                  />
+                );
+              })}
+            </div>
+          </div>
+          <div className="ext-browse-hero-progress" aria-hidden="true">
+            {archetypes.map((archetype, tabIndex) => (
+              <span
+                key={archetype.id}
+                className={`ext-browse-hero-dot${tabIndex === index ? ' is-active' : ''}`}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </section>
+  );
+}
+
+function HeroChip({
+  archetype,
+  selected,
+  onSelect
+}: {
+  archetype: BrowseHeroArchetype;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const Icon = archetype.icon;
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      className={`ext-browse-hero-tab${selected ? ' is-active' : ''}`}
+      onClick={onSelect}
+    >
+      <Icon size={12} />
+      {archetype.title}
+    </button>
   );
 }
 

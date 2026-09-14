@@ -23,7 +23,8 @@ export const PROFILE_BY_FAMILY: Record<HarnessFamily, LaunchProfileId> = {
   codex: 'codex',
   pi: 'pi',
   opencode: 'opencode',
-  grok: 'grok'
+  grok: 'grok',
+  mastracode: 'mastracode'
 };
 
 const THREAD_PROVIDER_BY_FAMILY: Record<HarnessFamily, string> = {
@@ -32,7 +33,8 @@ const THREAD_PROVIDER_BY_FAMILY: Record<HarnessFamily, string> = {
   codex: 'codex',
   pi: 'pi',
   opencode: 'acp-opencode',
-  grok: 'acp-grok'
+  grok: 'acp-grok',
+  mastracode: 'acp-mastracode'
 };
 
 export type CliAgentModelOption = CatalogModelPickerRow;

@@ -8,6 +8,10 @@
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
+  "scripts": {
+    "build": "node scripts/build-app.mjs",
+    "package": "node scripts/build-app.mjs"
+  },
   "zcc": {
     "name": "Docs",
     "description": "Durable project knowledge: Docs rail, per-project Library, and the library-curator skill",
@@ -20,5 +24,15 @@
       "global": true
     },
     "skills": ["skills"]
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-plugin-build": "workspace:*",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "happy-dom": "^20.10.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   }
 }

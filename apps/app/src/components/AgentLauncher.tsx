@@ -112,6 +112,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   const harnessCodexEnabled = useData((s) => s.harnessCodexEnabled);
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
   const harnessGrokEnabled = useData((s) => s.harnessGrokEnabled);
+  const harnessMastracodeEnabled = useData((s) => s.harnessMastracodeEnabled);
   // Target project for a SCRATCH-mode launch. `null` = the built-in scratch
   // workspace (the default). Unused in project mode (the target is fixed).
   const [targetProjectId] = useState<string | null>(null);
@@ -143,7 +144,8 @@ export const AgentLauncher = memo(function AgentLauncher({
     harnessCursorEnabled ? 'Cursor' : null,
     harnessCodexEnabled ? 'Codex' : null,
     harnessPiEnabled ? 'PI' : null,
-    harnessGrokEnabled ? 'Grok Build' : null
+    harnessGrokEnabled ? 'Grok Build' : null,
+    harnessMastracodeEnabled ? 'Mastra Code' : null
   ].filter((provider): provider is string => provider !== null);
   // Resolve scratch-mode project selection.
   const target = projectMode

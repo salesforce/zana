@@ -854,7 +854,7 @@ export class PtyManager extends EventEmitter {
       roleTargetId: roleTarget.targetId
     }) || undefined;
 
-    const { command, args } = provider.resolveLaunch(
+    const { command, args, env: launchEnv } = provider.resolveLaunch(
       effectiveProfile,
       opts.config,
       autoModeActive,
@@ -1368,6 +1368,7 @@ export class PtyManager extends EventEmitter {
     // env-substitutes into its `--mcp-config` file) — OpenCode instead reads the
     // whole zcc-inbox server block from this var, deep-merged over its own config.
     Object.assign(env, providerIntegration.mcpEnv);
+    if (launchEnv) Object.assign(env, launchEnv);
     // Per-session V8 heap ceiling: bound a runaway claude (and its subagent
     // node subtree, which inherits NODE_OPTIONS) so it aborts its own turn at
     // the ceiling instead of growing until the OS memory-pressure killer takes

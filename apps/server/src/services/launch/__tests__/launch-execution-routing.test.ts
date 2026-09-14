@@ -406,7 +406,7 @@ describe('production execution routing preflight', () => {
     }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
   });
 
-  it.each(['claude', 'cursor', 'codex', 'grok'] as const)('allows default CLI Agent (Agent mode) for %s without structured routing', async (profile) => {
+  it.each(['claude', 'cursor', 'codex', 'grok', 'mastracode'] as const)('allows default CLI Agent (Agent mode) for %s without structured routing', async (profile) => {
     const services = deps();
     await expect(preflightTerminalExecution({
       config: { version: 1, theme: 'dark' } as AppConfig,

@@ -132,6 +132,7 @@ export function LegacyAgentHomeComposer({
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
   const harnessGrokEnabled = useData((s) => s.harnessGrokEnabled);
+  const harnessMastracodeEnabled = useData((s) => s.harnessMastracodeEnabled);
   const nativeAgentDiscoveryEnabled = useData((s) => s.nativeAgentDiscoveryEnabled);
   const cliRemoteHostCatalogEnabled = useData((s) => s.cliRemoteHostCatalogEnabled);
   const selectTab = useUi((s) => s.selectTab);
@@ -351,7 +352,7 @@ export function LegacyAgentHomeComposer({
       if (generation !== descriptorGeneration.current) return;
       setDescriptors([]);
     });
-  }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, harnessGrokEnabled]);
+  }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, harnessGrokEnabled, harnessMastracodeEnabled]);
 
   useEffect(() => {
     if (pinnedProject) {
@@ -504,6 +505,7 @@ export function LegacyAgentHomeComposer({
     harnessPiEnabled,
     harnessOpenCodeEnabled,
     harnessGrokEnabled,
+    harnessMastracodeEnabled,
     cliRemoteHostCatalogEnabled,
     catalog.providers
   ]);

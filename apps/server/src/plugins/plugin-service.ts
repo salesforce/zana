@@ -22,6 +22,7 @@ import {
   formatPluginRequireCycle,
   isPluginId,
   parsePluginSource,
+  parsePluginOverviewMarkdown,
   readPluginManifest,
   sortPluginsByRequires,
   satisfiesRange,
@@ -87,6 +88,13 @@ import type {
   PluginThreadEvent
 } from '@zana-ai/zcc-plugin-sdk/server';
 import type { ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';
+import {
+  deepFreezePluginMetadata,
+  parsePersistedPluginMetadata
+} from '@zana-ai/zcc-domain/thread-runtime';
+import {
+  listThreadPluginMetadataRows
+} from '@zana-ai/zcc-db';
 import {
   invokePluginAgentTool,
   resolvePluginSessionTools,
@@ -334,6 +342,16 @@ export interface PluginServiceOptions {
     senderThreadId?: string;
   }) => Promise<{ id: string }>;
   unarchiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+  getPluginMetadata?: (args: {
+    pluginId: string;
+    threadId: string;
+  }) => Promise<import('@zana-ai/zcc-domain/thread-runtime').JsonObject>;
+  updatePluginMetadata?: (args: {
+    pluginId: string;
+    threadId: string;
+    set: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
+    remove: readonly string[];
+  }) => Promise<import('@zana-ai/zcc-domain/thread-runtime').JsonObject>;
   pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
   listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
   productContext?: import('../http/product-context.js').ProductHttpContext;
@@ -637,6 +655,43 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       .filter((row) => row.text.trim().length > 0);
   }
 
+  function withPluginMetadata(
+    sources: PluginAgentToolSource[],
+    ctx: PluginAgentConfigureContext
+  ): PluginAgentToolSource[] {
+    const db = opts.productContext?.db;
+    const threadId = ctx.threadId;
+    if (!db || !threadId) {
+      return sources.map((source) => ({
+        ...source,
+        pluginMetadata: deepFreezePluginMetadata({})
+      }));
+    }
+    const rows = listThreadPluginMetadataRows(
+      db,
+      threadId,
+      sources.map((source) => source.pluginId)
+    );
+    const byId = new Map(rows.map((row) => [row.pluginId, row.metadataJson]));
+    return sources.map((source) => {
+      const raw = byId.get(source.pluginId);
+      if (raw === undefined) {
+        return { ...source, pluginMetadata: deepFreezePluginMetadata({}) };
+      }
+      const parsed = parsePersistedPluginMetadata(raw);
+      if (parsed === undefined) {
+        console.warn(
+          `Ignoring corrupt plugin metadata for thread ${threadId}, plugin ${source.pluginId}`
+        );
+        return { ...source, pluginMetadata: deepFreezePluginMetadata({}) };
+      }
+      return {
+        ...source,
+        pluginMetadata: deepFreezePluginMetadata(structuredClone(parsed))
+      };
+    });
+  }
+
   function agentToolSources(): PluginAgentToolSource[] {
     const pluginSources = [...live.entries()]
       .filter(([, current]) => current.handle)
@@ -850,6 +905,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       listQueuedMessages: opts.listQueuedMessages,
       createQueuedMessage: opts.createQueuedMessage,
       unarchiveThread: opts.unarchiveThread,
+      getPluginMetadata: opts.getPluginMetadata,
+      updatePluginMetadata: opts.updatePluginMetadata,
       pushInbox: opts.pushInbox,
       listProjects: opts.listProjects,
       productContext: opts.productContext,
@@ -1455,7 +1512,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     snapshot,
     agentContributions,
     sessionTools(ctx) {
-      return resolvePluginSessionTools(agentToolSources(), ctx);
+      return resolvePluginSessionTools(withPluginMetadata(agentToolSources(), ctx), ctx);
     },
     invokeAgentTool(args) {
       return invokePluginAgentTool(agentToolSources(), args.name, args.input, args.ctx);
@@ -1698,6 +1755,7 @@ export interface BundledPluginCatalogEntry {
   extra?: Record<string, unknown>;
   tags?: string[];
   category?: string;
+  overview?: string;
 }
 
 /**
@@ -1726,6 +1784,12 @@ export function listBundledPluginCatalog(
         // Dir name must match the derived id so a mismatched package cannot be
         // offered under another id (same guard installFromBundled uses).
         if (manifest.id !== name) continue;
+        const overviewPath = join(dir, 'PLUGIN_OVERVIEW.md');
+        let overview: string | undefined;
+        if (existsSync(overviewPath)) {
+          const parsed = parsePluginOverviewMarkdown(readFileSync(overviewPath, 'utf8'));
+          if (parsed.ok) overview = parsed.overview;
+        }
         out.push({
           id: manifest.id,
           version: manifest.version,
@@ -1741,7 +1805,8 @@ export function listBundledPluginCatalog(
           })),
           extra: Object.keys(manifest.extra).length > 0 ? manifest.extra : undefined,
           tags: ['official'],
-          category: bundledPluginByName(name)?.category
+          category: bundledPluginByName(name)?.category,
+          ...(overview ? { overview } : {})
         });
       } catch (err) {
         log?.(`listBundledPluginCatalog:${name}`, err);

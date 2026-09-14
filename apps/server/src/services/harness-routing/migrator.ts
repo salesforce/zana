@@ -21,8 +21,8 @@ export interface HarnessRoutingMigrationResult {
 type JsonObject = Record<string, any>;
 
 const LEGACY_CONFIG_KEYS = [
-  'claudeBinary', 'cursorBinary', 'codexBinary', 'piBinary', 'opencodeBinary', 'grokBinary',
-  'harnessCursorEnabled', 'harnessCodexEnabled', 'harnessPiEnabled', 'harnessOpenCodeEnabled', 'harnessGrokEnabled',
+  'claudeBinary', 'cursorBinary', 'codexBinary', 'piBinary', 'opencodeBinary', 'grokBinary', 'mastracodeBinary',
+  'harnessCursorEnabled', 'harnessCodexEnabled', 'harnessPiEnabled', 'harnessOpenCodeEnabled', 'harnessGrokEnabled', 'harnessMastracodeEnabled',
   'defaultModel', 'defaultPermissionMode', 'claudeAppendSystemPrompt', 'claudeExtraArgs',
   'claudeAddDirs', 'claudeAllowedTools', 'claudeDeniedTools', 'defaultCodexSandbox',
   'defaultCodexApproval', 'autoModeEnabled', 'autoModeEnvironment', 'autoModeAllow',
@@ -55,7 +55,8 @@ function projectConfig(raw: JsonObject): JsonObject {
     ['codex', 'codexBinary', 'harnessCodexEnabled'],
     ['pi', 'piBinary', 'harnessPiEnabled'],
     ['opencode', 'opencodeBinary', 'harnessOpenCodeEnabled'],
-    ['grok', 'grokBinary', 'harnessGrokEnabled']
+    ['grok', 'grokBinary', 'harnessGrokEnabled'],
+    ['mastracode', 'mastracodeBinary', 'harnessMastracodeEnabled']
   ] as const;
   for (const [id, binaryKey, enabledKey] of adapters) {
     if (own(next, binaryKey) || (enabledKey && own(next, enabledKey))) {

@@ -94,6 +94,7 @@ export function threadProviderFamily(providerId: string): string | null {
   if (providerId === 'acp-cursor') return 'cursor';
   if (providerId === 'acp-opencode') return 'opencode';
   if (providerId === 'acp-grok') return 'grok';
+  if (providerId === 'acp-mastracode') return 'mastracode';
   if (providerId === 'codex' || providerId === 'pi') return providerId;
   return null;
 }

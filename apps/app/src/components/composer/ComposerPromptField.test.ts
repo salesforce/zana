@@ -8,6 +8,7 @@ describe('ComposerPromptField', () => {
     expect(ui).toContain('ComposerImageThumbs');
     expect(ui).toContain('onOpen');
     expect(ui).toContain('ThreadImageLightbox');
+    expect(ui).toContain('mergeLightboxItems');
     expect(ui).toContain('ComposerTypeaheadMenu');
     expect(ui).toContain('Make prompt box larger');
     expect(ui).toContain('EditorContent');

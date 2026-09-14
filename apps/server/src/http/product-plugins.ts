@@ -21,6 +21,10 @@ import {
 } from '../services/threads/conversation-lifecycle.js';
 import { createQueuedMessage, listQueuedMessages } from '../services/threads/queued-messages.js';
 import { createConversationFromRequest } from '../services/threads/conversation-create.js';
+import {
+  readConversationPluginMetadata,
+  updateConversationPluginMetadata
+} from '../services/threads/conversation-plugin-metadata.js';
 import { listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 import type { ProductHttpContext } from './product-context.js';
 import { conversationThreadOutput } from '../plugins/thread-events.js';
@@ -241,7 +245,8 @@ export async function attachProductPluginService(
       reasoningLevel,
       permissionMode,
       visibility,
-      environment
+      environment,
+      pluginMetadata
     }) => {
       const providers = listThreadProviders();
       const resolvedProvider = providerId
@@ -261,13 +266,20 @@ export async function attachProductPluginService(
         ...(environment?.kind === 'reuse' ? { environment: { kind: 'reuse', environmentId: environment.environmentId } } : {}),
         ...(model ? { model } : {}),
         ...(reasoningLevel ? { reasoningLevel: reasoningLevel as never } : {}),
-        ...(permissionMode ? { permissionMode } : {})
+        ...(permissionMode ? { permissionMode } : {}),
+        ...(pluginMetadata ? { pluginMetadata } : {})
       });
       return { id: thread.id };
     },
     unarchiveThread: async ({ threadId }) => {
       const thread = await unarchiveConversation(ctx, threadId);
       return { id: thread.id };
+    },
+    getPluginMetadata: async ({ threadId, pluginId }) => {
+      return readConversationPluginMetadata(ctx.db, threadId, pluginId);
+    },
+    updatePluginMetadata: async ({ threadId, pluginId, set, remove }) => {
+      return updateConversationPluginMetadata(ctx.db, { threadId, pluginId, set, remove });
     }
   });
   ctx.plugins = plugins;

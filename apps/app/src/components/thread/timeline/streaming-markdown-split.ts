@@ -1,7 +1,7 @@
 /**
  * Splits an in-progress assistant message into a settled prefix and a live
- * tail so the timeline can render them as two memoized `MarkdownPreview`
- * instances: only the tail is re-parsed when the next delta arrives.
+ * tail so the timeline can render them as two memoized markdown instances:
+ * only the tail is re-parsed when the next delta arrives.
  *
  * The boundary is the last blank line that
  *  - is not inside an open fenced code block or `$$` math block,
@@ -15,66 +15,27 @@
  * Returns `null` when no such boundary exists (short messages, an open fence
  * spanning the whole text, ...) so the caller renders one document.
  */
+import {
+  closesFence,
+  countOccurrences,
+  INDENTED_CONTINUATION_PATTERN,
+  isBlankLine,
+  isListLike,
+  LIST_MARKER_PATTERN,
+  MATH_DELIMITER,
+  parseFenceOpen,
+  type OpenFence
+} from '../../markdown-block-scan.js';
+
 interface StreamingMarkdownSplit {
   settled: string;
   tail: string;
 }
 
-interface OpenFence {
-  char: string;
-  length: number;
-}
-
-const FENCE_PATTERN = /^\s*(`{3,}|~{3,})/u;
-const LIST_MARKER_PATTERN = /^\s{0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)/u;
-const INDENTED_CONTINUATION_PATTERN = /^(?: {2,}|\t)/u;
-const MATH_DELIMITER = "$$";
-
-function parseFenceOpen(line: string): OpenFence | null {
-  const match = FENCE_PATTERN.exec(line);
-  if (match === null) {
-    return null;
-  }
-  const marker = match[1] ?? "";
-  return { char: marker[0] ?? "`", length: marker.length };
-}
-
-function closesFence(line: string, fence: OpenFence): boolean {
-  const match = FENCE_PATTERN.exec(line);
-  if (match === null) {
-    return false;
-  }
-  const marker = match[1] ?? "";
-  if (marker[0] !== fence.char || marker.length < fence.length) {
-    return false;
-  }
-  return line.slice(match[0].length).trim().length === 0;
-}
-
-function countOccurrences(line: string, needle: string): number {
-  let count = 0;
-  let index = line.indexOf(needle);
-  while (index !== -1) {
-    count += 1;
-    index = line.indexOf(needle, index + needle.length);
-  }
-  return count;
-}
-
-function isBlankLine(line: string): boolean {
-  return line.trim().length === 0;
-}
-
-function isListLike(line: string): boolean {
-  return (
-    LIST_MARKER_PATTERN.test(line) || INDENTED_CONTINUATION_PATTERN.test(line)
-  );
-}
-
 export function splitStreamingMarkdown(
   text: string,
 ): StreamingMarkdownSplit | null {
-  const lines = text.split("\n");
+  const lines = text.split('\n');
   // `lines[lines.length - 1]` is the unterminated last line (possibly empty).
   const lastCompleteLineIndex = lines.length - 2;
   let openFence: OpenFence | null = null;
@@ -83,7 +44,7 @@ export function splitStreamingMarkdown(
   let boundaryLineIndex = -1;
 
   for (let index = 0; index <= lastCompleteLineIndex; index += 1) {
-    const line = lines[index] ?? "";
+    const line = lines[index] ?? '';
     if (openFence !== null) {
       if (closesFence(line, openFence)) {
         openFence = null;
@@ -103,7 +64,7 @@ export function splitStreamingMarkdown(
       if (index + 1 > lastCompleteLineIndex) {
         continue;
       }
-      const nextLine = lines[index + 1] ?? "";
+      const nextLine = lines[index + 1] ?? '';
       if (INDENTED_CONTINUATION_PATTERN.test(nextLine)) {
         continue;
       }
@@ -137,7 +98,7 @@ export function splitStreamingMarkdown(
   }
   let settledLength = 0;
   for (let index = 0; index <= boundaryLineIndex; index += 1) {
-    settledLength += (lines[index] ?? "").length + 1;
+    settledLength += (lines[index] ?? '').length + 1;
   }
   return {
     settled: text.slice(0, settledLength),

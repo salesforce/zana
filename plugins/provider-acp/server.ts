@@ -18,7 +18,7 @@ const extraAcpCapabilities = {
 
 /**
  * First-party ACP provider plugin. Registers Cursor, OpenCode, OMP, Grok Build,
- * Hermes Agent, and optional custom ACP agents from plugin settings.
+ * Mastra Code, Hermes Agent, and optional custom ACP agents from plugin settings.
  */
 export default function plugin(bb: ZccPluginApi) {
   const settings = bb.settings.define(ACP_CUSTOM_AGENTS_SETTING);
@@ -69,6 +69,14 @@ export default function plugin(bb: ZccPluginApi) {
     id: "acp-grok",
     displayName: "Grok Build",
     icon: "./icons/grok.svg",
+    visibility: "installed",
+    capabilities: extraAcpCapabilities,
+    composerActions: [],
+  });
+  bb.agents.experimental_registerProvider({
+    id: "acp-mastracode",
+    displayName: "Mastra Code",
+    icon: "./icons/mastracode.svg",
     visibility: "installed",
     capabilities: extraAcpCapabilities,
     composerActions: [],

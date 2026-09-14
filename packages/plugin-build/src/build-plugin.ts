@@ -97,17 +97,40 @@ export function jsx(type, props, key) {
 export const jsxs = jsx;
 export const jsxDEV = jsx;
 `;
+  const reactDomShim = `const ReactDOM = globalThis.__ZCC_HOST_REACT_DOM__;
+if (ReactDOM == null) {
+  throw new Error('host react-dom is not available');
+}
+export default ReactDOM;
+export const createPortal = ReactDOM.createPortal;
+export const flushSync = ReactDOM.flushSync;
+export const hydrate = ReactDOM.hydrate;
+export const render = ReactDOM.render;
+export const unmountComponentAtNode = ReactDOM.unmountComponentAtNode;
+export const findDOMNode = ReactDOM.findDOMNode;
+export const version = ReactDOM.version;
+`;
+  const reactDomClientShim = `const ReactDOMClient = globalThis.__ZCC_HOST_REACT_DOM_CLIENT__;
+if (ReactDOMClient == null) {
+  throw new Error('host react-dom/client is not available');
+}
+export default ReactDOMClient;
+export const createRoot = ReactDOMClient.createRoot;
+export const hydrateRoot = ReactDOMClient.hydrateRoot;
+`;
   return {
     name: 'zcc-host-react',
     setup(build) {
-      build.onResolve({ filter: /^(react|react-dom|react\/jsx-runtime|react\/jsx-dev-runtime)$/ }, (args) => ({
+      build.onResolve({ filter: /^(react|react-dom|react-dom\/client|react\/jsx-runtime|react\/jsx-dev-runtime)$/ }, (args) => ({
         path: args.path,
         namespace
       }));
-      build.onLoad({ filter: /.*/, namespace }, (args) => ({
-        contents: args.path.startsWith('react/jsx') ? jsxShim : reactShim,
-        loader: 'js'
-      }));
+      build.onLoad({ filter: /.*/, namespace }, (args) => {
+        if (args.path.startsWith('react/jsx')) return { contents: jsxShim, loader: 'js' };
+        if (args.path === 'react-dom/client') return { contents: reactDomClientShim, loader: 'js' };
+        if (args.path === 'react-dom') return { contents: reactDomShim, loader: 'js' };
+        return { contents: reactShim, loader: 'js' };
+      });
     }
   };
 }

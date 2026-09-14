@@ -160,6 +160,7 @@ describe('threadProviderFamily', () => {
     expect(threadProviderFamily('acp-cursor')).toBe('cursor');
     expect(threadProviderFamily('acp-opencode')).toBe('opencode');
     expect(threadProviderFamily('acp-grok')).toBe('grok');
+    expect(threadProviderFamily('acp-mastracode')).toBe('mastracode');
     expect(threadProviderFamily('codex')).toBe('codex');
     expect(threadProviderFamily('pi')).toBe('pi');
     expect(threadProviderFamily('fake')).toBeNull();
@@ -200,6 +201,9 @@ describe('isThreadProviderOffered', () => {
     expect(isThreadProviderOffered({ id: 'acp-grok', visibility: 'installed' }, [verify('grok')])).toBe(true);
     expect(isThreadProviderOffered({ id: 'acp-grok', visibility: 'installed' }, [verify('grok', { enabled: false })])).toBe(false);
     expect(isThreadProviderOffered({ id: 'acp-grok', visibility: 'installed' }, [], { 'acp-grok': false })).toBe(false);
+    expect(isThreadProviderOffered({ id: 'acp-mastracode', visibility: 'installed' }, [verify('mastracode')])).toBe(true);
+    expect(isThreadProviderOffered({ id: 'acp-mastracode', visibility: 'installed' }, [verify('mastracode', { enabled: false })])).toBe(false);
+    expect(isThreadProviderOffered({ id: 'acp-mastracode', visibility: 'installed' }, [], { 'acp-mastracode': false })).toBe(false);
     expect(isThreadProviderOffered({ id: 'fake' }, [verify('codex', { installed: false })])).toBe(true);
   });
 });

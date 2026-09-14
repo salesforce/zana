@@ -34,5 +34,6 @@ thread's panel.
 ## When not to use this
 
 - You only need the contents yourself → `Read`.
+- You wrote or updated a **Library** document with `library_write` → emit `::doc{path title}` (library-curator). Do not `preview_file` a `.zcc/library` path.
 - You want to surface a durable deliverable in the inbox → `inbox_push` with `docs`.
 - You want the user to watch a web page → install the **Browser Automation** plugin and use `zcc browser` / `zcc guide browser`. Do not call `browser_open`.

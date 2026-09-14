@@ -66,6 +66,7 @@ import {
 } from './conversation-execution-mode.js';
 import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
 import { recordThreadExecutionMode } from './conversation-plan.js';
+import { persistConversationPluginMetadataSeed } from './conversation-plugin-metadata.js';
 
 export {
   conversationThreadView,
@@ -91,6 +92,7 @@ export interface CreateConversationInput {
   parentThreadId?: string;
   visibility?: 'visible' | 'hidden';
   originPluginId?: string | null;
+  pluginMetadata?: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
 }
 
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -408,6 +410,7 @@ export async function createConversationFromRequest(
       visibility: input.visibility,
       originPluginId: input.originPluginId ?? null
     });
+    persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
     emitPluginThreadEvent(ctx, {
       name: 'thread.created',
       threadId: thread.id,
@@ -506,6 +509,7 @@ export async function createConversationFromRequest(
         visibility: input.visibility,
         originPluginId: input.originPluginId ?? null
       });
+      persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
       emitPluginThreadEvent(ctx, {
         name: 'thread.created',
         threadId: thread.id,
@@ -536,6 +540,7 @@ export async function createConversationFromRequest(
       visibility: input.visibility,
       originPluginId: input.originPluginId ?? null
     });
+    persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
     emitPluginThreadEvent(ctx, {
       name: 'thread.created',
       threadId: thread.id,

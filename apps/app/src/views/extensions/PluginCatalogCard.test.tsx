@@ -46,4 +46,16 @@ describe('PluginCatalogCard', () => {
     expect(html).toContain('>Ada</button>');
     expect(html).not.toContain('role="link"');
   });
+
+  it('shows a green Installed pill instead of a disabled button', () => {
+    const html = renderToStaticMarkup(
+      h(PluginCatalogCard, {
+        entry: entry({ installed: true }),
+        onOpen: () => {},
+        onInstall: () => {}
+      })
+    );
+    expect(html).toContain('ext-browse-installed-pill');
+    expect(html).not.toContain('settings-btn');
+  });
 });

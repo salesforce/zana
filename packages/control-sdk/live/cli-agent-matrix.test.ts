@@ -6,7 +6,7 @@ import { Zcc } from '../src/client.js';
 const enabled = liveEnabled();
 
 /** Base CLI Agent profiles (not resume/yolo variants). */
-const PROFILES = ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok'] as const;
+const PROFILES = ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode'] as const;
 
 describe.skipIf(!enabled)('live CLI Agent harness matrix', () => {
   it.each(PROFILES)('launches %s to idle when preflight passes', async (profile) => {

@@ -80,16 +80,14 @@ export function PluginCatalogCard({
           <span className="ext-browse-card-body">
             <span className="ext-market-item-head">
               <span className="ext-market-item-title">{entry.title}</span>
-              <span
-                className={`ext-market-item-source ext-market-item-source--${provenance}`}
-                title={
-                  provenance === 'official'
-                    ? 'First-party plugin shipped with the app'
-                    : 'From a configured plugin catalog'
-                }
-              >
-                {provenance === 'official' ? 'Official' : 'Community'}
-              </span>
+              {provenance === 'community' ? (
+                <span
+                  className="ext-market-item-source ext-market-item-source--community"
+                  title="From a configured plugin catalog"
+                >
+                  Community
+                </span>
+              ) : null}
               {entry.hasUpdate && (
                 <span className="ext-market-item-source ext-market-item-source--update">Update</span>
               )}
@@ -119,18 +117,25 @@ export function PluginCatalogCard({
         ) : null}
       </div>
       <div className="ext-market-item-action">
-        <button
-          type="button"
-          className={`settings-btn ${action.primary ? 'primary' : ''}`}
-          disabled={action.disabled}
-          onClick={(event) => {
-            event.stopPropagation();
-            onInstall();
-          }}
-        >
-          {action.icon}
-          {action.label}
-        </button>
+        {action.label === 'Installed' && !entry.hasUpdate ? (
+          <span className="ext-browse-installed-pill">
+            {action.icon}
+            Installed
+          </span>
+        ) : (
+          <button
+            type="button"
+            className={`settings-btn ${action.primary ? 'primary' : ''}`}
+            disabled={action.disabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onInstall();
+            }}
+          >
+            {action.icon}
+            {action.label}
+          </button>
+        )}
       </div>
     </article>
   );

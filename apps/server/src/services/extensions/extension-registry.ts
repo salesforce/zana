@@ -497,6 +497,7 @@ export async function listMarketplace(
       extra: b.extra,
       tags: b.tags ?? ['official'],
       category: b.category,
+      overview: b.overview,
       installed: installedSet.has(b.id) || installed !== null,
       installedVersion: installed?.version,
       hasUpdate: false,
@@ -546,6 +547,7 @@ export interface BundledMarketplaceInput {
   extra?: Record<string, unknown>;
   tags?: string[];
   category?: string;
+  overview?: string;
 }
 
 /**

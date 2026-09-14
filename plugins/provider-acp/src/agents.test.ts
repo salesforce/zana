@@ -216,6 +216,7 @@ describe("acpProviderDeclaration", () => {
 
     expect(byId.get("acp-cursor")?.capabilities.fork).toBe("none");
     expect(byId.get("acp-grok")?.capabilities.fork).toBe("none");
+    expect(byId.get("acp-mastracode")?.capabilities.fork).toBe("none");
     expect(byId.get("acp-opencode")?.capabilities.fork).toBe("tip");
     expect(byId.get("acp-cursor")?.experimental_bridgeOptions).toMatchObject({
       acpDialect: "cursor",
@@ -241,6 +242,16 @@ describe("acpProviderDeclaration", () => {
     expect(byId.get("acp-grok")?.experimental_bridgeOptions).toMatchObject({
       acpDialect: "grok",
     });
+    expect(byId.get("acp-mastracode")?.experimental_bridgeOptions).toMatchObject({
+      acpLaunchSpec: {
+        command: "mastracode",
+        args: ["--acp"],
+        permissionCli: { full: ["--dangerous-auto-approve"] },
+      },
+    });
+    expect(byId.get("acp-mastracode")?.experimental_bridgeOptions).not.toHaveProperty(
+      "acpDialect",
+    );
     expect(byId.get("acp-opencode")?.experimental_bridgeOptions).toMatchObject({
       acpDialect: "opencode",
     });
@@ -262,6 +273,12 @@ describe("acpProviderDeclaration", () => {
       "high",
     ]);
     expect(grok.experimental_visibility).toBe("installed");
+
+    const mastracode = acpProviderDeclaration(
+      KNOWN_ACP_AGENTS.find((agent) => agent.id === "acp-mastracode")!,
+    );
+    expect(mastracode.capabilities.reasoningLevels).toEqual([]);
+    expect(mastracode.experimental_visibility).toBe("installed");
 
     const cursor = acpProviderDeclaration(
       KNOWN_ACP_AGENTS.find((agent) => agent.id === "acp-cursor")!,

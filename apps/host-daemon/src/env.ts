@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { accessSync, constants, existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,19 +24,18 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Dotfile-managed CLI installers (asdf, volta, cargo, bun, deno, most vendor
- * installers, …) all follow the same convention: drop a `bin/` dir inside a
- * `~/.<tool>/` home. We don't special-case any one vendor — instead scan the
- * top level of the home dir for that `~/.*​/bin` shape once, so a tool we've
- * never heard of (today: AI Suite's `~/.aisuite/bin`) is picked up for free.
+ * installers, …) drop a `bin/` or native `local/` dir inside a `~/.<tool>/`
+ * home. We don't special-case any one vendor — instead scan the top level of
+ * the home dir for those shapes once, so a tool we've never heard of (today:
+ * AI Suite's `~/.aisuite/bin`, native `~/.<tool>/local`) is picked up for free.
  * Bounded to a single non-recursive `readdir` — cheap, and never throws (a
  * permission error / missing home dir degrades to no extra dirs).
  */
-function dotDirBinPaths(): string[] {
-  const home = homedir();
+function dotDirSubPaths(sub: 'bin' | 'local', home = homedir()): string[] {
   try {
     return readdirSync(home, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && entry.name.startsWith('.'))
-      .map((entry) => join(home, entry.name, 'bin'))
+      .map((entry) => join(home, entry.name, sub))
       .filter((dir) => existsSync(dir));
   } catch {
     return [];
@@ -44,14 +43,61 @@ function dotDirBinPaths(): string[] {
 }
 
 /** Known CLI install dirs — fallback only, when the shell query can't run. */
-function fallbackDirs(): string[] {
+export function fallbackDirs(home = homedir()): string[] {
   return [
     '/usr/local/bin',
     '/opt/homebrew/bin',
-    join(homedir(), '.local', 'bin'),
-    join(homedir(), 'bin'),
-    ...dotDirBinPaths()
+    join(home, '.local', 'bin'),
+    join(home, 'bin'),
+    ...dotDirSubPaths('bin', home),
+    ...dotDirSubPaths('local', home)
   ];
+}
+
+function isExecutableFile(candidatePath: string): boolean {
+  try {
+    accessSync(candidatePath, constants.X_OK);
+    return statSync(candidatePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Directories that hold `npm i -g` shims, resolved from a `node` on the
+ * fallback PATH. Version managers expose `~/.<tool>/bin/node` (picked up by
+ * {@link fallbackDirs}) while global CLIs land next to the *real* node in a
+ * nested prefix (`…/pkgs/npm/<ver>/…/bin/mastracode`). Finder/login PATH and
+ * the shim dir itself do not contain those globals, so Settings reports
+ * "not found" for a CLI the user's IDE terminal can run.
+ *
+ * Local-only — do not fold these into {@link fallbackDirs} / {@link augmentPath}.
+ * Those also compose remote SSH PATH, and a local versioned prefix must never
+ * leak onto another machine.
+ */
+export function nodePrefixBinDirs(home = homedir()): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const dir of fallbackDirs(home)) {
+    const nodeShim = join(dir, 'node');
+    if (!isExecutableFile(nodeShim)) continue;
+    let real: string;
+    try {
+      real = realpathSync(nodeShim);
+    } catch {
+      continue;
+    }
+    const prefix = dirname(real);
+    if (!prefix || prefix === dir || seen.has(prefix) || !existsSync(prefix)) continue;
+    seen.add(prefix);
+    out.push(prefix);
+  }
+  return out;
+}
+
+/** Append resolved node-prefix bin dirs to `current` (deduped). Pure. */
+export function augmentPathWithNodePrefixes(current: string | undefined, home = homedir()): string {
+  return composePath(current, ...nodePrefixBinDirs(home));
 }
 
 /**
@@ -283,7 +329,8 @@ function loginShellPath(): string | null {
  *
  * Order: launch-only PATH dirs first (E2E fakes such as a stub `gh`), then the
  * real login-shell PATH (authoritative for Finder/Dock launches), then the
- * PATH we were launched with, then the guessed fallback dirs, and finally the
+ * PATH we were launched with, then the guessed fallback dirs, then node-prefix
+ * bins behind `~/.<tool>/bin/node` shims (`npm i -g` CLIs), and finally the
  * bundled `zcc` CLI bin dir as the LOWEST-precedence entry.
  *
  * The `zcc` dir is appended HERE, not in fallbackDirs(): fallbackDirs() also
@@ -299,5 +346,5 @@ export function ensureProcessPath(): void {
   const login = loginShellPath();
   const launched = process.env.PATH;
   const base = composePath(launchedPathOverrides(login, launched), login, launched, ...fallbackDirs());
-  process.env.PATH = augmentPathWithZcc(base);
+  process.env.PATH = augmentPathWithZcc(augmentPathWithNodePrefixes(base));
 }

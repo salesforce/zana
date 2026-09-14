@@ -178,6 +178,27 @@ describe('resolvePluginSessionTools', () => {
     expect(session.tools).toEqual([]);
   });
 
+  it('passes frozen plugin metadata into configure()', async () => {
+    const seen: Array<unknown> = [];
+    const session = await resolvePluginSessionTools([
+      source({
+        pluginId: 'notes',
+        tools: [tool('echo')],
+        pluginMetadata: { ticket: 'W-1' },
+        configurers: [(ctx) => {
+          seen.push(ctx.pluginMetadata);
+          expect(Object.isFrozen(ctx.pluginMetadata)).toBe(true);
+          expect(() => {
+            (ctx.pluginMetadata as { extra?: string }).extra = 'no';
+          }).toThrow();
+          return { tools: ['echo'], instructions: String((ctx.pluginMetadata as { ticket?: string })?.ticket) };
+        }]
+      })
+    ], { threadId: 'thr-1', projectId: 'proj-1' });
+    expect(seen).toEqual([{ ticket: 'W-1' }]);
+    expect(session.instructions).toBe('W-1');
+  });
+
   it('applies per-tool parameter overrides from configure()', async () => {
     const session = await resolvePluginSessionTools([
       source({

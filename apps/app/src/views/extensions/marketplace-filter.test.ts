@@ -67,7 +67,7 @@ describe('MarketplaceView presentation', () => {
     expect(source).toContain('Official plugins install offline from the app');
     expect(source).toContain('ext-market-tag');
     expect(card).toContain('ext-browse-card-icon');
-    expect(card).toContain("provenance === 'official' ? 'Official' : 'Community'");
+    expect(card).toContain("provenance === 'community'");
     expect(source).not.toContain('marketplaceTags(entry)');
     expect(source).not.toContain("? 'Bundled' : 'Marketplace'");
   });

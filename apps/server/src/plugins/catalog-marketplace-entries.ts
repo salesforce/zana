@@ -71,6 +71,7 @@ function toMarketplaceEntry(
     version,
     title: plugin.displayName,
     description: plugin.description,
+    overview: plugin.overview,
     author: plugin.author.name,
     icon: plugin.icon?.lucide,
     installed: installedIds.has(plugin.id),

@@ -145,7 +145,8 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'harness-codex', label: 'Codex' },
     { id: 'harness-pi', label: 'PI' },
     { id: 'harness-opencode', label: 'OpenCode' },
-    { id: 'harness-grok', label: 'Grok Build' }
+    { id: 'harness-grok', label: 'Grok Build' },
+    { id: 'harness-mastracode', label: 'Mastra Code' }
   ],
   editor: [
     { id: 'editor-status', label: 'Installed editors' },
@@ -310,6 +311,9 @@ export function SettingsView() {
       }
       if (typeof patch.harnessGrokEnabled === 'boolean') {
         useData.getState().setHarnessGrokEnabled(patch.harnessGrokEnabled);
+      }
+      if (typeof patch.harnessMastracodeEnabled === 'boolean') {
+        useData.getState().setHarnessMastracodeEnabled(patch.harnessMastracodeEnabled);
       }
       if (typeof patch.nativeAgentDiscoveryEnabled === 'boolean') {
         useData.setState({ nativeAgentDiscoveryEnabled: patch.nativeAgentDiscoveryEnabled });

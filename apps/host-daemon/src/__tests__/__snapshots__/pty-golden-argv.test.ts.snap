@@ -2557,6 +2557,290 @@ exports[`golden argv — local create() matrix > grok-yolo · projectSettings ·
 }
 `;
 
+exports[`golden argv — local create() matrix > mastracode · persona · interactive 1`] = `
+{
+  "args": [],
+  "command": "mastracode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode · persona · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode · persona+projectSettings · interactive 1`] = `
+{
+  "args": [],
+  "command": "mastracode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode · persona+projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode · plain · interactive 1`] = `
+{
+  "args": [],
+  "command": "mastracode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode · plain · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode · projectSettings · interactive 1`] = `
+{
+  "args": [],
+  "command": "mastracode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode · projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-resume · persona · interactive 1`] = `
+{
+  "args": [
+    "--continue",
+  ],
+  "command": "mastracode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-resume · persona · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+    "--continue",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-resume · persona+projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--continue",
+  ],
+  "command": "mastracode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-resume · persona+projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+    "--continue",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-resume · plain · interactive 1`] = `
+{
+  "args": [
+    "--continue",
+  ],
+  "command": "mastracode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-resume · plain · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+    "--continue",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-resume · projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--continue",
+  ],
+  "command": "mastracode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-resume · projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+    "--continue",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-yolo · persona · interactive 1`] = `
+{
+  "args": [],
+  "command": "mastracode",
+  "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-yolo · persona · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-yolo · persona+projectSettings · interactive 1`] = `
+{
+  "args": [],
+  "command": "mastracode",
+  "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-yolo · persona+projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-yolo · plain · interactive 1`] = `
+{
+  "args": [],
+  "command": "mastracode",
+  "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-yolo · plain · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-yolo · projectSettings · interactive 1`] = `
+{
+  "args": [],
+  "command": "mastracode",
+  "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > mastracode-yolo · projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "mastracode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
 exports[`golden argv — local create() matrix > opencode · persona · interactive 1`] = `
 {
   "args": [],
@@ -3933,6 +4217,198 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok-yolo · p
     "-t",
     "sfwork@devbox",
     "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode · persona 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode · persona+projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode · plain 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode · projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-resume · persona 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-resume · persona+projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-resume · plain 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-resume · projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-yolo · persona 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-yolo · persona+projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-yolo · plain 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
+  ],
+}
+`;
+
+exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-yolo · projectSettings 1`] = `
+{
+  "args": [
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=4",
+    "-o",
+    "TCPKeepAlive=yes",
+    "-t",
+    "sfwork@devbox",
+    "'cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
   ],
 }
 `;

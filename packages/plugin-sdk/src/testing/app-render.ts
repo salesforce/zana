@@ -1,4 +1,6 @@
 import * as React from 'react';
+import * as ReactDOM from 'react-dom';
+import * as ReactDOMClient from 'react-dom/client';
 import type { ComponentType, ReactElement } from 'react';
 import { render, type RenderResult } from '@testing-library/react';
 import type {
@@ -66,6 +68,9 @@ function asPluginApp(value: unknown): unknown {
 
 function installHostReact(): void {
   (globalThis as { __ZCC_HOST_REACT__?: typeof React }).__ZCC_HOST_REACT__ = React;
+  (globalThis as { __ZCC_HOST_REACT_DOM__?: typeof ReactDOM }).__ZCC_HOST_REACT_DOM__ = ReactDOM;
+  (globalThis as { __ZCC_HOST_REACT_DOM_CLIENT__?: typeof ReactDOMClient }).__ZCC_HOST_REACT_DOM_CLIENT__ =
+    ReactDOMClient;
 }
 
 function defaultComposerScope(context: ZccContext): PluginComposerScope {

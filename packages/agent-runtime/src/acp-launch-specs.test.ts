@@ -69,6 +69,7 @@ describe("BUILT_IN_ACP_LAUNCH_SPECS", () => {
       "acp-cursor",
       "acp-grok",
       "acp-hermes-agent",
+      "acp-mastracode",
       "acp-omp",
       "acp-opencode",
     ]);
@@ -97,6 +98,24 @@ describe("BUILT_IN_ACP_LAUNCH_SPECS", () => {
       },
     });
     expect(BUILT_IN_ACP_MODEL_PICKER["acp-grok"]).toEqual({ acpDialect: "grok" });
+  });
+
+  it("launches Mastra Code as `mastracode --acp` without a thinking CLI", () => {
+    expect(BUILT_IN_ACP_LAUNCH_SPECS["acp-mastracode"]).toEqual({
+      displayName: "Mastra Code",
+      command: "mastracode",
+      args: ["--acp"],
+      env: {},
+      permissionCli: { full: ["--dangerous-auto-approve"] },
+      nativeSkillRoots: {
+        user: [".agents/skills"],
+        project: [".agents/skills"],
+      },
+    });
+    expect(BUILT_IN_ACP_LAUNCH_SPECS["acp-mastracode"]).not.toHaveProperty(
+      "reasoningCli",
+    );
+    expect(BUILT_IN_ACP_MODEL_PICKER["acp-mastracode"]).toBeUndefined();
   });
 
   it("launches OMP and Hermes on their ACP subcommands", () => {

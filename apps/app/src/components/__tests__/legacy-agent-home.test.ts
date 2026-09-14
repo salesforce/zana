@@ -51,7 +51,8 @@ describe('PROFILE_BY_FAMILY', () => {
       codex: 'codex',
       pi: 'pi',
       opencode: 'opencode',
-      grok: 'grok'
+      grok: 'grok',
+      mastracode: 'mastracode'
     });
   });
 });
@@ -64,12 +65,14 @@ describe('thread provider id mapping', () => {
     expect(threadProviderIdForFamily('codex')).toBe('codex');
     expect(threadProviderIdForFamily('pi')).toBe('pi');
     expect(threadProviderIdForFamily('grok')).toBe('acp-grok');
+    expect(threadProviderIdForFamily('mastracode')).toBe('acp-mastracode');
     expect(threadProviderIdForFamily('shell')).toBeNull();
     expect(familyForThreadProviderId('claude-code')).toBe('claude');
     expect(familyForThreadProviderId('acp-cursor')).toBe('cursor');
     expect(familyForThreadProviderId('acp-opencode')).toBe('opencode');
     expect(familyForThreadProviderId('codex')).toBe('codex');
     expect(familyForThreadProviderId('acp-grok')).toBe('grok');
+    expect(familyForThreadProviderId('acp-mastracode')).toBe('mastracode');
     expect(familyForThreadProviderId('unknown')).toBeNull();
   });
 });
@@ -440,7 +443,9 @@ describe('CLI permission modes', () => {
       { family: 'opencode', mode: 'accept-edits', unrestrictedId: 'opencode-yolo', expected: { executionState: 'accept-edits' } },
       { family: 'opencode', mode: 'full', unrestrictedId: 'opencode-yolo', expected: { profileId: 'opencode-yolo' } },
       { family: 'grok', mode: 'accept-edits', unrestrictedId: 'grok-yolo', expected: { executionState: 'accept-edits' } },
-      { family: 'grok', mode: 'full', unrestrictedId: 'grok-yolo', expected: { profileId: 'grok-yolo' } }
+      { family: 'grok', mode: 'full', unrestrictedId: 'grok-yolo', expected: { profileId: 'grok-yolo' } },
+      { family: 'mastracode', mode: 'accept-edits', unrestrictedId: 'mastracode-yolo', expected: { executionState: 'accept-edits' } },
+      { family: 'mastracode', mode: 'full', unrestrictedId: 'mastracode-yolo', expected: { profileId: 'mastracode-yolo' } }
     ];
     for (const row of rows) {
       expect(
@@ -735,6 +740,7 @@ describe('cliComposerModeChip', () => {
     expect(cliComposerModeChip('codex')).toBe('work-mode');
     expect(cliComposerModeChip('pi')).toBe('none');
     expect(cliComposerModeChip('grok')).toBe('none');
+    expect(cliComposerModeChip('mastracode')).toBe('none');
     expect(cliComposerModeChip('')).toBe('none');
   });
 });

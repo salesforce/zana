@@ -8,6 +8,7 @@ import { listMessageActions, subscribePluginSlots } from '../../../plugins/plugi
 import { openPluginThreadPanel } from '../../../plugins/plugin-thread-panel.js';
 import { conversationImageSrc } from '../../../lib/prompt-attachments.js';
 import { extractInlineThreadImages, threadImageStubLabel } from './thread-inline-images.js';
+import { mergeLightboxItems, type ThreadLightboxItem } from './thread-image-lightbox.js';
 import { ThreadDisplayedImage } from './ThreadDisplayedImage.js';
 import { splitStreamingMarkdown } from './streaming-markdown-split.js';
 import { repairStreamingMarkdownTail } from './repair-streaming-markdown-tail.js';
@@ -97,6 +98,17 @@ export const ConversationRow = memo(function ConversationRow({
     }
     return refs;
   }, [extracted.images, row.attachments, row.role]);
+  const galleryItems = useMemo(() => {
+    const items: ThreadLightboxItem[] = [];
+    const seen = new Set<string>();
+    for (const image of imageRefs) {
+      const src = conversationImageSrc(projectId, image.path);
+      if (!src || seen.has(src)) continue;
+      seen.add(src);
+      items.push({ src, alt: image.name });
+    }
+    return items;
+  }, [imageRefs, projectId]);
   const fileNames = row.role === 'user' ? (row.attachments?.localFilePaths ?? []) : [];
   const previewPaths = useMemo(
     () => conversationFilePreviewPaths(row.text ?? '', fileNames),
@@ -381,6 +393,7 @@ export const ConversationRow = memo(function ConversationRow({
         <ThreadImageLightbox
           src={lightbox.src}
           alt={lightbox.name}
+          items={mergeLightboxItems(galleryItems, { src: lightbox.src, alt: lightbox.name })}
           onClose={() => setLightbox(null)}
         />
       ) : null}

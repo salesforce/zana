@@ -4,10 +4,11 @@
  */
 
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
-import { augmentPath } from '../env.js';
+import { augmentPath, augmentPathWithNodePrefixes, fallbackDirs, nodePrefixBinDirs } from '../env.js';
 import { HARNESS_REGISTRATIONS } from './registry.js';
 
 function runVersion(
@@ -27,24 +28,57 @@ function runVersion(
   });
 }
 
+function isExecutableFile(candidatePath: string): boolean {
+  try {
+    accessSync(candidatePath, constants.X_OK);
+    return statSync(candidatePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function wellKnownHarnessPaths(command: string, home: string): string[] {
+  return [
+    ...fallbackDirs(home).map((dir) => join(dir, command)),
+    ...nodePrefixBinDirs(home).map((dir) => join(dir, command)),
+    join(home, `.${command}`, 'local', command)
+  ];
+}
+
+export interface ResolveHarnessCommandOptions {
+  home?: string;
+  uid?: number;
+}
+
 /**
- * Resolve a basename harness command against PATH. Finder/Dock and the
- * electron-vite sandbox often omit `~/.local/bin`, so `execFile('claude')`
- * returns ENOENT even when the CLI is installed. Absolute overrides that
- * exist stay as-is; a missing override (stale `harnesses.byId.*.binary`)
- * falls back to PATH search by basename so CLI Agents still launch.
+ * Resolve a basename harness command against PATH, then well-known native
+ * install locations. Finder/Dock and the electron-vite sandbox often omit
+ * `~/.local/bin`, so `execFile('claude')` returns ENOENT even when the CLI is
+ * installed. Absolute overrides that exist and are executable stay as-is; a
+ * missing or non-executable override (stale `harnesses.byId.*.binary`) falls
+ * back to PATH search by basename so CLI Agents still launch.
  */
-export function resolveHarnessCommand(command: string, pathEnv = process.env.PATH): string {
+export function resolveHarnessCommand(
+  command: string,
+  pathEnv = process.env.PATH,
+  options: ResolveHarnessCommandOptions = {}
+): string {
   if (!command) return command;
   const original = command;
   if (isAbsolute(command) || command.includes('/') || command.includes('\\')) {
-    if (existsSync(command)) return command;
+    if (isExecutableFile(command)) return command;
     command = command.replace(/.*[/\\]/, '') || command;
   }
   for (const dir of (pathEnv ?? '').split(delimiter)) {
     if (!dir) continue;
     const candidate = join(dir, command);
-    if (existsSync(candidate)) return candidate;
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  const uid = options.uid ?? process.getuid?.();
+  if (uid === 0) return original;
+  const home = options.home ?? homedir();
+  for (const candidate of wellKnownHarnessPaths(command, home)) {
+    if (isExecutableFile(candidate)) return candidate;
   }
   return original;
 }
@@ -96,7 +130,7 @@ export function harnessEnabledFromProbe(input: {
 
 /** Verify every registered binary harness against its registration metadata. */
 export async function verifyHarnesses(config: AppConfig): Promise<HarnessVerifyResult[]> {
-  const searchPath = augmentPath(process.env.PATH);
+  const searchPath = augmentPathWithNodePrefixes(augmentPath(process.env.PATH));
   const registrations = HARNESS_REGISTRATIONS.filter((registration) => registration.verification !== undefined);
   return Promise.all(registrations.map(async (registration): Promise<HarnessVerifyResult> => {
     const verification = registration.verification!;

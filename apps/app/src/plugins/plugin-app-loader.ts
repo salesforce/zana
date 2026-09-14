@@ -17,6 +17,8 @@ import type { PluginSettingsSnapshot as DomainPluginSettingsSnapshot } from '@za
  */
 
 import * as React from 'react';
+import * as ReactDOM from 'react-dom';
+import * as ReactDOMClient from 'react-dom/client';
 import { create } from 'zustand';
 import type { AppModule, ModuleHost, RendererEntry } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
@@ -118,6 +120,8 @@ async function loadPluginApp(
     // Some bundled renderer apps use the host React shim during module evaluation
     // (before their slot registration runs), so prime it before importing.
     (globalThis as Record<string, unknown>).__ZCC_HOST_REACT__ = React;
+    (globalThis as Record<string, unknown>).__ZCC_HOST_REACT_DOM__ = ReactDOM;
+    (globalThis as Record<string, unknown>).__ZCC_HOST_REACT_DOM_CLIENT__ = ReactDOMClient;
     const mod = await importer(entry.appUrl);
     if (isPluginAppDefinition(mod.default)) {
       const set = interpretPluginApp(entry.id, mod.default);

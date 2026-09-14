@@ -96,3 +96,19 @@ export function nextComposerRequestNonce(): number {
   composerNonce += 1;
   return composerNonce;
 }
+
+export type BrowseHeroOpenRequest = { nonce: number; seed?: string };
+
+/** Apply a create request only when its nonce is new. Callback identity must not re-enter compose. */
+export function applyBrowseHeroOpenRequest(
+  request: BrowseHeroOpenRequest | null | undefined,
+  appliedNonce: number | null
+):
+  | { enterCompose: true; nonce: number; seed?: string }
+  | { enterCompose: false; nonce: number | null } {
+  if (!request) return { enterCompose: false, nonce: null };
+  if (request.nonce === appliedNonce) {
+    return { enterCompose: false, nonce: appliedNonce };
+  }
+  return { enterCompose: true, nonce: request.nonce, seed: request.seed };
+}

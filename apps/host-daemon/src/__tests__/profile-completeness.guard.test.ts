@@ -5,8 +5,9 @@
  * `packages/domain/src/launch-provider.ts` `VALID_PROFILES` is the single source of truth,
  * but a profile id is physically re-listed in several files that cannot all
  * import the shared runtime value:
- *   - the family predicates (`isClaudeProfile` / `isCursorProfile` /
- *     `isCodexProfile` / `isPiProfile` / `isOpenCodeProfile` / `isGrokProfile`) — every non-shell
+   *   - the family predicates (`isClaudeProfile` / `isCursorProfile` /
+   *     `isCodexProfile` / `isPiProfile` / `isOpenCodeProfile` / `isGrokProfile` /
+   *     `isMastracodeProfile`) — every non-shell
  *     profile must belong to exactly one;
  *   - `providerCapabilities` — must return a descriptor for every profile;
  *   - the registry (`providerFor`) — must resolve a real provider for every
@@ -35,6 +36,7 @@ import {
   isPiProfile,
   isOpenCodeProfile,
   isGrokProfile,
+  isMastracodeProfile,
   isAgentProfile,
   providerCapabilities
 } from '@zana-ai/zcc-domain/launch-provider';
@@ -71,7 +73,8 @@ describe('profile-completeness — the enumeration agrees everywhere', () => {
         isCodexProfile(p),
         isPiProfile(p),
         isOpenCodeProfile(p),
-        isGrokProfile(p)
+        isGrokProfile(p),
+        isMastracodeProfile(p)
       ].filter(Boolean).length;
       expect(inFamilies, `${p} must be in exactly one family predicate`).toBe(1);
       expect(isAgentProfile(p), `${p} must be an agent profile`).toBe(true);

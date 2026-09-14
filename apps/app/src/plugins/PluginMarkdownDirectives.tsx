@@ -1,5 +1,7 @@
-import { Fragment, useSyncExternalStore, type ComponentType } from 'react';
+import { Fragment, useMemo, useSyncExternalStore, type ComponentType } from 'react';
 import { MarkdownContent } from '../components/MarkdownContent.js';
+import { useIncrementalMarkdownPieces } from '../components/markdown-incremental-pieces.js';
+import { collectMarkdownLightboxItems } from '../components/thread/timeline/thread-inline-images.js';
 import { openWorkspaceFileForThread } from '../components/thread/secondary-panel/useThreadOpenFileSignal.js';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 import { listMessageDirectives, subscribePluginSlots } from './plugin-slots.js';
@@ -31,18 +33,40 @@ export function PluginMarkdownDirectives({
     listMessageDirectives
   );
   const parsed = parseMessageDirectives(text);
-  if (parsed.length === 0 || registrations.length === 0) {
+  const byName = new Map(registrations.map((row) => [row.id, row]));
+  const hasRegisteredDirective = parsed.some((dir) => byName.has(dir.name));
+  const pieces = useIncrementalMarkdownPieces(text, !hasRegisteredDirective);
+  const documentLightboxItems = useMemo(
+    () => collectMarkdownLightboxItems(text, projectId),
+    [projectId, text]
+  );
+  const markdownProps = {
+    threadId,
+    projectId,
+    threadMentions,
+    filePathHints,
+    lightboxItems: documentLightboxItems
+  };
+  if (!hasRegisteredDirective) {
+    let offset = 0;
     return (
-      <MarkdownContent
-        text={text}
-        threadId={threadId}
-        projectId={projectId}
-        threadMentions={threadMentions}
-        filePathHints={filePathHints}
-      />
+      <>
+        {pieces.map((piece) => {
+          const key = offset;
+          offset += piece.length;
+          return piece.trim() ? (
+            <MarkdownContent
+              key={key}
+              text={piece}
+              {...markdownProps}
+            />
+          ) : (
+            <Fragment key={key} />
+          );
+        })}
+      </>
     );
   }
-  const byName = new Map(registrations.map((row) => [row.id, row]));
   const segments: Array<{ kind: 'md'; text: string } | { kind: 'dir'; dir: ParsedMessageDirective }> = [];
   let cursor = 0;
   for (const dir of parsed) {
@@ -56,10 +80,7 @@ export function PluginMarkdownDirectives({
     return (
       <MarkdownContent
         text={text}
-        threadId={threadId}
-        projectId={projectId}
-        threadMentions={threadMentions}
-        filePathHints={filePathHints}
+        {...markdownProps}
       />
     );
   }
@@ -71,10 +92,7 @@ export function PluginMarkdownDirectives({
             <MarkdownContent
               key={`md-${index}`}
               text={segment.text}
-              threadId={threadId}
-              projectId={projectId}
-              threadMentions={threadMentions}
-              filePathHints={filePathHints}
+              {...markdownProps}
             />
           ) : (
             <Fragment key={`md-${index}`} />

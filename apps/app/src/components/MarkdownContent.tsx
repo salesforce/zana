@@ -1,9 +1,8 @@
-import { Children, isValidElement, memo, useState, type ReactNode } from 'react';
+import { Children, isValidElement, memo, useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import 'highlight.js/styles/github-dark.css';
 import 'katex/dist/katex.min.css';
@@ -23,14 +22,22 @@ import { parseThreadMentionHref, remarkThreadMentions } from './markdown-thread-
 import { dispatchThreadOpenFile } from './thread/secondary-panel/useThreadOpenFileSignal.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { conversationImageSrc } from '../lib/prompt-attachments.js';
-import { transformMarkdownMediaUrl } from './thread/timeline/thread-inline-images.js';
+import {
+  collectMarkdownLightboxItems,
+  transformMarkdownMediaUrl
+} from './thread/timeline/thread-inline-images.js';
 import { ThreadImageLightbox } from './thread/timeline/ThreadImageLightbox.js';
+import { mergeLightboxItems } from './thread/timeline/thread-image-lightbox.js';
+import {
+  highlightMarkdownCode,
+  languageFromMarkdownClassName
+} from './markdown-code-highlight.js';
 
 /**
  * Shared markdown / doc rendering for the inbox.
  *
  * Extracted so the live detail pane and the PDF export render through the
- * *same* pipeline — react-markdown + remark-gfm + rehype-highlight, with
+ * *same* pipeline — react-markdown + remark-gfm + highlight.js (LRU-cached), with
  * ```mermaid fences promoted to diagrams and recognized source files syntax
  * highlighted. Keeping one renderer is the whole point: a second markdown
  * path would drift from what the user sees on screen.
@@ -146,7 +153,8 @@ export const MarkdownContent = memo(function MarkdownContent({
   threadMentions = false,
   threadId,
   projectId,
-  filePathHints
+  filePathHints,
+  lightboxItems: providedLightboxItems
 }: {
   text: string;
   mermaidTheme?: 'dark' | 'default';
@@ -156,6 +164,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   threadId?: string;
   projectId?: string | null;
   filePathHints?: readonly string[];
+  lightboxItems?: readonly { src: string; alt: string }[];
 }) {
   const body = unwrapBareFence(text);
   const [rewriteLocalhost] = useBooleanPreference(
@@ -164,6 +173,11 @@ export const MarkdownContent = memo(function MarkdownContent({
   );
   const hostname = typeof window !== 'undefined' ? window.location.hostname : undefined;
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const collectedLightboxItems = useMemo(
+    () => collectMarkdownLightboxItems(body, projectId),
+    [body, projectId]
+  );
+  const lightboxItems = providedLightboxItems ?? collectedLightboxItems;
   const remarkPlugins = [
     remarkGfm,
     remarkMath,
@@ -176,11 +190,7 @@ export const MarkdownContent = memo(function MarkdownContent({
         <ReactMarkdown
         remarkPlugins={remarkPlugins}
         urlTransform={(url) => transformMarkdownMediaUrl(url, defaultUrlTransform)}
-        // Syntax-highlight fenced code blocks. `ignoreMissing` keeps unknown
-        // languages (incl. ```mermaid, which the pre override intercepts
-        // before this matters) from throwing — they just render unhighlighted.
         rehypePlugins={[
-          [rehypeHighlight, { ignoreMissing: true }],
           // html-only avoids KaTeX's sibling MathML+HTML trees, which React
           // warns about as an unkeyed list.
           [rehypeKatex, { throwOnError: false, output: 'html' }]
@@ -253,6 +263,17 @@ export const MarkdownContent = memo(function MarkdownContent({
             const mermaid = extractMermaid(props.children);
             if (mermaid !== null)
               return <MermaidDiagram key={mermaid} code={mermaid} theme={mermaidTheme} exportable={exportable} />;
+            const highlighted = highlightFencedPre(props.children);
+            if (highlighted) {
+              return (
+                <pre>
+                  <code
+                    className={highlighted.className}
+                    dangerouslySetInnerHTML={highlighted.html}
+                  />
+                </pre>
+              );
+            }
             return <pre {...props} />;
           },
           code: (props) => {
@@ -319,6 +340,7 @@ export const MarkdownContent = memo(function MarkdownContent({
         <ThreadImageLightbox
           src={lightbox.src}
           alt={lightbox.alt}
+          items={mergeLightboxItems(lightboxItems, lightbox)}
           onClose={() => setLightbox(null)}
         />
       ) : null}
@@ -345,4 +367,20 @@ function extractMermaid(children: ReactNode): string | null {
   if (!/(^|\s)language-mermaid(\s|$)/.test(className)) return null;
   const source = props.children;
   return typeof source === 'string' ? source.replace(/\n$/, '') : null;
+}
+
+function highlightFencedPre(children: ReactNode): {
+  className: string;
+  html: { __html: string };
+} | null {
+  if (!isValidElement(children)) return null;
+  const props = children.props as { className?: string; children?: ReactNode };
+  const source = typeof props.children === 'string' ? props.children.replace(/\n$/, '') : null;
+  if (source === null) return null;
+  const language = languageFromMarkdownClassName(props.className);
+  const className = ['hljs', props.className].filter(Boolean).join(' ');
+  return {
+    className,
+    html: highlightMarkdownCode({ code: source, language })
+  };
 }

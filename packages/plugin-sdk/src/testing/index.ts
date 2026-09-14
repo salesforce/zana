@@ -185,6 +185,16 @@ export interface FakePluginHostOptions {
     senderThreadId?: string;
   }) => Promise<{ id: string }>;
   unarchiveThread?: (args: { threadId: string }) => Promise<{ id: string }>;
+  getPluginMetadata?: (args: {
+    threadId: string;
+    pluginId?: string;
+  }) => Promise<import('@zana-ai/zcc-domain/thread-runtime').JsonObject>;
+  updatePluginMetadata?: (args: {
+    threadId: string;
+    pluginId?: string;
+    set?: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
+    remove?: readonly string[];
+  }) => Promise<import('@zana-ai/zcc-domain/thread-runtime').JsonObject>;
   pushInbox?: (args: { projectId: string; comments: string }) => Promise<{ id: string }>;
   listProjects?: () =>
     | Array<{ id: string; name: string; path?: string }>
@@ -428,6 +438,18 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
             throw new Error('zcc.sdk is not available in this runtime');
           }
           return options.unarchiveThread(args);
+        },
+        async getPluginMetadata(args) {
+          if (!options?.getPluginMetadata) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.getPluginMetadata(args);
+        },
+        async updatePluginMetadata(args) {
+          if (!options?.updatePluginMetadata) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.updatePluginMetadata(args);
         }
       },
       inbox: {
@@ -461,6 +483,23 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
             options?.readWorkspaceFile ? () => options.readWorkspaceFile!(args) : undefined,
             args
           ) as Promise<import('../server.js').PluginSdkFileReadResult>;
+        }
+      },
+      library: {
+        async list(args) {
+          return invokeSdk('library.list', undefined, args) as Promise<
+            import('../server.js').PluginSdkLibraryDoc[]
+          >;
+        },
+        async read(args) {
+          return invokeSdk('library.read', undefined, args) as Promise<
+            { ok: true; content: string } | { ok: false; message: string }
+          >;
+        },
+        async write(args) {
+          return invokeSdk('library.write', undefined, args) as Promise<
+            { ok: true } | { ok: false; message: string }
+          >;
         }
       },
       providers: {

@@ -481,4 +481,10 @@ describe('zcc-plugin-authoring skill', () => {
     expect(skill).toContain('renderSlot');
     expect(skill).toContain('loadPluginApp');
   });
+
+  it('documents thread plugin metadata on spawn, get, update, and configure', () => {
+    expect(skill).toContain('pluginMetadata');
+    expect(skill).toContain('getPluginMetadata');
+    expect(skill).toContain('updatePluginMetadata');
+  });
 });

@@ -18,4 +18,21 @@ describe('ThreadImageLightbox', () => {
     expect(readFileSync(new URL('./ThreadImageLightbox.tsx', import.meta.url), 'utf8'))
       .toContain('className="thread-image-modal"');
   });
+
+  it('shows gallery navigation when multiple images are provided', () => {
+    const html = renderToStaticMarkup(
+      <ThreadImageLightbox
+        src="https://example.com/a.png"
+        alt="A"
+        items={[
+          { src: 'https://example.com/a.png', alt: 'A' },
+          { src: 'https://example.com/b.png', alt: 'B' }
+        ]}
+        onClose={() => undefined}
+      />
+    );
+    expect(html).toContain('aria-label="Previous image"');
+    expect(html).toContain('aria-label="Next image"');
+    expect(html).toContain('1 of 2');
+  });
 });

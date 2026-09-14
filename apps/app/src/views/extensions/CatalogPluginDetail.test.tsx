@@ -18,13 +18,14 @@ function entry(over: Partial<MarketplaceEntry> & Pick<MarketplaceEntry, 'id'>): 
 }
 
 describe('CatalogPluginDetail', () => {
-  it('shows Install, Includes, and more from the same author', () => {
+  it('shows Install, overview, capabilities, and more from the same author', () => {
     const html = renderToStaticMarkup(
       h(CatalogPluginDetail, {
         entry: entry({
           id: 'tasks',
           title: 'Tasks',
           description: 'Plan work',
+          overview: '## What you get\n\n- A task board.\n',
           category: 'Workflow management',
           skillNames: ['tasks']
         }),
@@ -38,10 +39,15 @@ describe('CatalogPluginDetail', () => {
     );
     expect(html).toContain('catalog-plugin-detail');
     expect(html).toContain('Install');
-    expect(html).toContain('Includes');
+    expect(html).toContain('Capabilities');
+    expect(html).toContain('Overview');
+    expect(html).toContain('What you get');
     expect(html).toContain('Workflow management');
     expect(html).toContain('plugin-more-from-author');
     expect(html).toContain('Notes');
+    expect(html).toContain('ext-plugin-detail-stack');
+    expect(html).toContain('ext-plugin-meta-grid');
+    expect(html).toContain('ext-plugin-table');
   });
 });
 

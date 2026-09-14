@@ -806,6 +806,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessPiEnabled: config.harnessPiEnabled !== false,
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled !== false,
     harnessGrokEnabled: config.harnessGrokEnabled !== false,
+    harnessMastracodeEnabled: config.harnessMastracodeEnabled !== false,
     nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
     teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false,
@@ -1583,6 +1584,8 @@ interface DataState {
   harnessOpenCodeEnabled: boolean;
   /** Mirror of AppConfig.harnessGrokEnabled — explicit hide for Grok Build. */
   harnessGrokEnabled: boolean;
+  /** Mirror of AppConfig.harnessMastracodeEnabled — explicit hide for Mastra Code. */
+  harnessMastracodeEnabled: boolean;
   /** Mirror of AppConfig.nativeAgentDiscoveryEnabled. */
   nativeAgentDiscoveryEnabled: boolean;
   /** Last code-harness verification snapshot (Settings → Code Harness). Empty
@@ -1649,6 +1652,7 @@ interface DataState {
   setHarnessPiEnabled: (on: boolean) => void;
   setHarnessOpenCodeEnabled: (on: boolean) => void;
   setHarnessGrokEnabled: (on: boolean) => void;
+  setHarnessMastracodeEnabled: (on: boolean) => void;
   setMicroVmEnabled: (on: boolean) => void;
   setWorktreeIsolationDefault: (on: boolean) => void;
   setIdleAttentionSensitivity: (level: 'high' | 'medium' | 'low') => void;
@@ -2021,6 +2025,7 @@ export const useData = create<DataState>((set, get) => ({
   harnessPiEnabled: false,
   harnessOpenCodeEnabled: false,
   harnessGrokEnabled: false,
+  harnessMastracodeEnabled: false,
   nativeAgentDiscoveryEnabled: false,
   harnessStatus: [],
   editorStatus: [],
@@ -2117,6 +2122,11 @@ export const useData = create<DataState>((set, get) => ({
 
   setHarnessGrokEnabled(on) {
     set({ harnessGrokEnabled: on });
+    void prefetchThreadModelCatalog().catch(() => undefined);
+  },
+
+  setHarnessMastracodeEnabled(on) {
+    set({ harnessMastracodeEnabled: on });
     void prefetchThreadModelCatalog().catch(() => undefined);
   },
 

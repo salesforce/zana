@@ -202,6 +202,17 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       expect(spawnThread).toHaveBeenCalledWith({ pluginId: 'demo', projectId: 'p', prompt: 'hi' });
       await expect(handle.api.sdk.threads.spawn({
         projectId: 'p',
+        prompt: 'seeded',
+        pluginMetadata: { ticket: 'W-1' }
+      })).resolves.toEqual({ id: 'thr-spawned' });
+      expect(spawnThread).toHaveBeenCalledWith({
+        pluginId: 'demo',
+        projectId: 'p',
+        prompt: 'seeded',
+        pluginMetadata: { ticket: 'W-1' }
+      });
+      await expect(handle.api.sdk.threads.spawn({
+        projectId: 'p',
         prompt: 'work',
         visibility: 'hidden',
         environment: { kind: 'reuse', environmentId: '11111111-1111-1111-1111-111111111111' },
@@ -231,6 +242,47 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
     }
   });
 
+  it('defaults plugin metadata namespaces to the calling plugin and rejects invalid ids', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-meta-sdk-'));
+    try {
+      const getPluginMetadata = vi.fn(async () => ({ ticket: 'W-1' }));
+      const updatePluginMetadata = vi.fn(async () => ({ ticket: 'W-2' }));
+      const handle = createPluginApi('notes', dir, { getPluginMetadata, updatePluginMetadata });
+      await expect(handle.api.sdk.threads.getPluginMetadata({ threadId: 'thr-1' })).resolves.toEqual({
+        ticket: 'W-1'
+      });
+      expect(getPluginMetadata).toHaveBeenCalledWith({ pluginId: 'notes', threadId: 'thr-1' });
+      await expect(handle.api.sdk.threads.getPluginMetadata({
+        threadId: 'thr-1',
+        pluginId: 'other-plugin'
+      })).resolves.toEqual({ ticket: 'W-1' });
+      expect(getPluginMetadata).toHaveBeenCalledWith({ pluginId: 'other-plugin', threadId: 'thr-1' });
+      await expect(handle.api.sdk.threads.getPluginMetadata({
+        threadId: 'thr-1',
+        pluginId: 'Not Valid'
+      })).rejects.toThrow(/pluginId is invalid/);
+      await expect(handle.api.sdk.threads.updatePluginMetadata({
+        threadId: 'thr-1',
+        set: { ticket: 'W-2' },
+        remove: ['stale']
+      })).resolves.toEqual({ ticket: 'W-2' });
+      expect(updatePluginMetadata).toHaveBeenCalledWith({
+        pluginId: 'notes',
+        threadId: 'thr-1',
+        set: { ticket: 'W-2' },
+        remove: ['stale']
+      });
+      await expect(handle.api.sdk.threads.updatePluginMetadata({
+        threadId: 'thr-1',
+        set: { a: 1 },
+        remove: ['a']
+      })).rejects.toThrow(/overlap/);
+      await handle.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('wires sdk.inbox.push and sdk.projects.list when callbacks are provided', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-sdk-inbox-'));
     try {
@@ -255,6 +307,62 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         /not available/
       );
       await expect(bare.api.sdk.projects.list()).rejects.toThrow(/not available/);
+      await handle.dispose();
+      await bare.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('wires sdk.library list/read/write through productContext', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-sdk-library-'));
+    try {
+      const productContext = {
+        dataDir: '/tmp/zcc-data',
+        toProjects: () => [{
+          id: 'p1',
+          name: 'Alpha',
+          path: '/tmp/alpha',
+          createdAt: 1,
+          lastActiveAt: 1
+        }],
+        hostHub: {
+          resolveHostId: (hostId?: string) => hostId ?? 'host-1',
+          callHostOnlineRpc: async (input: { command: { type: string } }) => {
+            if (input.command.type === 'host.list_files') {
+              return {
+                files: [{
+                  root: '/tmp/alpha/.zcc/library',
+                  relPath: 'findings/auth.md',
+                  bytes: 4,
+                  kind: 'file'
+                }]
+              };
+            }
+            if (input.command.type === 'host.read_file') {
+              return { content: '# Auth\n', encoding: 'utf8' };
+            }
+            return { outcome: 'written', sha256: 'x', sizeBytes: 4 };
+          }
+        }
+      };
+      const handle = createPluginApi('docs', dir, { productContext: productContext as never });
+      await expect(handle.api.sdk.library.list({ projectId: 'p1' })).resolves.toEqual([
+        expect.objectContaining({ relPath: 'findings/auth.md', scope: 'project', projectId: 'p1' })
+      ]);
+      await expect(handle.api.sdk.library.read({
+        scope: 'project',
+        relPath: 'findings/auth.md',
+        projectId: 'p1'
+      })).resolves.toEqual({ ok: true, content: '# Auth\n' });
+      await expect(handle.api.sdk.library.write({
+        scope: 'project',
+        relPath: 'findings/auth.md',
+        projectId: 'p1',
+        content: '# Next\n'
+      })).resolves.toEqual({ ok: true });
+      const bare = createPluginApi('bare', dir);
+      await expect(bare.api.sdk.library.list()).rejects.toThrow(/not available/);
       await handle.dispose();
       await bare.dispose();
     } finally {

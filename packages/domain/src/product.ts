@@ -58,14 +58,17 @@ export type LaunchProfileId =
   | 'opencode-yolo'
   | 'grok'
   | 'grok-resume'
-  | 'grok-yolo';
+  | 'grok-yolo'
+  | 'mastracode'
+  | 'mastracode-resume'
+  | 'mastracode-yolo';
 
 /**
  * A verifiable code-harness FAMILY — the coarse grouping the Settings → Code
  * Harness category and the launcher's profile gate reason about (one family can
  * back several `LaunchProfileId`s, e.g. `claude`/`claude-resume`/`claude-yolo`).
  */
-export type HarnessFamily = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok';
+export type HarnessFamily = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok' | 'mastracode';
 
 /** Why a launch profile was supplied. Only an explicit choice may override a persona pin. */
 export type LaunchProfileSource = 'explicit' | 'seeded-default';
@@ -1684,6 +1687,13 @@ export interface AppConfig {
    */
   grokBinary?: string;
   /**
+   * Path/name of the `mastracode` CLI (Mastra Code TUI harness). Optional:
+   * absent ⇒ the provider falls back to the bare `mastracode` on PATH. Thread
+   * already speaks this binary over ACP (`mastracode --acp`); this slot is the
+   * interactive TUI.
+   */
+  mastracodeBinary?: string;
+  /**
    * Hide the Cursor harness from agent-launch UIs. Absent/undefined ⇒ auto-on
    * when the CLI is installed. `false` is an explicit hide.
    */
@@ -1708,6 +1718,11 @@ export interface AppConfig {
    * auto-on when the CLI is installed. `false` is an explicit hide.
    */
   harnessGrokEnabled?: boolean;
+  /**
+   * Hide the Mastra Code TUI harness from agent-launch UIs. Absent/undefined ⇒
+   * auto-on when the CLI is installed. `false` is an explicit hide.
+   */
+  harnessMastracodeEnabled?: boolean;
   /**
    * Allow compatible harnesses to discover project-specific native agents.
    * Default OFF: only built-in semantic roles remain available in composers.
@@ -5186,6 +5201,8 @@ export interface MarketplaceEntry {
   version: string;
   title: string;
   description?: string;
+  /** Long marketplace write-up (What you get / How it works / Requirements). */
+  overview?: string;
   author?: string;
   /** Lucide icon name (resolved renderer-side, like a manifest icon). */
   icon?: string;

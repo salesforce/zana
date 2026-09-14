@@ -101,6 +101,15 @@ describe('MarkdownContent thread extras', () => {
     expect(html).not.toContain('inbox-md-file-chip');
   });
 
+  it('highlights fenced code through the LRU highlight path', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent text={'```ts\nconst x = 1;\n```'} />
+    );
+    expect(html).toContain('hljs');
+    expect(html).toContain('language-ts');
+    expect(html).toContain('hljs-');
+  });
+
   it('styles clickable file chips like gold inline code', () => {
     const css = readFileSync(new URL('../styles/global.css', import.meta.url), 'utf8');
     expect(css).toContain('.inbox-md .inbox-md-file-chip');

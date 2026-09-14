@@ -45,13 +45,17 @@ describe('mode/reasoning case tables', () => {
       'acp-opencode mode plan',
       'acp-opencode reasoning low',
       'acp-opencode reasoning medium',
-      'acp-opencode reasoning high'
+      'acp-opencode reasoning high',
+      'acp-mastracode mode build',
+      'acp-mastracode mode plan',
+      'acp-mastracode mode fast'
     ]);
     expect(cases.some((row) => row.acpMode && row.reasoningLevel)).toBe(false);
     expect(cases.find((row) => row.name === 'claude-code mode plan')?.prompt).toBe(PLAN_PROMPT);
     expect(cases.find((row) => row.name === 'claude-code mode plan')?.acpMode).toBeUndefined();
     expect(cases.find((row) => row.name === 'acp-opencode mode build')?.acpMode).toBe('build');
     expect(cases.find((row) => row.name === 'acp-cursor mode plan')?.acpMode).toBe('plan');
+    expect(cases.find((row) => row.name === 'acp-mastracode mode fast')?.acpMode).toBe('fast');
   });
 
   it('covers CLI execution states, OpenCode roles, and mapped model levels', () => {
@@ -83,6 +87,13 @@ describe('mode/reasoning case tables', () => {
     });
     expect(cases.find((row) => row.name === 'opencode modelLevel high')?.harnessRouting?.byAdapter.opencode?.roleTargetId)
       .toBeUndefined();
+
+    expect(cases.find((row) => row.name === 'mastracode executionState interactive')?.harnessRouting?.byAdapter.mastracode)
+      .toEqual({ executionState: 'interactive' });
+    expect(cases.find((row) => row.name === 'mastracode executionState accept-edits')?.harnessRouting?.byAdapter.mastracode)
+      .toEqual({ executionState: 'accept-edits' });
+    expect(cases.some((row) => row.name === 'mastracode executionState plan')).toBe(false);
+    expect(cases.some((row) => row.name === 'mastracode modelLevel medium')).toBe(false);
   });
 
   it('rejects OpenCode role + modelLevel the same way as role + catalog model', () => {

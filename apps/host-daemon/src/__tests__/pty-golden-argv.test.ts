@@ -125,7 +125,8 @@ const SESSION_ENV_KEYS = [
   'ZCC_OVERSEER_URL',
   'ZCC_CONTENTSCREEN_URL',
   'ZCC_SESSION_ID',
-  'CLAUDE_CODE_ENABLE_AUTO_MODE'
+  'CLAUDE_CODE_ENABLE_AUTO_MODE',
+  'MASTRACODE_YOLO'
   // NODE_OPTIONS deliberately excluded: it inherits the parent (vitest's own
   // --max-old-space-size), so it's machine-dependent. Covered separately via
   // the pure applyHeapCeiling assertions above.
@@ -200,6 +201,9 @@ const PROFILES: LaunchProfileId[] = [
   'grok',
   'grok-resume',
   'grok-yolo',
+  'mastracode',
+  'mastracode-resume',
+  'mastracode-yolo',
   'shell'
 ];
 type LayerName = 'plain' | 'persona' | 'projectSettings' | 'persona+projectSettings';

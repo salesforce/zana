@@ -99,7 +99,7 @@ function validatePerTabRouting(routing: HarnessModelRoutingV1 | undefined): void
     throw new Error('Invalid structured model routing request.');
   }
   for (const [family, value] of Object.entries(routing.byAdapter)) {
-    if (!['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok'].includes(family) || !value || typeof value !== 'object') {
+    if (!['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode'].includes(family) || !value || typeof value !== 'object') {
       throw new Error('Invalid structured model routing request.');
     }
     const intent = value as {

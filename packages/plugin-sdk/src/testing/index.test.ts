@@ -145,6 +145,24 @@ describe('createFakePluginHost sdk stubs', () => {
     await expect(wired.zcc.sdk.threads.unarchive({ threadId: 't1' })).resolves.toEqual({ id: 't1' });
   });
 
+  it('wires plugin metadata get and update when callbacks are provided', async () => {
+    const bare = createFakePluginHost({ pluginId: 'bare' });
+    await expect(bare.zcc.sdk.threads.getPluginMetadata({ threadId: 't1' })).rejects.toThrow(/not available/);
+    const wired = createFakePluginHost({
+      pluginId: 'wired',
+      getPluginMetadata: async (args) => ({ pluginId: args.pluginId ?? 'wired', threadId: args.threadId }),
+      updatePluginMetadata: async (args) => ({ ...(args.set ?? {}), threadId: args.threadId })
+    });
+    await expect(wired.zcc.sdk.threads.getPluginMetadata({ threadId: 't1' })).resolves.toEqual({
+      pluginId: 'wired',
+      threadId: 't1'
+    });
+    await expect(wired.zcc.sdk.threads.updatePluginMetadata({
+      threadId: 't1',
+      set: { ticket: 'W-1' }
+    })).resolves.toEqual({ ticket: 'W-1', threadId: 't1' });
+  });
+
   it('lists hidden forks and queued messages when callbacks are wired', async () => {
     const wired = createFakePluginHost({
       pluginId: 'wired',

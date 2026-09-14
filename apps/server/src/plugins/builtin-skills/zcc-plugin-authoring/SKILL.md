@@ -91,9 +91,10 @@ this list fails CI):
   `configure(provider)` (returns optional `{ tools, skills, instructions }`
   folded into the generated plugin-instructions skill). `provider` receives
   thread / project / environment / host / provider / `origin` (including
-  `origin.pluginId` when the thread was spawned by a plugin) — use that to
-  give workers a different tool set than authors. Tool names may also be
-  `{ name, parameters }` to override the JSON Schema for that session.
+  `origin.pluginId` when the thread was spawned by a plugin) and a frozen
+  `pluginMetadata` snapshot of this plugin's namespace (`{}` when none) —
+  use that to give workers a different tool set than authors. Tool names may
+  also be `{ name, parameters }` to override the JSON Schema for that session.
   `parameters` on `registerTool` is a Zod schema or JSON-schema object.
   Conversation threads inject these tools via bb-bridge; CLI Agent / PTY
   needs `zcc.mcpServers` instead.
@@ -109,8 +110,16 @@ this list fails CI):
   threadId? }` and returns `{ id, label, insertText? }[]`. `resolve` returns
   `{ context }` that the host appends as agent-only text at send.
 - `zcc.status` — `status.needsConfiguration(message)`.
-- `zcc.sdk` — product SDK. `sdk.threads.spawn({ projectId, prompt, providerId?, parentThreadId?, title?, model?, permissionMode?, visibility?, environment? })`
+- `zcc.sdk` — product SDK. `sdk.threads.spawn({ projectId, prompt, providerId?, parentThreadId?, title?, model?, permissionMode?, visibility?, environment?, pluginMetadata? })`
   attributes the thread to this plugin. Hidden workers use `visibility: "hidden"`.
+  `pluginMetadata` seeds this plugin's per-thread namespace at spawn.
+  `sdk.threads.getPluginMetadata({ threadId, pluginId? })` and
+  `sdk.threads.updatePluginMetadata({ threadId, pluginId?, set?, remove? })`
+  read and atomically patch that namespace. Default `pluginId` is the caller;
+  an explicit id must match `pluginIdSchema`. `{ set, remove }` must not overlap
+  keys; an empty object after patch deletes the row. Each namespace is capped
+  at 256 KiB UTF-8 of `JSON.stringify` (oversize merged namespace is 413, left
+  unchanged). Forks inherit nothing. Metadata never appears on ordinary thread GET.
   `sdk.threads.output` / `stop` / `defaultExecutionOptions` take `{ threadId }`.
   `sdk.threads.archive` / `fork` / `unarchive` take `{ threadId }`.
   `sdk.environments.get({ environmentId })` and `sdk.files.read({ hostId, path, rootPath })`

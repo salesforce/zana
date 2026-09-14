@@ -10,7 +10,7 @@ import plugin from '../server.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const ACP_PROVIDER_IDS = ['acp-cursor', 'acp-opencode', 'acp-omp', 'acp-grok', 'acp-hermes-agent'] as const;
+const ACP_PROVIDER_IDS = ['acp-cursor', 'acp-opencode', 'acp-omp', 'acp-grok', 'acp-mastracode', 'acp-hermes-agent'] as const;
 
 describe('provider-acp plugin', () => {
   it('derives a stable id', () => {
@@ -46,6 +46,10 @@ describe('provider-acp plugin', () => {
       displayName: 'Grok Build',
       visibility: 'installed'
     });
+    expect(harness.providers.find((row) => row.id === 'acp-mastracode')).toMatchObject({
+      displayName: 'Mastra Code',
+      visibility: 'installed'
+    });
     expect(harness.settings.customAgents).toMatchObject({ type: 'string', multiline: true });
     await harness.dispose();
   });
@@ -63,7 +67,7 @@ describe('provider-acp plugin', () => {
     const set = collectTestPluginApp(app, 'provider-acp');
     expect(set.providerIcons.map((row) => row.providerId)).toEqual([...ACP_PROVIDER_IDS]);
     const compiled = readFileSync(join(root, 'app.js'), 'utf8');
-    for (const file of ['cursor.svg', 'opencode.svg', 'omp.svg', 'grok.svg', 'hermes.svg']) {
+    for (const file of ['cursor.svg', 'opencode.svg', 'omp.svg', 'grok.svg', 'mastracode.svg', 'hermes.svg']) {
       expect(existsSync(join(root, 'icons', file))).toBe(true);
     }
     for (const id of ACP_PROVIDER_IDS) {

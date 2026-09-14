@@ -58,7 +58,7 @@ export interface ThreadModeReasoningCase {
 
 export interface CliModeReasoningCase {
   name: string;
-  profile: ScenarioProfile;
+  profile: ScenarioProfile | 'mastracode';
   harnessRouting?: CliAgentLaunchSpec['harnessRouting'];
 }
 
@@ -83,7 +83,10 @@ export function threadModeReasoningCases(): ThreadModeReasoningCase[] {
     { name: 'acp-opencode mode plan', providerId: 'acp-opencode', prompt: CRASH_PROMPT, acpMode: 'plan' },
     { name: 'acp-opencode reasoning low', providerId: 'acp-opencode', prompt: CRASH_PROMPT, reasoningLevel: 'low' },
     { name: 'acp-opencode reasoning medium', providerId: 'acp-opencode', prompt: CRASH_PROMPT, reasoningLevel: 'medium' },
-    { name: 'acp-opencode reasoning high', providerId: 'acp-opencode', prompt: CRASH_PROMPT, reasoningLevel: 'high' }
+    { name: 'acp-opencode reasoning high', providerId: 'acp-opencode', prompt: CRASH_PROMPT, reasoningLevel: 'high' },
+    { name: 'acp-mastracode mode build', providerId: 'acp-mastracode', prompt: CRASH_PROMPT, acpMode: 'build' },
+    { name: 'acp-mastracode mode plan', providerId: 'acp-mastracode', prompt: CRASH_PROMPT, acpMode: 'plan' },
+    { name: 'acp-mastracode mode fast', providerId: 'acp-mastracode', prompt: CRASH_PROMPT, acpMode: 'fast' }
   ];
 }
 
@@ -120,6 +123,13 @@ export function cliModeReasoningCases(): CliModeReasoningCase[] {
         harnessRouting: routingFor(profile, { modelLevel })
       });
     }
+  }
+  for (const executionState of ['interactive', 'accept-edits'] as const) {
+    cases.push({
+      name: `mastracode executionState ${executionState}`,
+      profile: 'mastracode',
+      harnessRouting: routingFor('mastracode', { executionState })
+    });
   }
   return cases;
 }

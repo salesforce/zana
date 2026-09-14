@@ -15,10 +15,10 @@ Handed to `export default function plugin(zcc)`.
 | `rpc.method` | Renderer/host RPC |
 | `realtime.publish` | Events |
 | `background.service` / `schedule` | Long-running work |
-| `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` |
+| `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata` |
 | `ui.requestInput` | Host prompt |
 | `status.needsConfiguration` | Degraded-until-configured |
-| `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: hidden attributed spawn, `output`/`stop`, confined host file read |
+| `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: hidden attributed spawn (`pluginMetadata` seed), `getPluginMetadata` / `updatePluginMetadata`, `output`/`stop`, confined host file read |
 | `services.provide` / `services.use` / `services.has` | Experimental plugin-to-plugin SDK (live proxy; `has` after `provide`; `service_unavailable` until provided) |
 | `onDispose` | LIFO teardown |
 

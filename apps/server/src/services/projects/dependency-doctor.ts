@@ -6,6 +6,7 @@
  *   - Claude Code CLI (`claude`)     — MANUAL. Required for first-run auto-open.
  *   - Cursor CLI (`cursor-agent`)    — INSTALLABLE (official install script).
  *   - OpenCode CLI (`opencode`)      — INSTALLABLE (`npm i -g opencode-ai`).
+ *   - Mastra Code CLI (`mastracode`) — INSTALLABLE (`npm i -g mastracode`).
  *   - Pi CLI (`pi`)                  — INSTALLABLE (`npm i -g @earendil-works/pi-coding-agent`).
  *   - Codex CLI (`codex`)            — INSTALLABLE (`npm i -g @openai/codex`).
  *   - SF CLI (`sf`)                  — INSTALLABLE (`npm i -g @salesforce/cli`).
@@ -110,6 +111,17 @@ const COMPANIONS: readonly CompanionSpec[] = [
     versionArgs: ['--version'],
     manualCommand: 'npm install -g opencode-ai@latest',
     install: npmGlobalInstall('opencode-ai')
+  },
+  {
+    id: 'mastracode-cli',
+    label: 'Mastra Code CLI',
+    detail: 'The `mastracode` command — Mastra Code agent harness.',
+    kind: 'installable',
+    required: false,
+    bin: 'mastracode',
+    versionArgs: ['--help'],
+    manualCommand: 'npm install -g mastracode@latest',
+    install: npmGlobalInstall('mastracode')
   },
   {
     id: 'pi-cli',

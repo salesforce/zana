@@ -32,6 +32,16 @@ describe('official marketplace.json', () => {
       source: { git: { url: 'https://github.com/salesforce/zana', subdir: 'plugins/docs', ref: 'HEAD' } }
     });
     expect(pluginEntryFromPackage({ name: '@zcc-ext/docs', zcc: { name: 'Docs' } }, 'other')).toBeNull();
+    expect(
+      pluginEntryFromPackage(
+        {
+          name: '@zcc-ext/docs',
+          zcc: { name: 'Docs', description: 'Durable project knowledge' }
+        },
+        'docs',
+        { overview: '## What you get\n\n- A library.\n' }
+      )?.overview
+    ).toContain('## What you get');
   });
 
   it('committed feed parses as schemaVersion 1 official catalog', () => {

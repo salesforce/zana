@@ -5,6 +5,7 @@ import { OpenAiIcon } from '../../icons/OpenAiIcon.js';
 import { OpencodeIcon } from '../../icons/OpencodeIcon.js';
 import { PiIcon } from '../../icons/PiIcon.js';
 import { GrokIcon } from '../../icons/GrokIcon.js';
+import { MastracodeIcon } from '../../icons/MastracodeIcon.js';
 
 export type ProviderMark = ComponentType<{ className?: string; size?: number }>;
 
@@ -14,7 +15,8 @@ const PROVIDER_ICONS: Record<string, ProviderMark> = {
   pi: PiIcon,
   'acp-cursor': CursorIcon,
   'acp-opencode': OpencodeIcon,
-  'acp-grok': GrokIcon
+  'acp-grok': GrokIcon,
+  'acp-mastracode': MastracodeIcon
 };
 
 export function providerIconForId(providerId: string): ProviderMark | null {

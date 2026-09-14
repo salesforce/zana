@@ -47,6 +47,9 @@ import {
   PLUGIN_INTERACTION_MAX_TITLE_LENGTH,
   PLUGIN_CLI_COMMAND_NAME_PATTERN,
   RESERVED_ZCC_CLI_COMMANDS,
+  pluginIdSchema,
+  validatePluginMetadata,
+  type JsonObject,
   type JsonValue
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
@@ -70,6 +73,12 @@ import {
 } from '@zana-ai/zcc-plugin-sdk/server';
 import { appendPluginLogLine } from './plugin-log.js';
 import {
+  listLibraryDocs,
+  readLibraryDoc,
+  writeLibraryDoc
+} from '../http/library-via-host.js';
+import type { LibraryDoc } from '@zana-ai/zcc-domain/product';
+import {
   mergeSecretSettings,
   persistSecretSettings,
   publicSettingsValues
@@ -78,6 +87,22 @@ import {
 export const HOST_ZCC_VERSION = '2.1.1';
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
 export const FACTORY_TIMEOUT_MS = 10_000;
+
+function parseLibraryScope(value: unknown): 'project' | 'global' | null {
+  return value === 'project' || value === 'global' ? value : null;
+}
+
+function toSdkLibraryDoc(doc: LibraryDoc) {
+  return {
+    id: doc.id,
+    relPath: doc.relPath,
+    title: doc.title,
+    ...(doc.summary ? { summary: doc.summary } : {}),
+    ...(doc.tags ? { tags: doc.tags } : {}),
+    scope: (doc.scope ?? 'project') as 'project' | 'global',
+    ...(doc.projectId ? { projectId: doc.projectId } : {})
+  };
+}
 
 function applyPluginSqliteMigrations(
   runScript: (sql: string) => void,
@@ -284,6 +309,13 @@ export function createPluginApi(
       senderThreadId?: string;
     }) => Promise<{ id: string }>;
     unarchiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+    getPluginMetadata?: (args: { pluginId: string; threadId: string }) => Promise<JsonObject>;
+    updatePluginMetadata?: (args: {
+      pluginId: string;
+      threadId: string;
+      set: JsonObject;
+      remove: readonly string[];
+    }) => Promise<JsonObject>;
     pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
     listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
     productContext?: import('../http/product-context.js').ProductHttpContext;
@@ -321,6 +353,12 @@ export function createPluginApi(
   let sharedDatabase: PluginDatabase | null = null;
   const assertLive = (): void => {
     if (stale) throw new Error(`plugin context is stale: ${pluginId}`);
+  };
+  const resolveSdkPluginId = (requested: unknown): string => {
+    const value = typeof requested === 'string' && requested.trim() ? requested.trim() : pluginId;
+    const parsed = pluginIdSchema.safeParse(value);
+    if (!parsed.success) throw new Error('pluginId is invalid');
+    return parsed.data;
   };
   const services = bindPluginServices(
     pluginId,
@@ -534,6 +572,9 @@ export function createPluginApi(
             ...(args?.visibility === 'hidden' || args?.visibility === 'visible' ? { visibility: args.visibility } : {}),
             ...(args?.environment?.kind === 'reuse' && typeof args.environment.environmentId === 'string'
               ? { environment: { kind: 'reuse', environmentId: args.environment.environmentId } }
+              : {}),
+            ...(args?.pluginMetadata !== undefined
+              ? { pluginMetadata: validatePluginMetadata(args.pluginMetadata) }
               : {})
           });
         },
@@ -712,6 +753,42 @@ export function createPluginApi(
           const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
           if (!threadId) throw new Error('threadId is required');
           return options.unarchiveThread({ pluginId, threadId });
+        },
+        getPluginMetadata: async (args) => {
+          assertLive();
+          if (!options?.getPluginMetadata) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          return options.getPluginMetadata({
+            pluginId: resolveSdkPluginId(args?.pluginId),
+            threadId
+          });
+        },
+        updatePluginMetadata: async (args) => {
+          assertLive();
+          if (!options?.updatePluginMetadata) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          const set = args?.set === undefined ? {} : validatePluginMetadata(args.set);
+          const remove = Array.isArray(args?.remove)
+            ? args.remove.filter((key): key is string => typeof key === 'string')
+            : [];
+          if (new Set(remove).size !== remove.length) {
+            throw new Error('remove contains duplicate keys');
+          }
+          if (remove.some((key) => Object.hasOwn(set, key))) {
+            throw new Error('set and remove overlap');
+          }
+          return options.updatePluginMetadata({
+            pluginId: resolveSdkPluginId(args?.pluginId),
+            threadId,
+            set,
+            remove
+          });
         }
       },
       inbox: {
@@ -759,6 +836,57 @@ export function createPluginApi(
           if (!hostId) throw new Error('hostId is required');
           if (!path.trim()) throw new Error('path is required');
           return options.readWorkspaceFile({ pluginId, hostId, path, rootPath });
+        }
+      },
+      library: {
+        list: async (args) => {
+          assertLive();
+          if (!options?.productContext) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const projectId = typeof args?.projectId === 'string' ? args.projectId.trim() : '';
+          const hostId = typeof args?.hostId === 'string' && args.hostId.trim() ? args.hostId.trim() : undefined;
+          const docs = await listLibraryDocs(options.productContext, hostId);
+          const scoped = projectId
+            ? docs.filter((doc) => doc.scope === 'global' || doc.projectId === projectId)
+            : docs;
+          return scoped.map(toSdkLibraryDoc);
+        },
+        read: async (args) => {
+          assertLive();
+          if (!options?.productContext) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const scope = parseLibraryScope(args?.scope);
+          const relPath = typeof args?.relPath === 'string' ? args.relPath.trim() : '';
+          if (!scope) throw new Error('scope must be "project" or "global"');
+          if (!relPath) throw new Error('relPath is required');
+          const projectId = typeof args?.projectId === 'string' && args.projectId.trim()
+            ? args.projectId.trim()
+            : undefined;
+          if (scope === 'project' && !projectId) throw new Error('projectId is required');
+          const hostId = typeof args?.hostId === 'string' && args.hostId.trim() ? args.hostId.trim() : undefined;
+          const result = await readLibraryDoc(options.productContext, scope, relPath, projectId, hostId);
+          if (!result.ok) return { ok: false as const, message: result.message ?? 'read failed' };
+          return { ok: true as const, content: result.content ?? '' };
+        },
+        write: async (args) => {
+          assertLive();
+          if (!options?.productContext) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const scope = parseLibraryScope(args?.scope);
+          const relPath = typeof args?.relPath === 'string' ? args.relPath.trim() : '';
+          const content = typeof args?.content === 'string' ? args.content : null;
+          if (!scope) throw new Error('scope must be "project" or "global"');
+          if (!relPath) throw new Error('relPath is required');
+          if (content === null) throw new Error('content is required');
+          const projectId = typeof args?.projectId === 'string' && args.projectId.trim()
+            ? args.projectId.trim()
+            : undefined;
+          if (scope === 'project' && !projectId) throw new Error('projectId is required');
+          const hostId = typeof args?.hostId === 'string' && args.hostId.trim() ? args.hostId.trim() : undefined;
+          return writeLibraryDoc(options.productContext, scope, relPath, content, projectId, hostId);
         }
       },
       providers: {

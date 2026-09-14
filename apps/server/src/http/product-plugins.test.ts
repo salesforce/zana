@@ -141,6 +141,7 @@ describe('listen.ts', () => {
     expect(source).toContain('createQueuedMessage');
     expect(source).toContain('listQueuedMessages');
     expect(source).toContain('originPluginId: pluginId');
+    expect(source).toContain('pluginMetadata');
     expect(source).toContain('stopThread:');
     expect(source).toContain('threadOutput:');
     expect(source).toContain('defaultExecutionOptions:');

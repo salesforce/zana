@@ -169,6 +169,16 @@ describe('structured providers final local argv', () => {
     });
   });
 
+  it('emits Mastra Code catalog model without extra execution flags for Edits', () => {
+    expect(spawn('mastracode', routing('mastracode', {
+      modelTargetId: 'anthropic/claude-opus-4-6',
+      executionState: 'accept-edits'
+    }))).toEqual({
+      command: 'mastracode',
+      args: ['--model', 'anthropic/claude-opus-4-6']
+    });
+  });
+
   it('emits per-tab OpenCode role in final argv', () => {
     expect(spawn('opencode', routing('opencode', {
       roleTargetId: 'custom-agent'

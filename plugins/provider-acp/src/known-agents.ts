@@ -190,6 +190,26 @@ export const KNOWN_ACP_AGENTS: readonly AcpAgentDefinition[] = [
     nativeRootsResolver: resolveGrokNativeRoots,
   },
   {
+    id: "acp-mastracode",
+    displayName: "Mastra Code",
+    icon: declaredIcon("mastracode"),
+    installUrl: "https://code.mastra.ai/",
+    visibility: "installed",
+    fork: "none",
+    reasoningLevels: [],
+    launch: {
+      displayName: "Mastra Code",
+      command: "mastracode",
+      args: ["--acp"],
+      env: {},
+      permissionCli: { full: ["--dangerous-auto-approve"] },
+      nativeSkillRoots: {
+        user: recursiveRoots([".agents/skills"]),
+        project: ancestorRoots(recursiveRoots([".agents/skills"])),
+      },
+    },
+  },
+  {
     id: "acp-hermes-agent",
     displayName: "Hermes Agent",
     icon: declaredIcon("hermes-agent"),

@@ -10,11 +10,11 @@ const hero = readFileSync(
 const hub = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
 
-describe('ExtensionsView aurora background', () => {
-  it('hosts AuroraGrid the same way Home does', () => {
-    expect(view).toContain("className=\"settings-panel extensions-panel aurora-host\"");
-    expect(view).toContain('<AuroraGrid />');
-    expect(view.indexOf('<AuroraGrid />')).toBeLessThan(view.indexOf('className={`settings-inner'));
+describe('ExtensionsView plugin catalogue', () => {
+  it('does not host the Home aurora grid on Plugins', () => {
+    expect(view).toContain('className="settings-panel extensions-panel"');
+    expect(view).not.toContain('aurora-host');
+    expect(view).not.toContain('<AuroraGrid />');
   });
 
   it('mounts hub pages from plugin navPanels inside the extensions panel', () => {
@@ -32,6 +32,8 @@ describe('ExtensionsView aurora background', () => {
         expect(hub).toContain('<PluginDefinedSettings pluginId={module.id} />');
         expect(hub).toContain('PluginHubIncludes');
         expect(hub).toContain('id="plugin-configure"');
+        expect(hub).toContain('ext-plugin-section--config');
+        expect(hub).toContain('ext-plugin-detail-stack');
   });
 
   it('pins the grid to the panel and lifts hub content above it', () => {
@@ -93,8 +95,11 @@ describe('ExtensionsView aurora background', () => {
     expect(marketplace).toContain("searchParams.get('view') === 'create'");
     expect(marketplace).toContain('BrowseHeroCarousel');
     expect(hero).toContain('HomeAgentComposer');
+    expect(hero).toContain('{composing ? (');
     expect(hero).toContain('Turn ZCC into');
+    expect(hero).not.toContain('onFocusCapture');
     expect(marketplace).toContain('Back to Browse');
+    expect(marketplace).toContain('setHeroRequest(null)');
     expect(marketplace).toContain('ext-install-split');
     expect(marketplace).toContain('BrowseArchetypeCards');
     expect(marketplace).not.toContain('onCreate');
@@ -121,5 +126,22 @@ describe('ExtensionsView aurora background', () => {
     expect(hub).toContain('onClick={onOpen}');
     const chevron = hub.slice(hub.indexOf('ext-installed-row-chevron'));
     expect(chevron.startsWith('ext-installed-row-chevron"\n          onClick={onOpen}')).toBe(true);
+  });
+
+  it('keeps Details as a borderless grid and boxes Release rows', () => {
+    expect(css).toContain(
+      '.ext-plugin-section--config:not(:has(.ext-plugin-settings-panel, .plugin-settings-sections)) {\n  display: none;'
+    );
+    expect(css).toContain(
+      '.ext-plugin-meta-grid > div {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;'
+    );
+    expect(css).not.toContain(
+      '.ext-plugin-meta-grid > div {\n  display: grid;\n  grid-template-columns: minmax(7rem, 11rem)'
+    );
+    expect(css).toContain(
+      '.ext-plugin-table {\n  display: flex;\n  flex-direction: column;\n  margin: 0;\n  overflow: hidden;\n  border: 1px solid var(--border);'
+    );
+    expect(css).toContain('.ext-plugin-table > div:first-child {\n  border-top: 0;');
+    expect(css).toContain('.ext-plugin-detail-stack > .ext-plugin-section {\n  margin: 0;\n  padding: 24px 0;\n  border-top: 1px solid var(--border);');
   });
 });

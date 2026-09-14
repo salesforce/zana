@@ -5,6 +5,7 @@ import type {
   PluginAgentToolRecord
 } from '@zana-ai/zcc-plugin-sdk/server';
 import type { DynamicTool, ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';
+import { deepFreezePluginMetadata } from '@zana-ai/zcc-domain/thread-runtime';
 
 export const GENERIC_AGENT_TOOL_GLYPH = 'Toolbox';
 
@@ -18,6 +19,7 @@ export interface PluginAgentToolSource {
   >;
   extraInstructions?: readonly string[];
   extraInstructionProviders?: ReadonlyArray<(ctx: { threadId: string; projectId: string }) => string | null>;
+  pluginMetadata?: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
 }
 
 export interface PluginSessionTools {
@@ -194,7 +196,10 @@ async function configurePlugin(
   const parameterOverrides = new Map<string, unknown>();
   for (const configure of configurers) {
     try {
-      const result = await configure(ctx);
+      const result = await configure({
+        ...ctx,
+        pluginMetadata: deepFreezePluginMetadata(structuredClone(source.pluginMetadata ?? {}))
+      });
       if (!result) continue;
       if (Array.isArray(result.tools)) {
         const names = new Set<string>();

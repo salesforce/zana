@@ -259,6 +259,7 @@ export interface PluginSdkThreadSpawnArgs {
   permissionMode?: 'accept-edits' | 'auto' | 'full';
   visibility?: 'visible' | 'hidden';
   environment?: { kind: 'reuse'; environmentId: string };
+  pluginMetadata?: JsonObject;
 }
 
 export interface PluginSdkThreadOutput {
@@ -359,6 +360,13 @@ export interface PluginSdkThreads {
   archive(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
   fork(args: PluginSdkThreadForkArgs | PluginSdkThreadIdArgs): Promise<{ id: string }>;
   unarchive(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
+  getPluginMetadata(args: { threadId: string; pluginId?: string }): Promise<JsonObject>;
+  updatePluginMetadata(args: {
+    threadId: string;
+    pluginId?: string;
+    set?: JsonObject;
+    remove?: readonly string[];
+  }): Promise<JsonObject>;
   queuedMessages: {
     list(args: PluginSdkThreadIdArgs): Promise<PluginSdkQueuedMessage[]>;
     create(args: {
@@ -375,6 +383,46 @@ export interface PluginSdkEnvironments {
 
 export interface PluginSdkFiles {
   read(args: PluginSdkFileReadArgs): Promise<PluginSdkFileReadResult>;
+}
+
+export type PluginSdkLibraryScope = 'project' | 'global';
+
+export interface PluginSdkLibraryDoc {
+  id: string;
+  relPath: string;
+  title: string;
+  summary?: string;
+  tags?: string[];
+  scope: PluginSdkLibraryScope;
+  projectId?: string;
+}
+
+export interface PluginSdkLibraryListArgs {
+  projectId?: string;
+  hostId?: string;
+}
+
+export interface PluginSdkLibraryReadArgs {
+  scope: PluginSdkLibraryScope;
+  relPath: string;
+  projectId?: string;
+  hostId?: string;
+}
+
+export interface PluginSdkLibraryWriteArgs {
+  scope: PluginSdkLibraryScope;
+  relPath: string;
+  content: string;
+  projectId?: string;
+  hostId?: string;
+}
+
+export interface PluginSdkLibrary {
+  list(args?: PluginSdkLibraryListArgs): Promise<PluginSdkLibraryDoc[]>;
+  read(
+    args: PluginSdkLibraryReadArgs
+  ): Promise<{ ok: true; content: string } | { ok: false; message: string }>;
+  write(args: PluginSdkLibraryWriteArgs): Promise<{ ok: true } | { ok: false; message: string }>;
 }
 
 export interface PluginSdkProviders {
@@ -407,6 +455,7 @@ export interface PluginSdk {
   projects: PluginSdkProjects;
   environments: PluginSdkEnvironments;
   files: PluginSdkFiles;
+  library: PluginSdkLibrary;
   providers: PluginSdkProviders;
   experimental_desktopBrowsers: PluginSdkDesktopBrowsers;
 }
@@ -642,6 +691,11 @@ export interface PluginAgentConfigureContext {
   threadId?: string;
   projectId?: string;
   origin?: { kind?: 'fork' | null; pluginId?: string | null };
+  /**
+   * This plugin's thread namespace, or `{}` when absent. Deep-frozen for the
+   * configure call. Treat values as untrusted.
+   */
+  pluginMetadata?: JsonObject;
   thread?: PluginSdkThreadSummary & {
     title?: string | null;
     parentThreadId?: string | null;
@@ -693,7 +747,7 @@ export interface PluginAgents {
   ): void;
 }
 
-import type { JsonValue, ProviderFork } from '@zana-ai/zcc-domain/thread-runtime';
+import type { JsonObject, JsonValue, ProviderFork } from '@zana-ai/zcc-domain/thread-runtime';
 import type { PluginServices } from './plugin-services.js';
 import type {
   PluginProviderExtensionKindDeclaration,

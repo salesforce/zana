@@ -1543,6 +1543,88 @@ describe('product HTTP thread reasoning', () => {
     expect(source).toContain("routeParams(path, '/api/v1/threads/:id/prompt-history')");
     expect(source).toContain("routeParams(path, '/api/v1/threads/:id/pin')");
     expect(source).toContain("routeParams(path, '/api/v1/threads/:id/child-summary')");
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/plugin-metadata')");
+  });
+});
+
+describe('product HTTP plugin thread metadata', () => {
+  it('gets and patches per-plugin namespaces without leaking them onto thread GET', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-meta-http-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+    const missing = await fetch(
+      `${server.url}api/v1/threads/${thread.id}/plugin-metadata?pluginId=notes`
+    );
+    expect(missing.status).toBe(200);
+    await expect(missing.json()).resolves.toEqual({});
+    const patched = await fetch(`${server.url}api/v1/threads/${thread.id}/plugin-metadata`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pluginId: 'notes', set: { ticket: 'W-1' }, remove: ['stale'] })
+    });
+    expect(patched.status).toBe(200);
+    await expect(patched.json()).resolves.toEqual({ ticket: 'W-1' });
+    const stored = await fetch(
+      `${server.url}api/v1/threads/${thread.id}/plugin-metadata?pluginId=notes`
+    );
+    await expect(stored.json()).resolves.toEqual({ ticket: 'W-1' });
+    const threadGet = await fetch(`${server.url}api/v1/threads/${thread.id}`);
+    const threadBody = await threadGet.json() as { thread: Record<string, unknown> };
+    expect(threadBody.thread).not.toHaveProperty('pluginMetadata');
+    expect(threadBody.thread.id).toBe(thread.id);
+    const badQuery = await fetch(`${server.url}api/v1/threads/${thread.id}/plugin-metadata`);
+    expect(badQuery.status).toBe(400);
+    const overlap = await fetch(`${server.url}api/v1/threads/${thread.id}/plugin-metadata`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pluginId: 'notes', set: { ticket: 'W-2' }, remove: ['ticket'] })
+    });
+    expect(overlap.status).toBe(400);
+    const seed = await fetch(`${server.url}api/v1/threads/${thread.id}/plugin-metadata`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pluginId: 'notes', set: { keep: 'x'.repeat(200_000) } })
+    });
+    expect(seed.status).toBe(200);
+    const tooLarge = await fetch(`${server.url}api/v1/threads/${thread.id}/plugin-metadata`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pluginId: 'notes', set: { extra: 'y'.repeat(80_000) } })
+    });
+    expect(tooLarge.status).toBe(413);
+    const stillThere = await fetch(
+      `${server.url}api/v1/threads/${thread.id}/plugin-metadata?pluginId=notes`
+    );
+    await expect(stillThere.json()).resolves.toEqual({
+      ticket: 'W-1',
+      keep: 'x'.repeat(200_000)
+    });
+    const child = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      parentThreadId: thread.id,
+      originKind: 'fork'
+    });
+    const inherited = await fetch(
+      `${server.url}api/v1/threads/${child.id}/plugin-metadata?pluginId=notes`
+    );
+    await expect(inherited.json()).resolves.toEqual({});
   });
 });
 

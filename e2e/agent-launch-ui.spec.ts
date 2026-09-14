@@ -9,6 +9,7 @@
  *   Pi      → picker hidden (no unrestricted profile)
  *   OpenCode→ Edits, Full Access (yolo / opencode-yolo); no Auto in catalog
  *   Grok    → Edits, Full Access (yolo / grok-yolo); no Auto in catalog
+ *   Mastra  → Edits, Full Access (yolo / mastracode-yolo); no Auto in catalog
  *
  *   Agents nav (data-testid="nav-agents")
  *     → "New agent" (data-testid="agents-board-new-thread")
@@ -38,9 +39,9 @@ import { basename, join } from 'node:path';
 
 test.use({ e2e: true });
 
-type BinaryKey = 'claudeBinary' | 'cursorBinary' | 'codexBinary' | 'piBinary' | 'opencodeBinary' | 'grokBinary';
-type EnableKey = 'harnessCursorEnabled' | 'harnessCodexEnabled' | 'harnessPiEnabled' | 'harnessOpenCodeEnabled' | 'harnessGrokEnabled';
-type Family = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok';
+type BinaryKey = 'claudeBinary' | 'cursorBinary' | 'codexBinary' | 'piBinary' | 'opencodeBinary' | 'grokBinary' | 'mastracodeBinary';
+type EnableKey = 'harnessCursorEnabled' | 'harnessCodexEnabled' | 'harnessPiEnabled' | 'harnessOpenCodeEnabled' | 'harnessGrokEnabled' | 'harnessMastracodeEnabled';
+type Family = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok' | 'mastracode';
 
 type PermissionPick = {
   optionLabel: string;
@@ -111,6 +112,15 @@ const CLI_FAMILIES: readonly FamilySpec[] = [
     providerId: 'acp-grok',
     binaryKey: 'grokBinary',
     enableKey: 'harnessGrokEnabled',
+    expectWorking: false,
+    pickerOptions: ['Accept Edits', 'Full Access'],
+    modes: [ACCEPT_EDITS, FULL_ACCESS]
+  },
+  {
+    family: 'mastracode',
+    providerId: 'acp-mastracode',
+    binaryKey: 'mastracodeBinary',
+    enableKey: 'harnessMastracodeEnabled',
     expectWorking: false,
     pickerOptions: ['Accept Edits', 'Full Access'],
     modes: [ACCEPT_EDITS, FULL_ACCESS]

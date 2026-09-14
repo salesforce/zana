@@ -68,6 +68,10 @@ import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
 import { listThreadStorageFiles, readThreadStorageFile } from '../services/threads/thread-storage.js';
 import { getConversationThreadTabs, updateConversationThreadTabs } from '../services/threads/thread-tabs.js';
+import {
+  readConversationPluginMetadata,
+  updateConversationPluginMetadata
+} from '../services/threads/conversation-plugin-metadata.js';
 import { openThreadFilePreview, previewFileDepsFromContext } from '../services/threads/preview-file.js';
 import { listThreadProviders, bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
 import {
@@ -95,9 +99,9 @@ import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
 import { provisionProjectEnvironment } from '../services/threads/spawn-environment-provision.js';
 import { isZccManagedWorkspacePath } from '../services/threads/worktree-paths.js';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
-import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, validatePluginMetadata, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
-import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema } from '@zana-ai/zcc-server-contract';
+import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema, threadPluginMetadataQuerySchema, updateThreadPluginMetadataRequestSchema } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify, harnessVerifyBundle } from './harness-via-rpc.js';
 import { mergeHealthIntoExtraInstalled, probeInstalledProviderHealth } from '../services/threads/provider-health-probe.js';
@@ -1336,6 +1340,49 @@ export async function handleProductHttp(
       return true;
     }
 
+    const threadPluginMetadata = routeParams(path, '/api/v1/threads/:id/plugin-metadata');
+    if (threadPluginMetadata && method === 'GET') {
+      const parsed = threadPluginMetadataQuerySchema.safeParse({
+        pluginId: requestUrl.searchParams.get('pluginId')
+      });
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'pluginId is required' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, readConversationPluginMetadata(ctx.db, threadPluginMetadata.id, parsed.data.pluginId));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+    if (threadPluginMetadata && method === 'PATCH') {
+      const parsed = updateThreadPluginMetadataRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid plugin metadata patch' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, updateConversationPluginMetadata(ctx.db, {
+          threadId: threadPluginMetadata.id,
+          pluginId: parsed.data.pluginId,
+          set: parsed.data.set ?? {},
+          remove: parsed.data.remove ?? []
+        }));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
     const threadTabs = routeParams(path, '/api/v1/threads/:id/tabs');
     if (threadTabs && method === 'GET') {
       try {
@@ -1852,7 +1899,22 @@ export async function handleProductHttp(
           visibility: body.visibility === 'hidden' || body.visibility === 'visible'
             ? body.visibility
             : undefined,
-          originPluginId: body.origin === 'sdk' ? 'sdk' : undefined
+          originPluginId: typeof body.originPluginId === 'string' && body.originPluginId.trim()
+            ? body.originPluginId.trim()
+            : body.origin === 'sdk' ? 'sdk' : undefined,
+          ...(body.pluginMetadata !== undefined
+            ? (() => {
+                try {
+                  return { pluginMetadata: validatePluginMetadata(body.pluginMetadata) };
+                } catch (error) {
+                  throw new ThreadCreateError(
+                    400,
+                    'invalid-input',
+                    error instanceof Error ? error.message : 'pluginMetadata is invalid'
+                  );
+                }
+              })()
+            : {})
         });
         sendJson(response, 201, { ok: true, value: conversationThreadView(ctx, thread), thread: conversationThreadView(ctx, thread) });
       } catch (error) {
