@@ -17,6 +17,8 @@ import { product } from '../lib/product-client.js';
  */
 
 import * as React from 'react';
+import * as ReactDOM from 'react-dom';
+import * as ReactDOMClient from 'react-dom/client';
 import { create } from 'zustand';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { ActivateResult, RendererEntry } from '@zana-ai/zcc-extension-sdk/renderer';
@@ -209,6 +211,8 @@ async function loadExtensionModule(entry: ExtensionEntry): Promise<ExtensionModu
     // global up front covers that eval-time window so such bundles import
     // cleanly. Bundles that import nothing (like the hello sample) ignore it.
     (globalThis as Record<string, unknown>).__ZCC_HOST_REACT__ = React;
+    (globalThis as Record<string, unknown>).__ZCC_HOST_REACT_DOM__ = ReactDOM;
+    (globalThis as Record<string, unknown>).__ZCC_HOST_REACT_DOM_CLIENT__ = ReactDOMClient;
     const mod = (await import(/* @vite-ignore */ blobUrl)) as { default?: RendererEntry | unknown };
     const exported = mod.default;
     if (isPluginAppDefinition(exported)) {

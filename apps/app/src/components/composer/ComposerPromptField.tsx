@@ -7,6 +7,7 @@ import { ComposerTypeaheadMenu } from './ComposerTypeaheadMenu.js';
 import type { ComposerImageAttachment } from './composer-image-attachments.js';
 import type { TypeaheadSuggestion } from './types.js';
 import { ThreadImageLightbox } from '../thread/timeline/ThreadImageLightbox.js';
+import { mergeLightboxItems } from '../thread/timeline/thread-image-lightbox.js';
 
 export function ComposerPromptField({
   editor,
@@ -69,6 +70,10 @@ export function ComposerPromptField({
         <ThreadImageLightbox
           src={lightbox.src}
           alt={lightbox.name}
+          items={mergeLightboxItems(
+            images.map((image) => ({ src: image.previewSrc, alt: image.name })),
+            { src: lightbox.src, alt: lightbox.name }
+          )}
           onClose={() => setLightbox(null)}
         />
       ) : null}

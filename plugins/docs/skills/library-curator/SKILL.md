@@ -46,9 +46,11 @@ repository's source-controlled documentation.
 3. Write clear, self-contained content with `library_write`. Set a concise
    title, one-line summary, and stable tags. Use a meaningful path such as
    `findings/`, `decisions/`, `runbooks/`, or `research/`.
-4. Include concrete evidence where it helps future agents: affected file paths,
+4. After every `library_write`, emit a `::doc` card so the user can open the
+   document beside the thread. Do not call `preview_file` for Library documents.
+5. Include concrete evidence where it helps future agents: affected file paths,
    commands run, verification results, assumptions, and dates.
-5. If the update is a significant deliverable, create a concise inbox report
+6. If the update is a significant deliverable, create a concise inbox report
    pointing the user to it. Do not treat the inbox report as the canonical copy.
 
 ## Writing standards
@@ -66,15 +68,24 @@ repository's source-controlled documentation.
 
 ## Link documents in chat
 
-When the user should reopen a library or workspace Markdown/HTML document
-beside the thread, emit this leaf on its own line (not in a code fence):
+After `library_write`, always emit this leaf on its own line (not in a code
+fence). `path` is **library-relative** (the same path you passed to
+`library_write`, for example `findings/auth.md` → `.zcc/library/findings/auth.md`).
+It is not a workspace path.
 
 ```md
 ::doc{path="findings/auth.md" title="Auth findings"}
 ```
 
-`path` is workspace-relative. Include a short `title` when known. The card
-opens the file in the thread side panel (Docs file opener for `.md` / `.mdx`).
+Include a short `title` when known. Optional `scope="global"` targets the
+global library; omit it (or use `scope="project"`) for the current project.
+
+The card opens an editable side panel. Do **not** call `preview_file` for
+Library documents — that tool is for ordinary workspace files.
+
+To preview a workspace Markdown/HTML file that is *not* in the Library, emit
+`::doc{path="docs/guide.md" title="Guide" source="workspace"}` or use
+`preview_file`.
 
 ## Inbox reports
 
@@ -92,3 +103,4 @@ the Library with `library_write`.
   update them when appropriate.
 - Do not assume library content is current. Verify code paths and commands before
   relying on older findings.
+- Do not call `preview_file` on a `.zcc/library` path.

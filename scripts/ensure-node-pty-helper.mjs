@@ -1,17 +1,85 @@
+#!/usr/bin/env node
+/**
+ * node-pty ships platform prebuilds and also a `build/Release` addon that
+ * `electron-rebuild -f` overwrites. Node and Electron can both load the package
+ * (Release miss falls through to prebuilds), so force-rebuilding on every
+ * `rebuild:electron` is wasted compile time. Probe first; compile only when
+ * Electron cannot `require('node-pty')`.
+ *
+ * Default invocation (prepare / predev) only restores the spawn-helper mode bit.
+ */
+import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-// node-pty's prebuilt Unix spawn helper must be executable. Some npm installs
-// retain the archive's read-only mode, which otherwise surfaces only as the
-// opaque "posix_spawnp failed" when the first terminal is created.
-if (process.platform !== 'win32') {
-  const helper = join(
-    process.cwd(),
-    'node_modules',
-    'node-pty',
-    'prebuilds',
-    `${process.platform}-${process.arch}`,
-    'spawn-helper'
-  );
-  if (existsSync(helper)) chmodSync(helper, 0o755);
+const require = createRequire(import.meta.url);
+
+export function nodePtyPackageRoot() {
+  return dirname(require.resolve('node-pty/package.json'));
+}
+
+export function nodePtySpawnHelperPath(root = nodePtyPackageRoot()) {
+  return join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper');
+}
+
+export function ensureNodePtySpawnHelperExecutable(root = nodePtyPackageRoot()) {
+  if (process.platform === 'win32') return false;
+  const helper = nodePtySpawnHelperPath(root);
+  if (!existsSync(helper)) return false;
+  chmodSync(helper, 0o755);
+  return true;
+}
+
+export function probeNodePtyInElectronChild() {
+  const script = `
+    const { createRequire } = require('node:module');
+    const requireFrom = createRequire(${JSON.stringify(import.meta.url)});
+    requireFrom('node-pty');
+  `;
+  const result = spawnSync(require('electron'), ['-e', script], {
+    encoding: 'utf8',
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+  });
+  if (result.status === 0) return { ok: true };
+  const message = `${result.stderr || ''}${result.stdout || ''}`.trim()
+    || 'node-pty failed to load in Electron child process';
+  const error = new Error(message);
+  if (/ERR_DLOPEN_FAILED|NODE_MODULE_VERSION|did not self-register/.test(message)) {
+    error.code = 'ERR_DLOPEN_FAILED';
+  }
+  return { ok: false, error };
+}
+
+export function rebuildNodePtyForElectron() {
+  const rebuildCli = require.resolve('@electron/rebuild/lib/cli.js');
+  process.stderr.write('[ensure-node-pty] rebuilding for Electron (probe failed)\n');
+  const result = spawnSync(process.execPath, [rebuildCli, '-f', '-w', 'node-pty'], {
+    stdio: 'inherit',
+    env: process.env
+  });
+  if (result.status !== 0) {
+    throw new Error(`node-pty Electron rebuild failed with exit ${result.status ?? 'null'}`);
+  }
+}
+
+export function ensureNodePtyForElectron() {
+  ensureNodePtySpawnHelperExecutable();
+  const loaded = probeNodePtyInElectronChild();
+  if (loaded.ok) {
+    process.stderr.write('[ensure-node-pty] Electron can already load node-pty; skip rebuild\n');
+    return;
+  }
+  rebuildNodePtyForElectron();
+  ensureNodePtySpawnHelperExecutable();
+  const retry = probeNodePtyInElectronChild();
+  if (!retry.ok) throw retry.error;
+}
+
+const invokedDirectly = Boolean(process.argv[1])
+  && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  if (process.argv.includes('--electron')) ensureNodePtyForElectron();
+  else ensureNodePtySpawnHelperExecutable();
 }

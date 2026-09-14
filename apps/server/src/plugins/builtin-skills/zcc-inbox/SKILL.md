@@ -43,7 +43,7 @@ with the other product builtins.
   intent?: string,                  // one line of CONTEXT — what you were trying to achieve
   docs?: Array<{ path: string }>,  // paths relative to the project root
   comments?: string,                // markdown
-  report?: boolean,                 // mark as a finished REPORT/deliverable (badge + Reports tab + filter)
+  report?: boolean,                 // mark as a finished REPORT/deliverable (badge + Reports filter)
 
   // Optional structured question (same shape as inbox_ask). When present,
   // `comments` becomes the question prompt and these render as a lettered form.
@@ -135,7 +135,7 @@ inbox_push({
 > you. Reserve free-text `comments` for open-ended questions and status updates.
 
 **Comment plus a doc pointer, flagged as a report** (preferred for deliverables —
-`report: true` gives it the badge + Reports tab so the user can find it fast):
+`report: true` gives it the badge + Reports filter so the user can find it fast):
 
 ```
 inbox_push({

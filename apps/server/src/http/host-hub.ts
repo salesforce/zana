@@ -50,6 +50,8 @@ import type { ProductHub } from './product-hub.js';
 import { isBackgroundTaskLifecyclePayload } from '@zana-ai/zcc-thread-view';
 import type { ThreadLifecycleEvent } from '@zana-ai/zcc-domain/thread-runtime';
 import { appendBoundedTerminalOutput } from './terminal-output-buffer.js';
+import { desktopBrowserChangedSchema } from '@zana-ai/zcc-host-daemon-contract';
+import { DesktopBrowserError, syncDesktopBrowserTabs } from '../services/desktop-browsers.js';
 
 export interface HostTerminalSessionRecord {
   hostId: string;
@@ -276,6 +278,34 @@ export function createHostHub(
           hub.emit('projects:cloneProgress', event.payload);
           return;
         }
+        if (event.kind === 'desktop.browser.changed') {
+          const parsed = desktopBrowserChangedSchema.safeParse(event.payload);
+          if (!parsed.success) {
+            rejected.push({ index, reason: 'invalid_payload' });
+            return;
+          }
+          try {
+            syncDesktopBrowserTabs(
+              { db, hub },
+              {
+                hostId: session.hostId,
+                instanceId: parsed.data.instanceId,
+                generation: parsed.data.generation,
+                threadId: parsed.data.threadId
+              },
+              parsed.data.tabs
+            );
+            accepted += 1;
+          } catch (error) {
+            rejected.push({
+              index,
+              reason: error instanceof DesktopBrowserError && error.code === 'unknown-thread'
+                ? 'unknown_thread'
+                : 'desktop_browser_sync_failed'
+            });
+          }
+          return;
+        }
         if (event.kind === 'terminal.output' || event.kind === 'terminal.exited') {
           if (!event.terminalId) {
             rejected.push({ index, reason: 'unknown_terminal' });
@@ -415,6 +445,7 @@ export function createHostHub(
         event.kind !== 'terminal.output'
         && event.kind !== 'terminal.exited'
         && event.kind !== 'project.clone.progress'
+        && event.kind !== 'desktop.browser.changed'
         && !rejected.some((row) => row.index === index)
       ));
       if (statusChanged) hub.emit('threads:updated', { hostId: session.hostId });

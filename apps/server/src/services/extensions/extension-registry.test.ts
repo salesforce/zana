@@ -452,7 +452,8 @@ describe('listMarketplace', () => {
         apiRange: '^1.0.0',
         title: 'GUS',
         icon: 'Ticket',
-        permissions: ['exec']
+        permissions: ['exec'],
+        category: 'Developer tools'
       }
     ]);
     expect(out).toHaveLength(1);
@@ -464,7 +465,8 @@ describe('listMarketplace', () => {
       permissions: ['exec'],
       hasUpdate: false,
       compatible: true,
-      source: 'bundled'
+      source: 'bundled',
+      category: 'Developer tools'
     });
   });
 

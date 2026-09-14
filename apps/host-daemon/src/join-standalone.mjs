@@ -10,7 +10,8 @@ import { homedir, hostname } from 'node:os';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const PROTOCOL_VERSION = 24;
+/** Keep in lockstep with `HOST_RPC_PROTOCOL_VERSION` in `@zana-ai/zcc-contracts/host-rpc`. */
+const PROTOCOL_VERSION = 26;
 
 function joinServerUrl(serverUrl, path) {
   const base = serverUrl.endsWith('/') ? serverUrl : `${serverUrl}/`;

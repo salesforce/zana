@@ -144,7 +144,8 @@ vi.mock('../updater.js', () => ({
 
 vi.mock('-ai/zcc-host-daemon/mcp-config', () => ({
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
-  ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json'
+  ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json',
+  alwaysOnPluginMcpAllowlist: () => []
 }));
 
 // safeSend() calls testTap.record(channel, args) unconditionally (before the

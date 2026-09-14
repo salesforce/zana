@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Durable global and project memories injected into agents.",
+  "description": "Provider-independent durable memory for agents. We recommend disabling provider-native memory when using this plugin.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
   "zcc": {
     "name": "Memory",
-    "description": "Durable global and project memories the agent can search and update.",
+    "description": "Provider-independent durable memory for agents. We recommend disabling provider-native memory when using this plugin.",
     "branding": {
       "icon": "Brain"
     },

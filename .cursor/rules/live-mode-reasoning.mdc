@@ -1,0 +1,32 @@
+---
+description: After thread, CLI Agent, or harness spawn/mode/reasoning changes, run pnpm live:mode-reasoning and pnpm live:memory against the attached app.
+globs: packages/control-sdk/**,apps/server/src/services/threads/**,apps/server/src/http/cli-*.ts,apps/server/src/http/product-api.ts,apps/server/src/plugins/plugin-agent-tools.ts,apps/host-daemon/src/harness/**,apps/host-daemon/src/pty.ts,apps/desktop/src/control/**,packages/cli/src/lib/commands/thread.ts,packages/cli/src/lib/commands/agent.ts,packages/domain/src/bb-thread/**,plugins/provider-claude-code/**,plugins/provider-codex/**,plugins/provider-acp/**,plugins/memory/**
+alwaysApply: false
+---
+
+# Live thread / CLI Agent checks
+
+When you change Modern **threads**, **CLI Agents**, harness providers, spawn argv/routing, `acpMode`, `reasoningLevel`, `executionState`, `modelLevel`, native roles, or plugin session instructions, finish by running:
+
+```bash
+unset ZCC_SESSION_ID
+pnpm live:mode-reasoning
+pnpm live:memory
+```
+
+`live:mode-reasoning` is the production-boundary check that spawn still works per harness mode and reasoning. `live:memory` is the production-boundary check that a live Claude Code thread still receives Memory catalog injection. Unit tests are not enough.
+
+## What they cover
+
+- **`pnpm live:mode-reasoning`** — Claude Code, Cursor, Codex, OpenCode — each distinct mode and reasoning once, on **both** `POST /api/v1/threads` and `POST /api/v1/cli-agents`. Crash-only: alive then `stop()`. Not PONG, not file writes, not `pnpm live:matrix`.
+- **`pnpm live:memory`** — Memory plugin product-HTTP CLI, then a tagged hidden Claude Code thread that must quote a seeded catalog summary from `contributeInstructions`. Skip if the plugin is not `running`.
+
+## How to run them
+
+- Host shell only. `ZCC_SESSION_ID` → `FORBIDDEN_AGENT`.
+- Attached app: product HTTP `:8780` (packaged / `dev:prod`) or `:8781` (`pnpm dev`), Electron with matching `ZCC_PRODUCT_SERVER_CREDENTIAL`, enrolled host-daemon.
+- If harness verify is empty, tests skip and look green in milliseconds. That is a false pass — check the `[live] skip …` warnings.
+
+Unattended HTTP DENIED for `accept-edits` or some `interactive` mappings is expected. A real failure is spawn 5xx, thread `error`, CLI early `exited` / `NOT_FOUND`, or a hang.
+
+See `docs/control-sdk.md`.

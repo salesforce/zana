@@ -1,34 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { InboxEntry, LibraryDoc } from '@zana-ai/zcc-domain/product';
+import type { InboxEntry } from '@zana-ai/zcc-domain/product';
 
-const { select, library } = vi.hoisted(() => ({
+const { select, markRead, maybeRefresh } = vi.hoisted(() => ({
   select: vi.fn(),
-  library: { docs: [] as LibraryDoc[] }
-}));
-
-vi.mock('../lib/product-client.js', () => ({
-  product: { openers: { openIn: async () => ({ ok: true }) } }
+  markRead: vi.fn(),
+  maybeRefresh: vi.fn()
 }));
 
 vi.mock('../store.js', () => ({
   useInboxSelection: (selector: (s: { select: typeof select }) => unknown) =>
     selector({ select }),
-  useLibrary: (selector: (s: { docs: LibraryDoc[] }) => unknown) =>
-    selector({ docs: library.docs }),
-  useData: { getState: () => ({ projects: [] }) },
-  useUi: {
-    getState: () => ({
-      selectedProjectId: null,
-      revealLibraryDoc: vi.fn(),
-      pushToast: vi.fn()
-    })
-  }
+  useInboxRead: (selector: (s: { markRead: typeof markRead }) => unknown) =>
+    selector({ markRead }),
+  useInboxAnswered: (selector: (s: { answeredIds: Record<string, true> }) => unknown) =>
+    selector({ answeredIds: {} }),
+  useData: (selector: (s: { projects: { id: string; name: string; color?: string }[] }) => unknown) =>
+    selector({ projects: [{ id: 'p1', name: 'Alpha', color: '#58a6ff' }] }),
+  maybeRefreshInboxSummary: maybeRefresh
 }));
 
 vi.mock('./InboxSummaryCard.js', () => ({
-  InboxSummaryCard: () => null
+  InboxSummaryCard: () => <div className="inbox-ai-card-stub">AI Summary</div>
+}));
+
+vi.mock('./InboxGuidance.js', () => ({
+  InboxGuidance: () => <aside className="inbox-guidance-stub">guidance</aside>
 }));
 
 vi.mock('./InboxSidebar.js', () => ({
@@ -47,8 +45,7 @@ function entry(overrides: Partial<InboxEntry> & Pick<InboxEntry, 'id'>): InboxEn
 }
 
 describe('InboxOverview', () => {
-  it('does not render a Questions rollup even when unanswered asks exist', () => {
-    library.docs = [];
+  it('renders pending blocking questions on the attention landing', () => {
     const html = renderToStaticMarkup(
       <InboxOverview
         scopeProjectId={null}
@@ -57,6 +54,7 @@ describe('InboxOverview', () => {
             id: 'q1',
             subject: 'Approval needed',
             comments: 'Tell me how this is working',
+            intent: 'Unblock the deploy',
             question: { options: [{ id: 'A', label: 'Yes' }], blocking: true }
           }),
           entry({ id: 'r1', subject: 'Weekly status', report: true }),
@@ -64,61 +62,47 @@ describe('InboxOverview', () => {
         ]}
       />
     );
-    expect(html).not.toContain('Questions');
-    expect(html).not.toContain('need your answer');
-    expect(html).not.toContain('tone-question');
-    expect(html).not.toContain('Approval needed');
-    expect(html).toContain('Reports');
-    expect(html).toContain('Weekly status');
-    expect(html).toContain('Goals');
-    expect(html).toContain('Shipped goal');
+    expect(html).toContain('Needs your answer');
+    expect(html).toContain('Approval needed');
+    expect(html).toContain('Unblock the deploy');
+    expect(html).toContain('Answer');
+    expect(html).toContain('inbox-overview-questions');
+    expect(html).not.toContain('Weekly status');
+    expect(html).not.toContain('Shipped goal');
+    expect(html).not.toContain('tone-report');
+    expect(html).not.toContain('Ideas');
   });
 
-  it('renders Ideas from the library and hides empty rollups', () => {
-    library.docs = [
-      {
-        id: 'idea-1',
-        relPath: 'ideas/dark.md',
-        title: 'Ship dark mode',
-        kind: 'md',
-        tags: ['idea'],
-        createdAt: 1,
-        updatedAt: 2
-      }
-    ];
+  it('does not catalogue library ideas or report/goal rollups', () => {
+    const source = readFileSync(new URL('./InboxOverview.tsx', import.meta.url), 'utf8');
+    expect(source).not.toContain('useLibrary');
+    expect(source).not.toContain('label="Reports"');
+    expect(source).not.toContain('label="Ideas"');
+    expect(source).not.toContain('label="Goals"');
+    expect(source).not.toContain('inbox-overview-rollup');
+    expect(source).toContain('maybeRefreshInboxSummary');
+  });
+
+  it('uses PaneEmptyState when the inbox is empty', () => {
     const html = renderToStaticMarkup(
       <InboxOverview scopeProjectId={null} entries={[]} />
     );
-    expect(html).toContain('Ideas');
-    expect(html).toContain('Ship dark mode');
-    expect(html).not.toContain('Reports');
-    expect(html).not.toContain('Goals');
-    expect(html).not.toContain('Questions');
+    expect(html).toContain('data-testid="inbox-overview-empty"');
+    expect(html).toContain('data-art="inbox"');
+    expect(html).toContain('No inbox messages yet');
+    expect(html).toContain('inbox-guidance-stub');
+    expect(html).not.toContain('Needs your answer');
+    expect(html).not.toContain('inbox-ai-card-stub');
   });
 
-  it('shows the empty state when there are only questions', () => {
-    library.docs = [];
+  it('omits the questions section when nothing is pending', () => {
     const html = renderToStaticMarkup(
       <InboxOverview
         scopeProjectId={null}
-        entries={[
-          entry({
-            id: 'q1',
-            subject: 'Approval needed',
-            question: { options: [{ id: 'A', label: 'Yes' }], blocking: true }
-          })
-        ]}
+        entries={[entry({ id: 'r1', subject: 'Weekly status', report: true })]}
       />
     );
-    expect(html).toContain('inbox-overview-empty');
-    expect(html).toContain('reports, goals, and captured ideas');
-    expect(html).not.toContain('questions, reports');
-  });
-
-  it('does not declare a Questions rollup in source', () => {
-    const source = readFileSync(new URL('./InboxOverview.tsx', import.meta.url), 'utf8');
-    expect(source).not.toContain('label="Questions"');
-    expect(source).not.toContain('need your answer');
-    expect(source).not.toContain("tone: 'question'");
+    expect(html).not.toContain('Needs your answer');
+    expect(html).toContain('inbox-ai-card-stub');
   });
 });

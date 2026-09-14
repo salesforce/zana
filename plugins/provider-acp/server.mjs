@@ -3,6 +3,7 @@ const RESERVED = new Set([
   'acp-opencode',
   'acp-omp',
   'acp-grok',
+  'acp-mastracode',
   'acp-hermes-agent',
   'claude-code',
   'codex',
@@ -112,6 +113,14 @@ export default function plugin(zcc) {
     id: 'acp-grok',
     displayName: 'Grok Build',
     icon: './icons/grok.svg',
+    visibility: 'installed',
+    capabilities: extraCapabilities,
+    composerActions: []
+  });
+  zcc.agents.experimental_registerProvider({
+    id: 'acp-mastracode',
+    displayName: 'Mastra Code',
+    icon: './icons/mastracode.svg',
     visibility: 'installed',
     capabilities: extraCapabilities,
     composerActions: []

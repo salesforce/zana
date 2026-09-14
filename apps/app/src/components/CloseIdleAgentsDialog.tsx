@@ -42,8 +42,8 @@ interface Props {
  * the structure/markup of {@link AddRemoteProjectDialog} (backdrop + modal +
  * footer) so it inherits the app's modal styling.
  *
- * Portaled to `document.body` so the Agents board's stacking context
- * (`.aurora-host { isolation: isolate }`) cannot trap the backdrop.
+ * Portaled to `document.body` so the Agents board's container queries
+ * (`container-type: inline-size` on `.agents-board`) cannot trap the backdrop.
  */
 export function CloseIdleAgentsDialog({
   agents,

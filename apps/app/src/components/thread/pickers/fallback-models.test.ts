@@ -66,9 +66,11 @@ describe('fallback thread catalogs', () => {
     expect(fallbackModelsForProvider('pi')).toEqual([]);
     expect(fallbackModelsForProvider('acp-opencode')).toEqual([]);
     expect(fallbackModelsForProvider('acp-grok')).toEqual([]);
+    expect(fallbackModelsForProvider('acp-mastracode')).toEqual([]);
     expect(fallbackProviderOption('acp-opencode').displayName).toBe('OpenCode');
     expect(fallbackProviderOption('acp-grok').displayName).toBe('Grok Build');
     expect(fallbackProviderOption('acp-grok').permissionModes).toEqual(['accept-edits', 'full']);
+    expect(fallbackProviderOption('acp-mastracode').displayName).toBe('Mastra Code');
   });
 
   it('seeds every builtin harness on a new thread and locks to one on an existing thread', () => {

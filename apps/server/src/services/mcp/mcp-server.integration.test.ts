@@ -17,6 +17,7 @@
  *                     close() shuts the listener.
  */
 
+import { createServer, type Server } from 'node:http';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -899,25 +900,21 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(listed.tools.find((t) => t.name === 'remote_read')).toBeFalsy();
   });
 
-  it('registers browser automation tools that fail closed without a desktop host', async () => {
+  it('does not register native browser_* tools; agents use zcc browser', async () => {
     const store = createMemoryInboxStore();
     const h = await boot(store, [makeProject('proj-1', 'My Project')]);
     const client = await connectClient(h.url, 'proj-1/sess-A');
     clients.push(client);
     const tools = await client.listTools();
-    expect(tools.tools.find((t) => t.name === 'browser_open'), 'browser_open tool is registered').toBeTruthy();
+    expect(tools.tools.find((t) => t.name === 'browser_open')).toBeFalsy();
     expect(tools.tools.find((t) => t.name === 'preview_file'), 'preview_file tool is registered').toBeTruthy();
+    expect(tools.tools.find((t) => t.name === 'browser_click')).toBeFalsy();
+    expect(tools.tools.find((t) => t.name === 'browser_type')).toBeFalsy();
+    expect(tools.tools.find((t) => t.name === 'browser_eval')).toBeFalsy();
     const previewSchema = tools.tools.find((t) => t.name === 'preview_file')!;
     const previewProps = (previewSchema.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
     expect(Object.keys(previewProps)).not.toContain('threadId');
     expect(Object.keys(previewProps)).not.toContain('projectId');
-    const res = await client.callTool({
-      name: 'browser_open',
-      arguments: { url: 'https://example.com' }
-    });
-    expect((res as { isError?: boolean }).isError).toBe(true);
-    const text = (res as { content?: Array<{ text?: string }> }).content?.[0]?.text ?? '';
-    expect(text).toContain('desktop app');
     const preview = await client.callTool({
       name: 'preview_file',
       arguments: { path: 'src/a.ts' }
@@ -1067,5 +1064,46 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(projectTools.tools.find((t) => t.name === 'schedule_run_now')).toBeTruthy();
     expect(projectTools.tools.find((t) => t.name === 'schedule_set_enabled')).toBeTruthy();
     expect(projectTools.tools.find((t) => t.name === 'schedule_report')).toBeFalsy();
+  });
+});
+
+describe('startMcpServer bind recovery', () => {
+  let occupant: Server | null = null;
+  let handle: McpServerHandle | null = null;
+
+  afterEach(async () => {
+    if (handle) {
+      await handle.close();
+      handle = null;
+    }
+    if (occupant) {
+      await new Promise<void>((resolve, reject) => {
+        occupant!.close((err) => (err ? reject(err) : resolve()));
+      });
+      occupant = null;
+    }
+  });
+
+  it('falls back to an ephemeral port when the preferred port is already bound', async () => {
+    occupant = createServer((_req, res) => res.end());
+    await new Promise<void>((resolve, reject) => {
+      occupant!.once('error', reject);
+      occupant!.listen(0, '127.0.0.1', () => {
+        occupant!.off('error', reject);
+        resolve();
+      });
+    });
+    const taken = (occupant.address() as { port: number }).port;
+    const logs: string[] = [];
+    handle = await startMcpServer({
+      port: taken,
+      inboxStore: createMemoryInboxStore(),
+      suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => null },
+      log: (msg) => logs.push(msg)
+    });
+    expect(handle.port).not.toBe(taken);
+    expect(logs.some((line) => line.includes(`port ${taken} is in use`))).toBe(true);
+    expect(logs.some((line) => line.includes(`[mcp] listening on ${handle!.url}`))).toBe(true);
   });
 });

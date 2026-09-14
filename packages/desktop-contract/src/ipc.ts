@@ -752,6 +752,12 @@ export const IPC = {
     stop: 'desktop:browser:stop',
     setBounds: 'desktop:browser:set-bounds',
     setVisible: 'desktop:browser:set-visible',
+    setVisibleWithoutFocus: 'desktop:browser:set-visible-without-focus',
+    focus: 'desktop:browser:focus',
+    findInPage: 'desktop:browser:find-in-page',
+    stopFindInPage: 'desktop:browser:stop-find-in-page',
+    findResult: 'desktop:browser:find-result',
+    appCommand: 'desktop:browser:app-command',
     state: 'desktop:browser:state',
     openTab: 'desktop:browser:open-tab',
     scopedOpenTab: 'desktop:browser:scoped-open-tab',
@@ -759,6 +765,14 @@ export const IPC = {
     automationOpen: 'desktop:browser:automation-open',
     registerAutomationTarget: 'desktop:browser:register-automation-target',
     unregisterAutomationTarget: 'desktop:browser:unregister-automation-target',
-    stopAutomation: 'desktop:browser:stop-automation'
+    stopAutomation: 'desktop:browser:stop-automation',
+    control: 'desktop:browser:control',
+    getControl: 'desktop:browser:get-control',
+    releaseControl: 'desktop:browser:release-control',
+    reveal: 'desktop:browser:reveal',
+    focused: 'desktop:browser:focused',
+    listImportSources: 'desktop:browser:list-import-sources',
+    importCookies: 'desktop:browser:import-cookies',
+    openFullDiskAccessSettings: 'desktop:browser:open-full-disk-access-settings'
   }
 } as const;

@@ -18,7 +18,7 @@ const extraAcpCapabilities = {
 
 /**
  * First-party ACP provider plugin. Registers Cursor, OpenCode, OMP, Grok Build,
- * Hermes Agent, and optional custom ACP agents from plugin settings.
+ * Mastra Code, Hermes Agent, and optional custom ACP agents from plugin settings.
  */
 export default function plugin(bb: ZccPluginApi) {
   const settings = bb.settings.define(ACP_CUSTOM_AGENTS_SETTING);
@@ -74,6 +74,14 @@ export default function plugin(bb: ZccPluginApi) {
     composerActions: [],
   });
   bb.agents.experimental_registerProvider({
+    id: "acp-mastracode",
+    displayName: "Mastra Code",
+    icon: "./icons/mastracode.svg",
+    visibility: "installed",
+    capabilities: extraAcpCapabilities,
+    composerActions: [],
+  });
+  bb.agents.experimental_registerProvider({
     id: "acp-hermes-agent",
     displayName: "Hermes Agent",
     icon: "./icons/hermes.svg",
@@ -83,7 +91,7 @@ export default function plugin(bb: ZccPluginApi) {
   });
 
   let customHandles: PluginProviderHandle[] = [];
-  const applyCustom = (raw: string | boolean | undefined) => {
+  const applyCustom = (raw: string | number | boolean | undefined) => {
     customHandles = syncCustomAcpAgents(bb, raw, customHandles);
   };
   void settings.get().then((values) => applyCustom(values[CUSTOM_ACP_AGENTS_SETTING]));

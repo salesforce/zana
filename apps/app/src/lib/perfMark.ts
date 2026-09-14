@@ -13,8 +13,9 @@
  *
  * Deliberately zero-cost when disabled (a single boolean check, no allocation).
  */
-const ENABLED =
-  typeof localStorage !== 'undefined' && localStorage.getItem('ccPerf') === '1';
+import { readLocalStorageItem } from './safe-local-storage.js';
+
+const ENABLED = readLocalStorageItem('ccPerf') === '1';
 
 const counts = new Map<string, number>();
 let flushRaf = 0;

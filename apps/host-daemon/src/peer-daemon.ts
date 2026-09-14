@@ -74,21 +74,28 @@ function collectStream(
   });
 }
 
-export function createSystemPeerDaemonSsh(): PeerDaemonSsh {
+export type PeerDaemonSpawn = typeof spawn;
+
+export function createSystemPeerDaemonSsh(spawnImpl: PeerDaemonSpawn = spawn): PeerDaemonSsh {
   return {
     async run(remote, remoteCmd, timeoutMs = SSH_TIMEOUT_MS) {
-      const proc = spawn('ssh', [...sshBaseArgs(remote), remoteCmd], {
+      const proc = spawnImpl('ssh', [...sshBaseArgs(remote), remoteCmd], {
         stdio: ['ignore', 'pipe', 'pipe']
       });
       return collectStream(proc, timeoutMs);
     },
     async pipeFile(remote, remoteCmd, filePath, timeoutMs = SSH_TIMEOUT_MS) {
-      const proc = spawn('ssh', [...sshBaseArgs(remote), remoteCmd], {
+      const proc = spawnImpl('ssh', [...sshBaseArgs(remote), remoteCmd], {
         stdio: ['pipe', 'pipe', 'pipe']
       });
+      // SSH often closes stdin mid-auth (BatchMode reject, ControlMaster drop,
+      // remote died). Piping the artifact into that socket without a listener
+      // is an unhandled Socket EPIPE that kills the whole host-daemon.
+      proc.stdin?.on('error', () => {});
       const input = createReadStream(filePath);
-      input.pipe(proc.stdin!);
       input.on('error', () => proc.kill('SIGKILL'));
+      if (proc.stdin) input.pipe(proc.stdin);
+      else input.destroy();
       return collectStream(proc, timeoutMs);
     }
   };

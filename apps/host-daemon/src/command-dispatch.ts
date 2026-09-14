@@ -20,6 +20,11 @@ import { PERSONAL_WORKSPACE_DIR_NAME } from '@zana-ai/zcc-domain';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import type { PendingInteractionResolution, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import {
+  killProcessesWithCwdUnder,
+  listProcessesWithCwdUnder,
+  WORKSPACE_PROCESS_LIST_CAP
+} from '@zana-ai/zcc-agent-process-utils';
+import {
   WorkspaceError,
   cloneProject,
   destroyWorkspace,
@@ -65,6 +70,8 @@ import {
   removeHostPath,
   writeHostFile
 } from './host-fs.js';
+import type { DesktopBrowserBroker } from './desktop-browser-broker.js';
+import type { DesktopBrowserCommand } from '@zana-ai/zcc-host-daemon-contract';
 
 const MAX_LISTED_FILES = 500;
 const MAX_DIR_ENTRIES = 2000;
@@ -136,7 +143,11 @@ export type ThreadArchiveInput = {
 
 export interface CommandRuntime {
   dataDir: string;
-  environments: Map<string, { path: string; workspaceProvisionType: 'unmanaged' | 'managed-worktree' | 'personal' }>;
+  environments: Map<string, {
+    path: string;
+    workspaceProvisionType: 'unmanaged' | 'managed-worktree' | 'personal';
+    sourcePath?: string;
+  }>;
   threads: Map<string, { environmentId: string; providerId: string }>;
   terminals: Map<string, { cwd: string }>;
   provisionSignals: Map<string, AbortController>;
@@ -193,6 +204,7 @@ export interface CommandRuntime {
   }) => Promise<ProviderHealthResult>;
   homeDir?: string;
   peerSsh?: PeerDaemonSsh;
+  desktopBrowserBroker?: DesktopBrowserBroker;
 }
 
 export function createCommandRuntime(options: {
@@ -249,6 +261,7 @@ export function createCommandRuntime(options: {
   }) => Promise<ProviderHealthResult>;
   homeDir?: string;
   peerSsh?: PeerDaemonSsh;
+  desktopBrowserBroker?: DesktopBrowserBroker;
 }): CommandRuntime {
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
   return {
@@ -281,6 +294,7 @@ export function createCommandRuntime(options: {
     providerHealth: options.providerHealth,
     homeDir: options.homeDir,
     peerSsh: options.peerSsh,
+    desktopBrowserBroker: options.desktopBrowserBroker,
     verifyProviders: options.verifyProviders ?? (async () => {
       const [results, extraInstalledAgents] = await Promise.all([
         verifyHarnesses(loadConfig()),
@@ -533,6 +547,28 @@ function listDirShallow(absDir: string): HostDirEntry[] {
   return out;
 }
 
+async function requestDesktopBrowser(
+  runtime: CommandRuntime,
+  command: Extract<HostRpcCommand, { type: `desktop.browser.${string}` }>
+): Promise<unknown> {
+  const broker = runtime.desktopBrowserBroker;
+  if (!broker) {
+    throw new HostCommandError('unknown_command', 'desktop browser broker is not available');
+  }
+  try {
+    return await broker.request(command as DesktopBrowserCommand);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const unavailable = /disconnected from server|unavailable or generation is stale|broker is disconnected/i.test(
+      message
+    );
+    throw new HostCommandError(
+      unavailable ? 'desktop_browser_unavailable' : 'desktop_browser_failed',
+      message
+    );
+  }
+}
+
 export async function dispatchHostCommand(
   runtime: CommandRuntime,
   command: HostRpcCommand
@@ -623,7 +659,10 @@ export async function dispatchHostCommand(
                 });
           runtime.environments.set(command.environmentId, {
             path: provisioned.discovered.path,
-            workspaceProvisionType: command.workspaceProvisionType
+            workspaceProvisionType: command.workspaceProvisionType,
+            ...(command.workspaceProvisionType === 'managed-worktree'
+              ? { sourcePath: command.sourcePath }
+              : {})
           });
           return {
             environmentId: command.environmentId,
@@ -644,9 +683,11 @@ export async function dispatchHostCommand(
     case 'environment.destroy': {
       return withEnvironmentLane(runtime, command.environmentId, async () => {
         try {
+          const stored = runtime.environments.get(command.environmentId);
           await destroyWorkspace({
             path: command.workspacePath,
-            workspaceProvisionType: command.workspaceProvisionType
+            workspaceProvisionType: command.workspaceProvisionType,
+            sourcePath: stored?.sourcePath
           });
           runtime.environments.delete(command.environmentId);
           return { environmentId: command.environmentId, destroyed: true as const };
@@ -1018,6 +1059,26 @@ export async function dispatchHostCommand(
       } catch (error) {
         mapWorkspaceError(error);
       }
+    case 'workspace.processes.list': {
+      if (process.platform === 'win32') {
+        return { processes: [], truncated: false, supported: false as const };
+      }
+      const listed = await listProcessesWithCwdUnder({ directory: command.workspacePath });
+      listed.sort((left, right) => left.pid - right.pid);
+      const truncated = listed.length > WORKSPACE_PROCESS_LIST_CAP;
+      return {
+        processes: listed.slice(0, WORKSPACE_PROCESS_LIST_CAP),
+        truncated,
+        supported: true as const
+      };
+    }
+    case 'workspace.processes.kill': {
+      const killed = await killProcessesWithCwdUnder({
+        directory: command.workspacePath,
+        pids: command.pids
+      });
+      return { killed };
+    }
     case 'project.clone_default_path':
       return { path: await resolveCloneDefaultPath(runtime.dataDir, command.projectSlug) };
     case 'project.clone':
@@ -1098,6 +1159,18 @@ export async function dispatchHostCommand(
         artifactPath: command.artifactPath
       });
     }
+    case 'desktop.browser.list_instances':
+    case 'desktop.browser.list_tabs':
+    case 'desktop.browser.create_tab':
+    case 'desktop.browser.reveal_tab':
+    case 'desktop.browser.close_tab':
+    case 'desktop.browser.capture_tab':
+    case 'desktop.browser.acquire_control':
+    case 'desktop.browser.open_connection':
+    case 'desktop.browser.release_control':
+    case 'desktop.browser.list_import_sources':
+    case 'desktop.browser.import_cookies':
+      return requestDesktopBrowser(runtime, command);
     default: {
       const exhaustive: never = command;
       throw new HostCommandError('unknown_command', `unsupported command ${(exhaustive as { type: string }).type}`);

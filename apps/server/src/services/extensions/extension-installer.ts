@@ -141,6 +141,7 @@ export interface BundledCatalogEntry {
   description?: string;
   author?: string;
   permissions: string[];
+  category?: string;
 }
 
 /** Read a bundled manifest with the extra catalog fields. Null on failure. */

@@ -1,0 +1,40 @@
+{
+  "name": "@zana-ai/zcc-control",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "source": "./src/testing/index.ts",
+      "default": "./src/testing/index.ts"
+    },
+    "./isolated": {
+      "types": "./src/isolated.ts",
+      "source": "./src/isolated.ts",
+      "default": "./src/isolated.ts"
+    }
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts",
+    "live:smoke": "ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts live/thread-smoke.test.ts live/cli-agent-smoke.test.ts",
+    "live:matrix": "ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts live/thread-matrix.test.ts live/cli-agent-matrix.test.ts live/combo.test.ts",
+    "live:cli-scenarios": "ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts --testTimeout 180000 live/cli-agent-scenarios.test.ts",
+    "live:mode-reasoning": "ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts --testTimeout 60000 live/harness-mode-reasoning.test.ts",
+    "live:browser": "ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts --testTimeout 120000 live/desktop-browser.test.ts",
+    "live:memory": "ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts --testTimeout 120000 live/plugin-memory.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@zana-ai/zcc-tsconfig": "workspace:*",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

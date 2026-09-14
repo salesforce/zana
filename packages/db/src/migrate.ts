@@ -231,6 +231,15 @@ const MIGRATE_V15 = [
       )`
 ];
 
+const MIGRATE_V16 = [
+  `CREATE TABLE thread_plugin_metadata (
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        plugin_id TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        PRIMARY KEY (thread_id, plugin_id)
+      )`
+];
+
 const MIGRATE_V5 = [
   `CREATE TABLE pending_interactions (
         id TEXT PRIMARY KEY,
@@ -337,6 +346,7 @@ export function migrate(database: SqliteDatabase): void {
   if (!applied.has(13)) applyVersion(database, 13, MIGRATE_V13);
   if (!applied.has(14)) applyVersion(database, 14, MIGRATE_V14);
   if (!applied.has(15)) applyVersion(database, 15, MIGRATE_V15);
+  if (!applied.has(16)) applyVersion(database, 16, MIGRATE_V16);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

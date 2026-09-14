@@ -47,7 +47,8 @@ vi.mock('node-pty', () => ({
 }));
 
 vi.mock('../mcp-config.js', () => ({
-  ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`
+  ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
+  alwaysOnPluginMcpAllowlist: () => []
 }));
 
 // tmux is "available" so the remote wrap (and thus the reattach recipe) arms.

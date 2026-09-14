@@ -53,7 +53,10 @@ const PROFILE_LABEL: Record<LaunchProfileId, string> = {
   'opencode-yolo': 'opencode --auto',
   grok: 'grok',
   'grok-resume': 'grok --continue',
-  'grok-yolo': 'grok --always-approve'
+  'grok-yolo': 'grok --always-approve',
+  mastracode: 'mastracode',
+  'mastracode-resume': 'mastracode --continue',
+  'mastracode-yolo': 'mastracode (yolo)'
 };
 
 /** Status → pill label / class suffix. Reuses the scheduler pill palette. */

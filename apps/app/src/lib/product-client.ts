@@ -187,6 +187,13 @@ function httpProduct(): Pick<
         const suffix = params.toString();
         return apiJson(`/projects/${encodeURIComponent(projectId)}/paths${suffix ? `?${suffix}` : ''}`);
       },
+      listProcesses: async (projectId: string) =>
+        apiJson(`/projects/${encodeURIComponent(projectId)}/processes`),
+      killProcesses: async (projectId: string, pids: number[]) =>
+        apiJson(`/projects/${encodeURIComponent(projectId)}/processes/kill`, {
+          method: 'POST',
+          body: JSON.stringify({ pids })
+        }),
       onChanged: (cb: (projects: Project[]) => void) =>
         subscribeProductEvent<Project[]>('projects:changed', cb)
     } as unknown as CcApi['projects'],
@@ -874,7 +881,14 @@ function httpProduct(): Pick<
         return apiJson(`/environments/${encodeURIComponent(environmentId)}`, {
           method: 'DELETE'
         });
-      }
+      },
+      listProcesses: async (environmentId) =>
+        apiJson(`/environments/${encodeURIComponent(environmentId)}/processes`),
+      killProcesses: async (environmentId, pids) =>
+        apiJson(`/environments/${encodeURIComponent(environmentId)}/processes/kill`, {
+          method: 'POST',
+          body: JSON.stringify({ pids })
+        })
     } as CcApi['environments'],
     harness: {
       verify: async () => {
@@ -1051,7 +1065,7 @@ function httpProduct(): Pick<
       getSettings: async (pluginId) =>
         apiJson(`/plugin-apps/${encodeURIComponent(pluginId)}/settings`),
       setSettings: async (pluginId, values) => {
-        const payload: Record<string, string | boolean | null> = {};
+        const payload: Record<string, string | number | boolean | null> = {};
         for (const [key, value] of Object.entries(values)) {
           payload[key] = value === undefined ? null : value;
         }
@@ -1257,6 +1271,8 @@ function wrapDesktopProjects(desktop: CcApi['projects']): CcApi['projects'] {
       if (fromDesktop) return fromDesktop;
       return http.cloneRoot();
     },
-    paths: http.paths
+    paths: http.paths,
+    listProcesses: http.listProcesses,
+    killProcesses: http.killProcesses
   };
 }

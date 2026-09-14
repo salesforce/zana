@@ -13,7 +13,8 @@ export default defineConfig({
       '@zana-ai/zcc-plugin-sdk/host': resolve(__dirname, '../plugin-sdk/src/host.ts'),
       '@zana-ai/zcc-plugin-sdk': resolve(__dirname, '../plugin-sdk/src/index.ts'),
       '@zana-ai/zcc-plugin-templates': resolve(__dirname, '../plugin-templates/src/index.ts'),
-      '@zana-ai/zcc-plugin-build': resolve(__dirname, '../plugin-build/src/index.ts')
+      '@zana-ai/zcc-plugin-build': resolve(__dirname, '../plugin-build/src/index.ts'),
+      '@zana-ai/zcc-control': resolve(__dirname, '../control-sdk/src/index.ts')
     }
   }
 });

@@ -45,9 +45,16 @@ import { DEFAULT_TERMINAL_THEME, type TerminalThemeId } from '@zana-ai/zcc-domai
 import { seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 import { resolveRestartProfile } from './lib/sessionRestore.js';
+import { closeFollowupProgressMessage, runCloseIdleAgents } from './lib/close-idle-agents.js';
+
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
+import {
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem
+} from './lib/safe-local-storage.js';
 import { product } from './lib/product-client.js';
 import { subscribeProductEvent } from './lib/product-ws.js';
 import { prefetchThreadModelCatalog, reloadThreadModelCatalog } from './components/thread/pickers/thread-model-catalog.js';
@@ -187,6 +194,7 @@ export type SettingsTab =
   | 'machines'
   | 'connectivity'
   | 'inbox'
+  | 'browser'
   | (string & {});
 
 /** The focused top-level Extensions workspace page. */
@@ -516,25 +524,25 @@ interface UiState {
   setExplorerTreeMode: (projectId: string, mode: 'files' | 'changes') => void;
   toggleExplorerTreeMode: (projectId: string) => void;
   // sidebar: collapsed to an icon rail (labels hidden) to save horizontal
-  // space. Persisted in localStorage so it survives reloads.
+  // space. Persisted per-window in localStorage so a project window's rail
+  // doesn't bleed into the main window.
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
   // sidebar: when true, the Projects list hides projects that have no live
-  // (non-exited or background) sessions, so a long rail collapses to just the
-  // ones with running agents. Persisted in localStorage so it survives reloads.
+  // (non-exited or background) sessions. Persisted on AppConfig.
   hideIdleProjects: boolean;
   toggleHideIdleProjects: () => void;
   // scheduler rail: when true, the Project section hides projects that have no
-  // schedules defined, so the list collapses to just the ones with work.
-  // Persisted in localStorage so it survives reloads.
+  // schedules defined. Persisted on AppConfig.
   hideSchedulelessProjects: boolean;
   toggleHideSchedulelessProjects: () => void;
   // sidebar: per-section collapse state in the list rail (Scheduler/Settings),
-  // keyed by a stable section id like 'scheduler:groups'. Collapsed sections
-  // hide their rows so a long rail stays scannable. Persisted in localStorage
-  // as a JSON map. Absent key = expanded (the default).
+  // keyed by a stable section id like 'scheduler:groups'. Persisted on AppConfig.
   collapsedSections: Record<string, boolean>;
   toggleSection: (key: string) => void;
+  sidebarNavOrder: unknown;
+  projectSidebarNavOrder: unknown;
+  setSidebarNavOrder: (storageKey: string, order: string[]) => void;
   setNav: (n: NavId) => void;
   /** Cross-panel deep-link prefilter: a Plugin row's "4 skills" chip writes
    *  `catalogueFilter.skills = pluginName`, then navs to skills. The skills
@@ -611,14 +619,13 @@ interface UiState {
   setSchedulerTab: (tab: 'overview' | 'group' | 'global' | 'project') => void;
   /**
    * Which tab is active in the Inbox list pane:
-   *  - 'feed'    — the live push feed (default)
-   *  - 'reports' — only entries explicitly flagged `report: true` (deliverables)
-   *  - 'saved'   — the durable saved-for-later reports (`~/.zcc/saved/`)
-   * Purely a view toggle; all read their own slice, so switching never mutates
-   * any list. Not persisted — the feed is the natural landing tab.
+   *  - 'feed'  — the live push feed (default)
+   *  - 'saved' — the durable saved-for-later reports (`~/.zcc/saved/`)
+   * Flagged deliverables (`report: true`) are a Feed filter chip, not a tab.
+   * Purely a view toggle; not persisted — the feed is the natural landing tab.
    */
-  inboxTab: 'feed' | 'reports' | 'saved';
-  setInboxTab: (tab: 'feed' | 'reports' | 'saved') => void;
+  inboxTab: 'feed' | 'saved';
+  setInboxTab: (tab: 'feed' | 'saved') => void;
   /**
    * How the inbox Feed groups its rows within each day bucket:
    *  - 'project' — collapsible per-project subgroups (default), folded noise
@@ -642,8 +649,8 @@ interface UiState {
   revealSchedule: (taskId: string) => void;
   clearRevealSchedule: () => void;
   /**
-   * Deep-link target for the Library view — the doc id another surface (the
-   * Inbox Overview's Ideas rollup) asked to open. LibraryView picks it up,
+   * Deep-link target for the Library view — the doc id another surface asked
+   * to open. LibraryView picks it up,
    * selects that doc (expanding its scope folder), then clears this so a
    * re-render doesn't re-trigger the jump. Twin of {@link revealScheduleId}.
    * Null when nothing is pending.
@@ -668,7 +675,11 @@ interface UiState {
   /** Jump to the global Follow-ups panel and reveal `id`. */
   revealFollowUp: (id: string) => void;
   clearRevealFollowUp: () => void;
-  pushToast: (message: string, kind?: 'info' | 'error') => void;
+  pushToast: (
+    message: string,
+    kind?: 'info' | 'error',
+    opts?: { persist?: boolean }
+  ) => string;
   dismissToast: (id: string) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
@@ -790,11 +801,12 @@ function mirroredConfigFlags(config: AppConfig) {
     reviewerApprovalMode: config.reviewerApprovalMode ?? 'ask',
     worktreeIsolationDefault: config.worktreeIsolationDefault ?? false,
     suggestionsEnabled: config.suggestionsEnabled ?? false,
-    harnessCursorEnabled: config.harnessCursorEnabled ?? false,
-    harnessCodexEnabled: config.harnessCodexEnabled ?? false,
-    harnessPiEnabled: config.harnessPiEnabled ?? false,
-    harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
-    harnessGrokEnabled: config.harnessGrokEnabled ?? false,
+    harnessCursorEnabled: config.harnessCursorEnabled !== false,
+    harnessCodexEnabled: config.harnessCodexEnabled !== false,
+    harnessPiEnabled: config.harnessPiEnabled !== false,
+    harnessOpenCodeEnabled: config.harnessOpenCodeEnabled !== false,
+    harnessGrokEnabled: config.harnessGrokEnabled !== false,
+    harnessMastracodeEnabled: config.harnessMastracodeEnabled !== false,
     nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
     teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false,
@@ -809,15 +821,67 @@ function mirroredConfigFlags(config: AppConfig) {
 // Restore the per-section collapse map persisted by toggleSection. A malformed
 // or missing value just yields an empty map (everything expanded).
 function readCollapsedSections(): Record<string, boolean> {
-  if (typeof localStorage === 'undefined') return {};
   try {
-    const raw = localStorage.getItem('zcc.collapsedSections');
+    const raw = readLocalStorageItem('zcc.collapsedSections');
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
     return {};
   }
+}
+
+function persistSidebarChrome(patch: Partial<AppConfig>) {
+  product.config.set(patch).catch(() => {});
+}
+
+let collapsedSectionsTimer: number | null = null;
+function persistCollapsedSections(next: Record<string, boolean>) {
+  if (collapsedSectionsTimer !== null) window.clearTimeout(collapsedSectionsTimer);
+  collapsedSectionsTimer = window.setTimeout(() => {
+    collapsedSectionsTimer = null;
+    persistSidebarChrome({ collapsedSections: next });
+  }, 200);
+}
+
+function readStoredNavOrder(key: string): unknown {
+  try {
+    const raw = readLocalStorageItem(key);
+    if (raw == null) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function consumeLocalSidebarChrome(config: AppConfig): Partial<AppConfig> {
+  const patch: Partial<AppConfig> = {};
+  if (config.collapsedSections === undefined) {
+    const local = readCollapsedSections();
+    if (Object.keys(local).length > 0) patch.collapsedSections = local;
+  }
+  if (config.hideIdleProjects === undefined && readLocalStorageItem('zcc.hideIdleProjects') === '1') {
+    patch.hideIdleProjects = true;
+  }
+  if (config.hideSchedulelessProjects === undefined && readLocalStorageItem('zcc.hideSchedulelessProjects') === '1') {
+    patch.hideSchedulelessProjects = true;
+  }
+  if (config.sidebarNavOrder === undefined) {
+    const local = readStoredNavOrder('zcc.sidebarNavOrder');
+    if (Array.isArray(local) && local.length > 0) patch.sidebarNavOrder = local.filter((id): id is string => typeof id === 'string');
+  }
+  if (config.projectSidebarNavOrder === undefined) {
+    const local = readStoredNavOrder('zcc.projectSidebarNavOrder');
+    if (Array.isArray(local) && local.length > 0) {
+      patch.projectSidebarNavOrder = local.filter((id): id is string => typeof id === 'string');
+    }
+  }
+  removeLocalStorageItem('zcc.collapsedSections');
+  removeLocalStorageItem('zcc.hideIdleProjects');
+  removeLocalStorageItem('zcc.hideSchedulelessProjects');
+  removeLocalStorageItem('zcc.sidebarNavOrder');
+  removeLocalStorageItem('zcc.projectSidebarNavOrder');
+  return patch;
 }
 
 // Debounced write of projectView -> AppConfig.projectViews.
@@ -877,7 +941,7 @@ function applyDestination(
   extra?: Partial<UiState>
 ) {
   const url = new URL(path, 'http://zcc.local');
-  const decoded = decodeRoutePath(url.pathname, url.hash);
+  const decoded = decodeRoutePath(url.pathname, url.hash, url.search);
   set((s) => {
     const keepFocus =
       s.focusedProjectId != null &&
@@ -948,46 +1012,26 @@ export const useUi = create<UiState>((set, get) => ({
   projectExpanded: {},
   splitLayout: {},
   splitTabIds: {},
-  favoritesDrawerOpen:
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem('zcc.favoritesDrawerOpen') === '1',
+  favoritesDrawerOpen: readLocalStorageItem('zcc.favoritesDrawerOpen') === '1',
   toggleFavoritesDrawer: () =>
     set((s) => {
       const next = !s.favoritesDrawerOpen;
-      try {
-        localStorage.setItem('zcc.favoritesDrawerOpen', next ? '1' : '0');
-      } catch {
-        // ignore quota errors
-      }
+      writeLocalStorageItem('zcc.favoritesDrawerOpen', next ? '1' : '0');
       return { favoritesDrawerOpen: next };
     }),
   setFavoritesDrawerOpen: (open) => {
-    try {
-      localStorage.setItem('zcc.favoritesDrawerOpen', open ? '1' : '0');
-    } catch {
-      // ignore quota errors
-    }
+    writeLocalStorageItem('zcc.favoritesDrawerOpen', open ? '1' : '0');
     set({ favoritesDrawerOpen: open });
   },
-  notificationsDrawerOpen:
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem('zcc.notificationsDrawerOpen') === '1',
+  notificationsDrawerOpen: readLocalStorageItem('zcc.notificationsDrawerOpen') === '1',
   toggleNotificationsDrawer: () =>
     set((s) => {
       const next = !s.notificationsDrawerOpen;
-      try {
-        localStorage.setItem('zcc.notificationsDrawerOpen', next ? '1' : '0');
-      } catch {
-        // ignore quota errors
-      }
+      writeLocalStorageItem('zcc.notificationsDrawerOpen', next ? '1' : '0');
       return { notificationsDrawerOpen: next };
     }),
   setNotificationsDrawerOpen: (open) => {
-    try {
-      localStorage.setItem('zcc.notificationsDrawerOpen', open ? '1' : '0');
-    } catch {
-      // ignore quota errors
-    }
+    writeLocalStorageItem('zcc.notificationsDrawerOpen', open ? '1' : '0');
     set({ notificationsDrawerOpen: open });
   },
   hostInstallDrawer: EMPTY_HOST_INSTALL_DRAWER,
@@ -1007,56 +1051,45 @@ export const useUi = create<UiState>((set, get) => ({
   setHostInstallDrawerOpen: (open) => set((s) => ({
     hostInstallDrawer: { ...s.hostInstallDrawer, open }
   })),
-  sidebarCollapsed:
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem(sidebarCollapsedKey()) === '1',
+  sidebarCollapsed: readLocalStorageItem(sidebarCollapsedKey()) === '1',
   toggleSidebar: () =>
     set((s) => {
       const next = !s.sidebarCollapsed;
-      try {
-        localStorage.setItem(sidebarCollapsedKey(), next ? '1' : '0');
-      } catch {
-        // ignore quota errors
-      }
+      writeLocalStorageItem(sidebarCollapsedKey(), next ? '1' : '0');
       return { sidebarCollapsed: next };
     }),
-  hideIdleProjects:
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem('zcc.hideIdleProjects') === '1',
+  hideIdleProjects: readLocalStorageItem('zcc.hideIdleProjects') === '1',
   toggleHideIdleProjects: () =>
     set((s) => {
       const next = !s.hideIdleProjects;
-      try {
-        localStorage.setItem('zcc.hideIdleProjects', next ? '1' : '0');
-      } catch {
-        // ignore quota errors
-      }
+      persistSidebarChrome({ hideIdleProjects: next });
       return { hideIdleProjects: next };
     }),
-  hideSchedulelessProjects:
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem('zcc.hideSchedulelessProjects') === '1',
+  hideSchedulelessProjects: readLocalStorageItem('zcc.hideSchedulelessProjects') === '1',
   toggleHideSchedulelessProjects: () =>
     set((s) => {
       const next = !s.hideSchedulelessProjects;
-      try {
-        localStorage.setItem('zcc.hideSchedulelessProjects', next ? '1' : '0');
-      } catch {
-        // ignore quota errors
-      }
+      persistSidebarChrome({ hideSchedulelessProjects: next });
       return { hideSchedulelessProjects: next };
     }),
   collapsedSections: readCollapsedSections(),
   toggleSection: (key) =>
     set((s) => {
       const next = { ...s.collapsedSections, [key]: !s.collapsedSections[key] };
-      try {
-        localStorage.setItem('zcc.collapsedSections', JSON.stringify(next));
-      } catch {
-        // ignore quota errors
-      }
+      persistCollapsedSections(next);
       return { collapsedSections: next };
     }),
+  sidebarNavOrder: readStoredNavOrder('zcc.sidebarNavOrder'),
+  projectSidebarNavOrder: readStoredNavOrder('zcc.projectSidebarNavOrder'),
+  setSidebarNavOrder: (storageKey, order) => {
+    if (storageKey === 'zcc.projectSidebarNavOrder') {
+      persistSidebarChrome({ projectSidebarNavOrder: order });
+      set({ projectSidebarNavOrder: order });
+      return;
+    }
+    persistSidebarChrome({ sidebarNavOrder: order });
+    set({ sidebarNavOrder: order });
+  },
   // Entering the scheduler always lands on Overview — the cross-scope summary
   // is the right "home" when you click in. Switching to global/project scope
   // happens inside the panel via setSchedulerTab, so this only resets on
@@ -1068,7 +1101,7 @@ export const useUi = create<UiState>((set, get) => ({
       nav === 'scheduler' ? { schedulerTab: 'overview' } : undefined
     ),
   inboxTab: 'feed',
-  setInboxTab: (inboxTab) => set({ inboxTab }),
+  setInboxTab: (inboxTab) => set({ inboxTab: inboxTab === 'saved' ? 'saved' : 'feed' }),
   inboxGrouping: 'project',
   setInboxGrouping: (grouping) => {
     set({ inboxGrouping: grouping });
@@ -1157,7 +1190,7 @@ export const useUi = create<UiState>((set, get) => ({
   setExtensionsTab: (extensionsTab) =>
     applyDestination(set, getExtensionsTabRoutePath(extensionsTab)),
   setSettingsExtensionId: (settingsExtensionId) => set({ settingsExtensionId }),
-  selectSettingsExtension: (id) => applyDestination(set, getPluginDetailRoutePath(id)),
+  selectSettingsExtension: (id) => applyDestination(set, getPluginDetailRoutePath(id, { view: 'installed' })),
   settingsAnchor: null,
   setSettingsAnchor: (settingsAnchor) => set({ settingsAnchor }),
   setSchedulerTab: (schedulerTab) => set({ schedulerTab }),
@@ -1191,12 +1224,15 @@ export const useUi = create<UiState>((set, get) => ({
     applyDestination(set, getFollowUpsRoutePath(), { revealFollowUpId: id });
   },
   clearRevealFollowUp: () => set({ revealFollowUpId: null }),
-  pushToast: (message, kind = 'info') => {
+  pushToast: (message, kind = 'info', opts) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }));
-    setTimeout(() => {
-      set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
-    }, 4000);
+    if (!opts?.persist) {
+      setTimeout(() => {
+        set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+      }, 4000);
+    }
+    return id;
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   addPendingLaunches: (launches) =>
@@ -1548,6 +1584,8 @@ interface DataState {
   harnessOpenCodeEnabled: boolean;
   /** Mirror of AppConfig.harnessGrokEnabled — explicit hide for Grok Build. */
   harnessGrokEnabled: boolean;
+  /** Mirror of AppConfig.harnessMastracodeEnabled — explicit hide for Mastra Code. */
+  harnessMastracodeEnabled: boolean;
   /** Mirror of AppConfig.nativeAgentDiscoveryEnabled. */
   nativeAgentDiscoveryEnabled: boolean;
   /** Last code-harness verification snapshot (Settings → Code Harness). Empty
@@ -1614,6 +1652,7 @@ interface DataState {
   setHarnessPiEnabled: (on: boolean) => void;
   setHarnessOpenCodeEnabled: (on: boolean) => void;
   setHarnessGrokEnabled: (on: boolean) => void;
+  setHarnessMastracodeEnabled: (on: boolean) => void;
   setMicroVmEnabled: (on: boolean) => void;
   setWorktreeIsolationDefault: (on: boolean) => void;
   setIdleAttentionSensitivity: (level: 'high' | 'medium' | 'low') => void;
@@ -1684,7 +1723,7 @@ interface DataState {
        *  project and launches the agent there. Ignored for remote/scratch/non-repo
        *  projects. See {@link CreateTerminalRequest.worktree}. */
       worktree?: boolean | { branch?: string };
-      /** Workspace provision choice for host-thread spawn (browser / product API). */
+      /** Workspace provision choice for CLI Agent New worktree / reuse / personal. */
       workspace?: import('@zana-ai/zcc-domain').SpawnEnvironmentChoice;
       prompt?: string;
       personaId?: string;
@@ -1745,21 +1784,29 @@ interface DataState {
   /** Remove terminal cards owned by a Job after its single dismiss action succeeds. */
   dismissTerminals: (sessionIds: readonly string[]) => void;
   /**
-   * Bulk-close the given at-rest agents in a project (the Agents board's Close
-   * action and the modal's "Close with follow-up" item). When `summarize` is
-   * set, asks main FIRST to fold each agent's work into ONE inbox entry AND file
-   * a follow-up for anything left unfinished (transcripts are read while the
-   * ptys are still alive), then closes each session via the same per-session
-   * {@link closeTerminal} path. Before killing, re-checks each agent's LIVE
-   * status and skips any that drifted back to working/blocked while the confirm
-   * dialog was open — a manual reclaim must never terminate an agent mid-task.
-   * Returns how many were closed / summarized / followed up.
+   * Session ids currently in Close with follow-up (LLM paper trail + close).
+   * Drives footer/menu `Closing…` busy state so the action cannot double-fire.
    */
-  closeIdleAgents: (
-    projectId: string,
-    sessionIds: string[],
-    summarize: boolean
-  ) => Promise<{ closed: number; summarized: number; followedUp: number }>;
+  closingFollowupIds: ReadonlySet<string>;
+    /**
+    * Bulk-close the given at-rest agents in a project (the Agents board's Close
+    * action). When `summarize` is set, asks main FIRST to fold each agent's work
+    * into ONE inbox entry AND file a follow-up for anything left unfinished
+    * (transcripts are read while the ptys are still alive), then closes each
+    * session via the same per-session {@link closeTerminal} path. Before killing,
+    * re-checks each agent's LIVE status and skips any that drifted back to
+    * working/blocked while the confirm dialog was open — a bulk reclaim must
+    * never terminate an agent mid-task. Pass `{ force: true }` for an explicit
+    * single-card Close with follow-up so Needs you / blocked / working still
+    * close after the user confirmed that card. Returns how many were closed /
+    * summarized / followed up.
+    */
+   closeIdleAgents: (
+     projectId: string,
+     sessionIds: string[],
+     summarize: boolean,
+     opts?: { force?: boolean }
+   ) => Promise<{ closed: number; summarized: number; followedUp: number }>;
   /**
    * READ-ONLY companion to {@link closeIdleAgents}: fold the given idle agents'
    * work into ONE inbox entry and leave every agent RUNNING (the Agents board's
@@ -1925,6 +1972,16 @@ export function sortProjectsAlphabetically(projects: Project[]): Project[] {
   });
 }
 
+function applySidebarChrome(config: AppConfig) {
+  useUi.setState({
+    hideIdleProjects: config.hideIdleProjects === true,
+    hideSchedulelessProjects: config.hideSchedulelessProjects === true,
+    collapsedSections: config.collapsedSections ?? {},
+    sidebarNavOrder: config.sidebarNavOrder ?? null,
+    projectSidebarNavOrder: config.projectSidebarNavOrder ?? null
+  });
+}
+
 export const useData = create<DataState>((set, get) => ({
   projects: [],
   terminals: {},
@@ -1962,11 +2019,13 @@ export const useData = create<DataState>((set, get) => ({
   structuredQuestionsEnabled: true,
   defaultHarness: null,
   configLoaded: false,
+  closingFollowupIds: new Set<string>(),
   harnessCursorEnabled: false,
   harnessCodexEnabled: false,
   harnessPiEnabled: false,
   harnessOpenCodeEnabled: false,
   harnessGrokEnabled: false,
+  harnessMastracodeEnabled: false,
   nativeAgentDiscoveryEnabled: false,
   harnessStatus: [],
   editorStatus: [],
@@ -2063,6 +2122,11 @@ export const useData = create<DataState>((set, get) => ({
 
   setHarnessGrokEnabled(on) {
     set({ harnessGrokEnabled: on });
+    void prefetchThreadModelCatalog().catch(() => undefined);
+  },
+
+  setHarnessMastracodeEnabled(on) {
+    set({ harnessMastracodeEnabled: on });
     void prefetchThreadModelCatalog().catch(() => undefined);
   },
 
@@ -2244,6 +2308,11 @@ export const useData = create<DataState>((set, get) => ({
       if (typeof config.sidebarWidth === 'number') {
         applySidebarWidth(config.sidebarWidth);
       }
+      const chromePatch = consumeLocalSidebarChrome(config);
+      if (Object.keys(chromePatch).length > 0) {
+        void product.config.set(chromePatch);
+      }
+      applySidebarChrome({ ...config, ...chromePatch });
       // Live config sync across windows: main broadcasts `config:onChanged` to
       // EVERY window after any `config:set`, so a feature toggled off in one
       // window (e.g. Follow-ups) flips this window's mirrored gate at once
@@ -2258,6 +2327,7 @@ export const useData = create<DataState>((set, get) => ({
         if (typeof next.sidebarWidth === 'number') {
           applySidebarWidth(next.sidebarWidth);
         }
+        applySidebarChrome(next);
       });
       const views = config.projectViews ?? config.workspaceModes;
       if (views) {
@@ -3119,6 +3189,7 @@ export const useData = create<DataState>((set, get) => ({
         cwd: opts?.cwd,
         isolateScratch: opts?.isolateScratch,
         worktree: opts?.worktree,
+        workspace: opts?.workspace,
         prompt: opts?.prompt,
         environment: opts?.environment,
         sandboxDenyNetwork: opts?.sandboxDenyNetwork,
@@ -3291,67 +3362,65 @@ export const useData = create<DataState>((set, get) => ({
     }
   },
 
-  async closeIdleAgents(projectId, sessionIds, summarize) {
-    if (sessionIds.length === 0) return { closed: 0, summarized: 0, followedUp: 0 };
-    // Re-check LIVE status right before we act. The confirm dialog is an open
-    // dwell window during which an idle agent can resume (a scheduled fire, a
-    // human reply) — a manual reclaim must never terminate an agent mid-task, so
-    // drop any that drifted back to working/blocked. useAgentStatus is the same
-    // live signal the board's lanes read, so this can't disagree with what the
-    // user last saw. (Ids missing from the map are treated as still-eligible —
-    // an unknown state is the at-rest default here, matching isIdleAgent.)
-    const status = useAgentStatus.getState().byId;
-    const ids = sessionIds.filter((id) => {
-      const st = status[id];
-      return st !== 'working' && st !== 'blocked';
+  async closeIdleAgents(projectId, sessionIds, summarize, opts) {
+    const markClosing = (ids: string[]) => {
+      if (ids.length === 0) return;
+      set((s) => {
+        const next = new Set(s.closingFollowupIds);
+        for (const id of ids) next.add(id);
+        return { closingFollowupIds: next };
+      });
+    };
+    const clearClosing = (ids: string[]) => {
+      if (ids.length === 0) return;
+      set((s) => {
+        const next = new Set(s.closingFollowupIds);
+        for (const id of ids) next.delete(id);
+        return { closingFollowupIds: next };
+      });
+    };
+    return runCloseIdleAgents({
+      projectId,
+      sessionIds,
+      summarize,
+      force: opts?.force === true,
+      deps: {
+        statusById: useAgentStatus.getState().byId,
+        alreadyClosingIds: get().closingFollowupIds,
+        markClosing,
+        clearClosing,
+        closeFollowup: (pid, ids) => product.terminals.closeFollowup(pid, ids),
+        closeTerminal: (id, pid) => get().closeTerminal(id, pid),
+        pushBusyToast: (requestedCount) => {
+          useUi
+            .getState()
+            .pushToast(
+              requestedCount === 1
+                ? 'Agent is busy again — left it running.'
+                : 'Those agents are busy again — left them running.',
+              'info'
+            );
+        },
+        pushErrorToast: (err) => {
+          pushErrorToast(errorMessage(err, 'Failed to summarize agents'));
+        },
+        pushClosedToast: (closed, summarized, followedUp) => {
+          const bits = [`Closed ${closed} agent${closed === 1 ? '' : 's'}`];
+          if (summarized > 0) bits.push(`${summarized} summarized to inbox`);
+          if (followedUp > 0) {
+            bits.push(`${followedUp} follow-up${followedUp === 1 ? '' : 's'} filed`);
+          } else if (summarized > 0) {
+            bits.push('no unfinished work found');
+          } else {
+            bits.push('no readable transcript found');
+          }
+          useUi.getState().pushToast(`${bits.join(' · ')}.`, summarized > 0 ? 'info' : 'error');
+        },
+        pushProgressToast: (count) =>
+          useUi.getState().pushToast(closeFollowupProgressMessage(count), 'info', { persist: true }),
+        dismissProgressToast: (id) => useUi.getState().dismissToast(id)
+      }
     });
-    if (ids.length === 0) {
-      // Everything drifted back to working/blocked since the confirm opened — say
-      // so rather than closing the dialog with no visible effect.
-      useUi
-        .getState()
-        .pushToast(
-          sessionIds.length === 1
-            ? 'Agent is busy again — left it running.'
-            : 'Those agents are busy again — left them running.',
-          'info'
-        );
-      return { closed: 0, summarized: 0, followedUp: 0 };
-    }
-
-    // Summarize + (optionally) file follow-ups BEFORE closing: main reads each
-    // agent's live transcript, so it must run while the ptys are still alive.
-    // Main confines the ids to the project and never throws, but guard anyway —
-    // a lost paper trail is never a reason to abort the close the user asked for.
-    let summarized = 0;
-    let followedUp = 0;
-    if (summarize) {
-      try {
-        const res = await product.terminals.closeFollowup(projectId, ids);
-        summarized = res.summarized;
-        followedUp = res.followedUp;
-      } catch (err) {
-        pushErrorToast(errorMessage(err, 'Failed to summarize agents'));
-      }
-    }
-    // Close each via the single-agent path so selection-advance, split removal,
-    // and status/triage cleanup all stay correct. Sequential to keep the
-    // selection math (it reindexes the visible strip each time) deterministic.
-    let closed = 0;
-    for (const id of ids) {
-      try {
-        await get().closeTerminal(id, projectId);
-        closed++;
-      } catch {
-        // closeTerminal already toasts on the IPC failure; keep going.
-      }
-    }
-    if (closed > 0) {
-      const bits = [`Closed ${closed} agent${closed === 1 ? '' : 's'}`];
-      if (followedUp > 0) bits.push(`${followedUp} follow-up${followedUp === 1 ? '' : 's'} filed`);
-      useUi.getState().pushToast(`${bits.join(' · ')}.`, 'info');
-    }
-    return { closed, summarized, followedUp };
   },
 
   async summarizeIdleAgents(projectId, sessionIds) {

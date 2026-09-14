@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { environmentLabel, ThreadInfoContent, ThreadInfoRows } from './ThreadInfoContent.js';
@@ -237,5 +238,32 @@ describe('ThreadInfoRows', () => {
     expect(html).toContain('Local');
     expect(html).toContain('/tmp/proj');
     expect(html).toMatch(/data-testid="thread-info-tab"[\s\S]*data-testid="thread-info-storage"/);
+  });
+});
+
+describe('ThreadInfoContent workspace git', () => {
+  it('hosts EnvironmentActions so managed worktrees get commit/PR controls', () => {
+    const source = readFileSync(new URL('./ThreadInfoContent.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('header={<EnvironmentActions environmentId={environmentId} />}');
+  });
+
+  it('keeps workspace git inside the padded info content', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadInfoRows
+          isWorktree={false}
+          cwd="/tmp/proj"
+          branchName={null}
+          workspaceStatus={null}
+          pullRequest={null}
+          header={<section className="environment-actions" data-testid="environment-actions" />}
+        />
+      </MemoryRouter>
+    );
+    const infoIdx = html.indexOf('data-testid="thread-info-tab"');
+    const envIdx = html.indexOf('data-testid="environment-actions"');
+    expect(infoIdx).toBeGreaterThan(-1);
+    expect(envIdx).toBeGreaterThan(infoIdx);
+    expect(html.indexOf('data-testid="thread-info-environment"')).toBeGreaterThan(envIdx);
   });
 });

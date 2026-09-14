@@ -22,7 +22,7 @@ vi.mock('@zana-ai/zcc-db', () => ({
       failureReason: 'host-offline',
       createdAt: 2,
       updatedAt: 2,
-      payload: JSON.stringify({ kind: 'send', input: 'retry me' })
+      payload: JSON.stringify({ kind: 'send', input: 'retry me', senderThreadId: 'thr_childaaaa' })
     }
   ])
 }));
@@ -40,7 +40,8 @@ describe('conversationNextTurnView', () => {
           failureReason: null,
           createdAt: 1,
           updatedAt: 1,
-          text: 'hello'
+          text: 'hello',
+          senderThreadId: null
         },
         {
           id: 'd2',
@@ -50,7 +51,8 @@ describe('conversationNextTurnView', () => {
           failureReason: 'host-offline',
           createdAt: 2,
           updatedAt: 2,
-          text: 'retry me'
+          text: 'retry me',
+          senderThreadId: 'thr_childaaaa'
         }
       ]
     });

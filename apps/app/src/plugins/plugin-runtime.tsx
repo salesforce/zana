@@ -35,23 +35,28 @@ const NewThreadViewLazy = lazy(async () => {
 
 function useRpcImpl() {
   const { pluginId } = usePluginRuntimeContext();
-  return {
-    call: (method: string, args?: unknown) => callPluginRpc(pluginId, method, args)
-  };
+  return useMemo(
+    () => ({
+      call: (method: string, args?: unknown) => callPluginRpc(pluginId, method, args)
+    }),
+    [pluginId]
+  );
 }
 
 function useSettingsImpl(): PluginSettingsState {
   const { pluginId } = usePluginRuntimeContext();
-  const [values, setValues] = useState<Record<string, string | boolean> | undefined>(undefined);
+  const [values, setValues] = useState<Record<string, string | number | boolean> | undefined>(undefined);
   const [isLoading, setLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
     void getPluginSettings(pluginId)
       .then((snapshot) => {
         if (cancelled) return;
-        const next: Record<string, string | boolean> = {};
+        const next: Record<string, string | number | boolean> = {};
         for (const [key, value] of Object.entries(snapshot.values)) {
-          if (typeof value === 'string' || typeof value === 'boolean') next[key] = value;
+          if (typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') {
+            next[key] = value;
+          }
         }
         setValues(next);
         setLoading(false);
@@ -227,5 +232,5 @@ export function installPluginRuntime(): void {
 export { setActiveComposerApi } from './plugin-composer-api.js';
 
 export function openPluginSettings(pluginId: string): void {
-  appNavigate(getPluginDetailRoutePath(pluginId));
+  appNavigate(getPluginDetailRoutePath(pluginId, { view: 'installed' }));
 }

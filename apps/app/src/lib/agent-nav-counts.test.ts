@@ -82,6 +82,26 @@ describe('agentNavCounts', () => {
     })).toEqual({ active: 1, blocked: 1 });
   });
 
+  it('does not treat a blocked scheduled or headless agent as Needs you', () => {
+    expect(agentNavCounts({
+      terminals: {
+        p1: [
+          session({ id: 'sched', scheduled: true }),
+          session({ id: 'hidden', headless: true }),
+          session({ id: 'fg' })
+        ]
+      },
+      agentStateById: { sched: 'blocked', hidden: 'blocked', fg: 'blocked' }
+    })).toEqual({ active: 3, blocked: 1 });
+  });
+
+  it('still counts a blocked scheduled agent as active', () => {
+    expect(agentNavCounts({
+      terminals: { p1: [session({ id: 'sched', scheduled: true })] },
+      agentStateById: { sched: 'blocked' }
+    })).toEqual({ active: 1, blocked: 0 });
+  });
+
   it('scopes threads and agents to one project', () => {
     expect(agentNavCounts({
       terminals: {

@@ -9,9 +9,10 @@ and loads any installed plugin.
 | Package | Role |
 | --- | --- |
 | `docs/` | Builtin (`autoInstall: true`) — Docs rail, per-project Library, and the library-curator skill. The panel UI is compiled into the renderer (`apps/app/src/views/library`); this package ships the skill + server. Packaged builds copy `plugins/` via electron-builder extraResources. |
+| `memory/` | Builtin (`autoInstall: true`) — durable global (shared across projects) and project-scoped memories, injected as a catalog into threads. |
 | `plugin-guide/` | Builtin (`autoInstall: true`) — Plugin Guide under Plugins: annotated wireframe map of every SDK surface, Copy for agent, and links into installed plugin hub pages. |
 | `salesforce/` | Official (`autoInstall: false`) — Salesforce DX inner loop **and** the platform SDK (`@zcc-ext/salesforce/sdk`) other plugins consume via `zcc.services.use('salesforce')`. Org doctor, SOQL/Apex/LWC/Agentforce family tools, and fail-closed mutation confirms. |
-| `posthog-analytics/` | Builtin (`autoInstall: true`) — usage analytics: agent lifecycle events plus optional content-free UI-click ids. **Auto-installed and on by default** for every user, no setup required; opt out or point it at your own PostHog project in the plugin's Configure page. Never sends prompt/response content, labels, or input values. |
+| `posthog-analytics/` | Builtin (`autoInstall: true`) — anonymous usage analytics (agent activity only, never prompts or replies). Auto-installed and on by default; opt out or point it at your own PostHog project in Configure. |
 
 
 Do not add a runtime plugin to `MAIN_MODULES`. Author it with a `package.json`
@@ -41,6 +42,8 @@ export default function plugin(zcc) {
   const sf = zcc.services.use<SalesforceSdk>('salesforce');
   zcc.agents.registerTool({
     name: 'gus_query',
+    description: 'SOQL against GUS',
+    parameters: { type: 'object', properties: { query: { type: 'string' } } },
     execute: async (input) => {
       const { response } = await sf.request('/query', {
         method: 'GET',

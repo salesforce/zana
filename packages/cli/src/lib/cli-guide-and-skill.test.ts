@@ -23,7 +23,10 @@ const HELP_GROUPS = [
   'plugin',
   'marketplace',
   'status',
-  'team'
+  'team',
+  'live',
+  'browser',
+  'file'
 ] as const;
 
 describe('cli / guide / skill keep-in-sync', () => {
@@ -66,7 +69,8 @@ describe('cli / guide / skill keep-in-sync', () => {
       'plugins',
       'automations',
       'agent-configuration',
-      'environments'
+      'environments',
+      'browser'
     ]);
   });
 });

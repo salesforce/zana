@@ -6,11 +6,14 @@
  */
 export const RESERVED_ZCC_CLI_COMMANDS: readonly string[] = [
   'agent',
+  'browser',
   'environment',
+  'file',
   'followup',
   'guide',
   'help',
   'inbox',
+  'live',
   'machine',
   'marketplace',
   'personas',

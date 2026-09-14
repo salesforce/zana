@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
 
 export const CATALOG_MAX_CHARS = 3900;
+export const DEFAULT_RESULT_LIMIT = 20;
+export const MAX_RESULT_LIMIT = 100;
 export const MEMORY_KINDS = ['fact', 'preference', 'decision', 'procedure', 'episode', 'reference'];
 export const NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 export const TAG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}$/;
@@ -39,7 +41,31 @@ export const MEMORY_SCHEMA = [
      UNIQUE(memory_id, version)
    );
    CREATE INDEX IF NOT EXISTS memory_history_memory
-     ON memory_history(memory_id, version DESC);`
+     ON memory_history(memory_id, version DESC);`,
+  `ALTER TABLE memories ADD COLUMN last_accessed_at INTEGER;
+   ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE memory_history ADD COLUMN source_thread_id TEXT;
+   CREATE INDEX IF NOT EXISTS memories_catalog
+     ON memories(scope, project_id, deleted_at, pinned, importance, updated_at);
+   CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+     memory_id UNINDEXED, name, summary, details, tags
+   );
+   CREATE TRIGGER IF NOT EXISTS memories_fts_insert AFTER INSERT ON memories BEGIN
+     INSERT INTO memories_fts(memory_id, name, summary, details, tags)
+     VALUES (new.id, new.name, new.summary, new.details, new.tags_json);
+   END;
+   CREATE TRIGGER IF NOT EXISTS memories_fts_update
+     AFTER UPDATE OF name, summary, details, tags_json ON memories BEGIN
+     DELETE FROM memories_fts WHERE memory_id = old.id;
+     INSERT INTO memories_fts(memory_id, name, summary, details, tags)
+     VALUES (new.id, new.name, new.summary, new.details, new.tags_json);
+   END;
+   CREATE TRIGGER IF NOT EXISTS memories_fts_delete AFTER DELETE ON memories BEGIN
+     DELETE FROM memories_fts WHERE memory_id = old.id;
+   END;
+   INSERT INTO memories_fts(memory_id, name, summary, details, tags)
+     SELECT id, name, summary, details, tags_json FROM memories
+     WHERE id NOT IN (SELECT memory_id FROM memories_fts);`
 ];
 
 export class CliError extends Error {}
@@ -98,6 +124,35 @@ export function validateTags(values) {
   return tags;
 }
 
+export function parseKind(value) {
+  const kind = value ?? 'fact';
+  if (!isMemoryKind(kind)) {
+    throw new CliError(`kind must be one of: ${MEMORY_KINDS.join(', ')}`);
+  }
+  return kind;
+}
+
+export function parseInteger(label, value, options) {
+  if (value === undefined && options.defaultValue !== undefined) {
+    return options.defaultValue;
+  }
+  if (value === undefined || !/^-?\d+$/u.test(String(value))) {
+    throw new CliError(`${label} must be an integer`);
+  }
+  const parsed = Number(value);
+  if (parsed < options.min || parsed > options.max) {
+    throw new CliError(`${label} must be between ${options.min} and ${options.max}`);
+  }
+  return parsed;
+}
+
+export function parseBoolean(label, value) {
+  if (value === undefined) return undefined;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new CliError(`${label} must be true or false`);
+}
+
 function isRecord(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -130,6 +185,22 @@ export function parseMemoryRow(row) {
     version: Number(row.version),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
+  };
+}
+
+export function toMemorySummary(memory) {
+  return {
+    id: memory.id,
+    scope: memory.scope,
+    projectId: memory.projectId,
+    name: memory.name,
+    summary: memory.summary,
+    kind: memory.kind,
+    tags: memory.tags,
+    importance: memory.importance,
+    pinned: memory.pinned,
+    version: memory.version,
+    updatedAt: memory.updatedAt
   };
 }
 
@@ -168,6 +239,7 @@ function parseHistoryRow(row) {
     version: Number(row.version),
     action: row.action === 'update' || row.action === 'forget' ? row.action : 'create',
     snapshot,
+    sourceThreadId: typeof row.source_thread_id === 'string' ? row.source_thread_id : null,
     writeReason: String(row.write_reason),
     createdAt: Number(row.created_at)
   };
@@ -185,6 +257,56 @@ function normalizeOneLine(value) {
   return value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+export function scopeSql(scope, projectId, columnPrefix = 'm.') {
+  if (scope === 'global') {
+    return { sql: `${columnPrefix}scope = 'global'`, params: [] };
+  }
+  if (scope === 'project') {
+    if (!projectId) throw new CliError('project scope requires a project context');
+    return {
+      sql: `${columnPrefix}scope = 'project' AND ${columnPrefix}project_id = ?`,
+      params: [projectId]
+    };
+  }
+  if (!projectId) return { sql: `${columnPrefix}scope = 'global'`, params: [] };
+  return {
+    sql: `(${columnPrefix}scope = 'global' OR (${columnPrefix}scope = 'project' AND ${columnPrefix}project_id = ?))`,
+    params: [projectId]
+  };
+}
+
+export function searchExpression(query) {
+  const tokens = String(query).toLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? [];
+  if (tokens.length === 0) throw new CliError('search query has no searchable terms');
+  return [...new Set(tokens)]
+    .slice(0, 12)
+    .map((token) => `"${token.replaceAll('"', '""')}"`)
+    .join(' OR ');
+}
+
+export function readScope(args, defaultScope = 'all') {
+  const value = option(args, 'scope') ?? defaultScope;
+  if (value !== 'global' && value !== 'project' && value !== 'all') {
+    throw new CliError('scope must be global, project, or all');
+  }
+  return value;
+}
+
+export function resolveProjectId(args, ctx) {
+  return ctx?.projectId || option(args, 'project') || process.env.ZCC_PROJECT_ID || undefined;
+}
+
+export function writeScope(args, ctx) {
+  const value = requireOption(args, 'scope');
+  if (value === 'global') return { scope: 'global', projectId: null };
+  if (value !== 'project') throw new CliError('write scope must be project or global');
+  const projectId = resolveProjectId(args, ctx);
+  if (!projectId) {
+    throw new CliError('project-scoped memory requires a project context, --project <id>, or ZCC_PROJECT_ID');
+  }
+  return { scope: 'project', projectId };
+}
+
 export class MemoryStore {
   constructor(db) {
     this.db = db;
@@ -194,14 +316,15 @@ export class MemoryStore {
     this.db
       .prepare(
         `INSERT INTO memory_history (
-           memory_id, version, action, snapshot_json, write_reason, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?)`
+           memory_id, version, action, snapshot_json, source_thread_id, write_reason, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         memory.id,
         memory.version,
         action,
         JSON.stringify(memorySnapshot(memory)),
+        memory.sourceThreadId,
         memory.writeReason,
         memory.updatedAt
       );
@@ -209,6 +332,10 @@ export class MemoryStore {
 
   add(input) {
     const now = Date.now();
+    const importance = Number.isInteger(input.importance) ? input.importance : 50;
+    if (importance < 0 || importance > 100) {
+      throw new CliError('importance must be between 0 and 100');
+    }
     const record = {
       id: createMemoryId(),
       scope: input.scope,
@@ -218,7 +345,7 @@ export class MemoryStore {
       details: validateText('details', input.details, 16_000),
       kind: isMemoryKind(input.kind) ? input.kind : 'fact',
       tags: validateTags(input.tags),
-      importance: Number.isInteger(input.importance) ? input.importance : 50,
+      importance,
       pinned: Boolean(input.pinned),
       sourceThreadId: input.sourceThreadId ?? null,
       writeReason: validateText('reason', input.writeReason, 500),
@@ -275,61 +402,82 @@ export class MemoryStore {
       .map(parseMemoryRow);
   }
 
-  list(scope, projectId, limit = 20) {
-    const rows =
-      scope === 'global'
-        ? this.db
-            .prepare(
-              `SELECT * FROM memories WHERE deleted_at IS NULL AND scope = 'global'
-               ORDER BY pinned DESC, importance DESC, updated_at DESC LIMIT ?`
-            )
-            .all(limit)
-        : scope === 'project'
-          ? this.db
-              .prepare(
-                `SELECT * FROM memories WHERE deleted_at IS NULL AND scope = 'project' AND project_id = ?
-                 ORDER BY pinned DESC, importance DESC, updated_at DESC LIMIT ?`
-              )
-              .all(projectId, limit)
-          : this.db
-              .prepare(
-                `SELECT * FROM memories WHERE deleted_at IS NULL AND (scope = 'global' OR (scope = 'project' AND project_id = ?))
-                 ORDER BY pinned DESC, CASE WHEN scope = 'project' THEN 0 ELSE 1 END, importance DESC, updated_at DESC LIMIT ?`
-              )
-              .all(projectId ?? '', limit);
-    return rows.map(parseMemoryRow);
+  list(scope, projectId, limit = DEFAULT_RESULT_LIMIT) {
+    const scoped = scopeSql(scope, projectId ?? undefined);
+    const rows = this.db
+      .prepare(
+        `SELECT m.* FROM memories m
+         WHERE m.deleted_at IS NULL AND ${scoped.sql}
+         ORDER BY m.pinned DESC,
+           CASE WHEN m.scope = 'project' THEN 0 ELSE 1 END,
+           m.importance DESC, COALESCE(m.last_accessed_at, 0) DESC,
+           m.updated_at DESC, m.name ASC
+         LIMIT ?`
+      )
+      .all(...scoped.params, limit);
+    const countRow = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM memories m
+         WHERE m.deleted_at IS NULL AND ${scoped.sql}`
+      )
+      .get(...scoped.params);
+    const total = isRecord(countRow) ? Number(countRow.count) : 0;
+    return { memories: rows.map(parseMemoryRow), total };
   }
 
-  get(idOrName) {
+  getAdmin(id) {
     const row = this.db
-      .prepare(
-        `SELECT * FROM memories WHERE deleted_at IS NULL AND (id = ? OR name = ?)
-         ORDER BY CASE WHEN scope = 'project' THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`
-      )
-      .get(idOrName, idOrName);
+      .prepare('SELECT * FROM memories WHERE id = ? AND deleted_at IS NULL')
+      .get(id);
     return row === undefined ? null : parseMemoryRow(row);
   }
 
-  search(query, limit = 20) {
-    const needle = `%${query.trim().toLowerCase()}%`;
-    return this.db
+  get(idOrName, scope = 'all', projectId, touch = true) {
+    const scoped = scopeSql(scope, projectId);
+    const row = this.db
       .prepare(
-        `SELECT * FROM memories WHERE deleted_at IS NULL
-         AND (lower(name) LIKE ? OR lower(summary) LIKE ? OR lower(details) LIKE ? OR lower(tags_json) LIKE ?)
-         ORDER BY pinned DESC, importance DESC, updated_at DESC LIMIT ?`
+        `SELECT m.* FROM memories m
+         WHERE m.deleted_at IS NULL AND (m.id = ? OR m.name = ?) AND ${scoped.sql}
+         ORDER BY CASE WHEN m.scope = 'project' THEN 0 ELSE 1 END, m.updated_at DESC
+         LIMIT 1`
       )
-      .all(needle, needle, needle, needle, limit)
-      .map(parseMemoryRow);
+      .get(idOrName, idOrName, ...scoped.params);
+    if (row === undefined) return null;
+    const memory = parseMemoryRow(row);
+    if (touch) {
+      this.db
+        .prepare('UPDATE memories SET last_accessed_at = ?, access_count = access_count + 1 WHERE id = ?')
+        .run(Date.now(), memory.id);
+    }
+    return memory;
   }
 
-  update(id, input) {
+  search(query, scope = 'all', projectId, limit = DEFAULT_RESULT_LIMIT) {
+    const scoped = scopeSql(scope, projectId);
+    const rows = this.db
+      .prepare(
+        `SELECT m.* FROM memories_fts f
+         JOIN memories m ON m.id = f.memory_id
+         WHERE memories_fts MATCH ? AND m.deleted_at IS NULL AND ${scoped.sql}
+         ORDER BY bm25(memories_fts), m.pinned DESC, m.importance DESC, m.updated_at DESC
+         LIMIT ?`
+      )
+      .all(searchExpression(query), ...scoped.params, limit);
+    return rows.map(parseMemoryRow);
+  }
+
+  update(id, input, ctxProjectId) {
     return this.db.transaction(() => {
-      const current = this.get(id);
-      if (!current) throw new CliError(`memory "${id}" was not found`);
+      const current = this.get(id, 'all', ctxProjectId, false);
+      if (!current) throw new CliError(`memory "${id}" was not found in the current scope`);
       if (current.version !== input.expectedVersion) {
         throw new CliError(
           `version conflict for ${id}: expected ${input.expectedVersion}, current ${current.version}`
         );
+      }
+      const importance = input.importance ?? current.importance;
+      if (!Number.isInteger(importance) || importance < 0 || importance > 100) {
+        throw new CliError('importance must be between 0 and 100');
       }
       const updated = {
         ...current,
@@ -337,8 +485,9 @@ export class MemoryStore {
         details: input.details === undefined ? current.details : validateText('details', input.details, 16_000),
         kind: input.kind ?? current.kind,
         tags: input.tags === undefined ? current.tags : validateTags(input.tags),
-        importance: input.importance ?? current.importance,
+        importance,
         pinned: input.pinned ?? current.pinned,
+        sourceThreadId: input.sourceThreadId === undefined ? current.sourceThreadId : input.sourceThreadId,
         writeReason: validateText('reason', input.writeReason, 500),
         version: current.version + 1,
         updatedAt: Date.now()
@@ -346,7 +495,7 @@ export class MemoryStore {
       const result = this.db
         .prepare(
           `UPDATE memories SET summary = ?, details = ?, kind = ?, tags_json = ?, importance = ?,
-             pinned = ?, write_reason = ?, version = ?, updated_at = ?
+             pinned = ?, source_thread_id = ?, write_reason = ?, version = ?, updated_at = ?
            WHERE id = ? AND version = ? AND deleted_at IS NULL`
         )
         .run(
@@ -356,6 +505,7 @@ export class MemoryStore {
           JSON.stringify(updated.tags),
           updated.importance,
           updated.pinned ? 1 : 0,
+          updated.sourceThreadId,
           updated.writeReason,
           updated.version,
           updated.updatedAt,
@@ -368,52 +518,67 @@ export class MemoryStore {
     });
   }
 
-  forget(id, expectedVersion, reason) {
+  forget(id, expectedVersion, reason, sourceThreadId = null, ctxProjectId) {
     return this.db.transaction(() => {
-      const current = this.get(id);
-      if (!current) throw new CliError(`memory "${id}" was not found`);
+      const current = this.get(id, 'all', ctxProjectId, false);
+      if (!current) throw new CliError(`memory "${id}" was not found in the current scope`);
       if (current.version !== expectedVersion) {
         throw new CliError(
           `version conflict for ${id}: expected ${expectedVersion}, current ${current.version}`
         );
       }
       const writeReason = validateText('reason', reason, 500);
-      const updatedAt = Date.now();
-      const version = current.version + 1;
+      const forgotten = {
+        ...current,
+        sourceThreadId,
+        writeReason,
+        version: current.version + 1,
+        updatedAt: Date.now()
+      };
       const result = this.db
         .prepare(
-          `UPDATE memories SET deleted_at = ?, write_reason = ?, version = ?, updated_at = ?
+          `UPDATE memories SET deleted_at = ?, source_thread_id = ?, write_reason = ?,
+             version = ?, updated_at = ?
            WHERE id = ? AND version = ? AND deleted_at IS NULL`
         )
-        .run(updatedAt, writeReason, version, updatedAt, id, current.version);
+        .run(
+          forgotten.updatedAt,
+          sourceThreadId,
+          writeReason,
+          forgotten.version,
+          forgotten.updatedAt,
+          id,
+          current.version
+        );
       if (result.changes !== 1) throw new CliError(`memory ${id} changed concurrently; retry`);
-      const forgotten = { ...current, writeReason, version, updatedAt };
       this.insertHistory(forgotten, 'forget');
       return forgotten;
     });
   }
 
-  history(id, limit = 20) {
-    const capped = Number.isInteger(limit) ? Math.min(Math.max(limit, 1), 100) : 20;
+  history(id, projectId, limit = DEFAULT_RESULT_LIMIT) {
+    const capped = Number.isInteger(limit) ? Math.min(Math.max(limit, 1), MAX_RESULT_LIMIT) : DEFAULT_RESULT_LIMIT;
+    const scoped = scopeSql('all', projectId);
     return this.db
       .prepare(
-        `SELECT h.version, h.action, h.snapshot_json, h.write_reason, h.created_at
+        `SELECT h.version, h.action, h.snapshot_json, h.source_thread_id, h.write_reason, h.created_at
          FROM memory_history h
-         WHERE h.memory_id = ?
+         JOIN memories m ON m.id = h.memory_id
+         WHERE h.memory_id = ? AND ${scoped.sql}
          ORDER BY h.version DESC
          LIMIT ?`
       )
-      .all(id, capped)
+      .all(id, ...scoped.params, capped)
       .map(parseHistoryRow);
   }
 }
 
 export function renderCatalog(store, projectId) {
-  const memories = store.list('all', projectId ?? '', 100);
+  const { memories, total } = store.list('all', projectId ?? '', MAX_RESULT_LIMIT);
   const header = [
     'Memory index',
-    'The entries below are summaries, not full records. Use `zcc memory search <query> --json` and `zcc memory get <id> --json` to read details.',
-    'Save durable learning with `zcc memory add`. Use project scope for repository-specific facts and global scope only for user preferences that apply everywhere. Never store secrets, transient status, or rules already in AGENTS.md.',
+    'The entries below are summaries, not full records. Use `zcc memory search <query> --scope all --json` and `zcc memory get <id> --json` to progressively disclose details.',
+    'You may proactively save durable learning with `zcc memory add`. Use project scope for repository-specific facts and global scope only for broadly applicable user preferences or workflows. Never store secrets, transient status, guesses, or rules already guaranteed by AGENTS.md.',
     ''
   ].join('\n');
   if (memories.length === 0) return `${header}No memories are stored yet.`;
@@ -426,7 +591,18 @@ export function renderCatalog(store, projectId) {
     if (candidate.length > CATALOG_MAX_CHARS) break;
     lines.push(line);
   }
-  return `${header}${lines.join('\n')}`;
+  let finalLines = lines;
+  let footer = '';
+  while (true) {
+    const finalShown = finalLines.length;
+    footer =
+      finalShown < total
+        ? `\nShowing ${finalShown} of ${total}; run \`zcc memory catalog --scope all --json\` for the rest.`
+        : '';
+    if (`${header}${finalLines.join('\n')}${footer}`.length <= CATALOG_MAX_CHARS) break;
+    finalLines = finalLines.slice(0, -1);
+  }
+  return `${header}${finalLines.join('\n')}${footer}`;
 }
 
 export function parseArgv(argv) {
@@ -458,13 +634,19 @@ export function option(args, name) {
   return values?.[values.length - 1];
 }
 
+export function requireOption(args, name) {
+  const value = option(args, name);
+  if (value === undefined) throw new CliError(`missing required --${name}`);
+  return value;
+}
+
 export const MEMORY_USAGE = [
   'Usage:',
-  '  zcc memory catalog [--scope all|project|global] [--json]',
-  '  zcc memory search <query...> [--json]',
-  '  zcc memory get <id-or-name> [--json]',
+  '  zcc memory catalog [--scope all|project|global] [--limit N] [--json]',
+  '  zcc memory search <query...> [--scope all|project|global] [--limit N] [--json]',
+  '  zcc memory get <id-or-name> [--scope all|project|global] [--json]',
   '  zcc memory add --scope project|global --name NAME --summary TEXT --details TEXT --reason TEXT [--kind KIND] [--tag TAG]... [--importance 0-100] [--pinned] [--project ID] [--json]',
-  '  zcc memory update <id> --expected-version N --reason TEXT [--summary TEXT] [--details TEXT] [--kind KIND] [--tag TAG]... [--pinned true|false] [--json]',
+  '  zcc memory update <id> --expected-version N --reason TEXT [--summary TEXT] [--details TEXT] [--kind KIND] [--tag TAG]... [--importance 0-100] [--pinned true|false] [--json]',
   '  zcc memory forget <id> --expected-version N --reason TEXT [--json]',
   '  zcc memory history <id> [--limit N] [--json]'
 ].join('\n');

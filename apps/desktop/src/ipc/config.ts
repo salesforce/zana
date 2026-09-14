@@ -28,12 +28,14 @@ export function registerConfigIpc(): void {
         patch.harnessPiEnabled !== undefined ||
         patch.harnessOpenCodeEnabled !== undefined ||
         patch.harnessGrokEnabled !== undefined ||
+        patch.harnessMastracodeEnabled !== undefined ||
         patch.claudeBinary !== undefined ||
         patch.cursorBinary !== undefined ||
         patch.codexBinary !== undefined ||
         patch.piBinary !== undefined ||
         patch.opencodeBinary !== undefined ||
-        patch.grokBinary !== undefined
+        patch.grokBinary !== undefined ||
+        patch.mastracodeBinary !== undefined
       ) {
         harnessVerifyState.cache = undefined;
       }

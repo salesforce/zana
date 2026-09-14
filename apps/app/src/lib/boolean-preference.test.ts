@@ -5,9 +5,13 @@ const KEY = 'zcc.test.bool';
 
 afterEach(() => {
   try {
-    localStorage.removeItem(KEY);
+    delete (globalThis as { localStorage?: Storage }).localStorage;
   } catch {
-    /* node without localStorage */
+    try {
+      localStorage.removeItem(KEY);
+    } catch {
+      /* node without localStorage */
+    }
   }
 });
 
@@ -31,5 +35,11 @@ describe('boolean preference', () => {
     expect(readBooleanPreference(KEY, true)).toBe(false);
     writeBooleanPreference(KEY, true);
     expect(readBooleanPreference(KEY, false)).toBe(true);
+  });
+
+  it('defaults when localStorage exists but getItem is missing', () => {
+    (globalThis as { localStorage?: object }).localStorage = {};
+    expect(readBooleanPreference(KEY, true)).toBe(true);
+    expect(() => writeBooleanPreference(KEY, false)).not.toThrow();
   });
 });

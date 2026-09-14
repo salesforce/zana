@@ -45,6 +45,11 @@ describe('PluginComposerChrome create-plugin action', () => {
 });
 
 describe('plugin composer banners', () => {
+  it('stamps the thread id onto the host banner wrapper', () => {
+    const source = readFileSync(new URL('./PluginComposerChrome.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('data-composer-thread');
+    expect(source).toContain('data-composer-scope');
+  });
   it('collapses empty host chrome so a null plugin banner is not a blank card', () => {
     const css = readFileSync(new URL('../styles/global.css', import.meta.url), 'utf8');
     expect(css).toMatch(/\.plugin-composer-banner:empty\s*\{[^}]*display:\s*none/);

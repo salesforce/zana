@@ -259,16 +259,21 @@ export class CloseSummaryService {
       MAX_CONCURRENT_SUMMARIES,
       async ({ id, session }): Promise<ResolvedNote | null> => {
         try {
-          const lastTurn = await this.deps.readLastTurn({
+          const ref = {
             id,
             profile: session.profile,
             cwd: session.cwd,
             claudeSessionId: session.claudeSessionId,
             openCodeSessionId: session.openCodeSessionId,
             createdAt: session.createdAt
-          });
-          if (!lastTurn.trim()) return null; // nothing to summarize — skip, don't spend a call
-          const result = await this.deps.runSummary(lastTurn, `close-summary:${id}`);
+          };
+          const lastTurn = await this.deps.readLastTurn(ref);
+          // Tool-only final turns contain no assistant prose. The bounded digest
+          // still preserves user/assistant context and tool names, so use it as
+          // the paper-trail source rather than silently closing with zero notes.
+          const source = lastTurn.trim() || (await this.deps.readDigest(ref)).trim();
+          if (!source) return null;
+          const result = await this.deps.runSummary(source, `close-summary:${id}`);
           if (!result.ok) return null;
           const note = parseCloseSummary(result.text);
           return note ? { sessionId: id, title: session.title, note } : null;

@@ -35,7 +35,9 @@ describe('harness registrations', () => {
       if (registration.id === 'shell') {
         expect(registration.verification).toBeUndefined();
       } else {
-        expect(registration.verification?.versionArgs).toEqual(['--version']);
+        expect(registration.verification?.versionArgs).toEqual(
+          registration.id === 'mastracode' ? ['--help'] : ['--version']
+        );
         expect(registration.verification?.installHint).not.toBe('');
       }
     }

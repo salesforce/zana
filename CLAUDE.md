@@ -44,6 +44,59 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
   change. (A real-model end-to-end check exists outside this tree, owned by the
   integration — core stays unaware of it by design.)
 
+- **"Verify threads / CLI Agents still launch"** → `pnpm live:mode-reasoning`
+  then `pnpm live:memory`. Any change that can break spawn, mode, reasoning,
+  stop, or plugin catalog injection on **Modern threads** or **CLI Agents**
+  must run these live suites before calling the work done.
+  `live:mode-reasoning` launches Claude Code, Cursor, Codex, and OpenCode
+  under each distinct mode and reasoning value (additive, not cartesian) on
+  both surfaces, asserts the session stays alive, then `stop()` — no PONG,
+  file write, or wait-until-idle.
+  `live:memory` then attaches and proves a tagged hidden Claude Code thread
+  still receives Memory catalog injection (`contributeInstructions`).
+  Trigger both for: thread create/send/wait/execution options (`acpMode`,
+  `reasoningLevel`, `permissionMode`), CLI Agent HTTP (`/api/v1/cli-agents`,
+  `term.create`, harnessRouting / `executionState` / `modelLevel` / native
+  roles), host-daemon harness providers, `PtyManager.create()`, Control SDK
+  launch/wait, plugin session instructions, and `zcc thread` / `zcc agent`
+  commands. Prerequisites: attached app on `:8780` (or `:8781`), Electron +
+  matching product-server credential, enrolled host-daemon; Memory plugin
+  installed and `running`; run from a **host shell** (`unset ZCC_SESSION_ID`).
+  Preflight skips `console.warn` — an empty verify that finishes in
+  milliseconds is a false green. Unattended DENIED for `accept-edits` / some
+  `interactive` mappings is expected, not a crash. Keep these off
+  `pnpm live:matrix`. Details: `docs/control-sdk.md`.
+
+- **"Verify desktop browser product HTTP" → `pnpm live:browser`.** Any change
+  that can break in-app BrowserView leases, loopback CDP, capture, cookie
+  import-source redaction, or `zcc browser` / `experimental_desktopBrowsers`
+  must run this attach suite before calling the work done. It picks a connected
+  desktop window, spawns a tagged hidden thread, then create → acquire → CDP
+  `Browser.getVersion` → JPEG capture → release → close, then
+  `importCookies` into that thread's **automation** partition (never personal).
+  The default probe uses a missing source profile so it does not copy signed-in
+  cookies; `ZCC_LIVE_BROWSER_IMPORT=1` opts into a real copy when a source is
+  available. Cookie values must never appear in the HTTP JSON.
+  Missing host / BrowserView / harness `console.warn` and skip — an empty
+  verify that finishes in milliseconds is a false green. Isolated
+  `Zcc.launch({ isolated: true })` cannot run this (no BrowserView). Native
+  chrome (find-in-page, Take over, focused reveal) stays
+  `e2e/desktop-browser-broker.spec.ts`. Keep this off `pnpm live:matrix`.
+  Details: `docs/control-sdk.md`.
+
+- **"Verify Memory plugin live retrieval" → `pnpm live:memory`.** Any change
+  that can break Memory CLI, catalog injection (`contributeInstructions`),
+  scope isolation, or `zcc memory` in a live thread must run this attach suite
+  before calling the work done. It is also on the thread / CLI Agent spawn
+  list above (run it after `pnpm live:mode-reasoning`). It drives product HTTP
+  `POST /api/v1/plugins/memory/cli`, then spawns a tagged hidden Claude Code
+  thread that must quote a seeded catalog summary from
+  `contributeInstructions`. Missing plugin / harness `console.warn` and skip
+  — an empty verify that finishes in milliseconds is a false green. Isolated
+  `Zcc.launch({ isolated: true })` is not enough (plugin must already be
+  installed and `running`). Keep this off `pnpm live:matrix`. Details:
+  `docs/control-sdk.md`.
+
 - **Child-process integrations must be verified at the real Electron production
   boundary, not only through mocks, shell commands, or Node/Vitest.** Electron's
   process runtime can behave differently from equivalent Node and shell execution.

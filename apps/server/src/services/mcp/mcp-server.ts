@@ -42,7 +42,6 @@ import { resolveDoc } from '../projects/fs.js';
 import { registerInboxPushTool } from '../inbox/inbox-mcp-tool.js';
 import { registerInboxAskTool } from '../inbox/inbox-ask-mcp-tool.js';
 import { registerInboxSearchTool } from '../inbox/inbox-search-mcp-tool.js';
-import { registerBrowserAutomationTools } from '../threads/browser-mcp-tools.js';
 import { registerPreviewFileTool } from '../threads/preview-file-mcp-tool.js';
 import { registerRemoteExecTool, type RegisterRemoteExecOpts } from '@zana-ai/zcc-host-daemon/remote-exec-mcp-tool';
 import {
@@ -623,7 +622,6 @@ function buildProjectMcpServer(opts: {
     projectId: opts.projectId,
     inboxStore: opts.inboxStore
   });
-  registerBrowserAutomationTools(mcp, { threadId: opts.sessionId ?? null });
   if (opts.sessionId) {
     registerPreviewFileTool(mcp, {
       threadId: opts.sessionId,
@@ -1193,6 +1191,20 @@ export function extractSubagentIdentity(body: string): {
   }
 }
 
+function isAddrInUse(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'EADDRINUSE');
+}
+
+function listenLoopback(server: Server, port: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+}
+
 export async function startMcpServer(opts: McpServerOptions): Promise<McpServerHandle> {
   const log = opts.log ?? ((m) => console.log(m));
 
@@ -1200,13 +1212,19 @@ export async function startMcpServer(opts: McpServerOptions): Promise<McpServerH
     void handleRequest(req, res, opts, log);
   });
 
-  await new Promise<void>((resolve, reject) => {
-    httpServer.once('error', reject);
-    httpServer.listen(opts.port ?? 0, '127.0.0.1', () => {
-      httpServer.off('error', reject);
-      resolve();
-    });
-  });
+  const preferredPort = opts.port ?? 0;
+  try {
+    await listenLoopback(httpServer, preferredPort);
+  } catch (error) {
+    // electron-vite HMR (and a slow before-quit close) can leave the persisted
+    // port bound for a beat. Keep serving rather than leaving MCP down.
+    if (preferredPort !== 0 && isAddrInUse(error)) {
+      log(`[mcp] port ${preferredPort} is in use; falling back to an ephemeral port`);
+      await listenLoopback(httpServer, 0);
+    } else {
+      throw error;
+    }
+  }
 
   const addr = httpServer.address() as AddressInfo;
   const url = `http://127.0.0.1:${addr.port}`;

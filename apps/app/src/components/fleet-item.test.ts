@@ -211,6 +211,8 @@ describe('fleet items', () => {
     expect(cliHarnessLabel('opencode')).toBe('OpenCode');
     expect(cliHarnessLabel('grok')).toBe('Grok Build');
     expect(cliHarnessLabel('grok-yolo')).toBe('Grok Build');
+    expect(cliHarnessLabel('mastracode')).toBe('Mastra Code');
+    expect(cliHarnessLabel('mastracode-yolo')).toBe('Mastra Code');
     expect(agentCardRuntimeLabel({ profile: 'claude' })).toBe('Claude Code · Local');
     expect(agentCardRuntimeLabel({ profile: 'claude-yolo', remote: true })).toBe(
       'Claude Code · Remote host'

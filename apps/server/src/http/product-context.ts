@@ -75,6 +75,11 @@ export interface ProductHttpContext {
    * Absent means 502 host_disconnected.
    */
   teamOps?: ProductTeamOps;
+  /**
+   * Unattended CLI Agent verbs via the product-server control-plane caller.
+   * Absent means 502 host_disconnected.
+   */
+  cliAgentOps?: import('./cli-agent-ops.js').ProductCliAgentOps;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void;

@@ -7,6 +7,9 @@
  * identity closed over from the owning conversation row (Rule 1).
  *
  * Do not attach a zcc-inbox MCP URL to ACP/SDK/Codex/Pi.
+ *
+ * CLI Agent / PTY keeps `zcc-inbox` + plugin `zcc.mcpServers` instead of
+ * these DynamicTools. `registerTool` does not reach PTY sessions.
  */
 
 import type { DynamicTool, ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';
@@ -22,12 +25,6 @@ import {
   invokeHostPreviewFileTool,
   type PackedSessionTooling
 } from './host-preview-file-tool.js';
-import {
-  HOST_BROWSER_INSTRUCTION,
-  HOST_BROWSER_TOOL_NAMES,
-  HOST_BROWSER_TOOLS,
-  invokeHostBrowserTool
-} from './host-browser-tools.js';
 import {
   HOST_INBOX_INSTRUCTION,
   HOST_INBOX_TOOLS,
@@ -73,7 +70,6 @@ export type { PackedSessionTooling };
 
 export const HOST_SHARE_TOOL_NAMES = [
   HOST_PREVIEW_FILE_TOOL_NAME,
-  ...HOST_BROWSER_TOOL_NAMES,
   INBOX_PUSH_NAME,
   INBOX_SEARCH_NAME,
   SUGGEST_ACTION_NAME,
@@ -121,7 +117,6 @@ export const HOST_PTY_ONLY_TOOL_NAMES = [
 
 const HOST_SESSION_TOOLS: DynamicTool[] = [
   HOST_PREVIEW_FILE_TOOL,
-  ...HOST_BROWSER_TOOLS,
   ...HOST_INBOX_TOOLS,
   ...HOST_LIBRARY_TOOLS,
   ...HOST_GOAL_TOOLS,
@@ -131,7 +126,6 @@ const HOST_SESSION_TOOLS: DynamicTool[] = [
 
 export const HOST_SESSION_INSTRUCTION = [
   HOST_PREVIEW_FILE_INSTRUCTION,
-  HOST_BROWSER_INSTRUCTION,
   HOST_INBOX_INSTRUCTION,
   HOST_LIBRARY_INSTRUCTION,
   HOST_GOAL_INSTRUCTION,
@@ -166,9 +160,6 @@ export async function invokeHostSessionTool(
   const { name } = args;
   if (name === HOST_PREVIEW_FILE_TOOL_NAME) {
     return invokeHostPreviewFileTool(ctx, args);
-  }
-  if ((HOST_BROWSER_TOOL_NAMES as readonly string[]).includes(name)) {
-    return invokeHostBrowserTool(ctx, args);
   }
   if (name === INBOX_PUSH_NAME || name === INBOX_SEARCH_NAME || name === SUGGEST_ACTION_NAME) {
     return invokeHostInboxTool(ctx, args);

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MARKETPLACE_OVERVIEW_MAX_CHARS } from './plugin-overview.js';
 
 export const marketplaceSourceNpmSchema = z
   .object({
@@ -35,6 +36,7 @@ export const marketplaceEntrySchema = z
     id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
     displayName: z.string().min(1),
     description: z.string().min(1),
+    overview: z.string().min(1).max(MARKETPLACE_OVERVIEW_MAX_CHARS).optional(),
     icon: marketplaceIconSchema,
     tags: z.array(z.string().min(1).max(64)).max(24).optional(),
     author: z

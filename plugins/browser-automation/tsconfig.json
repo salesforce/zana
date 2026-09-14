@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "esModuleInterop": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "@zana-ai/zcc-plugin-sdk": ["../../packages/plugin-sdk/src/index.ts"],
+      "@zana-ai/zcc-plugin-sdk/host": ["../../packages/plugin-sdk/src/host.ts"],
+      "@zana-ai/zcc-plugin-sdk/testing": ["../../packages/plugin-sdk/src/testing/index.ts"],
+      "@zana-ai/zcc-plugin-sdk/testing/host": ["../../packages/plugin-sdk/src/testing/host.ts"]
+    }
+  },
+  "include": ["*.ts", "*.tsx"]
+}

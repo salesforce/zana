@@ -28,7 +28,7 @@ const openCodeExecutionEvidence = (
 });
 
 const exactExecutionEvidence = (
-  adapterId: 'claude' | 'cursor' | 'codex' | 'grok',
+  adapterId: 'claude' | 'cursor' | 'codex' | 'grok' | 'mastracode',
   state: ExecutionState,
   cliVersion: string,
   scopes: readonly ('local' | 'remote')[],
@@ -115,6 +115,20 @@ const APPROVED_EXECUTION_EVIDENCE: Readonly<Record<string, ExecutionEvidenceFixt
     '1.0.24',
     ['local', 'remote'],
     exactObserved('Grok native TUI prompts before tool execution')
+  ),
+  'mastracode.execution.interactive': exactExecutionEvidence(
+    'mastracode',
+    'interactive',
+    '0.38.0',
+    ['local', 'remote'],
+    exactObserved('Mastra Code native TUI prompts before tool execution')
+  ),
+  'mastracode.execution.accept-edits': exactExecutionEvidence(
+    'mastracode',
+    'accept-edits',
+    '0.38.0',
+    ['local', 'remote'],
+    exactObserved('Mastra Code native TUI prompts before tool execution')
   )
 });
 

@@ -27,6 +27,7 @@ export interface DeferredSendPayload {
   input: unknown;
   mode: ThreadSendMode;
   execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
+  senderThreadId?: string;
 }
 
 function isDeferredSendPayload(value: unknown): value is DeferredSendPayload {
@@ -50,6 +51,7 @@ export function deferConversationSend(
     input: unknown;
     mode: ThreadSendMode;
     execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
+    senderThreadId?: string;
     sendAfter?: number | null;
     paused?: boolean;
     groupBoundaryId?: string | null;
@@ -69,7 +71,8 @@ export function deferConversationSend(
       kind: 'send',
       input: args.input,
       mode: args.mode,
-      ...(args.execution ? { execution: args.execution } : {})
+      ...(args.execution ? { execution: args.execution } : {}),
+      ...(args.senderThreadId ? { senderThreadId: args.senderThreadId } : {})
     } satisfies DeferredSendPayload),
     sendAfter: args.sendAfter ?? null,
     paused: args.paused === true || isThreadQueueAutoSendPaused(ctx.db, args.threadId),

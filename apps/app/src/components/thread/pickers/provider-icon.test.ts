@@ -9,6 +9,7 @@ describe('providerIconForId', () => {
     expect(providerIconForId('acp-cursor')).not.toBeNull();
     expect(providerIconForId('acp-opencode')).not.toBeNull();
     expect(providerIconForId('acp-grok')).not.toBeNull();
+    expect(providerIconForId('acp-mastracode')).not.toBeNull();
   });
 
   it('returns null for unknown ids so the picker can fall back to a letter', () => {

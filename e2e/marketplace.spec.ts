@@ -53,8 +53,7 @@ test.describe('marketplace — signed registry configured', () => {
     await button.click();
     await market.confirmInstall();
 
-    // The onChanged push re-renders the row as installed.
-    await expect(market.rowButton('E2E Dummy')).toHaveText(/Installed/, { timeout: 30_000 });
+    await market.waitForInstalledDetail('E2E Dummy');
 
     // Verify on disk via the installed-list IPC (returns a bare ExtensionEntry[]).
     const list = await market.ipc<Array<{ id: string }>>('list');

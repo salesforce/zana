@@ -270,6 +270,7 @@ describe('rebuildPluginServers', () => {
     const body = JSON.parse(readFileSync(path, 'utf8'));
     expect(body.mcpServers['plugin:docs:library'].command).toBe('node');
     expect(body.mcpServers['plugin:docs:library'].args[0]).toContain('mcp.mjs');
+    expect(mod.alwaysOnPluginMcpAllowlist()).toContain('mcp__plugin_docs_library');
   });
 
   it('skips a disabled plugin and a path-escaping arg', () => {

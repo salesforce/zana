@@ -15,12 +15,13 @@ import {
 
 const pluginsRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
 
-/** Definition completeness only. github/workflows/automations/inline-vis stay installable stubs; bb feature ports are a separate decision. */
+/** Definition completeness only. Official plugins stay installable; feature depth is per plugin. */
 
 const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[number]> = {
   'ask-user-question': 'Agent interaction',
   automations: 'Workflow management',
   connect: 'Host access',
+  'browser-automation': 'Host access',
   'custom-instructions': 'Context & knowledge',
   docs: 'Context & knowledge',
   github: 'Developer tools',
@@ -30,6 +31,7 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
   'harness-opencode': 'Agent interaction',
   'harness-pi': 'Agent interaction',
   'harness-grok': 'Agent interaction',
+  'harness-mastracode': 'Agent interaction',
   'inline-vis': 'Interface',
   'keep-awake': 'Host access',
   memory: 'Context & knowledge',
@@ -54,6 +56,7 @@ const EXPECTED_ICONS: Record<string, string> = {
   'ask-user-question': 'CircleHelp',
   automations: 'Workflow',
   connect: 'Cable',
+  'browser-automation': 'Globe',
   'custom-instructions': 'ScrollText',
   docs: 'Library',
   github: 'Github',
@@ -63,6 +66,7 @@ const EXPECTED_ICONS: Record<string, string> = {
   'harness-opencode': './icons/opencode.svg',
   'harness-pi': './icons/pi.svg',
   'harness-grok': './icons/grok.svg',
+  'harness-mastracode': './icons/mastracode.svg',
   'inline-vis': 'ChartNoAxesColumn',
   'keep-awake': 'Coffee',
   memory: 'Brain',
@@ -94,6 +98,7 @@ function resolvePluginPath(root: string, entry: string): string {
 describe('retired first-party plugins', () => {
   it('names the leftover hub rows and never overlaps the official catalog', () => {
     expect([...RETIRED_FIRST_PARTY_PLUGIN_IDS].sort()).toEqual([
+      'browsercode',
       'consensus',
       'slack',
       'zana',
@@ -110,8 +115,9 @@ describe('retired first-party plugins', () => {
 });
 
 describe('promoted autoInstall reclaim', () => {
-  it('names Claude and Codex providers and keeps them autoInstall builtins', () => {
+  it('names Claude, Codex, and Memory and keeps them autoInstall builtins', async () => {
     expect([...RECLAIM_UNINSTALLED_AUTOINSTALL_IDS].sort()).toEqual([
+      'memory',
       'provider-claude-code',
       'provider-codex'
     ]);

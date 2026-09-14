@@ -292,6 +292,14 @@ export default defineConfig({
         find: /^@zcc\/harness-sdk\/(.*)$/,
         replacement: resolve(__dirname, 'packages/harness-sdk/src/$1.ts')
       },
+      {
+        find: /^@zana-ai\/zcc-control\/testing$/,
+        replacement: resolve(__dirname, 'packages/control-sdk/src/testing/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-control$/,
+        replacement: resolve(__dirname, 'packages/control-sdk/src/index.ts')
+      },
       { find: /^@\//, replacement: resolve(__dirname, 'apps/app/src') + '/' }
     ]
   }

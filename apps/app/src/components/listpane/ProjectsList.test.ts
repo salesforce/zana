@@ -19,10 +19,16 @@ describe('reorderProjectIds', () => {
 });
 
 describe('project-row workspace actions', () => {
-  it('uses the chat-plus affordance and opens the project workspace', () => {
+  it('uses the chat-plus affordance without leaving the current view', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<MessageCirclePlus size={14} />');
-    expect(source).toContain('enterProjectFocus(p.id);\n    setLauncherOpen(true);');
+    const start = source.indexOf('const spawnDefaultAgent = (p: Project) => {');
+    const end = source.indexOf('};', start);
+    expect(start).toBeGreaterThan(-1);
+    const body = source.slice(start, end);
+    expect(body).toContain('selectProject(p.id);');
+    expect(body).toContain('setLauncherOpen(true);');
+    expect(body).not.toContain('enterProjectFocus');
   });
 
   it('hands plugin project-menu actions a toProject navigator', () => {

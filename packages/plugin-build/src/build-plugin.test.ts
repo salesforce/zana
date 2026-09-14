@@ -1,8 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildPluginApp } from './build-plugin.js';
+import { buildPluginApp, buildPluginServer } from './build-plugin.js';
 
 const dirs: string[] = [];
 
@@ -61,6 +62,28 @@ export default { Badge, __zccPluginApp: true, setup() {} };
     expect(js).not.toMatch(/from ["']react-dom["']/);
   });
 
+  it('shims react-dom portal and flushSync onto the host react-dom global', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-react-dom-'));
+    dirs.push(dir);
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: '@zcc-ext/react-dom-demo', version: '0.0.1' })
+    );
+    writeFileSync(
+      join(dir, 'app.tsx'),
+      `import { createPortal, flushSync } from 'react-dom';
+export default { createPortal, flushSync, __zccPluginApp: true, setup() {} };
+`
+    );
+    const result = await buildPluginApp(dir, '1.0.0');
+    expect(result?.jsPath).toBe(join(dir, 'app.js'));
+    const js = readFileSync(join(dir, 'app.js'), 'utf8');
+    expect(js).toContain('__ZCC_HOST_REACT_DOM__');
+    expect(js).toContain('createPortal');
+    expect(js).toContain('flushSync');
+    expect(js).not.toMatch(/from ["']react-dom["']/);
+  });
+
   it('inlines @zana-ai/zcc-plugin-sdk/app so the renderer can import() the bundle', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-sdk-app-'));
     dirs.push(dir);
@@ -112,5 +135,38 @@ export default definePluginApp((app) => {
     expect(js).toContain('readableName');
     expect(js).toContain('sourceMappingURL=app.js.map');
     expect(readFileSync(join(dir, 'app.js.map'), 'utf8')).toMatch(/app\.tsx/);
+  });
+});
+
+describe('buildPluginServer', () => {
+  it('shims CJS require so bundled Ajv-style deps can load in ESM', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-server-cjs-'));
+    dirs.push(dir);
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: '@zcc-ext/cjs-demo', version: '0.0.1' })
+    );
+    writeFileSync(
+      join(dir, 'fs-dep.cjs'),
+      `const fs = require('fs');
+module.exports = { ok: typeof fs.readFileSync === 'function' };
+`
+    );
+    writeFileSync(
+      join(dir, 'server.ts'),
+      `import dep from './fs-dep.cjs';
+export default function plugin() {
+  return dep.ok;
+}
+`
+    );
+    const result = await buildPluginServer(dir, '1.0.0');
+    expect(result?.jsPath).toBe(join(dir, 'server.mjs'));
+    const js = readFileSync(join(dir, 'server.mjs'), 'utf8');
+    expect(js).toContain('createRequire as __createRequire');
+    const loaded = (await import(`${pathToFileURL(result!.jsPath).href}?t=${Date.now()}`)) as {
+      default: () => boolean;
+    };
+    expect(loaded.default()).toBe(true);
   });
 });

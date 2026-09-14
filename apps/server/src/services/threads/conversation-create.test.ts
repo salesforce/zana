@@ -195,6 +195,9 @@ describe('thread provider catalog', () => {
     expect(canonicalThreadProviderId('opencode-yolo')).toBe('acp-opencode');
     expect(canonicalThreadProviderId('grok')).toBe('acp-grok');
     expect(canonicalThreadProviderId('grok-yolo')).toBe('acp-grok');
+    expect(canonicalThreadProviderId('mastracode')).toBe('acp-mastracode');
+    expect(canonicalThreadProviderId('mastracode-resume')).toBe('acp-mastracode');
+    expect(canonicalThreadProviderId('mastracode-yolo')).toBe('acp-mastracode');
     expect(canonicalThreadProviderId('codex')).toBe('codex');
   });
 
@@ -213,6 +216,7 @@ describe('thread provider catalog', () => {
 describe('unmanaged environment reuse', () => {
   it('reattaches to the existing project/host/path environment instead of inserting a duplicate', () => {
     const source = readFileSync(new URL('./conversation-create.ts', import.meta.url), 'utf8');
+    expect(source).toContain('persistConversationPluginMetadataSeed(ctx.db, thread.id, input)');
     expect(source).toContain('appendClientTurnRequested');
     expect(source).toContain('findProjectEnvironmentByHostPath');
     expect(source).toContain("choice.kind === 'unmanaged'");

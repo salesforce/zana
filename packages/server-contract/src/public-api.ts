@@ -184,6 +184,8 @@ import type {
   ThreadSectionResponse,
   ThreadFilesRawQuery,
   ThreadGetQuery,
+  ThreadPluginMetadataQuery,
+  ThreadPluginMetadataResponse,
   ThreadHostFileContentQuery,
   ThreadListQuery,
   ThreadListResponse,
@@ -216,6 +218,7 @@ import type {
   UpdateProjectRequest,
   UpdateProjectSourceRequest,
   UpdateThreadRequest,
+  UpdateThreadPluginMetadataRequest,
   UpdateQueuedMessageRequest,
   UploadedPromptAttachment,
   WorkspaceFileListResponse,
@@ -298,6 +301,7 @@ import {
   threadEventsQuerySchema,
   threadFilesRawQuerySchema,
   threadGetQuerySchema,
+  threadPluginMetadataQuerySchema,
   threadHostFileContentQuerySchema,
   threadListQuerySchema,
   threadOpenRequestSchema,
@@ -322,6 +326,7 @@ import {
   updateProjectRequestSchema,
   updateProjectSourceRequestSchema,
   updateThreadRequestSchema,
+  updateThreadPluginMetadataRequestSchema,
 } from "./api-types.js";
 import type { ApiError } from "./errors.js";
 
@@ -996,6 +1001,27 @@ export const publicApiRoutes = {
       ),
       response: jsonResponse<ThreadResponse>(),
     }),
+    pluginMetadata: {
+      get: defineRoute({
+        path: "/threads/:id/plugin-metadata",
+        method: "get",
+        request: queryRequest<PathId, ThreadPluginMetadataQuery>(
+          threadPluginMetadataQuerySchema,
+        ),
+        response: jsonResponse<ThreadPluginMetadataResponse>(),
+      }),
+      update: defineRoute({
+        path: "/threads/:id/plugin-metadata",
+        method: "patch",
+        request: jsonRequest<PathId, UpdateThreadPluginMetadataRequest>(
+          updateThreadPluginMetadataRequestSchema,
+        ),
+        response: [
+          jsonResponse<ThreadPluginMetadataResponse>(),
+          jsonResponse<ApiError>({ status: 413 }),
+        ],
+      }),
+    },
     delete: defineRoute({
       path: "/threads/:id",
       method: "delete",

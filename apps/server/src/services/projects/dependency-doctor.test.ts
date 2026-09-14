@@ -35,6 +35,7 @@ const ALL_IDS = [
   'claude-cli',
   'cursor-cli',
   'opencode-cli',
+  'mastracode-cli',
   'pi-cli',
   'codex-cli',
   'sf-cli'
@@ -65,6 +66,7 @@ const ALL_PRESENT: Record<string, { stdout: string }> = {
   'claude --version': { stdout: '2.1.260 (Claude Code)' },
   'cursor-agent --version': { stdout: '2026.1.0' },
   'opencode --version': { stdout: '1.2.3' },
+  'mastracode --help': { stdout: 'mastracode 0.38.0' },
   'pi --version': { stdout: '0.4.1' },
   'codex --version': { stdout: 'codex-cli 0.136.0' },
   'sf --version': { stdout: '@salesforce/cli/2.50.0 darwin-arm64' }
@@ -78,7 +80,7 @@ describe('dependency doctor — detection', () => {
     vi.clearAllMocks();
   });
 
-  it('lists Claude, Cursor, OpenCode, Pi, Codex, and SF CLIs and marks them missing when absent', async () => {
+  it('lists Claude, Cursor, OpenCode, Mastra Code, Pi, Codex, and SF CLIs and marks them missing when absent', async () => {
     const { deps } = makeDeps();
     const doctor = createDoctor(deps);
     await doctor.check();

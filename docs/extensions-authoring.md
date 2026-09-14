@@ -59,7 +59,7 @@ Skills, MCP, and extra notes live in the same `zcc` block (BB’s `bb.skills` sh
 
 - `skills` omitted → default `["skills"]`. `[]` opts out.
 - A skill is `skills/<name>/SKILL.md` (directory name is the skill name).
-- `mcpServers` is ZCC-only (Claude CLI). Host namespaces keys as `plugin:<id>:<name>`.
+- `mcpServers` is ZCC-only (Claude CLI / PTY via `~/.zcc/mcp/<projectId>.json`). Host namespaces keys as `plugin:<id>:<name>`. Conversation threads do not read this map — use `zcc.agents.registerTool` (`parameters`: Zod or JSON Schema). A plugin that must work on both surfaces declares both. There is no runtime `registerMcpServer`.
 - `extra` is an opaque bag. The host does not execute it. Keep `zcc` strict — unknown keys outside `extra` fail install.
 - `requires` lists other plugin ids this plugin consumes via `zcc.services.use`. The host loads those plugins first. A cycle marks both `degraded`. A required plugin that is not running marks the consumer `needs-configuration` (`needs plugin: <id>`).
 

@@ -1,3 +1,5 @@
+import { PLUGIN_STORE_CATEGORY_NAMES } from '@zana-ai/zcc-domain';
+
 export interface BundledPluginDefinition {
   name: string;
   pluginId: string;
@@ -6,14 +8,7 @@ export interface BundledPluginDefinition {
   category?: string;
 }
 
-export const PLUGIN_CATALOG_CATEGORIES = [
-  'Workflow management',
-  'Agent interaction',
-  'Context & knowledge',
-  'Developer tools',
-  'Host access',
-  'Interface'
-] as const;
+export const PLUGIN_CATALOG_CATEGORIES = PLUGIN_STORE_CATEGORY_NAMES;
 
 /** Auto-reconciled on startup. */
 export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
@@ -95,8 +90,22 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     category: 'Agent interaction'
   },
   {
+    name: 'harness-mastracode',
+    pluginId: 'harness-mastracode',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
     name: 'custom-instructions',
     pluginId: 'custom-instructions',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Context & knowledge'
+  },
+  {
+    name: 'memory',
+    pluginId: 'memory',
     autoInstall: true,
     defaultEnabled: true,
     category: 'Context & knowledge'
@@ -190,13 +199,6 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
     category: 'Agent interaction'
   },
   {
-    name: 'memory',
-    pluginId: 'memory',
-    autoInstall: false,
-    defaultEnabled: true,
-    category: 'Context & knowledge'
-  },
-  {
     name: 'monaco-editor',
     pluginId: 'monaco-editor',
     autoInstall: false,
@@ -230,6 +232,13 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
     autoInstall: false,
     defaultEnabled: true,
     category: 'Host access'
+  },
+  {
+    name: 'browser-automation',
+    pluginId: 'browser-automation',
+    autoInstall: false,
+    defaultEnabled: false,
+    category: 'Host access'
   }
 ];
 
@@ -248,6 +257,7 @@ export function bundledPluginByName(name: string): BundledPluginDefinition | und
  * come back. Local-authored working dirs (local.json) are left alone.
  */
 export const RETIRED_FIRST_PARTY_PLUGIN_IDS = [
+  'browsercode',
   'consensus',
   'slack',
   'zana',
@@ -259,6 +269,7 @@ export const RETIRED_FIRST_PARTY_PLUGIN_IDS = [
  * uninstall tombstone once so the builtin can land; a later user uninstall sticks.
  */
 export const RECLAIM_UNINSTALLED_AUTOINSTALL_IDS = [
+  'memory',
   'provider-claude-code',
   'provider-codex'
 ] as const;

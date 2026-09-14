@@ -149,7 +149,7 @@ describe('filterInstalledRows', () => {
     ]);
   });
 
-  it('filters by publisher chip and sorts by name, not enabled state', () => {
+  it('filters by publisher chip and sorts enabled plugins first', () => {
     const official = filterInstalledRows(rows, '', 'official', 'asc');
     expect(official.map((row) => row.module.id)).toEqual(['docs', 'pi']);
     const local = filterInstalledRows(rows, '', 'local', 'asc');
@@ -161,14 +161,14 @@ describe('filterInstalledRows', () => {
     ]);
   });
 
-  it('reverses name order when sortDir is desc without grouping by enabled', () => {
+  it('reverses name order among enabled plugins, then disabled', () => {
     const desc = filterInstalledRows(rows, '', 'all', 'desc');
-    expect(desc.map((row) => row.module.id)).toEqual(['pi', 'docs', 'acme']);
+    expect(desc.map((row) => row.module.id)).toEqual(['docs', 'acme', 'pi']);
     const asc = filterInstalledRows(rows, '', 'all', 'asc');
     expect(asc.map((row) => row.module.id)).toEqual(['acme', 'docs', 'pi']);
   });
 
-  it('keeps a disabled plugin in alphabetic position instead of appending it', () => {
+  it('groups enabled plugins ahead of disabled ones', () => {
     const mixed: HubRow[] = [
       {
         module: mod('salesforce', 'Salesforce'),
@@ -187,9 +187,9 @@ describe('filterInstalledRows', () => {
       }
     ];
     expect(filterInstalledRows(mixed, '', 'all', 'asc').map((row) => row.module.title)).toEqual([
+      'Salesforce',
       'Pi provider',
-      'PR Monitor',
-      'Salesforce'
+      'PR Monitor'
     ]);
   });
 });

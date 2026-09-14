@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HostListFilesResult, HostReadFileResult } from '@zana-ai/zcc-contracts/host-rpc';
 import type { Project } from '@zana-ai/zcc-domain/product';
-import { listLibraryDocs, readLibraryDoc } from './library-via-host.js';
+import { listLibraryDocs, readLibraryDoc, writeLibraryDoc } from './library-via-host.js';
 import type { ProductHttpContext } from './product-context.js';
 
 function project(overrides: Partial<Project> & Pick<Project, 'id' | 'name' | 'path'>): Project {
@@ -86,13 +86,39 @@ describe('listLibraryDocs', () => {
   });
 });
 
-describe('readLibraryDoc', () => {
+describe('writeLibraryDoc', () => {
   it('rejects a path that escapes the library root', async () => {
-    const result = await readLibraryDoc(
+    const result = await writeLibraryDoc(
       ctx({ dataDir: '/tmp/zcc-data' }),
       'global',
-      '../secret'
+      '../secret',
+      'nope'
     );
     expect(result).toEqual({ ok: false, message: 'path escapes library root' });
+  });
+
+  it('writes utf8 content under the authorized library root', async () => {
+    const commands: unknown[] = [];
+    const context = {
+      dataDir: '/tmp/zcc-data',
+      toProjects: () => [],
+      hostHub: {
+        resolveHostId: (hostId?: string) => hostId ?? 'host-1',
+        callHostOnlineRpc: async (input: { command: unknown }) => {
+          commands.push(input.command);
+          return { outcome: 'written', sha256: 'abc', sizeBytes: 4 };
+        }
+      }
+    } as unknown as ProductHttpContext;
+    const result = await writeLibraryDoc(context, 'global', 'ideas/note.md', '# Hi\n');
+    expect(result).toEqual({ ok: true });
+    expect(commands).toEqual([{
+      type: 'host.write_file',
+      path: '/tmp/zcc-data/library/ideas/note.md',
+      rootPath: '/tmp/zcc-data/library',
+      content: '# Hi\n',
+      contentEncoding: 'utf8',
+      createParents: true
+    }]);
   });
 });

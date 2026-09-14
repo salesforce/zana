@@ -41,14 +41,18 @@ describe('CREATE_PLUGIN_PROMPT', () => {
   });
 
   it('Browse Create a plugin stays on the page until send', () => {
-    const source = readFileSync(new URL('../views/extensions/MarketplaceView.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('CREATE_PLUGIN_PROMPT');
-    expect(source).toContain("searchParams.get('view') === 'create'");
-    expect(source).toContain('HomeAgentComposer');
-    expect(source).toContain('key={prompt}');
-    expect(source).toContain('Back to Browse');
-    expect(source).not.toContain('createPluginComposeNavigation');
-    expect(source).not.toContain('onCreate');
+    const marketplace = readFileSync(new URL('../views/extensions/MarketplaceView.tsx', import.meta.url), 'utf8');
+    const hero = readFileSync(
+      new URL('../components/plugin/browse-hero/BrowseHeroCarousel.tsx', import.meta.url),
+      'utf8'
+    );
+    expect(marketplace).toContain('CREATE_PLUGIN_PROMPT');
+    expect(marketplace).toContain("searchParams.get('view') === 'create'");
+    expect(hero).toContain('HomeAgentComposer');
+    expect(hero).toContain('key={prompt}');
+    expect(marketplace).toContain('Back to Browse');
+    expect(marketplace).not.toContain('createPluginComposeNavigation');
+    expect(marketplace).not.toContain('onCreate');
   });
 
   it('composer Create plugin action inserts the shared prefix on new-thread only', () => {

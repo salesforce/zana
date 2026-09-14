@@ -93,7 +93,10 @@ describe('proxyPluginCliCommand', () => {
     const result = await proxyPluginCliCommand('/tmp', 'hello', ['world'], false);
     expect(result).toEqual({ exitCode: 0, stdout: 'hi\n', stderr: undefined });
     expect(callControlPlane).toHaveBeenCalledWith(
-      expect.objectContaining({ op: 'plugin.cli', args: { id: 'hello', argv: ['world'] } })
+      expect.objectContaining({
+        op: 'plugin.cli',
+        args: expect.objectContaining({ id: 'hello', argv: ['world'], cwd: expect.any(String) })
+      })
     );
   });
 });

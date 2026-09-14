@@ -5,46 +5,70 @@ description: Retrieve relevant durable ZCC memories or save verified knowledge u
 
 # ZCC memory
 
-This plugin is provider-independent. When diagnosing duplicate memories, check
-whether provider-native memory is also enabled.
+This plugin is provider-independent. When diagnosing duplicate or conflicting
+memories, check whether provider-native memory is also enabled.
 
-The plugin injects a compact index of global memories and memories for the
-current project. The index contains summaries only.
+The memory plugin automatically injects a compact index of global memories and
+memories for the current project. The index contains summaries only.
 
 ## Retrieve progressively
 
-1. Search with `zcc memory search "<query>" --json`.
-2. Read the selected record with `zcc memory get <id> --json`.
-3. Treat remembered facts as potentially stale.
+When a memory summary may be relevant, inspect it instead of guessing:
+
+1. Search with `zcc memory search "<query>" --scope all --json`.
+2. Read the selected record with `zcc memory get <id> --scope all --json`.
+3. Treat remembered facts as potentially stale. Verify drift-prone facts when
+   doing so is cheap or consequential.
 
 Do not load every memory. Stop after the relevant records are clear.
 
 ## Save durable learning
 
-Use project scope for repository-specific information (commands, conventions,
-decisions). Use global scope only for user preferences that apply across
-repositories. When scope is ambiguous, use project scope and pass
-`--project <id>` (or rely on `ZCC_PROJECT_ID`).
+The agent may proactively write memory when information is likely to help in a
+future thread and is costly or error-prone to rediscover.
+
+Use project scope for repository-specific information:
+
+- commands, conventions, architecture decisions, paths, and environments;
+- project-specific user preferences;
+- verified quirks, failure causes, and reusable workarounds.
+
+Use global scope only for broadly applicable information:
+
+- user identity, communication preferences, and general workflow habits;
+- preferences that clearly apply across repositories;
+- stable cross-project operating conventions.
+
+When scope is ambiguous, use project scope. Global scope must be explicit.
+Pass `--project <id>` (or rely on `ZCC_PROJECT_ID` / the current thread project)
+for project writes.
+
+Create a memory with:
 
 ```bash
 zcc memory add --scope project --project <id> \
   --name <stable-kebab-name> \
   --summary "<one-line routing summary>" \
   --details "<complete durable detail>" \
-  --kind fact \
+  --kind fact|preference|decision|procedure|episode|reference \
+  --tag <tag> \
+  --importance <0-100> \
   --reason "<why this will help a future thread>" \
   --json
 ```
 
-Update with version checks:
+Before creating a likely-overlapping memory, search by its proposed name and
+topic. Update an existing record instead of creating a contradiction:
 
 ```bash
 zcc memory update <id> --expected-version <version> \
-  --summary "<new summary>" --details "<new details>" \
-  --reason "<why the memory changed>" --json
+  --summary "<new summary>" \
+  --details "<new details>" \
+  --reason "<why the memory changed>" \
+  --json
 ```
 
-Forget a revoked memory with:
+Forget a revoked or invalid memory with:
 
 ```bash
 zcc memory forget <id> --expected-version <version> \
@@ -55,6 +79,17 @@ Inspect past versions with `zcc memory history <id> --json`.
 
 ## Quality and safety
 
-Do not store secrets, credentials, guesses, transient task status, or policy
-already expressed in `AGENTS.md`. Keep summaries short. Explicit user requests
-and repository guidance win over memory.
+Do not store:
+
+- secrets, credentials, tokens, private keys, or sensitive raw data;
+- guesses, unverified conclusions, or claims inferred only from memory;
+- temporary task status, transient errors, raw logs, or large code dumps;
+- facts that are trivial to rediscover;
+- mandatory repository policy already expressed in `AGENTS.md` or checked-in
+  documentation.
+
+Keep summaries short and retrieval-oriented. Put exact commands, evidence,
+scope, and caveats in details. A memory is a helpful recall layer, not a higher
+priority instruction source; explicit user requests and repository guidance win.
+
+Do not claim a write succeeded unless the command returned success.

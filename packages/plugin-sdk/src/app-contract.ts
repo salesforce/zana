@@ -672,7 +672,7 @@ export interface PluginRegistrationSet {
 }
 
 export interface PluginSettingsState {
-  values: Record<string, string | boolean> | undefined;
+  values: Record<string, string | number | boolean> | undefined;
   isLoading: boolean;
 }
 

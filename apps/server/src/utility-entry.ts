@@ -6,6 +6,7 @@ import { SERVER_RUNTIME_PROTOCOL_VERSION, ServerRuntimeInboundSchema } from '@za
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createTeamOpsViaControl } from './http/team-ops-via-control.js';
+import { createCliAgentOpsViaControl } from './http/cli-agent-ops.js';
 import { createProjectStore, type ProjectStore } from './project-store.js';
 import { createProjectSettingsStore, type ProjectSettingsStore } from './project-settings-store.js';
 import { createTerminalExecutionService, type TerminalExecutionService } from './terminal-execution-service.js';
@@ -75,6 +76,7 @@ parentPort.on('message', async ({ data }) => {
         projects: projects ?? undefined
       });
       product.teamOps = createTeamOpsViaControl(message.dataDir);
+      product.cliAgentOps = createCliAgentOpsViaControl(message.dataDir);
       threadDb = product.db;
       plugins = await attachProductPluginService(product, {
         bundledRoot: bundledPluginsRootFromDataDir(message.dataDir, message.bundledPluginsRoot),
@@ -407,7 +409,11 @@ parentPort.on('message', async ({ data }) => {
         type: 'result',
         protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
         id: message.id,
-        value: await plugins.runCliCommand(message.pluginId, message.argv ?? [])
+        value: await plugins.runCliCommand(message.pluginId, message.argv ?? [], {
+          ...(typeof message.projectId === 'string' ? { projectId: message.projectId } : {}),
+          ...(typeof message.threadId === 'string' ? { threadId: message.threadId } : {}),
+          ...(typeof message.cwd === 'string' ? { cwd: message.cwd } : {})
+        })
       });
     }
   }

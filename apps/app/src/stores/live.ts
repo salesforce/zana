@@ -1817,7 +1817,9 @@ export function useProjectOpenFollowUpCount(projectId: string): number {
  * Sidebar-badge counts for the Agents nav item. `active` is every agent that
  * is live right now (working, blocked, or an idle/unknown pty that is still
  * `running`/`starting` — headless included); `blocked` is how many of those
- * need the user. The Agents nav shows `active` as the badge and reds it when
+ * would appear in the board’s Needs you lane (foreground permission/question
+ * only — scheduled/headless blocked sessions stay in Working and do not red
+ * the badge). The Agents nav shows `active` as the badge and reds it when
  * `blocked`. Counts live PTY agents and busy/pending threads.
  *
  * Scope: a per-project WINDOW (hard URL lock via {@link getScopedProjectId})

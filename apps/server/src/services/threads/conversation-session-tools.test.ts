@@ -14,6 +14,47 @@ describe('packConversationSessionTooling', () => {
     expect(packed.instructions).toBe(HOST_SESSION_INSTRUCTION);
   });
 
+  it('passes a configure context with threadId and projectId to sessionTools', async () => {
+    const seen: unknown[] = [];
+    await packConversationSessionTooling(
+      {
+        plugins: {
+          sessionTools: async (ctx) => {
+            seen.push(ctx);
+            return { tools: [] };
+          }
+        }
+      } as unknown as ProductHttpContext,
+      { threadId: 'thr-1', projectId: 'proj-1' }
+    );
+    expect(seen).toEqual([expect.objectContaining({
+      threadId: 'thr-1',
+      projectId: 'proj-1',
+      origin: { kind: null, pluginId: null }
+    })]);
+  });
+
+  it('packs project metadata onto configure context when the store is present', async () => {
+    const seen: unknown[] = [];
+    await packConversationSessionTooling(
+      {
+        plugins: {
+          sessionTools: async (ctx) => {
+            seen.push(ctx);
+            return { tools: [] };
+          }
+        },
+        projects: {
+          list: () => [{ id: 'proj-1', name: 'Demo', path: '/tmp/demo' }]
+        }
+      } as unknown as ProductHttpContext,
+      { threadId: 'thr-1', projectId: 'proj-1' }
+    );
+    expect(seen).toEqual([expect.objectContaining({
+      project: { id: 'proj-1', name: 'Demo' }
+    })]);
+  });
+
   it('merges plugin tools after the host SHARE tools', async () => {
     const packed = await packConversationSessionTooling(
       {
@@ -32,7 +73,6 @@ describe('packConversationSessionTooling', () => {
     ]);
     expect(packed.instructions).toContain('Use sf_soql.');
     expect(packed.instructions).toContain('preview_file');
-    expect(packed.instructions).toContain('browser_open');
   });
 
   it('still offers SHARE host tools when plugin sessionTools throws', async () => {

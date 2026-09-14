@@ -17,6 +17,7 @@ import {
   Inbox,
   Keyboard,
   PenLine,
+  Globe,
   type LucideIcon
 } from 'lucide-react';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
@@ -36,6 +37,7 @@ import { ConnectivityTab } from '@/views/settings/ConnectivityView';
 import { InboxSettingsTab } from '@/views/settings/InboxSettingsView';
 import { KeyboardSettingsSection } from '@/views/settings/KeyboardSettingsSection';
 import { ComposerSettingsView } from '@/views/settings/ComposerSettingsView';
+import { BrowserSettingsSection } from '@/components/settings/BrowserSettingsSection';
 import { ProjectTab } from '@/views/settings/ProjectSettingsView';
 import { PersonasPanel } from '@/views/settings/PersonasView';
 import { SquadsPanel } from '@/views/settings/SquadsView';
@@ -79,6 +81,7 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'composer', label: 'Composer', icon: PenLine, desc: 'Launch surfaces, send mode, and prompt box', group: 'config' },
   { id: 'keyboard', label: 'Shortcuts', icon: Keyboard, desc: 'Remap chords and view all shortcuts', group: 'config' },
   { id: 'inbox', label: 'Inbox', icon: Inbox, desc: 'Guidance, tool trust, and PDF export', group: 'config' },
+  { id: 'browser', label: 'Browsers', icon: Globe, desc: 'Import cookies into the in-app browser', group: 'config' },
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare, desc: 'Appearance, shell & tmux', group: 'config' },
   { id: 'harness', label: 'Code Harness', icon: Bot, desc: 'Verify & enable Claude Code, Cursor, Codex & PI', group: 'config' },
   { id: 'editor', label: 'Editor', icon: SquareArrowOutUpRight, desc: 'Open-in-editor & terminal buttons', group: 'config' },
@@ -142,7 +145,8 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'harness-codex', label: 'Codex' },
     { id: 'harness-pi', label: 'PI' },
     { id: 'harness-opencode', label: 'OpenCode' },
-    { id: 'harness-grok', label: 'Grok Build' }
+    { id: 'harness-grok', label: 'Grok Build' },
+    { id: 'harness-mastracode', label: 'Mastra Code' }
   ],
   editor: [
     { id: 'editor-status', label: 'Installed editors' },
@@ -160,6 +164,9 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   ],
   inbox: [
     { id: 'inbox-general', label: 'Inbox' }
+  ],
+  browser: [
+    { id: 'browsers', label: 'Browsers' }
   ],
   about: [
     { id: 'about-credits', label: 'Credits' }
@@ -305,6 +312,9 @@ export function SettingsView() {
       if (typeof patch.harnessGrokEnabled === 'boolean') {
         useData.getState().setHarnessGrokEnabled(patch.harnessGrokEnabled);
       }
+      if (typeof patch.harnessMastracodeEnabled === 'boolean') {
+        useData.getState().setHarnessMastracodeEnabled(patch.harnessMastracodeEnabled);
+      }
       if (typeof patch.nativeAgentDiscoveryEnabled === 'boolean') {
         useData.setState({ nativeAgentDiscoveryEnabled: patch.nativeAgentDiscoveryEnabled });
       }
@@ -422,6 +432,8 @@ export function SettingsView() {
             onConfigDraft={setConfig}
             onUpdate={update}
           />
+        ) : tab === 'browser' ? (
+          <BrowserSettingsSection />
         ) : (
           <ProjectTab
             project={selectedProject}

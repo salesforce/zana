@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
  * Build + package every first-party plugin under `plugins/*` that still needs
- * a compile step, so a cold `npm run dev` never loads a stale bundle. Plugins
- * that ship as source (docs: package.json + server.mjs + skills) skip this —
- * PluginService auto-installs them from `plugins/<id>` in place.
+ * a compile step, so a cold `npm run dev` never loads a stale bundle.
+ * PluginService auto-installs first-party plugins from `plugins/<id>` in place.
  *
  * Extension-agnostic by design (engineering rule #6): it discovers plugins
  * by scanning `plugins/*` for a `package.json` with both `build` and

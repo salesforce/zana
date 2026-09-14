@@ -17,6 +17,7 @@ interface NextTurnItemView {
   text: string;
   failureReason: string | null;
   status: string;
+  senderThreadId: string | null;
 }
 
 export function QueuedMessagesCard({ threadId }: { threadId: string }) {
@@ -39,6 +40,7 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
           text?: unknown;
           failureReason?: unknown;
           status?: unknown;
+          senderThreadId?: unknown;
         };
         const text = typeof record.text === 'string' && record.text.trim()
           ? record.text
@@ -47,7 +49,10 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
           id: typeof record.id === 'string' ? record.id : '',
           text,
           failureReason: typeof record.failureReason === 'string' ? record.failureReason : null,
-          status: typeof record.status === 'string' ? record.status : 'queued'
+          status: typeof record.status === 'string' ? record.status : 'queued',
+          senderThreadId: typeof record.senderThreadId === 'string' && record.senderThreadId.trim()
+            ? record.senderThreadId.trim()
+            : null
         };
       }).filter((row) => row.id));
     }).catch(() => undefined);
@@ -99,6 +104,11 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
           <li key={item.id} className="thread-queued-ghost" data-status={item.status}>
             <div className="thread-queued-ghost-body">
               <p className="thread-queued-item-text">{queuedMessagePreview(item.text) || '(queued message)'}</p>
+              {item.senderThreadId ? (
+                <p className="thread-queued-sender" data-testid="thread-queued-sender">
+                  From {item.senderThreadId}
+                </p>
+              ) : null}
               {item.failureReason ? (
                 <p className="thread-queued-failure" data-testid="thread-queued-failure">{item.failureReason}</p>
               ) : null}
@@ -205,12 +215,14 @@ export function PromptContextBanner({
   branchName,
   isWorktree,
   parentThreadId,
+  originKind,
   childCount,
   environmentId
 }: {
   branchName?: string | null;
   isWorktree?: boolean;
   parentThreadId?: string | null;
+  originKind?: string | null;
   childCount?: number;
   environmentId?: string | null;
 }) {
@@ -243,7 +255,7 @@ export function PromptContextBanner({
   const bits = [
     branchName ? `git: ${branchName}` : null,
     isWorktree ? 'worktree' : null,
-    parentThreadId ? 'child thread' : null,
+    originKind === 'fork' ? 'fork' : parentThreadId ? 'child thread' : null,
     childCount && childCount > 0 ? `${childCount} child ${childCount === 1 ? 'agent' : 'agents'}` : null
   ].filter(Boolean);
   if (bits.length === 0 && !pullRequest) return null;

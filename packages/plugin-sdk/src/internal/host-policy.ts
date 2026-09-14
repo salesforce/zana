@@ -62,12 +62,29 @@ export function pluginCliCollisionWarning(
 
 /**
  * Built-in dynamic tool names plugins may not shadow. Maintained by hand —
- * kept in sync with the built-in tools in
- * apps/server/src/services/threads/thread-runtime-config.ts by
- * apps/server/test/services/plugins/plugin-agent-tools.test.ts.
+ * kept in sync with conversation SHARE tools in
+ * apps/server/src/services/threads/host-session-tools.ts
+ * (`HOST_SHARE_TOOL_NAMES`) plus `update_environment_directory`.
+ * Guarded by host-session-tools.policy.test.ts.
  */
 export const RESERVED_AGENT_TOOL_NAMES: readonly string[] = [
   "update_environment_directory",
+  "preview_file",
+  "inbox_push",
+  "inbox_search",
+  "suggest_action",
+  "library_write",
+  "library_read",
+  "library_list",
+  "library_remove",
+  "goal_create",
+  "goal_list",
+  "schedule_list",
+  "schedule_run_now",
+  "schedule_set_enabled",
+  "list_projects",
+  "register_project",
+  "create_local_extension",
 ];
 
 /** JSON values ≤256KB; larger writes are rejected with a clear error. */
@@ -1981,6 +1998,162 @@ export function parsePluginAgentToolPresentation(
     };
   }
   return presentation;
+}
+
+export interface NormalizedPluginAgentTool {
+  name: string;
+  description: string;
+  presentation: PluginAgentToolPresentation | null;
+  instructions: string | null;
+  inputSchema: unknown;
+  parse(
+    input: unknown,
+  ): { ok: true; value: unknown } | { ok: false; error: string };
+  execute(
+    params: unknown,
+    ctx: { threadId: string; projectId: string; signal: AbortSignal },
+  ): unknown | Promise<unknown>;
+}
+
+/**
+ * Host / test helper: a DynamicTool that already has a JSON schema and does
+ * not go through `registerTool` validation (reserved names, icons, …).
+ */
+export function jsonSchemaAgentToolRecord(args: {
+  name: string;
+  description: string;
+  inputSchema?: unknown;
+  instructions?: string | null;
+  presentation?: PluginAgentToolPresentation | null;
+  execute: NormalizedPluginAgentTool["execute"];
+}): NormalizedPluginAgentTool {
+  return {
+    name: args.name,
+    description: args.description,
+    presentation: args.presentation ?? null,
+    instructions: args.instructions ?? null,
+    inputSchema: args.inputSchema ?? { type: "object", properties: {} },
+    parse: (input) => ({ ok: true, value: input }),
+    execute: args.execute,
+  };
+}
+
+/**
+ * Shared `registerTool` contract for the live host and both fake hosts.
+ * `parameters` is Zod or a JSON-schema object; `inputSchema` is accepted as
+ * a deprecated alias so existing plugins keep loading.
+ */
+export function normalizeRegisteredAgentTool(args: {
+  pluginId: string;
+  tool: object;
+  declaredIconNames?: ReadonlySet<string>;
+}): NormalizedPluginAgentTool {
+  const tool = args.tool as {
+    name?: unknown;
+    description?: unknown;
+    instructions?: unknown;
+    presentation?: unknown;
+    parameters?: unknown;
+    inputSchema?: unknown;
+    execute?: unknown;
+  };
+  const name = tool.name;
+  if (typeof name !== "string" || !AGENT_TOOL_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `invalid tool name ${JSON.stringify(name)} — use letters, digits, "-" and "_"`,
+    );
+  }
+  if (RESERVED_AGENT_TOOL_NAMES.includes(name)) {
+    throw new Error(
+      `tool name "${name}" is a built-in ZCC tool — pick another name`,
+    );
+  }
+  rejectStaleAgentToolFields(name, args.tool);
+  if (typeof tool.description !== "string" || tool.description.trim().length === 0) {
+    throw new Error(`tool "${name}" must provide a description`);
+  }
+  if (tool.instructions !== undefined && typeof tool.instructions !== "string") {
+    throw new Error(`tool "${name}" instructions must be a string`);
+  }
+  if (
+    typeof tool.instructions === "string" &&
+    tool.instructions.length > PLUGIN_AGENT_STATIC_INSTRUCTIONS_MAX_CHARS
+  ) {
+    throw new Error(
+      `tool "${name}" instructions exceed the ${PLUGIN_AGENT_STATIC_INSTRUCTIONS_MAX_CHARS}-character limit`,
+    );
+  }
+  const presentation = parsePluginAgentToolPresentation(name, tool.presentation);
+  if (presentation?.icon !== undefined) {
+    const problem = undeclaredIconProblem(
+      args.pluginId,
+      args.declaredIconNames ?? new Set(),
+      presentation.icon.glyph,
+    );
+    if (problem !== null) {
+      throw new Error(agentToolIconRefusalMessage(name, problem));
+    }
+  }
+  if (typeof tool.execute !== "function") {
+    throw new Error(
+      `tool "${name}" must provide an execute(params, ctx) function`,
+    );
+  }
+  const parameters: unknown =
+    tool.parameters !== undefined ? tool.parameters : tool.inputSchema;
+  let inputSchema: unknown;
+  let parse: NormalizedPluginAgentTool["parse"];
+  if (isZodSchemaLike(parameters)) {
+    try {
+      inputSchema = zodSchemaToJsonSchema(parameters);
+    } catch (error) {
+      throw new Error(
+        `tool "${name}" parameters look like a zod schema but could not be converted to JSON Schema (${
+          error instanceof Error ? error.message : String(error)
+        }) — use zod 4, or pass a plain JSON-schema object`,
+      );
+    }
+    parse = (input) => {
+      const result = parameters.safeParse(input);
+      if (result.success) return { ok: true, value: result.data };
+      return { ok: false, error: summarizeParseIssues(result.error) };
+    };
+  } else if (
+    typeof parameters === "object" &&
+    parameters !== null &&
+    !Array.isArray(parameters)
+  ) {
+    try {
+      inputSchema = JSON.parse(JSON.stringify(parameters));
+    } catch {
+      throw new Error(
+        `tool "${name}" parameters JSON schema is not JSON-serializable`,
+      );
+    }
+    parse = (input) => ({ ok: true, value: input });
+  } else {
+    throw new Error(
+      `tool "${name}" parameters must be a zod schema or a JSON-schema object`,
+    );
+  }
+  assertNoRecursiveJsonSchemaReferences(
+    inputSchema,
+    `tool "${name}" parameters`,
+  );
+  return {
+    name,
+    description: tool.description,
+    presentation,
+    instructions:
+      typeof tool.instructions === "string" && tool.instructions.trim().length > 0
+        ? tool.instructions
+        : null,
+    inputSchema,
+    parse,
+    execute: (
+      tool.execute as NormalizedPluginAgentTool["execute"]
+    ).bind(tool),
+  };
 }
 
 /** Compact issue summary from a (possibly foreign-instance) zod error. */

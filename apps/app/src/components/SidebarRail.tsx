@@ -227,7 +227,7 @@ export function SidebarRail({
               onClick={() => {
                 void action.run({
                   openSettings() {
-                    appNavigate(getPluginDetailRoutePath(action.pluginId));
+                    appNavigate(getPluginDetailRoutePath(action.pluginId, { view: 'installed' }));
                   },
                   toPluginPanel(path, options) {
                     return appNavigate(hrefForPluginNavPanel(action.pluginId, path, options?.subPath), {

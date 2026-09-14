@@ -4,7 +4,10 @@ import type {
   CcApi,
   DesktopBrowserApi,
   DesktopBrowserAutomationOpenRequest,
+  DesktopBrowserControlState,
+  DesktopBrowserFindResult,
   DesktopBrowserOpenTabRequest,
+  DesktopBrowserRevealRequest,
   DesktopBrowserScopedOpenTabRequest,
   DesktopBrowserSnapshot,
   DesktopBrowserState,
@@ -12,7 +15,10 @@ import type {
 } from '@zana-ai/zcc-desktop-contract';
 import {
   parseDesktopBrowserAutomationOpenRequest,
+  parseDesktopBrowserControlState,
+  parseDesktopBrowserFindResult,
   parseDesktopBrowserOpenTabRequest,
+  parseDesktopBrowserRevealRequest,
   parseDesktopBrowserScopedOpenTabRequest,
   parseDesktopBrowserSnapshot,
   parseDesktopBrowserState
@@ -67,6 +73,10 @@ const browserOpenTabListeners = new Set<(request: DesktopBrowserOpenTabRequest) 
 const browserScopedOpenTabListeners = new Set<(request: DesktopBrowserScopedOpenTabRequest) => void>();
 const browserSnapshotListeners = new Set<(snapshot: DesktopBrowserSnapshot) => void>();
 const browserAutomationOpenListeners = new Set<(request: DesktopBrowserAutomationOpenRequest) => void>();
+const browserRevealListeners = new Set<(request: DesktopBrowserRevealRequest) => void>();
+const browserControlListeners = new Set<(state: DesktopBrowserControlState) => void>();
+const browserFindResultListeners = new Set<(result: DesktopBrowserFindResult) => void>();
+const browserAppCommandListeners = new Set<(command: string) => void>();
 
 function browserViewBoundsAtWindowScale(bounds: DesktopBrowserViewBounds): DesktopBrowserViewBounds {
   const zoomFactor = webFrame.getZoomFactor();
@@ -116,6 +126,33 @@ function createDesktopBrowserApi(): DesktopBrowserApi {
     setVisible(request) {
       ipcRenderer.send(IPC.browser.setVisible, request);
     },
+    setVisibleWithoutFocus(request) {
+      ipcRenderer.send(IPC.browser.setVisibleWithoutFocus, request);
+    },
+    focus(tabId) {
+      ipcRenderer.send(IPC.browser.focus, { tabId });
+    },
+    findInPage(request) {
+      ipcRenderer.send(IPC.browser.findInPage, request);
+    },
+    stopFindInPage(request) {
+      ipcRenderer.send(IPC.browser.stopFindInPage, request);
+    },
+    onFindResult(listener) {
+      browserFindResultListeners.add(listener);
+      return () => {
+        browserFindResultListeners.delete(listener);
+      };
+    },
+    onAppCommand(listener) {
+      browserAppCommandListeners.add(listener);
+      return () => {
+        browserAppCommandListeners.delete(listener);
+      };
+    },
+    getControl(tabId) {
+      return ipcRenderer.invoke(IPC.browser.getControl, { tabId });
+    },
     onState(listener) {
       browserStateListeners.add(listener);
       return () => {
@@ -154,6 +191,30 @@ function createDesktopBrowserApi(): DesktopBrowserApi {
     },
     stopAutomation(targetId) {
       return ipcRenderer.invoke(IPC.browser.stopAutomation, targetId);
+    },
+    onReveal(listener) {
+      browserRevealListeners.add(listener);
+      return () => {
+        browserRevealListeners.delete(listener);
+      };
+    },
+    onControl(listener) {
+      browserControlListeners.add(listener);
+      return () => {
+        browserControlListeners.delete(listener);
+      };
+    },
+    listImportSources() {
+      return ipcRenderer.invoke(IPC.browser.listImportSources);
+    },
+    importCookies(request) {
+      return ipcRenderer.invoke(IPC.browser.importCookies, request);
+    },
+    openFullDiskAccessSettings() {
+      return ipcRenderer.invoke(IPC.browser.openFullDiskAccessSettings);
+    },
+    releaseControl(tabId) {
+      return ipcRenderer.invoke(IPC.browser.releaseControl, { tabId });
     }
   };
 }
@@ -182,6 +243,25 @@ ipcRenderer.on(IPC.browser.automationOpen, (_event, payload: unknown) => {
   const parsed = parseDesktopBrowserAutomationOpenRequest(payload);
   if (!parsed.success) return;
   for (const listener of browserAutomationOpenListeners) listener(parsed.data);
+});
+ipcRenderer.on(IPC.browser.reveal, (_event, payload: unknown) => {
+  const parsed = parseDesktopBrowserRevealRequest(payload);
+  if (!parsed.success) return;
+  for (const listener of browserRevealListeners) listener(parsed.data);
+});
+ipcRenderer.on(IPC.browser.control, (_event, payload: unknown) => {
+  const parsed = parseDesktopBrowserControlState(payload);
+  if (!parsed.success) return;
+  for (const listener of browserControlListeners) listener(parsed.data);
+});
+ipcRenderer.on(IPC.browser.findResult, (_event, payload: unknown) => {
+  const parsed = parseDesktopBrowserFindResult(payload);
+  if (!parsed.success) return;
+  for (const listener of browserFindResultListeners) listener(parsed.data);
+});
+ipcRenderer.on(IPC.browser.appCommand, (_event, payload: unknown) => {
+  if (typeof payload !== 'string' || payload.length === 0) return;
+  for (const listener of browserAppCommandListeners) listener(payload);
 });
 
 const api: CcApi = {
@@ -270,7 +350,9 @@ const api: CcApi = {
       ipcRenderer.on(IPC.projects.onChanged, handler);
       return () => ipcRenderer.off(IPC.projects.onChanged, handler);
     },
-    paths: async () => ({ paths: [], truncated: false })
+    paths: async () => ({ paths: [], truncated: false }),
+    listProcesses: async () => ({ processes: [], truncated: false, supported: true }),
+    killProcesses: async () => ({ killed: [] })
   },
   ssh: {
     listHosts: () => ipcRenderer.invoke(IPC.ssh.listHosts),
@@ -474,7 +556,9 @@ const api: CcApi = {
       pullRequest: async () => ({ pullRequest: null }),
       action: async () => ({ ok: false }),
       cancelProvision: async () => ({ ok: false }),
-      destroy: async () => ({ ok: false })
+      destroy: async () => ({ ok: false }),
+      listProcesses: async () => ({ processes: [], truncated: false, supported: true }),
+      killProcesses: async () => ({ killed: [] })
     },
   terminals: {
     list: (projectId) => ipcRenderer.invoke(IPC.terminals.list, projectId),

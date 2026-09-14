@@ -6,6 +6,12 @@ interface SpawnCall {
   args: string[];
 }
 
+/** Tests name harness CLIs by basename; `resolveHarnessCommand` may absolutize PATH hits. */
+function snapshotCommand(command: string): string {
+  if (!command.includes('/') && !command.includes('\\')) return command;
+  return command.replace(/.*[/\\]/, '') || command;
+}
+
 const spawns: SpawnCall[] = [];
 
 vi.mock('node-pty', () => ({
@@ -23,7 +29,8 @@ vi.mock('node-pty', () => ({
 }));
 
 vi.mock('../mcp-config.js', () => ({
-  ensureMcpConfigForProjectSync: () => '/tmp/proj1/.mcp.json'
+  ensureMcpConfigForProjectSync: () => '/tmp/proj1/.mcp.json',
+  alwaysOnPluginMcpAllowlist: () => []
 }));
 
 vi.mock('../tmux.js', () => ({
@@ -63,7 +70,8 @@ function spawn(profile: LaunchProfileId, harnessRouting?: HarnessModelRoutingV1)
     config: CONFIG,
     harnessRouting
   });
-  return spawns.at(-1)!;
+  const last = spawns.at(-1)!;
+  return { command: snapshotCommand(last.command), args: last.args };
 }
 
 describe('structured providers final local argv', () => {
@@ -168,6 +176,16 @@ describe('structured providers final local argv', () => {
     });
   });
 
+  it('emits Mastra Code catalog model without extra execution flags for Edits', () => {
+    expect(spawn('mastracode', routing('mastracode', {
+      modelTargetId: 'anthropic/claude-opus-4-6',
+      executionState: 'accept-edits'
+    }))).toEqual({
+      command: 'mastracode',
+      args: ['--model', 'anthropic/claude-opus-4-6']
+    });
+  });
+
   it('emits per-tab OpenCode role in final argv', () => {
     expect(spawn('opencode', routing('opencode', {
       roleTargetId: 'custom-agent'
@@ -204,7 +222,8 @@ describe('structured providers final local argv', () => {
       config: { ...CONFIG, harnessRouting: routing('opencode', { modelTargetId: 'llmgw/gpt-5.6-sol-1M' }) },
       harnessRouting: routing('opencode', { roleTargetId: 'custom-agent' })
     });
-    expect(spawns.at(-1)).toEqual({
+    const last = spawns.at(-1)!;
+    expect({ command: snapshotCommand(last.command), args: last.args }).toEqual({
       command: 'opencode',
       args: ['--agent', 'custom-agent']
     });
@@ -226,7 +245,8 @@ describe('structured providers final local argv', () => {
       }
     });
 
-    expect(spawns.at(-1)).toEqual({
+    const last = spawns.at(-1)!;
+    expect({ command: snapshotCommand(last.command), args: last.args }).toEqual({
       command: 'pi',
       args: ['--provider', 'anthropic', '--model', 'claude-sonnet-4-5', '--thinking', 'high']
     });

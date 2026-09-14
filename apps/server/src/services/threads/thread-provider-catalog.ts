@@ -79,11 +79,17 @@ export function canonicalThreadProviderId(providerId: string): string {
   if (providerId === 'cursor') return 'acp-cursor';
   if (providerId === 'opencode' || providerId === 'opencode-resume' || providerId === 'opencode-yolo') return 'acp-opencode';
   if (providerId === 'grok' || providerId === 'grok-resume' || providerId === 'grok-yolo') return 'acp-grok';
+  if (providerId === 'mastracode' || providerId === 'mastracode-resume' || providerId === 'mastracode-yolo') {
+    return 'acp-mastracode';
+  }
   return providerId;
 }
 
 export function permissionModeForLaunchProfile(providerId: string): 'accept-edits' | 'auto' | 'full' {
-  return providerId === 'claude-yolo' || providerId === 'opencode-yolo' || providerId === 'grok-yolo'
+  return providerId === 'claude-yolo'
+    || providerId === 'opencode-yolo'
+    || providerId === 'grok-yolo'
+    || providerId === 'mastracode-yolo'
     ? 'full'
     : 'accept-edits';
 }

@@ -30,6 +30,7 @@ import {
 import { createPullRequest, getPullRequestForCurrentBranch, runPullRequestAction } from './git-host.js';
 import { resolveAdditionalWorkspaceWriteRoots } from './workspace-write-roots.js';
 import { PROJECT_CHECKOUTS_DIR_NAME } from '@zana-ai/zcc-domain';
+import { killProcessesWithCwdUnder } from '@zana-ai/zcc-agent-process-utils';
 import { join } from 'node:path';
 
 export type UnmanagedCheckout =
@@ -114,6 +115,7 @@ export async function destroyWorkspace(args: {
   sourcePath?: string;
 }): Promise<void> {
   if (args.workspaceProvisionType === 'unmanaged') return;
+  await killProcessesWithCwdUnder({ directory: args.path });
   if (args.workspaceProvisionType === 'personal') {
     const { rm } = await import('node:fs/promises');
     await rm(args.path, { recursive: true, force: true });

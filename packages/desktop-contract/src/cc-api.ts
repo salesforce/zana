@@ -323,6 +323,15 @@ export interface CcApi {
       }>;
       truncated: boolean;
     }>;
+    listProcesses(projectId: string): Promise<{
+      processes: Array<{ pid: number; cwd: string; command: string }>;
+      truncated: boolean;
+      supported: boolean;
+    }>;
+    killProcesses(
+      projectId: string,
+      pids: number[]
+    ): Promise<{ killed: Array<{ pid: number; cwd: string; command: string }> }>;
   };
   ssh: {
     listHosts(): Promise<SshHostEntry[]>;
@@ -715,6 +724,15 @@ export interface CcApi {
     action(environmentId: string, action: EnvironmentAction): Promise<Record<string, unknown>>;
     cancelProvision(environmentId: string): Promise<{ ok: boolean; cancelled?: boolean }>;
     destroy(environmentId: string): Promise<{ ok: boolean }>;
+    listProcesses(environmentId: string): Promise<{
+      processes: Array<{ pid: number; cwd: string; command: string }>;
+      truncated: boolean;
+      supported: boolean;
+    }>;
+    killProcesses(
+      environmentId: string,
+      pids: number[]
+    ): Promise<{ killed: Array<{ pid: number; cwd: string; command: string }> }>;
   };
   terminals: {
     verifyTmux(): Promise<TmuxVerifyResult>;
@@ -1462,7 +1480,7 @@ export interface CcApi {
     getSettings(pluginId: string): Promise<PluginSettingsSnapshot>;
     setSettings(
       pluginId: string,
-      values: Record<string, string | boolean | undefined>
+      values: Record<string, string | number | boolean | undefined>
     ): Promise<PluginSettingsSnapshot>;
     checkUpdates(): Promise<Array<{
       id: string;

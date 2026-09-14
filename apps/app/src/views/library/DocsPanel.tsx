@@ -2,6 +2,8 @@ import { lazy, Suspense } from 'react';
 import type { ModuleHost } from '@zana-ai/zcc-extension-sdk/renderer';
 import { useData } from '@/store';
 import { DelayedStencilList } from '@/components/ui/Skeleton';
+import { useRouteState } from '../../hooks/useRouteState.js';
+import { parseLibraryPanelSubPath } from './library-deep-link.js';
 
 const LibraryPanel = lazy(() =>
   import('./LibraryPanel.js').then((m) => ({ default: m.LibraryPanel }))
@@ -20,6 +22,8 @@ const loading = <DelayedStencilList label="Loading library" className="zcc-stenc
 export function DocsPanel({ host }: { host: ModuleHost }) {
   const scopedId = host.getScopedProjectId();
   const projects = useData((s) => s.projects);
+  const route = useRouteState();
+  const deepLink = parseLibraryPanelSubPath(route.pluginSubPath);
 
   if (scopedId) {
     const project = projects.find((p) => p.id === scopedId);
@@ -30,16 +34,22 @@ export function DocsPanel({ host }: { host: ModuleHost }) {
         </div>
       );
     }
+    const scopedLink =
+      !deepLink ||
+      deepLink.scope === 'global' ||
+      deepLink.projectId === project.id
+        ? deepLink
+        : null;
     return (
       <Suspense fallback={loading}>
-        <LibraryView project={project} />
+        <LibraryView project={project} deepLink={scopedLink} />
       </Suspense>
     );
   }
 
   return (
     <Suspense fallback={loading}>
-      <LibraryPanel />
+      <LibraryPanel deepLink={deepLink} />
     </Suspense>
   );
 }

@@ -31,7 +31,7 @@ export function AgentSessionActions({
   const summaryEnabled = useData((s) => s.catchUpSummaryEnabled);
   const canSummarize = summaryEnabled && isClaudeProfile(session.profile);
   const [summarizing, setSummarizing] = useState(false);
-  const [closingWithFollowup, setClosingWithFollowup] = useState(false);
+  const closingWithFollowup = useData((s) => s.closingFollowupIds.has(session.id));
   const triageVerdict = useIdleTriage((s) => s.byId[session.id]);
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const surfacingForAttention =
@@ -54,13 +54,8 @@ export function AgentSessionActions({
 
   const closeWithFollowup = async () => {
     if (closingWithFollowup) return;
-    setClosingWithFollowup(true);
-    try {
-      const confirmed = await closeAgentWithFollowup(session, projectId);
-      if (confirmed) onSessionClosed?.();
-    } finally {
-      setClosingWithFollowup(false);
-    }
+    const confirmed = await closeAgentWithFollowup(session, projectId);
+    if (confirmed) onSessionClosed?.();
   };
 
   const summarize = async () => {

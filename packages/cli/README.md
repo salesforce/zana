@@ -10,6 +10,8 @@ default `http://127.0.0.1:8780`). `zcc guide` is the only fully offline command.
 Prefer product nouns: `thread`, `machine`, `project`, `skill`, `settings`,
 `terminal`, `environment`. `zcc run` and `zcc agent send` are deprecated aliases
 of `thread spawn` and `thread tell`. `zcc term` aliases `terminal`.
+`zcc agent launch|wait|reply|stop` drive CLI Agents over HTTP. Handbook:
+[`docs/control-sdk.md`](../../docs/control-sdk.md).
 
 Agent callers (`ZCC_SESSION_ID` set by the app) are read/inspect only. Mutations
 return `FORBIDDEN_AGENT` (exit 5) except the host-stamped orchestrator spawn/close set.
@@ -36,6 +38,8 @@ zcc thread list --json
 ```bash
 zcc status --json
 zcc thread spawn --project <id> --prompt "…" [--wait]
+zcc agent launch --project <id> --prompt "…" [--wait]
+zcc agent wait|reply|stop <id>
 zcc thread list|show|tell|wait|stop
 zcc machine list
 zcc project list

@@ -17,9 +17,11 @@ flowchart TD
 ```
 
 Prefer product nouns: `thread`, `machine`, `project`, `skill`, `settings`,
-`terminal`, `environment`. `zcc run` and `zcc agent send` are **deprecated
+`terminal`, `environment`, `live`. `zcc run` and `zcc agent send` are **deprecated
 aliases** of `thread spawn` and `thread tell`. `zcc term` aliases `terminal`
 (except `term reply` / `term close-summary`, which still use the control plane).
+`zcc agent launch` starts a CLI Agent over HTTP without native confirm. `zcc agent wait|reply|stop` drive it. See also
+[`control-sdk.md`](./control-sdk.md).
 
 `zcc --help` is the flag surface. `zcc guide [chapter]` is the long-form
 companion and works with no app. Keep this page, the `zcc-cli` skill, and
@@ -67,7 +69,7 @@ This mirrors `zcc --help`:
 OFFLINE (no app required):
   guide [chapter]          Print a chapter (overview, threads, projects, machines,
                            terminals, plugins, automations, agent-configuration,
-                           environments)
+                           environments, browser)
   plugin new <name>        Scaffold a TypeScript plugin (package.json zcc)
   plugin types [dir]       Sync bundled SDK .d.ts into the plugin [--check]
   plugin build [dir]       Bundle zcc.app / zcc.server for CI
@@ -77,17 +79,23 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   plugin dev [dir]         Watch, rebuild UI, reload on save [--once]
   status                   Live dashboard: projects and threads
   thread list [--project ID]
-  thread spawn --project <id> --prompt "..." [--provider <id>] [--wait]
+  thread spawn --project <id> --prompt "..." [--provider <id>] [--model <id>]
+                           [--acp-mode <mode>] [--reasoning-level <level>] [--permission-mode <mode>]
+                           [--title] [--wait]
   thread show|log|tell|wait|stop|fork|archive|unarchive|interactions <id>
   thread background list|stop <id>
   thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
   machine list|show|join-code|rename|remove|provider-cli
-  project list|show|create|files|content|skills
+  project list|show|create|files|content|skills|processes
   projects ls              Alias of project list
   skill list|show|files|cli-skills-status|install-cli-skills
   settings show|general|experiment|appearance
   terminal list|create|show|output|wait|send|close
-  environment status|diff|diff-files|pull-request <id>
+  team launch --team <id> --project <id> --goal "..." [--mode structured|freeform]
+  team status|wait|answer|stop <id>
+  environment status|diff|diff-files|pull-request|processes <id>
+  browser instances|tabs|create|acquire|connection|release|reveal|capture|close|watch|import-sources|import-cookies
+  file read <path> --host <id> [--root <path>]
   run <project> <prompt>   Deprecated alias of thread spawn
   agent send <id> <msg>    Deprecated alias of thread tell
   term ls|close            Deprecated aliases of terminal list|close
@@ -103,20 +111,28 @@ LIVE CONTROL PLANE (app must be running):
   plugin ls|install|enable|disable|remove|search|outdated|update|run|logs
   marketplace ls|add|refresh|remove|install
   agent ls                 List live agents + their state
+  agent launch --project <id> --prompt "..." [--profile claude]
+                           [--persona <id>] [--title] [--wait] [--timeout]
+                           [--execution-state plan|interactive|accept-edits|autonomous]
+                           [--model-level low|medium|high|extra-high] [--role <id>]
+  agent wait <id> [--until idle|working|done] [--timeout]
+  agent reply <id> "..."
+  agent stop <id>
+  live cleanup [--stale|--tag <runId>]
   team ls                  List the team catalogue
   term reply <sessionId> <message>
   term close-summary <projectId> <sessionId...>
   schedule run-now|enable|disable <id>
 ```
 
-I made a typo: `pull-return` should be `pull-request`. Fix that.
-
 ### Product verbs (preferred)
 
 ```bash
 zcc status --json
-zcc thread spawn --project <id> --prompt "…" [--wait]
+zcc thread spawn --project <id> --prompt "…" [--provider <id>] [--model <id>] [--wait]
 zcc thread list|show|tell|wait|stop
+zcc agent launch --project <id> --prompt "…" [--wait]
+zcc agent wait|reply|stop <id>
 zcc thread background list|stop <id>
 zcc machine list
 zcc project list
@@ -202,6 +218,18 @@ zcc projects ls --json
 The human table truncates the `id` to its first 8 characters; `--json` returns
 the full record.
 
+### `project processes`
+
+List or stop OS processes whose current working directory is inside a
+registered project or environment. **Product HTTP.** Kill is always explicit
+(`--pid`); there is no kill-all on an unmanaged checkout.
+
+```bash
+zcc project processes list <id>
+zcc project processes kill <id> --pid 4242
+zcc environment processes list <id>
+```
+
 ### `personas ls`
 
 List personas merged from the global store (`~/.zcc/personas/*.json`) and each
@@ -243,7 +271,7 @@ zcc team ls --json
 ### `team launch|status|wait|answer|stop`
 
 Start and watch one durable Team execution. `--mode freeform` asks the coordinator to infer a plan; `--mode structured` (default) says the goal contains the plan. **Product API — needs the app running.**
-Launch, answer, and stop cross Electron main's native operator-confirmation gate.
+Launch, answer, and stop are operator-only.
 
 ```bash
 zcc team launch --team <id> --project <id> --goal "ship it" [--mode structured|freeform] [--wait]
@@ -353,6 +381,36 @@ live agents it prints `No live agents.`
 zcc agent ls --json
 ```
 
+### `agent launch`
+
+Start a **CLI Agent** (PTY harness) over product HTTP. No native Allow dialog.
+**Product HTTP — mutating.** Operator launches are untagged (your `--title` as
+given, not `[zcc-live:…]`). `--role` XOR `--model-level`. Do not pass extra
+argv flags; denied tokens would be stripped and look like they worked.
+
+```bash
+zcc agent launch --project <id> --prompt "…" [--profile claude] [--persona <id>] [--title]
+                 [--execution-state plan|interactive|accept-edits|autonomous]
+                 [--model-level low|medium|high|extra-high] [--role <id>]
+                 [--wait] [--timeout 5m]
+```
+
+`--wait` polls until idle. Some `executionState` values are DENIED on the
+unattended HTTP path (`accept-edits` never mints consent). Details:
+[`control-sdk.md`](./control-sdk.md).
+
+### `agent wait` / `agent reply` / `agent stop`
+
+Drive an already-running CLI Agent by session id. **Product HTTP — mutating.**
+
+```bash
+zcc agent wait <id> [--until idle|working|done] [--timeout 5m]
+zcc agent reply <id> "also check the error paths"
+zcc agent stop <id>
+```
+
+`zcc agent ls` and `zcc term reply` stay on the control plane.
+
 ### `agent send <handle> <msg>` (deprecated)
 
 **Deprecated alias of `zcc thread tell`.** Prefer `zcc thread tell <id> "…"`.
@@ -400,7 +458,9 @@ zcc thread background list <id>
 
 `zcc thread wait` returns when the **turn** finishes (`idle`/`error`) so
 `spawn --wait` does not hang on leftover Vite. Wait until background shells
-are gone with `--until quiet`.
+are gone with `--until quiet`. List leftover servers on the project folder
+with `zcc project processes <id>` and stop selected pids with
+`zcc project processes kill <id> --pid <pid>`.
 
 Stop leftover Bash:
 

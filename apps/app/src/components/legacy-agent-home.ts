@@ -23,7 +23,8 @@ export const PROFILE_BY_FAMILY: Record<HarnessFamily, LaunchProfileId> = {
   codex: 'codex',
   pi: 'pi',
   opencode: 'opencode',
-  grok: 'grok'
+  grok: 'grok',
+  mastracode: 'mastracode'
 };
 
 const THREAD_PROVIDER_BY_FAMILY: Record<HarnessFamily, string> = {
@@ -32,7 +33,8 @@ const THREAD_PROVIDER_BY_FAMILY: Record<HarnessFamily, string> = {
   codex: 'codex',
   pi: 'pi',
   opencode: 'acp-opencode',
-  grok: 'acp-grok'
+  grok: 'acp-grok',
+  mastracode: 'acp-mastracode'
 };
 
 export type CliAgentModelOption = CatalogModelPickerRow;
@@ -106,6 +108,13 @@ export function threadProviderIdForFamily(family: string): string | null {
   return null;
 }
 
+export function threadPermissionMode(
+  mode: string
+): 'accept-edits' | 'auto' | 'full' | undefined {
+  if (mode === 'accept-edits' || mode === 'auto' || mode === 'full') return mode;
+  return undefined;
+}
+
 export function familyForThreadProviderId(providerId: string): HarnessFamily | null {
   for (const [family, id] of Object.entries(THREAD_PROVIDER_BY_FAMILY) as Array<[HarnessFamily, string]>) {
     if (id === providerId) return family;
@@ -133,6 +142,29 @@ export function resolveCliAgentFamily(input: {
     return input.effectiveDefaultFamilyId;
   }
   return input.effectiveDefaultFamilyId || '';
+}
+
+/**
+ * Concrete PTY profile for a CLI Agent launch. An automatic project default
+ * (`codex-yolo`, …) wins only when it actually resolved. Otherwise fall back
+ * to the harness default / family map so a remembered family (Codex already
+ * selected on open) is still spawnable — `automaticProfile` stays null on
+ * that early-resolve path.
+ */
+export function resolveCliAgentSpawnProfile(input: {
+  provenance: 'automatic' | 'explicit';
+  automaticProfile: LaunchProfileId | null;
+  harnessDefaultProfileId?: LaunchProfileId | null;
+  familyId: string;
+}): LaunchProfileId | undefined {
+  if (input.provenance === 'automatic' && input.automaticProfile) {
+    return input.automaticProfile;
+  }
+  if (input.harnessDefaultProfileId) return input.harnessDefaultProfileId;
+  if (input.familyId in PROFILE_BY_FAMILY) {
+    return PROFILE_BY_FAMILY[input.familyId as HarnessFamily];
+  }
+  return undefined;
 }
 
 export function availableAgentHarnesses<T extends {

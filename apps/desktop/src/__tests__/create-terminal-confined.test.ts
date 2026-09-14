@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync }
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Project, AppConfig, ProjectSettings } from '@zana-ai/zcc-domain/product';
+import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
+import { MANAGED_WORKTREE_DIR_NAME } from '@zana-ai/zcc-domain';
 
 /**
  * Main-path enforcement of the launch-arg denylist (A6). `createTerminalConfined`
@@ -142,7 +144,8 @@ vi.mock('../updater.js', () => ({
 // Avoid writing a real ~/.zcc/mcp file if any claude-profile path touches it.
 vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
-  ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json'
+  ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json',
+  alwaysOnPluginMcpAllowlist: () => []
 }));
 
 const {
@@ -159,6 +162,7 @@ describe('sanitizeRendererTerminalRequest', () => {
       projectId: 'p1', profile: 'claude', cols: 80, rows: 24,
       headless: true,
       worktreeInfo: { path: '/tmp/forged', branch: 'forged' },
+      workspaceEnvironmentId: 'forged-env',
       cohort: { cohortId: 'forged', teamId: 'team', teamName: 'Team', role: 'orchestrator' }
     })).toEqual({ projectId: 'p1', profile: 'claude', cols: 80, rows: 24 });
   });
@@ -189,6 +193,84 @@ describe('resolveWorktreeForRequest', () => {
       code: 'WORKTREE_UNAVAILABLE',
       message: 'Worktree isolation requires a Git repository.'
     });
+  });
+
+  it('provisions a managed workspace via the product Environment API', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        environment: {
+          id: '11111111-1111-4111-8111-111111111111',
+          path: '/tmp/.zcc/worktrees/11111111-1111-4111-8111-111111111111/proj',
+          branchName: 'zcc/task'
+        }
+      })
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const result = await resolveWorktreeForRequest({
+        projectId: 'p1', profile: 'claude', cols: 80, rows: 24,
+        workspace: { kind: 'worktree' }
+      });
+      expect(result).toEqual({
+        ok: true,
+        value: {
+          projectId: 'p1',
+          profile: 'claude',
+          cols: 80,
+          rows: 24,
+          workspace: { kind: 'worktree' },
+          worktreeInfo: {
+            path: '/tmp/.zcc/worktrees/11111111-1111-4111-8111-111111111111/proj',
+            branch: 'zcc/task'
+          },
+          workspaceEnvironmentId: '11111111-1111-4111-8111-111111111111'
+        }
+      });
+      expect(fetchMock).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('fails closed when the Environment API cannot provision a workspace', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      json: async () => ({ ok: false, code: 'WORKTREE_CREATE_FAILED', message: 'host offline' })
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await expect(resolveWorktreeForRequest({
+        projectId: 'p1', profile: 'claude', cols: 80, rows: 24,
+        workspace: { kind: 'worktree' }
+      })).resolves.toEqual({
+        ok: false,
+        code: 'WORKTREE_CREATE_FAILED',
+        message: 'host offline'
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not provision a managed workspace for Quick Agent isolateScratch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const request = {
+        projectId: 'p1',
+        profile: 'claude' as const,
+        cols: 80,
+        rows: 24,
+        workspace: { kind: 'worktree' as const },
+        isolateScratch: true as const
+      };
+      expect(await resolveWorktreeForRequest(request)).toEqual({ ok: true, value: request });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -226,6 +308,19 @@ describe('resolveEffectiveLaunch', () => {
       cwd: realpathSync('/tmp/zcc-worktrees/task'),
       trustedPath: '/tmp/zcc-worktrees/task',
       worktree: { path: realpathSync('/tmp/zcc-worktrees/task'), branch: 'zcc/task' }
+    });
+  });
+
+  it('selects a managed Environment worktree under the app data dir', () => {
+    const managed = join(electronZccDataDir(), MANAGED_WORKTREE_DIR_NAME, 'env-1', 'proj');
+    mkdirSync(managed, { recursive: true });
+    expect(resolveEffectiveLaunch({
+      worktreeInfo: { path: managed, branch: 'zcc/env' }
+    }, PROJECT)).toEqual({
+      projectRoot: realpathSync('/tmp/proj'),
+      cwd: realpathSync(managed),
+      trustedPath: managed,
+      worktree: { path: realpathSync(managed), branch: 'zcc/env' }
     });
   });
 

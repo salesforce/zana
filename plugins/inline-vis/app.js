@@ -1,9 +1,12 @@
 import {
   DEFAULT_HEIGHT_PX,
-  hostFileContentUrl,
   MAX_HTML_CHARS,
   parsePreviewHeight,
-  requireWorkspaceHtmlFile
+  parsePreviewSource,
+  previewContentUrl,
+  previewKindForFile,
+  renderSafeMarkdown,
+  requirePreviewFile
 } from './src/preview.js';
 
 function hostReact() {
@@ -14,19 +17,26 @@ function InlineVisDirective(props) {
   const React = hostReact();
   if (!React) return null;
   const { useEffect, useState } = React;
-  const file = requireWorkspaceHtmlFile(props.attributes?.file);
+  const file = requirePreviewFile(props.attributes?.file);
+  const source = parsePreviewSource(props.attributes?.source);
   const height = parsePreviewHeight(props.attributes?.height);
   const [state, setState] = useState(
     height === null
       ? { status: 'invalid-height' }
-      : file
-        ? { status: 'loading', file }
-        : { status: 'missing-file' }
+      : source === null
+        ? { status: 'invalid-source' }
+        : file
+          ? { status: 'loading', file, source }
+          : { status: 'missing-file' }
   );
 
   useEffect(() => {
     if (height === null) {
       setState({ status: 'invalid-height' });
+      return undefined;
+    }
+    if (source === null) {
+      setState({ status: 'invalid-source' });
       return undefined;
     }
     if (!file) {
@@ -38,22 +48,27 @@ function InlineVisDirective(props) {
       setState({ status: 'error', file, message: 'No thread is attached to this message.' });
       return undefined;
     }
+    const kind = previewKindForFile(file);
     let cancelled = false;
-    setState({ status: 'loading', file });
-    void fetch(hostFileContentUrl(threadId, file), { credentials: 'same-origin' })
+    setState({ status: 'loading', file, source });
+    void fetch(previewContentUrl(threadId, file, source), { credentials: 'same-origin' })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(response.status === 404 ? 'File not found' : `HTTP ${response.status}`);
         }
         const body = await response.json();
         if (body?.encoding && body.encoding !== 'utf8') {
-          throw new Error('Visualization must be a UTF-8 HTML file');
+          throw new Error('Visualization must be a UTF-8 file');
         }
-        const html = typeof body?.content === 'string' ? body.content : '';
-        if (!html.trim()) throw new Error('File is empty');
-        if (html.length > MAX_HTML_CHARS) throw new Error('File is larger than 5 MiB');
+        const content = typeof body?.content === 'string' ? body.content : '';
+        if (!content.trim()) throw new Error('File is empty');
+        if (content.length > MAX_HTML_CHARS) throw new Error('File is larger than 5 MiB');
         if (cancelled) return;
-        setState({ status: 'ready', file, html });
+        if (kind === 'markdown') {
+          setState({ status: 'ready', kind: 'markdown', file, source, content });
+          return;
+        }
+        setState({ status: 'ready', kind: 'html', file, source, html: content });
       })
       .catch((error) => {
         if (cancelled) return;
@@ -66,13 +81,13 @@ function InlineVisDirective(props) {
     return () => {
       cancelled = true;
     };
-  }, [file, height, props.message?.threadId]);
+  }, [file, height, source, props.message?.threadId]);
 
   if (state.status === 'missing-file') {
     return React.createElement(
       'div',
       { className: 'plugin-directive-card plugin-directive-card--error', role: 'alert', title: props.source },
-      'inline-vis requires a workspace HTML file, e.g. ::vis{file="charts/out.html"}'
+      'inline-vis requires a workspace HTML or Markdown file, e.g. ::vis{file="charts/out.html"}'
     );
   }
   if (state.status === 'invalid-height') {
@@ -82,8 +97,15 @@ function InlineVisDirective(props) {
       'inline-vis height must be a whole number from 120 to 1200 pixels.'
     );
   }
+  if (state.status === 'invalid-source') {
+    return React.createElement(
+      'div',
+      { className: 'plugin-directive-card plugin-directive-card--error', role: 'alert', title: props.source },
+      'inline-vis source must be workspace or thread-storage.'
+    );
+  }
 
-  const openAction = typeof props.openWorkspaceFile === 'function'
+  const openAction = state.source === 'workspace' && typeof props.openWorkspaceFile === 'function'
     ? React.createElement(
       'button',
       {
@@ -121,6 +143,22 @@ function InlineVisDirective(props) {
       `Failed to load ${state.file}: ${state.message}`
     );
   }
+  const body = state.kind === 'markdown'
+    ? React.createElement(
+      'div',
+      {
+        className: 'plugin-directive-vis-markdown-wrap',
+        style: { height: `${height ?? DEFAULT_HEIGHT_PX}px`, overflow: 'auto' }
+      },
+      renderSafeMarkdown(React, state.content)
+    )
+    : React.createElement('iframe', {
+      className: 'plugin-directive-vis-frame',
+      title: `inline-vis: ${state.file}`,
+      sandbox: 'allow-scripts',
+      srcDoc: state.html,
+      style: { height: `${height ?? DEFAULT_HEIGHT_PX}px` }
+    });
   return React.createElement(
     'div',
     { className: 'plugin-directive-vis' },
@@ -131,13 +169,7 @@ function InlineVisDirective(props) {
       React.createElement('span', { className: 'plugin-directive-card-title' }, state.file),
       openAction
     ),
-    React.createElement('iframe', {
-      className: 'plugin-directive-vis-frame',
-      title: `inline-vis: ${state.file}`,
-      sandbox: 'allow-scripts',
-      srcDoc: state.html,
-      style: { height: `${height ?? DEFAULT_HEIGHT_PX}px` }
-    })
+    body
   );
 }
 

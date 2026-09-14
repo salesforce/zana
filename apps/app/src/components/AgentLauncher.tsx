@@ -7,7 +7,7 @@ import type {
   Project,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
-import { useData, useTeams } from '../store.js';
+import { useData, useTeams, useUi } from '../store.js';
 import { profileIcon } from '../lib/profileIcon.js';
 import { TeamComposer } from './TeamComposer.js';
 import { ThreadCommandComposer } from './ThreadCommandComposer.js';
@@ -112,10 +112,12 @@ export const AgentLauncher = memo(function AgentLauncher({
   const harnessCodexEnabled = useData((s) => s.harnessCodexEnabled);
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
   const harnessGrokEnabled = useData((s) => s.harnessGrokEnabled);
+  const harnessMastracodeEnabled = useData((s) => s.harnessMastracodeEnabled);
   // Target project for a SCRATCH-mode launch. `null` = the built-in scratch
   // workspace (the default). Unused in project mode (the target is fixed).
   const [targetProjectId] = useState<string | null>(null);
-  const [composerProjectId, setComposerProjectId] = useState(project?.id ?? '');
+  const selectedProjectId = useUi((s) => s.selectedProjectId);
+  const [composerProjectId, setComposerProjectId] = useState(project?.id ?? selectedProjectId ?? '');
   useEffect(() => {
     if (project?.id) setComposerProjectId(project.id);
   }, [project?.id]);
@@ -142,7 +144,8 @@ export const AgentLauncher = memo(function AgentLauncher({
     harnessCursorEnabled ? 'Cursor' : null,
     harnessCodexEnabled ? 'Codex' : null,
     harnessPiEnabled ? 'PI' : null,
-    harnessGrokEnabled ? 'Grok Build' : null
+    harnessGrokEnabled ? 'Grok Build' : null,
+    harnessMastracodeEnabled ? 'Mastra Code' : null
   ].filter((provider): provider is string => provider !== null);
   // Resolve scratch-mode project selection.
   const target = projectMode

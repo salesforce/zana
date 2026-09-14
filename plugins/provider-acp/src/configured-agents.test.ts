@@ -25,6 +25,7 @@ describe('parseCustomAcpAgents', () => {
       rejectedIds: ['acp-cursor', 'codex']
     });
     expect(RESERVED_ACP_PROVIDER_IDS).toContain('acp-hermes-agent');
+    expect(RESERVED_ACP_PROVIDER_IDS).toContain('acp-mastracode');
   });
 
   it('returns empty agents for malformed JSON', () => {

@@ -60,7 +60,8 @@ vi.mock('../updater.js', () => ({
 
 vi.mock('-ai/zcc-host-daemon/mcp-config', () => ({
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
-  ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json'
+  ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json',
+  alwaysOnPluginMcpAllowlist: () => []
 }));
 
 vi.mock('../test-tap.js', () => ({

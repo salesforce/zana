@@ -25,10 +25,9 @@ describe('AgentsBoard', () => {
     expect(app).not.toContain("nav !== 'home'");
   });
 
-  it('hosts AuroraGrid behind the board the same way Home does', () => {
-    expect(board).toContain('aurora-host');
-    expect(board).toContain('<AuroraGrid />');
-    expect(board.indexOf('<AuroraGrid />')).toBeLessThan(board.indexOf('{showToolbar && ('));
+  it('uses the standard panel surface without AuroraGrid', () => {
+    expect(board).not.toContain('aurora-host');
+    expect(board).not.toContain('<AuroraGrid');
     expect(board).not.toContain('<HomeAgentComposer');
     expect(board).toContain('No agents');
     expect(board).toContain('No agents yet');
@@ -43,17 +42,15 @@ describe('AgentsBoard', () => {
     expect(emptyStart).toBeGreaterThan(-1);
     expect(filterStart).toBeGreaterThan(emptyStart);
     const emptyBranch = board.slice(emptyStart, filterStart);
-    expect(emptyBranch).not.toContain('<AuroraGrid');
-    expect(emptyBranch).not.toContain('aurora-host');
     expect(emptyBranch).not.toContain('<HomeAgentComposer');
     expect(emptyBranch).toContain('agents-board-empty--launch');
+    expect(emptyBranch).toContain('<PaneEmptyState');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));
-    expect(filterBranch).not.toContain('<AuroraGrid');
     expect(filterBranch).not.toContain('<HomeAgentComposer');
   });
 
-  it('portals the close-idle dialog out of the aurora stacking context', () => {
+  it('portals the close-idle dialog out of the board stacking context', () => {
     expect(closeIdle).toContain('return createPortal(node, document.body)');
     expect(closeIdle).toContain('className="modal-backdrop"');
   });
@@ -171,6 +168,12 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(css).toContain('.app-shell.sidebar-is-collapsed .agents-board-toolbar {\n  padding-left: var(--shell-leading-reserve);\n}');
   });
 
+  it('keeps a small gap between the toolbar and the list, board, or flow', () => {
+    expect(css).toContain(
+      '.agents-board-toolbar {\n  display: flex;\n  min-width: 0;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: flex-end;\n  flex-wrap: wrap;\n  gap: 8px;\n  padding: 8px 12px 12px;\n}'
+    );
+  });
+
   it('narrows the list-view monitor columns on a compact board', () => {
     expect(css).toContain('@container agents-board (max-width: 920px)');
     expect(css).toContain(
@@ -195,12 +198,9 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(css).not.toContain('.agents-board > .home-agent-composer {');
   });
 
-  it('lifts board content above AuroraGrid', () => {
-    expect(css).toContain('.agents-board.aurora-host > :not(.aurora-grid) {');
-    const liftStart = css.indexOf('.agents-board.aurora-host > :not(.aurora-grid) {');
-    const lift = css.slice(liftStart, css.indexOf('}', liftStart));
-    expect(lift).toContain('position: relative;');
-    expect(lift).toContain('z-index: 1;');
+  it('paints the board on the standard panel surface', () => {
+    expect(css).not.toContain('.agents-board.aurora-host');
+    expect(css).toContain('.agents-board {\n  flex: 1;\n  min-width: 0;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  background: var(--bg-panel);');
     expect(css).toContain(
       '.agents-board-empty--launch {\n  overflow: auto;\n  gap: 20px;\n  justify-content: center;\n  padding: 48px 24px 56px;\n  background: transparent;'
     );

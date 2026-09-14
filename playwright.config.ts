@@ -16,11 +16,10 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
   outputDir: './e2e/.artifacts',
-  // Marketplace functionality is temporarily out of scope for the core E2E
-  // suite. Its tests remain runnable explicitly by file path. install-from-git
-  // lives with that set: leftover UI plus the modern `package.json` `zcc` path.
+  // Marketplace specs stay in the suite so Plugins browse/install is covered.
+  // install-from-git remains opt-in: leftover UI plus the modern `package.json`
+  // `zcc` path.
   testIgnore: [
-    '**/marketplace*.spec.ts',
     '**/install-from-git.spec.ts',
   ],
   // One Electron app at a time; specs within a file still run in order.

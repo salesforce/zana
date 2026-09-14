@@ -16,6 +16,7 @@ import {
   type LibraryTreeNode,
   type LibraryPhantomFolder
 } from './libraryTree.js';
+import { matchLibraryDeepLink, type LibraryDeepLink } from './library-deep-link.js';
 
 // Width of the folder-tree column. Persisted like LibraryView's own list
 // width, under a distinct key — this is a different panel with its own layout.
@@ -49,7 +50,7 @@ interface ContextMenuState {
  * stays as the project-scoped twin; this panel is the "see everything, one
  * place" surface the left-nav Library entry opens.
  */
-export function LibraryPanel() {
+export function LibraryPanel({ deepLink = null }: { deepLink?: LibraryDeepLink | null }) {
   const pushToast = useUi((s) => s.pushToast);
   const docs = useLibrary((s) => s.docs);
   const loading = useLibrary((s) => s.loading);
@@ -160,6 +161,22 @@ export function LibraryPanel() {
     setSelectedDoc(match);
     setPendingRevealId(null);
   }, [pendingRevealId, docs]);
+
+  const [pendingDeepLink, setPendingDeepLink] = useState<LibraryDeepLink | null>(deepLink);
+  useEffect(() => {
+    setPendingDeepLink(deepLink);
+  }, [deepLink]);
+  useEffect(() => {
+    if (!pendingDeepLink) return;
+    const match = matchLibraryDeepLink(docs, pendingDeepLink);
+    if (match) {
+      setSearchQuery('');
+      setSelectedDoc(match);
+      setPendingDeepLink(null);
+      return;
+    }
+    if (!loading) setPendingDeepLink(null);
+  }, [pendingDeepLink, docs, loading]);
 
   useEffect(() => {
     if (!menu) return;

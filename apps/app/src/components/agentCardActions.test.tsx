@@ -4,17 +4,22 @@ import { readFileSync } from 'node:fs';
 
 const h = vi.hoisted(() => ({
   closeTerminal: vi.fn(),
-  closeIdleAgents: vi.fn(async () => ({ closed: 1, summarized: 1, followedUp: 1 }))
+  closeIdleAgents: vi.fn(async () => ({ closed: 1, summarized: 1, followedUp: 1 })),
+  closingFollowupIds: new Set<string>()
 }));
 
 vi.mock('../store.js', () => ({
   useData: Object.assign(
-    (selector: (s: { closeTerminal: typeof h.closeTerminal }) => unknown) =>
-      selector({ closeTerminal: h.closeTerminal }),
+    (selector: (s: {
+      closeTerminal: typeof h.closeTerminal;
+      closingFollowupIds: Set<string>;
+    }) => unknown) =>
+      selector({ closeTerminal: h.closeTerminal, closingFollowupIds: h.closingFollowupIds }),
     {
       getState: () => ({
         closeTerminal: h.closeTerminal,
-        closeIdleAgents: h.closeIdleAgents
+        closeIdleAgents: h.closeIdleAgents,
+        closingFollowupIds: h.closingFollowupIds
       })
     }
   ),
@@ -88,7 +93,10 @@ describe('plugin agent card menu', () => {
     expect(source).toContain('canCloseWithFollowup(card.session)');
     expect(source).toContain('actions.closeWithFollowup(card)');
     expect(source).toContain('Close with follow-up');
-    expect(source).toContain('closeIdleAgents(projectId, [session.id], true)');
+    expect(source).toContain("closingWithFollowup ? 'Closing…' : 'Close with follow-up'");
+    expect(source).toContain('disabled={closingWithFollowup}');
+    expect(source).toContain('closingFollowupIds.has(card.session.id)');
+    expect(source).toContain('closeIdleAgents(projectId, [session.id], true, { force: true })');
     expect(source).toContain('Open in split');
     expect(source).toContain('openAgentSessionInSplit');
     expect(source).toContain('cliAgentRemoveLabel(exited)');
@@ -137,10 +145,11 @@ describe('closeAgentWithFollowup', () => {
     const confirm = vi.fn(() => true);
     vi.stubGlobal('confirm', confirm);
     h.closeIdleAgents.mockClear();
+    h.closingFollowupIds.clear();
     const ok = await closeAgentWithFollowup({ id: 's1', title: 'Review' }, 'p1');
     expect(ok).toBe(true);
     expect(confirm).toHaveBeenCalled();
-    expect(h.closeIdleAgents).toHaveBeenCalledWith('p1', ['s1'], true);
+    expect(h.closeIdleAgents).toHaveBeenCalledWith('p1', ['s1'], true, { force: true });
     vi.unstubAllGlobals();
   });
 
@@ -148,9 +157,23 @@ describe('closeAgentWithFollowup', () => {
     const confirm = vi.fn(() => false);
     vi.stubGlobal('confirm', confirm);
     h.closeIdleAgents.mockClear();
+    h.closingFollowupIds.clear();
     const ok = await closeAgentWithFollowup({ id: 's1', title: 'Review' }, 'p1');
     expect(ok).toBe(false);
     expect(h.closeIdleAgents).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('returns false without confirming when the session is already closing', async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    h.closeIdleAgents.mockClear();
+    h.closingFollowupIds.add('s1');
+    const ok = await closeAgentWithFollowup({ id: 's1', title: 'Review' }, 'p1');
+    expect(ok).toBe(false);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(h.closeIdleAgents).not.toHaveBeenCalled();
+    h.closingFollowupIds.clear();
     vi.unstubAllGlobals();
   });
 });

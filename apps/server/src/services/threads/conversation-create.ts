@@ -15,7 +15,6 @@ import {
   type EnvironmentRow
 } from '@zana-ai/zcc-db';
 import {
-  DEFAULT_SETUP_TIMEOUT_MS,
   buildManagedBranchName,
   titleFromPrompt,
   type SpawnEnvironmentChoice
@@ -23,7 +22,8 @@ import {
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ReasoningLevel, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { clampPermissionModeToHost } from '../hosts/permission-ceiling.js';
-import type { EnvironmentProvisionCommand, EnvironmentProvisionResult } from '@zana-ai/zcc-contracts/host-rpc';
+import type { EnvironmentProvisionResult } from '@zana-ai/zcc-contracts/host-rpc';
+import { provisionCommandFor } from './spawn-environment-provision.js';
 import { AmbiguousHostError, HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { applyLoggedConversationLifecycleEvent } from './conversation-lifecycle-outcome.js';
@@ -66,6 +66,7 @@ import {
 } from './conversation-execution-mode.js';
 import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
 import { recordThreadExecutionMode } from './conversation-plan.js';
+import { persistConversationPluginMetadataSeed } from './conversation-plugin-metadata.js';
 
 export {
   conversationThreadView,
@@ -89,6 +90,9 @@ export interface CreateConversationInput {
   reasoningLevel?: ReasoningLevel;
   acpMode?: string;
   parentThreadId?: string;
+  visibility?: 'visible' | 'hidden';
+  originPluginId?: string | null;
+  pluginMetadata?: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
 }
 
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -120,45 +124,6 @@ function mapHostError(error: unknown): ThreadCreateError {
     return new ThreadCreateError(502, code, message);
   }
   return new ThreadCreateError(500, 'thread-create-failed', error instanceof Error ? error.message : String(error));
-}
-
-function provisionCommandFor(
-  environment: EnvironmentRow,
-  project: Project,
-  choice: SpawnEnvironmentChoice,
-  checkout: CreateConversationInput['checkout'],
-  workspacePath: string
-): EnvironmentProvisionCommand {
-  if (choice.kind === 'personal') {
-    if (!environment.path) {
-      throw new ThreadCreateError(500, 'thread-create-failed', 'personal workspace path is missing');
-    }
-    return {
-      type: 'environment.provision',
-      environmentId: environment.id,
-      workspaceProvisionType: 'personal',
-      targetPath: environment.path
-    };
-  }
-  if (choice.kind === 'worktree') {
-    return {
-      type: 'environment.provision',
-      environmentId: environment.id,
-      workspaceProvisionType: 'managed-worktree',
-      sourcePath: project.path,
-      targetPath: environment.path!,
-      branchName: environment.branchName ?? buildManagedBranchName({ threadId: environment.id }),
-      baseBranch: environment.baseBranch,
-      setupTimeoutMs: DEFAULT_SETUP_TIMEOUT_MS
-    };
-  }
-  return {
-    type: 'environment.provision',
-    environmentId: environment.id,
-    workspaceProvisionType: 'unmanaged',
-    path: workspacePath,
-    checkout
-  };
 }
 
 export function threadTitle(input: Pick<CreateConversationInput, 'title'>, prompt: string[]): string {
@@ -441,8 +406,11 @@ export async function createConversationFromRequest(
       providerId,
       title: threadTitle(input, textPrompt),
       status: 'starting',
-      parentThreadId: input.parentThreadId ?? null
+      parentThreadId: input.parentThreadId ?? null,
+      visibility: input.visibility,
+      originPluginId: input.originPluginId ?? null
     });
+    persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
     emitPluginThreadEvent(ctx, {
       name: 'thread.created',
       threadId: thread.id,
@@ -537,8 +505,11 @@ export async function createConversationFromRequest(
         providerId,
         title: threadTitle(input, textPrompt),
         status: 'starting',
-        parentThreadId: input.parentThreadId ?? null
+        parentThreadId: input.parentThreadId ?? null,
+        visibility: input.visibility,
+        originPluginId: input.originPluginId ?? null
       });
+      persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
       emitPluginThreadEvent(ctx, {
         name: 'thread.created',
         threadId: thread.id,
@@ -565,8 +536,11 @@ export async function createConversationFromRequest(
       providerId,
       title: threadTitle(input, textPrompt),
       status: 'starting',
-      parentThreadId: input.parentThreadId ?? null
+      parentThreadId: input.parentThreadId ?? null,
+      visibility: input.visibility,
+      originPluginId: input.originPluginId ?? null
     });
+    persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
     emitPluginThreadEvent(ctx, {
       name: 'thread.created',
       threadId: thread.id,

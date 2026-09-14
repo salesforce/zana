@@ -36,11 +36,11 @@ export function composerSurfacesFromConfig(config: {
   composerShowAutonomousTeam?: boolean;
   teamJobLaunchEnabled?: boolean;
 }): ComposerSurfaceFlags {
-  return {
+  return normalizeComposerSurfaces({
     showCliAgent: config.composerShowCliAgent !== false,
     showModern: config.composerShowModern !== false,
     showTeam: config.composerShowAutonomousTeam !== false || config.teamJobLaunchEnabled !== false
-  };
+  });
 }
 
 /** Never persist a pair that hides both Modern and CLI Agent. */

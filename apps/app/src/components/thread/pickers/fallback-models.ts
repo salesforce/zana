@@ -72,6 +72,7 @@ const FALLBACK_PROVIDERS: readonly ThreadComposerProviderOption[] = [
   { id: 'acp-cursor', displayName: 'Cursor', permissionModes: ['accept-edits', 'full'], composerActions: [] },
   { id: 'acp-opencode', displayName: 'OpenCode', permissionModes: ['accept-edits', 'full'], composerActions: [] },
   { id: 'acp-grok', displayName: 'Grok Build', permissionModes: ['accept-edits', 'full'], composerActions: [] },
+  { id: 'acp-mastracode', displayName: 'Mastra Code', permissionModes: ['accept-edits', 'full'], composerActions: [] },
   { id: 'fake', displayName: 'Fake', permissionModes: ['full'], composerActions: ['plan'] }
 ];
 
@@ -82,7 +83,9 @@ export function fallbackProviderOption(providerId: string): ThreadComposerProvid
 
 /** Builtin harnesses for a new thread before execution-options returns. Omits `fake` and installed-only OpenCode. */
 export function fallbackProvidersForNewThread(): ThreadComposerProviderOption[] {
-  return FALLBACK_PROVIDERS.filter((row) => row.id !== 'fake' && row.id !== 'acp-opencode' && row.id !== 'acp-grok');
+  return FALLBACK_PROVIDERS.filter((row) =>
+    row.id !== 'fake' && row.id !== 'acp-opencode' && row.id !== 'acp-grok' && row.id !== 'acp-mastracode'
+  );
 }
 
 /** True when a new-thread send can use this provider (it is in the live roster). */

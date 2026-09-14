@@ -78,6 +78,7 @@ describe('ThreadProviderCatalog', () => {
     expect(merged.map((row) => row.id)).toEqual(expect.arrayContaining([
       'acp-omp',
       'acp-grok',
+      'acp-mastracode',
       'acp-hermes-agent'
     ]));
     expect(merged.find((row) => row.id === 'acp-opencode')).toEqual({

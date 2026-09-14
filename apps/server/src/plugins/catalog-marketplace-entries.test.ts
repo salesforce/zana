@@ -64,7 +64,38 @@ describe('projectCatalogMarketplaceEntries', () => {
       installedVersion: '1.0.0',
       version: '1.2.0'
     });
+    expect(rows[0]?.category).toBeUndefined();
     expect(rows.map((row) => row.id)).not.toContain('docs');
+  });
+
+  it('copies overview text from a catalog plugin', () => {
+    const rows = projectCatalogMarketplaceEntries(
+      [
+        catalog({
+          cachedIndex: {
+            ...NOTES,
+            plugins: [{ ...NOTES.plugins[0]!, overview: '## What you get\n\n- Notes.\n' }]
+          }
+        })
+      ],
+      new Set()
+    );
+    expect(rows[0]?.overview).toContain('## What you get');
+  });
+
+  it('copies a curated category tag onto the browse row', () => {
+    const rows = projectCatalogMarketplaceEntries(
+      [
+        catalog({
+          cachedIndex: {
+            ...NOTES,
+            plugins: [{ ...NOTES.plugins[0]!, tags: ['Interface'] }]
+          }
+        })
+      ],
+      new Set()
+    );
+    expect(rows[0]?.category).toBe('Interface');
   });
 
   it('badges an official catalog and prefers it over a community twin', () => {

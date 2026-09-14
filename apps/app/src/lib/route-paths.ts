@@ -250,8 +250,12 @@ export function getPluginBrowseRoutePath(): string {
   return TOOLS_PLUGIN_BROWSE_ROUTE_PATH;
 }
 
-export function getPluginDetailRoutePath(pluginId: string): string {
-  return `${TOOLS_PLUGINS_ROUTE_PATH}/${encodeURIComponent(pluginId)}`;
+export function getPluginDetailRoutePath(
+  pluginId: string,
+  options?: { view?: 'installed' }
+): string {
+  const path = `${TOOLS_PLUGINS_ROUTE_PATH}/${encodeURIComponent(pluginId)}`;
+  return options?.view === 'installed' ? `${path}?view=installed` : path;
 }
 
 export function getExtensionsTabRoutePath(
@@ -262,7 +266,7 @@ export function getExtensionsTabRoutePath(
     case 'marketplace':
       return TOOLS_PLUGIN_BROWSE_ROUTE_PATH;
     case 'installed':
-      return pluginId ? getPluginDetailRoutePath(pluginId) : TOOLS_PLUGINS_ROUTE_PATH;
+      return pluginId ? getPluginDetailRoutePath(pluginId, { view: 'installed' }) : TOOLS_PLUGINS_ROUTE_PATH;
     case 'skills':
       return TOOLS_SKILLS_ROUTE_PATH;
     case 'mcp':

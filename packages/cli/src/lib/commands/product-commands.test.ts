@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../run-cli.js';
 
@@ -53,6 +56,9 @@ describe('product API command groups', () => {
         const body = JSON.parse(String(init?.body));
         expect(body.projectId).toBe('proj-1');
         expect(body.prompt).toContain('review');
+        expect(body.origin).toBe('sdk');
+        expect(body.visibility).toBe('visible');
+        expect(String(body.title ?? '')).not.toContain('[zcc-live:');
         return jsonResponse(201, { thread: { ...sampleThread, status: 'starting' } });
       },
       'POST /api/v1/threads/thr-1/send': (_url, init) => {
@@ -87,6 +93,29 @@ describe('product API command groups', () => {
 
     const stopped = await runCli(['node', 'zcc', 'thread', 'stop', 'thr-1'], { fetchImpl });
     expect(stopped.stdout).toContain('stopped');
+  });
+
+  it('spawn --wait polls until idle', async () => {
+    let status = 'starting';
+    const fetchImpl = router({
+      'POST /api/v1/threads': jsonResponse(201, { thread: { ...sampleThread, status: 'starting' } }),
+      'GET /api/v1/threads/thr-1': () => ({ thread: { ...sampleThread, status } }),
+      'GET /api/v1/threads/thr-1/interactions': { interactions: [] }
+    });
+    let now = 0;
+    const waited = await runCli(
+      ['node', 'zcc', 'thread', 'spawn', '--project', 'proj-1', '--prompt', 'review', '--wait', '--timeout', '2s'],
+      {
+        fetchImpl,
+        nowMs: () => now,
+        sleep: async () => {
+          status = 'idle';
+          now += 500;
+        }
+      }
+    );
+    expect(waited.exitCode).toBe(0);
+    expect(waited.stdout).toContain('idle');
   });
 
   it('wait --until quiet stays until background commands drain', async () => {
@@ -185,6 +214,140 @@ describe('product API command groups', () => {
     expect(closed.stdout).toContain('closed');
   });
 
+  it('launches a CLI Agent over product HTTP', async () => {
+    const fetchImpl = router({
+      'POST /api/v1/cli-agents': (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.projectId).toBe('proj-1');
+        expect(body.profile).toBe('claude');
+        expect(body.prompt).toContain('hi');
+        expect(String(body.title ?? '')).not.toContain('[zcc-live:');
+        return jsonResponse(201, { session: { id: 's1', status: 'working', projectId: 'proj-1', profile: 'claude' } });
+      }
+    });
+    const launched = await runCli(
+      ['node', 'zcc', 'agent', 'launch', '--project', 'proj-1', '--prompt', 'hi there', '--title', 'Work'],
+      { fetchImpl }
+    );
+    expect(launched.exitCode).toBe(0);
+    expect(launched.stdout).toContain('s1');
+  });
+
+  it('sends CLI Agent routing flags and does not live-tag the title', async () => {
+    const fetchImpl = router({
+      'POST /api/v1/cli-agents': (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.title).toBe('Review');
+        expect(String(body.title)).not.toContain('[zcc-live:');
+        expect(body.harnessRouting).toEqual({
+          schemaVersion: 1,
+          byAdapter: {
+            opencode: { executionState: 'autonomous', modelLevel: 'high' }
+          }
+        });
+        return jsonResponse(201, {
+          session: { id: 's1', status: 'working', projectId: 'proj-1', profile: 'opencode', title: 'Review' }
+        });
+      }
+    });
+    const launched = await runCli([
+      'node', 'zcc', 'agent', 'launch',
+      '--project', 'proj-1',
+      '--prompt', 'hi',
+      '--profile', 'opencode',
+      '--title', 'Review',
+      '--execution-state', 'autonomous',
+      '--model-level', 'high'
+    ], { fetchImpl });
+    expect(launched.exitCode).toBe(0);
+    expect(launched.stdout).toContain('s1');
+  });
+
+  it('rejects CLI Agent --role together with --model-level', async () => {
+    const launched = await runCli([
+      'node', 'zcc', 'agent', 'launch',
+      '--project', 'proj-1',
+      '--prompt', 'hi',
+      '--profile', 'opencode',
+      '--role', 'build',
+      '--model-level', 'high'
+    ], { fetchImpl: router({}) });
+    expect(launched.exitCode).toBe(2);
+    expect(launched.stderr).toMatch(/mutually exclusive/i);
+  });
+
+  it('waits, replies, and stops a CLI Agent', async () => {
+    let status = 'working';
+    let replied = '';
+    let stopped = false;
+    const fetchImpl = router({
+      'POST /api/v1/cli-agents': jsonResponse(201, {
+        session: { id: 's1', status: 'working', projectId: 'proj-1', profile: 'claude' }
+      }),
+      'GET /api/v1/cli-agents/s1': () => ({
+        session: { id: 's1', status, projectId: 'proj-1', profile: 'claude' }
+      }),
+      'POST /api/v1/cli-agents/s1/reply': (_url, init) => {
+        replied = JSON.parse(String(init?.body)).text;
+        return { ok: true };
+      },
+      'POST /api/v1/cli-agents/s1/stop': () => {
+        stopped = true;
+        return { ok: true };
+      }
+    });
+    let now = 0;
+    const waitedLaunch = await runCli(
+      ['node', 'zcc', 'agent', 'launch', '--project', 'proj-1', '--prompt', 'hi', '--wait', '--timeout', '2s'],
+      {
+        fetchImpl,
+        nowMs: () => now,
+        sleep: async () => {
+          status = 'idle';
+          now += 500;
+        }
+      }
+    );
+    expect(waitedLaunch.exitCode).toBe(0);
+    expect(waitedLaunch.stdout).toContain('idle');
+
+    status = 'working';
+    now = 0;
+    const waited = await runCli(['node', 'zcc', 'agent', 'wait', 's1', '--until', 'idle', '--timeout', '2s'], {
+      fetchImpl,
+      nowMs: () => now,
+      sleep: async () => {
+        status = 'idle';
+        now += 500;
+      }
+    });
+    expect(waited.exitCode).toBe(0);
+    expect(waited.stdout).toContain('idle');
+
+    const reply = await runCli(['node', 'zcc', 'agent', 'reply', 's1', 'also', 'check'], { fetchImpl });
+    expect(reply.exitCode).toBe(0);
+    expect(replied).toBe('also check');
+
+    const stoppedResult = await runCli(['node', 'zcc', 'agent', 'stop', 's1'], { fetchImpl });
+    expect(stoppedResult.exitCode).toBe(0);
+    expect(stopped).toBe(true);
+    expect(stoppedResult.stdout).toContain('stopped');
+  });
+
+  it('janitors tagged live sessions', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-live-cleanup-'));
+    try {
+      const fetchImpl = router({
+        'GET /api/v1/threads': { threads: [] },
+        'GET /api/v1/cli-agents': { sessions: [] }
+      });
+      const cleaned = await runCli(['node', 'zcc', 'live', 'cleanup', '--stale'], { fetchImpl, dataDir });
+      expect(cleaned.exitCode).toBe(0);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it('lists machines, projects, skills, settings, terminals, environments', async () => {
     const fetchImpl = router({
       'GET /api/v1/hosts': [{ id: 'h1', name: 'Laptop', status: 'connected' }],
@@ -200,6 +363,35 @@ describe('product API command groups', () => {
     expect((await runCli(['node', 'zcc', 'settings', 'show', '--json'], { fetchImpl })).stdout).toContain('dark');
     expect((await runCli(['node', 'zcc', 'terminal', 'list'], { fetchImpl })).stdout).toContain('s1');
     expect((await runCli(['node', 'zcc', 'environment', 'status', 'e1', '--json'], { fetchImpl })).stdout).toContain('dirty');
+  });
+
+  it('lists and kills confined project and environment processes', async () => {
+    let killedBody: unknown;
+    const fetchImpl = router({
+      'GET /api/v1/projects/p1/processes': {
+        processes: [{ pid: 4242, cwd: '/tmp/app', command: 'vite' }],
+        truncated: false,
+        supported: true
+      },
+      'POST /api/v1/projects/p1/processes/kill': (_url: URL, init?: RequestInit) => {
+        killedBody = init?.body ? JSON.parse(String(init.body)) : null;
+        return { killed: [{ pid: 4242, cwd: '/tmp/app', command: 'vite' }] };
+      },
+      'GET /api/v1/environments/e1/processes': {
+        processes: [{ pid: 99, cwd: '/tmp/wt', command: 'sleep' }],
+        truncated: false,
+        supported: true
+      }
+    });
+    const listed = await runCli(['node', 'zcc', 'project', 'processes', 'list', 'p1'], { fetchImpl });
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout).toContain('4242');
+    expect(listed.stdout).toContain('vite');
+    const killed = await runCli(['node', 'zcc', 'project', 'processes', 'kill', 'p1', '--pid', '4242'], { fetchImpl });
+    expect(killed.exitCode).toBe(0);
+    expect(killedBody).toEqual({ pids: [4242] });
+    expect((await runCli(['node', 'zcc', 'environment', 'processes', 'e1'], { fetchImpl })).stdout).toContain('sleep');
+    expect((await runCli(['node', 'zcc', 'project', 'processes', 'kill', 'p1'])).exitCode).toBe(2);
   });
 
   it('status dashboard uses projects + threads', async () => {
@@ -549,5 +741,65 @@ describe('product API command groups', () => {
     }
     expect(headers?.get('x-zcc-caller-session-id')).toBe('session-1');
     expect(headers?.get('x-zcc-caller-credential')).toBe('credential-1');
+  });
+
+  it('lists desktop browser instances and reads a host file', async () => {
+    const fetchImpl = router({
+      'POST /api/v1/desktop-browsers/instances': (_url, init) => {
+        expect(JSON.parse(String(init?.body)).hostId).toBe('host-1');
+        return { instances: [{ instanceId: 'desktop', generation: 'g1', label: 'Desktop' }] };
+      },
+      'POST /api/v1/desktop-browsers/create': (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.threadId).toBe('thr-1');
+        expect(body.url).toBe('https://example.test');
+        return { tab: { tabId: 'browser:1' } };
+      },
+      'POST /api/v1/files/read': (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.hostId).toBe('host-1');
+        expect(body.path).toBe('/tmp/shot.jpg');
+        return { content: 'hello', contentEncoding: 'utf8' };
+      }
+    });
+    const listed = await runCli(['node', 'zcc', 'browser', 'instances', '--host', 'host-1', '--json'], {
+      fetchImpl
+    });
+    expect(listed.exitCode).toBe(0);
+    expect(JSON.parse(listed.stdout).instances[0].instanceId).toBe('desktop');
+
+    const created = await runCli(
+      [
+        'node',
+        'zcc',
+        'browser',
+        'create',
+        '--host',
+        'host-1',
+        '--instance',
+        'desktop',
+        '--generation',
+        'g1',
+        '--thread',
+        'thr-1',
+        '--url',
+        'https://example.test'
+      ],
+      { fetchImpl }
+    );
+    expect(created.exitCode).toBe(0);
+    expect(created.stdout).toContain('browser:1');
+
+    const missingHost = await runCli(['node', 'zcc', 'browser', 'instances'], { fetchImpl });
+    expect(missingHost.exitCode).toBe(2);
+
+    const read = await runCli(['node', 'zcc', 'file', 'read', '/tmp/shot.jpg', '--host', 'host-1', '--json'], {
+      fetchImpl
+    });
+    expect(read.exitCode).toBe(0);
+    expect(JSON.parse(read.stdout).content).toBe('hello');
+
+    const missingFileHost = await runCli(['node', 'zcc', 'file', 'read', '/tmp/shot.jpg'], { fetchImpl });
+    expect(missingFileHost.exitCode).toBe(2);
   });
 });

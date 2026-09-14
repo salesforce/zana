@@ -40,6 +40,16 @@ describe('classifyCaller', () => {
     // …and absence of the marker is still the operator path regardless.
     expect(classifyCaller('', isOrch)).toBe('operator');
   });
+  it('promotes a verified product-server credential with no session id', () => {
+    const verify = (credential: unknown) => credential === 'product-secret';
+    expect(classifyCaller(undefined, undefined, 'product-secret', undefined, verify)).toBe('product-server');
+    expect(classifyCaller('', undefined, 'product-secret', undefined, verify)).toBe('product-server');
+    // Wrong or missing credential stays operator (human zcc still confirms).
+    expect(classifyCaller(undefined, undefined, 'nope', undefined, verify)).toBe('operator');
+    expect(classifyCaller(undefined, undefined, 'product-secret')).toBe('operator');
+    // A session id still wins — an agent cannot steal product-server even with the secret.
+    expect(classifyCaller('sess-1', undefined, 'product-secret', undefined, verify)).toBe('agent');
+  });
 });
 
 describe('authorizeRequest', () => {
@@ -65,7 +75,7 @@ describe('authorizeRequest', () => {
   });
 
   // Read-only ops (incl. the new persona.list) are allowed for agent-class callers.
-  it.each(['status', 'project.list', 'persona.list', 'team.status', 'agent.list', 'term.list', 'sched.list'])(
+  it.each(['status', 'project.list', 'persona.list', 'team.status', 'agent.list', 'term.list', 'term.get', 'sched.list'])(
     'allows agent-class caller for read op %s',
     (op) => {
       const r = authorizeRequest({ ...EXPECTED, op, callerSessionId: 'sess-1' }, EXPECTED);
@@ -98,7 +108,7 @@ describe('authorizeRequest', () => {
       expect(r).toMatchObject({ ok: true, caller: 'orchestrator' });
     }
   );
-  it.each(['status', 'project.list', 'persona.list', 'team.status', 'agent.list', 'term.list', 'sched.list'])(
+  it.each(['status', 'project.list', 'persona.list', 'team.status', 'agent.list', 'term.list', 'term.get', 'sched.list'])(
     'allows an orchestrator the read op %s',
     (op) => {
       const r = authorizeRequest(
@@ -149,6 +159,36 @@ describe('authorizeRequest', () => {
     // The message names the agent class, not orchestrator (it was never promoted).
     if (!r.ok) expect(r.message).toContain('agent-class');
   });
+
+  it.each(['term.create', 'term.reply', 'term.close', 'term.list', 'term.get', 'session.status'])(
+    'allows a verified product-server caller the unattended op %s',
+    (op) => {
+      const verify = (credential: unknown) => credential === 'product-secret';
+      const r = authorizeRequest(
+        { ...EXPECTED, op, callerCredential: 'product-secret' },
+        EXPECTED,
+        undefined,
+        undefined,
+        verify
+      );
+      expect(r).toMatchObject({ ok: true, caller: 'product-server' });
+    }
+  );
+
+  it.each(['team.launch', 'agent.send', 'sched.runNow'])(
+    'refuses a product-server caller the out-of-surface op %s',
+    (op) => {
+      const verify = (credential: unknown) => credential === 'product-secret';
+      const r = authorizeRequest(
+        { ...EXPECTED, op, callerCredential: 'product-secret' },
+        EXPECTED,
+        undefined,
+        undefined,
+        verify
+      );
+      expect(r).toMatchObject({ ok: false, code: 'FORBIDDEN_AGENT' });
+    }
+  );
 });
 
 function makeDeps(over: Partial<ControlPlaneDeps> = {}): ControlPlaneDeps {
@@ -247,6 +287,45 @@ describe('dispatchOp', () => {
     const deps = makeDeps({ closeTerminal: () => false });
     const r = await dispatchOp('term.close', { sessionId: 'ghost' }, deps);
     expect(r).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+  });
+
+  it('term.get returns a live session even when the project-scoped list is empty', async () => {
+    const session = { id: 's-live', projectId: 'p1', profile: 'claude' };
+    const deps = makeDeps({
+      listTerminals: () => [],
+      getSession: (id) => (id === 's-live' ? session as any : null)
+    });
+    await expect(dispatchOp('term.get', { sessionId: 's-live' }, deps)).resolves.toMatchObject({
+      ok: true,
+      value: session
+    });
+    await expect(dispatchOp('term.get', { sessionId: 'ghost' }, deps)).resolves.toMatchObject({
+      ok: false,
+      code: 'NOT_FOUND'
+    });
+    await expect(dispatchOp('term.get', {}, deps)).resolves.toMatchObject({ ok: false, code: 'BAD_ARGS' });
+  });
+
+  it('term.get returns a recently exited session from getSession', async () => {
+    const session = { id: 's-exited', projectId: 'p1', profile: 'claude', status: 'exited' };
+    const deps = makeDeps({
+      listTerminals: () => [],
+      getSession: (id) => (id === 's-exited' ? session as any : null)
+    });
+    await expect(dispatchOp('term.get', { sessionId: 's-exited' }, deps)).resolves.toMatchObject({
+      ok: true,
+      value: session
+    });
+  });
+
+  it('term.close succeeds when the host reports a remembered exited session', async () => {
+    const closeTerminal = vi.fn((id: string) => id === 's-exited');
+    const deps = makeDeps({ closeTerminal });
+    await expect(dispatchOp('term.close', { sessionId: 's-exited' }, deps)).resolves.toMatchObject({
+      ok: true,
+      value: true
+    });
+    expect(closeTerminal).toHaveBeenCalledWith('s-exited');
   });
 
   it('term.close-summary requires projectId and at least one sessionId', async () => {
@@ -482,7 +561,18 @@ describe('startControlPlane (real socket)', () => {
     expect(resp).toMatchObject({ ok: false, code: 'UNAUTHORIZED' });
   });
 
-  it('requires native confirmation before an unbound operator mutation dispatches', async () => {
+  it('dispatches an unbound operator mutation when no confirmer is wired', async () => {
+    const closeTerminal = vi.fn(() => true);
+    const { socketPath, tokenPath } = await boot({ closeTerminal });
+    const tok = JSON.parse(readFileSync(tokenPath, 'utf8'));
+    const allowed = await rawRequest(socketPath, [
+      JSON.stringify({ token: tok.token, nonce: tok.nonce, op: 'term.close', args: { sessionId: 's1' } }) + '\n'
+    ]);
+    expect(allowed).toMatchObject({ ok: true, value: true });
+    expect(closeTerminal).toHaveBeenCalledWith('s1');
+  });
+
+  it('honors a wired confirmer that denies an unbound operator mutation', async () => {
     const closeTerminal = vi.fn(() => true);
     const confirmOperatorMutation = vi.fn(async () => false);
     const { socketPath, tokenPath } = await boot({ closeTerminal, confirmOperatorMutation });
@@ -524,6 +614,78 @@ describe('startControlPlane (real socket)', () => {
     expect(allowed).toMatchObject({ ok: true, value: { id: 'ex-1' } });
     expect(confirmOperatorMutation).toHaveBeenCalledWith('team.launch', args);
     expect(launch).toHaveBeenCalledWith(args);
+  });
+
+  it('skips native confirmation for a verified product-server term.create', async () => {
+    const createTerminal = vi.fn(() => ({ ok: true as const, value: { id: 's-ps' } as any }));
+    const confirmOperatorMutation = vi.fn(async () => false);
+    const { socketPath, tokenPath } = await boot({
+      createTerminal,
+      confirmOperatorMutation,
+      verifyProductServerCredential: (credential) => credential === 'product-secret'
+    });
+    const tok = JSON.parse(readFileSync(tokenPath, 'utf8'));
+    const allowed = await rawRequest(socketPath, [
+      JSON.stringify({
+        token: tok.token,
+        nonce: tok.nonce,
+        op: 'term.create',
+        callerCredential: 'product-secret',
+        args: { projectId: 'p1', profile: 'claude', prompt: 'hi' }
+      }) + '\n'
+    ]);
+    expect(allowed).toMatchObject({ ok: true });
+    expect(confirmOperatorMutation).not.toHaveBeenCalled();
+    expect(createTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p1', profile: 'claude', prompt: 'hi' }),
+      { class: 'product-server' }
+    );
+  });
+
+  it('still confirms an unbound operator term.create', async () => {
+    const createTerminal = vi.fn(() => ({ ok: true as const, value: { id: 's-op' } as any }));
+    const confirmOperatorMutation = vi.fn(async () => false);
+    const { socketPath, tokenPath } = await boot({
+      createTerminal,
+      confirmOperatorMutation,
+      verifyProductServerCredential: (credential) => credential === 'product-secret'
+    });
+    const tok = JSON.parse(readFileSync(tokenPath, 'utf8'));
+    const denied = await rawRequest(socketPath, [
+      JSON.stringify({
+        token: tok.token,
+        nonce: tok.nonce,
+        op: 'term.create',
+        args: { projectId: 'p1', profile: 'claude' }
+      }) + '\n'
+    ]);
+    expect(denied).toMatchObject({ ok: false, code: 'CANCELLED' });
+    expect(confirmOperatorMutation).toHaveBeenCalledWith('term.create', expect.objectContaining({ projectId: 'p1' }));
+    expect(createTerminal).not.toHaveBeenCalled();
+  });
+
+  it('still forbids an agent-class term.create even with a product-server secret', async () => {
+    const createTerminal = vi.fn();
+    const confirmOperatorMutation = vi.fn(async () => true);
+    const { socketPath, tokenPath } = await boot({
+      createTerminal: createTerminal as any,
+      confirmOperatorMutation,
+      verifyProductServerCredential: (credential) => credential === 'product-secret'
+    });
+    const tok = JSON.parse(readFileSync(tokenPath, 'utf8'));
+    const denied = await rawRequest(socketPath, [
+      JSON.stringify({
+        token: tok.token,
+        nonce: tok.nonce,
+        op: 'term.create',
+        callerSessionId: 'sess-agent',
+        callerCredential: 'product-secret',
+        args: { projectId: 'p1', profile: 'claude' }
+      }) + '\n'
+    ]);
+    expect(denied).toMatchObject({ ok: false, code: 'FORBIDDEN_AGENT' });
+    expect(createTerminal).not.toHaveBeenCalled();
+    expect(confirmOperatorMutation).not.toHaveBeenCalled();
   });
 
   it('runs plugin.reload without native confirmation', async () => {

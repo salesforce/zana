@@ -24,14 +24,13 @@
  *     spawned. Each pty therefore receives a boot-local, session-bound MAC. The
  *     CLI forwards it with the session id; main verifies it before granting the
  *     bounded orchestrator surface. A missing/invalid MAC never promotes a
- *     caller. Requests with no bound session are operator candidates, but every
- *     mutation requires a native main-process confirmation before dispatch.
+ *     caller. Requests with no bound session are operator-class: the 0600
+ *     control token is the gate. Production does not prompt.
  *
  *     HONEST LIMITATION: same-uid processes can still read the shared control
- *     token and omit their session fields. Such a request can reach only the
- *     native confirmation ceremony; it cannot silently mutate. Preventing even
- *     the prompt requires per-process OS isolation or an operator credential
- *     unavailable to all child processes.
+ *     token and omit their session fields. Such a request is treated as
+ *     operator and can mutate. Preventing that requires per-process OS
+ *     isolation or an operator credential unavailable to all child processes.
  *
  * Protocol: one request per connection. The client connects, writes a single
  * JSON object followed by `\n`, and reads a single JSON response line back; the
@@ -99,6 +98,8 @@ export interface ControlPlaneDeps {
   listProjects: () => Array<{ id: string; name: string; tag?: string; path: string }>;
   /** Live terminal sessions for a project (or all when omitted). */
   listTerminals: (projectId?: string) => TerminalSession[];
+  /** Look up one live session by id, bypassing the project-scoped list. */
+  getSession?: (sessionId: string) => TerminalSession | null;
   /**
    * Spawn a terminal. MUST run the same realpath path-confinement the IPC
    * handler runs — passed in from index.ts so there's one copy of the gate.
@@ -136,7 +137,17 @@ export interface ControlPlaneDeps {
   isOrchestratorSession?: (sessionId: string) => boolean;
   /** Verify the boot-local credential main bound to a spawned session. */
   verifySessionCredential?: (sessionId: string, credential: unknown) => boolean;
-  /** Native human ceremony for an unbound operator candidate's mutation. */
+  /**
+   * Verify the boot-injected product-server credential. Absence of a session
+   * id plus a matching credential promotes the caller to product-server
+   * (unattended term.create/reply/close). Human `zcc` cannot present it.
+   */
+  verifyProductServerCredential?: (credential: unknown) => boolean;
+  /**
+   * Optional extra gate for an unbound operator mutation. Absent or resolving
+   * true grants; false cancels. Production omits this — the control-socket
+   * token is the operator gate.
+   */
   confirmOperatorMutation?: (op: string, args: Record<string, unknown>) => Promise<boolean>;
   authorizeOrchestratorMutation?: (
     sessionId: string,
@@ -203,7 +214,11 @@ export interface ControlPlaneDeps {
     refreshMarketplace(url: string): Promise<unknown>;
     removeMarketplace(url: string): Promise<unknown>;
     cliContributions(): Promise<unknown>;
-    runCliCommand(id: string, argv: string[]): Promise<unknown>;
+    runCliCommand(
+      id: string,
+      argv: string[],
+      context?: { projectId?: string; threadId?: string; cwd?: string }
+    ): Promise<unknown>;
     logs(id: string, n?: number): Promise<unknown>;
   };
   log?: (msg: string) => void;
@@ -235,7 +250,7 @@ export interface ControlRequest {
   args?: unknown;
 }
 
-export type CallerClass = 'operator' | 'orchestrator' | 'agent';
+export type CallerClass = 'operator' | 'orchestrator' | 'agent' | 'product-server';
 
 /** Ops an agent-class caller may invoke — the read surface only. */
 const AGENT_ALLOWED_OPS = new Set<string>([
@@ -246,14 +261,30 @@ const AGENT_ALLOWED_OPS = new Set<string>([
   'team.status',
   'agent.list',
   'term.list',
+  'term.get',
   'sched.list'
 ]);
 
 /**
+ * Ops the boot-injected product-server utility may invoke without native
+ * confirmation. The credential is env-only (never a file under ~/.zcc) and
+ * is not inherited by PTY children. Do not add these to PLUGIN_CONTROL_OPS
+ * and do not skip confirm based on a forgeable args.source field.
+ */
+const PRODUCT_SERVER_ALLOWED_OPS = new Set<string>([
+  'term.create',
+  'term.reply',
+  'term.close',
+  'term.list',
+  'term.get',
+  'session.status'
+]);
+
+/**
  * Plugin/marketplace control ops. Token-authenticated CLI callers (operator or
- * agent) may run these without the native confirmation dialog: the authoring
- * loop (`zcc plugin install` / `reload` / `dev`) would otherwise prompt on
- * every rebuild. The token file still gates who can reach the socket.
+ * agent) may run these without an optional confirmOperatorMutation hook: the
+ * authoring loop (`zcc plugin install` / `reload` / `dev`) must not block on
+ * a per-rebuild prompt. The token file still gates who can reach the socket.
  */
 const PLUGIN_CONTROL_OPS = new Set<string>([
   'plugin.install',
@@ -330,13 +361,15 @@ export function classifyCaller(
   callerSessionId: unknown,
   isOrchestratorSession?: (sessionId: string) => boolean,
   callerCredential?: unknown,
-  verifySessionCredential?: (sessionId: string, credential: unknown) => boolean
+  verifySessionCredential?: (sessionId: string, credential: unknown) => boolean,
+  verifyProductServerCredential?: (credential: unknown) => boolean
 ): CallerClass {
   // Any non-empty caller-session marker means "spawned by the app" → agent.
   // Liveness is intentionally NOT checked: a just-exited agent must not get
   // promoted to operator by racing its own teardown, and a forged/stale id only
   // ever moves a caller toward the MORE restrictive class. Only ABSENCE of the
-  // field yields operator (a human shell has no ZCC_SESSION_ID).
+  // field yields operator (a human shell has no ZCC_SESSION_ID) — unless a
+  // boot-injected product-server credential verifies.
   if (typeof callerSessionId === 'string' && callerSessionId.length > 0) {
     // App-attested orchestrator sessions get the bounded open/close surface;
     // every other app-spawned session stays a read-only agent.
@@ -346,6 +379,7 @@ export function classifyCaller(
     ) return 'orchestrator';
     return 'agent';
   }
+  if (verifyProductServerCredential?.(callerCredential) === true) return 'product-server';
   return 'operator';
 }
 
@@ -353,6 +387,7 @@ export function classifyCaller(
 function isOpRefusedFor(caller: CallerClass, op: string): boolean {
   if (caller === 'operator') return false;
   if (PLUGIN_CONTROL_OPS.has(op)) return false;
+  if (caller === 'product-server') return !PRODUCT_SERVER_ALLOWED_OPS.has(op);
   if (caller === 'orchestrator') return !ORCHESTRATOR_ALLOWED_OPS.has(op);
   return !AGENT_ALLOWED_OPS.has(op);
 }
@@ -362,7 +397,8 @@ export function authorizeRequest(
   req: ControlRequest,
   expected: { token: string; nonce: string },
   isOrchestratorSession?: (sessionId: string) => boolean,
-  verifySessionCredential?: (sessionId: string, credential: unknown) => boolean
+  verifySessionCredential?: (sessionId: string, credential: unknown) => boolean,
+  verifyProductServerCredential?: (credential: unknown) => boolean
 ):
   | { ok: true; op: string; args: Record<string, unknown>; caller: CallerClass; callerSessionId?: string }
   | { ok: false; code: string; message: string } {
@@ -380,7 +416,8 @@ export function authorizeRequest(
     req.callerSessionId,
     isOrchestratorSession,
     req.callerCredential,
-    verifySessionCredential
+    verifySessionCredential,
+    verifyProductServerCredential
   );
   if (isOpRefusedFor(caller, req.op)) {
     // An orchestrator that strays past its open/close surface, or a plain agent
@@ -494,6 +531,15 @@ export async function dispatchOp(
       return { ok: true, value: deps.listTeams() };
     case 'term.list':
       return { ok: true, value: deps.listTerminals(str(args.projectId)) };
+    case 'term.get': {
+      const id = str(args.sessionId);
+      if (!id) return { ok: false, code: 'BAD_ARGS', message: 'sessionId required' };
+      const session = deps.getSession?.(id)
+        ?? deps.listTerminals().find((row) => row.id === id)
+        ?? null;
+      if (!session) return { ok: false, code: 'NOT_FOUND', message: `no live session: ${id}` };
+      return { ok: true, value: session };
+    }
     case 'agent.list':
       return {
         ok: true,
@@ -521,6 +567,7 @@ export async function dispatchOp(
       }
       // Confinement of `cwd` happens inside createTerminal (the SAME gate the IPC
       // handler uses) — we do not pre-trust the caller's path here.
+      const environment = str(args.environment);
       return await deps.createTerminal({
         projectId,
         profile,
@@ -532,7 +579,20 @@ export async function dispatchOp(
           : undefined,
         title: str(args.title),
         cols: dim(args.cols, 80),
-        rows: dim(args.rows, 24)
+        rows: dim(args.rows, 24),
+        harnessRouting: args.harnessRouting && typeof args.harnessRouting === 'object' && !Array.isArray(args.harnessRouting)
+          ? args.harnessRouting as CreateTerminalRequest['harnessRouting']
+          : undefined,
+        worktree: args.worktree === true || args.worktree === false
+          || (args.worktree && typeof args.worktree === 'object' && !Array.isArray(args.worktree))
+          ? args.worktree as CreateTerminalRequest['worktree']
+          : undefined,
+        isolateScratch: typeof args.isolateScratch === 'boolean' || typeof args.isolateScratch === 'string'
+          ? args.isolateScratch
+          : undefined,
+        environment: environment === 'local' || environment === 'sandbox' || environment === 'microvm'
+          ? environment
+          : undefined
       }, caller);
     }
     case 'term.close': {
@@ -738,7 +798,15 @@ export async function dispatchOp(
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
           const argv = Array.isArray(args.argv) ? args.argv.map((item) => String(item)) : [];
-          return { ok: true, value: await (host?.runCliCommand(id, argv) ?? (await ensureFallbackPluginService()).runCliCommand(id, argv)) };
+          const context = {
+            ...(str(args.projectId) ? { projectId: str(args.projectId)! } : {}),
+            ...(str(args.threadId) ? { threadId: str(args.threadId)! } : {}),
+            ...(str(args.cwd) ? { cwd: str(args.cwd)! } : {})
+          };
+          return {
+            ok: true,
+            value: await (host?.runCliCommand(id, argv, context) ?? (await ensureFallbackPluginService()).runCliCommand(id, argv, context))
+          };
         }
       } catch (error) {
         return {
@@ -920,7 +988,8 @@ async function handleConnection(
       parsed,
       expected,
       deps.isOrchestratorSession,
-      deps.verifySessionCredential
+      deps.verifySessionCredential,
+      deps.verifyProductServerCredential
     );
     if (!authd.ok) {
       log(`[control] refused ${String(parsed.op)}: ${authd.code}`);
@@ -932,7 +1001,8 @@ async function handleConnection(
         authd.caller === 'operator' &&
         !AGENT_ALLOWED_OPS.has(authd.op) &&
         !PLUGIN_CONTROL_OPS.has(authd.op) &&
-        !(await deps.confirmOperatorMutation?.(authd.op, authd.args))
+        deps.confirmOperatorMutation != null &&
+        !(await deps.confirmOperatorMutation(authd.op, authd.args))
       ) {
         finish({ ok: false, code: 'CANCELLED', message: 'operator confirmation was not granted' });
         return;

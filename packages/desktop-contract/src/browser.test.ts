@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DESKTOP_BROWSER_MAX_FIND_TEXT_LENGTH,
   DESKTOP_BROWSER_MAX_URL_LENGTH,
   clampDesktopBrowserViewBounds,
   parseDesktopBrowserAttachRequest,
   parseDesktopBrowserAutomationOpenRequest,
+  parseDesktopBrowserFindInPageRequest,
+  parseDesktopBrowserFindResult,
   parseDesktopBrowserSetBoundsRequest,
   parseDesktopBrowserState,
+  parseDesktopBrowserStopFindInPageRequest,
   type DesktopBrowserViewBounds,
   type DesktopBrowserViewportBounds
 } from './browser.js';
+import { isRetryableDesktopBrowserImportReason } from './browser-import.js';
 
 interface BrowserBoundsClampTestCase {
   bounds: DesktopBrowserViewBounds;
@@ -132,6 +137,54 @@ describe('desktop browser IPC schemas', () => {
     ).toBe(false);
   });
 
+  it('accepts find-in-page requests and rejects empty or oversized text', () => {
+    expect(
+      parseDesktopBrowserFindInPageRequest({
+        tabId: 'browser:abc',
+        text: 'query',
+        forward: true,
+        newSession: true
+      }).success
+    ).toBe(true);
+    expect(
+      parseDesktopBrowserFindInPageRequest({
+        tabId: 'browser:abc',
+        text: '',
+        forward: true,
+        newSession: true
+      }).success
+    ).toBe(false);
+    expect(
+      parseDesktopBrowserFindInPageRequest({
+        tabId: 'browser:abc',
+        text: 'a'.repeat(DESKTOP_BROWSER_MAX_FIND_TEXT_LENGTH + 1),
+        forward: true,
+        newSession: true
+      }).success
+    ).toBe(false);
+    expect(
+      parseDesktopBrowserStopFindInPageRequest({
+        tabId: 'browser:abc',
+        action: 'clearSelection'
+      }).success
+    ).toBe(true);
+    expect(
+      parseDesktopBrowserStopFindInPageRequest({
+        tabId: 'browser:abc',
+        action: 'dropSelection'
+      }).success
+    ).toBe(false);
+    expect(
+      parseDesktopBrowserFindResult({
+        tabId: 'browser:abc',
+        requestId: 1,
+        activeMatchOrdinal: 1,
+        matches: 4,
+        finalUpdate: true
+      }).success
+    ).toBe(true);
+  });
+
   it('rejects oversized URLs beyond the length cap', () => {
     const longUrl = `https://example.com/${'a'.repeat(DESKTOP_BROWSER_MAX_URL_LENGTH)}`;
     expect(
@@ -142,5 +195,14 @@ describe('desktop browser IPC schemas', () => {
         visible: true
       }).success
     ).toBe(false);
+  });
+});
+
+describe('desktop browser cookie-import copy', () => {
+  it('treats keychain and FDA failures as retryable', () => {
+    expect(isRetryableDesktopBrowserImportReason('needsKeychainApproval')).toBe(true);
+    expect(isRetryableDesktopBrowserImportReason('needsFullDiskAccess')).toBe(true);
+    expect(isRetryableDesktopBrowserImportReason('notInstalled')).toBe(false);
+    expect(isRetryableDesktopBrowserImportReason('unknownSource')).toBe(false);
   });
 });

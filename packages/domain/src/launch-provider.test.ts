@@ -7,6 +7,7 @@ import {
   isCursorProfile,
   isCodexProfile,
   isGrokProfile,
+  isMastracodeProfile,
   isAgentProfile,
   providerCapabilities,
   providerUiSchema,
@@ -82,6 +83,13 @@ describe('launch-provider', () => {
       expect(isGrokProfile('grok-resume')).toBe(true);
       expect(isGrokProfile('grok-yolo')).toBe(true);
       expect(isGrokProfile('opencode')).toBe(false);
+    });
+
+    it('isMastracodeProfile matches only the mastracode family', () => {
+      expect(isMastracodeProfile('mastracode')).toBe(true);
+      expect(isMastracodeProfile('mastracode-resume')).toBe(true);
+      expect(isMastracodeProfile('mastracode-yolo')).toBe(true);
+      expect(isMastracodeProfile('grok')).toBe(false);
     });
 
     it('isAgentProfile is true for every non-shell profile', () => {
@@ -355,6 +363,39 @@ describe('launch-provider', () => {
             "isAgent": true,
             "supportsHooks": false,
           },
+          "mastracode": {
+            "acceptsPermissionMode": false,
+            "acceptsPromptArgv": false,
+            "acceptsSessionId": false,
+            "canAutoCloseOnFinish": false,
+            "emitsOscStatus": false,
+            "hasTranscript": false,
+            "injectsClaudeMcpConfig": false,
+            "isAgent": true,
+            "supportsHooks": false,
+          },
+          "mastracode-resume": {
+            "acceptsPermissionMode": false,
+            "acceptsPromptArgv": false,
+            "acceptsSessionId": false,
+            "canAutoCloseOnFinish": false,
+            "emitsOscStatus": false,
+            "hasTranscript": false,
+            "injectsClaudeMcpConfig": false,
+            "isAgent": true,
+            "supportsHooks": false,
+          },
+          "mastracode-yolo": {
+            "acceptsPermissionMode": false,
+            "acceptsPromptArgv": false,
+            "acceptsSessionId": false,
+            "canAutoCloseOnFinish": false,
+            "emitsOscStatus": false,
+            "hasTranscript": false,
+            "injectsClaudeMcpConfig": false,
+            "isAgent": true,
+            "supportsHooks": false,
+          },
           "opencode": {
             "acceptsPermissionMode": false,
             "acceptsPromptArgv": true,
@@ -590,8 +631,11 @@ describe('launch-provider', () => {
       expect(seedPromptArgs('opencode', '--weird')).toEqual(['--prompt', '--weird']);
     });
 
-    it('returns [] for shell (a shell would run the prompt as a command)', () => {
+    it('returns [] for shell and mastracode (TUI ignores --prompt / positional)', () => {
       expect(seedPromptArgs('shell', 'echo hi')).toEqual([]);
+      expect(seedPromptArgs('mastracode', 'do the thing')).toEqual([]);
+      expect(seedPromptArgs('mastracode-resume', 'do the thing')).toEqual([]);
+      expect(seedPromptArgs('mastracode-yolo', 'do the thing')).toEqual([]);
     });
 
     it('returns [] for an empty / whitespace-only prompt on every profile', () => {

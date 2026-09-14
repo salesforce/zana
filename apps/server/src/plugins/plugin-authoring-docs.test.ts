@@ -78,6 +78,7 @@ void _assertAllApiKeysListed;
 const SETTING_DESCRIPTOR_TYPES = [
   'string',
   'boolean',
+  'number',
   'select',
   'project'
 ] as const satisfies readonly PluginSettingDescriptor['type'][];
@@ -479,5 +480,11 @@ describe('zcc-plugin-authoring skill', () => {
     expect(skill).toContain('## Testing a plugin');
     expect(skill).toContain('renderSlot');
     expect(skill).toContain('loadPluginApp');
+  });
+
+  it('documents thread plugin metadata on spawn, get, update, and configure', () => {
+    expect(skill).toContain('pluginMetadata');
+    expect(skill).toContain('getPluginMetadata');
+    expect(skill).toContain('updatePluginMetadata');
   });
 });

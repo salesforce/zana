@@ -13,6 +13,13 @@ function isLiveAgentProcess(session: Pick<TerminalSession, 'status'>): boolean {
   return session.status === 'running' || session.status === 'starting';
 }
 
+/** Same predicate as `isBackgroundAgent` on the board — kept local so this
+ *  module does not import the React board file. Scheduled/headless sessions
+ *  never occupy the Needs you lane; a blocked one is remapped to Working. */
+function isBackgroundSession(session: Pick<TerminalSession, 'headless' | 'scheduled'>): boolean {
+  return !!session.headless || !!session.scheduled;
+}
+
 export function agentNavCounts(input: {
   terminals: Record<string, TerminalSession[] | undefined>;
   agentStateById: Record<string, AgentState | undefined>;
@@ -31,7 +38,9 @@ export function agentNavCounts(input: {
       const state = input.agentStateById[session.id];
       if (state === 'blocked') {
         active += 1;
-        blocked += 1;
+        // Background blocked still counts as live, but not as “need you” —
+        // matching the board’s Needs you exclusion.
+        if (!isBackgroundSession(session)) blocked += 1;
       } else if (state === 'working' || (isLiveAgentProcess(session) && state !== 'done')) {
         // Live pty sessions count even before a working/blocked status arrives
         // (unknown) and while the agent is idle between turns — the process is

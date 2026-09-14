@@ -1,0 +1,1 @@
+{"name":"zcc-plugin-host-bridge-fixture","version":"1.0.0","engines":{"zcc":">=1.0.0"},"zcc":{"name":"Bridge surface fixture","description":"Imports the published bridge surface.","branding":{"icon":"Cpu"},"server":"./server.ts","host":"./host.ts"}}

@@ -94,6 +94,17 @@ export const BUILT_IN_ACP_LAUNCH_SPECS: Readonly<
       project: [".grok/skills", ".agents/skills"],
     },
   },
+  "acp-mastracode": {
+    displayName: "Mastra Code",
+    command: "mastracode",
+    args: ["--acp"],
+    env: {},
+    permissionCli: { full: ["--dangerous-auto-approve"] },
+    nativeSkillRoots: {
+      user: [".agents/skills"],
+      project: [".agents/skills"],
+    },
+  },
   "acp-hermes-agent": {
     displayName: "Hermes Agent",
     command: "hermes",

@@ -175,6 +175,23 @@ describe('execution-state resolution', () => {
     })).toThrow('Grok Build does not support plan execution state.');
   });
 
+  it('maps Mastra Code accept-edits onto the native TUI and still rejects Plan', () => {
+    expect(resolveExecutionState(providerFor('mastracode'), {
+      config: config({ defaultExecutionState: 'accept-edits' }),
+      profile: 'mastracode',
+      extraArgs: []
+    })).toMatchObject({
+      state: 'accept-edits',
+      origin: 'portable-mapped',
+      contribution: {}
+    });
+    expect(() => resolveExecutionState(providerFor('mastracode'), {
+      config: config({ defaultExecutionState: 'plan' }),
+      profile: 'mastracode',
+      extraArgs: []
+    })).toThrow('Mastra Code does not support plan execution state.');
+  });
+
   it('blocks unsupported explicit Persona and Global execution state', () => {
     expect(() => resolveExecutionState(providerFor('pi'), {
       config: config({ defaultExecutionState: 'plan' }),
@@ -269,14 +286,16 @@ describe('execution-state resolution', () => {
   });
 
   it('ignores inherited execution on unrestricted profiles but rejects same-request Agent execution', () => {
-    for (const profile of ['claude-yolo', 'codex-yolo', 'opencode-yolo', 'grok-yolo'] as const) {
+    for (const profile of ['claude-yolo', 'codex-yolo', 'opencode-yolo', 'grok-yolo', 'mastracode-yolo'] as const) {
       const family = profile === 'claude-yolo'
         ? 'claude'
         : profile === 'codex-yolo'
           ? 'codex'
           : profile === 'grok-yolo'
             ? 'grok'
-            : 'opencode';
+            : profile === 'mastracode-yolo'
+              ? 'mastracode'
+              : 'opencode';
       expect(resolveExecutionState(providerFor(profile), {
         config: config({ defaultExecutionState: 'plan' }), profile, extraArgs: [],
         persona: { id: 'p', name: 'P', executionState: 'interactive' },

@@ -36,6 +36,14 @@ export type PluginSettingDescriptor =
     }
   | { type: 'boolean'; label: string; description?: string; default?: boolean }
   | {
+      type: 'number';
+      label: string;
+      description?: string;
+      default?: number;
+      min?: number;
+      max?: number;
+    }
+  | {
       type: 'select';
       label: string;
       description?: string;
@@ -44,7 +52,7 @@ export type PluginSettingDescriptor =
     }
   | { type: 'project'; label: string; description?: string; default?: string };
 
-export type PluginSettingValue = string | boolean;
+export type PluginSettingValue = string | number | boolean;
 export type PluginSettingDescriptors = Record<string, PluginSettingDescriptor>;
 
 export interface PluginSettingsHandle {
@@ -77,6 +85,7 @@ export interface PluginDatabaseStatement {
 export interface PluginDatabase {
   runScript(sql: string): void;
   prepare(sql: string): PluginDatabaseStatement;
+  /** Append-only. Already-applied statements are skipped on later plugin loads. */
   migrate(statements: readonly string[]): void;
   transaction<T>(fn: () => T): T;
 }
@@ -91,7 +100,7 @@ export interface PluginRpc {
   /** Typed-contract twin of `method`. Handlers are registered by name; schema is advisory. */
   register(
     contract: unknown,
-    handlers: Record<string, (args: unknown) => unknown | Promise<unknown>>
+    handlers: Record<string, (args: never) => unknown>
   ): void;
 }
 
@@ -128,6 +137,10 @@ export const PLUGIN_CLI_OUTPUT_MAX_BYTES = 1024 * 1024;
 export interface PluginCliContext {
   pluginId: string;
   argv: string[];
+  projectId?: string;
+  threadId?: string;
+  cwd?: string;
+  signal?: AbortSignal;
 }
 
 export interface PluginCliResult {
@@ -231,6 +244,72 @@ export interface PluginSdkThreadEventListArgs {
 export interface PluginSdkThreadSendArgs {
   threadId: string;
   prompt: string;
+  visibility?: 'visible' | 'agent-only';
+  mode?: 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
+}
+
+export interface PluginSdkThreadSpawnArgs {
+  projectId: string;
+  prompt: string;
+  providerId?: string;
+  parentThreadId?: string;
+  title?: string;
+  model?: string;
+  reasoningLevel?: string;
+  permissionMode?: 'accept-edits' | 'auto' | 'full';
+  visibility?: 'visible' | 'hidden';
+  environment?: { kind: 'reuse'; environmentId: string };
+  pluginMetadata?: JsonObject;
+}
+
+export interface PluginSdkThreadOutput {
+  output: string;
+}
+
+export interface PluginSdkExecutionOptions {
+  model: string;
+  reasoningLevel: string;
+  permissionMode: string;
+}
+
+export interface PluginSdkEnvironment {
+  id: string;
+  projectId: string;
+  hostId: string;
+  path: string | null;
+}
+
+export interface PluginSdkFileReadArgs {
+  hostId: string;
+  path: string;
+  rootPath?: string;
+  signal?: AbortSignal;
+}
+
+export interface PluginSdkFileReadResult {
+  content: string;
+  contentEncoding: 'utf8' | 'base64';
+  sizeBytes: number;
+}
+
+export interface PluginSdkProviderInfo {
+  id: string;
+  available: boolean;
+  capabilities?: {
+    permissionModes: string[];
+  };
+}
+
+export interface PluginSdkProviderModel {
+  id: string;
+  model: string;
+  supportedReasoningEfforts: Array<{ reasoningEffort: string }>;
+}
+
+export interface PluginSdkModelCatalog {
+  models: PluginSdkProviderModel[];
+  selectedOnlyModels: PluginSdkProviderModel[];
+  modelLoadError: { providerId: string; code: string } | null;
 }
 
 export interface PluginSdkThreadIdArgs {
@@ -268,16 +347,26 @@ export interface PluginSdkQueuedMessage {
 }
 
 export interface PluginSdkThreads {
-  spawn(args: { projectId: string; prompt: string; providerId?: string; parentThreadId?: string }): Promise<{ id: string }>;
+  spawn(args: PluginSdkThreadSpawnArgs): Promise<{ id: string }>;
   get(args: { threadId: string }): Promise<PluginSdkThreadSummary | null>;
   list(args?: PluginSdkThreadListArgs): Promise<PluginSdkThreadSummary[]>;
   events: {
     list(args: PluginSdkThreadEventListArgs): Promise<PluginSdkThreadEventRow[]>;
   };
   send(args: PluginSdkThreadSendArgs): Promise<{ id: string }>;
+  stop(args: PluginSdkThreadIdArgs): Promise<{ ok: true }>;
+  output(args: PluginSdkThreadIdArgs): Promise<PluginSdkThreadOutput>;
+  defaultExecutionOptions(args: PluginSdkThreadIdArgs): Promise<PluginSdkExecutionOptions>;
   archive(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
   fork(args: PluginSdkThreadForkArgs | PluginSdkThreadIdArgs): Promise<{ id: string }>;
   unarchive(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
+  getPluginMetadata(args: { threadId: string; pluginId?: string }): Promise<JsonObject>;
+  updatePluginMetadata(args: {
+    threadId: string;
+    pluginId?: string;
+    set?: JsonObject;
+    remove?: readonly string[];
+  }): Promise<JsonObject>;
   queuedMessages: {
     list(args: PluginSdkThreadIdArgs): Promise<PluginSdkQueuedMessage[]>;
     create(args: {
@@ -286,6 +375,59 @@ export interface PluginSdkThreads {
       senderThreadId?: string;
     }): Promise<PluginSdkQueuedMessage>;
   };
+}
+
+export interface PluginSdkEnvironments {
+  get(args: { environmentId: string }): Promise<PluginSdkEnvironment>;
+}
+
+export interface PluginSdkFiles {
+  read(args: PluginSdkFileReadArgs): Promise<PluginSdkFileReadResult>;
+}
+
+export type PluginSdkLibraryScope = 'project' | 'global';
+
+export interface PluginSdkLibraryDoc {
+  id: string;
+  relPath: string;
+  title: string;
+  summary?: string;
+  tags?: string[];
+  scope: PluginSdkLibraryScope;
+  projectId?: string;
+}
+
+export interface PluginSdkLibraryListArgs {
+  projectId?: string;
+  hostId?: string;
+}
+
+export interface PluginSdkLibraryReadArgs {
+  scope: PluginSdkLibraryScope;
+  relPath: string;
+  projectId?: string;
+  hostId?: string;
+}
+
+export interface PluginSdkLibraryWriteArgs {
+  scope: PluginSdkLibraryScope;
+  relPath: string;
+  content: string;
+  projectId?: string;
+  hostId?: string;
+}
+
+export interface PluginSdkLibrary {
+  list(args?: PluginSdkLibraryListArgs): Promise<PluginSdkLibraryDoc[]>;
+  read(
+    args: PluginSdkLibraryReadArgs
+  ): Promise<{ ok: true; content: string } | { ok: false; message: string }>;
+  write(args: PluginSdkLibraryWriteArgs): Promise<{ ok: true } | { ok: false; message: string }>;
+}
+
+export interface PluginSdkProviders {
+  list(args?: { environmentId?: string }): Promise<PluginSdkProviderInfo[]>;
+  models(args: { environmentId?: string; providerId: string }): Promise<PluginSdkModelCatalog>;
 }
 
 export interface PluginSdkInboxPushArgs {
@@ -311,10 +453,91 @@ export interface PluginSdk {
   threads: PluginSdkThreads;
   inbox: PluginSdkInbox;
   projects: PluginSdkProjects;
+  environments: PluginSdkEnvironments;
+  files: PluginSdkFiles;
+  library: PluginSdkLibrary;
+  providers: PluginSdkProviders;
+  experimental_desktopBrowsers: PluginSdkDesktopBrowsers;
+}
+
+export interface PluginSdkDesktopBrowserScope {
+  hostId: string;
+  instanceId: string;
+  generation: string;
+  threadId: string;
+}
+
+export interface PluginSdkDesktopBrowserTab {
+  tabId: string;
+  threadId?: string;
+  url?: string;
+  title?: string;
+  profile: { kind: 'personal' } | { kind: 'automation'; id: string };
+  control?: { leaseId: string } | null;
+}
+
+export interface PluginSdkDesktopBrowsers {
+  listInstances(input: { hostId: string }): Promise<{
+    instances: Array<{ instanceId: string; generation: string; label: string; hostId: string }>;
+  }>;
+  listTabs(input: PluginSdkDesktopBrowserScope): Promise<{ tabs: PluginSdkDesktopBrowserTab[] }>;
+  createTab(
+    input: PluginSdkDesktopBrowserScope & { url?: string; presentation?: 'hidden' | 'reveal' }
+  ): Promise<{ tab: PluginSdkDesktopBrowserTab }>;
+  acquireControl(
+    input: PluginSdkDesktopBrowserScope & {
+      tabIds: string[];
+      controllerLabel: string;
+      ttlMs?: number;
+      allowPersonal?: boolean;
+    }
+  ): Promise<{
+    hostId: string;
+    instanceId: string;
+    generation: string;
+    threadId: string;
+    leaseId: string;
+    tabIds: string[];
+    controllerLabel: string;
+    expiresAt: number;
+  }>;
+  openConnection(
+    input: PluginSdkDesktopBrowserScope & { leaseId: string }
+  ): Promise<{ hostId: string; wsEndpoint: string; expiresAt: number }>;
+  releaseControl(input: PluginSdkDesktopBrowserScope & { leaseId: string }): Promise<{ ok: true }>;
+  revealTab(input: PluginSdkDesktopBrowserScope & { tabId: string }): Promise<{ ok: true }>;
+  closeTab(input: PluginSdkDesktopBrowserScope & { tabId: string }): Promise<{ ok: true }>;
+  captureTab(input: PluginSdkDesktopBrowserScope & { tabId: string }): Promise<{ base64: string; mimeType: string }>;
+  listImportSources(input: {
+    hostId: string;
+    instanceId: string;
+    generation: string;
+  }): Promise<{ sources: unknown[] }>;
+  importCookies(input: {
+    hostId: string;
+    instanceId: string;
+    generation: string;
+    sourceId: string;
+    sourceProfileDirectory: string;
+    profile?: { kind: 'personal' } | { kind: 'automation'; id: string };
+  }): Promise<unknown>;
+  subscribe(
+    input: PluginSdkDesktopBrowserScope & {
+      onChange: (result: { tabs: PluginSdkDesktopBrowserTab[] }) => void;
+      onError: (error: Error) => void;
+    }
+  ): { dispose(): void };
 }
 
 export interface PluginHostClient {
-  call(method: string, input: unknown, options: { hostId: string }): Promise<unknown>;
+  call(
+    method: string,
+    input?: unknown,
+    options?: { hostId?: string; signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<unknown>;
+  experimental_onWorkerExit(
+    handler: (event: { readonly hostId: string }) => void | Promise<void>
+  ): () => void;
 }
 
 export interface PluginHostApi {
@@ -331,8 +554,27 @@ export interface PluginAgentToolContext {
 export interface PluginAgentToolRegistration {
   name: string;
   description: string;
+  /**
+   * Zod schema (validated per call) or a JSON-schema object. Preferred over
+   * `inputSchema`.
+   */
+  parameters?: unknown;
+  /** @deprecated Alias for `parameters`. */
   inputSchema?: unknown;
+  /** Optional usage snippet appended to the session when this tool is selected. */
+  instructions?: string;
   presentation?: PluginAgentToolPresentation;
+  execute(input: unknown, ctx: PluginAgentToolContext): unknown | Promise<unknown>;
+}
+
+/** Stored record after `registerTool` — JSON schema plus parse/execute. */
+export interface PluginAgentToolRecord {
+  name: string;
+  description: string;
+  presentation: PluginAgentToolPresentation | null;
+  instructions: string | null;
+  inputSchema: unknown;
+  parse(input: unknown): { ok: true; value: unknown } | { ok: false; error: string };
   execute(input: unknown, ctx: PluginAgentToolContext): unknown | Promise<unknown>;
 }
 
@@ -457,10 +699,44 @@ export interface PluginPtyHarnessDeclaration {
 export interface PluginAgentConfigureContext {
   threadId?: string;
   projectId?: string;
+  origin?: { kind?: 'fork' | null; pluginId?: string | null };
+  /**
+   * This plugin's thread namespace, or `{}` when absent. Deep-frozen for the
+   * configure call. Treat values as untrusted.
+   */
+  pluginMetadata?: JsonObject;
+  thread?: PluginSdkThreadSummary & {
+    title?: string | null;
+    parentThreadId?: string | null;
+    sourceThreadId?: string | null;
+  };
+  project?: {
+    id: string;
+    kind?: 'standard' | 'personal';
+    name?: string;
+    gitRemoteUrl?: string | null;
+  };
+  environment?: {
+    id: string;
+    name?: string | null;
+    path?: string | null;
+    workspaceProvisionType?: 'unmanaged' | 'managed-worktree' | 'personal';
+    branchName?: string | null;
+  };
+  host?: { id: string; name: string };
+  provider?: {
+    id: string;
+    model?: string;
+    capabilities?: { supportsNativeUserQuestion?: boolean };
+  };
 }
 
+export type PluginAgentConfiguredTool =
+  | string
+  | { name: string; parameters?: unknown };
+
 export interface PluginAgentConfigureResult {
-  tools?: string[];
+  tools?: PluginAgentConfiguredTool[];
   skills?: string[];
   instructions?: string;
 }
@@ -480,7 +756,7 @@ export interface PluginAgents {
   ): void;
 }
 
-import type { JsonValue, ProviderFork } from '@zana-ai/zcc-domain/thread-runtime';
+import type { JsonObject, JsonValue, ProviderFork } from '@zana-ai/zcc-domain/thread-runtime';
 import type { PluginServices } from './plugin-services.js';
 import type {
   PluginProviderExtensionKindDeclaration,

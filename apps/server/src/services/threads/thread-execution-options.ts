@@ -8,7 +8,9 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import {
+  getThreadProvider,
   listThreadProviders,
+  permissionModeForLaunchProfile,
   type ThreadProviderRecord
 } from './thread-provider-catalog.js';
 
@@ -92,6 +94,7 @@ export function threadProviderFamily(providerId: string): string | null {
   if (providerId === 'acp-cursor') return 'cursor';
   if (providerId === 'acp-opencode') return 'opencode';
   if (providerId === 'acp-grok') return 'grok';
+  if (providerId === 'acp-mastracode') return 'mastracode';
   if (providerId === 'codex' || providerId === 'pi') return providerId;
   return null;
 }
@@ -318,6 +321,74 @@ export function modelsForThreadProvider(
     return withCatalogEfforts(FAKE_FALLBACK_MODELS, ['low', 'medium', 'high'], 'fake-model');
   }
   return [];
+}
+
+export interface PluginHostModelRow {
+  id: string;
+  model: string;
+  isDefault?: boolean;
+  supportedReasoningEfforts: Array<{ reasoningEffort: string }>;
+}
+
+/** Static model catalog for in-process plugin host APIs (no live daemon list). */
+export function pluginHostModelCatalog(providerId: string): {
+  models: PluginHostModelRow[];
+  selectedOnlyModels: PluginHostModelRow[];
+  modelLoadError: null;
+} {
+  const provider = getThreadProvider(providerId);
+  const declared = provider?.models?.fallback ?? [];
+  const rows: PluginHostModelRow[] = declared.length > 0
+    ? declared.map((model) => ({
+        id: model.id,
+        model: model.id,
+        isDefault: model.isDefault,
+        supportedReasoningEfforts: model.supportedReasoningEfforts.map((effort) => ({
+          reasoningEffort: effort.reasoningEffort
+        }))
+      }))
+    : modelsForThreadProvider(providerId, provider?.capabilities.reasoningLevels ?? []).map((model) => ({
+        id: model.id,
+        model: model.model,
+        isDefault: model.isDefault,
+        supportedReasoningEfforts: model.supportedReasoningEfforts.map((effort) => ({
+          reasoningEffort: effort.reasoningEffort
+        }))
+      }));
+  return { models: rows, selectedOnlyModels: rows, modelLoadError: null };
+}
+
+export function resolvePluginDefaultExecutionOptions(input: {
+  providerId: string;
+  lastModel: string | null;
+  lastReasoningLevel: string | null;
+}): {
+  model: string;
+  reasoningLevel: string;
+  permissionMode: PermissionMode;
+} {
+  const provider = getThreadProvider(input.providerId);
+  const catalog = pluginHostModelCatalog(input.providerId);
+  const defaultRow = catalog.models.find((row) => row.isDefault) ?? catalog.models[0];
+  const lastRow = input.lastModel
+    ? catalog.models.find((row) => row.id === input.lastModel || row.model === input.lastModel)
+    : undefined;
+  const modelRow = lastRow ?? defaultRow;
+  const model = modelRow?.model ?? modelRow?.id ?? input.providerId;
+  const allowedReasons = new Set(
+    (modelRow?.supportedReasoningEfforts ?? []).map((effort) => effort.reasoningEffort)
+  );
+  const reasoningLevel = (
+    [input.lastReasoningLevel, 'medium', 'low', 'high', 'none'] as const
+  ).find((level): level is string => typeof level === 'string' && allowedReasons.has(level))
+    ?? [...allowedReasons][0]
+    ?? 'medium';
+  const allowedModes = provider?.capabilities.permissionModes ?? ['accept-edits'];
+  const profileMode = permissionModeForLaunchProfile(input.providerId);
+  const permissionMode = permissionModeSchema.parse(
+    (allowedModes.includes(profileMode) ? profileMode : allowedModes[0]) ?? 'full'
+  );
+  return { model, reasoningLevel, permissionMode };
 }
 
 export function selectedOnlyModelsForThreadProvider(providerId: string): AvailableModel[] {

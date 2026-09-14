@@ -36,7 +36,8 @@ vi.mock('node-pty', () => ({
 
 // Keep claude-profile spawns from writing a real ~/.zcc/mcp file.
 vi.mock('../mcp-config.js', () => ({
-  ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`
+  ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
+  alwaysOnPluginMcpAllowlist: () => []
 }));
 
 import { PtyManager, cleanExtraArgs, extractPinnedSessionId } from '../pty.js';

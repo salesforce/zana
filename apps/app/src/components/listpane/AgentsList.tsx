@@ -69,22 +69,39 @@ const STATE_LABEL: Record<AgentState, string> = {
   waiting: 'Waiting for model'
 };
 
+/** Same predicate as `isBackgroundAgent` on the board. Scheduled/headless
+ *  sessions never occupy the Needs you group. */
+function isBackgroundSession(session?: Pick<TerminalSession, 'headless' | 'scheduled'>): boolean {
+  return !!session?.headless || !!session?.scheduled;
+}
+
 /**
- * Does a side-list row belong in "Needs you"? Always when `blocked` (a real
- * permission prompt / question). Additionally — ONLY when `promoteTriage` is on
- * (the optional `agentListNeedsYouFromTriage` setting) — when it's an at-rest
- * (non-working) agent whose triage verdict surfaces at `sensitivity` (the same
+ * Does a side-list row belong in "Needs you"? Foreground `blocked` (a real
+ * permission prompt / question) always does. Scheduled/headless blocked
+ * sessions do not — they remap to Working on the board, so they must not nag
+ * here either. Additionally — ONLY when `promoteTriage` is on (the optional
+ * `agentListNeedsYouFromTriage` setting) — when it's an at-rest (non-working)
+ * foreground agent whose triage verdict surfaces at `sensitivity` (the same
  * mapping the board uses). With the setting off, a triaged idle agent is never
  * promoted and falls through to Idle. Pure + exported for unit tests.
  */
 export function sideListNeedsYou(
-  r: Pick<AgentRow, 'state' | 'triage'>,
+  r: Pick<AgentRow, 'state' | 'triage'> & { session?: Pick<TerminalSession, 'headless' | 'scheduled'> },
   promoteTriage: boolean,
   sensitivity: 'high' | 'medium' | 'low'
 ): boolean {
+  if (isBackgroundSession(r.session)) return false;
   if (r.state === 'blocked') return true;
   if (!promoteTriage || !r.triage || r.state === 'working') return false;
   return idleSurfacesToNeedsYou(r.triage.resolution, r.triage.confidence ?? 0, sensitivity);
+}
+
+/** Working group membership: actively working, or a background agent that is
+ *  `blocked` (the board remaps those to Working so they never vanish). */
+export function sideListWorking(
+  r: Pick<AgentRow, 'state'> & { session?: Pick<TerminalSession, 'headless' | 'scheduled'> }
+): boolean {
+  return r.state === 'working' || (isBackgroundSession(r.session) && r.state === 'blocked');
 }
 
 export function openFullAgentsList(setView: (view: 'list') => void): void {
@@ -269,7 +286,8 @@ export function AgentsListPane() {
   const rows = useAgentRows();
   // Optional (off by default): also pull a triage-flagged idle agent into the
   // "Needs you" group, using the same sensitivity mapping as the board. When
-  // off, only `blocked` agents are "Needs you" and a triaged idle one stays Idle.
+  // off, only foreground `blocked` agents are "Needs you" (scheduled/headless
+  // blocked remaps to Working) and a triaged idle one stays Idle.
   const promoteTriage = useData((s) => s.agentListNeedsYouFromTriage);
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const organization = useData((s) => s.agentsListOrganization);
@@ -461,8 +479,10 @@ export function AgentsListPane() {
     if (entry.kind === 'thread') return entry.state === 'blocked';
     return needsYou(entry.row);
   };
-  const entryState = (entry: LiveEntry): AgentState =>
-    entry.kind === 'thread' ? entry.state : entry.row.state;
+  const entryWorking = (entry: LiveEntry): boolean => {
+    if (entry.kind === 'thread') return entry.state === 'working';
+    return sideListWorking(entry.row);
+  };
 
   // Group live foreground agents + threads by what they need from you. `done` and
   // `unknown` collapse into the Idle bucket — neither is actively running nor
@@ -479,11 +499,11 @@ export function AgentsListPane() {
   const liveGroups: Array<{ key: string; label: string; entries: LiveEntry[] }> = [
     { key: 'pinned', label: 'Pinned', entries: pinnedEntries },
     { key: 'blocked', label: 'Needs you', entries: liveEntries.filter(entryNeedsYou) },
-    { key: 'working', label: 'Working', entries: liveEntries.filter((entry) => entryState(entry) === 'working') },
+    { key: 'working', label: 'Working', entries: liveEntries.filter(entryWorking) },
     {
       key: 'idle',
       label: 'Idle',
-      entries: liveEntries.filter((entry) => entryState(entry) !== 'working' && !entryNeedsYou(entry))
+      entries: liveEntries.filter((entry) => !entryWorking(entry) && !entryNeedsYou(entry))
     }
   ].filter((g) => g.entries.length > 0);
 
@@ -837,7 +857,7 @@ function AgentSideListRow({
         </span>
         <span className="agents-row-meta">
           <span className="agents-row-project">{row.projectName}</span>
-          {row.state === 'blocked' && !exited ? (
+          {row.state === 'blocked' && !exited && !row.session.headless && !row.session.scheduled ? (
             <span className="agents-row-needs-you">Needs you</span>
           ) : null}
           {!exited && <span className="agents-row-duration">{dur}</span>}
