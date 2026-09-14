@@ -1,7 +1,9 @@
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { runJoinStandalone } from '../../../host-daemon/src/join-standalone.mjs';
 import { startProductServer, type ProductServer } from './product-server.js';
 
@@ -16,6 +18,14 @@ afterEach(async () => {
 });
 
 describe('join-standalone pairing', () => {
+  it(`ships host-rpc protocol ${HOST_RPC_PROTOCOL_VERSION}`, () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../../host-daemon/src/join-standalone.mjs'),
+      'utf8'
+    );
+    expect(source).toMatch(new RegExp(`PROTOCOL_VERSION = ${HOST_RPC_PROTOCOL_VERSION};`));
+  });
+
   it('enrolls a join code, opens the host websocket, and reports connected', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-join-standalone-server-'));
     server = await startProductServer({

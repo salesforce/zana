@@ -87,6 +87,7 @@
     "@testing-library/react": "^16.3.2",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^26.2.0",
+    "@types/ws": "^8.18.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",

@@ -143,8 +143,9 @@ export default function plugin(zcc: ZccPluginApi) {
   zcc.ui.registerMentionProvider({
     id: 'task',
     label: 'Tasks',
-    async search({ query }) {
+    async search(ctx) {
       const store = await load();
+      const query = typeof ctx === 'string' ? ctx : ctx.query;
       const needle = typeof query === 'string' ? query.trim().toLowerCase() : '';
       return store.items
         .filter(

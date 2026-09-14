@@ -5,8 +5,10 @@ import type { HostRpcCommand } from '@zana-ai/zcc-contracts/host-rpc';
 import {
   threadTabsSchema,
   type ExperimentalDesktopBrowserAcquireRequest,
+  type ExperimentalDesktopBrowserCapture,
   type ExperimentalDesktopBrowserCreateRequest,
   type ExperimentalDesktopBrowserImportCookiesRequest,
+  type ExperimentalDesktopBrowserImportSources,
   type ExperimentalDesktopBrowserInstanceRequest,
   type ExperimentalDesktopBrowserLease,
   type ExperimentalDesktopBrowserLeaseRequest,
@@ -436,7 +438,7 @@ export async function captureDesktopBrowserTab(
   input: ExperimentalDesktopBrowserTabRequest
 ) {
   authorize(ctx, input);
-  return callDesktopBrowserRpc(ctx, input.hostId, {
+  return callDesktopBrowserRpc<ExperimentalDesktopBrowserCapture>(ctx, input.hostId, {
     type: 'desktop.browser.capture_tab',
     ...scopeCommand(input),
     tabId: input.tabId
@@ -447,7 +449,7 @@ export async function listDesktopBrowserImportSources(
   ctx: Pick<ProductHttpContext, 'hostHub'>,
   input: ExperimentalDesktopBrowserInstanceRequest
 ) {
-  return callDesktopBrowserRpc(ctx, input.hostId, {
+  return callDesktopBrowserRpc<ExperimentalDesktopBrowserImportSources>(ctx, input.hostId, {
     type: 'desktop.browser.list_import_sources',
     instanceId: input.instanceId,
     generation: input.generation

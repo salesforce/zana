@@ -116,7 +116,7 @@ export function createDesktopBrowserBrokerClient(args: {
         sendRegistration();
         args.broker.setHostId(descriptor.hostId);
       });
-      connection.on('message', (data, binary) => {
+      connection.on('message', (data: { toString(): string }, binary: boolean) => {
         let request;
         try {
           if (binary) throw new Error('Expected a JSON broker request');

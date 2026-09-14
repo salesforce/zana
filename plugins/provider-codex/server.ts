@@ -1,7 +1,7 @@
 import type { ZccPluginApi } from "@zana-ai/zcc-plugin-sdk";
 
 function booleanSetting(
-  value: string | boolean | undefined,
+  value: string | number | boolean | undefined,
   fallback: boolean,
 ): boolean {
   return typeof value === "boolean" ? value : fallback;

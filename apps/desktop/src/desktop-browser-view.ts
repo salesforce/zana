@@ -10,6 +10,7 @@ import {
   type DesktopBrowserNavigateRequest,
   type DesktopBrowserOpenTabRequest,
   type DesktopBrowserScopedOpenTabRequest,
+  type DesktopBrowserControlState,
   type DesktopBrowserFindInPageRequest,
   type DesktopBrowserFindResult,
   type DesktopBrowserSetBoundsRequest,
@@ -17,6 +18,7 @@ import {
   type DesktopBrowserSnapshot,
   type DesktopBrowserState,
   type DesktopBrowserStopFindInPageRequest,
+  type DesktopBrowserRevealRequest,
   type DesktopBrowserViewBounds,
   type DesktopBrowserViewportBounds
 } from '@zana-ai/zcc-desktop-contract';
@@ -79,6 +81,8 @@ export type DesktopBrowserHostWebContentsPayload =
   | DesktopBrowserScopedOpenTabRequest
   | DesktopBrowserSnapshot
   | DesktopBrowserFindResult
+  | DesktopBrowserControlState
+  | DesktopBrowserRevealRequest
   | { tabId: string }
   | AppCommandId;
 

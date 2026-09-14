@@ -10,7 +10,7 @@ export interface DbStatement {
 
 export type Db = {
   prepare(sql: string): DbStatement;
-  transaction<T>(fn: () => T): T | (() => T);
+  transaction<T>(fn: () => T): () => T;
 };
 
 export function wrapPluginDatabase(database: {

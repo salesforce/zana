@@ -6,6 +6,12 @@ interface SpawnCall {
   args: string[];
 }
 
+/** Tests name harness CLIs by basename; `resolveHarnessCommand` may absolutize PATH hits. */
+function snapshotCommand(command: string): string {
+  if (!command.includes('/') && !command.includes('\\')) return command;
+  return command.replace(/.*[/\\]/, '') || command;
+}
+
 const spawns: SpawnCall[] = [];
 
 vi.mock('node-pty', () => ({
@@ -64,7 +70,8 @@ function spawn(profile: LaunchProfileId, harnessRouting?: HarnessModelRoutingV1)
     config: CONFIG,
     harnessRouting
   });
-  return spawns.at(-1)!;
+  const last = spawns.at(-1)!;
+  return { command: snapshotCommand(last.command), args: last.args };
 }
 
 describe('structured providers final local argv', () => {
@@ -215,7 +222,8 @@ describe('structured providers final local argv', () => {
       config: { ...CONFIG, harnessRouting: routing('opencode', { modelTargetId: 'llmgw/gpt-5.6-sol-1M' }) },
       harnessRouting: routing('opencode', { roleTargetId: 'custom-agent' })
     });
-    expect(spawns.at(-1)).toEqual({
+    const last = spawns.at(-1)!;
+    expect({ command: snapshotCommand(last.command), args: last.args }).toEqual({
       command: 'opencode',
       args: ['--agent', 'custom-agent']
     });
@@ -237,7 +245,8 @@ describe('structured providers final local argv', () => {
       }
     });
 
-    expect(spawns.at(-1)).toEqual({
+    const last = spawns.at(-1)!;
+    expect({ command: snapshotCommand(last.command), args: last.args }).toEqual({
       command: 'pi',
       args: ['--provider', 'anthropic', '--model', 'claude-sonnet-4-5', '--thinking', 'high']
     });

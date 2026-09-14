@@ -144,6 +144,10 @@ describe('invokeHostSessionTool', () => {
   });
 
   it('lists schedules for this project and emits run-now on the hub', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-data-'));
+    const previousDataDir = process.env.ZCC_DATA_DIR;
+    process.env.ZCC_DATA_DIR = dataDir;
+    try {
     const root = mkdtempSync(join(tmpdir(), 'zcc-sched-'));
     const dir = join(root, '.zcc', 'schedules');
     mkdirSync(dir, { recursive: true });
@@ -185,6 +189,10 @@ describe('invokeHostSessionTool', () => {
       input: { id: 'sched-1', enabled: false }
     });
     expect(toggled.success).toBe(true);
+    } finally {
+      if (previousDataDir === undefined) delete process.env.ZCC_DATA_DIR;
+      else process.env.ZCC_DATA_DIR = previousDataDir;
+    }
   });
 
   it('answers inbox_search and suggest_action', async () => {

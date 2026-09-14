@@ -10,6 +10,7 @@ import {
   parseDesktopBrowserTabRef
 } from '@zana-ai/zcc-desktop-contract';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { desktopBrowserImportSourceIdSchema } from '@zana-ai/zcc-host-daemon-contract';
 import {
   bindAutomationTargetThread,
   peekPendingBrowserOpen,
@@ -174,7 +175,7 @@ export function registerDesktopBrowserIpc(
       : { kind: 'personal' as const };
     return browserImport.importCookies(
       {
-        sourceId: parsed.data.sourceId,
+        sourceId: desktopBrowserImportSourceIdSchema.parse(parsed.data.sourceId),
         sourceProfileDirectory: parsed.data.sourceProfileDirectory
       },
       manager.profileSession(profile)

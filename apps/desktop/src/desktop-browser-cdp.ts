@@ -669,7 +669,7 @@ function createConnection(
       socket.terminate();
     }
   });
-  socket.on("message", async (data, binary) => {
+  socket.on("message", async (data: { toString(): string }, binary: boolean) => {
     let command: CdpCommand;
     try {
       if (binary) throw new Error("Text CDP messages required");
@@ -773,7 +773,7 @@ export async function createDesktopBrowserCdpBridge(args: {
       socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       return;
     }
-    websocketServer.handleUpgrade(request, socket, head, (websocket) => {
+    websocketServer.handleUpgrade(request, socket, head, (websocket: WebSocket) => {
       grant.disconnect = createConnection(
         websocket,
         args.adapter,

@@ -66,6 +66,7 @@ import {
   releaseDesktopBrowserControl
 } from '../services/desktop-browsers.js';
 import { cronMatches, cronMinuteKey } from '@zana-ai/zcc-plugin-sdk';
+import { desktopBrowserImportSourceIdSchema } from '@zana-ai/zcc-host-daemon-contract';
 import {
   bindPluginServices,
   createPluginServicesRegistry,
@@ -481,7 +482,12 @@ export function createPluginApi(
           runScript,
           prepare: (sql) => db.prepare(sql),
           migrate: (statements) => {
-            applyPluginSqliteMigrations(runScript, (sql) => db.prepare(sql), (fn) => beginTxn.call(db, fn)(), statements);
+            applyPluginSqliteMigrations(
+              runScript,
+              (sql) => db.prepare(sql),
+              <T>(fn: () => T): T => beginTxn.call(db, fn)() as T,
+              statements
+            );
           },
           transaction: <T>(fn: () => T): T => beginTxn.call(db, fn)() as T
         };
@@ -972,8 +978,7 @@ export function createPluginApi(
           assertLive();
           if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
           const result = await captureDesktopBrowserTab(options.productContext, input);
-          if (!('base64' in result)) throw new Error('Desktop did not return a screenshot');
-          return result;
+          return { base64: result.base64, mimeType: result.mimeType };
         },
         listImportSources: async (input) => {
           assertLive();
@@ -984,7 +989,11 @@ export function createPluginApi(
           assertLive();
           if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
           return importDesktopBrowserCookies(options.productContext, {
-            ...input,
+            hostId: input.hostId,
+            instanceId: input.instanceId,
+            generation: input.generation,
+            sourceId: desktopBrowserImportSourceIdSchema.parse(input.sourceId),
+            sourceProfileDirectory: input.sourceProfileDirectory,
             profile: input.profile ?? { kind: 'personal' }
           });
         },
@@ -1070,7 +1079,9 @@ export function createPluginApi(
       register: (_contract, handlers) => {
         assertLive();
         for (const [name, handler] of Object.entries(handlers)) {
-          if (typeof handler === 'function') rpc.set(name, handler);
+          if (typeof handler === 'function') {
+            rpc.set(name, handler as (args: unknown) => unknown);
+          }
         }
       }
     },

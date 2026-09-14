@@ -100,7 +100,7 @@ export interface PluginRpc {
   /** Typed-contract twin of `method`. Handlers are registered by name; schema is advisory. */
   register(
     contract: unknown,
-    handlers: Record<string, (args: unknown) => unknown | Promise<unknown>>
+    handlers: Record<string, (args: never) => unknown>
   ): void;
 }
 
@@ -467,14 +467,23 @@ export interface PluginSdkDesktopBrowserScope {
   threadId: string;
 }
 
+export interface PluginSdkDesktopBrowserTab {
+  tabId: string;
+  threadId?: string;
+  url?: string;
+  title?: string;
+  profile: { kind: 'personal' } | { kind: 'automation'; id: string };
+  control?: { leaseId: string } | null;
+}
+
 export interface PluginSdkDesktopBrowsers {
   listInstances(input: { hostId: string }): Promise<{
     instances: Array<{ instanceId: string; generation: string; label: string; hostId: string }>;
   }>;
-  listTabs(input: PluginSdkDesktopBrowserScope): Promise<{ tabs: unknown[] }>;
+  listTabs(input: PluginSdkDesktopBrowserScope): Promise<{ tabs: PluginSdkDesktopBrowserTab[] }>;
   createTab(
     input: PluginSdkDesktopBrowserScope & { url?: string; presentation?: 'hidden' | 'reveal' }
-  ): Promise<{ tab: unknown }>;
+  ): Promise<{ tab: PluginSdkDesktopBrowserTab }>;
   acquireControl(
     input: PluginSdkDesktopBrowserScope & {
       tabIds: string[];
@@ -514,7 +523,7 @@ export interface PluginSdkDesktopBrowsers {
   }): Promise<unknown>;
   subscribe(
     input: PluginSdkDesktopBrowserScope & {
-      onChange: (result: { tabs: unknown[] }) => void;
+      onChange: (result: { tabs: PluginSdkDesktopBrowserTab[] }) => void;
       onError: (error: Error) => void;
     }
   ): { dispose(): void };

@@ -1,11 +1,27 @@
-function isSafeRelPath(relPath) {
+export interface DocDirectiveAttributes {
+  path?: unknown;
+  title?: unknown;
+  source?: unknown;
+  scope?: unknown;
+  vault?: unknown;
+}
+
+export interface ParsedDocDirective {
+  path: string;
+  title: string;
+  source: 'library' | 'workspace';
+  scope: 'project' | 'global';
+  vault: string | null;
+}
+
+function isSafeRelPath(relPath: string): boolean {
   const normalized = String(relPath).split('\\').join('/').trim();
   if (!normalized || normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized)) return false;
   const parts = normalized.split('/');
   return parts.every((part) => part.length > 0 && part !== '.' && part !== '..');
 }
 
-export function parseDocDirectiveAttributes(attributes) {
+export function parseDocDirectiveAttributes(attributes: DocDirectiveAttributes | null | undefined): ParsedDocDirective | null {
   const rawPath = typeof attributes?.path === 'string' ? attributes.path.trim() : '';
   if (!isSafeRelPath(rawPath)) return null;
   const path = rawPath.split('\\').join('/');

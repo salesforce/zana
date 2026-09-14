@@ -38,7 +38,14 @@ const entries = [
   {
     source: 'src/testing/app-entry.ts',
     output: 'dist/testing/app.js',
-    external: ['react', 'react/*', '@testing-library/react', '@testing-library/react/*']
+    external: [
+      'react',
+      'react/*',
+      'react-dom',
+      'react-dom/*',
+      '@testing-library/react',
+      '@testing-library/react/*'
+    ]
   },
   {
     source: 'src/host.ts',

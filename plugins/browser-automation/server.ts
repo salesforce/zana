@@ -4,7 +4,9 @@ import type { ZccPluginApi, PluginRpcHandlers } from "@zana-ai/zcc-plugin-sdk";
 import { z } from "zod";
 import {
   hostContract,
+  outputSchema,
   rpcContract,
+  runtimeStateSchema,
   sessionSchema,
   type RunOutput,
   type Session,
@@ -261,10 +263,12 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
       await save(record);
       active.set(session.id, record);
       while (true) {
-        const runtime = await host.call(
-          "prepare",
-          {},
-          { hostId: session.hostId, signal },
+        const runtime = runtimeStateSchema.parse(
+          await host.call(
+            "prepare",
+            {},
+            { hostId: session.hostId, signal },
+          ),
         );
         if (runtime.status === "ready") break;
         zcc.log.info(
@@ -325,14 +329,16 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
       throw new Error("Session stopped or expired; open a new session");
     busy.set(input.sessionId, (busy.get(input.sessionId) ?? 0) + 1);
     try {
-      const result = await host.call(
-        "run",
-        {
-          sessionId: input.sessionId,
-          script: input.script,
-          timeoutMs: input.timeoutMs,
-        },
-        { hostId: record.session.hostId, signal },
+      const result = outputSchema.parse(
+        await host.call(
+          "run",
+          {
+            sessionId: input.sessionId,
+            script: input.script,
+            timeoutMs: input.timeoutMs,
+          },
+          { hostId: record.session.hostId, signal },
+        ),
       );
       if (result.exitCode === 124) await finish(record, "stopped");
       return result;

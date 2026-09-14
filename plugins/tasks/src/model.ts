@@ -268,7 +268,7 @@ export function matchesFilters(task: Task, filters: ListFilters): boolean {
   return true;
 }
 
-export function sortTasks(tasks: readonly Task[], sort: TaskSort): Task[] {
+export function sortTasks<T extends Task>(tasks: readonly T[], sort: TaskSort): T[] {
   const copy = [...tasks];
   if (sort === 'priority') {
     copy.sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.order - b.order);
@@ -285,13 +285,13 @@ export function sortTasks(tasks: readonly Task[], sort: TaskSort): Task[] {
   return copy;
 }
 
-export interface StatusGroup {
+export interface StatusGroup<T extends Task = Task> {
   status: TaskStatus;
-  tasks: Task[];
+  tasks: T[];
 }
 
-export function groupTasksByStatus(tasks: readonly Task[]): StatusGroup[] {
-  const byStatus = new Map<TaskStatus, Task[]>();
+export function groupTasksByStatus<T extends Task>(tasks: readonly T[]): StatusGroup<T>[] {
+  const byStatus = new Map<TaskStatus, T[]>();
   for (const task of tasks) {
     const bucket = byStatus.get(task.status);
     if (bucket) bucket.push(task);
@@ -303,9 +303,9 @@ export function groupTasksByStatus(tasks: readonly Task[]): StatusGroup[] {
   });
 }
 
-export type ColumnMap = Record<TaskStatus, Task[]>;
+export type ColumnMap<T extends Task = Task> = Record<TaskStatus, T[]>;
 
-export function emptyColumns(): ColumnMap {
+export function emptyColumns<T extends Task = Task>(): ColumnMap<T> {
   return {
     backlog: [],
     todo: [],
@@ -316,8 +316,8 @@ export function emptyColumns(): ColumnMap {
   };
 }
 
-export function groupColumns(tasks: readonly Task[]): ColumnMap {
-  const columns = emptyColumns();
+export function groupColumns<T extends Task>(tasks: readonly T[]): ColumnMap<T> {
+  const columns = emptyColumns<T>();
   for (const task of tasks) columns[task.status].push(task);
   return columns;
 }

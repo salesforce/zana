@@ -72,7 +72,7 @@ export function ComposerPromptField({
           alt={lightbox.name}
           items={mergeLightboxItems(
             images.map((image) => ({ src: image.previewSrc, alt: image.name })),
-            lightbox
+            { src: lightbox.src, alt: lightbox.name }
           )}
           onClose={() => setLightbox(null)}
         />

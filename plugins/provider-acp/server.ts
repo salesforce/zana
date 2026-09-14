@@ -91,7 +91,7 @@ export default function plugin(bb: ZccPluginApi) {
   });
 
   let customHandles: PluginProviderHandle[] = [];
-  const applyCustom = (raw: string | boolean | undefined) => {
+  const applyCustom = (raw: string | number | boolean | undefined) => {
     customHandles = syncCustomAcpAgents(bb, raw, customHandles);
   };
   void settings.get().then((values) => applyCustom(values[CUSTOM_ACP_AGENTS_SETTING]));

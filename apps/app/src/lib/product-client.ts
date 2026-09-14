@@ -1065,7 +1065,7 @@ function httpProduct(): Pick<
       getSettings: async (pluginId) =>
         apiJson(`/plugin-apps/${encodeURIComponent(pluginId)}/settings`),
       setSettings: async (pluginId, values) => {
-        const payload: Record<string, string | boolean | null> = {};
+        const payload: Record<string, string | number | boolean | null> = {};
         for (const [key, value] of Object.entries(values)) {
           payload[key] = value === undefined ? null : value;
         }

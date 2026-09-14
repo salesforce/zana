@@ -22,8 +22,8 @@ export function DocDirectiveCard(props: PluginMessageDirectiveProps) {
       document,
       projectId: props.message.projectId,
       openWorkspaceFile: props.openWorkspaceFile,
-      openThreadPanel: (options) => navigate.openThreadPanel(options),
-      toPluginPanel: (path, options) => navigate.toPluginPanel(path, options)
+      openThreadPanel: navigate.openThreadPanel,
+      toPluginPanel: navigate.toPluginPanel
     });
   };
 
@@ -34,7 +34,7 @@ export function DocDirectiveCard(props: PluginMessageDirectiveProps) {
       projectId: props.message.projectId,
       openWorkspaceFile: props.openWorkspaceFile,
       openThreadPanel: () => false,
-      toPluginPanel: (path, options) => navigate.toPluginPanel(path, options)
+      toPluginPanel: navigate.toPluginPanel
     });
   };
 

@@ -4,7 +4,9 @@ export type TasksRoute =
   | { kind: 'browse'; view: TasksView }
   | { kind: 'task'; taskKey: string };
 
-export function parseTasksRoute(subPath: string): Omit<TasksRoute, 'view'> & { view?: TasksView } | TasksRoute {
+export function parseTasksRoute(
+  subPath: string
+): { kind: 'task'; taskKey: string } | { kind: 'browse'; view?: TasksView } {
   const parts = subPath.split('/').filter(Boolean);
   if (parts[0] === 'task' && parts[1]) {
     return { kind: 'task', taskKey: parts[1] };

@@ -942,7 +942,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     handle.api.rpc.register = (contract, handlers) => {
       originalRegister(contract, handlers);
       for (const [name, handler] of Object.entries(handlers)) {
-        if (typeof handler === 'function') rpc.set(name, handler);
+        if (typeof handler === 'function') {
+          rpc.set(name, handler as (args: unknown) => unknown);
+        }
       }
     };
     try {

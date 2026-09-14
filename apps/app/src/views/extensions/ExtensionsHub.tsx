@@ -818,7 +818,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
           <PluginSettingsSections pluginId={module.id} />
         </section>
         <PluginReleaseSection
-          version={entry?.manifest?.version ?? plugin?.npmResolvedVersion}
+          version={entry?.manifest?.version ?? plugin?.npmResolvedVersion ?? undefined}
           delivery="Updates with ZCC"
         />
         {plugin ? <PluginHubIncludes plugin={plugin} /> : entry ? <InstallConfirmationCard entry={entry} /> : null}

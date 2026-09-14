@@ -2886,6 +2886,11 @@ export interface CreateTerminalRequest {
    */
   workspace?: import('./environment.js').SpawnEnvironmentChoice;
   /**
+   * Preferred host for workspace provision. Renderer-supplied; main re-resolves
+   * against enrolled hosts (Rule 1).
+   */
+  hostId?: string;
+  /**
    * RESOLVED worktree (main-internal, never sent by the renderer). Set only by
    * the `terminals:create` handler after it has successfully minted/adopted the
    * worktree for {@link worktree}: carries the realpath'd checkout path + branch
@@ -4869,6 +4874,8 @@ export interface PluginAppEntry {
   skillNames?: string[];
   mcpServers?: Array<{ name: string; type: string; alwaysOn?: boolean }>;
   cliNames?: string[];
+  /** Installed npm version when this plugin came from the catalog, else omitted. */
+  npmResolvedVersion?: string | null;
 }
 
 export interface PluginSettingsSnapshot {

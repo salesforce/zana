@@ -8,7 +8,7 @@ import {
 
 const MAXIMUM_WAIT_OPTIONS = ["6 hours", "24 hours", "No limit"] as const;
 
-function maximumWaitMs(value: string | boolean | undefined): number | null {
+function maximumWaitMs(value: string | number | boolean | undefined): number | null {
   switch (value) {
     case "6 hours":
       return DEFAULT_MAXIMUM_WAIT_MS;
@@ -50,7 +50,7 @@ export default async function plugin(zcc: ZccPluginApi): Promise<void> {
       methods: Object.values(providerRetryRpcMethods),
     },
     {
-      async providerRetryCancel(args) {
+      async providerRetryCancel(args: unknown) {
         const threadId =
           typeof args === "object" &&
           args !== null &&
@@ -60,7 +60,7 @@ export default async function plugin(zcc: ZccPluginApi): Promise<void> {
             : "";
         return { cancelled: await service.cancel(threadId) };
       },
-      providerRetryStatus(args) {
+      providerRetryStatus(args: unknown) {
         const threadId =
           typeof args === "object" &&
           args !== null &&

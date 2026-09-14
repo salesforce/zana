@@ -1,4 +1,12 @@
-export function libraryPanelSubPath({ scope, projectId, relPath }) {
+export function libraryPanelSubPath({
+  scope,
+  projectId,
+  relPath
+}: {
+  scope: 'project' | 'global';
+  projectId?: string | null;
+  relPath?: string | null;
+}): string {
   const safe = String(relPath ?? '')
     .split(/[/\\]/)
     .filter((part) => part.length > 0)
@@ -8,7 +16,11 @@ export function libraryPanelSubPath({ scope, projectId, relPath }) {
   return `project/${id}/${safe}`;
 }
 
-export function parseLibraryPanelSubPath(subPath) {
+export function parseLibraryPanelSubPath(subPath: string | null | undefined): {
+  scope: 'global' | 'project';
+  projectId?: string;
+  relPath: string;
+} | null {
   const parts = String(subPath ?? '')
     .split('/')
     .filter((part) => part.length > 0);
