@@ -140,6 +140,12 @@ describe('projectExecutionProjection', () => {
     expect(projected).not.toHaveProperty('finalSummary');
   });
 
+  it('projects legacy records with no resolved model snapshot', () => {
+    const legacy = record();
+    legacy.resolvedModels = undefined as unknown as ExecutionRecord['resolvedModels'];
+    expect(projectExecutionProjection([legacy], [])[0].baselineMetrics?.resolvedModels).toEqual([]);
+  });
+
   it('keeps first live orchestrator and returns newest unresolved blocker response', () => {
     const input = record();
     input.blockers!.push({ id: 'newest', workUnitId: 'verify', slotId: 'reviewer', question: 'Proceed?', response: 'Yes', resolved: false, createdAt: 4 });
