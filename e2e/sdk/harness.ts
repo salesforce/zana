@@ -570,7 +570,7 @@ async function worker() {
   }
   let buf = '';
   // Sentinel that terminates every pushAssignments() message (see service.ts).
-  const END = 'agent_send.';
+  const END = 'coordinator.';
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', function (chunk) {
     const s = String(chunk);

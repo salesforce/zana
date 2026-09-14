@@ -19,6 +19,26 @@ function request() {
 }
 
 describe('execution store', () => {
+  it('queues coordinator wakes as a bounded FIFO and acknowledges by stable id', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    await store.queueCoordinatorWake(record.id, 'first');
+    await store.queueCoordinatorWake(record.id, 'second');
+    let queued = await store.get(record.id);
+    expect(queued?.coordinatorWakes).toEqual([
+      expect.objectContaining({ id: 'execution-1:wake:1', message: 'first' }),
+      expect.objectContaining({ id: 'execution-1:wake:2', message: 'second' })
+    ]);
+    await store.acknowledgeCoordinatorWake(record.id, 'execution-1:wake:1');
+    queued = await store.get(record.id);
+    expect(queued?.coordinatorWakes?.map((wake) => wake.message)).toEqual(['second']);
+    await store.acknowledgeCoordinatorWake(record.id, 'execution-1:wake:1');
+    expect((await store.get(record.id))?.coordinatorWakes?.map((wake) => wake.message)).toEqual(['second']);
+    for (let index = 2; index <= 100; index += 1) await store.queueCoordinatorWake(record.id, `wake-${index}`);
+    await expect(store.queueCoordinatorWake(record.id, 'overflow')).rejects.toThrow('coordinator wake queue is full');
+    expect((await store.get(record.id))?.coordinatorWakes).toHaveLength(100);
+  }));
+
   it('treats same-slot claim and completion retries as durable replays', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     let record = (await store.claim(request())).record;

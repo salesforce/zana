@@ -1,6 +1,6 @@
 import { isDurableCoordination, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SquadBundleWorkflowMetadataV1, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -83,6 +83,7 @@ export interface ExecutionServiceDeps {
    */
   deliverToWorker?: (sessionId: string, text: string) => boolean;
   triggerDeliveryDrain?: (sessionId: string) => void;
+  logError?: (message: string, error: unknown) => void;
   inbox?: { append: (input: InboxInput) => Promise<unknown> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
   resumeGrants?: ReturnType<typeof createResumeGrantStore>;
@@ -159,6 +160,32 @@ export const MAX_DEP_RESULT_CHARS = 2_048;
  *  is a graceful no-op (the record is already terminal), so this is the floor. */
 export const AUTO_FINALIZE_SUMMARY = 'All work units completed; execution finalized automatically by the engine.';
 export const AUTO_FAIL_SUMMARY = 'All runnable work settled; execution failed automatically by the engine.';
+const TERMINAL_SUMMARY_MAX_CHARS = 64 * 1024;
+const TERMINAL_SUMMARY_ITEM_MAX_CHARS = 2_048;
+
+/** Pure, bounded terminal assembly from durable execution state and artifact metadata. */
+export function deterministicTerminalSummary(record: ExecutionRecord, artifacts: readonly ExecutionArtifactRecord[], events: readonly ExecutionEvent[] = []): string {
+  const lines = [
+    `# ${record.state === 'FAILED' ? 'Execution failed' : 'Execution completed'}`,
+    '',
+    `Work units: ${(record.workUnits ?? []).filter((unit) => unit.state === 'COMPLETED').length} completed, ${(record.workUnits ?? []).filter((unit) => unit.state === 'FAILED').length} failed, ${(record.workUnits ?? []).filter((unit) => unit.state === 'SKIPPED').length} skipped.`
+  ];
+  for (const unit of record.workUnits ?? []) {
+    const detail = unit.state === 'FAILED' ? unit.failureCode ?? 'UNKNOWN' : undefined;
+    lines.push(`- ${unit.title} [${unit.state}]${detail ? `: ${detail.slice(0, TERMINAL_SUMMARY_ITEM_MAX_CHARS)}` : ''}`);
+  }
+  if (record.policyResult) lines.push('', `Policy: ${record.policyResult.status} - ${record.policyResult.summary.slice(0, TERMINAL_SUMMARY_ITEM_MAX_CHARS)}`);
+  const terminalEvents = events.filter((event) => event.eventType === 'outcome' || event.eventType === 'failure').slice(-20);
+  if (terminalEvents.length) {
+    lines.push('', 'Events:');
+    for (const event of terminalEvents) lines.push(`- ${event.eventType}: ${event.summary.slice(0, TERMINAL_SUMMARY_ITEM_MAX_CHARS)}`);
+  }
+  if (artifacts.length) {
+    lines.push('', 'Artifacts:');
+    for (const artifact of artifacts.slice(0, 100)) lines.push(`- ${artifact.name} (${artifact.mediaType}, ${artifact.contentDigest})`);
+  }
+  return lines.join('\n').slice(0, TERMINAL_SUMMARY_MAX_CHARS);
+}
 
 /**
  * Build the "Upstream results" section for a dependent unit's assignment text so
@@ -553,10 +580,14 @@ export class ExecutionService {
         if (!units.length) return;
         try {
           if (units.every((unit) => unit.state === 'COMPLETED')) {
-            terminal = await this.deps.store.completeExecution(record.id, record.stateVersion, AUTO_FINALIZE_SUMMARY);
+             const evidence = await this.terminalEvidence(record);
+             const summary = deterministicTerminalSummary({ ...record, state: 'COMPLETED' }, evidence.artifacts, evidence.events);
+             terminal = await this.deps.store.completeExecution(record.id, record.stateVersion, summary);
           } else if (units.some((unit) => unit.state === 'FAILED')
             && units.every((unit) => unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')) {
-            terminal = await this.deps.store.transition(record.id, record.stateVersion, 'FAILED', 'error', AUTO_FAIL_SUMMARY);
+             const evidence = await this.terminalEvidence(record);
+             terminal = await this.deps.store.failExecution(record.id, record.stateVersion,
+               deterministicTerminalSummary({ ...record, state: 'FAILED' }, evidence.artifacts, evidence.events));
           } else {
             return;
           }
@@ -587,6 +618,14 @@ export class ExecutionService {
       void this.maybeAutoFinalize(executionId);
     }, AUTO_FINALIZE_RETRY_MS) as NodeJS.Timeout;
     this.autoFinalizeTimers.set(executionId, timer);
+  }
+
+  private async terminalEvidence(record: ExecutionRecord): Promise<{ artifacts: ExecutionArtifactRecord[]; events: ExecutionEvent[] }> {
+    const [artifacts, eventPage] = await Promise.all([
+      this.deps.artifacts.list(record.id, record.projectId),
+      this.deps.store.eventsInProject(record.projectId, record.id, Math.max(0, (record.lastEventSequence ?? 0) - 100), 100)
+    ]);
+    return { artifacts: artifacts.slice(0, 100), events: eventPage.events };
   }
 
   /**
@@ -624,7 +663,7 @@ export class ExecutionService {
         continue;
       }
       const upstream = dependencyResultsSection(record, assignment.workUnitId);
-      const text = `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${upstream}\n\nWhen the unit is done call execution.work.complete; if it needs human input call execution.work.block; if it fails call execution.work.fail; to hand it back call execution.work.release. Report progress and results to the coordinator with agent_send.`;
+      const text = `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${upstream}\n\nClose the unit through exactly one structured outcome: execution.work.complete, execution.work.block, execution.work.fail, or execution.work.release. Do not send routine progress or results to the coordinator.`;
       try {
         // Idle-gated: never inject an assignment into a mid-turn worker (the
         // cascade fires from the worker's own completion, so it is busy). Falls
@@ -644,7 +683,10 @@ export class ExecutionService {
   private async releaseUndeliveredAssignments(executionId: string, assignments: ExecutionDispatchAssignment[]): Promise<void> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        await this.deps.store.releaseUndelivered(executionId, assignments);
+        const record = await this.deps.store.releaseUndelivered(executionId, assignments);
+        if (record.coordinatorState === 'PARKED') {
+          await this.wakeCoordinator(record, `HUMAN_BLOCKER: ${assignments.length} work assignment(s) could not be delivered; retry dispatch or recover workers.`);
+        }
         return;
       } catch (error) {
         if (attempt === 0) continue;
@@ -660,7 +702,11 @@ export class ExecutionService {
     const outcome = await this.mutateBound(binding, (record) => this.deps.store.failWork(record.id, record.stateVersion, binding, workUnitId, failure, failureCode));
     if (outcome.ok) {
       await this.cascadeDispatch(outcome.value.id, binding.slotId);
-      await this.maybeAutoFinalize(outcome.value.id);
+      if (failureCode === 'SEMANTIC_CONFLICT' || failureCode === 'POLICY_ESCALATION') {
+        await this.wakeCoordinator(outcome.value, `${failureCode}: work unit ${workUnitId} requires coordinator resolution.`);
+      } else {
+        await this.maybeAutoFinalize(outcome.value.id);
+      }
     }
     return outcome;
   }
@@ -670,6 +716,7 @@ export class ExecutionService {
     const result = await this.mutateBound(binding, (record) => this.deps.store.blockWork(record.id, record.stateVersion, binding, workUnitId, blocker));
     if (result.ok) {
       const record = result.value;
+      await this.wakeCoordinator(record, `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`);
       const questionData = blocker.options ? buildInboxQuestion({ options: blocker.options }, true) : {};
       void this.deps.inbox?.append({
         projectId: binding.projectId,
@@ -890,9 +937,48 @@ export class ExecutionService {
     }
     try {
       const updated = await this.deps.store.setPolicyResult(record.id, record.stateVersion, result);
+      if (result.status === 'BLOCKED' || result.status === 'FAILED') {
+        await this.wakeCoordinator(updated, `POLICY_ESCALATION: optional policy is ${result.status}.`);
+      }
       return { ok: true as const, value: updated };
     } catch (error) {
       return { ok: false as const, code: 'CONFLICT', message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  private async wakeCoordinator(record: ExecutionRecord, message: string): Promise<void> {
+    const logError = this.deps.logError ?? ((context: string, error: unknown) => console.error(context, error));
+    let current: ExecutionRecord;
+    try {
+      current = await this.deps.store.queueCoordinatorWake(record.id, message);
+    } catch (error) {
+      logError(`execution coordinator wake persistence failed for ${record.id}`, error);
+      return;
+    }
+    try {
+      const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(current.callerPrincipalId, current.teamLaunchRequestId));
+      if (lifecycle?.orchestratorSessionId) {
+        await this.drainCoordinatorWake(record.projectId, record.id, lifecycle.orchestratorSessionId);
+        this.deps.triggerDeliveryDrain?.(lifecycle.orchestratorSessionId);
+      }
+    } catch (error) {
+      logError(`execution coordinator wake delivery failed for ${record.id}`, error);
+    }
+  }
+
+  /** Main idle-edge hook retries a durable coordinator wake after busy/restart loss. */
+  async drainCoordinatorWake(projectId: string, executionId: string, sessionId: string): Promise<void> {
+    try {
+      for (let delivered = 0; delivered < 100; delivered += 1) {
+        const record = await this.deps.store.getInProject(projectId, executionId);
+        const wake = record?.coordinatorWakes?.[0];
+        if (!record || !wake) return;
+        const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+        if (lifecycle?.orchestratorSessionId !== sessionId || !this.deps.replyToSession(sessionId, wake.message)) return;
+        await this.deps.store.acknowledgeCoordinatorWake(record.id, wake.id);
+      }
+    } catch (error) {
+      (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(`execution coordinator wake drain failed for ${executionId}`, error);
     }
   }
 

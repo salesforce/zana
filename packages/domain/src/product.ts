@@ -5402,7 +5402,9 @@ export const EXECUTION_FAILURE_CODES = [
   'VALIDATION_FAILED',
   'PERMISSION_DENIED',
   'RESOURCE_EXHAUSTED',
-  'TRANSIENT'
+  'TRANSIENT',
+  'SEMANTIC_CONFLICT',
+  'POLICY_ESCALATION'
 ] as const;
 export type ExecutionFailureCode = typeof EXECUTION_FAILURE_CODES[number];
 export const EXECUTION_FAILURE_DETAIL_MAX_CHARS = 2_048;
@@ -5490,7 +5492,7 @@ export interface ExecutionBoardProjection {
   }>;
   finalSummary?: string;
   eventCursor?: number;
-  coordinator?: { status: 'live' | 'lost' | 'complete'; sessionId?: string };
+  coordinator?: { status: 'live' | 'parked' | 'lost' | 'complete'; sessionId?: string };
   recoveryAttention?: boolean;
   recovery?: { status: 'available' | 'expired' | 'terminal'; deadlineAt?: number };
 }
