@@ -130,7 +130,7 @@ describe('dev-local turbo TUI', () => {
     expect(readFileSync(join(dataDir, 'host-enroll.token'), 'utf8')).toBe(
       prepared.env.ZCC_HOST_ENROLL_TOKEN
     );
-    expect(formatDevTargetBanner(prepared)).toContain('pnpm dev:prod');
+    expect(formatDevTargetBanner(prepared)).toContain('pnpm start');
   });
 
   it('shares ~/.zcc and port 8780 when targeting packaged', () => {
@@ -248,7 +248,8 @@ describe('dev-local turbo TUI', () => {
       'pnpm --dir ../.. exec node --conditions=source --import tsx apps/host-daemon/src/enroll-entry.ts'
     );
     expect(root.scripts.dev).toBe('node scripts/dev-local.mjs');
-    expect(root.scripts['dev:prod']).toBe('node scripts/dev-local.mjs --packaged');
+    expect(root.scripts.start).toBe('node scripts/start-packaged.mjs');
+    expect(root.scripts['dev:prod']).toBeUndefined();
     expect(turbo.tasks.dev.persistent).toBe(true);
     expect(turbo.tasks.dev.passThroughEnv).toEqual(['*']);
   });

@@ -782,7 +782,7 @@ chosen by this precedence (highest wins):
 5. the default `~/.zcc`
 
 Bare `zcc` talks to the packaged app (`~/.zcc`, port `8780`), including while
-`pnpm dev:prod` is running. To drive isolated `pnpm dev`:
+`pnpm start` is running. To drive isolated `pnpm dev`:
 
 ```bash
 ZCC_DATA_DIR="$HOME/.zcc-dev" ZCC_SERVER_URL=http://127.0.0.1:8781 zcc status --json

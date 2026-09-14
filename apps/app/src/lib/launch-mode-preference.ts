@@ -1,3 +1,5 @@
+import { COMPOSER_LAUNCH_SURFACES_REV } from '@zana-ai/zcc-domain/product';
+
 export const LAUNCH_MODES = ['agent', 'thread', 'team'] as const;
 export type LaunchMode = (typeof LAUNCH_MODES)[number];
 
@@ -35,7 +37,16 @@ export function composerSurfacesFromConfig(config: {
   composerShowModern?: boolean;
   composerShowAutonomousTeam?: boolean;
   teamJobLaunchEnabled?: boolean;
+  composerLaunchSurfacesRev?: number;
 }): ComposerSurfaceFlags {
+  if (
+    config.composerLaunchSurfacesRev !== COMPOSER_LAUNCH_SURFACES_REV
+    && config.composerShowModern === false
+    && config.composerShowAutonomousTeam === false
+    && config.teamJobLaunchEnabled === false
+  ) {
+    return { ...COMPOSER_SURFACE_DEFAULTS };
+  }
   return normalizeComposerSurfaces({
     showCliAgent: config.composerShowCliAgent !== false,
     showModern: config.composerShowModern !== false,
@@ -43,10 +54,10 @@ export function composerSurfacesFromConfig(config: {
   });
 }
 
-/** Never persist a pair that hides both Modern and CLI Agent. */
+/** Never persist a pair that hides both Modern and CLI Agent. Recover to all three. */
 export function normalizeComposerSurfaces(flags: ComposerSurfaceFlags): ComposerSurfaceFlags {
   if (!flags.showCliAgent && !flags.showModern) {
-    return { ...flags, showCliAgent: true };
+    return { ...COMPOSER_SURFACE_DEFAULTS };
   }
   return flags;
 }

@@ -659,6 +659,7 @@ export function LibraryPanel({ deepLink = null }: { deepLink?: LibraryDeepLink |
         <AgentLauncher
           project={launcherProject}
           initialPrompt={buildSpawnPrompt(selectedDoc)}
+          onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}
           onClose={() => setLauncherOpen(false)}
         />
       )}

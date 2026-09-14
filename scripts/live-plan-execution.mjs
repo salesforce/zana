@@ -12,7 +12,7 @@
  *   node scripts/live-plan-execution.mjs --watch <threadId>
  *
  * Not part of `npm test` — spends real model turns. Requires a running app
- * (default http://127.0.0.1:8780, `pnpm dev:prod`). Threads are left open.
+ * (default http://127.0.0.1:8780, `pnpm start`). Threads are left open.
  *
  * Honor-system: this asserts ZCC *recorded* harness checklist statuses, not
  * that the shell work happened.
@@ -68,7 +68,7 @@ if (providers.length === 0 && !args.watch) fail('no providers selected');
 
 const health = await json('GET', '/api/v1/projects');
 if (health.status === 0) {
-  fail(`app is not reachable at ${base} (start pnpm dev:prod)`);
+  fail(`app is not reachable at ${base} (run pnpm start)`);
 }
 if (health.status >= 400) {
   fail(`GET /api/v1/projects ${health.status} ${health.text.slice(0, 400)}`);

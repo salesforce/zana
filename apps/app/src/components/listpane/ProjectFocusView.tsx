@@ -5,6 +5,7 @@ import { useData, useUi, useAgentStatus, useIdleTriage, usePersonas } from '../.
 import type { Project, LaunchProfileId, Persona, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileLabel } from '@zana-ai/zcc-domain/launch-provider';
 import { composerProjectLabel, isRemoteWorkspaceProject } from '../composer-project-default.js';
+import { ProjectDot } from './ProjectDot.js';
 import { profileIcon, personaIcon } from '../../lib/profileIcon.js';
 import { bucketSessions } from '../../lib/sessionBuckets.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
@@ -194,10 +195,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
         ) : null}
       </AppPageHeader>
       <div className="focus-project-header">
-        <span
-          className="project-dot"
-          style={project.color ? { background: project.color } : undefined}
-        />
+        <ProjectDot project={project} />
         <span className="project-meta project-meta--inline">
           <span className="focus-project-name" title={project.path}>
             {composerProjectLabel(project)}

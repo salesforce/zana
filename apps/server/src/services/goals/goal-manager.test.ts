@@ -314,7 +314,7 @@ describe('GoalManager — create / spawn', () => {
       activate: true
     });
     expect(ptys.createCalls).toHaveLength(1); // spawned a worker
-    expect(ptys.createCalls[0].profile).toBe('codex');
+    expect(ptys.createCalls[0].profile).toBe('codex-yolo');
     expect(current(manager, g.id).status).toBe('active'); // looping, not escalated
   });
 });

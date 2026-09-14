@@ -24,7 +24,7 @@ function run(command, args) {
 function main() {
   let exitCode = 1;
   try {
-    exitCode = run('pnpm', ['run', 'build:legacy']);
+    exitCode = run('pnpm', ['run', 'build']);
     if (exitCode !== 0) return exitCode;
 
     exitCode = run('pnpm', ['run', 'rebuild:electron']);

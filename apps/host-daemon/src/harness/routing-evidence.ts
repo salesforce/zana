@@ -1,6 +1,6 @@
 import type { HarnessEvidence, HarnessPersonaFacet, HarnessScope } from '@zana-ai/zcc-domain/harness-adapter';
 import type { LaunchProvider } from './launch-provider.js';
-import { compareVersions } from '@zana-ai/zcc-domain';
+import { versionFloorDecision } from './version-floor.js';
 
 export type RoutingEvidenceDecision =
   | { classification: 'available'; evidence: HarnessEvidence }
@@ -12,14 +12,14 @@ function evidenceMatches(
   scope: HarnessScope
 ): RoutingEvidenceDecision {
   if (!evidence) return { classification: 'unavailable', reason: 'missing evidence' };
-  if (!evidence.versionRange || !installedVersion || compareVersions(installedVersion, evidence.versionRange) < 0) {
+  if (!evidence.versionRange) {
     return {
       classification: 'unavailable',
-      reason: installedVersion && evidence.versionRange
-        ? `CLI version below reviewed floor (installed ${installedVersion}, requires >= ${evidence.versionRange})`
-        : 'CLI version below reviewed floor (installed version could not be determined)'
+      reason: 'CLI version below reviewed floor (installed version could not be determined)'
     };
   }
+  const floor = versionFloorDecision(installedVersion, evidence.versionRange);
+  if (!floor.ok) return { classification: 'unavailable', reason: floor.reason };
   if (evidence.scope !== scope) return { classification: 'unavailable', reason: 'scope mismatch' };
   if (!evidence.probe || !evidence.observed || !evidence.reviewedAt) {
     return { classification: 'unavailable', reason: 'incomplete evidence' };

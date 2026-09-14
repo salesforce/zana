@@ -25,6 +25,7 @@ vi.mock('electron', () => ({
 
 const { store, scratchWorkspaceRoot, SCRATCH_DIR_NAME, normalizeConfig, remoteProjectsRoot } = await import('./store.js');
 const { PROJECT_COLORS } = await import('@zana-ai/zcc-domain/project-colors');
+const { COMPOSER_LAUNCH_SURFACES_REV } = await import('@zana-ai/zcc-domain/product');
 
 const dataDir = join(h.home, '.zcc');
 const projectsFile = join(dataDir, 'projects.json');
@@ -69,8 +70,6 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'closeIdlePeersEnabled',
     'teamLaunchEnabled',
     'teamJobLaunchEnabled',
-    'composerShowCliAgent',
-    'composerShowModern',
     'composerShowAutonomousTeam',
     'goalsEnabled',
     'cliRemoteHostCatalogEnabled',
@@ -98,6 +97,51 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     expect(store.getConfig()[flag]).toBe(true);
     store.setConfig({ [flag]: false });
     expect(store.getConfig()[flag]).toBe(false);
+  });
+
+  it('persists CLI Agent or Modern off when the other surface stays on', () => {
+    store.setConfig({ composerShowCliAgent: true, composerShowModern: true });
+    store.setConfig({ composerShowCliAgent: false });
+    expect(store.getConfig()).toMatchObject({ composerShowCliAgent: false, composerShowModern: true });
+    store.setConfig({ composerShowCliAgent: true, composerShowModern: false });
+    expect(store.getConfig()).toMatchObject({ composerShowCliAgent: true, composerShowModern: false });
+  });
+
+  it('migrates leftover CLI-only launch surfaces to all-on once', () => {
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(configFile, JSON.stringify({
+      version: 1,
+      composerShowCliAgent: true,
+      composerShowModern: false,
+      composerShowAutonomousTeam: false,
+      teamJobLaunchEnabled: false
+    }));
+    expect(store.getConfig()).toMatchObject({
+      composerShowCliAgent: true,
+      composerShowModern: true,
+      composerShowAutonomousTeam: true,
+      teamJobLaunchEnabled: true,
+      composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV
+    });
+    expect(readJson(configFile)).toMatchObject({
+      composerShowModern: true,
+      composerShowAutonomousTeam: true,
+      teamJobLaunchEnabled: true,
+      composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV
+    });
+    store.setConfig({
+      composerShowCliAgent: true,
+      composerShowModern: false,
+      composerShowAutonomousTeam: false,
+      teamJobLaunchEnabled: false
+    });
+    expect(store.getConfig()).toMatchObject({
+      composerShowCliAgent: true,
+      composerShowModern: false,
+      composerShowAutonomousTeam: false,
+      teamJobLaunchEnabled: false,
+      composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV
+    });
   });
 
   it('persists composerSendMode without inventing a default for existing installs', () => {

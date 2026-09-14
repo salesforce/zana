@@ -543,7 +543,7 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
         ],
         inboxAllow
       ),
-      []
+      input.scheduled && caps.injectsClaudeMcpConfig ? ['AskUserQuestion'] : []
     );
     // Prepend the enable var so auto mode also lights up on a remote Bedrock/Vertex
     // /Foundry host (harmless no-op on the Anthropic API). The remote claude reads

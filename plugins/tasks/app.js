@@ -26,7 +26,7 @@ function wa(){let e=globalThis.__ZCC_PLUGIN_HOST__;if(!e)throw new Error("plugin
   background: var(--bg-panel, var(--zcc-surface, #1e1e1e));
   border: 1px solid var(--border, var(--zcc-border, #2e2e2e));
   border-radius: 10px;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .zcc-kanban-col.is-collapsed {
@@ -139,11 +139,15 @@ function wa(){let e=globalThis.__ZCC_PLUGIN_HOST__;if(!e)throw new Error("plugin
 .zcc-kanban-col-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: visible;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 10px;
+}
+
+.zcc-kanban-col-body > * {
+  flex-shrink: 0;
 }
 
 .zcc-kanban-col.is-collapsed .zcc-kanban-col-body {

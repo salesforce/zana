@@ -124,7 +124,7 @@ cleanup_work() { rm -rf "$WORKDIR"; }
 trap cleanup_work EXIT
 
 if ! curl -sf "http://127.0.0.1:${SERVER_PORT}/api/v1/health" >/dev/null; then
-  printf 'skip live join — no product server on :%s (start pnpm dev / pnpm dev:prod)\n' "$SERVER_PORT"
+  printf 'skip live join — no product server on :%s (start pnpm dev / pnpm start)\n' "$SERVER_PORT"
 elif ! bash "$ROOT/scripts/docker-remote-machine.sh" join --local --server-port "$SERVER_PORT"; then
   fail 'live --local enroll'
 else

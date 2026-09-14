@@ -25,6 +25,7 @@ const MAIN_PRODUCTION_DEPS = [
   'better-sqlite3',
   'croner',
   'electron-updater',
+  'jiti',
   'node-pty',
   'smol-toml',
   'ws',

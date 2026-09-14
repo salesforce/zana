@@ -69,8 +69,9 @@ describe('ensure-better-sqlite3', () => {
       scripts: Record<string, string>;
     };
     expect(pkg.scripts.predev).toContain('ensure-better-sqlite3.mjs');
-    expect(pkg.scripts.prestart).toContain('ensure-better-sqlite3.mjs');
+    expect(pkg.scripts.prebuild).toContain('ensure-better-sqlite3.mjs');
     expect(pkg.scripts.prepare).toContain('ensure-better-sqlite3.mjs');
+    expect(pkg.scripts.prestart).toBeUndefined();
     expect(pkg.scripts.rebuild).toBe(
       'node scripts/ensure-node-pty-helper.mjs --electron && node scripts/ensure-better-sqlite3.mjs'
     );

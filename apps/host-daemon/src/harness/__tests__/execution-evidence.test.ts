@@ -93,6 +93,29 @@ describe('execution evidence', () => {
     });
   });
 
+  it('does not treat Mastra Code --help text as a version below the reviewed floor', () => {
+    const mastra = registeredAdapters().find(({ adapter }) => adapter.descriptor.id === 'mastracode')!;
+    const target = executionTargetFor(mastra, 'accept-edits')!;
+    const evidence = fixture({
+      id: target.id,
+      cliVersion: '0.38.0',
+      scopes: ['local', 'remote']
+    });
+    const help = 'Usage: mastracode --prompt <text> [options]\nHeadless (non-interactive) mode options:';
+    expect(evaluateExecutionEvidence(target, evidence, {
+      cliVersion: help, scope: 'local', profilePosture: 'default'
+    })).toMatchObject({ classification: 'available' });
+    expect(evaluateExecutionEvidence(target, evidence, {
+      cliVersion: 'unknown', scope: 'local', profilePosture: 'default'
+    })).toMatchObject({ classification: 'available' });
+    expect(evaluateExecutionEvidence(target, evidence, {
+      cliVersion: '0.37.9', scope: 'local', profilePosture: 'default'
+    })).toEqual({
+      classification: 'unavailable',
+      reason: 'CLI version below reviewed floor (installed 0.37.9, requires >= 0.38.0)'
+    });
+  });
+
   it('never lets an approved fixture promote candidate catalog metadata', () => {
     const target = { ...executionTargetFor(registeredAdapters()[2], 'plan')!, evidenceStatus: 'candidate' as const };
     expect(evaluateExecutionEvidence(target, fixture(), {

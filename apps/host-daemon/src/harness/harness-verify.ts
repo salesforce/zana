@@ -10,6 +10,20 @@ import { delimiter, isAbsolute, join } from 'node:path';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import { augmentPath, augmentPathWithNodePrefixes, fallbackDirs, nodePrefixBinDirs } from '../env.js';
 import { HARNESS_REGISTRATIONS } from './registry.js';
+import {
+  UNVERSIONED_HARNESS,
+  comparableCliVersion,
+  resolveProbedHarnessVersion
+} from './version-floor.js';
+
+export {
+  UNVERSIONED_HARNESS,
+  comparableCliVersion,
+  harnessPackageVersion,
+  normalizeHarnessVersion,
+  resolveProbedHarnessVersion,
+  versionFloorDecision
+} from './version-floor.js';
 
 function runVersion(
   cmd: string,
@@ -83,11 +97,6 @@ export function resolveHarnessCommand(
   return original;
 }
 
-/** Extract one exact numeric CLI version; ranges and aliases are deliberately unsupported. */
-export function normalizeHarnessVersion(output: string): string | undefined {
-  return output.match(/(?:^|[^0-9])v?(\d+\.\d+\.\d+)(?:[^0-9]|$)/)?.[1];
-}
-
 /**
  * Structured launch preflight needs a version string. Prefer the parsed
  * semver; if the probe succeeded but the banner is non-numeric, still treat
@@ -97,9 +106,9 @@ export function verifiableHarnessVersion(
   row: Pick<HarnessVerifyResult, 'installed' | 'normalizedVersion' | 'version'> | undefined
 ): string | undefined {
   if (!row?.installed) return undefined;
-  return row.normalizedVersion
-    ?? (row.version ? normalizeHarnessVersion(row.version) : undefined)
-    ?? row.version;
+  return comparableCliVersion(row.normalizedVersion)
+    ?? comparableCliVersion(row.version)
+    ?? UNVERSIONED_HARNESS;
 }
 
 export async function installedHarnessVersion(
@@ -146,6 +155,9 @@ export async function verifyHarnesses(config: AppConfig): Promise<HarnessVerifyR
       configEnabled,
       installed: probe.ok
     });
+    const normalizedVersion = probe.ok
+      ? resolveProbedHarnessVersion(probe.out, command, nodePrefixBinDirs())
+      : undefined;
     return {
       family: registration.id as HarnessFamily,
       label: registration.label,
@@ -153,8 +165,8 @@ export async function verifyHarnesses(config: AppConfig): Promise<HarnessVerifyR
       enabled,
       alwaysEnabled: verification.alwaysEnabled === true,
       installed: probe.ok,
-      version: probe.ok ? probe.out : undefined,
-      normalizedVersion: probe.ok ? normalizeHarnessVersion(probe.out) : undefined,
+      version: normalizedVersion,
+      normalizedVersion,
       installHint: verification.installHint
     };
   }));

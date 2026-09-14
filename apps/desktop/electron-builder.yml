@@ -94,13 +94,18 @@ extraResources:
   # First-party plugins (`plugins/<id>` with a package.json `zcc` block).
   # PluginService.reconcileBuiltins auto-installs from this tree; tests and
   # packaging scripts stay in the repo and are not shipped.
+  #
+  # Do NOT exclude `*/src/**`. Handwritten `server.mjs` / `app.js` files and
+  # jiti-loaded `server.ts` entries import runtime modules from `src/` (the
+  # Docs HEALTH crash was `server.mjs` → `src/library-mentions.js` after this
+  # glob stripped the tree). The packaged-plugin-runtime guard walks those
+  # import graphs against this filter.
   - from: plugins
     to: plugins
     filter:
       - "**/*"
       - "!README.md"
       - "!**/README.md"
-      - "!*/src/**"
       - "!**/playground/src/**"
       - "!*/scripts/**"
       - "!*/node_modules/**"

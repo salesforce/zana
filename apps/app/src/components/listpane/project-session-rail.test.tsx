@@ -251,6 +251,7 @@ describe('ProjectSessionRail', () => {
     expect(source).toContain('>Project</span>');
     expect(source).toContain('isRemoteWorkspaceProject(project)');
     expect(source).toContain('className="project-remote-icon"');
+    expect(source).toContain('<ProjectDot project={project} unread={hasUnread} />');
     expect(source).toContain('className="sidebar-projects');
     expect(source).not.toContain('ListFilter');
     expect(source).not.toContain('Organize projects');

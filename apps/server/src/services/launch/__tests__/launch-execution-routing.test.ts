@@ -456,6 +456,22 @@ describe('production execution routing preflight', () => {
     expect(services.consentStore.reserve).not.toHaveBeenCalled();
   });
 
+  it('allows CLI Agent Edits for Mastra Code when --help has no semver', async () => {
+    const services = {
+      consentStore: { reserve: vi.fn(async () => ({ outcome: 'denied' as const })) },
+      installedVersion: vi.fn(async () => 'Usage: mastracode --prompt <text> [options]\n--help, -h')
+    };
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark' } as AppConfig,
+      profile: 'mastracode',
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'cli-edits-mastracode-help',
+      harnessRouting: { schemaVersion: 1, byAdapter: { mastracode: { executionState: 'accept-edits' } } }
+    }, services)).resolves.toMatchObject({ decision: 'allowed', scope: 'local' });
+  });
+
   it('allows CLI Agent Edits routing for Grok as the native TUI', async () => {
     const services = {
       consentStore: { reserve: vi.fn(async () => ({ outcome: 'denied' as const })) },

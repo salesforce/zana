@@ -75,6 +75,10 @@ import {
   createAcpDeltaTranslator,
   type AcpDeltaTranslator,
 } from "../delta-translation.js";
+import {
+  concatenatedAcpPromptText,
+  wrapSystemInstructions,
+} from "../system-instruction-echo.js";
 import { resolveAcpDialect } from "../dialect.js";
 import {
   buildAcpPermissionInteractionPayload,
@@ -1579,11 +1583,12 @@ function buildPromptContentBlocks(
   const blocks: AcpContentBlock[] = [];
 
   const instructions = session.pendingInstructions;
+  const injectedInstructions = Boolean(instructions);
   if (instructions) {
     session.pendingInstructions = undefined;
     blocks.push({
       type: "text",
-      text: `<system_instructions>\n${instructions}\n</system_instructions>`,
+      text: wrapSystemInstructions(instructions),
     });
   }
 
@@ -1626,6 +1631,12 @@ function buildPromptContentBlocks(
         });
         break;
     }
+  }
+
+  if (injectedInstructions) {
+    session.translator.armSystemInstructionEcho(
+      concatenatedAcpPromptText(blocks),
+    );
   }
 
   return blocks;

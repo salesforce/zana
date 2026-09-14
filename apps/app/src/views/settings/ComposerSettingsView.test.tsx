@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig } from '@zana-ai/zcc-domain/product';
 import { ComposerSettingsView } from './ComposerSettingsView.js';
 
 const config: AppConfig = {
@@ -43,19 +43,18 @@ describe('ComposerSettingsView', () => {
     expect(html).toContain('settings-anchor-composer');
   });
 
-  it('repairs a both-off pair so CLI Agent stays on and cannot be disabled', () => {
+  it('repairs a both-off pair so all three launch surfaces stay on', () => {
     const html = renderToStaticMarkup(
       <ComposerSettingsView
         config={{ ...config, composerShowCliAgent: false, composerShowModern: false }}
         onUpdate={vi.fn().mockResolvedValue(undefined)}
       />
     );
-    const cliBtn = switchButton(html, 'CLI Agent');
-    expect(cliBtn).toContain('aria-checked="true"');
-    expect(cliBtn).toContain('disabled=""');
-    const modernBtn = switchButton(html, 'Modern');
-    expect(modernBtn).toContain('aria-checked="false"');
-    expect(modernBtn).not.toContain('disabled=""');
+    expect(switchButton(html, 'CLI Agent')).toContain('aria-checked="true"');
+    expect(switchButton(html, 'Modern')).toContain('aria-checked="true"');
+    expect(switchButton(html, 'Team')).toContain('aria-checked="true"');
+    expect(switchButton(html, 'CLI Agent')).not.toContain('disabled=""');
+    expect(switchButton(html, 'Modern')).not.toContain('disabled=""');
   });
 
   it('disables the last remaining of Modern or CLI Agent', () => {
@@ -73,5 +72,40 @@ describe('ComposerSettingsView', () => {
     const modernBtn = html.slice(modernStart, html.indexOf('</button>', modernStart));
     expect(modernBtn).toContain('aria-label="Modern"');
     expect(modernBtn).not.toContain('disabled=""');
+  });
+
+  it('resets leftover CLI-only until the launch-surface rev is persisted', () => {
+    const leftover = renderToStaticMarkup(
+      <ComposerSettingsView
+        config={{
+          ...config,
+          composerShowCliAgent: true,
+          composerShowModern: false,
+          composerShowAutonomousTeam: false,
+          teamJobLaunchEnabled: false
+        }}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(switchButton(leftover, 'CLI Agent')).toContain('aria-checked="true"');
+    expect(switchButton(leftover, 'Modern')).toContain('aria-checked="true"');
+    expect(switchButton(leftover, 'Team')).toContain('aria-checked="true"');
+
+    const optedOut = renderToStaticMarkup(
+      <ComposerSettingsView
+        config={{
+          ...config,
+          composerShowCliAgent: true,
+          composerShowModern: false,
+          composerShowAutonomousTeam: false,
+          teamJobLaunchEnabled: false,
+          composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV
+        }}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(switchButton(optedOut, 'CLI Agent')).toContain('aria-checked="true"');
+    expect(switchButton(optedOut, 'Modern')).toContain('aria-checked="false"');
+    expect(switchButton(optedOut, 'Team')).toContain('aria-checked="false"');
   });
 });

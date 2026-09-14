@@ -27,7 +27,7 @@ export function main(argv = process.argv.slice(2)) {
   let exitCode = 0;
   try {
     if (build) {
-      exitCode = run('pnpm', ['run', 'build:legacy']);
+      exitCode = run('pnpm', ['run', 'build']);
     }
     if (exitCode === 0) exitCode = run('pnpm', ['run', 'rebuild:electron']);
     if (exitCode === 0) exitCode = run('pnpm', ['exec', 'playwright', 'test', ...playwrightArgs]);

@@ -102,9 +102,10 @@ function readDotenvKey(key) {
 
 /**
  * Isolated `~/.zcc-dev` is the default so `pnpm dev` can sit beside the
- * installed app. `--packaged` / `pnpm dev:prod` / `ZCC_DEV_TARGET=packaged`
- * share `~/.zcc` instead. Do not pass `--prod` to `pnpm` itself (`pnpm dev --prod`
- * is pnpm's production-deps flag); use `pnpm dev:prod` or `pnpm dev -- --packaged`.
+ * installed app. `--packaged` / `ZCC_DEV_TARGET=packaged` share `~/.zcc`
+ * instead (Turbo still — not the .app). Do not pass `--prod` to `pnpm` itself
+ * (`pnpm dev --prod` is pnpm's production-deps flag); use `pnpm start` to open
+ * the packaged app, or `pnpm dev -- --packaged` to point Turbo at `~/.zcc`.
  */
 export function parseDevTarget(argv = [], env = process.env) {
   const flags = argv.filter((arg) => arg !== '--');
@@ -172,10 +173,10 @@ export function formatDevTargetBanner(prepared) {
   const dataDir = prepared.env.ZCC_DATA_DIR;
   const port = prepared.env.ZCC_SERVER_PORT;
   if (prepared.target === 'packaged') {
-    return `[zcc dev] using packaged ${dataDir} on :${port} — quit the installed Zana app first (pnpm dev for isolated ~/.zcc-dev)\n`;
+    return `[zcc dev] using packaged ${dataDir} on :${port} — quit the installed Zana app first (pnpm start launches the .app; pnpm dev for isolated ~/.zcc-dev)\n`;
   }
   if (prepared.isolated) {
-    return `[zcc dev] isolated to ${dataDir} on :${port} (pnpm dev:prod to use ~/.zcc)\n`;
+    return `[zcc dev] isolated to ${dataDir} on :${port} (pnpm start for the packaged app)\n`;
   }
   return null;
 }

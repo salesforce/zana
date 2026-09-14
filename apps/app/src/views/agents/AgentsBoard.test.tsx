@@ -68,8 +68,9 @@ describe('AgentsBoard', () => {
     expect(board).toContain('schedulesForAgentView');
     expect(board).toContain('openScheduleFromAgents');
     expect(board).toContain('item.kind === \'schedule\'');
-    expect(board).toContain('getAgentSessionRoutePath(item.card.session.id, item.projectId)');
+    expect(board).toContain('openAgentModal(item.card.session.id, item.projectId)');
     expect(board).toContain('item.card.session.scheduled');
+    expect(board).not.toContain('getAgentSessionRoutePath');
   });
 });
 

@@ -122,6 +122,8 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"stop_hook_active\\":true'*) exit 0;; esac; if [ -n \\"$ZCC_HOOK_URL\\" ]; then curl -s -m 5 -X POST \\"$ZCC_HOOK_URL\\" >/dev/null 2>&1 || true; fi; exit 0"},{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/clear\\" >/dev/null 2>&1 || true; exit 0"}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"permission_prompt\\"'*|*'\\"elicitation_dialog\\"'*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); if [ -n \\"$ZCC_CONTENTSCREEN_URL\\" ]; then printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 10 -X POST --data-binary @- \\"$ZCC_CONTENTSCREEN_URL\\" 2>/dev/null || true; fi; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}",
     "--allowedTools",
     "mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
+    "--disallowedTools",
+    "AskUserQuestion",
   ],
   "sessionEnv": {
     "ZCC_CONTENTSCREEN_URL": "http://127.0.0.1:<PORT>/hook/contentscreen/proj1/<UUID>",
@@ -269,6 +271,7 @@ exports[`golden argv — local create() matrix > claude · persona · scheduled 
 {
   "args": [
     "claude",
+    "--dangerously-skip-permissions",
     "--model",
     "opus",
     "--session-id",
@@ -291,14 +294,12 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "You are a careful reviewer.",
     "--add-dir",
     "/extra/context",
-    "--permission-mode",
-    "acceptEdits",
     "--settings",
     "{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"stop_hook_active\\":true'*) exit 0;; esac; if [ -n \\"$ZCC_HOOK_URL\\" ]; then curl -s -m 5 -X POST \\"$ZCC_HOOK_URL\\" >/dev/null 2>&1 || true; fi; exit 0"},{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/clear\\" >/dev/null 2>&1 || true; exit 0"}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"permission_prompt\\"'*|*'\\"elicitation_dialog\\"'*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}",
     "--allowedTools",
     "Read,Grep,mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
     "--disallowedTools",
-    "Bash",
+    "Bash,AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -366,6 +367,7 @@ exports[`golden argv — local create() matrix > claude · persona+projectSettin
 {
   "args": [
     "claude",
+    "--dangerously-skip-permissions",
     "--model",
     "opus",
     "--session-id",
@@ -388,21 +390,17 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "Project house rules.",
     "--add-dir",
     "/project/docs",
-    "--permission-mode",
-    "plan",
     "--verbose",
     "--append-system-prompt",
     "You are a careful reviewer.",
     "--add-dir",
     "/extra/context",
-    "--permission-mode",
-    "acceptEdits",
     "--settings",
     "{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"stop_hook_active\\":true'*) exit 0;; esac; if [ -n \\"$ZCC_HOOK_URL\\" ]; then curl -s -m 5 -X POST \\"$ZCC_HOOK_URL\\" >/dev/null 2>&1 || true; fi; exit 0"},{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/clear\\" >/dev/null 2>&1 || true; exit 0"}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"permission_prompt\\"'*|*'\\"elicitation_dialog\\"'*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}",
     "--allowedTools",
     "Write,Read,Grep,mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
     "--disallowedTools",
-    "WebFetch,Bash",
+    "WebFetch,Bash,AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -456,8 +454,7 @@ exports[`golden argv — local create() matrix > claude · plain · scheduled 1`
 {
   "args": [
     "claude",
-    "--permission-mode",
-    "auto",
+    "--dangerously-skip-permissions",
     "--session-id",
     "<UUID>",
     "--mcp-config",
@@ -478,10 +475,11 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"stop_hook_active\\":true'*) exit 0;; esac; if [ -n \\"$ZCC_HOOK_URL\\" ]; then curl -s -m 5 -X POST \\"$ZCC_HOOK_URL\\" >/dev/null 2>&1 || true; fi; exit 0"},{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/clear\\" >/dev/null 2>&1 || true; exit 0"}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"permission_prompt\\"'*|*'\\"elicitation_dialog\\"'*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}",
     "--allowedTools",
     "mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
+    "--disallowedTools",
+    "AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
-    "CLAUDE_CODE_ENABLE_AUTO_MODE": "1",
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
@@ -540,6 +538,7 @@ exports[`golden argv — local create() matrix > claude · projectSettings · sc
 {
   "args": [
     "claude",
+    "--dangerously-skip-permissions",
     "--model",
     "sonnet",
     "--session-id",
@@ -562,15 +561,13 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "Project house rules.",
     "--add-dir",
     "/project/docs",
-    "--permission-mode",
-    "plan",
     "--verbose",
     "--settings",
     "{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"stop_hook_active\\":true'*) exit 0;; esac; if [ -n \\"$ZCC_HOOK_URL\\" ]; then curl -s -m 5 -X POST \\"$ZCC_HOOK_URL\\" >/dev/null 2>&1 || true; fi; exit 0"},{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/clear\\" >/dev/null 2>&1 || true; exit 0"}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"permission_prompt\\"'*|*'\\"elicitation_dialog\\"'*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}",
     "--allowedTools",
     "Write,mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
     "--disallowedTools",
-    "WebFetch",
+    "WebFetch,AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -653,12 +650,16 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "/extra/context",
     "--permission-mode",
     "acceptEdits",
+    "--permission-mode",
+    "bypassPermissions",
+    "--permission-mode",
+    "acceptEdits",
     "--settings",
     "{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"stop_hook_active\\":true'*) exit 0;; esac; if [ -n \\"$ZCC_HOOK_URL\\" ]; then curl -s -m 5 -X POST \\"$ZCC_HOOK_URL\\" >/dev/null 2>&1 || true; fi; exit 0"},{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/clear\\" >/dev/null 2>&1 || true; exit 0"}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"permission_prompt\\"'*|*'\\"elicitation_dialog\\"'*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}",
     "--allowedTools",
     "Read,Grep,mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
     "--disallowedTools",
-    "Bash",
+    "Bash,AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -755,12 +756,16 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "/extra/context",
     "--permission-mode",
     "acceptEdits",
+    "--permission-mode",
+    "bypassPermissions",
+    "--permission-mode",
+    "acceptEdits",
     "--settings",
     "{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"stop_hook_active\\":true'*) exit 0;; esac; if [ -n \\"$ZCC_HOOK_URL\\" ]; then curl -s -m 5 -X POST \\"$ZCC_HOOK_URL\\" >/dev/null 2>&1 || true; fi; exit 0"},{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/clear\\" >/dev/null 2>&1 || true; exit 0"}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"permission_prompt\\"'*|*'\\"elicitation_dialog\\"'*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}",
     "--allowedTools",
     "Write,Read,Grep,mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
     "--disallowedTools",
-    "WebFetch,Bash",
+    "WebFetch,Bash,AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -814,8 +819,6 @@ exports[`golden argv — local create() matrix > claude-resume · plain · sched
   "args": [
     "claude",
     "--resume",
-    "--permission-mode",
-    "auto",
     "--mcp-config",
     "/tmp/proj1/.mcp.json",
     "--append-system-prompt",
@@ -830,14 +833,19 @@ You are running in ONE project, but the user manages several. The MCP tool \`lis
 This project has a durable document library at \`.zcc/library\` — a place for notes that should outlive your session and be visible to teammates and future agents. MCP tools (server: zcc-inbox), scoped to THIS project: - \`library_write\` — create or update a doc by relPath (e.g.   \`findings/auth.md\`); writing the same path again overwrites it. - \`library_read\` — read a doc’s full content + metadata by relPath. - \`library_list\` — list the docs already captured (relPath, title, tags). - \`library_remove\` — delete an agent-authored doc by relPath.  Reach for \`library_write\` when you finish an investigation and want the findings to persist, when a peer or a future run should see your notes, or when you are building up a multi-run artifact (a decision log). \`library_read\` before you append. Use relPath prefixes like \`findings/\`, \`decisions/\`, \`thoughts/\` (or tags) as your cue to future you. This is the right home for "write this down" — prefer it over scattering markdown around the repo.
 
 Occasionally you hit a question you genuinely cannot resolve yourself — one that truly needs the human, that reading the repo or running a command won’t settle, and that is worth surviving this session ending. For THAT, park a durable Follow-up instead of going idle or blocking. MCP tools (server: zcc-inbox), scoped to THIS project: - \`followup_list\` — see what is already parked. Call this FIRST: if an open   follow-up already covers your question, filing a similar one in the same   session just refreshes it (it does not pile up), so keep the wording consistent. - \`followup_create\` — file a follow-up: one-line \`title\` (the actual   question), a \`detail\` (markdown context — strongly recommended), \`kind:   "question"\` (default) or \`"decision"\`. It appears in the project’s Follow-ups   tab and SURVIVES this session ending. - \`followup_resolve\` — once answered or moot, close it: pass the \`id\`,   \`status: "resolved"\` (answered/decided) or \`"dismissed"\` (no longer   relevant), and an optional one-line \`resolution\`.  This is a HIGH bar. Do NOT file for anything you can answer or try yourself, for routine choices (commit / test / lint / an obvious default), or for anything you are about to say in your response. A follow-up and \`inbox_push\` are EITHER/OR, not both: \`inbox_push\` pings the user now; a follow-up is the durable record that persists — if you already pushed it this session, don’t also file a follow-up. When in doubt, do NOT file — resolve it yourself.",
+    "--permission-mode",
+    "bypassPermissions",
+    "--permission-mode",
+    "acceptEdits",
     "--settings",
     "{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"stop_hook_active\\":true'*) exit 0;; esac; if [ -n \\"$ZCC_HOOK_URL\\" ]; then curl -s -m 5 -X POST \\"$ZCC_HOOK_URL\\" >/dev/null 2>&1 || true; fi; exit 0"},{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/clear\\" >/dev/null 2>&1 || true; exit 0"}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"permission_prompt\\"'*|*'\\"elicitation_dialog\\"'*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}",
     "--allowedTools",
     "mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
+    "--disallowedTools",
+    "AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
-    "CLAUDE_CODE_ENABLE_AUTO_MODE": "1",
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
     "ZCC_NOTIFY_URL": "http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>",
@@ -919,12 +927,16 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--permission-mode",
     "plan",
     "--verbose",
+    "--permission-mode",
+    "bypassPermissions",
+    "--permission-mode",
+    "acceptEdits",
     "--settings",
     "{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"stop_hook_active\\":true'*) exit 0;; esac; if [ -n \\"$ZCC_HOOK_URL\\" ]; then curl -s -m 5 -X POST \\"$ZCC_HOOK_URL\\" >/dev/null 2>&1 || true; fi; exit 0"},{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/clear\\" >/dev/null 2>&1 || true; exit 0"}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"permission_prompt\\"'*|*'\\"elicitation_dialog\\"'*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}",
     "--allowedTools",
     "Write,mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
     "--disallowedTools",
-    "WebFetch",
+    "WebFetch,AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -1012,7 +1024,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--allowedTools",
     "Read,Grep,mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
     "--disallowedTools",
-    "Bash",
+    "Bash,AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -1110,7 +1122,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--allowedTools",
     "Write,Read,Grep,mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
     "--disallowedTools",
-    "WebFetch,Bash",
+    "WebFetch,Bash,AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -1183,6 +1195,8 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"stop_hook_active\\":true'*) exit 0;; esac; if [ -n \\"$ZCC_HOOK_URL\\" ]; then curl -s -m 5 -X POST \\"$ZCC_HOOK_URL\\" >/dev/null 2>&1 || true; fi; exit 0"},{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/clear\\" >/dev/null 2>&1 || true; exit 0"}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\"permission_prompt\\"'*|*'\\"elicitation_dialog\\"'*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_TOOLACTIVITY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_TOOLACTIVITY_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}",
     "--allowedTools",
     "mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
+    "--disallowedTools",
+    "AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -1272,7 +1286,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--allowedTools",
     "Write,mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__schedule_list,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
     "--disallowedTools",
-    "WebFetch",
+    "WebFetch,AskUserQuestion",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -1317,6 +1331,7 @@ exports[`golden argv — local create() matrix > codex · persona · scheduled 1
 {
   "args": [
     "codex",
+    "--dangerously-bypass-approvals-and-sandbox",
     "-m",
     "opus",
     "-c",
@@ -1374,6 +1389,7 @@ exports[`golden argv — local create() matrix > codex · persona+projectSetting
 {
   "args": [
     "codex",
+    "--dangerously-bypass-approvals-and-sandbox",
     "-m",
     "opus",
     "-c",
@@ -1429,6 +1445,7 @@ exports[`golden argv — local create() matrix > codex · plain · scheduled 1`]
 {
   "args": [
     "codex",
+    "--dangerously-bypass-approvals-and-sandbox",
     "-c",
     "mcp_servers.zcc-inbox.url="http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>"",
     "-c",
@@ -1484,6 +1501,7 @@ exports[`golden argv — local create() matrix > codex · projectSettings · sch
 {
   "args": [
     "codex",
+    "--dangerously-bypass-approvals-and-sandbox",
     "-m",
     "sonnet",
     "-c",
@@ -1562,6 +1580,10 @@ exports[`golden argv — local create() matrix > codex-resume · persona · sche
     "hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]",
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
+    "-s",
+    "danger-full-access",
+    "-a",
+    "never",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -1623,6 +1645,10 @@ exports[`golden argv — local create() matrix > codex-resume · persona+project
     "hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]",
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
+    "-s",
+    "danger-full-access",
+    "-a",
+    "never",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -1680,6 +1706,10 @@ exports[`golden argv — local create() matrix > codex-resume · plain · schedu
     "hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]",
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
+    "-s",
+    "danger-full-access",
+    "-a",
+    "never",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -1741,6 +1771,10 @@ exports[`golden argv — local create() matrix > codex-resume · projectSettings
     "hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]",
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
+    "-s",
+    "danger-full-access",
+    "-a",
+    "never",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -1995,6 +2029,7 @@ exports[`golden argv — local create() matrix > cursor · persona · scheduled 
 {
   "args": [
     "cursor-agent",
+    "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2017,6 +2052,7 @@ exports[`golden argv — local create() matrix > cursor · persona+projectSettin
 {
   "args": [
     "cursor-agent",
+    "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2039,6 +2075,7 @@ exports[`golden argv — local create() matrix > cursor · plain · scheduled 1`
 {
   "args": [
     "cursor-agent",
+    "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2061,6 +2098,7 @@ exports[`golden argv — local create() matrix > cursor · projectSettings · sc
 {
   "args": [
     "cursor-agent",
+    "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2086,6 +2124,7 @@ exports[`golden argv — local create() matrix > cursor-resume · persona · sch
   "args": [
     "cursor-agent",
     "--resume",
+    "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2111,6 +2150,7 @@ exports[`golden argv — local create() matrix > cursor-resume · persona+projec
   "args": [
     "cursor-agent",
     "--resume",
+    "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2136,6 +2176,7 @@ exports[`golden argv — local create() matrix > cursor-resume · plain · sched
   "args": [
     "cursor-agent",
     "--resume",
+    "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2161,6 +2202,7 @@ exports[`golden argv — local create() matrix > cursor-resume · projectSetting
   "args": [
     "cursor-agent",
     "--resume",
+    "--force",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2283,6 +2325,7 @@ exports[`golden argv — local create() matrix > grok · persona · scheduled 1`
 {
   "args": [
     "grok",
+    "--always-approve",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2305,6 +2348,7 @@ exports[`golden argv — local create() matrix > grok · persona+projectSettings
 {
   "args": [
     "grok",
+    "--always-approve",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2327,6 +2371,7 @@ exports[`golden argv — local create() matrix > grok · plain · scheduled 1`] 
 {
   "args": [
     "grok",
+    "--always-approve",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2349,6 +2394,7 @@ exports[`golden argv — local create() matrix > grok · projectSettings · sche
 {
   "args": [
     "grok",
+    "--always-approve",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2574,6 +2620,7 @@ exports[`golden argv — local create() matrix > mastracode · persona · schedu
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2596,6 +2643,7 @@ exports[`golden argv — local create() matrix > mastracode · persona+projectSe
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2618,6 +2666,7 @@ exports[`golden argv — local create() matrix > mastracode · plain · schedule
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2640,6 +2689,7 @@ exports[`golden argv — local create() matrix > mastracode · projectSettings �
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
+    "MASTRACODE_YOLO": "1",
     "ZCC_SESSION_ID": "<UUID>",
   },
 }
@@ -2855,6 +2905,7 @@ exports[`golden argv — local create() matrix > opencode · persona · schedule
 {
   "args": [
     "opencode",
+    "--auto",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2877,6 +2928,7 @@ exports[`golden argv — local create() matrix > opencode · persona+projectSett
 {
   "args": [
     "opencode",
+    "--auto",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2899,6 +2951,7 @@ exports[`golden argv — local create() matrix > opencode · plain · scheduled 
 {
   "args": [
     "opencode",
+    "--auto",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2921,6 +2974,7 @@ exports[`golden argv — local create() matrix > opencode · projectSettings · 
 {
   "args": [
     "opencode",
+    "--auto",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2946,6 +3000,9 @@ exports[`golden argv — local create() matrix > opencode-resume · persona · s
   "args": [
     "opencode",
     "--continue",
+    "--agent",
+    "build",
+    "--auto",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2971,6 +3028,9 @@ exports[`golden argv — local create() matrix > opencode-resume · persona+proj
   "args": [
     "opencode",
     "--continue",
+    "--agent",
+    "build",
+    "--auto",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -2996,6 +3056,9 @@ exports[`golden argv — local create() matrix > opencode-resume · plain · sch
   "args": [
     "opencode",
     "--continue",
+    "--agent",
+    "build",
+    "--auto",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
@@ -3021,6 +3084,9 @@ exports[`golden argv — local create() matrix > opencode-resume · projectSetti
   "args": [
     "opencode",
     "--continue",
+    "--agent",
+    "build",
+    "--auto",
   ],
   "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {

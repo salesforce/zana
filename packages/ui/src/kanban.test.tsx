@@ -68,4 +68,11 @@ describe('Kanban', () => {
     const css = readFileSync(new URL('./kanban.css', import.meta.url), 'utf8');
     expect(css).toMatch(/\.zcc-kanban-col-header \{[^}]*background:\s*transparent;/);
   });
+
+  it('clips columns to their rounded chrome and scrolls overflowing cards inside the body', () => {
+    const css = readFileSync(new URL('./kanban.css', import.meta.url), 'utf8');
+    expect(css).toMatch(/\.zcc-kanban-col \{[^}]*overflow:\s*hidden;/);
+    expect(css).toMatch(/\.zcc-kanban-col-body \{[^}]*overflow-y:\s*auto;/);
+    expect(css).toMatch(/\.zcc-kanban-col-body > \* \{[^}]*flex-shrink:\s*0;/);
+  });
 });

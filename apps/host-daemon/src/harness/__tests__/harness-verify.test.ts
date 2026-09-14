@@ -4,9 +4,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   harnessEnabledFromProbe,
+  harnessPackageVersion,
   normalizeHarnessVersion,
   resolveHarnessCommand,
-  verifiableHarnessVersion
+  resolveProbedHarnessVersion,
+  UNVERSIONED_HARNESS,
+  verifiableHarnessVersion,
+  versionFloorDecision
 } from '../harness-verify.js';
 
 describe('harnessEnabledFromProbe', () => {
@@ -152,7 +156,110 @@ describe('verifiableHarnessVersion', () => {
     expect(verifiableHarnessVersion({
       installed: true,
       version: 'dev-build'
-    })).toBe('dev-build');
+    })).toBe(UNVERSIONED_HARNESS);
+    expect(verifiableHarnessVersion({
+      installed: true,
+      version: 'Usage: mastracode --prompt <text> [options]\n--help, -h'
+    })).toBe(UNVERSIONED_HARNESS);
     expect(verifiableHarnessVersion({ installed: false, version: '1.0.0' })).toBeUndefined();
+  });
+});
+
+describe('mastracode version probe', () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function npmPrefix(name: string, version: string): { bin: string; prefixBin: string } {
+    const prefix = mkdtempSync(join(tmpdir(), 'zcc-mastra-pkg-'));
+    tmpDirs.push(prefix);
+    const prefixBin = join(prefix, 'bin');
+    const pkgDir = join(prefix, 'lib', 'node_modules', name);
+    mkdirSync(prefixBin, { recursive: true });
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name, version }));
+    const bin = join(prefixBin, name);
+    writeFileSync(bin, '#!/bin/sh\n');
+    chmodSync(bin, 0o755);
+    return { bin, prefixBin };
+  }
+
+  it('reads the npm package version next to a prefix bin', () => {
+    const { bin } = npmPrefix('mastracode', '0.38.0');
+    expect(harnessPackageVersion(bin)).toBe('0.38.0');
+  });
+
+  it('ignores a random parent package.json that does not match the CLI name', () => {
+    const home = mkdtempSync(join(tmpdir(), 'zcc-mastra-home-'));
+    tmpDirs.push(home);
+    writeFileSync(join(home, 'package.json'), JSON.stringify({}));
+    const shimDir = join(home, '.local', 'bin');
+    mkdirSync(shimDir, { recursive: true });
+    const shim = join(shimDir, 'mastracode');
+    writeFileSync(shim, '#!/bin/sh\n');
+    chmodSync(shim, 0o755);
+    expect(harnessPackageVersion(shim)).toBeUndefined();
+  });
+
+  it('finds the npm package via an extra prefix bin dir when PATH is a shim', () => {
+    const { bin, prefixBin } = npmPrefix('mastracode', '0.38.0');
+    const home = mkdtempSync(join(tmpdir(), 'zcc-mastra-shim-'));
+    tmpDirs.push(home);
+    const shim = join(home, 'mastracode');
+    writeFileSync(shim, '#!/bin/sh\n');
+    chmodSync(shim, 0o755);
+    expect(harnessPackageVersion(shim)).toBeUndefined();
+    expect(harnessPackageVersion(shim, [prefixBin])).toBe('0.38.0');
+    expect(bin).toContain('/bin/mastracode');
+  });
+
+  it('does not take a semver from Usage help; uses the package version instead', () => {
+    const { bin } = npmPrefix('mastracode', '0.38.0');
+    const help = [
+      'Usage: mastracode --prompt <text> [options]',
+      'Headless (non-interactive) mode options:',
+      '  --timeout <seconds>       Exit with code 2 if not complete within timeout',
+      'Examples: mastracode --prompt "Fix the bug in auth.ts"'
+    ].join('\n');
+    expect(resolveProbedHarnessVersion(help, bin)).toBe('0.38.0');
+    expect(normalizeHarnessVersion('2.1.270 (Claude Code)')).toBe('2.1.270');
+  });
+
+  it('reads a package.json by walking up from a realpath that is not an npm prefix bin', () => {
+    const prefix = mkdtempSync(join(tmpdir(), 'zcc-mastra-walk-'));
+    tmpDirs.push(prefix);
+    const pkgDir = join(prefix, 'mastracode');
+    mkdirSync(join(pkgDir, 'dist'), { recursive: true });
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'mastracode', version: '0.38.0' }));
+    const cli = join(pkgDir, 'dist', 'cli.js');
+    writeFileSync(cli, '#!/usr/bin/env node\n');
+    chmodSync(cli, 0o755);
+    const shimDir = join(prefix, 'wrappers');
+    mkdirSync(shimDir);
+    const shim = join(shimDir, 'mastracode');
+    symlinkSync(cli, shim);
+    expect(harnessPackageVersion(shim)).toBe('0.38.0');
+  });
+
+  it('keeps a numeric --version banner and does not require a package.json', () => {
+    expect(resolveProbedHarnessVersion('2.1.270 (Claude Code)', '/nonexistent/claude')).toBe('2.1.270');
+    expect(harnessPackageVersion('')).toBeUndefined();
+  });
+
+  it('skips the reviewed floor for Usage help and still blocks a real older CLI', () => {
+    const help = 'Usage: mastracode --prompt <text> [options]\n--help, -h';
+    expect(versionFloorDecision('0.38.0', '0.38.0')).toEqual({ ok: true });
+    expect(versionFloorDecision('0.39.0', '0.38.0')).toEqual({ ok: true });
+    expect(versionFloorDecision(UNVERSIONED_HARNESS, '0.38.0')).toEqual({ ok: true });
+    expect(versionFloorDecision('0.37.0', '0.38.0')).toEqual({
+      ok: false,
+      reason: 'CLI version below reviewed floor (installed 0.37.0, requires >= 0.38.0)'
+    });
+    expect(versionFloorDecision(undefined, '0.38.0')).toEqual({
+      ok: false,
+      reason: 'CLI version below reviewed floor (installed version could not be determined)'
+    });
   });
 });

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
-import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig } from '@zana-ai/zcc-domain/product';
 import { DEFAULT_TERMINAL_THEME } from '@zana-ai/zcc-domain/terminal-themes';
 import { atomicDurableWrite, DurableWriteConflictError } from '../../durable-store.js';
 
@@ -24,12 +24,46 @@ export interface ConfigStoreOptions {
   configFile: string;
 }
 
-/** Never persist or serve a pair that hides both Modern and CLI Agent. */
+/** Never persist or serve a pair that hides both Modern and CLI Agent.
+ *  Rev {@link COMPOSER_LAUNCH_SURFACES_REV} also resets leftover CLI-only
+ *  (Modern+Team off from the old healer) to all-on once. */
 export function ensureComposerLaunchSurfaces<T extends Partial<AppConfig>>(config: T): T {
-  if (config.composerShowCliAgent === false && config.composerShowModern === false) {
-    return { ...config, composerShowCliAgent: true };
+  let next = config;
+  if (next.composerShowCliAgent === false && next.composerShowModern === false) {
+    next = {
+      ...next,
+      composerShowCliAgent: true,
+      composerShowModern: true,
+      composerShowAutonomousTeam: true,
+      teamJobLaunchEnabled: true
+    };
   }
-  return config;
+  if (
+    next.composerLaunchSurfacesRev !== COMPOSER_LAUNCH_SURFACES_REV
+    && next.composerShowModern === false
+    && next.composerShowAutonomousTeam === false
+    && next.teamJobLaunchEnabled === false
+  ) {
+    next = {
+      ...next,
+      composerShowCliAgent: true,
+      composerShowModern: true,
+      composerShowAutonomousTeam: true,
+      teamJobLaunchEnabled: true
+    };
+  }
+  if (next.composerLaunchSurfacesRev !== COMPOSER_LAUNCH_SURFACES_REV) {
+    next = { ...next, composerLaunchSurfacesRev: COMPOSER_LAUNCH_SURFACES_REV };
+  }
+  return next;
+}
+
+function composerLaunchSurfacesDiffer(before: Partial<AppConfig>, after: Partial<AppConfig>): boolean {
+  return before.composerShowCliAgent !== after.composerShowCliAgent
+    || before.composerShowModern !== after.composerShowModern
+    || before.composerShowAutonomousTeam !== after.composerShowAutonomousTeam
+    || before.teamJobLaunchEnabled !== after.teamJobLaunchEnabled
+    || before.composerLaunchSurfacesRev !== after.composerLaunchSurfacesRev;
 }
 
 /**
@@ -116,7 +150,18 @@ export function createConfigStore(
 
   return {
     getConfig(): AppConfig {
-      return hydrate(readJsonRaw<Partial<AppConfig>>({}).value);
+      const disk = readJsonRaw<Partial<AppConfig>>({});
+      const stored = deps.normalizeConfig(disk.value);
+      const merged = deps.projectConfigCompatibility({ ...fallback(), ...stored, version: 1 });
+      const healed = ensureComposerLaunchSurfaces(merged);
+      if (disk.hash !== null && composerLaunchSurfacesDiffer(merged, healed)) {
+        try {
+          writeConfig(deps.canonicalConfigForWrite(healed), disk.hash);
+        } catch {
+          /* still serve the healed view if another writer won the file */
+        }
+      }
+      return healed;
     },
     snapshot(): ConfigSnapshot {
       const disk = readJsonRaw<Partial<AppConfig>>({});

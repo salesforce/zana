@@ -18,6 +18,12 @@ describe('structured routing evidence', () => {
     expect(evaluateFacetEvidence(provider, 'opening-prompt', 'remote', '1.18.0')).toMatchObject({
       classification: 'available', evidence: { id: 'opencode.facet.opening-prompt-remote' }
     });
+    expect(evaluateFacetEvidence(
+      provider,
+      'opening-prompt',
+      'local',
+      'Usage: mastracode --prompt <text> [options]\n--help'
+    )).toMatchObject({ classification: 'available' });
   });
 
   it('accepts approved model targets for local and remote launches', () => {

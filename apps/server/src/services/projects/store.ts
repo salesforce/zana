@@ -4,7 +4,7 @@ import { join, basename, dirname, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { Project, ProjectRemote, AppConfig, ProjectSettings, OpenTarget, ProjectLaunchDefault, HarnessFamily } from '@zana-ai/zcc-domain/product';
-import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, DEFAULT_PROJECT_DISPLAY_NAME } from '@zana-ai/zcc-domain/product';
+import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME } from '@zana-ai/zcc-domain/product';
 import { isTerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
 import { PROJECT_COLORS, pickProjectColor } from '@zana-ai/zcc-domain/project-colors';
 import { registeredAdapters } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -1043,8 +1043,14 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.composerShowAutonomousTeam === 'boolean') {
     normalized.composerShowAutonomousTeam = input.composerShowAutonomousTeam;
   }
+  if (input.composerLaunchSurfacesRev === COMPOSER_LAUNCH_SURFACES_REV) {
+    normalized.composerLaunchSurfacesRev = COMPOSER_LAUNCH_SURFACES_REV;
+  }
   if (normalized.composerShowCliAgent === false && normalized.composerShowModern === false) {
     normalized.composerShowCliAgent = true;
+    normalized.composerShowModern = true;
+    normalized.composerShowAutonomousTeam = true;
+    normalized.teamJobLaunchEnabled = true;
   }
   if (typeof input.goalsEnabled === 'boolean') {
     normalized.goalsEnabled = input.goalsEnabled;

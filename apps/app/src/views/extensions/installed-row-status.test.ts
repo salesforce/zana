@@ -48,4 +48,8 @@ describe('installedRuntimeStatus', () => {
     expect(installedNotRunning(row({ status: 'running' }))).toBe(false);
     expect(installedNotRunning(row({ enabled: false, status: 'disabled' }))).toBe(false);
   });
+
+  it('keeps degraded detail for the health copy, not a second not-running chip', () => {
+    expect(installedRuntimeStatus(row({ status: 'degraded' }))?.detail).toBe('RPC failed');
+  });
 });

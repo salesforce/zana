@@ -407,13 +407,20 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ composerShowAutonomousTeam: 'yes' }).composerShowAutonomousTeam).toBeUndefined();
   });
 
-  it('repairs a both-off composer launch-surface pair to keep CLI Agent on', () => {
+  it('repairs a both-off composer launch-surface pair to all three on', () => {
     expect(normalizeConfig({
       composerShowCliAgent: false,
       composerShowModern: false
-    })).toMatchObject({ composerShowCliAgent: true, composerShowModern: false });
+    })).toMatchObject({
+      composerShowCliAgent: true,
+      composerShowModern: true,
+      composerShowAutonomousTeam: true,
+      teamJobLaunchEnabled: true
+    });
     expect(normalizeConfig({ composerShowCliAgent: false }).composerShowCliAgent).toBe(false);
     expect(normalizeConfig({ composerShowModern: false }).composerShowModern).toBe(false);
+    expect(normalizeConfig({ composerLaunchSurfacesRev: 2 }).composerLaunchSurfacesRev).toBe(2);
+    expect(normalizeConfig({ composerLaunchSurfacesRev: 1 }).composerLaunchSurfacesRev).toBeUndefined();
   });
 
   it('passes through a boolean suggestionsEnabled, drops non-booleans', () => {

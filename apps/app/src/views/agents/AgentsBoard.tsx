@@ -16,7 +16,7 @@ import {
 } from '@/store';
 import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { getThreadRoutePath, getAgentSessionRoutePath, threadIdFromPath } from '@/lib/route-paths';
+import { getThreadRoutePath, threadIdFromPath } from '@/lib/route-paths';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
 import { AgentViewToggle, ScheduledColumnToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
@@ -283,11 +283,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       return;
     }
     if (item.kind === 'schedule') {
-      openScheduleFromAgents(item.task, terminals, navigate);
-      return;
-    }
-    if (item.card.session.scheduled) {
-      navigate(getAgentSessionRoutePath(item.card.session.id, item.projectId));
+      openScheduleFromAgents(item.task, terminals);
       return;
     }
     const executionId = item.card.session.cohort?.executionId;
@@ -304,11 +300,11 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       return;
     }
     if (item.kind === 'schedule') {
-      openScheduleFromAgents(item.task, terminals, navigate);
+      openScheduleFromAgents(item.task, terminals);
       return;
     }
     if (item.card.session.scheduled) {
-      navigate(getAgentSessionRoutePath(item.card.session.id, item.projectId));
+      useUi.getState().openAgentModal(item.card.session.id, item.projectId);
       return;
     }
     const c = item.card;

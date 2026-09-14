@@ -18,6 +18,7 @@ import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath 
 import { resolveHarnessCommand } from './harness/harness-verify.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName } from './tmux.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
+import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
 import type { HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
 import { getHarnessAuth } from './harness-auth.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from './harness/target-resolution.js';
@@ -652,6 +653,11 @@ export class PtyManager extends EventEmitter {
      * claude-family), `buildSystemPromptGuidance(true)` adds the schedule-report
      * block so the agent knows to file a run report via `schedule_report`. Off
      * for user-opened tabs so they aren't nagged to report.
+     *
+     * Scheduled fires are unattended: default-posture profiles remap onto the
+     * adapter's unrestricted (yolo) sibling, AskUserQuestion is denied, and
+     * inherited interactive/plan/accept-edits execution is replaced with
+     * autonomous so the run cannot stall on a permission prompt.
      */
     scheduled?: boolean;
     /**
@@ -769,22 +775,36 @@ export class PtyManager extends EventEmitter {
     // opts.profile as the base command. This lets a persona declare "I always
     // run as claude-yolo" without the caller needing to know.
     const personaOrOptsProfile = opts.persona?.baseProfile ?? opts.profile;
-    // AUTONOMOUS squad runs launch on the `claude-yolo` base (full bypass —
-    // `--dangerously-skip-permissions`, no per-tool prompts at all) so an
-    // unattended team never stalls on an approval. This deliberately OVERRIDES a
-    // claude-family persona's baseProfile (the built-in orchestrator/worker
-    // personas pin `claude`), because the operator opted the whole squad into
-    // yolo at launch — a per-persona base must not quietly downgrade it. Only
-    // claude-family bases are switched: a cursor/codex persona keeps its own
-    // profile (yolo is a claude-only concept), and a non-autonomous launch is
-    // untouched. CAVEAT: an enterprise `managed-settings.json:
+    // Unattended identity: autonomous Claude-family squads (including resume)
+    // and scheduled default-posture fires remap onto the adapter's unrestricted
+    // sibling so they cannot inherit prompting permission settings. See
+    // effectiveUnattendedProfile. CAVEAT: an enterprise `managed-settings.json:
     // disableBypassPermissionsMode` policy, if present on this fleet, makes
     // claude ignore the bypass flag and silently fall back to prompting — the
     // known trade-off of choosing the yolo base.
-    const effectiveProfile: LaunchProfileId =
-      opts.autonomous && isClaudeProfile(personaOrOptsProfile)
-        ? 'claude-yolo'
-        : personaOrOptsProfile;
+    const effectiveProfile: LaunchProfileId = effectiveUnattendedProfile(
+      opts.profile,
+      opts.persona,
+      { autonomous: opts.autonomous, scheduled: opts.scheduled }
+    );
+    const spawnPersona = opts.persona
+      ? { ...opts.persona, baseProfile: effectiveProfile }
+      : undefined;
+    // Validate: unrestricted profiles cannot have structured execution routing
+    if (profilePostureOf(effectiveProfile) === 'unrestricted' && opts.harnessRouting) {
+      const family = harnessFamilyOf(effectiveProfile);
+      const adapterConfig = family && opts.harnessRouting.byAdapter?.[family];
+      if (adapterConfig?.executionState || adapterConfig?.executionTargetId || adapterConfig?.compatibility) {
+        throw new Error('Structured execution state conflicts with unrestricted profile.');
+      }
+    }
+    const harnessRouting = opts.scheduled
+      ? (profilePostureOf(effectiveProfile) === 'unrestricted'
+          ? withoutExecutionIntent(opts.harnessRouting, effectiveProfile)
+          : unattendedExecutionRouting(personaOrOptsProfile, opts.harnessRouting) ?? opts.harnessRouting)
+      : (profilePostureOf(effectiveProfile) === 'unrestricted'
+          ? withoutExecutionIntent(opts.harnessRouting, effectiveProfile)
+          : opts.harnessRouting);
     // Resolve the launch provider for this profile (Rule 6: the profile → provider
     // mapping lives in the registry; PtyManager dispatches through the seam and
     // never names a provider in its launch logic).
@@ -799,34 +819,34 @@ export class PtyManager extends EventEmitter {
     const autoModeActive = provider.computeAutoModeActive({
       profile: effectiveProfile,
       config: opts.config,
-      persona: opts.persona,
+      persona: spawnPersona,
       projectSettings: opts.projectSettings,
-      harnessRouting: opts.harnessRouting,
+      harnessRouting,
       extraArgs: preCleanedExtra
     });
     const modelTarget = resolveModelTarget(provider, {
       config: opts.config,
-      persona: opts.persona,
+      persona: spawnPersona,
       projectSettings: opts.projectSettings,
-      perTabRouting: opts.harnessRouting,
+      perTabRouting: harnessRouting,
       profile: effectiveProfile,
       extraArgs: preCleanedExtra,
       scope: 'local'
     });
     const roleTarget = resolveRoleTarget(provider, {
       config: opts.config,
-      persona: opts.persona,
+      persona: spawnPersona,
       projectSettings: opts.projectSettings,
-      perTabRouting: opts.harnessRouting,
+      perTabRouting: harnessRouting,
       profile: effectiveProfile,
       extraArgs: preCleanedExtra,
       scope: 'local'
     });
     const execution = resolveExecutionState(provider, {
       config: opts.config,
-      persona: opts.persona,
+      persona: spawnPersona,
       projectSettings: opts.projectSettings,
-      perTabRouting: opts.harnessRouting,
+      perTabRouting: harnessRouting,
       profile: effectiveProfile,
       extraArgs: preCleanedExtra,
       scope: 'local'
@@ -1035,8 +1055,8 @@ export class PtyManager extends EventEmitter {
     // per-project overrides still win. The provider owns whether it honours
     // personas: the shell provider returns [] (a persona on a shell tab is a
     // no-op), so no profile branch is needed here.
-    const personaArgs = opts.persona
-      ? provider.personaArgs(opts.persona, effectiveProfile)
+    const personaArgs = spawnPersona
+      ? provider.personaArgs(spawnPersona, effectiveProfile)
       : [];
     const psArgs = opts.projectSettings
       ? provider.projectSettingsArgs(opts.projectSettings, effectiveProfile)
@@ -1251,7 +1271,7 @@ export class PtyManager extends EventEmitter {
       caps.acceptsPermissionMode ? ['--permission-mode', 'acceptEdits'] : [];
     const autonomousDisallowArgs =
       caps.injectsClaudeMcpConfig ? ['--disallowedTools', 'AskUserQuestion'] : [];
-    const autonomousArgs = opts.autonomous
+    const autonomousArgs = (opts.autonomous || opts.scheduled)
       ? [...autonomousPermissionArgs, ...autonomousDisallowArgs]
       : [];
     // Job Team's MCP allowlist and AskUserQuestion denial use Claude-only argv
@@ -1935,32 +1955,47 @@ export class PtyManager extends EventEmitter {
       throw new Error(`Harness profile ${opts.profile} does not support remote execution`);
     }
     const remoteProvider = remoteRegistration.implementation;
-    const remoteEffectiveProfile = opts.persona?.baseProfile ?? opts.profile;
+    const remoteEffectiveProfile = effectiveUnattendedProfile(
+      opts.profile,
+      opts.persona,
+      { autonomous: opts.autonomous, scheduled: opts.scheduled }
+    );
+    const remotePersona = opts.persona
+      ? { ...opts.persona, baseProfile: remoteEffectiveProfile }
+      : undefined;
+    const remoteHarnessRouting = profilePostureOf(remoteEffectiveProfile) === 'unrestricted'
+      ? withoutExecutionIntent(opts.harnessRouting, remoteEffectiveProfile)
+      : opts.scheduled
+        ? unattendedExecutionRouting(
+            opts.persona?.baseProfile ?? opts.profile,
+            opts.harnessRouting
+          ) ?? opts.harnessRouting
+        : opts.harnessRouting;
     const remoteMetadataProvider = remoteProvider;
     const remoteExtra = cleanExtraArgs(opts.extraArgs);
     const remoteModelTarget = resolveModelTarget(remoteMetadataProvider, {
       config: opts.config,
-      persona: opts.persona,
+      persona: remotePersona,
       projectSettings: opts.projectSettings,
-      perTabRouting: opts.harnessRouting,
+      perTabRouting: remoteHarnessRouting,
       profile: remoteEffectiveProfile,
       extraArgs: remoteExtra,
       scope: 'remote'
     });
     const remoteRoleTarget = resolveRoleTarget(remoteMetadataProvider, {
       config: opts.config,
-      persona: opts.persona,
+      persona: remotePersona,
       projectSettings: opts.projectSettings,
-      perTabRouting: opts.harnessRouting,
+      perTabRouting: remoteHarnessRouting,
       profile: remoteEffectiveProfile,
       extraArgs: remoteExtra,
       scope: 'remote'
     });
     const remoteExecution = resolveExecutionState(remoteMetadataProvider, {
       config: opts.config,
-      persona: opts.persona,
+      persona: remotePersona,
       projectSettings: opts.projectSettings,
-      perTabRouting: opts.harnessRouting,
+      perTabRouting: remoteHarnessRouting,
       profile: remoteEffectiveProfile,
       extraArgs: remoteExtra,
       scope: 'remote'
@@ -2069,9 +2104,9 @@ export class PtyManager extends EventEmitter {
       autoModeActive: remoteProvider.computeAutoModeActive({
         profile: remoteEffectiveProfile,
         config: opts.config,
-        persona: opts.persona,
+        persona: remotePersona,
         projectSettings: opts.projectSettings,
-        harnessRouting: opts.harnessRouting,
+        harnessRouting: remoteHarnessRouting,
         extraArgs: cleanExtraArgs(opts.extraArgs)
       }),
       callbacks: remoteHookUrls ? {
@@ -2082,8 +2117,11 @@ export class PtyManager extends EventEmitter {
       } : {},
       scope: 'remote'
     });
-    const { cmd: builtCmd, claudeSessionId: remoteClaudeSessionId } = renderRemoteCommand(opts.profile, {
+    const { cmd: builtCmd, claudeSessionId: remoteClaudeSessionId } = renderRemoteCommand(remoteEffectiveProfile, {
       ...opts,
+      profile: remoteEffectiveProfile,
+      persona: remotePersona,
+      harnessRouting: remoteHarnessRouting,
       lifecycle: remoteLifecycle,
       remoteHookUrls,
       remoteMcpUrl,
