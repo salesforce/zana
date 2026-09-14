@@ -4134,7 +4134,7 @@ function jobWorkerPrompt(input: {
   return [
     `Team worker standby. You are ${input.label} (${input.personaName}), slot \`${input.slotId}\`${input.executionId ? ` in execution \`${input.executionId}\`` : ''}.`,
     'Your working directory is the trusted project workspace. Execution sources and the job plan are coordinator-owned. Wait for an assignment from the coordinator containing the needed source context and file scope. Do not infer or start the overall job independently.',
-    'Do not poll `agent_inbox`. Messages inject when idle. Call `agent_inbox` only after an injected notification. Execute only the bounded work assigned to this slot. When complete, call `execution.work.complete`; if failed, call `execution.work.fail`; if blocked, call `execution.work.block`; if releasing the work, call `execution.work.release`. Then report progress, blockers, and results to the coordinator with `agent_send`. If an assignment lacks required source context, ask the coordinator for it with `agent_send` before proceeding.',
+    'Do not poll `agent_inbox`. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Do not use `agent_send` for routine progress or results. If required source context is missing, use `execution.work.block` so the coordinator wakes through the explicit blocker lane.',
     'If human input is required, call `execution.work.block`; do not use AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId; report delivered false plus error when application fails.'
   ].join('\n\n');
 }
@@ -4160,7 +4160,7 @@ function jobCoordinatorPrompt(input: {
       '- If `workUnits` are empty (or not yet a valid DAG) and execution sources exist, call `execution.source.list`, read each source fully with bounded `execution.source.read` pages, derive bounded generic work units, and call `execution.plan.register` exactly once.',
       '- If `workUnits` are empty and no execution sources exist, derive bounded generic work units from the goal and available context and call `execution.plan.register` exactly once; if that context cannot support a bounded plan, fail clearly without registering a speculative plan.',
       '- Once a valid structured plan exists, call `execution.work.dispatch_ready` EXACTLY ONCE. The engine assigns every ready unit to a free worker slot, notifies each worker, and AUTOMATICALLY re-dispatches newly-ready units as work completes. Do NOT assign or delegate units yourself — no `execution.work.assign`, no per-unit `agent_send`. Never assign work to the orchestrator slot.',
-      '- Do not poll for progress. Worker completions, blockers, and results inject when you are idle; act only on an injected notification.',
+      '- After dispatch succeeds, end this turn and remain idle. Do not poll or synthesize routine progress. Wake only for an injected HUMAN_BLOCKER, SEMANTIC_CONFLICT, or POLICY_ESCALATION notification.',
       '- Do not call execution.status during normal kickoff.',
       '- Do not call execution.list during normal kickoff.',
       '- Do not call execution.events during normal kickoff.',
@@ -4190,11 +4190,11 @@ function jobCoordinatorPrompt(input: {
       'Coordination contract:',
       '- Preserve source-declared execution semantics in generic work units: dependency ids become `dependencies`; bounded work becomes `task`; mutating paths become `files`; read-only work sets `readOnly: true`; checks become `verification`. Every mutating unit needs non-empty `files` before registration.',
       '- Workers must close each unit with `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`.',
-      '- After the plan is structured, hand scheduling to the engine with a single `execution.work.dispatch_ready`; the engine assigns and re-dispatches ready units to workers. Do not relay per-unit assignments with `agent_send`. Do not poll `agent_inbox`; messages inject when idle. Never let workers independently execute the whole goal.',
+      '- After the plan is structured, hand scheduling to the engine with a single `execution.work.dispatch_ready`; the engine assigns and re-dispatches ready units to workers. Then end the turn and remain parked. Do not relay assignments or routine results with `agent_send`. Never let workers independently execute the whole goal.',
       '- Record meaningful progress and outcomes with `execution.event`. Route human-required questions through `execution.work.block`, never event-only blockers or AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId; report delivered false plus error when application fails.',
       '- Store durable outputs with `execution.artifact.put`.',
-      '- Resolve or escalate blockers, synthesize worker results, and verify completion criteria.',
-      '- Only after all required work units and verification are complete, call `execution.complete` with final summary. Do not stop early.'
+      '- On an explicit wake notification, resolve or escalate only that human blocker, semantic conflict, or policy escalation. Do not resume routine coordination.',
+      '- Terminal status and summary are assembled mechanically from durable work outcomes, policy state, events, and artifacts. Optional narrative may augment that record but never gates settlement.'
     ].join('\n')
   ].filter(Boolean).join('\n\n');
 }
@@ -4941,6 +4941,7 @@ const squadExecutionService = new SquadExecutionService({
   sources: executionSources,
   inbox: inboxStore,
   triggerDeliveryDrain: (sessionId) => executionDeliveryDrain.forceCheck(sessionId),
+  isSessionIdle: (sessionId) => agentStatus.get(sessionId) === 'idle',
   authorizeTeamLaunch,
   launchTeam,
   getTeamLaunch: async (callerPrincipalId, launchRequestId) => {
@@ -5581,6 +5582,11 @@ function wireBridgeListeners() {
     // safe to inject. Cheap no-op for non-idle states or an empty queue.
     workerInjector.onState(sessionId, state);
     const session = ptys.getSession(sessionId);
+    if (state === 'idle' && session?.cohort?.executionId && session.cohort.role === 'orchestrator') {
+      void squadExecutionService.drainCoordinatorWake(session.projectId, session.cohort.executionId, sessionId).catch((error) =>
+        logMainError(`execution coordinator wake ${sessionId}`, error)
+      );
+    }
     if (session) void transcriptSource.observe(transcriptRefForSession(session));
     void teamLifecycleIntegration.onAgentStatus(sessionId, state).catch((error) =>
       logMainError(`team lifecycle status ${sessionId}`, error)

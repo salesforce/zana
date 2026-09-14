@@ -82,9 +82,9 @@ async function expectFailedDagDetails(window: Page): Promise<void> {
   await card.click();
   const details = window.getByLabel('Team details');
   await expect(details.getByText(/FAILED · attempt/)).toBeVisible();
-  await expect(details.getByText(/Fail Root.*FAILED/)).toBeVisible();
-  await expect(details.getByText(/Dependent.*SKIPPED/)).toBeVisible();
-  await expect(details.getByText(/Independent.*COMPLETED/)).toBeVisible();
+  await expect(details.getByText(/Fail Root.*FAILED/).first()).toBeVisible();
+  await expect(details.getByText(/Dependent.*SKIPPED/).first()).toBeVisible();
+  await expect(details.getByText(/Independent.*COMPLETED/).first()).toBeVisible();
   await expect(details.getByRole('button', { name: 'Retry work' })).toHaveCount(0);
 }
 

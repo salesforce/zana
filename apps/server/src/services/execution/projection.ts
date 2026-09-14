@@ -156,7 +156,9 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     ...(record.finalSummary ? { finalSummary: record.finalSummary } : {}),
     eventCursor: record.lastEventSequence ?? 0,
     ...(orchestratorSessionId ? { orchestratorSessionId } : {}),
-    coordinator: terminal ? { status: 'complete' } : orchestratorSessionId
+    coordinator: terminal ? { status: 'complete' } : record.coordinatorState === 'PARKED' && orchestratorSessionId
+      ? { status: 'parked', sessionId: orchestratorSessionId }
+      : orchestratorSessionId
       ? { status: 'live', sessionId: orchestratorSessionId }
       : { status: 'lost' },
     recoveryAttention: !terminal && !orchestratorSessionId,

@@ -112,6 +112,18 @@ describe('projectExecutionProjection', () => {
     });
   });
 
+  it('distinguishes a parked live coordinator but still surfaces a lost parked session', () => {
+    const input = record();
+    input.coordinatorState = 'PARKED';
+    const session = { id: 'orch', status: 'running', cohort: { executionId: input.id, role: 'orchestrator' } } as TerminalSession;
+    expect(projectExecutionProjection([input], [session])[0]).toMatchObject({
+      coordinator: { status: 'parked', sessionId: 'orch' }, recoveryAttention: false
+    });
+    expect(projectExecutionProjection([input], [])[0]).toMatchObject({
+      coordinator: { status: 'lost' }, recoveryAttention: true
+    });
+  });
+
   it('does not let an unbound recovery monitor suppress recovery attention', () => {
     const input = record();
     const unbound = { id: 'recovery-unbound', status: 'running', cohort: { executionId: input.id, role: 'orchestrator', slotId: 'orchestrator:recovery' } } as TerminalSession;

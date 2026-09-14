@@ -123,6 +123,9 @@ export interface ExecutionRecord {
   blockers?: ExecutionBlocker[];
   deliveries?: ExecutionDeliveryRecord[];
   finalSummary?: string;
+  /** Coordinator intentionally stopped taking routine turns after initial dispatch. */
+  coordinatorState?: 'ACTIVE' | 'PARKED';
+  coordinatorWake?: { message: string; createdAt: number };
   coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
   origin?: import('@zana-ai/zcc-domain/product').LaunchOrigin;
   createdAt: number;
@@ -261,6 +264,8 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.blockers === undefined || Array.isArray(record.blockers) && record.blockers.length <= MAX_WORK_UNITS && record.blockers.every(validExecutionBlocker))
     && (record.deliveries === undefined || Array.isArray(record.deliveries) && record.deliveries.length <= MAX_DELIVERIES_PER_EXECUTION && record.deliveries.every(validExecutionDelivery))
     && (record.finalSummary === undefined || typeof record.finalSummary === 'string' && record.finalSummary.length > 0 && record.finalSummary.length <= MAX_FINAL_SUMMARY)
+    && (record.coordinatorState === undefined || record.coordinatorState === 'ACTIVE' || record.coordinatorState === 'PARKED')
+    && (record.coordinatorWake === undefined || validString(record.coordinatorWake.message) && typeof record.coordinatorWake.createdAt === 'number')
     && (record.coordinationMode === undefined || record.coordinationMode === 'interactive-team' || record.coordinationMode === 'autonomous-team' || record.coordinationMode === 'job-team' || record.coordinationMode === 'structured' || record.coordinationMode === 'freeform')
     && (record.origin === undefined || record.origin === 'explicit' || record.origin === 'scheduled' || record.origin === 'goal')
     && typeof record.createdAt === 'number' && typeof record.updatedAt === 'number'
@@ -806,6 +811,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       record.authorizationContext = undefined;
       record.authorizationContextDigest = undefined;
       record.policyResult = undefined;
+      record.coordinatorState = 'ACTIVE';
       record.updatedAt = now();
       append(snapshot.state, record, record.state, 'info', 'Execution retry started', record.updatedAt, { kind: 'transition', fromState: 'BLOCKED', toState: 'STARTING' });
       persist(snapshot.state, snapshot.hash);
@@ -942,9 +948,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           assignments.push({ workUnitId: unit.id, slotId: slot.slotId, title: unit.title, task: unit.task, ...(unit.files?.length ? { files: unit.files } : {}) });
         }
         if (assignments.length) {
+          record.coordinatorState = 'PARKED';
           record.stateVersion += 1;
           record.updatedAt = timestamp;
-          append(snapshot.state, record, record.state, 'info', `Auto-dispatched ${assignments.length} ready work unit(s)`, timestamp, { kind: 'command' });
+          append(snapshot.state, record, record.state, 'info', `Coordinator parked; auto-dispatched ${assignments.length} ready work unit(s)`, timestamp, { kind: 'command' });
           persist(snapshot.state, snapshot.hash);
         }
       }
@@ -1291,6 +1298,73 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, 'Coordinator completed execution');
   }
 
+  async function failExecution(executionId: string, expectedStateVersion: number, finalSummary: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      assertActive(record);
+      if (record.blockers?.some((blocker) => !blocker.resolved)) throw new Error('cannot transition to FAILED while blockers are unresolved');
+      if (typeof finalSummary !== 'string' || !finalSummary.trim() || finalSummary.length > MAX_FINAL_SUMMARY) throw new Error('invalid execution final summary');
+      const fromState = record.state;
+      record.state = 'FAILED';
+      record.finalSummary = finalSummary;
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'error', 'All runnable work settled; execution failed automatically by the engine.', record.updatedAt, { kind: 'transition', fromState, toState: 'FAILED' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  async function setCoordinatorState(executionId: string, coordinatorState: 'ACTIVE' | 'PARKED'): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (terminalStates.has(record.state) || record.coordinatorState === coordinatorState) return clone(record);
+      record.coordinatorState = coordinatorState;
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'info', `Coordinator ${coordinatorState.toLowerCase()}`, record.updatedAt, { kind: 'command' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  async function queueCoordinatorWake(executionId: string, message: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (terminalStates.has(record.state)) return clone(record);
+      const boundedMessage = string(message, 'coordinator wake');
+      record.coordinatorState = 'ACTIVE';
+      record.coordinatorWake = { message: boundedMessage, createdAt: now() };
+      record.stateVersion += 1;
+      record.updatedAt = record.coordinatorWake.createdAt;
+      append(snapshot.state, record, record.state, 'warning', 'Coordinator wake queued', record.updatedAt, { kind: 'command' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  async function acknowledgeCoordinatorWake(executionId: string, message: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.coordinatorWake?.message !== message) return clone(record);
+      record.coordinatorWake = undefined;
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'info', 'Coordinator wake delivered', record.updatedAt, { kind: 'command' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
   /** Hide terminal board history without deleting audit records or source retention. */
   async function dismiss(executionId: string): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
@@ -1413,7 +1487,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, releaseUndelivered, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, releaseUndelivered, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, setCoordinatorState, queueCoordinatorWake, acknowledgeCoordinatorWake, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {
