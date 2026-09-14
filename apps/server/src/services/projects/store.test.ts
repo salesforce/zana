@@ -162,6 +162,7 @@ describe('harness compatibility projection persistence', () => {
       byAdapter: {
         codex: {
           providerTargetId: 'openai',
+          roleTargetId: 'reviewer',
           modelTargetId: 'gpt-4o',
           modelLevel: 'high' as const,
           executionState: 'plan' as const,
@@ -174,13 +175,12 @@ describe('harness compatibility projection persistence', () => {
     expect(store.getConfig().harnessRouting).toEqual(harnessRouting);
   });
 
-  it('drops globally unsupported role, execution target, and compatibility fields', () => {
+  it('drops globally unsupported execution target and compatibility fields', () => {
     expect(normalizeConfig({
       harnessRouting: {
         schemaVersion: 1,
         byAdapter: {
           codex: {
-            roleTargetId: 'reviewer',
             executionTargetId: 'codex.execution.plan',
             compatibility: { codexSandbox: 'read-only', codexApproval: 'on-request' }
           }

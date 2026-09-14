@@ -582,10 +582,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
         if (!HARNESS_FAMILIES.includes(adapterId as HarnessFamily) || !routing || typeof routing !== 'object') return [];
         const modelTargetId = (routing as { modelTargetId?: unknown }).modelTargetId;
         const providerTargetId = (routing as { providerTargetId?: unknown }).providerTargetId;
+        const roleTargetId = (routing as { roleTargetId?: unknown }).roleTargetId;
         const modelLevel = (routing as { modelLevel?: unknown }).modelLevel;
         const executionState = (routing as { executionState?: unknown }).executionState;
-        const entry: { providerTargetId?: string; modelTargetId?: string; modelLevel?: 'low' | 'medium' | 'high' | 'extra-high'; executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous' } = {};
+        const entry: { providerTargetId?: string; roleTargetId?: string; modelTargetId?: string; modelLevel?: 'low' | 'medium' | 'high' | 'extra-high'; executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous' } = {};
         if (typeof providerTargetId === 'string' && providerTargetId.trim() && providerTargetId.length <= 256) entry.providerTargetId = providerTargetId;
+        if (typeof roleTargetId === 'string' && roleTargetId.trim() && roleTargetId.length <= 256) entry.roleTargetId = roleTargetId;
         if (typeof modelTargetId === 'string' && modelTargetId.trim() && modelTargetId.length <= 512) entry.modelTargetId = modelTargetId;
         if (modelLevel === 'low' || modelLevel === 'medium' || modelLevel === 'high' || modelLevel === 'extra-high') entry.modelLevel = modelLevel;
         if (executionState === 'plan' || executionState === 'interactive' || executionState === 'accept-edits' || executionState === 'autonomous') entry.executionState = executionState;
@@ -1725,6 +1727,12 @@ export const store = {
   },
   getConfig(): AppConfig {
     return configStore.getConfig();
+  },
+  snapshotConfig(): ReturnType<typeof configStore.snapshot> {
+    return configStore.snapshot();
+  },
+  replaceConfig(next: AppConfig, expectedHash: string | null): AppConfig {
+    return configStore.replaceConfig(next, expectedHash);
   },
   setConfig(patch: Partial<AppConfig>): AppConfig {
     return configStore.setConfig(patch);
