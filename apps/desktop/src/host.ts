@@ -6202,21 +6202,29 @@ async function bootstrapNormal() {
   } catch (err) {
     logMainError('ensureQuickAgentProject', err);
   }
-  const openCodeProvider = providerFor('opencode');
-  if (openCodeProvider.discoverModelTargets) {
-    const config = store.getConfig();
-    const probeCwd = selectOpenCodeProbeCwd({
-      lastProjectId: config.lastProjectId,
-      projects: store.listProjects(),
-      pathExists: existsSync,
-      ensureScratchRoot: () => store.ensureScratchRoot()
-    });
-    void reconcileOpenCodeStartupRouting(probeCwd, {
-      snapshot: () => store.snapshotConfig(),
-      replaceConfig: (next, expectedHash) => store.replaceConfig(next, expectedHash),
-      discoverLiveModels: (input) => openCodeProvider.discoverModelTargets!(input),
-      catalogModels: openCodeProvider.adapter.descriptor.targets?.models
-    }).catch((err) => logMainError('reconcileOpenCodeStartupRouting', err));
+  try {
+    const openCodeProvider = providerFor('opencode');
+    if (openCodeProvider.discoverModelTargets) {
+      const config = store.getConfig();
+      const probeCwd = selectOpenCodeProbeCwd({
+        lastProjectId: config.lastProjectId,
+        projects: store.listProjects(),
+        pathExists: existsSync,
+        ensureScratchRoot: () => store.ensureScratchRoot()
+      });
+      void reconcileOpenCodeStartupRouting(probeCwd, {
+        snapshot: () => store.snapshotConfig(),
+        replaceConfig: (next, expectedHash) => store.replaceConfig(next, expectedHash),
+        discoverLiveModels: (input) => openCodeProvider.discoverModelTargets!(input),
+        catalogModels: openCodeProvider.adapter.descriptor.targets?.models
+      }).then((result) => {
+        if (result.outcome === 'cas-give-up') {
+          logMainError('reconcileOpenCodeStartupRouting', new Error(`cas-give-up cwd=${probeCwd}`));
+        }
+      }).catch((err) => logMainError('reconcileOpenCodeStartupRouting', err));
+    }
+  } catch (err) {
+    logMainError('reconcileOpenCodeStartupRouting', err);
   }
   // Warm each discovery-capable registration for local projects. The launcher
   // reads the harness-owned cache; only an explicit refresh bypasses it.

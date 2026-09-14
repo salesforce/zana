@@ -75,6 +75,17 @@ describe('projectOpenCodeStartupRoute', () => {
     });
   });
 
+  it('clears a drifted provider when the live model has no catalog provider', () => {
+    expect(projectOpenCodeStartupRoute(
+      { modelTargetId: 'llmgw/orphan', providerTargetId: 'stale' },
+      ['llmgw/orphan'],
+      catalog
+    )).toEqual({
+      outcome: 'cleared-provider-only',
+      route: { modelTargetId: 'llmgw/orphan' }
+    });
+  });
+
   it('rewrites a live model whose provider drifted', () => {
     expect(projectOpenCodeStartupRoute(
       { modelTargetId: 'llmgw/old', providerTargetId: 'stale' },
@@ -171,6 +182,41 @@ describe('reconcileOpenCodeStartupRouting', () => {
       outcome: 'cas-give-up'
     });
     expect(replaceConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses the first live-model probe on a CAS retry', async () => {
+    const current = baseConfig({
+      schemaVersion: 1,
+      byAdapter: { opencode: { modelTargetId: 'aisuite/old' } }
+    });
+    const discoverLiveModels = vi.fn(async () => ['llmgw/old']);
+    const replaceConfig = vi.fn(() => {
+      throw new DurableWriteConflictError();
+    });
+    await expect(reconcileOpenCodeStartupRouting('/repo', {
+      snapshot: () => snapshotOf(current),
+      replaceConfig,
+      discoverLiveModels,
+      catalogModels: catalog
+    })).resolves.toEqual({ outcome: 'cas-give-up' });
+    expect(discoverLiveModels).toHaveBeenCalledTimes(1);
+    expect(replaceConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates a non-conflict discoverLiveModels error without retrying', async () => {
+    const replaceConfig = vi.fn();
+    const boom = new Error('probe exploded');
+    await expect(reconcileOpenCodeStartupRouting('/repo', {
+      snapshot: () => snapshotOf(baseConfig({
+        schemaVersion: 1,
+        byAdapter: { opencode: { modelTargetId: 'aisuite/old' } }
+      })),
+      replaceConfig,
+      discoverLiveModels: async () => {
+        throw boom;
+      }
+    })).rejects.toBe(boom);
+    expect(replaceConfig).not.toHaveBeenCalled();
   });
 
   it('does not write when the probe is unavailable', async () => {

@@ -28,16 +28,13 @@ export interface OpenCodeStartupReconcileDeps {
 }
 
 type OpenCodeRoute = NonNullable<HarnessModelRoutingV1['byAdapter']['opencode']>;
+type ProjectedRoute = { outcome: Exclude<OpenCodeStartupReconcileOutcome, 'cas-give-up'>; route?: OpenCodeRoute };
 
 const AISUITE_PREFIX = 'aisuite/';
 const LLMGW_PREFIX = 'llmgw/';
 
 function cloneConfig(config: AppConfig): AppConfig {
   return JSON.parse(JSON.stringify(config)) as AppConfig;
-}
-
-function liveSet(ids: readonly string[]): Set<string> {
-  return new Set(ids);
 }
 
 function renameCandidate(modelTargetId: string): string | undefined {
@@ -67,16 +64,52 @@ function sameRoute(left: OpenCodeRoute | undefined, right: OpenCodeRoute | undef
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }
 
+function applyCatalogProvider(
+  route: OpenCodeRoute,
+  modelTargetId: string,
+  catalogModels?: readonly OpenCodeCatalogModel[]
+): ProjectedRoute {
+  const mappedProvider = providerForModel(modelTargetId, catalogModels);
+  const next: OpenCodeRoute = { ...route };
+  if (mappedProvider && next.providerTargetId && next.providerTargetId !== mappedProvider) {
+    next.providerTargetId = mappedProvider;
+    return { outcome: 'remapped', route: next };
+  }
+  if (!mappedProvider && next.providerTargetId) {
+    delete next.providerTargetId;
+    return sameRoute(route, next) ? { outcome: 'no-op', route } : { outcome: 'cleared-provider-only', route: next };
+  }
+  return { outcome: 'no-op', route };
+}
+
+function projectStaleModel(
+  route: OpenCodeRoute,
+  live: ReadonlySet<string>,
+  catalogModels?: readonly OpenCodeCatalogModel[]
+): ProjectedRoute {
+  const next: OpenCodeRoute = { ...route };
+  const candidate = route.modelTargetId ? renameCandidate(route.modelTargetId) : undefined;
+  if (candidate && live.has(candidate)) {
+    next.modelTargetId = candidate;
+    const mappedProvider = providerForModel(candidate, catalogModels);
+    if (mappedProvider) next.providerTargetId = mappedProvider;
+    else delete next.providerTargetId;
+    return { outcome: 'remapped', route: next };
+  }
+  delete next.modelTargetId;
+  delete next.providerTargetId;
+  return { outcome: 'cleared-stale-model', route: next };
+}
+
 export function projectOpenCodeStartupRoute(
   route: OpenCodeRoute | undefined,
   liveModels: readonly string[] | undefined,
   catalogModels?: readonly OpenCodeCatalogModel[]
-): { outcome: Exclude<OpenCodeStartupReconcileOutcome, 'cas-give-up'>; route?: OpenCodeRoute } {
+): ProjectedRoute {
   if (!route) return { outcome: 'no-op' };
   if (!liveModels) return { outcome: 'probe-unavailable', route };
 
-  const live = liveSet(liveModels);
-  const next: OpenCodeRoute = { ...route };
+  const live = new Set(liveModels);
   const hasRole = Boolean(route.roleTargetId);
   const hasModel = Boolean(route.modelTargetId);
   const hasProvider = Boolean(route.providerTargetId);
@@ -84,36 +117,12 @@ export function projectOpenCodeStartupRoute(
   if (hasRole && hasModel) return { outcome: 'no-op', route };
 
   if (hasModel && route.modelTargetId) {
-    if (live.has(route.modelTargetId)) {
-      const mappedProvider = providerForModel(route.modelTargetId, catalogModels);
-      if (mappedProvider && next.providerTargetId && next.providerTargetId !== mappedProvider) {
-        next.providerTargetId = mappedProvider;
-        return { outcome: 'remapped', route: next };
-      }
-      if (!mappedProvider && next.providerTargetId && !hasRole) {
-        delete next.providerTargetId;
-        return sameRoute(route, next) ? { outcome: 'no-op', route } : { outcome: 'cleared-provider-only', route: next };
-      }
-      return { outcome: 'no-op', route };
-    }
-
-    if (hasRole) return { outcome: 'no-op', route };
-
-    const candidate = renameCandidate(route.modelTargetId);
-    if (candidate && live.has(candidate)) {
-      next.modelTargetId = candidate;
-      const mappedProvider = providerForModel(candidate, catalogModels);
-      if (mappedProvider) next.providerTargetId = mappedProvider;
-      else delete next.providerTargetId;
-      return { outcome: 'remapped', route: next };
-    }
-
-    delete next.modelTargetId;
-    delete next.providerTargetId;
-    return { outcome: 'cleared-stale-model', route: next };
+    if (live.has(route.modelTargetId)) return applyCatalogProvider(route, route.modelTargetId, catalogModels);
+    return projectStaleModel(route, live, catalogModels);
   }
 
   if (hasProvider && !hasModel) {
+    const next: OpenCodeRoute = { ...route };
     delete next.providerTargetId;
     return { outcome: 'cleared-provider-only', route: next };
   }
@@ -141,10 +150,16 @@ export async function reconcileOpenCodeStartupRouting(
   cwd: string,
   deps: OpenCodeStartupReconcileDeps
 ): Promise<OpenCodeStartupReconcileResult> {
+  let cachedLive: readonly string[] | undefined;
+  let probed = false;
+
   const attempt = async (snapshot: ConfigSnapshot): Promise<OpenCodeStartupReconcileResult> => {
-    const liveModels = await deps.discoverLiveModels({ cwd, config: snapshot.config });
+    if (!probed) {
+      cachedLive = await deps.discoverLiveModels({ cwd, config: snapshot.config });
+      probed = true;
+    }
     const current = snapshot.config.harnessRouting?.byAdapter?.opencode;
-    const projected = projectOpenCodeStartupRoute(current, liveModels, deps.catalogModels);
+    const projected = projectOpenCodeStartupRoute(current, cachedLive, deps.catalogModels);
     if (
       projected.outcome === 'no-op'
       || projected.outcome === 'probe-unavailable'
