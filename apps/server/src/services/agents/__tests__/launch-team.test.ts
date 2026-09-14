@@ -178,26 +178,14 @@ vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
   alwaysOnPluginMcpAllowlist: () => []
 }));
 
-// launchTeam's execution preflight probes each harness's installed CLI version
-// via verifyHarnesses (a real `<binary> --version` exec). Pin it to the
-// evidence-registry's approved versions so structured-routing assertions are
-// deterministic regardless of what's actually installed on the machine
-// running the suite (see evidence-registry.ts's per-family cliVersion pins).
+// Team launch tests exercise launch behavior, not per-harness compatibility
+// floors. Report one deliberately high valid version so preflight stays isolated
+// from local CLI installs and evidence-registry floor updates.
 vi.mock('@zana-ai/zcc-host-daemon/harness/harness-verify', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@zana-ai/zcc-host-daemon/harness/harness-verify')>();
-  const versions: Record<string, string> = {
-    claude: '2.1.220', cursor: '2026.01.23', codex: '0.140.0', pi: '0.52.12', opencode: '1.18.10'
-  };
   return {
     ...actual,
-    installedHarnessVersion: async (_config: AppConfig, adapterId: string) => versions[adapterId],
-    verifyHarnesses: async () => ([
-      { family: 'claude', label: 'Claude Code', binary: 'claude', enabled: true, alwaysEnabled: true, installed: true, normalizedVersion: '2.1.220' },
-      { family: 'cursor', label: 'Cursor', binary: 'cursor', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '2026.01.23' },
-      { family: 'codex', label: 'Codex', binary: 'codex', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.140.0' },
-      { family: 'pi', label: 'PI', binary: 'pi', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.52.12' },
-      { family: 'opencode', label: 'OpenCode', binary: 'opencode', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '1.18.10' }
-    ])
+    installedHarnessVersion: async () => '999999.0.0'
   };
 });
 

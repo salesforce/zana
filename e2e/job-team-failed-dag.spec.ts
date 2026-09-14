@@ -30,6 +30,64 @@ async function configureFailedDagTeam(window: Page, binary: string, projectDir: 
   }, projectDir);
 }
 
+async function launchFailedDag(window: Page, projectName: string): Promise<void> {
+  await window.getByTestId('nav-agents').click();
+  await window.getByTestId('agents-board-new-thread').first().click();
+  const modal = window.getByTestId('launch-modal');
+  await modal.locator('.launch-segmented').getByRole('button', { name: 'Team', exact: true }).click();
+  await modal.getByTestId('team-command-input').fill('verify deterministic failed DAG settlement');
+  await modal.getByLabel('Team', { exact: true }).click();
+  await window.getByRole('listbox', { name: 'Team' }).getByRole('option', { name: 'E2E Failure Team' }).click();
+  await modal.getByRole('button', { name: 'Project', exact: true }).click();
+  await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();
+  await modal.getByLabel('Team planning').click();
+  await window.getByRole('option', { name: 'Plan provided in goal', exact: true }).click();
+  await modal.getByTestId('team-command-send').click();
+  await expect(modal).toBeHidden();
+}
+
+async function findExecutionId(window: Page, projectId: string): Promise<string> {
+  await expect.poll(async () => window.evaluate(async (id) => {
+    const page = await window.cc.executionBoard.listProject(id);
+    return page.executions.find((execution) => execution.teamId === 'e2e-failure-team')?.executionId ?? '';
+  }, projectId), { timeout: 15_000, intervals: [500] }).not.toBe('');
+  return window.evaluate(async (id) => {
+    const page = await window.cc.executionBoard.listProject(id);
+    return page.executions.find((execution) => execution.teamId === 'e2e-failure-team')!.executionId;
+  }, projectId);
+}
+
+async function expectFailedDagSettlement(window: Page, projectId: string, executionId: string): Promise<void> {
+  await expect.poll(async () => window.evaluate(async (input) => {
+    const snapshot = await window.cc.executionBoard.snapshot(input.projectId, input.executionId, 0);
+    return snapshot && {
+      state: snapshot.execution.state,
+      counts: snapshot.execution.work?.counts,
+      assignments: snapshot.execution.work?.assignments.map(({ workUnitId, state, failureCode }) => ({ workUnitId, state, failureCode }))
+    };
+  }, { projectId, executionId }), { timeout: 60_000, intervals: [500] }).toEqual({
+    state: 'FAILED',
+    counts: { PENDING: 0, READY: 0, CLAIMED: 0, BLOCKED: 0, COMPLETED: 1, FAILED: 1, SKIPPED: 1 },
+    assignments: [
+      { workUnitId: 'fail-root', state: 'FAILED', failureCode: 'VALIDATION_FAILED' },
+      { workUnitId: 'dependent', state: 'SKIPPED', failureCode: undefined },
+      { workUnitId: 'independent', state: 'COMPLETED', failureCode: undefined }
+    ]
+  });
+}
+
+async function expectFailedDagDetails(window: Page): Promise<void> {
+  const card = window.locator('.agent-card').filter({ hasText: 'E2E Failure Team' }).first();
+  await expect(card).toBeVisible();
+  await card.click();
+  const details = window.getByLabel('Team details');
+  await expect(details.getByText(/FAILED · attempt/)).toBeVisible();
+  await expect(details.getByText(/Fail Root.*FAILED/)).toBeVisible();
+  await expect(details.getByText(/Dependent.*SKIPPED/)).toBeVisible();
+  await expect(details.getByText(/Independent.*COMPLETED/)).toBeVisible();
+  await expect(details.getByRole('button', { name: 'Retry work' })).toHaveCount(0);
+}
+
 test('failed DAG continues independent work, skips descendants, and settles in Job Details', async ({ app }) => {
   const { window } = app;
   const agent = makeJobTeamCoordinatorBinary({ scenario: 'failed-dag' });
@@ -39,57 +97,10 @@ test('failed DAG continues independent work, skips descendants, and settles in J
 
   try {
     projectId = await configureFailedDagTeam(window, agent.path, projectDir);
-
-    await window.getByTestId('nav-agents').click();
-    await window.getByTestId('agents-board-new-thread').first().click();
-    const modal = window.getByTestId('launch-modal');
-    await modal.locator('.launch-segmented').getByRole('button', { name: 'Team', exact: true }).click();
-    await modal.getByTestId('team-command-input').fill('verify deterministic failed DAG settlement');
-    await modal.getByLabel('Team', { exact: true }).click();
-    await window.getByRole('listbox', { name: 'Team' }).getByRole('option', { name: 'E2E Failure Team' }).click();
-    await modal.getByRole('button', { name: 'Project', exact: true }).click();
-    await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();
-    await modal.getByLabel('Team planning').click();
-    await window.getByRole('option', { name: 'Plan provided in goal', exact: true }).click();
-    await modal.getByTestId('team-command-send').click();
-    await expect(modal).toBeHidden();
-
-    const jobTitle = 'verify deterministic failed DAG settlement';
-    await expect.poll(async () => window.evaluate(async ({ projectId }) => {
-      const page = await window.cc.executionBoard.listProject(projectId);
-      return page.executions.find((execution) => execution.teamId === 'e2e-failure-team')?.executionId ?? '';
-    }, { projectId: projectId! }), { timeout: 15_000, intervals: [500] }).not.toBe('');
-    const executionId = await window.evaluate(async ({ projectId }) => {
-      const page = await window.cc.executionBoard.listProject(projectId);
-      return page.executions.find((execution) => execution.teamId === 'e2e-failure-team')!.executionId;
-    }, { projectId: projectId! });
-
-    await expect.poll(async () => window.evaluate(async ({ projectId, executionId }) => {
-      const snapshot = await window.cc.executionBoard.snapshot(projectId, executionId, 0);
-      return snapshot && {
-        state: snapshot.execution.state,
-        counts: snapshot.execution.work?.counts,
-        assignments: snapshot.execution.work?.assignments.map(({ workUnitId, state, failureCode }) => ({ workUnitId, state, failureCode }))
-      };
-    }, { projectId: projectId!, executionId }), { timeout: 60_000, intervals: [500] }).toEqual({
-      state: 'FAILED',
-      counts: { PENDING: 0, READY: 0, CLAIMED: 0, BLOCKED: 0, COMPLETED: 1, FAILED: 1, SKIPPED: 1 },
-      assignments: [
-        { workUnitId: 'fail-root', state: 'FAILED', failureCode: 'VALIDATION_FAILED' },
-        { workUnitId: 'dependent', state: 'SKIPPED', failureCode: undefined },
-        { workUnitId: 'independent', state: 'COMPLETED', failureCode: undefined }
-      ]
-    });
-
-    const card = window.locator('.agent-card').filter({ hasText: 'E2E Failure Team' }).first();
-    await expect(card).toBeVisible();
-    await card.click();
-    const details = window.getByLabel('Team details');
-    await expect(details.getByText(/FAILED · attempt/)).toBeVisible();
-    await expect(details.getByText(/Fail Root.*FAILED/)).toBeVisible();
-    await expect(details.getByText(/Dependent.*SKIPPED/)).toBeVisible();
-    await expect(details.getByText(/Independent.*COMPLETED/)).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Retry work' })).toHaveCount(0);
+    await launchFailedDag(window, projectName);
+    const executionId = await findExecutionId(window, projectId);
+    await expectFailedDagSettlement(window, projectId, executionId);
+    await expectFailedDagDetails(window);
   } finally {
     if (projectId) {
       await window.evaluate(async (id) => {

@@ -26,6 +26,80 @@ function resultPreview(raw: string): string {
   return raw.slice(0, MAX_UNIT_RESULT_CHARS);
 }
 
+type WorkProjection = NonNullable<ExecutionBoardProjection['work']>;
+
+function workProjection(record: ExecutionRecord): WorkProjection {
+  const counts: WorkProjection['counts'] = {
+    PENDING: 0, READY: 0, CLAIMED: 0, BLOCKED: 0, COMPLETED: 0, FAILED: 0, SKIPPED: 0
+  };
+  for (const unit of record.workUnits ?? []) counts[unit.state] += 1;
+  return {
+    total: record.workUnits?.length ?? 0,
+    completed: counts.COMPLETED,
+    counts,
+    assignments: (record.workUnits ?? []).map((unit) => ({
+      workUnitId: unit.id, title: unit.title, ...(unit.assignedSlotId ? { slotId: unit.assignedSlotId } : {}), state: unit.state,
+      ...(unit.failureCode ? { failureCode: unit.failureCode } : {}),
+      ...(unit.result !== undefined ? { result: resultPreview(unit.result) } : {})
+    })),
+    rosterSlotIds: record.authorizationContext?.slots.map((slot) => slot.slotId) ?? []
+  };
+}
+
+function baselineMetrics(
+  record: ExecutionRecord,
+  counts: WorkProjection['counts'],
+  terminalDuration: number | undefined
+): ExecutionBoardProjection['baselineMetrics'] {
+  return {
+    version: 1,
+    ...(terminalDuration === undefined ? {} : { terminalAt: record.updatedAt, wallDurationMs: terminalDuration }),
+    workUnitCount: record.workUnits?.length ?? 0,
+    completedWorkUnitCount: counts.COMPLETED,
+    failedWorkUnitCount: counts.FAILED,
+    skippedWorkUnitCount: counts.SKIPPED,
+    workAttemptCount: (record.workUnits ?? []).reduce((total, unit) => total + unit.attempt, 0),
+    blockerCount: record.blockers?.length ?? 0,
+    resolvedBlockerCount: (record.blockers ?? []).filter((blocker) => blocker.resolved).length,
+    resolvedModels: (record.resolvedModels ?? []).slice(0, MAX_METRIC_RESOLVED_MODELS).map(({ slotId, provider, model }) => ({
+      slotId: slotId.slice(0, MAX_METRIC_ID_CHARS),
+      provider: provider.slice(0, MAX_METRIC_ID_CHARS),
+      model: model.slice(0, MAX_METRIC_ID_CHARS)
+    }))
+  };
+}
+
+function blockerProjection(record: ExecutionRecord): Pick<ExecutionBoardProjection, 'blockers'>
+  & Partial<Pick<ExecutionBoardProjection, 'currentBlocker'>> {
+  const currentBlocker = [...(record.blockers ?? [])]
+    .filter((blocker) => !blocker.resolved)
+    .sort((left, right) => right.createdAt - left.createdAt)[0];
+  const currentDelivery = currentBlocker ? [...(record.deliveries ?? [])]
+    .filter((delivery) => delivery.blockerId === currentBlocker.id)
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0] : undefined;
+  const deliveryStateByBlocker = new Map<string, NonNullable<ExecutionBoardProjection['blockers']>[number]['deliveryState']>();
+  for (const delivery of [...(record.deliveries ?? [])].sort((left, right) => left.updatedAt - right.updatedAt)) {
+    deliveryStateByBlocker.set(delivery.blockerId, delivery.state);
+  }
+  return {
+    ...(currentBlocker ? { currentBlocker: {
+      id: currentBlocker.id, workUnitId: currentBlocker.workUnitId, slotId: currentBlocker.slotId,
+      question: currentBlocker.question, ...(currentBlocker.options ? { options: currentBlocker.options } : {}),
+      ...(currentBlocker.response ? { response: currentBlocker.response } : {}),
+      ...(currentDelivery ? { delivery: {
+        id: currentDelivery.id, state: currentDelivery.state, attempt: currentDelivery.attempt,
+        maxAttempts: MAX_DELIVERY_ATTEMPTS,
+        retryEligible: currentDelivery.state === 'FAILED' && (currentDelivery.manualRetryCount ?? 0) < 1,
+        ...(currentDelivery.lastError ? { error: firstErrorLine(currentDelivery.lastError) } : {})
+      } } : {})
+    } } : {}),
+    blockers: (record.blockers ?? []).map((blocker) => ({
+      id: blocker.id, resolved: blocker.resolved,
+      ...(deliveryStateByBlocker.has(blocker.id) ? { deliveryState: deliveryStateByBlocker.get(blocker.id) } : {})
+    }))
+  };
+}
+
 /** Build bounded project-local board data from durable records and live tabs. */
 export function projectExecutionProjection(
   records: readonly ExecutionRecord[],
@@ -51,24 +125,11 @@ export function projectExecutionProjection(
 }
 
 export function executionBoardProjection(record: ExecutionRecord, orchestratorSessionId?: string): ExecutionBoardProjection {
-  const counts: NonNullable<ExecutionBoardProjection['work']>['counts'] = {
-    PENDING: 0, READY: 0, CLAIMED: 0, BLOCKED: 0, COMPLETED: 0, FAILED: 0, SKIPPED: 0
-  };
-  for (const unit of record.workUnits ?? []) counts[unit.state] += 1;
-  const currentBlocker = [...(record.blockers ?? [])]
-    .filter((blocker) => !blocker.resolved)
-    .sort((left, right) => right.createdAt - left.createdAt)[0];
-  const currentDelivery = currentBlocker ? [...(record.deliveries ?? [])]
-    .filter((delivery) => delivery.blockerId === currentBlocker.id)
-    .sort((left, right) => right.updatedAt - left.updatedAt)[0] : undefined;
+  const work = workProjection(record);
   const terminal = record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED';
   const terminalDuration = terminal && Number.isFinite(record.createdAt) && Number.isFinite(record.updatedAt) && record.updatedAt >= record.createdAt
     ? record.updatedAt - record.createdAt
     : undefined;
-  const deliveryStateByBlocker = new Map<string, NonNullable<ExecutionBoardProjection['blockers']>[number]['deliveryState']>();
-  for (const delivery of [...(record.deliveries ?? [])].sort((left, right) => left.updatedAt - right.updatedAt)) {
-    deliveryStateByBlocker.set(delivery.blockerId, delivery.state);
-  }
   return {
     executionId: record.id,
     projectId: record.projectId,
@@ -89,53 +150,9 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
       id: source.id, name: source.name, mediaType: source.mediaType, byteSize: source.byteSize,
       contentDigest: source.contentDigest, extractionWarnings: source.extractionWarnings
     })),
-    work: {
-      total: record.workUnits?.length ?? 0,
-      completed: counts.COMPLETED,
-      counts,
-      assignments: (record.workUnits ?? []).map((unit) => ({
-        workUnitId: unit.id, title: unit.title, ...(unit.assignedSlotId ? { slotId: unit.assignedSlotId } : {}), state: unit.state,
-        ...(unit.failureCode ? { failureCode: unit.failureCode } : {}),
-        ...(unit.result !== undefined ? { result: resultPreview(unit.result) } : {})
-      })),
-      rosterSlotIds: record.authorizationContext?.slots.map((slot) => slot.slotId) ?? []
-    },
-    baselineMetrics: {
-      version: 1,
-      ...(terminalDuration === undefined ? {} : { terminalAt: record.updatedAt, wallDurationMs: terminalDuration }),
-      workUnitCount: record.workUnits?.length ?? 0,
-      completedWorkUnitCount: counts.COMPLETED,
-      failedWorkUnitCount: counts.FAILED,
-      skippedWorkUnitCount: counts.SKIPPED,
-      workAttemptCount: (record.workUnits ?? []).reduce((total, unit) => total + unit.attempt, 0),
-      blockerCount: record.blockers?.length ?? 0,
-      resolvedBlockerCount: (record.blockers ?? []).filter((blocker) => blocker.resolved).length,
-      resolvedModels: (record.resolvedModels ?? []).slice(0, MAX_METRIC_RESOLVED_MODELS).map(({ slotId, provider, model }) => ({
-        slotId: slotId.slice(0, MAX_METRIC_ID_CHARS),
-        provider: provider.slice(0, MAX_METRIC_ID_CHARS),
-        model: model.slice(0, MAX_METRIC_ID_CHARS)
-      }))
-    },
-    ...(currentBlocker ? { currentBlocker: {
-      id: currentBlocker.id, workUnitId: currentBlocker.workUnitId, slotId: currentBlocker.slotId,
-      question: currentBlocker.question, ...(currentBlocker.options ? { options: currentBlocker.options } : {}),
-      ...(currentBlocker.response ? { response: currentBlocker.response } : {}),
-      ...(currentDelivery ? { delivery: {
-        id: currentDelivery.id,
-        state: currentDelivery.state,
-        attempt: currentDelivery.attempt,
-        maxAttempts: MAX_DELIVERY_ATTEMPTS,
-        retryEligible: currentDelivery.state === 'FAILED' && (currentDelivery.manualRetryCount ?? 0) < 1,
-        ...(currentDelivery.lastError ? { error: firstErrorLine(currentDelivery.lastError) } : {})
-      } } : {})
-    } } : {}),
-    blockers: (record.blockers ?? []).map((blocker) => ({
-      id: blocker.id,
-      resolved: blocker.resolved,
-      ...(deliveryStateByBlocker.has(blocker.id)
-        ? { deliveryState: deliveryStateByBlocker.get(blocker.id) }
-        : {})
-    })),
+    work,
+    baselineMetrics: baselineMetrics(record, work.counts, terminalDuration),
+    ...blockerProjection(record),
     ...(record.finalSummary ? { finalSummary: record.finalSummary } : {}),
     eventCursor: record.lastEventSequence ?? 0,
     ...(orchestratorSessionId ? { orchestratorSessionId } : {}),
