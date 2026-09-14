@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -21,7 +22,18 @@ describe('ensure-node-pty-helper', () => {
 
   it('makes the Unix spawn-helper executable when present', () => {
     if (process.platform === 'win32') return;
-    expect(ensureNodePtySpawnHelperExecutable()).toBe(true);
+    const root = mkdtempSync(join(tmpdir(), 'node-pty-helper-'));
+    try {
+      const release = join(root, 'build', 'Release');
+      mkdirSync(release, { recursive: true });
+      const helper = join(release, 'spawn-helper');
+      writeFileSync(helper, '');
+      chmodSync(helper, 0o644);
+      expect(ensureNodePtySpawnHelperExecutable(root)).toBe(true);
+      expect(statSync(helper).mode & 0o111).not.toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('probes node-pty in an Electron child without opening a window', () => {

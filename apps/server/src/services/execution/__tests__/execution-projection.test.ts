@@ -35,7 +35,7 @@ describe('projectExecutionProjection', () => {
       orchestratorSessionId: 'orch', coordinator: { status: 'live', sessionId: 'orch' },
       sources: [{ name: 'plan.md', contentDigest: 'sha256:source', extractionWarnings: ['Normalized line endings'] }],
       work: {
-        total: 2, completed: 1, counts: { PENDING: 0, READY: 0, CLAIMED: 0, BLOCKED: 1, COMPLETED: 1, FAILED: 0 },
+        total: 2, completed: 1, counts: { PENDING: 0, READY: 0, CLAIMED: 0, BLOCKED: 1, COMPLETED: 1, FAILED: 0, SKIPPED: 0 },
         assignments: [{ workUnitId: 'build', slotId: 'builder', state: 'COMPLETED' }, { workUnitId: 'verify', slotId: 'reviewer', state: 'BLOCKED' }]
       },
       currentBlocker: { id: 'current', workUnitId: 'verify', slotId: 'reviewer', question: 'Use staging?', options: ['Yes', 'No'] },
@@ -45,6 +45,53 @@ describe('projectExecutionProjection', () => {
       ],
       finalSummary: 'Full coordinator summary', eventCursor: 0, recoveryAttention: false
     });
+  });
+
+  it('projects bounded failure details and source-backed baseline metrics', () => {
+    const input = record();
+    input.state = 'FAILED';
+    input.createdAt = 10;
+    input.updatedAt = 35;
+    input.resolvedModels = Array.from({ length: 101 }, (_, index) => ({
+      slotId: `slot-${index}`, provider: 'provider', model: 'model', reasoning: 'not projected'
+    }));
+    input.workUnits = [
+      { id: 'failed', title: 'Failed', task: 'Work', dependencies: [], state: 'FAILED', assignedSlotId: 'slot-1', attempt: 2, failureCode: 'VALIDATION_FAILED', failure: `bad input\n${'x'.repeat(2_000)}`, history: [] },
+      { id: 'skipped', title: 'Skipped', task: 'Wait', dependencies: ['failed'], state: 'SKIPPED', attempt: 0, history: [] }
+    ];
+    const projected = projectExecutionProjection([input], [])[0];
+    expect(projected.work).toMatchObject({
+      counts: { FAILED: 1, SKIPPED: 1 }
+    });
+    expect(projected.work?.assignments).toContainEqual(expect.objectContaining({ failureCode: 'VALIDATION_FAILED' }));
+    expect(projected.work?.assignments[0]).not.toHaveProperty('failureDetail');
+    expect(projected.baselineMetrics).toEqual({
+      version: 1, terminalAt: 35, wallDurationMs: 25,
+      workUnitCount: 2, completedWorkUnitCount: 0, failedWorkUnitCount: 1, skippedWorkUnitCount: 1,
+      workAttemptCount: 2, blockerCount: 2, resolvedBlockerCount: 1,
+      resolvedModels: expect.any(Array)
+    });
+    expect(projected.baselineMetrics?.resolvedModels).toHaveLength(100);
+    expect(projected.baselineMetrics?.resolvedModels[0]).toEqual({ slotId: 'slot-0', provider: 'provider', model: 'model' });
+  });
+
+  it('never projects raw work failure details to the renderer', () => {
+    const input = record();
+    input.workUnits = [{ id: 'failed', title: 'Failed', task: 'Work', dependencies: [], state: 'FAILED', attempt: 1, failureCode: 'PERMISSION_DENIED', failure: 'Bearer secret-value', history: [] }];
+    const assignment = projectExecutionProjection([input], [])[0].work?.assignments[0];
+    expect(assignment).toMatchObject({ failureCode: 'PERMISSION_DENIED' });
+    expect(assignment).not.toHaveProperty('failureDetail');
+  });
+
+  it('omits terminal timing for active or invalid-duration records', () => {
+    const active = record();
+    expect(projectExecutionProjection([active], [])[0].baselineMetrics).not.toHaveProperty('terminalAt');
+    const terminal = record();
+    terminal.state = 'FAILED';
+    terminal.createdAt = 3;
+    terminal.updatedAt = 2;
+    expect(projectExecutionProjection([terminal], [])[0].baselineMetrics).not.toHaveProperty('terminalAt');
+    expect(projectExecutionProjection([terminal], [])[0].baselineMetrics).not.toHaveProperty('wallDurationMs');
   });
 
   it('exposes a completed unit result on its assignment, bounded to 2 KiB, and omits it when absent', () => {
@@ -92,6 +139,12 @@ describe('projectExecutionProjection', () => {
     expect(projected).not.toHaveProperty('summary');
     expect(projected).not.toHaveProperty('currentBlocker');
     expect(projected).not.toHaveProperty('finalSummary');
+  });
+
+  it('projects legacy records with no resolved model snapshot', () => {
+    const legacy = record();
+    legacy.resolvedModels = undefined as unknown as ExecutionRecord['resolvedModels'];
+    expect(projectExecutionProjection([legacy], [])[0].baselineMetrics?.resolvedModels).toEqual([]);
   });
 
   it('keeps first live orchestrator and returns newest unresolved blocker response', () => {

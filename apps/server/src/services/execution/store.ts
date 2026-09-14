@@ -8,13 +8,13 @@ import {
   readRawFile
 } from '../harness-routing/storage.js';
 import type { WorkflowPolicyResultV1 } from './policy-result.js';
-import { isDurableCoordination } from '@zana-ai/zcc-domain/product';
-import type { ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
+import { EXECUTION_FAILURE_CODES, isDurableCoordination } from '@zana-ai/zcc-domain/product';
+import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
 
 export type ExecutionState = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
-export type ExecutionWorkUnitState = 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED';
+export type ExecutionWorkUnitState = 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
 export type ExecutionCohortAuthority = { role: 'worker' | 'orchestrator'; slotId: string };
 export type ExecutionLaunchKind = 'team';
 
@@ -38,6 +38,7 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   state: ExecutionWorkUnitState;
   assignedSlotId?: string;
   attempt: number;
+  failureCode?: ExecutionFailureCode;
   failure?: string;
   result?: string;
   history: Array<{ action: 'claimed' | 'released' | 'retried' | 'blocked' | 'failed' | 'completed'; slotId?: string; attempt: number; at: number; detail?: string }>;
@@ -220,6 +221,7 @@ const DELIVERY_LEASE_MS = 60_000;
 const DELIVERED_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const storeQueue = createSerializedTransactionQueue();
 const terminalStates = new Set<ExecutionState>(['COMPLETED', 'STOPPED', 'FAILED']);
+const failureCodes = new Set<ExecutionFailureCode>(EXECUTION_FAILURE_CODES);
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -274,8 +276,9 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.files === undefined || Array.isArray(unit.files) && unit.files.length <= MAX_UNIT_LIST && unit.files.every(validString))
     && (unit.verification === undefined || Array.isArray(unit.verification) && unit.verification.length <= MAX_UNIT_LIST && unit.verification.every(validString))
     && (unit.readOnly === undefined || typeof unit.readOnly === 'boolean')
-    && (unit.state === 'PENDING' || unit.state === 'READY' || unit.state === 'CLAIMED' || unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED')
+    && (unit.state === 'PENDING' || unit.state === 'READY' || unit.state === 'CLAIMED' || unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')
     && (unit.assignedSlotId === undefined || validString(unit.assignedSlotId)) && Number.isInteger(unit.attempt) && (unit.attempt ?? -1) >= 0
+    && (unit.failureCode === undefined || failureCodes.has(unit.failureCode))
     && (unit.failure === undefined || validString(unit.failure)) && (unit.result === undefined || validString(unit.result))
     && Array.isArray(unit.history) && unit.history.length <= MAX_UNIT_LIST * 10;
 }
@@ -877,6 +880,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       unit.state = 'CLAIMED';
       unit.assignedSlotId = slotId;
       unit.attempt += 1;
+      unit.failureCode = undefined;
       unit.failure = undefined;
       unit.history.push({ action: 'claimed', slotId, attempt: unit.attempt, at: timestamp });
     }, `Work unit claimed: ${workUnitId}`);
@@ -921,13 +925,17 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           // flight (incl. one just claimed in this pass) — leave it READY.
           try { assertScopeAvailable(record, unit); } catch { continue; }
           let index = -1;
-          if (unit.assignedSlotId) index = freeSlots.findIndex((slot) => slot.slotId === unit.assignedSlotId);
+          if (unit.assignedSlotId) {
+            index = freeSlots.findIndex((slot) => slot.slotId === unit.assignedSlotId);
+            if (index < 0) continue;
+          }
           if (index < 0 && unit.preferredRole) index = freeSlots.findIndex((slot) => slot.personaId === unit.preferredRole);
           if (index < 0) index = 0;
           const slot = freeSlots[index];
           unit.state = 'CLAIMED';
           unit.assignedSlotId = slot.slotId;
           unit.attempt += 1;
+          unit.failureCode = undefined;
           unit.failure = undefined;
           unit.history.push({ action: 'claimed', slotId: slot.slotId, attempt: unit.attempt, at: timestamp });
           freeSlots.splice(index, 1);
@@ -960,7 +968,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Work unit completed: ${workUnitId}`);
   }
 
-  async function failWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, failure: string): Promise<ExecutionRecord> {
+  async function failWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN'): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
@@ -968,9 +976,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         throw new Error('work unit has unresolved blockers');
       }
       if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
+      if (!failureCodes.has(failureCode)) throw new Error('invalid execution work unit failure code');
       unit.state = 'FAILED';
+      unit.failureCode = failureCode;
       unit.failure = string(failure, 'work unit failure');
       unit.history.push({ action: 'failed', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: unit.failure });
+      deriveReadiness(record);
     }, `Work unit failed: ${workUnitId}`);
   }
 
@@ -983,6 +994,33 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
       unit.assignedSlotId = undefined;
     }, `Work unit released: ${workUnitId}`);
+  }
+
+  /** Return assignments that were never delivered in one engine-owned transaction. */
+  async function releaseUndelivered(executionId: string, assignments: ExecutionDispatchAssignment[]): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (terminalStates.has(record.state) || !assignments.length) return clone(record);
+      const timestamp = now();
+      let released = 0;
+      for (const assignment of assignments) {
+        const unit = record.workUnits?.find((candidate) => candidate.id === assignment.workUnitId);
+        if (unit?.state !== 'CLAIMED' || unit.assignedSlotId !== assignment.slotId) continue;
+        unit.state = 'READY';
+        unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
+        unit.assignedSlotId = undefined;
+        released += 1;
+      }
+      if (released) {
+        record.stateVersion += 1;
+        record.updatedAt = timestamp;
+        append(snapshot.state, record, record.state, 'warning', `Released ${released} undelivered work assignment(s)`, timestamp, { kind: 'command' });
+        persist(snapshot.state, snapshot.hash);
+      }
+      return clone(record);
+    });
   }
 
   async function retryWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, assignedSlotId?: string): Promise<ExecutionRecord> {
@@ -1006,6 +1044,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (assignedSlotId) assertAuthorizedSlot(record, assignedSlotId);
       unit.state = 'READY';
       unit.assignedSlotId = assignedSlotId ? string(assignedSlotId, 'assigned slot id') : undefined;
+      unit.failureCode = undefined;
       unit.failure = undefined;
       unit.history.push({ action: 'retried', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
       for (const blocker of record.blockers ?? []) {
@@ -1016,6 +1055,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         }
       }
       record.state = record.blockers?.some((blocker) => !blocker.resolved) ? 'BLOCKED' : 'RUNNING';
+      deriveReadiness(record, true);
     }, `Work unit retry ready: ${workUnitId}`);
   }
 
@@ -1373,7 +1413,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, releaseUndelivered, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {
@@ -1441,7 +1481,7 @@ function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false
 }
 
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
-  const { state: _state, assignedSlotId: _assignedSlotId, attempt: _attempt, failure: _failure, result: _result, history: _history, ...input } = unit;
+  const { state: _state, assignedSlotId: _assignedSlotId, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, history: _history, ...input } = unit;
   return input;
 }
 
@@ -1480,9 +1520,29 @@ function assertAuthorizedSlot(record: ExecutionRecord, slotId: string): void {
   }
 }
 
-function deriveReadiness(record: ExecutionRecord): void {
-  const complete = new Set(record.workUnits?.filter((unit) => unit.state === 'COMPLETED').map((unit) => unit.id));
-  for (const unit of record.workUnits ?? []) if (unit.state === 'PENDING' && unit.dependencies.every((dependency) => complete.has(dependency))) unit.state = 'READY';
+function deriveReadiness(record: ExecutionRecord, recoverSkipped = false): void {
+  const units = record.workUnits ?? [];
+  const byId = new Map(units.map((unit) => [unit.id, unit]));
+  if (recoverSkipped) {
+    for (const unit of units) if (unit.state === 'SKIPPED') unit.state = 'PENDING';
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const unit of units) {
+      if (unit.state !== 'PENDING') continue;
+      const dependencies = unit.dependencies.map((dependency) => byId.get(dependency));
+      if (dependencies.some((dependency) => !dependency)) continue;
+      const knownDependencies = dependencies.filter((dependency): dependency is ExecutionWorkUnit => dependency !== undefined);
+      if (knownDependencies.some((dependency) => dependency.state === 'FAILED' || dependency.state === 'SKIPPED')) {
+        unit.state = 'SKIPPED';
+        changed = true;
+      } else if (knownDependencies.every((dependency) => dependency.state === 'COMPLETED')) {
+        unit.state = 'READY';
+        changed = true;
+      }
+    }
+  }
 }
 
 function scopesOverlap(left: ExecutionWorkUnit, right: ExecutionWorkUnit): boolean {

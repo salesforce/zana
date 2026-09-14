@@ -1,4 +1,4 @@
-import { isDurableCoordination, type ExecutionSourceSnapshot, type SquadBundleWorkflowMetadataV1, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
+import { isDurableCoordination, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SquadBundleWorkflowMetadataV1, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { launchDigest } from '../launch/digest.js';
 import { EXECUTION_RETENTION_MS, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
@@ -14,6 +14,7 @@ import { ExecutionDeadlineWatchdog } from './deadline-watchdog.js';
 const SNAPSHOT_TIMEOUT_MS = 15_000;
 /** Hard cap on event pages walked per snapshot (Rule 5: bound unbounded reads). */
 const MAX_SNAPSHOT_EVENT_PAGES = 1_000;
+const AUTO_FINALIZE_RETRY_MS = 1_000;
 
 export interface ExecutionCohortBinding extends ExecutionCohortAuthority {
   executionId: string;
@@ -157,6 +158,7 @@ export const MAX_DEP_RESULT_CHARS = 2_048;
  *  orchestrator never explicitly closed. A later coordinator execution.complete
  *  is a graceful no-op (the record is already terminal), so this is the floor. */
 export const AUTO_FINALIZE_SUMMARY = 'All work units completed; execution finalized automatically by the engine.';
+export const AUTO_FAIL_SUMMARY = 'All runnable work settled; execution failed automatically by the engine.';
 
 /**
  * Build the "Upstream results" section for a dependent unit's assignment text so
@@ -186,6 +188,7 @@ export class ExecutionService {
   private readonly bindingTails = new Map<string, Promise<void>>();
   private readonly pendingBindingOwners = new Map<string, string>();
   private readonly mintFlights = new Map<string, Promise<ReturnType<ExecutionService['mintResumeGrantOnce']> extends Promise<infer T> ? T : never>>();
+  private readonly autoFinalizeTimers = new Map<string, NodeJS.Timeout>();
   private readonly deadlineWatchdog: ExecutionDeadlineWatchdog;
 
   constructor(private readonly deps: ExecutionServiceDeps) {
@@ -372,6 +375,9 @@ export class ExecutionService {
 
   dispose(): void {
     this.deadlineWatchdog.dispose();
+    const clearTimer = this.deps.clearTimer ?? clearTimeout;
+    for (const timer of this.autoFinalizeTimers.values()) clearTimer(timer);
+    this.autoFinalizeTimers.clear();
   }
 
   /** Main-only project projection. Never expose through owner-scoped MCP routes. */
@@ -524,9 +530,9 @@ export class ExecutionService {
   }
 
   /**
-   * Engine-side finalization safety net. When a completed unit leaves the DAG
-   * fully resolved — EVERY work unit COMPLETED (so nothing PENDING/READY/CLAIMED/
-   * BLOCKED and none FAILED) — transition the execution to COMPLETED without
+   * Engine-side settlement safety net. When a unit leaves the DAG fully
+   * resolved, transition to COMPLETED for all-success or FAILED after all
+   * independent work has settled and failed descendants are SKIPPED, without
    * waiting for the orchestrator's execution.complete. Symmetric with
    * auto-dispatch: the engine owns the whole DAG lifecycle, so a run never hangs
    * WORKING because an external orchestrator (which Zana must not depend on —
@@ -538,15 +544,49 @@ export class ExecutionService {
    * non-RUNNING state) throw-and-skip here rather than force a bad transition.
    */
   private async maybeAutoFinalize(executionId: string): Promise<void> {
+    let terminal: ExecutionRecord;
     try {
-      const record = await this.deps.store.get(executionId);
-      if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') return;
-      const units = record.workUnits ?? [];
-      if (!units.length || !units.every((unit) => unit.state === 'COMPLETED')) return;
-      const completed = await this.deps.store.completeExecution(record.id, record.stateVersion, AUTO_FINALIZE_SUMMARY);
-      await this.cleanupTerminal(completed);
-      await this.deps.cancelTeamLaunch(completed.callerPrincipalId, completed.teamLaunchRequestId);
-    } catch { /* best-effort; the orchestrator's execution.complete remains a valid path */ }
+      for (let attempt = 0; ; attempt += 1) {
+        const record = await this.deps.store.get(executionId);
+        if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') return;
+        const units = record.workUnits ?? [];
+        if (!units.length) return;
+        try {
+          if (units.every((unit) => unit.state === 'COMPLETED')) {
+            terminal = await this.deps.store.completeExecution(record.id, record.stateVersion, AUTO_FINALIZE_SUMMARY);
+          } else if (units.some((unit) => unit.state === 'FAILED')
+            && units.every((unit) => unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')) {
+            terminal = await this.deps.store.transition(record.id, record.stateVersion, 'FAILED', 'error', AUTO_FAIL_SUMMARY);
+          } else {
+            return;
+          }
+          break;
+        } catch (error) {
+          if (attempt === 0 && error instanceof Error && error.message === 'stale execution state') continue;
+          throw error;
+        }
+      }
+    } catch (error) {
+      console.error(`[execution] auto-finalize failed for ${executionId}`, error);
+      this.scheduleAutoFinalize(executionId);
+      return;
+    }
+    try {
+      await this.cleanupTerminal(terminal);
+      await this.deps.cancelTeamLaunch(terminal.callerPrincipalId, terminal.teamLaunchRequestId);
+    } catch (error) {
+      console.error(`[execution] auto-finalize cleanup failed for ${executionId}`, error);
+    }
+  }
+
+  private scheduleAutoFinalize(executionId: string): void {
+    if (this.autoFinalizeTimers.has(executionId)) return;
+    const setTimer = this.deps.setTimer ?? setTimeout;
+    const timer = setTimer(() => {
+      this.autoFinalizeTimers.delete(executionId);
+      void this.maybeAutoFinalize(executionId);
+    }, AUTO_FINALIZE_RETRY_MS) as NodeJS.Timeout;
+    this.autoFinalizeTimers.set(executionId, timer);
   }
 
   /**
@@ -574,11 +614,15 @@ export class ExecutionService {
     try {
       lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
     } catch {
-      return; // transient lifecycle read failure — coordinator/reconcile can re-dispatch
+      await this.releaseUndeliveredAssignments(record.id, assignments);
+      return;
     }
     for (const assignment of assignments) {
       const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
-      if (!worker?.sessionId) continue;
+      if (!worker?.sessionId) {
+        await this.releaseUndeliveredAssignments(record.id, [assignment]);
+        continue;
+      }
       const upstream = dependencyResultsSection(record, assignment.workUnitId);
       const text = `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${upstream}\n\nWhen the unit is done call execution.work.complete; if it needs human input call execution.work.block; if it fails call execution.work.fail; to hand it back call execution.work.release. Report progress and results to the coordinator with agent_send.`;
       try {
@@ -588,14 +632,37 @@ export class ExecutionService {
         const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
         if (deliver(worker.sessionId, text)) {
           try { this.deps.triggerDeliveryDrain?.(worker.sessionId); } catch { /* nudge best-effort */ }
+        } else {
+          await this.releaseUndeliveredAssignments(record.id, [assignment]);
         }
-      } catch { /* push best-effort; a gone session is handled by reconcile */ }
+      } catch {
+        await this.releaseUndeliveredAssignments(record.id, [assignment]);
+      }
     }
   }
 
-  async failWork(binding: ExecutionCohortBinding, workUnitId: string, failure: string) {
+  private async releaseUndeliveredAssignments(executionId: string, assignments: ExecutionDispatchAssignment[]): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await this.deps.store.releaseUndelivered(executionId, assignments);
+        return;
+      } catch (error) {
+        if (attempt === 0) continue;
+        console.error(`[execution] failed to release undelivered assignments for ${executionId}`, {
+          assignments: assignments.map(({ workUnitId, slotId }) => ({ workUnitId, slotId })), error
+        });
+      }
+    }
+  }
+
+  async failWork(binding: ExecutionCohortBinding, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN') {
     if (binding.role !== 'worker') return deniedBound('only assigned worker can fail work');
-    return this.mutateBound(binding, (record) => this.deps.store.failWork(record.id, record.stateVersion, binding, workUnitId, failure));
+    const outcome = await this.mutateBound(binding, (record) => this.deps.store.failWork(record.id, record.stateVersion, binding, workUnitId, failure, failureCode));
+    if (outcome.ok) {
+      await this.cascadeDispatch(outcome.value.id, binding.slotId);
+      await this.maybeAutoFinalize(outcome.value.id);
+    }
+    return outcome;
   }
 
   async blockWork(binding: ExecutionCohortBinding, workUnitId: string, blocker: { id: string; question: string; options?: string[] }) {
@@ -626,22 +693,34 @@ export class ExecutionService {
   }
 
   async retryWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string) {
-    return this.mutateBound(binding, (record) => this.deps.store.retryWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId));
+    const outcome = await this.mutateBound(binding, (record) => this.deps.store.retryWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId));
+    if (outcome.ok) await this.cascadeDispatch(outcome.value.id);
+    return outcome;
   }
 
   async retryWorkFromBoard(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId?: string) {
-    return this.mutateOwnedWork(callerPrincipalId, projectId, executionId, expectedStateVersion,
+    const outcome = await this.mutateOwnedWork(callerPrincipalId, projectId, executionId, expectedStateVersion,
       (record, authority) => this.deps.store.retryWork(record.id, expectedStateVersion, authority, workUnitId, assignedSlotId));
+    if (outcome.ok) await this.cascadeDispatch(outcome.value.id);
+    return outcome;
   }
 
   async releaseWorkFromBoard(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string) {
-    return this.mutateOwnedWork(callerPrincipalId, projectId, executionId, expectedStateVersion,
-      (record, authority) => this.deps.store.releaseWork(record.id, expectedStateVersion, authority, workUnitId));
+    let releasedSlotId: string | undefined;
+    const outcome = await this.mutateOwnedWork(callerPrincipalId, projectId, executionId, expectedStateVersion,
+      (record, authority) => {
+        releasedSlotId = record.workUnits?.find((unit) => unit.id === workUnitId)?.assignedSlotId;
+        return this.deps.store.releaseWork(record.id, expectedStateVersion, authority, workUnitId);
+      });
+    if (outcome.ok) await this.cascadeDispatch(outcome.value.id, releasedSlotId);
+    return outcome;
   }
 
   async reassignWorkFromBoard(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId: string) {
-    return this.mutateOwnedWork(callerPrincipalId, projectId, executionId, expectedStateVersion,
+    const outcome = await this.mutateOwnedWork(callerPrincipalId, projectId, executionId, expectedStateVersion,
       (record, authority) => this.deps.store.reassignWork(record.id, expectedStateVersion, authority, workUnitId, assignedSlotId));
+    if (outcome.ok) await this.cascadeDispatch(outcome.value.id);
+    return outcome;
   }
 
   async reportBoundEvent(binding: ExecutionCohortBinding, input: Omit<Parameters<ExecutionServiceDeps['store']['producerEvent']>[1], 'slotId' | 'producerRole'>) {

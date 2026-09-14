@@ -10,6 +10,7 @@ import type { ExecutionRecord } from './store.js';
 import { EXECUTION_HANDOFF_OPERATION, EXECUTION_RESUME_MONITOR_OPERATION, type createExecutionHandoffStore } from './handoff-store.js';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
 import { isWithin } from '@zana-ai/zcc-path-confine';
+import { EXECUTION_FAILURE_CODES, EXECUTION_FAILURE_DETAIL_MAX_CHARS } from '@zana-ai/zcc-domain/product';
 
 const slotSchema = z.strictObject({
   initialTask: z.string().min(1).refine(
@@ -84,7 +85,11 @@ const executionPlanSchema = { ...executionIdSchema, workUnits: z.array(workUnitS
 const executionWorkSchema = { ...executionIdSchema, workUnitId: z.string().min(1).max(2048), assignedSlotId: z.string().min(1).max(2048).optional() };
 const executionWorkAssignSchema = { ...executionIdSchema, workUnitId: z.string().min(1).max(2048), assignedSlotId: z.string().min(1).max(2048) };
 const executionWorkResultSchema = { ...executionWorkSchema, result: z.string().min(1).max(2048) };
-const executionWorkFailureSchema = { ...executionWorkSchema, failure: z.string().min(1).max(2048) };
+const executionWorkFailureSchema = {
+  ...executionWorkSchema,
+  failure: z.string().min(1).max(EXECUTION_FAILURE_DETAIL_MAX_CHARS),
+  failureCode: z.enum(EXECUTION_FAILURE_CODES).optional()
+};
 const executionWorkBlockSchema = { ...executionWorkSchema, blockerId: z.string().min(1).max(2048), question: z.string().min(1).max(2048), options: z.array(z.string().min(1).max(2048)).max(20).optional() };
 const executionDeliveryAckSchema = {
   deliveryId: z.string().min(1).max(2048), leaseId: z.string().min(1).max(2048), delivered: z.boolean(),
@@ -315,9 +320,9 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (!authorized()) return denied('execution.work.complete'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.complete');
     return boundResult('execution.work.complete', await options.service.completeWork(bound, workUnitId, result));
   });
-  register('execution.work.fail', { description: 'Fail one assigned work unit durably.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure }) => {
+  register('execution.work.fail', { description: 'Fail one assigned work unit durably.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure, failureCode }) => {
     if (!authorized()) return denied('execution.work.fail'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.fail');
-    return boundResult('execution.work.fail', await options.service.failWork(bound, workUnitId, failure));
+    return boundResult('execution.work.fail', await options.service.failWork(bound, workUnitId, failure, failureCode));
   });
   register('execution.work.block', { description: 'Block one assigned work unit with a durable question.', inputSchema: executionWorkBlockSchema }, async ({ executionId, workUnitId, blockerId, question, options: choices }) => {
     if (!authorized()) return denied('execution.work.block'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.block');
