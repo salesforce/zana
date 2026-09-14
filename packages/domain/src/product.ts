@@ -5461,7 +5461,6 @@ export interface ExecutionBoardProjection {
       slotId?: string;
       state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
       failureCode?: ExecutionFailureCode;
-      failureDetail?: string;
       result?: string;
     }>;
     rosterSlotIds: string[];

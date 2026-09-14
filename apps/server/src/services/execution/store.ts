@@ -996,6 +996,33 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Work unit released: ${workUnitId}`);
   }
 
+  /** Return assignments that were never delivered in one engine-owned transaction. */
+  async function releaseUndelivered(executionId: string, assignments: ExecutionDispatchAssignment[]): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (terminalStates.has(record.state) || !assignments.length) return clone(record);
+      const timestamp = now();
+      let released = 0;
+      for (const assignment of assignments) {
+        const unit = record.workUnits?.find((candidate) => candidate.id === assignment.workUnitId);
+        if (unit?.state !== 'CLAIMED' || unit.assignedSlotId !== assignment.slotId) continue;
+        unit.state = 'READY';
+        unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
+        unit.assignedSlotId = undefined;
+        released += 1;
+      }
+      if (released) {
+        record.stateVersion += 1;
+        record.updatedAt = timestamp;
+        append(snapshot.state, record, record.state, 'warning', `Released ${released} undelivered work assignment(s)`, timestamp, { kind: 'command' });
+        persist(snapshot.state, snapshot.hash);
+      }
+      return clone(record);
+    });
+  }
+
   async function retryWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, assignedSlotId?: string): Promise<ExecutionRecord> {
     if (authority.role !== 'orchestrator') throw new Error('only coordinator can retry work');
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
@@ -1386,7 +1413,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, releaseUndelivered, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {
@@ -1504,11 +1531,13 @@ function deriveReadiness(record: ExecutionRecord, recoverSkipped = false): void 
     changed = false;
     for (const unit of units) {
       if (unit.state !== 'PENDING') continue;
-      const dependencies = unit.dependencies.map((dependency) => byId.get(dependency)!);
-      if (dependencies.some((dependency) => dependency.state === 'FAILED' || dependency.state === 'SKIPPED')) {
+      const dependencies = unit.dependencies.map((dependency) => byId.get(dependency));
+      if (dependencies.some((dependency) => !dependency)) continue;
+      const knownDependencies = dependencies.filter((dependency): dependency is ExecutionWorkUnit => dependency !== undefined);
+      if (knownDependencies.some((dependency) => dependency.state === 'FAILED' || dependency.state === 'SKIPPED')) {
         unit.state = 'SKIPPED';
         changed = true;
-      } else if (dependencies.every((dependency) => dependency.state === 'COMPLETED')) {
+      } else if (knownDependencies.every((dependency) => dependency.state === 'COMPLETED')) {
         unit.state = 'READY';
         changed = true;
       }

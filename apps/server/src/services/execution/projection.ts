@@ -21,15 +21,9 @@ function firstErrorLine(raw: string): string {
  */
 const MAX_UNIT_RESULT_CHARS = 2_048;
 const MAX_METRIC_ID_CHARS = 256;
+const MAX_METRIC_RESOLVED_MODELS = 100;
 function resultPreview(raw: string): string {
   return raw.slice(0, MAX_UNIT_RESULT_CHARS);
-}
-
-function failurePreview(raw: string): string {
-  const line = firstErrorLine(raw);
-  return /(bearer\s+|api[_-]?key\s*[:=]|token\s*[:=]|password\s*[:=])/i.test(line)
-    ? 'Failure detail redacted'
-    : line;
 }
 
 /** Build bounded project-local board data from durable records and live tabs. */
@@ -102,7 +96,6 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
       assignments: (record.workUnits ?? []).map((unit) => ({
         workUnitId: unit.id, title: unit.title, ...(unit.assignedSlotId ? { slotId: unit.assignedSlotId } : {}), state: unit.state,
         ...(unit.failureCode ? { failureCode: unit.failureCode } : {}),
-        ...(unit.failure !== undefined ? { failureDetail: failurePreview(unit.failure) } : {}),
         ...(unit.result !== undefined ? { result: resultPreview(unit.result) } : {})
       })),
       rosterSlotIds: record.authorizationContext?.slots.map((slot) => slot.slotId) ?? []
@@ -117,7 +110,7 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
       workAttemptCount: (record.workUnits ?? []).reduce((total, unit) => total + unit.attempt, 0),
       blockerCount: record.blockers?.length ?? 0,
       resolvedBlockerCount: (record.blockers ?? []).filter((blocker) => blocker.resolved).length,
-      resolvedModels: (record.resolvedModels ?? []).slice(0, 100).map(({ slotId, provider, model }) => ({
+      resolvedModels: (record.resolvedModels ?? []).slice(0, MAX_METRIC_RESOLVED_MODELS).map(({ slotId, provider, model }) => ({
         slotId: slotId.slice(0, MAX_METRIC_ID_CHARS),
         provider: provider.slice(0, MAX_METRIC_ID_CHARS),
         model: model.slice(0, MAX_METRIC_ID_CHARS)

@@ -185,8 +185,12 @@ vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
 // running the suite (see evidence-registry.ts's per-family cliVersion pins).
 vi.mock('@zana-ai/zcc-host-daemon/harness/harness-verify', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@zana-ai/zcc-host-daemon/harness/harness-verify')>();
+  const versions: Record<string, string> = {
+    claude: '2.1.220', cursor: '2026.01.23', codex: '0.140.0', pi: '0.52.12', opencode: '1.18.10'
+  };
   return {
     ...actual,
+    installedHarnessVersion: async (_config: AppConfig, adapterId: string) => versions[adapterId],
     verifyHarnesses: async () => ([
       { family: 'claude', label: 'Claude Code', binary: 'claude', enabled: true, alwaysEnabled: true, installed: true, normalizedVersion: '2.1.220' },
       { family: 'cursor', label: 'Cursor', binary: 'cursor', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '2026.01.23' },

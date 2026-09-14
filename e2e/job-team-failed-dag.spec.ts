@@ -3,9 +3,32 @@ import { makeJobTeamCoordinatorBinary } from './sdk/harness.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import type { Page } from '@playwright/test';
 
 test.use({ e2e: true, initialConfig: { teamJobLaunchEnabled: true, autoRenameTabs: false } });
 test.setTimeout(120_000);
+
+async function configureFailedDagTeam(window: Page, binary: string, projectDir: string): Promise<string> {
+  await window.evaluate((bin) => window.cc.config.set({
+    teamJobLaunchEnabled: true, sponsorPromptDismissed: true, claudeBinary: bin, defaultHarness: 'claude'
+  }), binary);
+  await window.evaluate(() => window.cc.personas.save({
+    id: 'e2e-failure-orchestrator', name: 'E2E Failure Orchestrator', description: 'Failed DAG coordinator',
+    baseProfile: 'claude', permissionMode: 'default', systemPrompt: ''
+  }));
+  await window.evaluate(() => window.cc.personas.save({
+    id: 'e2e-failure-worker', name: 'E2E Failure Worker', description: 'Failed DAG worker',
+    baseProfile: 'claude', permissionMode: 'default', systemPrompt: ''
+  }));
+  await window.evaluate(() => window.cc.teams.save({
+    id: 'e2e-failure-team', name: 'E2E Failure Team', description: 'Failed DAG team',
+    slots: [{ personaId: 'e2e-failure-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-failure-orchestrator'
+  }));
+  return window.evaluate(async (path) => {
+    const result = await window.cc.projects.add(path);
+    return (result && 'ok' in result ? result.value : result).id;
+  }, projectDir);
+}
 
 test('failed DAG continues independent work, skips descendants, and settles in Job Details', async ({ app }) => {
   const { window } = app;
@@ -15,28 +38,7 @@ test('failed DAG continues independent work, skips descendants, and settles in J
   let projectId: string | null = null;
 
   try {
-    await window.evaluate((bin) => window.cc.config.set({
-      teamJobLaunchEnabled: true,
-      sponsorPromptDismissed: true,
-      claudeBinary: bin,
-      defaultHarness: 'claude'
-    }), agent.path);
-    await window.evaluate(() => window.cc.personas.save({
-      id: 'e2e-failure-orchestrator', name: 'E2E Failure Orchestrator', description: 'Failed DAG coordinator',
-      baseProfile: 'claude', permissionMode: 'default', systemPrompt: ''
-    }));
-    await window.evaluate(() => window.cc.personas.save({
-      id: 'e2e-failure-worker', name: 'E2E Failure Worker', description: 'Failed DAG worker',
-      baseProfile: 'claude', permissionMode: 'default', systemPrompt: ''
-    }));
-    await window.evaluate(() => window.cc.teams.save({
-      id: 'e2e-failure-team', name: 'E2E Failure Team', description: 'Failed DAG team',
-      slots: [{ personaId: 'e2e-failure-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-failure-orchestrator'
-    }));
-    projectId = await window.evaluate(async (path) => {
-      const result = await window.cc.projects.add(path);
-      return (result && 'ok' in result ? result.value : result).id;
-    }, projectDir);
+    projectId = await configureFailedDagTeam(window, agent.path, projectDir);
 
     await window.getByTestId('nav-agents').click();
     await window.getByTestId('agents-board-new-thread').first().click();

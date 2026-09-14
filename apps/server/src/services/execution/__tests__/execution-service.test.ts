@@ -401,6 +401,30 @@ describe('SquadExecutionService', () => {
     expect((await service.events('owner', 'project-1', record.id)).events).toContainEqual(expect.objectContaining({ summary: AUTO_FAIL_SUMMARY }));
   }));
 
+  it('retries auto-finalization once after a stale state conflict', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let transitionCalls = 0;
+    const service = new SquadExecutionService(deps(filePath, {
+      store: {
+        ...store,
+        transition: async (...args) => {
+          transitionCalls += 1;
+          if (transitionCalls === 3) throw new Error('stale execution state');
+          return store.transition(...args);
+        }
+      }
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [
+      { id: 'unit', title: 'Unit', task: 'fail', dependencies: [], files: ['unit.txt'], verification: ['check'] }
+    ] });
+    let record = (await store.get('execution-1'))!;
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    const worker = { executionId: record.id, projectId: record.projectId, slotId: 'slot-1', role: 'worker' as const };
+    await expect(service.failWork(worker, 'unit', 'failed')).resolves.toMatchObject({ ok: true });
+    expect((await store.get(record.id))?.state).toBe('FAILED');
+    expect(transitionCalls).toBe(4);
+  }));
+
   it('accepts producer events and artifacts from bound cohort and stamps authority server-side', async () => fixture(async (filePath) => {
     const service = new SquadExecutionService(deps(filePath));
     await service.start('owner', 'project-1', request);

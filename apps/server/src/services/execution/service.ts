@@ -14,6 +14,7 @@ import { ExecutionDeadlineWatchdog } from './deadline-watchdog.js';
 const SNAPSHOT_TIMEOUT_MS = 15_000;
 /** Hard cap on event pages walked per snapshot (Rule 5: bound unbounded reads). */
 const MAX_SNAPSHOT_EVENT_PAGES = 1_000;
+const AUTO_FINALIZE_RETRY_MS = 1_000;
 
 export interface ExecutionCohortBinding extends ExecutionCohortAuthority {
   executionId: string;
@@ -187,6 +188,7 @@ export class ExecutionService {
   private readonly bindingTails = new Map<string, Promise<void>>();
   private readonly pendingBindingOwners = new Map<string, string>();
   private readonly mintFlights = new Map<string, Promise<ReturnType<ExecutionService['mintResumeGrantOnce']> extends Promise<infer T> ? T : never>>();
+  private readonly autoFinalizeTimers = new Map<string, NodeJS.Timeout>();
   private readonly deadlineWatchdog: ExecutionDeadlineWatchdog;
 
   constructor(private readonly deps: ExecutionServiceDeps) {
@@ -373,6 +375,9 @@ export class ExecutionService {
 
   dispose(): void {
     this.deadlineWatchdog.dispose();
+    const clearTimer = this.deps.clearTimer ?? clearTimeout;
+    for (const timer of this.autoFinalizeTimers.values()) clearTimer(timer);
+    this.autoFinalizeTimers.clear();
   }
 
   /** Main-only project projection. Never expose through owner-scoped MCP routes. */
@@ -539,23 +544,49 @@ export class ExecutionService {
    * non-RUNNING state) throw-and-skip here rather than force a bad transition.
    */
   private async maybeAutoFinalize(executionId: string): Promise<void> {
+    let terminal: ExecutionRecord;
     try {
-      const record = await this.deps.store.get(executionId);
-      if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') return;
-      const units = record.workUnits ?? [];
-      if (!units.length) return;
-      let terminal: ExecutionRecord;
-      if (units.every((unit) => unit.state === 'COMPLETED')) {
-        terminal = await this.deps.store.completeExecution(record.id, record.stateVersion, AUTO_FINALIZE_SUMMARY);
-      } else if (units.some((unit) => unit.state === 'FAILED')
-        && units.every((unit) => unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')) {
-        terminal = await this.deps.store.transition(record.id, record.stateVersion, 'FAILED', 'error', AUTO_FAIL_SUMMARY);
-      } else {
-        return;
+      for (let attempt = 0; ; attempt += 1) {
+        const record = await this.deps.store.get(executionId);
+        if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') return;
+        const units = record.workUnits ?? [];
+        if (!units.length) return;
+        try {
+          if (units.every((unit) => unit.state === 'COMPLETED')) {
+            terminal = await this.deps.store.completeExecution(record.id, record.stateVersion, AUTO_FINALIZE_SUMMARY);
+          } else if (units.some((unit) => unit.state === 'FAILED')
+            && units.every((unit) => unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')) {
+            terminal = await this.deps.store.transition(record.id, record.stateVersion, 'FAILED', 'error', AUTO_FAIL_SUMMARY);
+          } else {
+            return;
+          }
+          break;
+        } catch (error) {
+          if (attempt === 0 && error instanceof Error && error.message === 'stale execution state') continue;
+          throw error;
+        }
       }
+    } catch (error) {
+      console.error(`[execution] auto-finalize failed for ${executionId}`, error);
+      this.scheduleAutoFinalize(executionId);
+      return;
+    }
+    try {
       await this.cleanupTerminal(terminal);
       await this.deps.cancelTeamLaunch(terminal.callerPrincipalId, terminal.teamLaunchRequestId);
-    } catch { /* best-effort; the orchestrator's execution.complete remains a valid path */ }
+    } catch (error) {
+      console.error(`[execution] auto-finalize cleanup failed for ${executionId}`, error);
+    }
+  }
+
+  private scheduleAutoFinalize(executionId: string): void {
+    if (this.autoFinalizeTimers.has(executionId)) return;
+    const setTimer = this.deps.setTimer ?? setTimeout;
+    const timer = setTimer(() => {
+      this.autoFinalizeTimers.delete(executionId);
+      void this.maybeAutoFinalize(executionId);
+    }, AUTO_FINALIZE_RETRY_MS) as NodeJS.Timeout;
+    this.autoFinalizeTimers.set(executionId, timer);
   }
 
   /**
@@ -611,13 +642,16 @@ export class ExecutionService {
   }
 
   private async releaseUndeliveredAssignments(executionId: string, assignments: ExecutionDispatchAssignment[]): Promise<void> {
-    for (const assignment of assignments) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const current = await this.deps.store.get(executionId);
-        const unit = current?.workUnits?.find((candidate) => candidate.id === assignment.workUnitId);
-        if (!current || unit?.state !== 'CLAIMED' || unit.assignedSlotId !== assignment.slotId) continue;
-        await this.deps.store.releaseWork(current.id, current.stateVersion, { role: 'worker', slotId: assignment.slotId }, assignment.workUnitId);
-      } catch { /* concurrent progress owns the newer state */ }
+        await this.deps.store.releaseUndelivered(executionId, assignments);
+        return;
+      } catch (error) {
+        if (attempt === 0) continue;
+        console.error(`[execution] failed to release undelivered assignments for ${executionId}`, {
+          assignments: assignments.map(({ workUnitId, slotId }) => ({ workUnitId, slotId })), error
+        });
+      }
     }
   }
 

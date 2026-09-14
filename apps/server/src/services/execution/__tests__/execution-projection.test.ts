@@ -63,7 +63,8 @@ describe('projectExecutionProjection', () => {
     expect(projected.work).toMatchObject({
       counts: { FAILED: 1, SKIPPED: 1 }
     });
-    expect(projected.work?.assignments).toContainEqual(expect.objectContaining({ failureCode: 'VALIDATION_FAILED', failureDetail: 'bad input' }));
+    expect(projected.work?.assignments).toContainEqual(expect.objectContaining({ failureCode: 'VALIDATION_FAILED' }));
+    expect(projected.work?.assignments[0]).not.toHaveProperty('failureDetail');
     expect(projected.baselineMetrics).toEqual({
       version: 1, terminalAt: 35, wallDurationMs: 25,
       workUnitCount: 2, completedWorkUnitCount: 0, failedWorkUnitCount: 1, skippedWorkUnitCount: 1,
@@ -74,12 +75,12 @@ describe('projectExecutionProjection', () => {
     expect(projected.baselineMetrics?.resolvedModels[0]).toEqual({ slotId: 'slot-0', provider: 'provider', model: 'model' });
   });
 
-  it('redacts token-shaped work failure details from renderer projection', () => {
+  it('never projects raw work failure details to the renderer', () => {
     const input = record();
     input.workUnits = [{ id: 'failed', title: 'Failed', task: 'Work', dependencies: [], state: 'FAILED', attempt: 1, failureCode: 'PERMISSION_DENIED', failure: 'Bearer secret-value', history: [] }];
-    expect(projectExecutionProjection([input], [])[0].work?.assignments[0]).toMatchObject({
-      failureCode: 'PERMISSION_DENIED', failureDetail: 'Failure detail redacted'
-    });
+    const assignment = projectExecutionProjection([input], [])[0].work?.assignments[0];
+    expect(assignment).toMatchObject({ failureCode: 'PERMISSION_DENIED' });
+    expect(assignment).not.toHaveProperty('failureDetail');
   });
 
   it('omits terminal timing for active or invalid-duration records', () => {

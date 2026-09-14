@@ -20,16 +20,28 @@ export function nodePtyPackageRoot() {
   return dirname(require.resolve('node-pty/package.json'));
 }
 
+export function nodePtySpawnHelperPaths(root = nodePtyPackageRoot()) {
+  return [
+    join(root, 'build', 'Release', 'spawn-helper'),
+    join(root, 'build', 'Debug', 'spawn-helper'),
+    join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper')
+  ];
+}
+
 export function nodePtySpawnHelperPath(root = nodePtyPackageRoot()) {
-  return join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper');
+  const paths = nodePtySpawnHelperPaths(root);
+  return paths.find(existsSync) ?? paths[paths.length - 1];
 }
 
 export function ensureNodePtySpawnHelperExecutable(root = nodePtyPackageRoot()) {
   if (process.platform === 'win32') return false;
-  const helper = nodePtySpawnHelperPath(root);
-  if (!existsSync(helper)) return false;
-  chmodSync(helper, 0o755);
-  return true;
+  let found = false;
+  for (const helper of nodePtySpawnHelperPaths(root)) {
+    if (!existsSync(helper)) continue;
+    chmodSync(helper, 0o755);
+    found = true;
+  }
+  return found;
 }
 
 export function probeNodePtyInElectronChild() {

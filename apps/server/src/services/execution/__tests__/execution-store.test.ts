@@ -71,6 +71,24 @@ describe('execution store', () => {
     expect((await createExecutionStore({ filePath }).get(record.id))?.workUnits).toContainEqual(expect.objectContaining({ id: 'child', state: 'READY' }));
   }));
 
+  it('does not crash readiness derivation for legacy records with a missing dependency', async () => fixture(async (filePath) => {
+    let store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [
+      { id: 'root', title: 'Root', task: 'Root', dependencies: [], readOnly: true },
+      { id: 'child', title: 'Child', task: 'Child', dependencies: ['root'], readOnly: true }
+    ]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'root');
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as { records: Array<{ workUnits: Array<{ id: string; dependencies: string[] }> }> };
+    persisted.records[0].workUnits.find((unit) => unit.id === 'child')!.dependencies = ['missing'];
+    await writeFile(filePath, JSON.stringify(persisted));
+    store = createExecutionStore({ filePath });
+    const completed = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'root', 'done');
+    expect(completed.workUnits?.find((unit) => unit.id === 'child')).toMatchObject({ state: 'PENDING' });
+  }));
+
   it('leaves explicitly pinned ready work unclaimed while its target slot is busy', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     let record = (await store.claim(request())).record;
@@ -89,6 +107,28 @@ describe('execution store', () => {
     const dispatched = await store.dispatchReady(record.id);
     expect(dispatched.assignments).toEqual([]);
     expect(dispatched.record.workUnits?.find((unit) => unit.id === 'pinned')).toMatchObject({ state: 'READY', assignedSlotId: 'slot-2' });
+  }));
+  it('releases multiple undelivered assignments in one state transition', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.setAuthorizationContext(record.id, record.stateVersion, {
+      version: 1, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+        { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1' },
+        { slotId: 'slot-2', personaId: 'worker', authorizationIdDigest: 'w2' }
+      ]
+    }, 'authorization-digest');
+    record = await store.registerPlan(record.id, record.stateVersion, [
+      { id: 'a', title: 'A', task: 'A', dependencies: [], readOnly: true },
+      { id: 'b', title: 'B', task: 'B', dependencies: [], readOnly: true }
+    ]);
+    const dispatched = await store.dispatchReady(record.id);
+    const released = await store.releaseUndelivered(record.id, dispatched.assignments);
+    expect(released.stateVersion).toBe(dispatched.record.stateVersion + 1);
+    expect(released.workUnits).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'a', state: 'READY' }),
+      expect.objectContaining({ id: 'b', state: 'READY' })
+    ]));
+    expect(released.workUnits?.every((unit) => unit.assignedSlotId === undefined)).toBe(true);
   }));
   it('persists tasks up to Team launch UTF-8 limit instead of generic metadata limit', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
