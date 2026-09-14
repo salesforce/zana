@@ -1,10 +1,11 @@
 /**
  * Thread-scoped automation for the visible local WebContentsView.
  *
- * Per-thread cookie partitions (`browserPartitionForThread`) and headless
- * Chrome on enrolled hosts are later additive layers — not a replacement for
- * the in-app browser tab, and not a port of BB's browser-automation plugin.
+ * Per-id hashed cookie partitions (`hashedAutomationPartition`) isolate agent
+ * jars. Personal in-app tabs stay on persist:zcc-browser.
  */
+
+import { createHash } from 'node:crypto';
 
 export interface AutomationTargetRow {
   targetId: string;
@@ -13,8 +14,12 @@ export interface AutomationTargetRow {
   title: string | null;
 }
 
-/** Shared cookie jar for agent-driven tabs. Personal in-app tabs stay on persist:zcc-browser. */
+/** Prefix for hashed agent cookie jars. Personal in-app tabs stay on persist:zcc-browser. */
 export const ZCC_BROWSER_AUTOMATION_PARTITION = 'persist:zcc-browser-automation';
+
+export function hashedAutomationPartition(id: string): string {
+  return `${ZCC_BROWSER_AUTOMATION_PARTITION}-${createHash('sha256').update(id).digest('hex')}`;
+}
 
 export const HIDDEN_AUTOMATION_VIEW_BOUNDS = { x: 0, y: 0, width: 1280, height: 720 };
 
@@ -35,9 +40,10 @@ export function isPendingAutomationTab(tabId: string): boolean {
 
 export function partitionForBrowserTab(
   tabIsAutomation: boolean,
-  personalPartition = 'persist:zcc-browser'
+  personalPartition = 'persist:zcc-browser',
+  automationId = 'shared'
 ): string {
-  return tabIsAutomation ? ZCC_BROWSER_AUTOMATION_PARTITION : personalPartition;
+  return tabIsAutomation ? hashedAutomationPartition(automationId) : personalPartition;
 }
 
 export function shouldBroadcastAutomationOpen(visible: boolean): boolean {

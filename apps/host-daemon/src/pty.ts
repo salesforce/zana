@@ -13,8 +13,9 @@ import { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 import { harnessFamilyOf, isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { cliPlanIntentForLaunch } from './harness/cli-plan-files.js';
-import { ensureMcpConfigForProjectSync } from './mcp-config.js';
-import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv } from './env.js';
+import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync } from './mcp-config.js';
+import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
+import { resolveHarnessCommand } from './harness/harness-verify.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName } from './tmux.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import type { HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
@@ -280,8 +281,12 @@ export { personaArgs_build };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Crash-on-start GET/stop still need the record after `live` drops. Rule 5 cap. */
+export const PTY_RECENT_EXITED_CAP = 32;
+
 export class PtyManager extends EventEmitter {
   private live = new Map<string, Live>();
+  private recentExited = new Map<string, TerminalSession>();
   /** Base URL of the local MCP server, set after the http listener boots. */
   private mcpBaseUrl: string | null = null;
   /**
@@ -421,6 +426,30 @@ export class PtyManager extends EventEmitter {
   /** Look up a single live session by id, or null if it isn't running. */
   getSession(sessionId: string): TerminalSession | null {
     return this.live.get(sessionId)?.session ?? null;
+  }
+
+  /**
+   * Live session, or one that exited recently enough that HTTP GET/stop can
+   * still name it. Orchestrator stamps, `waitForReady`, and `isLiveSession`
+   * stay on {@link getSession} so a finished PTY is never treated as running.
+   */
+  getRememberedSession(sessionId: string): TerminalSession | null {
+    return this.getSession(sessionId) ?? this.recentExited.get(sessionId) ?? null;
+  }
+
+  private setLive(id: string, live: Live): void {
+    this.recentExited.delete(id);
+    this.live.set(id, live);
+  }
+
+  private rememberExited(session: TerminalSession): void {
+    this.recentExited.delete(session.id);
+    this.recentExited.set(session.id, session);
+    while (this.recentExited.size > PTY_RECENT_EXITED_CAP) {
+      const oldest = this.recentExited.keys().next().value;
+      if (oldest === undefined) break;
+      this.recentExited.delete(oldest);
+    }
   }
 
   /** Resolve only after an async backend owns a real execution handle. */
@@ -657,6 +686,12 @@ export class PtyManager extends EventEmitter {
      */
     worktree?: SessionWorktree;
     /**
+     * Host Environment this CLI Agent was provisioned into. Recorded so the
+     * inspector can offer commit/PR and so last-session destroy can prune the
+     * managed checkout. Absent on a project-root / Quick Agent launch.
+     */
+    workspaceEnvironmentId?: string;
+    /**
      * Team-launch cohort stamp (set only by `launchTeam`). Carried verbatim onto
      * the session record so the Agents board can group the launch's tabs and
      * mark the orchestrator. Absent on every other spawn.
@@ -819,7 +854,7 @@ export class PtyManager extends EventEmitter {
       roleTargetId: roleTarget.targetId
     }) || undefined;
 
-    const { command, args } = provider.resolveLaunch(
+    const { command, args, env: launchEnv } = provider.resolveLaunch(
       effectiveProfile,
       opts.config,
       autoModeActive,
@@ -1103,20 +1138,21 @@ export class PtyManager extends EventEmitter {
       : [];
     // "Trust all ZCC tools" (AppConfig.trustZccToolsEnabled) short-circuits the
     // narrow per-tool allow-list to the whole-server wildcard `mcp__zcc-inbox`
-    // (claude treats an `mcp__<server>` entry with no `__tool` suffix as "pre-
-    // approve all its tools"), so agents are never prompted for ANY zcc tool —
-    // including the ones normally withheld behind a first-use prompt
-    // (`agent_send`, `remote_exec`, `microvm_exec`, `library_remove`). Covers
-    // future tools too, with no list to maintain. Still gated on `mcpConfigPath`
-    // (no zcc-inbox server is even wired into the session without it, so allowing
-    // it is moot).
+    // plus always-on plugin MCP servers (`mcp__plugin_<id>_<name>`). Claude
+    // treats an `mcp__<server>` entry with no `__tool` suffix as "pre-approve
+    // all its tools", so agents are never prompted for ANY zcc inbox tool or
+    // always-on plugin MCP tool — including the ones normally withheld behind
+    // a first-use prompt (`agent_send`, `remote_exec`, `microvm_exec`,
+    // `library_remove`). Covers future tools too, with no list to maintain.
+    // Still gated on `mcpConfigPath` (no zcc-inbox server is even wired into
+    // the session without it, so allowing it is moot).
     const trustAllZcc = opts.config.trustZccToolsEnabled === true;
     // `inbox_search` is read-only (never mutates the inbox), so it's safe to
     // pre-approve alongside the other read tools — same rationale as `agent_inbox`.
     const inboxAllow = !mcpConfigPath
       ? []
       : trustAllZcc
-        ? ['mcp__zcc-inbox']
+        ? ['mcp__zcc-inbox', ...alwaysOnPluginMcpAllowlist()]
         : opts.scheduled
           ? [
               'mcp__zcc-inbox__inbox_push',
@@ -1301,6 +1337,10 @@ export class PtyManager extends EventEmitter {
       ZCC_SESSION_ID: sessionId,
       ZCC_SESSION_TOKEN: sessionCredential
     };
+    // Finder/Dock and the electron-vite sandbox omit `~/.local/bin`. node-pty
+    // `posix_spawnp` does not always honor env PATH the way `execFile` does,
+    // so we also resolve the harness basename against the augmented PATH.
+    env.PATH = augmentPath(env.PATH ?? process.env.PATH);
     // Drop Claude Code's own nested-session markers before they reach a claude
     // WE spawn. When ZCC itself runs inside a Claude session (e.g. `npm run dev`
     // from a Claude shell), `...process.env` above carries CLAUDECODE /
@@ -1328,6 +1368,7 @@ export class PtyManager extends EventEmitter {
     // env-substitutes into its `--mcp-config` file) — OpenCode instead reads the
     // whole zcc-inbox server block from this var, deep-merged over its own config.
     Object.assign(env, providerIntegration.mcpEnv);
+    if (launchEnv) Object.assign(env, launchEnv);
     // Per-session V8 heap ceiling: bound a runaway claude (and its subagent
     // node subtree, which inherits NODE_OPTIONS) so it aborts its own turn at
     // the ceiling instead of growing until the OS memory-pressure killer takes
@@ -1427,7 +1468,11 @@ export class PtyManager extends EventEmitter {
       microVmCpus: opts.microVmCpus,
       microVmMemoryMib: opts.microVmMemoryMib
     };
-    const inner = execEnv.wrap({ command, args: fullArgs }, envCtx);
+    const wrapped = execEnv.wrap({ command, args: fullArgs }, envCtx);
+    const inner = {
+      ...wrapped,
+      command: resolveHarnessCommand(wrapped.command, env.PATH)
+    };
     const isolationStatus = execEnv.status(envCtx);
     // Callback-env rewrite: identity for local/sandbox (a sandboxed process shares
     // the host loopback, so the 127.0.0.1 callbacks resolve unchanged). Invoked
@@ -1509,6 +1554,7 @@ export class PtyManager extends EventEmitter {
       personaId: opts.persona?.id,
       cohort: opts.cohort,
       worktree: opts.worktree,
+      workspaceEnvironmentId: opts.workspaceEnvironmentId,
       // Record WHERE it runs + whether isolation is actually in force, so the
       // Agents board can badge a sandboxed session and surface an honest posture
       // when the kernel couldn't enforce it (warn-and-run). Omitted for a plain
@@ -1531,7 +1577,7 @@ export class PtyManager extends EventEmitter {
     // create() itself STAYS synchronous — no caller pays the boot latency.
     if (execEnv.createSession) {
       const deferred = new DeferredExecSession();
-      this.live.set(session.id, { session, proc: deferred });
+      this.setLive(session.id, { session, proc: deferred });
       this.emit('sessionUpdated', session);
       void this.attachExecutionSession(session, execEnv, inner, envCtx, rewrittenCallbackEnv, env, opts, caps);
       return session;
@@ -1554,7 +1600,7 @@ export class PtyManager extends EventEmitter {
     });
     session.pid = proc.pid;
 
-    this.live.set(session.id, {
+    this.setLive(session.id, {
       session,
       proc,
       localTmuxBacked: useTmux || undefined,
@@ -1741,6 +1787,7 @@ export class PtyManager extends EventEmitter {
     // Trailing args are additive (plain EventEmitter): existing `(id, code)`
     // listeners ignore them; the Team lifecycle integration consumes them.
     this.emit('exit', sessionId, exitCode, signal ?? null, explanation ?? null);
+    this.rememberExited(live.session);
     this.live.delete(sessionId);
     // Release node-pty's master /dev/ptmx fd. On a normal `onExit`, node-pty's
     // own socket-close path already frees it — but reapDeadSessions() finalizes
@@ -2111,6 +2158,7 @@ export class PtyManager extends EventEmitter {
       ZCC_SESSION_TOKEN: controlCredentialForSession(sessionId),
       TERM: 'xterm-256color'
     };
+    spawnEnv.PATH = augmentPath(spawnEnv.PATH ?? process.env.PATH);
     ensureInteractiveTerminalEnv(spawnEnv);
 
     ensureNodePtySpawnHelperExecutable();
@@ -2186,7 +2234,7 @@ export class PtyManager extends EventEmitter {
    * through the full spawn/cap/env path again.
    */
   private bindRemoteProc(session: TerminalSession, proc: pty.IPty, reattach?: RemoteReattach): void {
-    this.live.set(session.id, { session, proc, reattach });
+    this.setLive(session.id, { session, proc, reattach });
     proc.onData((data) => {
       // Any streamed byte proves the (re-)attached link is stable — reset the
       // reconnect budget so a long, occasionally-flaky session isn't starved.

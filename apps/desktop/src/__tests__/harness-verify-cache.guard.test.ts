@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 const configIpc = readFileSync(new URL('../ipc/config.ts', import.meta.url), 'utf8');
 
 describe('harness verify cache invalidation', () => {
-  it('busts the cache when any harness binary or enable flag changes, including Grok', () => {
+  it('busts the cache when any harness binary or enable flag changes, including Grok and Mastra Code', () => {
     for (const token of [
       'patch.claudeBinary !== undefined',
       'patch.cursorBinary !== undefined',
@@ -12,11 +12,13 @@ describe('harness verify cache invalidation', () => {
       'patch.piBinary !== undefined',
       'patch.opencodeBinary !== undefined',
       'patch.grokBinary !== undefined',
+      'patch.mastracodeBinary !== undefined',
       'patch.harnessCursorEnabled !== undefined',
       'patch.harnessCodexEnabled !== undefined',
       'patch.harnessPiEnabled !== undefined',
       'patch.harnessOpenCodeEnabled !== undefined',
-      'patch.harnessGrokEnabled !== undefined'
+      'patch.harnessGrokEnabled !== undefined',
+      'patch.harnessMastracodeEnabled !== undefined'
     ]) {
       expect(configIpc, token).toContain(token);
     }

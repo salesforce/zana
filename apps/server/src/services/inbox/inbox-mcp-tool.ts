@@ -45,8 +45,8 @@ export const INBOX_PUSH_DESCRIPTION = [
   '',
   'Set `report: true` when this push is a finished DELIVERABLE the user will want',
   'to find again — a completed analysis, an RCA, an audit, a design writeup (the',
-  'kind of thing you point at with `docs`). Flagged reports get a "Report" badge,',
-  'their own Reports tab, and a Reports filter in the inbox, so they surface fast',
+  'kind of thing you point at with `docs`). Flagged reports get a "Report" badge',
+  'and a Reports filter in the inbox, so they surface fast',
   'and stand apart from routine status check-ins. Leave it off (the default) for a',
   'plain progress update or a question — over-flagging routine pings defeats the',
   'purpose.',
@@ -113,7 +113,7 @@ export const inboxPushInputSchema = {
     .optional()
     .describe(
       'Mark this entry as a finished REPORT/deliverable (analysis, RCA, audit, design). ' +
-        'Flagged reports get a badge, a dedicated Reports tab, and a Reports filter so they ' +
+        'Flagged reports get a badge and a Reports filter so they ' +
         'surface fast. Default false — leave off for routine status updates and questions.'
     ),
   // Optional structured-question add-on. When present, `comments` becomes the

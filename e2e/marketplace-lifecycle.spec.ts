@@ -42,7 +42,7 @@ test.describe('marketplace lifecycle — search', () => {
     await searchInput.fill('nonexistent-extension');
     await expect(market.rows()).toHaveCount(0);
     await expect(
-      app.window.locator('.settings-help--muted', { hasText: 'No extensions match' })
+      app.window.locator('.settings-help--muted', { hasText: 'No plugins match' })
     ).toBeVisible();
 
     // Clear search to restore full catalog
@@ -85,9 +85,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
     // === Phase 2: Install ===
     await market.rowButton('E2E Dummy').click();
     await market.confirmInstall();
-
-    // Wait for install to complete (button changes to "Installed")
-    await expect(market.rowButton('E2E Dummy')).toHaveText(/Installed/, { timeout: 30_000 });
+    await market.waitForInstalledDetail('E2E Dummy');
 
     // Verify now present in installed list
     list = await market.ipc<Array<{ id: string; enabled: boolean }>>('list');
@@ -95,42 +93,24 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
     expect(installed).toBeTruthy();
     expect(installed!.enabled).toBe(true); // Auto-enabled after install
 
-    // === Phase 3: Extension is live-loaded ===
-    // Navigate to Extensions panel to verify it appears in the installed list
-    await app.window.getByRole('tab', { name: 'Installed' }).click();
-    await expect(app.window.locator('.ext-list-item')).toHaveCount(
-      expect.any(Number)
-    );
+    // === Phase 3: Extension is live-loaded on Installed detail ===
+    await expect(app.window.locator('.ext-hub-about')).toBeVisible();
 
-    // The installed extension row should be visible
-    const installedRow = app.window
-      .locator('.ext-list-item')
-      .filter({ has: app.window.locator('.ext-list-item-title', { hasText: 'E2E Dummy' }) });
-    await expect(installedRow).toBeVisible();
-
-    // === Phase 4: Uninstall ===
-    // Click the uninstall button (trash icon or "Remove" button)
-    const uninstallButton = installedRow.locator('button[title*="ninstall"], button', {
-      hasText: /Remove|Uninstall/,
-    });
-    await uninstallButton.first().click();
-
-    // Confirm the uninstall dialog if present
-    const confirmButton = app.window.locator('button', { hasText: /Confirm|Uninstall|Yes/ });
-    if (await confirmButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await confirmButton.click();
-    }
+    // === Phase 4: Uninstall from the installed detail ===
+    await app.window.getByTitle('Uninstall this plugin').click();
+    await app.window.getByRole('button', { name: 'Confirm remove' }).click();
 
     // === Phase 5: Verify gone ===
-    // The row should disappear from the installed list
-    await expect(installedRow).not.toBeVisible({ timeout: 15_000 });
+    await expect(app.window.locator('.ext-hub-about-titles h3', { hasText: 'E2E Dummy' })).not.toBeVisible({
+      timeout: 15_000
+    });
 
     // Verify removed from IPC list
     list = await market.ipc<Array<{ id: string }>>('list');
     expect(list.some((e) => e.id === id)).toBe(false);
 
-    // Navigate back to marketplace — should show "Install" again
-    await app.window.getByRole('tab', { name: 'Browse' }).click();
+    // Navigate back to Browse — the Plugins rail, not a hub tab.
+    await app.window.getByTestId('extensions-nav-marketplace').click();
     await expect(market.rowButton('E2E Dummy')).toHaveText(/Install/);
   });
 
@@ -174,7 +154,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
     await market.open();
     await market.rowButton('E2E Dummy').click();
     await market.confirmInstall();
-    await expect(market.rowButton('E2E Dummy')).toHaveText(/Installed/, { timeout: 30_000 });
+    await market.waitForInstalledDetail('E2E Dummy');
 
     // Uninstall via IPC (simulating the renderer's uninstall call)
     const uninstallResult = await market.ipc<{ ok: boolean }>('uninstall', id);

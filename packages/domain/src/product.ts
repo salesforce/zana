@@ -58,14 +58,17 @@ export type LaunchProfileId =
   | 'opencode-yolo'
   | 'grok'
   | 'grok-resume'
-  | 'grok-yolo';
+  | 'grok-yolo'
+  | 'mastracode'
+  | 'mastracode-resume'
+  | 'mastracode-yolo';
 
 /**
  * A verifiable code-harness FAMILY — the coarse grouping the Settings → Code
  * Harness category and the launcher's profile gate reason about (one family can
  * back several `LaunchProfileId`s, e.g. `claude`/`claude-resume`/`claude-yolo`).
  */
-export type HarnessFamily = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok';
+export type HarnessFamily = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok' | 'mastracode';
 
 /** Why a launch profile was supplied. Only an explicit choice may override a persona pin. */
 export type LaunchProfileSource = 'explicit' | 'seeded-default';
@@ -525,14 +528,14 @@ export interface InboxEntry {
    * deliverable/analysis the user should be able to find fast (an RCA, an audit,
    * a design writeup), as opposed to a routine status check-in. Set by the agent
    * via `inbox_push({ report: true })`; the app surfaces flagged entries with a
-   * "Report" badge, a dedicated Reports tab, and a list-pane Reports filter.
+   * "Report" badge and a list-pane Reports filter.
    *
    * This is an EXPLICIT opt-in signal, distinct from the `report` FEED CATEGORY
    * in `feedCategories.ts` (which is the un-classified *fallback* — every plain
    * push lands there). A `report: true` entry is always a feed-category `report`
    * too, but not every feed-category `report` carries this flag. The flag is what
    * `isReport()` reads to power the report-only surfaces. Absent/false ⇒ a normal
-   * entry (still surfaced inline, just not badged or in the Reports tab).
+   * entry (still surfaced inline, just not badged or in the Reports filter).
    */
   report?: boolean;
   /**
@@ -1374,9 +1377,10 @@ export interface TerminalSession {
    */
   worktree?: SessionWorktree;
   /**
-   * Host-owned Environment this session runs in (thread-create / worktree picker).
-   * Distinct from {@link environment} (sandbox/microvm). Used for git actions
-   * and destroy-on-last-thread. Absent on a legacy Electron `terminals.create`.
+   * Host-owned Environment this session runs in (CLI Agent New worktree / reuse /
+   * personal, or a thread that stamped the same id). Distinct from
+   * {@link environment} (sandbox/microvm). Used for git actions and
+   * destroy-on-last-session. Absent on a project-root / Quick Agent launch.
    */
   workspaceEnvironmentId?: string;
   /**
@@ -1683,6 +1687,13 @@ export interface AppConfig {
    */
   grokBinary?: string;
   /**
+   * Path/name of the `mastracode` CLI (Mastra Code TUI harness). Optional:
+   * absent ⇒ the provider falls back to the bare `mastracode` on PATH. Thread
+   * already speaks this binary over ACP (`mastracode --acp`); this slot is the
+   * interactive TUI.
+   */
+  mastracodeBinary?: string;
+  /**
    * Hide the Cursor harness from agent-launch UIs. Absent/undefined ⇒ auto-on
    * when the CLI is installed. `false` is an explicit hide.
    */
@@ -1707,6 +1718,11 @@ export interface AppConfig {
    * auto-on when the CLI is installed. `false` is an explicit hide.
    */
   harnessGrokEnabled?: boolean;
+  /**
+   * Hide the Mastra Code TUI harness from agent-launch UIs. Absent/undefined ⇒
+   * auto-on when the CLI is installed. `false` is an explicit hide.
+   */
+  harnessMastracodeEnabled?: boolean;
   /**
    * Allow compatible harnesses to discover project-specific native agents.
    * Default OFF: only built-in semantic roles remain available in composers.
@@ -1801,6 +1817,19 @@ export interface AppConfig {
    *  subgroups ('project', default) or a flat chronological stream ('time'). */
   inboxGrouping?: 'project' | 'time';
   listPaneWidth?: number;
+  /**
+   * Sidebar list-rail section collapse map (Scheduler/Settings keys).
+   * Absent key = expanded. Migrated once from `zcc.collapsedSections`.
+   */
+  collapsedSections?: Record<string, boolean>;
+  /** Hide projects with no live sessions in the Projects rail. */
+  hideIdleProjects?: boolean;
+  /** Hide projects with no schedules in the Scheduler rail. */
+  hideSchedulelessProjects?: boolean;
+  /** Global sidebar destination order (plugin + core nav ids). */
+  sidebarNavOrder?: string[];
+  /** Project-window sidebar destination order. */
+  projectSidebarNavOrder?: string[];
   /** Nav sidebar width in px. Absent ⇒ CSS default (256). Clamped [256, 480]. */
   sidebarWidth?: number;
   windowBounds?: { x?: number; y?: number; width: number; height: number };
@@ -2848,6 +2877,20 @@ export interface CreateTerminalRequest {
    */
   worktree?: boolean | { branch?: string };
   /**
+   * Workspace provision choice for a CLI Agent launch (New worktree / reuse /
+   * personal). Main (or the product HTTP terminals handler) provisions a host
+   * Environment first, then spawns the PTY in that checkout. Distinct from
+   * {@link worktree} (legacy `~/zcc-worktrees` isolation) and from
+   * {@link environment} (sandbox/microvm). Unmanaged / omitted ⇒ project root.
+   * Quick Agent must omit this and use {@link isolateScratch} instead.
+   */
+  workspace?: import('./environment.js').SpawnEnvironmentChoice;
+  /**
+   * Preferred host for workspace provision. Renderer-supplied; main re-resolves
+   * against enrolled hosts (Rule 1).
+   */
+  hostId?: string;
+  /**
    * RESOLVED worktree (main-internal, never sent by the renderer). Set only by
    * the `terminals:create` handler after it has successfully minted/adopted the
    * worktree for {@link worktree}: carries the realpath'd checkout path + branch
@@ -2857,6 +2900,13 @@ export interface CreateTerminalRequest {
    * MUST be ignored/overwritten by the handler.
    */
   worktreeInfo?: SessionWorktree;
+  /**
+   * Host Environment this CLI Agent was provisioned into (main-internal after
+   * {@link workspace} provision). Stamp onto {@link TerminalSession.workspaceEnvironmentId}
+   * so git actions / destroy-on-last-session work. A renderer-supplied value is
+   * untrusted and MUST be stripped.
+   */
+  workspaceEnvironmentId?: string;
   /**
    * Optional opening prompt for claude-family profiles — appended as the
    * positional `[prompt]` argv element so the spawned interactive session runs
@@ -4824,22 +4874,26 @@ export interface PluginAppEntry {
   skillNames?: string[];
   mcpServers?: Array<{ name: string; type: string; alwaysOn?: boolean }>;
   cliNames?: string[];
+  /** Installed npm version when this plugin came from the catalog, else omitted. */
+  npmResolvedVersion?: string | null;
 }
 
 export interface PluginSettingsSnapshot {
   descriptors: Record<
     string,
     {
-      type: 'string' | 'boolean' | 'select' | 'project';
+      type: 'string' | 'boolean' | 'number' | 'select' | 'project';
       label: string;
       description?: string;
       secret?: true;
       multiline?: true;
       options?: string[];
-      default?: string | boolean;
+      default?: string | number | boolean;
+      min?: number;
+      max?: number;
     }
   >;
-  values: Record<string, string | boolean | undefined>;
+  values: Record<string, string | number | boolean | undefined>;
 }
 
 /**
@@ -5154,6 +5208,8 @@ export interface MarketplaceEntry {
   version: string;
   title: string;
   description?: string;
+  /** Long marketplace write-up (What you get / How it works / Requirements). */
+  overview?: string;
   author?: string;
   /** Lucide icon name (resolved renderer-side, like a manifest icon). */
   icon?: string;
@@ -5180,6 +5236,8 @@ export interface MarketplaceEntry {
   mcpServers?: Array<{ name: string; alwaysOn?: boolean }>;
   extra?: Record<string, unknown>;
   tags?: string[];
+  /** Curated store shelf, when known (bundled plugins always set this). */
+  category?: string;
 }
 
 export type McpSource = 'user' | 'plugin' | 'project';

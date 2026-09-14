@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { emitPluginThreadEvent } from './thread-events.js';
+import { conversationThreadOutput, emitPluginThreadEvent } from './thread-events.js';
 import type { ProductHttpContext } from '../http/product-context.js';
 
 vi.mock('@zana-ai/zcc-db', () => ({
@@ -53,5 +53,11 @@ describe('emitPluginThreadEvent', () => {
       thread: expect.objectContaining({ id: 'thr-2', projectId: 'proj-1', status: 'idle' }),
       lastAssistantText: 'done'
     }));
+  });
+
+  it('assembles thread output from the last assistant text', () => {
+    expect(conversationThreadOutput({ db: {} } as ProductHttpContext, 'thr-2')).toEqual({
+      output: 'done'
+    });
   });
 });

@@ -62,6 +62,15 @@ function GrokIcon({ className }: { className?: string }) {
   );
 }
 
+function MastracodeIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <title>Mastra Code</title>
+      <path d="M3.5 19V5h4.1L12 13.4 16.4 5h4.1v14h-3.6V9.8L13.2 19h-2.4L7.1 9.8V19z" />
+    </svg>
+  );
+}
+
 export default definePluginApp((app) => {
   app.slots.experimental_providerIcon({
     providerId: "acp-cursor",
@@ -78,6 +87,10 @@ export default definePluginApp((app) => {
   app.slots.experimental_providerIcon({
     providerId: "acp-grok",
     icon: GrokIcon,
+  });
+  app.slots.experimental_providerIcon({
+    providerId: "acp-mastracode",
+    icon: MastracodeIcon,
   });
   app.slots.experimental_providerIcon({
     providerId: "acp-hermes-agent",

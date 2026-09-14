@@ -180,7 +180,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           'Omit `run` to open immediately. `layout` is `padded` or `flush`.',
           '`scopes` default to `["thread"]`. Include `"agent-session"` for the CLI-agent inspector.'
         ],
-        firstParty: ['Tasks', 'Side chat']
+        firstParty: ['Tasks', 'Side chat', 'Workflows']
       },
       {
         id: 'pendingInteraction',
@@ -282,7 +282,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
     blurb: 'APIs with no pixels — skills, CLI, MCP, workers.',
     sections: [
       { title: 'Agent capabilities', surfaceIds: ['skills', 'cli', 'mcp'] },
-      { title: 'Host services', surfaceIds: ['settings-define', 'background'] },
+      { title: 'Host services', surfaceIds: ['settings-define', 'background', 'desktop-browsers'] },
       { title: 'Runtime', surfaceIds: ['contentScripts', 'experimental_providerIcon'] }
     ],
     surfaces: [
@@ -296,7 +296,8 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           '`zcc.agents.contributeSkills` at runtime.',
           'CLI verbs rewrite the generated `plugin-commands` skill.'
         ],
-        apiSymbols: ['ZccPluginApi.agents.contributeSkills']
+        apiSymbols: ['ZccPluginApi.agents.contributeSkills'],
+        firstParty: ['Browser Automation']
       },
       {
         id: 'cli',
@@ -304,7 +305,8 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         tagline: 'A `zcc <name>` verb.',
         summary: 'Register a command the core CLI dispatches in-process.',
         bullets: ['Core `zcc` names always win.'],
-        apiSymbols: ['ZccPluginApi.cli.register']
+        apiSymbols: ['ZccPluginApi.cli.register'],
+        firstParty: ['Tasks', 'Workflows', 'Browser Automation']
       },
       {
         id: 'mcp',
@@ -312,7 +314,8 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         tagline: 'Servers merged into project `.mcp.json`.',
         summary: 'Declare MCP servers on the manifest.',
         bullets: ['`command` is basename-only.'],
-        apiSymbols: ['PluginManifest.mcpServers']
+        apiSymbols: ['PluginManifest.mcpServers'],
+        firstParty: ['Docs']
       },
       {
         id: 'settings-define',
@@ -329,6 +332,27 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         summary: 'Long-running work and minute-aligned schedules.',
         bullets: ['Named schedules persist last-fired minute.'],
         apiSymbols: ['ZccPluginApi.background.service', 'ZccPluginApi.background.schedule']
+      },
+      {
+        id: 'desktop-browsers',
+        title: 'Desktop browser control',
+        tagline: 'Use your automation tool on ZCC-owned tabs',
+        summary:
+          'Controls a selected desktop window through zcc.sdk.experimental_desktopBrowsers. With this, a plugin can:',
+        bullets: [
+          'Discover instances on an explicit host and create thread-owned tabs with separate automation profiles',
+          'Acquire expiring control; reveal the first tab only in the already focused thread. Personal tabs require an explicit handoff',
+          'Give a worker on that host a private, scoped CDP WebSocket connection',
+          'Capture or reveal a tab and release control while preserving the tab and its login',
+          'Observe changed tab and control state with a disposable two-second polling subscription',
+          "List browsers installed on the desktop host and copy a profile's signed-in cookies into the personal ZCC browser or an automation profile"
+        ],
+        apiSymbols: [
+          'PluginSdkDesktopBrowsers',
+          'PluginSdkDesktopBrowserScope'
+        ],
+        firstParty: ['Browser Automation'],
+        experimental: true
       },
       {
         id: 'contentScripts',

@@ -1,12 +1,20 @@
 import { deprecation, errResult, type CliResult } from '../cli-result.js';
 import { flagValue, hasFlag, splitSentinel, stripFlags } from '../flag-parse.js';
 import {
-  nowMs,
   productRequest,
   renderOrJson,
+  resolveServerUrl,
   sleepMs,
   type ProductHttpDeps
 } from '../product-http.js';
+import {
+  ControlError,
+  ProductHttpClient,
+  spawnThread as sdkSpawnThread,
+  exitCodeForControlError,
+  waitForThreadStatus,
+  type PermissionMode
+} from '@zana-ai/zcc-control';
 
 interface ThreadRow {
   id: string;
@@ -40,13 +48,6 @@ function parseDuration(raw: string): number | undefined {
 
 type WaitUntil = 'turn' | 'quiet';
 
-function threadIsQuiet(row: ThreadRow, until: WaitUntil): boolean {
-  const status = row.status ?? '';
-  if (status !== 'idle' && status !== 'error') return false;
-  if (until === 'turn') return true;
-  return (row.activity?.activeBackgroundCommandCount ?? 0) === 0;
-}
-
 async function waitForThread(
   id: string,
   timeoutMs: number,
@@ -54,34 +55,38 @@ async function waitForThread(
   deps: ProductHttpDeps | undefined,
   until: WaitUntil
 ): Promise<CliResult> {
-  const deadline = nowMs(deps) + timeoutMs;
-  while (nowMs(deps) < deadline) {
-    const shown = await productRequest<{ thread: ThreadRow }>(
-      'GET',
-      `/api/v1/threads/${encodeURIComponent(id)}`,
-      { deps }
-    );
-    if (!shown.ok) {
-      if (shown.result.exitCode === 3) return shown.result;
-      await sleepMs(500, deps);
-      continue;
+  const http = new ProductHttpClient(resolveServerUrl(deps), {
+    fetchImpl: deps?.fetchImpl,
+    nowMs: deps?.nowMs ?? (() => Date.now()),
+    sleep: deps?.sleep ?? ((ms) => sleepMs(ms, deps))
+  });
+  try {
+    const row = await waitForThreadStatus(http, id, {
+      until: until === 'quiet' ? 'quiet' : 'idle',
+      timeoutMs,
+      onInteraction: 'fail'
+    });
+    return renderOrJson(json, row, `${id} ${row.status ?? ''}\n`);
+  } catch (error) {
+    if (error instanceof ControlError && error.code === 'TIMEOUT') {
+      return {
+        exitCode: 124,
+        stdout: '',
+        stderr: `Error: timed out waiting for thread ${id}; it is still running\n`
+      };
     }
-    if (threadIsQuiet(shown.data.thread, until)) {
-      return renderOrJson(json, shown.data.thread, `${id} ${shown.data.thread?.status ?? ''}\n`);
+    if (error instanceof ControlError) {
+      return errResult(error.message, exitCodeForControlError(error));
     }
-    await sleepMs(500, deps);
+    throw error;
   }
-  return {
-    exitCode: 124,
-    stdout: '',
-    stderr: `Error: timed out waiting for thread ${id}; it is still running\n`
-  };
 }
 
-async function spawnThread(
+async function spawnThreadCommand(
   args: string[],
   json: boolean,
-  deps?: ProductHttpDeps
+  deps: ProductHttpDeps | undefined,
+  dataDir: string
 ): Promise<CliResult> {
   const { head, tail } = splitSentinel(args);
   const wait = hasFlag(head, '--wait');
@@ -90,14 +95,14 @@ async function spawnThread(
   const timeoutRaw = flagValue(head, '--timeout') ?? '5m';
   const timeoutMs = parseDuration(timeoutRaw);
   if (timeoutMs === undefined) return errResult(`invalid --timeout '${timeoutRaw}'`, 2);
+  const extraFlags = [
+    '--project', '--prompt', '--provider', '--model', '--host', '--permission-mode', '--title', '--timeout',
+    '--acp-mode', '--reasoning-level', '--visibility', '--parent'
+  ];
   const projectId = flagValue(head, '--project')
-    ?? stripFlags(head, [
-      '--project', '--prompt', '--provider', '--model', '--host', '--permission-mode', '--title', '--timeout'
-    ], ['--wait', '--detach', '--json'])[0];
+    ?? stripFlags(head, extraFlags, ['--wait', '--detach', '--json'])[0];
   const promptFromFlag = flagValue(head, '--prompt');
-  const positional = stripFlags(head, [
-    '--project', '--prompt', '--provider', '--model', '--host', '--permission-mode', '--title', '--timeout'
-  ], ['--wait', '--detach', '--json']);
+  const positional = stripFlags(head, extraFlags, ['--wait', '--detach', '--json']);
   const promptParts = tail.length > 0
     ? tail
     : promptFromFlag
@@ -106,29 +111,52 @@ async function spawnThread(
   const prompt = promptParts.join(' ').trim();
   if (!projectId) return errResult('thread spawn requires --project <id> (or a project positional)', 2);
   if (!prompt) return errResult('thread spawn requires --prompt or a prompt positional', 2);
-  const created = await productRequest<{ ok?: boolean; thread?: ThreadRow; value?: ThreadRow }>(
-    'POST',
-    '/api/v1/threads',
-    {
-      deps,
-      body: {
-        projectId,
-        prompt,
-        providerId: flagValue(head, '--provider') ?? 'claude-code',
-        model: flagValue(head, '--model'),
-        hostId: flagValue(head, '--host'),
-        permissionMode: flagValue(head, '--permission-mode'),
-        title: flagValue(head, '--title')
-      }
-    }
-  );
-  if (!created.ok) return created.result;
-  const row = created.data.thread ?? created.data.value;
-  if (!row?.id) return errResult('thread spawn did not return an id');
-  if (!wait) {
-    return renderOrJson(json, row, `${row.id}\t${row.status ?? 'starting'}\n`);
+  const permissionModeRaw = flagValue(head, '--permission-mode');
+  if (permissionModeRaw && permissionModeRaw !== 'accept-edits' && permissionModeRaw !== 'auto' && permissionModeRaw !== 'full') {
+    return errResult(`invalid --permission-mode '${permissionModeRaw}'`, 2);
   }
-  return waitForThread(row.id, timeoutMs, json, deps, 'turn');
+  const visibilityRaw = flagValue(head, '--visibility');
+  if (visibilityRaw && visibilityRaw !== 'visible' && visibilityRaw !== 'hidden') {
+    return errResult(`invalid --visibility '${visibilityRaw}'`, 2);
+  }
+  const http = new ProductHttpClient(resolveServerUrl(deps), {
+    fetchImpl: deps?.fetchImpl,
+    nowMs: deps?.nowMs ?? (() => Date.now()),
+    sleep: deps?.sleep ?? ((ms) => sleepMs(ms, deps))
+  });
+  try {
+    const handle = await sdkSpawnThread(http, {
+      projectId,
+      prompt,
+      providerId: flagValue(head, '--provider') ?? 'claude-code',
+      model: flagValue(head, '--model'),
+      acpMode: flagValue(head, '--acp-mode'),
+      hostId: flagValue(head, '--host'),
+      permissionMode: permissionModeRaw as PermissionMode | undefined,
+      reasoningLevel: flagValue(head, '--reasoning-level'),
+      visibility: visibilityRaw as 'visible' | 'hidden' | undefined,
+      parentThreadId: flagValue(head, '--parent'),
+      title: flagValue(head, '--title')
+    }, { runId: 'operator', dataDir, tagged: false });
+    const row = handle.snapshot();
+    if (!wait) {
+      return renderOrJson(json, row, `${row.id}\t${row.status ?? 'starting'}\n`);
+    }
+    const waited = await handle.wait({ until: 'idle', timeoutMs, onInteraction: 'fail' });
+    return renderOrJson(json, waited, `${waited.id}\t${waited.status ?? ''}\n`);
+  } catch (error) {
+    if (error instanceof ControlError && error.code === 'TIMEOUT') {
+      return {
+        exitCode: 124,
+        stdout: '',
+        stderr: `Error: timed out waiting for thread; it is still running\n`
+      };
+    }
+    if (error instanceof ControlError) {
+      return errResult(error.message, exitCodeForControlError(error));
+    }
+    throw error;
+  }
 }
 
 interface BackgroundCommandRow {
@@ -223,7 +251,8 @@ export async function runThreadCommand(
   subcommand: string | undefined,
   rest: string[],
   json: boolean,
-  deps?: ProductHttpDeps
+  deps?: ProductHttpDeps,
+  dataDir = '.'
 ): Promise<CliResult> {
   if (!subcommand || subcommand === 'list' || subcommand === 'ls') {
     const projectId = flagValue(rest, '--project');
@@ -238,7 +267,7 @@ export async function runThreadCommand(
     return renderOrJson(false, threads, `${threads.map(formatThread).join('\n')}\n`);
   }
 
-  if (subcommand === 'spawn') return spawnThread(rest, json, deps);
+  if (subcommand === 'spawn') return spawnThreadCommand(rest, json, deps, dataDir);
 
   if (subcommand === 'show') {
     const id = rest[0];
@@ -394,9 +423,10 @@ export async function runThreadCommand(
 export async function runSpawnAlias(
   rest: string[],
   json: boolean,
-  deps?: ProductHttpDeps
+  deps?: ProductHttpDeps,
+  dataDir = '.'
 ): Promise<CliResult> {
-  const result = await spawnThread(rest, json, deps);
+  const result = await spawnThreadCommand(rest, json, deps, dataDir);
   return deprecation('`zcc run` is deprecated; use `zcc thread spawn`', result);
 }
 

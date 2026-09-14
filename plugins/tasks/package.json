@@ -3,17 +3,35 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Plan and track work in ZCC — sidebar panel, zcc tasks, and a skill.",
+  "description": "Linear-style task tracker: list and board views, keys, priorities, and zcc tasks.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
+  "scripts": {
+    "build": "node scripts/build-app.mjs",
+    "package": "node scripts/build-app.mjs"
+  },
   "zcc": {
     "name": "Tasks",
-    "description": "Plan and track work: a sidebar panel, `zcc tasks`, and a generated-skill-friendly command.",
+    "description": "Plan and track work in a list or board: keys, statuses, priorities, and `zcc tasks`.",
     "branding": { "icon": "ListTodo" },
     "server": "./server.mjs",
     "app": "./app.js",
     "skills": ["skills"]
+  },
+  "dependencies": {
+    "@zana-ai/zcc-ui": "workspace:*",
+    "lucide-react": "^1.35.0"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-plugin-build": "workspace:*",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "happy-dom": "^20.10.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   }
 }

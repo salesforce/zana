@@ -23,6 +23,7 @@ import { codexHarness } from './codex/registration.js';
 import { piHarness } from './pi/registration.js';
 import { openCodeHarness } from './opencode/registration.js';
 import { grokHarness } from './grok/registration.js';
+import { mastracodeHarness } from './mastracode/registration.js';
 import { shellHarness } from './shell/registration.js';
 
 export const HARNESS_REGISTRATIONS: readonly HarnessRegistration[] = Object.freeze([
@@ -32,6 +33,7 @@ export const HARNESS_REGISTRATIONS: readonly HarnessRegistration[] = Object.free
   piHarness,
   openCodeHarness,
   grokHarness,
+  mastracodeHarness,
   shellHarness
 ]);
 

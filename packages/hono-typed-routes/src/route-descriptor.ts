@@ -152,6 +152,9 @@ export function jsonResponse<Output>(
   options: RouteResponseOptions<409>,
 ): RouteResponseDescriptor<Output, 409, "json">;
 export function jsonResponse<Output>(
+  options: RouteResponseOptions<413>,
+): RouteResponseDescriptor<Output, 413, "json">;
+export function jsonResponse<Output>(
   options?: undefined,
 ): RouteResponseDescriptor<Output, 200, "json">;
 export function jsonResponse<Output, const Status extends ContentfulStatusCode>(

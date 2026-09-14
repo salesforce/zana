@@ -1,5 +1,5 @@
 import { posix } from 'node:path';
-import type { HostListFilesResult, HostReadFileResult } from '@zana-ai/zcc-contracts/host-rpc';
+import type { HostListFilesResult, HostReadFileResult, HostWriteFileResult } from '@zana-ai/zcc-contracts/host-rpc';
 import type { FsReadResult, LibraryDoc, LibraryDocKind, LibraryScope, QuickPrompt } from '@zana-ai/zcc-domain/product';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import type { ProductHttpContext } from './product-context.js';
@@ -131,6 +131,47 @@ export async function readLibraryDoc(
       command: { type: 'host.read_file', root: root.root, relPath }
     });
     return { ok: true, content: result.content };
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === 'path_not_found') {
+      return { ok: false, message: 'file not found' };
+    }
+    mapHostError(error);
+  }
+}
+
+export async function writeLibraryDoc(
+  ctx: ProductHttpContext,
+  scope: LibraryScope,
+  relPath: string,
+  content: string,
+  projectId?: string,
+  hostId?: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!isSafeRelPath(relPath)) {
+    return { ok: false, message: 'path escapes library root' };
+  }
+  const roots = authorizedLibraryRoots(ctx);
+  const root = roots.find((row) =>
+    row.scope === scope && (scope === 'global' ? true : row.projectId === projectId)
+  );
+  if (!root) return { ok: false, message: 'library root is not authorized' };
+  try {
+    const resolved = ctx.hostHub.resolveHostId(hostId ?? root.hostId);
+    const result = await ctx.hostHub.callHostOnlineRpc<HostWriteFileResult>({
+      hostId: resolved,
+      command: {
+        type: 'host.write_file',
+        path: posix.join(root.root, relPath),
+        rootPath: root.root,
+        content,
+        contentEncoding: 'utf8',
+        createParents: true
+      }
+    });
+    if (result.outcome === 'conflict') {
+      return { ok: false, message: 'write conflict' };
+    }
+    return { ok: true };
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === 'path_not_found') {
       return { ok: false, message: 'file not found' };

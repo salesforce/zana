@@ -161,7 +161,7 @@ UI / IPC create-terminal
 
 The renderer also uses Electron **preload `CcApi`** (`@zana-ai/zcc-desktop-contract`) for window-local and native operations that are not yet fully on HTTP.
 
-**`zcc` CLI** talks to product HTTP (`ZCC_SERVER_URL`, often `http://127.0.0.1:8780`) and/or **`~/.zcc/control.sock`** (Unix domain socket + `control.token`) for driving the *running* desktop instance. The CLI is not an authority; agent-bound sessions are mostly read-only (`FORBIDDEN_AGENT`).
+**`zcc` CLI** talks to product HTTP (`ZCC_SERVER_URL`, often `http://127.0.0.1:8780`) and/or **`~/.zcc/control.sock`** (Unix domain socket + `control.token`) for driving the *running* desktop instance. The CLI is not an authority; agent-bound sessions are mostly read-only (`FORBIDDEN_AGENT`). The CLI and live tests share `@zana-ai/zcc-control` for thread spawn and CLI Agent launch.
 
 ---
 
@@ -205,6 +205,7 @@ Packages exist when **two apps** need them or they are a **public SDK**. Informa
 | `@zana-ai/zcc-db` | SQLite conversation store. |
 | `@zana-ai/zcc-host-workspace` | Git/workspace ops used by the host. |
 | `@zcc/harness-sdk` | PTY harness descriptors. |
+| `@zana-ai/zcc-control` | Live-drive the running app (threads + CLI Agents). Shared by `zcc` and live tests. |
 | `@zcc/cli` | `zcc` binary. |
 | `@zana-ai/zcc-app` | Curated runtime composition (still thin). |
 
@@ -216,7 +217,7 @@ Packages exist when **two apps** need them or they are a **public SDK**. Informa
 
 Trust control is **install/enable**, version pin, `engines.zcc`, `npm --ignore-scripts`, native-addon rejection — not a sandbox.
 
-**Builtin vs official:** `apps/server/src/plugins/builtin-registry.ts` lists auto-install builtins (docs + thread providers + custom-instructions + ask-user-question) vs store-on-demand official plugins (tasks, github, salesforce, memory, …). Core must not name a concrete plugin id in renderer logic (`'zana'` is guarded).
+**Builtin vs official:** `apps/server/src/plugins/builtin-registry.ts` lists auto-install builtins (docs + thread providers + custom-instructions + memory + ask-user-question) vs store-on-demand official plugins (tasks, github, salesforce, …). Core must not name a concrete plugin id in renderer logic (`'zana'` is guarded).
 
 **Disk extensions** (`extension.json`, utilityProcess + permission broker) remain for some marketplace/legacy panels (e.g. Tickets/GUS). Desktop still has `apps/desktop/src/extensions/` (broker, process host, consent). New capabilities should be plugins unless Rule 7 applies (capability the broker cannot grant even scoped).
 
@@ -246,7 +247,7 @@ These are product features that sit *on top of* the server/host split:
 
 ## Build, test, and native deps
 
-- **Node 20+**, **pnpm**, native modules: `node-pty` (Electron ABI via `pnpm rebuild`), `better-sqlite3` (Node ABI — `pnpm dev` loads SQLite in Node, not Electron). `scripts/ensure-better-sqlite3.mjs` rebuilds SQLite for the current Node when the addon was compiled for Electron.
+- **Node 20+**, **pnpm**, native modules: `node-pty` (prebuilds load in both Node and Electron; `ensure-node-pty-helper.mjs --electron` rebuilds only when Electron cannot `require` it), `better-sqlite3` (Node ABI for `pnpm dev` / Vitest; Electron ABI for the unpackaged utility process). Node and Electron cannot share one sqlite `.node` binary. `scripts/ensure-better-sqlite3.mjs` caches both ABIs under `node_modules/.cache/zcc-native-abi` and copies the matching one instead of recompiling on every flip.
 - pnpm **onlyBuiltDependencies** allowlists Electron and those natives; keep it narrow.
 - **Unit tests:** Vitest per package/app. Coverage expectation for new code is high (80%+ in project rules).
 - **E2E:** Playwright against a **built Electron** app for child-process / CLI integrations. Piped stdout in Electron can differ from Node; do not treat Vitest as production-boundary proof for PTY/CLI capture.
@@ -260,6 +261,7 @@ These are product features that sit *on top of* the server/host split:
 | Who may spawn a process? | `apps/server` policy → signed command → `apps/host-daemon` |
 | How is a Thread provider added? | `plugins/provider-*`, plugin-sdk, agent-runtime README |
 | How is a PTY CLI added? | `docs/harness-sdk-architecture.md`, `apps/host-daemon/src/harness/` |
+| How do live tests / `zcc thread` launch? | `docs/control-sdk.md`, `packages/control-sdk` |
 | How does the UI navigate? | `apps/app/src` views + `App.tsx` / `WorkspaceView` |
 | What may a plugin do? | `docs/extensions.md`, `packages/plugin-sdk` |
 | What is still migrating? | `docs/architecture/runtime-monorepo.md` |

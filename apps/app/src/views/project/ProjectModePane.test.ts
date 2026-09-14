@@ -19,6 +19,8 @@ describe('ProjectModePane', () => {
     expect(source).toContain('decodeRouteParam(mode)');
     expect(source).toContain('<SplitPaneHeaderActions />');
     expect(source).toContain('<ProjectStatusbarItems');
+    expect(source).toContain('<PaneEmptyState');
+    expect(source).toContain('Project not found');
     expect(source).not.toContain('<AgentLauncher');
   });
 });

@@ -24,6 +24,21 @@ describe('marketplaceIndexSchema', () => {
     expect(parsed.plugins[0]?.source.git?.subdir).toBe('plugins/notes');
   });
 
+  it('accepts an optional overview write-up', () => {
+    const parsed = marketplaceIndexSchema.parse({
+      schemaVersion: 1,
+      name: 'official',
+      displayName: 'Official',
+      plugins: [
+        {
+          ...BASE_ENTRY,
+          overview: 'Use ACP agents.\n\n## What you get\n\n- Cursor.\n'
+        }
+      ]
+    });
+    expect(parsed.plugins[0]?.overview).toContain('## What you get');
+  });
+
   it('accepts $schema, tags, and a string lucide icon', () => {
     const parsed = marketplaceIndexSchema.parse({
       $schema: 'https://example.test/schemas/marketplace.schema.json',

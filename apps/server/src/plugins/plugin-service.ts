@@ -22,6 +22,7 @@ import {
   formatPluginRequireCycle,
   isPluginId,
   parsePluginSource,
+  parsePluginOverviewMarkdown,
   readPluginManifest,
   sortPluginsByRequires,
   satisfiesRange,
@@ -79,6 +80,7 @@ import {
 } from './injected-skill-roots.js';
 import { applyBundledPosthogApiKey } from '../bundled-posthog-api-key.js';
 import type {
+  PluginAgentConfigureContext,
   PluginAgentToolContext,
   PluginCliExecutionResult,
   PluginHttpRequest,
@@ -86,6 +88,13 @@ import type {
   PluginThreadEvent
 } from '@zana-ai/zcc-plugin-sdk/server';
 import type { ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';
+import {
+  deepFreezePluginMetadata,
+  parsePersistedPluginMetadata
+} from '@zana-ai/zcc-domain/thread-runtime';
+import {
+  listThreadPluginMetadataRows
+} from '@zana-ai/zcc-db';
 import {
   invokePluginAgentTool,
   resolvePluginSessionTools,
@@ -126,7 +135,7 @@ export interface PluginService {
   stop(): void;
   snapshot(): PluginUiSnapshot[];
   agentContributions(): PluginAgentContribution[];
-  sessionTools(ctx: { threadId: string; projectId: string }): Promise<PluginSessionTools>;
+  sessionTools(ctx: PluginAgentConfigureContext): Promise<PluginSessionTools>;
   invokeAgentTool(args: {
     name: string;
     input: unknown;
@@ -160,7 +169,7 @@ export interface PluginService {
     pluginId: string;
     itemId: string;
   }): Promise<{ ok: true; context: string } | { ok: false; error: string }>;
-  runCliCommand(id: string, argv: string[]): Promise<PluginCliExecutionResult>;
+  runCliCommand(id: string, argv: string[], context?: { projectId?: string; threadId?: string; cwd?: string }): Promise<PluginCliExecutionResult>;
   dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
   readLogs(id: string, tail?: number): Promise<string[]>;
@@ -265,13 +274,7 @@ export interface PluginServiceOptions {
     signal?: AbortSignal;
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginInteractionResult>;
   interruptPluginInteractions?: (pluginId: string) => void;
-  spawnThread?: (args: {
-    pluginId: string;
-    projectId: string;
-    prompt: string;
-    providerId?: string;
-    parentThreadId?: string;
-  }) => Promise<{ id: string }>;
+  spawnThread?: (args: import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSpawnArgs & { pluginId: string }) => Promise<{ id: string }>;
   getThread?: (args: { pluginId: string; threadId: string }) => Promise<
     import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSummary | null
   >;
@@ -282,7 +285,37 @@ export interface PluginServiceOptions {
     types?: readonly string[];
     order?: 'asc' | 'desc';
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadEventRow[]>;
-  sendThread?: (args: { pluginId: string; threadId: string; prompt: string }) => Promise<{ id: string }>;
+  sendThread?: (args: {
+    pluginId: string;
+    threadId: string;
+    prompt: string;
+    visibility?: 'visible' | 'agent-only';
+    mode?: 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
+  }) => Promise<{ id: string }>;
+  stopThread?: (args: { pluginId: string; threadId: string }) => Promise<{ ok: true }>;
+  threadOutput?: (args: { pluginId: string; threadId: string }) => Promise<
+    import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadOutput
+  >;
+  defaultExecutionOptions?: (args: { pluginId: string; threadId: string }) => Promise<
+    import('@zana-ai/zcc-plugin-sdk/server').PluginSdkExecutionOptions
+  >;
+  getEnvironment?: (args: { pluginId: string; environmentId: string }) => Promise<
+    import('@zana-ai/zcc-plugin-sdk/server').PluginSdkEnvironment
+  >;
+  readWorkspaceFile?: (args: {
+    pluginId: string;
+    hostId: string;
+    path: string;
+    rootPath: string;
+  }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkFileReadResult>;
+  listProviders?: (args: { pluginId: string; environmentId?: string }) => Promise<
+    import('@zana-ai/zcc-plugin-sdk/server').PluginSdkProviderInfo[]
+  >;
+  loadProviderModels?: (args: {
+    pluginId: string;
+    environmentId?: string;
+    providerId: string;
+  }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkModelCatalog>;
   archiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
   forkThread?: (args: {
     pluginId: string;
@@ -309,8 +342,19 @@ export interface PluginServiceOptions {
     senderThreadId?: string;
   }) => Promise<{ id: string }>;
   unarchiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+  getPluginMetadata?: (args: {
+    pluginId: string;
+    threadId: string;
+  }) => Promise<import('@zana-ai/zcc-domain/thread-runtime').JsonObject>;
+  updatePluginMetadata?: (args: {
+    pluginId: string;
+    threadId: string;
+    set: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
+    remove: readonly string[];
+  }) => Promise<import('@zana-ai/zcc-domain/thread-runtime').JsonObject>;
   pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
   listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
+  productContext?: import('../http/product-context.js').ProductHttpContext;
   /** Shared live host-artifact map; omitted tests get a private registry. */
   pluginHostArtifacts?: PluginHostArtifactRegistry;
   /**
@@ -611,6 +655,43 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       .filter((row) => row.text.trim().length > 0);
   }
 
+  function withPluginMetadata(
+    sources: PluginAgentToolSource[],
+    ctx: PluginAgentConfigureContext
+  ): PluginAgentToolSource[] {
+    const db = opts.productContext?.db;
+    const threadId = ctx.threadId;
+    if (!db || !threadId) {
+      return sources.map((source) => ({
+        ...source,
+        pluginMetadata: deepFreezePluginMetadata({})
+      }));
+    }
+    const rows = listThreadPluginMetadataRows(
+      db,
+      threadId,
+      sources.map((source) => source.pluginId)
+    );
+    const byId = new Map(rows.map((row) => [row.pluginId, row.metadataJson]));
+    return sources.map((source) => {
+      const raw = byId.get(source.pluginId);
+      if (raw === undefined) {
+        return { ...source, pluginMetadata: deepFreezePluginMetadata({}) };
+      }
+      const parsed = parsePersistedPluginMetadata(raw);
+      if (parsed === undefined) {
+        console.warn(
+          `Ignoring corrupt plugin metadata for thread ${threadId}, plugin ${source.pluginId}`
+        );
+        return { ...source, pluginMetadata: deepFreezePluginMetadata({}) };
+      }
+      return {
+        ...source,
+        pluginMetadata: deepFreezePluginMetadata(structuredClone(parsed))
+      };
+    });
+  }
+
   function agentToolSources(): PluginAgentToolSource[] {
     const pluginSources = [...live.entries()]
       .filter(([, current]) => current.handle)
@@ -811,19 +892,35 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       getThread: opts.getThread,
       listThreadEvents: opts.listThreadEvents,
       sendThread: opts.sendThread,
+      stopThread: opts.stopThread,
+      threadOutput: opts.threadOutput,
+      defaultExecutionOptions: opts.defaultExecutionOptions,
+      getEnvironment: opts.getEnvironment,
+      readWorkspaceFile: opts.readWorkspaceFile,
+      listProviders: opts.listProviders,
+      loadProviderModels: opts.loadProviderModels,
       archiveThread: opts.archiveThread,
       forkThread: opts.forkThread,
       listThreads: opts.listThreads,
       listQueuedMessages: opts.listQueuedMessages,
       createQueuedMessage: opts.createQueuedMessage,
       unarchiveThread: opts.unarchiveThread,
+      getPluginMetadata: opts.getPluginMetadata,
+      updatePluginMetadata: opts.updatePluginMetadata,
       pushInbox: opts.pushInbox,
       listProjects: opts.listProjects,
+      productContext: opts.productContext,
       dataDir: opts.dataDir,
       onNeedsConfiguration: (message) => {
         configurationMessage = message;
       },
       services: servicesRegistry,
+      isAgentToolNameTaken: (name) => {
+        for (const [id, current] of live) {
+          if (current.handle?.agentTools.some((tool) => tool.name === name)) return id;
+        }
+        return undefined;
+      },
       hostEntryPath: (() => {
         try {
           const manifest = loadManifestFromDir(row.rootDir);
@@ -845,7 +942,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     handle.api.rpc.register = (contract, handlers) => {
       originalRegister(contract, handlers);
       for (const [name, handler] of Object.entries(handlers)) {
-        if (typeof handler === 'function') rpc.set(name, handler);
+        if (typeof handler === 'function') {
+          rpc.set(name, handler as (args: unknown) => unknown);
+        }
       }
     };
     try {
@@ -1415,7 +1514,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     snapshot,
     agentContributions,
     sessionTools(ctx) {
-      return resolvePluginSessionTools(agentToolSources(), ctx);
+      return resolvePluginSessionTools(withPluginMetadata(agentToolSources(), ctx), ctx);
     },
     invokeAgentTool(args) {
       return invokePluginAgentTool(agentToolSources(), args.name, args.input, args.ctx);
@@ -1423,13 +1522,13 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     cliContributions,
     mentionProviders,
     resolveMention,
-    async runCliCommand(id, argv) {
+    async runCliCommand(id, argv, context) {
       const byId = live.get(id)?.handle;
-      if (byId) return runPluginCli(byId, argv);
+      if (byId) return runPluginCli(byId, argv, context);
       const named = cliContributions().find((row) => row.name === id || row.pluginId === id);
       const handle = named ? live.get(named.pluginId)?.handle : undefined;
       if (!handle) throw new Error(`plugin not running: ${id}`);
-      return runPluginCli(handle, argv);
+      return runPluginCli(handle, argv, context);
     },
     async dispatchHttp(pluginId, request) {
       const routes = live.get(pluginId)?.handle?.httpRoutes ?? [];
@@ -1657,6 +1756,8 @@ export interface BundledPluginCatalogEntry {
   mcpServers?: Array<{ name: string; alwaysOn?: boolean }>;
   extra?: Record<string, unknown>;
   tags?: string[];
+  category?: string;
+  overview?: string;
 }
 
 /**
@@ -1685,6 +1786,12 @@ export function listBundledPluginCatalog(
         // Dir name must match the derived id so a mismatched package cannot be
         // offered under another id (same guard installFromBundled uses).
         if (manifest.id !== name) continue;
+        const overviewPath = join(dir, 'PLUGIN_OVERVIEW.md');
+        let overview: string | undefined;
+        if (existsSync(overviewPath)) {
+          const parsed = parsePluginOverviewMarkdown(readFileSync(overviewPath, 'utf8'));
+          if (parsed.ok) overview = parsed.overview;
+        }
         out.push({
           id: manifest.id,
           version: manifest.version,
@@ -1699,7 +1806,9 @@ export function listBundledPluginCatalog(
             alwaysOn: server.alwaysOn
           })),
           extra: Object.keys(manifest.extra).length > 0 ? manifest.extra : undefined,
-          tags: ['official']
+          tags: ['official'],
+          category: bundledPluginByName(name)?.category,
+          ...(overview ? { overview } : {})
         });
       } catch (err) {
         log?.(`listBundledPluginCatalog:${name}`, err);

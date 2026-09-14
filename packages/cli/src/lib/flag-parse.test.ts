@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { flagValue, hasFlag, splitSentinel, stripFlags } from './flag-parse.js';
+import { flagValue, flagValues, hasFlag, splitSentinel, stripFlags } from './flag-parse.js';
 import { renderGuide } from './guide-chapters.js';
 import { runGuideCommand } from './commands/guide.js';
 
@@ -25,6 +25,11 @@ describe('flag-parse', () => {
       tail: ['--wait', 'b']
     });
     expect(hasFlag(['--wait'], '--wait')).toBe(true);
+  });
+
+  it('collects repeated --pid flags', () => {
+    expect(flagValues(['--pid', '12', '--pid', '34'], '--pid')).toEqual(['12', '34']);
+    expect(flagValues(['--pid=12', '--pid=34'], '--pid')).toEqual(['12', '34']);
   });
 });
 

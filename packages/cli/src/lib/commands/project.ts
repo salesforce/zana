@@ -1,5 +1,5 @@
 import { errResult, type CliResult } from '../cli-result.js';
-import { flagValue } from '../flag-parse.js';
+import { flagValue, flagValues } from '../flag-parse.js';
 import { productRequest, renderOrJson, type ProductHttpDeps } from '../product-http.js';
 
 interface ProjectRow {
@@ -19,6 +19,14 @@ function projectsFrom(data: unknown): ProjectRow[] {
 
 function formatProject(row: ProjectRow): string {
   return `${row.id ?? '?'}\t${row.name ?? '?'}\t${row.tag ?? '-'}\t${row.path ?? ''}`;
+}
+
+function formatProcess(row: { pid?: number; command?: string; cwd?: string }): string {
+  return `${row.pid ?? '?'}\t${row.command || '-'}\t${row.cwd ?? ''}`;
+}
+
+function parseProcessPids(rest: string[]): number[] {
+  return flagValues(rest, '--pid').map((value) => Number(value)).filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
 export async function runProjectCommand(
@@ -91,8 +99,40 @@ export async function runProjectCommand(
     return renderOrJson(json, listed.data, `${JSON.stringify(listed.data, null, 2)}\n`);
   }
 
+  if (subcommand === 'processes') {
+    const action = rest[0] === 'kill' || rest[0] === 'list' ? rest[0] : 'list';
+    const id = rest[0] === 'kill' || rest[0] === 'list' ? rest[1] : rest[0];
+    if (!id) return errResult('project processes requires <id>', 2);
+    if (action === 'kill') {
+      const pids = parseProcessPids(rest);
+      if (pids.length === 0) return errResult('project processes kill requires --pid <pid>', 2);
+      const killed = await productRequest<{ killed?: Array<{ pid?: number; command?: string; cwd?: string }> }>(
+        'POST',
+        `/api/v1/projects/${encodeURIComponent(id)}/processes/kill`,
+        { deps, body: { pids } }
+      );
+      if (!killed.ok) return killed.result;
+      const rows = killed.data.killed ?? [];
+      if (json) return renderOrJson(true, killed.data, '');
+      if (rows.length === 0) return renderOrJson(false, killed.data, 'No matching processes\n');
+      return renderOrJson(false, killed.data, `${rows.map(formatProcess).join('\n')}\n`);
+    }
+    const listed = await productRequest<{
+      processes?: Array<{ pid?: number; command?: string; cwd?: string }>;
+      supported?: boolean;
+    }>('GET', `/api/v1/projects/${encodeURIComponent(id)}/processes`, { deps });
+    if (!listed.ok) return listed.result;
+    if (json) return renderOrJson(true, listed.data, '');
+    if (listed.data.supported === false) {
+      return renderOrJson(false, listed.data, 'Process listing is not available on this host\n');
+    }
+    const rows = listed.data.processes ?? [];
+    if (rows.length === 0) return renderOrJson(false, listed.data, 'No running processes\n');
+    return renderOrJson(false, listed.data, `${rows.map(formatProcess).join('\n')}\n`);
+  }
+
   return errResult(
-    `unknown project command '${subcommand}'. Try list, show, create, files, content, skills.`,
+    `unknown project command '${subcommand}'. Try list, show, create, files, content, skills, processes.`,
     2
   );
 }

@@ -147,6 +147,23 @@ describe('MenubarController.buildSnapshot', () => {
     expect(rows.find((r) => r.sessionId === 'hidden')!.repliable).toBe(false);
   });
 
+  it('does not count a blocked scheduled or headless session as Needs you', () => {
+    const c = makeController({
+      sessions: [
+        session({ id: 'fg' }),
+        session({ id: 'sched', scheduled: true }),
+        session({ id: 'hidden', headless: true })
+      ],
+      states: { fg: 'blocked', sched: 'blocked', hidden: 'blocked' }
+    });
+    const snap = c.buildSnapshot();
+    expect(snap.needsYou).toBe(1);
+    expect(snap.working).toBe(2);
+    expect(snap.agents.find((r) => r.sessionId === 'fg')!.state).toBe('blocked');
+    expect(snap.agents.find((r) => r.sessionId === 'sched')!.state).toBe('working');
+    expect(snap.agents.find((r) => r.sessionId === 'hidden')!.state).toBe('working');
+  });
+
   it('reports the soonest ENABLED next run, ignoring paused schedules', () => {
     const c = makeController({
       sessions: [],
@@ -175,6 +192,19 @@ describe('MenubarController.badgeCount', () => {
       states: { b1: 'blocked', b2: 'blocked', w1: 'working', idle: 'idle' }
     });
     expect(c.badgeCount()).toEqual({ needsYou: 2, working: 1 });
+  });
+
+  it('does not count a blocked scheduled or headless session as Needs you', () => {
+    const c = makeController({
+      sessions: [
+        session({ id: 'fg' }),
+        session({ id: 'sched', scheduled: true }),
+        session({ id: 'hidden', headless: true }),
+        session({ id: 'w1' })
+      ],
+      states: { fg: 'blocked', sched: 'blocked', hidden: 'blocked', w1: 'working' }
+    });
+    expect(c.badgeCount()).toEqual({ needsYou: 1, working: 3 });
   });
 });
 

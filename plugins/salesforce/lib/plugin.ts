@@ -462,7 +462,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     name: 'sf_soql',
     description:
       'Salesforce SOQL/SOSL lifecycle: schema search/describe, validate, bounded sample/run, and confined export. Prefer this over raw sf data query.',
-    inputSchema: {
+    parameters: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['schema.search', 'schema.describe', 'query.validate', 'query.sample', 'query.run', 'query.export'] },
@@ -480,7 +480,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     name: 'sf_apex',
     description:
       'Salesforce Apex lifecycle: local diagnose, targeted tests, debug logs, and anonymous Apex. Source edits stay with file tools. Anonymous Apex always confirms.',
-    inputSchema: {
+    parameters: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['diagnose', 'test.run', 'logs.fetch', 'anon.run'] },
@@ -500,7 +500,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     name: 'sf_lwc',
     description:
       'Local Lightning Web Component scan, inspect, diagnose, and targeted Jest. No deploy, retrieve, preview, or create.',
-    inputSchema: {
+    parameters: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['scan', 'inspect', 'diagnose', 'test.jest'] },
@@ -516,7 +516,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     name: 'sf_agent',
     description:
       'Agentforce lifecycle: LSP diagnose (diagnostics/hover/complete/definition/symbols) on a confined .agent file, compile/inspect, preview (simulate by default; live confirms), eval via a confined spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate. Edit source in the Agentforce Playground side panel or file tools. Publish, activate, and live preview always confirm.',
-    inputSchema: {
+    parameters: {
       type: 'object',
       properties: {
         action: {

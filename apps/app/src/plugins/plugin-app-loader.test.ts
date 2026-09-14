@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { listComposerCustomizations, listCreateProjectActions, listHomepageSections, listNavPanels, listPendingInteractionSlots, listProjectTabs } from './plugin-slots.js';
 import { pluginAppIsLoadable, reconcilePluginApps, usePluginAppModules } from './plugin-app-loader.js';
 
@@ -266,5 +267,11 @@ describe('server plugin app loader', () => {
     expect(listComposerCustomizations()).toEqual([
       expect.objectContaining({ pluginId: 'harness-claude', id: 'chip' })
     ]);
+  });
+
+  it('installs the plugin runtime from a static import so composer context is shared', () => {
+    const source = readFileSync(new URL('./plugin-app-loader.ts', import.meta.url), 'utf8');
+    expect(source).toContain("import { installPluginRuntime } from './plugin-runtime.js'");
+    expect(source).not.toContain("import('./plugin-runtime.js')");
   });
 });

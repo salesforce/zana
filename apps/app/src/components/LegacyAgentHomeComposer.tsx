@@ -73,6 +73,7 @@ import {
   PROFILE_BY_FAMILY,
   readCliExtraArgs,
   resolveCliAgentFamily,
+  resolveCliAgentSpawnProfile,
   resolveCliLaunchProfile,
   stageRemoteComposerAttachments,
   threadProviderIdForFamily,
@@ -102,8 +103,10 @@ const CLI_WORK_MODE_ENTRIES = composerModeEntries({
 });
 
 /**
- * Home PTY launch surface. Thread create stays in ThreadCommandComposer;
- * this file is the only home-page caller of `createTerminal`.
+ * Home PTY launch surface. CLI Agent always uses `createTerminal` — including
+ * New worktree / reuse / personal. Managed checkouts are provisioned on
+ * terminals.create (same host Environment as Modern threads) so we never mix
+ * a CLI Agent pick onto the threads stack.
  */
 export function LegacyAgentHomeComposer({
   project: pinnedProject,
@@ -129,6 +132,7 @@ export function LegacyAgentHomeComposer({
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
   const harnessGrokEnabled = useData((s) => s.harnessGrokEnabled);
+  const harnessMastracodeEnabled = useData((s) => s.harnessMastracodeEnabled);
   const nativeAgentDiscoveryEnabled = useData((s) => s.nativeAgentDiscoveryEnabled);
   const cliRemoteHostCatalogEnabled = useData((s) => s.cliRemoteHostCatalogEnabled);
   const selectTab = useUi((s) => s.selectTab);
@@ -348,7 +352,7 @@ export function LegacyAgentHomeComposer({
       if (generation !== descriptorGeneration.current) return;
       setDescriptors([]);
     });
-  }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, harnessGrokEnabled]);
+  }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, harnessGrokEnabled, harnessMastracodeEnabled]);
 
   useEffect(() => {
     if (pinnedProject) {
@@ -423,13 +427,16 @@ export function LegacyAgentHomeComposer({
       if (kept !== currentFamilyId) {
         setFamilyId(kept as HarnessFamily);
         if (kept === rememberedFamily) {
-          setSelectionProvenance('explicit');
           setAutomaticProfile(null);
           const providerId = threadProviderIdForFamily(kept);
           const restored = providerId ? rememberedSelectionFor(providerId)?.model ?? '' : '';
           if (restored) setModelId(restored);
         }
       }
+      // Early-resolve never waited on effectiveDefault, so this is a sticky /
+      // remembered pick — same as re-selecting Codex in the picker. Leaving
+      // provenance 'automatic' with automaticProfile null made Send a no-op.
+      setSelectionProvenance('explicit');
       if (availableFamilyIds.length > 0) {
         setSelectionState('resolved');
         setResolvedProjectId(projectId);
@@ -498,30 +505,44 @@ export function LegacyAgentHomeComposer({
     harnessPiEnabled,
     harnessOpenCodeEnabled,
     harnessGrokEnabled,
+    harnessMastracodeEnabled,
     cliRemoteHostCatalogEnabled,
     catalog.providers
   ]);
 
+  const spawnProfile = resolveCliAgentSpawnProfile({
+    provenance: selectionProvenance,
+    automaticProfile,
+    harnessDefaultProfileId: selectedHarness?.defaultProfileId,
+    familyId
+  });
   const canLaunch = Boolean(
     project
     && familyId
+    && spawnProfile
     && selectionState === 'resolved'
     && resolvedProjectId === projectId
-    && (selectionProvenance !== 'explicit'
-      || selectedHarness
-      || (cliRemoteHostCatalogEnabled && Boolean(PROFILE_BY_FAMILY[familyId])))
     && !launching
   );
 
   const launch = async () => {
     if (!project || !familyId || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId) return;
-    if (selectionProvenance === 'explicit' && !selectedHarness
-      && !(cliRemoteHostCatalogEnabled && PROFILE_BY_FAMILY[familyId])) return;
-    if (field.typeaheadOpen) return;
-    const profile = selectionProvenance === 'automatic'
-      ? automaticProfile
-      : selectedHarness?.defaultProfileId ?? PROFILE_BY_FAMILY[familyId];
-    if (!profile) return;
+    // An absolute path after whitespace is syntactically a slash-command query.
+    // When it matches nothing, the menu shows "No matching commands"; do not let
+    // that advisory empty state turn the enabled launch button into a silent no-op.
+    if (field.typeaheadOpen && field.suggestions.length > 0) return;
+    const profile = resolveCliAgentSpawnProfile({
+      provenance: selectionProvenance,
+      automaticProfile,
+      harnessDefaultProfileId: selectedHarness?.defaultProfileId,
+      familyId
+    });
+    if (!profile) {
+      const message = 'Agent launch failed: no launch profile for this harness';
+      setError(message);
+      pushToast(message, 'error');
+      return;
+    }
     setError(null);
     setLaunching(true);
     try {
@@ -613,7 +634,10 @@ export function LegacyAgentHomeComposer({
         harnessRouting: merged.harnessRouting,
         personaId: personaId || undefined,
         profileSource: selectionProvenance === 'automatic' ? 'seeded-default' : 'explicit',
-        workspace: project.quickAgent ? { kind: 'personal' } : workspace,
+        // Quick Agent stays isolateScratch under the scratch project — never a
+        // managed Environment. CLI Agent New worktree / reuse / personal rides
+        // `workspace` so terminals.create can provision, then spawn a PTY.
+        workspace: project.quickAgent ? undefined : workspace,
         isolateScratch: project.quickAgent ? args.title || true : undefined,
         onError: setError
       });

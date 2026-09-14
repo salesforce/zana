@@ -515,7 +515,7 @@ describe('conversation lifecycle', () => {
     }));
     const command = callHostOnlineRpc.mock.calls[0]?.[0] as { command: { dynamicTools?: Array<{ name?: string }> } };
     expect(command.command.dynamicTools?.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(['preview_file', 'browser_open', 'inbox_push'])
+      expect.arrayContaining(['preview_file', 'inbox_push'])
     );
     expect(command.command.dynamicTools?.[0]?.name).toBe('preview_file');
   });
@@ -566,6 +566,116 @@ describe('conversation lifecycle', () => {
       expect.objectContaining({
         threadId: forked.id,
         type: 'client/turn/requested'
+      })
+    );
+  });
+
+  it('prepends a transcript seed when the provider cannot clone the session', async () => {
+    providerHandles.push(
+      registerThreadProvider('test', {
+        id: 'acp-cursor',
+        displayName: 'Cursor',
+        capabilities: {
+          supportsServiceTier: false,
+          fork: 'none',
+          supportsThreadArchive: false,
+          supportsThreadRename: false,
+          permissionModes: ['full']
+        },
+        composerActions: []
+      })
+    );
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, providerId: 'acp-cursor' });
+    vi.mocked(listConversationThreadEvents).mockReturnValue([
+      {
+        id: 'evt-1',
+        threadId: thread.id,
+        sequence: 1,
+        type: 'client/turn/requested',
+        payload: {
+          type: 'client/turn/requested',
+          requestId: 'creq_1',
+          input: [{ type: 'text', text: 'Hello' }]
+        },
+        createdAt: 1
+      },
+      {
+        id: 'evt-2',
+        threadId: thread.id,
+        sequence: 2,
+        type: 'turn/input/accepted',
+        payload: {
+          type: 'turn/input/accepted',
+          clientRequestId: 'creq_1',
+          scope: { kind: 'turn', turnId: 't1' }
+        },
+        createdAt: 2
+      },
+      {
+        id: 'evt-3',
+        threadId: thread.id,
+        sequence: 3,
+        type: 'turn/started',
+        payload: {
+          type: 'turn/started',
+          scope: { kind: 'turn', turnId: 't1' },
+          providerThreadId: 'prov-1'
+        },
+        createdAt: 3
+      },
+      {
+        id: 'evt-4',
+        threadId: thread.id,
+        sequence: 4,
+        type: 'item/completed',
+        payload: {
+          type: 'item/completed',
+          item: { type: 'agentMessage', text: 'Hi there' },
+          scope: { kind: 'turn', turnId: 't1' }
+        },
+        createdAt: 4
+      },
+      {
+        id: 'evt-5',
+        threadId: thread.id,
+        sequence: 5,
+        type: 'turn/completed',
+        payload: {
+          type: 'turn/completed',
+          scope: { kind: 'turn', turnId: 't1' },
+          providerThreadId: 'prov-1'
+        },
+        createdAt: 5
+      }
+    ]);
+    const product = ctx(async () => ({}));
+    const forked = await forkConversation(product, thread.id, {
+      agentContextSeed: [{
+        type: 'text',
+        text: 'Replying to this earlier message in the conversation:\n\nHello',
+        mentions: [],
+        visibility: 'agent-only'
+      }]
+    });
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        threadId: forked.id,
+        type: 'client/turn/requested',
+        payload: expect.objectContaining({
+          input: [
+            expect.objectContaining({
+              type: 'text',
+              visibility: 'agent-only',
+              text: expect.stringContaining('User:\nHello')
+            }),
+            expect.objectContaining({
+              type: 'text',
+              visibility: 'agent-only',
+              text: 'Replying to this earlier message in the conversation:\n\nHello'
+            })
+          ]
+        })
       })
     );
   });
@@ -847,6 +957,110 @@ describe('conversation lifecycle', () => {
       })
     }));
     expect(setConversationProviderThreadId).toHaveBeenCalledWith(expect.anything(), forkId, 'prov-fork');
+  });
+
+  it('starts a fork:none thread without cloning the source session', async () => {
+    providerHandles.push(
+      registerThreadProvider('test', {
+        id: 'acp-cursor',
+        displayName: 'Cursor',
+        capabilities: {
+          supportsServiceTier: false,
+          fork: 'none',
+          supportsThreadArchive: false,
+          supportsThreadRename: false,
+          permissionModes: ['full']
+        },
+        composerActions: []
+      })
+    );
+    const forkId = '33333333-3333-4333-8333-333333333333';
+    const forked = {
+      ...thread,
+      id: forkId,
+      providerId: 'acp-cursor',
+      originKind: 'fork' as const,
+      parentThreadId: thread.id,
+      providerThreadId: null,
+      title: 'Hello (fork)',
+      status: 'idle' as const
+    };
+    vi.mocked(getConversationThread).mockReturnValue(forked);
+    vi.mocked(listConversationThreadEvents).mockReturnValue([
+      {
+        id: 'fork-evt-1',
+        threadId: forkId,
+        sequence: 1,
+        type: 'turn/started',
+        payload: {
+          type: 'turn/started',
+          threadId: forkId,
+          scope: { kind: 'turn', turnId: 'turn-1' },
+          providerThreadId: 'prov-source'
+        },
+        createdAt: 1
+      },
+      {
+        id: 'fork-evt-2',
+        threadId: forkId,
+        sequence: 2,
+        type: 'turn/completed',
+        payload: {
+          type: 'turn/completed',
+          threadId: forkId,
+          scope: { kind: 'turn', turnId: 'turn-1' },
+          providerThreadId: 'prov-source',
+          providerCheckpointId: 'cp-9'
+        },
+        createdAt: 2
+      }
+    ]);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: forkId, started: true, providerThreadId: 'prov-fresh' }));
+    await sendConversationTurn(ctx(callHostOnlineRpc), forkId, [{ type: 'text', text: 'Hello' }]);
+    await Promise.resolve();
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'thread.start',
+        input: [{ type: 'text', text: 'Hello', mentions: [] }]
+      })
+    }));
+    const command = (callHostOnlineRpc.mock.calls[0]?.[0] as { command: Record<string, unknown> }).command;
+    expect(command).not.toHaveProperty('providerThreadId');
+    expect(command).not.toHaveProperty('providerCheckpointId');
+  });
+
+  it('settles a failed fork start as thread.start', async () => {
+    const forkId = '33333333-3333-4333-8333-333333333333';
+    const forked = {
+      ...thread,
+      id: forkId,
+      originKind: 'fork' as const,
+      parentThreadId: thread.id,
+      providerThreadId: null,
+      title: 'Hello (fork)',
+      status: 'idle' as const
+    };
+    vi.mocked(getConversationThread).mockReturnValue(forked);
+    vi.mocked(listConversationThreadEvents).mockReturnValue([]);
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([]);
+    const callHostOnlineRpc = vi.fn(async () => {
+      throw Object.assign(new Error('Provider "acp-cursor" does not support forking a thread'), {
+        code: 'live_command_failed'
+      });
+    });
+    await sendConversationTurn(ctx(callHostOnlineRpc), forkId, [{ type: 'text', text: 'Hello' }]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: 'system/error',
+        payload: expect.objectContaining({
+          type: 'system/error',
+          message: 'Command thread.start failed'
+        })
+      })
+    );
   });
 
   it('retries the tab namer from a later prompt on a still-unnamed thread', async () => {

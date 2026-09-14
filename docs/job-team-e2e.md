@@ -35,7 +35,9 @@ The `-g "Job Team"` grep also matches all three test titles if you prefer
 > **ABI note:** built-Electron Playwright needs `better-sqlite3` compiled for the
 > Electron ABI (`pnpm run rebuild:electron`); vitest needs the Node ABI
 > (`node scripts/ensure-better-sqlite3.mjs`, which `pnpm run rebuild` also does).
-> `test:e2e:jobteam` handles both flips for you.
+> After the first compile of each sqlite ABI, those scripts copy a cached `.node`
+> instead of running node-gyp again. `node-pty` is probed and skipped when Electron
+> can already load it. `test:e2e:jobteam` handles both flips for you.
 
 ## Live coverage
 

@@ -74,7 +74,8 @@ describe('sidebarSortable', () => {
     expect(source).not.toContain('CSS.Transform.toString(transform)');
     expect(source).toContain('animateLayoutChanges: disableSortableLayoutAnimation');
     expect(source).toContain('transition: undefined');
-    expect(source).toContain('localStorage.setItem(storageKey');
+    expect(source).toContain('setSidebarNavOrder(storageKey, next)');
+    expect(source).not.toContain('localStorage.setItem(storageKey');
     expect(source).toContain('activationConstraint: { distance: 6 }');
     expect(source).toContain('suppressPostDragClick()');
     expect(source).toContain('POST_DRAG_CLICK_SUPPRESS_MS');

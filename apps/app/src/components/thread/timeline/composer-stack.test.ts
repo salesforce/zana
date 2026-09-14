@@ -53,6 +53,8 @@ describe('message actions helpers', () => {
     expect(source).toContain('thread-queued-ghost-body');
     expect(source).toContain('thread-queued-ghost-stop');
     expect(source).toContain('thread-queued-item-text');
+    expect(source).toContain('thread-queued-sender');
+    expect(source).toContain('senderThreadId');
     expect(source).toContain('queuedMessagePreview');
     expect(source).toContain('deleteNextTurn');
     expect(source).toContain('<Square size={14} fill="currentColor"');
@@ -109,8 +111,11 @@ describe('prompt context banner', () => {
     expect(banner).not.toContain('thread-prompt-context-review');
     expect(banner).not.toContain('dirtyCount');
     expect(banner).not.toContain('Review');
+    expect(banner).toContain("originKind === 'fork' ? 'fork'");
+    expect(banner).toContain("parentThreadId ? 'child thread'");
 
     const detail = readFileSync(new URL('../../../views/threads/ThreadDetailView.tsx', import.meta.url), 'utf8');
+    expect(detail).toContain('originKind={originKind}');
     expect(detail).toContain('<ThreadWorkspaceBanner');
     expect(detail).not.toContain('onReview={() => openDiff()}');
     const dockAt = detail.indexOf('className="thread-composer-dock"');

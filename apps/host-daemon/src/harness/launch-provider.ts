@@ -44,6 +44,8 @@ import type { ExecutionResolution, ModelResolution, RoleResolution } from './tar
 export interface ResolvedLaunch {
   command: string;
   args: string[];
+  /** Optional child-env overlay (e.g. TUI YOLO). Empty/absent ⇒ no extra env. */
+  env?: Record<string, string>;
 }
 
 /**

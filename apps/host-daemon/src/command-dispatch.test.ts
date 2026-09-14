@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, realpathSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { createCommandRuntime, dispatchHostCommand } from './command-dispatch.js';
 import { HostCommandError } from './host-command-error.js';
@@ -621,6 +621,83 @@ describe('host command dispatch', () => {
     expect(provisioned.path).toBe(realpathSync(targetPath));
   });
 
+  const posixOnly = process.platform === 'win32' ? it.skip : it;
+
+  posixOnly('reaps leftover processes when destroying a personal workspace', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-personal-reap-'));
+    const environmentId = randomUUID();
+    const runtime = createCommandRuntime({
+      dataDir,
+      verifyProviders: async () => installedClaude
+    });
+    const provisioned = await dispatchHostCommand(runtime, {
+      type: 'environment.provision',
+      environmentId,
+      workspaceProvisionType: 'personal',
+      targetPath: join(dataDir, 'personal-workspaces', environmentId)
+    }) as { path: string };
+    const child = spawn('sleep', ['300'], { cwd: provisioned.path, detached: true, stdio: 'ignore' });
+    child.unref();
+    const pid = child.pid ?? 0;
+    expect(pid).toBeGreaterThan(0);
+    const listed = await dispatchHostCommand(runtime, {
+      type: 'workspace.processes.list',
+      workspacePath: provisioned.path,
+      workspaceProvisionType: 'personal'
+    }) as { processes: Array<{ pid: number; command: string }>; supported: boolean };
+    expect(listed.supported).toBe(true);
+    expect(listed.processes.map((row) => row.pid)).toContain(pid);
+    await dispatchHostCommand(runtime, {
+      type: 'environment.destroy',
+      environmentId,
+      workspacePath: provisioned.path,
+      workspaceProvisionType: 'personal'
+    });
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        break;
+      }
+      if (Date.now() > deadline) throw new Error(`pid ${pid} still alive`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }, 15_000);
+
+  posixOnly('does not reap unmanaged checkout processes on destroy', async () => {
+    const target = mkdtempSync(join(tmpdir(), 'zcc-unmanaged-keep-'));
+    const child = spawn('sleep', ['300'], { cwd: target, detached: true, stdio: 'ignore' });
+    child.unref();
+    const pid = child.pid ?? 0;
+    const runtime = createCommandRuntime({ verifyProviders: async () => installedClaude });
+    await dispatchHostCommand(runtime, {
+      type: 'environment.destroy',
+      environmentId: randomUUID(),
+      workspacePath: target,
+      workspaceProvisionType: 'unmanaged'
+    });
+    expect(() => process.kill(pid, 0)).not.toThrow();
+    const ignored = await dispatchHostCommand(runtime, {
+      type: 'workspace.processes.kill',
+      workspacePath: join(target, 'missing-sibling'),
+      workspaceProvisionType: 'unmanaged',
+      pids: [pid]
+    }) as { killed: Array<{ pid: number }> };
+    expect(ignored.killed).toEqual([]);
+    expect(() => process.kill(pid, 0)).not.toThrow();
+    const killed = await dispatchHostCommand(runtime, {
+      type: 'workspace.processes.kill',
+      workspacePath: target,
+      workspaceProvisionType: 'unmanaged',
+      pids: [pid]
+    }) as { killed: Array<{ pid: number }> };
+    expect(killed.killed.map((row) => row.pid)).toContain(pid);
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {}
+  }, 15_000);
+
   it('fails PR actions closed when gh is missing', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'zcc-no-gh-'));
     const previous = process.env.PATH;
@@ -925,6 +1002,27 @@ describe('host command dispatch', () => {
       remote: { host: 'devbox' },
       serverHost: 'box.tailnet.ts.net'
     })).resolves.toEqual({ log: '--- host-daemon.log ---\njoined' });
+  });
+
+  it('dispatches desktop.browser commands through the loopback broker', async () => {
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      desktopBrowserBroker: {
+        request: async (command) => {
+          if (command.type === 'desktop.browser.list_instances') {
+            return { instances: [{ instanceId: 'window-1', generation: 'g1', label: 'ZCC window 1' }] };
+          }
+          throw new Error(command.type);
+        }
+      } as never
+    });
+    await expect(dispatchHostCommand(runtime, { type: 'desktop.browser.list_instances' }))
+      .resolves.toEqual({
+        instances: [{ instanceId: 'window-1', generation: 'g1', label: 'ZCC window 1' }]
+      });
+    const missing = createCommandRuntime({ verifyProviders: async () => installedClaude });
+    await expect(dispatchHostCommand(missing, { type: 'desktop.browser.list_instances' }))
+      .rejects.toMatchObject({ code: 'unknown_command' });
   });
 });
 

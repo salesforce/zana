@@ -8,8 +8,6 @@ import { Hono } from "hono";
 import { PLUGIN_INTERACTION_MAX_TITLE_LENGTH } from "@zana-ai/zcc-domain/thread-runtime";
 import {
   adoptHttpRouteResponse,
-  AGENT_TOOL_NAME_PATTERN,
-  agentToolIconRefusalMessage,
   aiServiceAlreadyRegisteredMessage,
   pluginHookAlreadyRegisteredMessage,
   assertAiServiceRegistrable,
@@ -18,16 +16,14 @@ import {
   CLI_COMMAND_NAME_PATTERN,
   enforcePluginCliOutputLimit,
   isStandardSchema,
-  isZodSchemaLike,
   storePluginHook,
   KV_VALUE_MAX_BYTES,
   MENTION_PROVIDER_ID_PATTERN,
   normalizeMentionProviderTriggers,
-  parsePluginAgentToolPresentation,
+  normalizeRegisteredAgentTool,
   pluginCliCollisionWarning,
   PLUGIN_AGENT_DYNAMIC_INSTRUCTIONS_MAX_CHARS,
   PLUGIN_AGENT_SELECTION_MAX_IDS,
-  PLUGIN_AGENT_STATIC_INSTRUCTIONS_MAX_CHARS,
   PLUGIN_AGENT_TOOL_PARAMETERS_MAX_BYTES,
   PLUGIN_HTTP_METHODS,
   providerAlreadyRegisteredMessage,
@@ -35,16 +31,12 @@ import {
   providerWithoutBridgeMessage,
   readRpcMethodContract,
   registerSettingDescriptors,
-  rejectStaleAgentToolFields,
-  RESERVED_AGENT_TOOL_NAMES,
   RPC_METHOD_PATTERN,
-  summarizeParseIssues,
   undeclaredIconProblem,
   validatePluginAiServiceDeclaration,
   validatePluginProviderDeclaration,
   validatePluginProviderEnvEntries,
   validateSettingsUpdate,
-  zodSchemaToJsonSchema,
   type NormalizedPluginProviderDeclaration,
 } from "../internal/host-policy.js";
 import type {
@@ -1570,116 +1562,13 @@ function createFakePluginHostInternal(
       ): PluginAgentToolResult | Promise<PluginAgentToolResult>;
     }) {
       assertLive();
-      const name = tool?.name;
-      if (typeof name !== "string" || !AGENT_TOOL_NAME_PATTERN.test(name)) {
-        throw new Error(
-          `invalid tool name ${JSON.stringify(name)} — use letters, digits, "-" and "_"`,
-        );
-      }
-      if (RESERVED_AGENT_TOOL_NAMES.includes(name)) {
-        throw new Error(
-          `tool name "${name}" is a built-in bb tool — pick another name`,
-        );
-      }
-      rejectStaleAgentToolFields(name, tool);
-      if (
-        typeof tool.description !== "string" ||
-        tool.description.trim().length === 0
-      ) {
-        throw new Error(`tool "${name}" must provide a description`);
-      }
-      if (
-        tool.instructions !== undefined &&
-        typeof tool.instructions !== "string"
-      ) {
-        throw new Error(`tool "${name}" instructions must be a string`);
-      }
-      if (
-        typeof tool.instructions === "string" &&
-        tool.instructions.length > PLUGIN_AGENT_STATIC_INSTRUCTIONS_MAX_CHARS
-      ) {
-        throw new Error(
-          `tool "${name}" instructions exceed the ${PLUGIN_AGENT_STATIC_INSTRUCTIONS_MAX_CHARS}-character limit`,
-        );
-      }
-      const presentation = parsePluginAgentToolPresentation(
-        name,
-        tool.presentation,
-      );
-      if (presentation?.icon !== undefined) {
-        // A namespaced glyph must name one of THIS plugin's declared icons,
-        // checked here like production checks it at the register call.
-        const problem = undeclaredIconProblem(
-          pluginId,
-          declaredIconNames,
-          presentation.icon.glyph,
-        );
-        if (problem !== null) {
-          throw new Error(agentToolIconRefusalMessage(name, problem));
-        }
-      }
-      if (typeof tool.execute !== "function") {
-        throw new Error(
-          `tool "${name}" must provide an execute(params, ctx) function`,
-        );
-      }
-      const parameters: unknown = tool.parameters;
-      let inputSchema: unknown;
-      let parse: FakeAgentToolRecord["parse"];
-      if (isZodSchemaLike(parameters)) {
-        try {
-          inputSchema = zodSchemaToJsonSchema(parameters);
-        } catch (error) {
-          throw new Error(
-            `tool "${name}" parameters look like a zod schema but could not be converted to JSON Schema (${errorMessage(error)}) — use zod 4, or pass a plain JSON-schema object`,
-          );
-        }
-        parse = (input) => {
-          const result = parameters.safeParse(input);
-          if (result.success) return { ok: true, value: result.data };
-          return { ok: false, error: summarizeParseIssues(result.error) };
-        };
-      } else if (
-        typeof parameters === "object" &&
-        parameters !== null &&
-        !Array.isArray(parameters)
-      ) {
-        try {
-          inputSchema = JSON.parse(JSON.stringify(parameters));
-        } catch {
-          throw new Error(
-            `tool "${name}" parameters JSON schema is not JSON-serializable`,
-          );
-        }
-        parse = (input) => ({ ok: true, value: input });
-      } else {
-        throw new Error(
-          `tool "${name}" parameters must be a zod schema or a JSON-schema object`,
-        );
-      }
-      assertNoRecursiveJsonSchemaReferences(
-        inputSchema,
-        `tool "${name}" parameters`,
-      );
-      const record: FakeAgentToolRecord = {
-        name,
-        description: tool.description,
-        presentation,
-        instructions:
-          tool.instructions !== undefined && tool.instructions.trim().length > 0
-            ? tool.instructions
-            : null,
-        inputSchema,
-        parse,
-        execute: (
-          tool.execute as (
-            params: unknown,
-            ctx: PluginAgentToolContext,
-          ) => PluginAgentToolResult | Promise<PluginAgentToolResult>
-        ).bind(tool),
-      };
-      if (agentTools.some((existing) => existing.name === name)) {
-        throw new Error(`tool "${name}" is already registered`);
+      const record = normalizeRegisteredAgentTool({
+        pluginId,
+        tool,
+        declaredIconNames,
+      });
+      if (agentTools.some((existing) => existing.name === record.name)) {
+        throw new Error(`tool "${record.name}" is already registered`);
       }
       agentTools.push(record);
     },

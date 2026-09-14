@@ -178,3 +178,12 @@ export {
   replaceThreadTabs,
   type ThreadTabsRow
 } from './data/thread-tabs.js';
+export {
+  getThreadPluginMetadata,
+  insertThreadPluginMetadata,
+  listThreadPluginMetadataRows,
+  patchThreadPluginMetadata,
+  type ThreadPluginMetadataPatch,
+  type ThreadPluginMetadataPatchResult,
+  type ThreadPluginMetadataRead
+} from './data/thread-plugin-metadata.js';

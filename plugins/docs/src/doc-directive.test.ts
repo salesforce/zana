@@ -5,22 +5,32 @@ describe('parseDocDirectiveAttributes', () => {
   it('requires a confined relative path', () => {
     expect(parseDocDirectiveAttributes({})).toBeNull();
     expect(parseDocDirectiveAttributes({ path: '../secret.md' })).toBeNull();
+    expect(parseDocDirectiveAttributes({ path: '/etc/passwd' })).toBeNull();
     expect(parseDocDirectiveAttributes({ path: '  ' })).toBeNull();
   });
 
-  it('uses the filename when title is missing', () => {
+  it('treats path as library-relative and defaults scope to project', () => {
     expect(parseDocDirectiveAttributes({ path: 'findings/auth.md' })).toEqual({
       path: 'findings/auth.md',
       title: 'auth.md',
+      source: 'library',
+      scope: 'project',
       vault: null
     });
+  });
+
+  it('keeps workspace source and global scope when set', () => {
     expect(parseDocDirectiveAttributes({
-      path: 'plans/release.md',
-      title: 'Release plan',
+      path: 'docs/guide.md',
+      title: 'Guide',
+      source: 'workspace',
+      scope: 'global',
       vault: 'personal'
     })).toEqual({
-      path: 'plans/release.md',
-      title: 'Release plan',
+      path: 'docs/guide.md',
+      title: 'Guide',
+      source: 'workspace',
+      scope: 'global',
       vault: 'personal'
     });
   });

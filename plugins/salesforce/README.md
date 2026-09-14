@@ -64,6 +64,7 @@ export default function plugin(zcc: ZccPluginApi) {
   zcc.agents.registerTool({
     name: 'gus_query',
     description: 'SOQL against the shared Salesforce session',
+    parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
     execute: async (input: { query: string }) => {
       const page = await sf.query(input.query);
       return { alias: page.org.alias, records: page.records };

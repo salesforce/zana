@@ -60,13 +60,14 @@ describe('marketplaceTags', () => {
 
 describe('MarketplaceView presentation', () => {
   const source = readFileSync(new URL('./MarketplaceView.tsx', import.meta.url), 'utf8');
+  const card = readFileSync(new URL('./PluginCatalogCard.tsx', import.meta.url), 'utf8');
 
-  it('uses a compact trust note, pill filters, and a single provenance chip', () => {
-    expect(source).toContain('ext-market-note');
+  it('uses collapsed catalog sources, pill filters, and a single provenance chip', () => {
+    expect(source).toContain('data-testid="marketplace-catalogs"');
     expect(source).toContain('Official plugins install offline from the app');
     expect(source).toContain('ext-market-tag');
-    expect(source).toContain('ext-market-item-icon-wrap');
-    expect(source).toContain("provenance === 'official' ? 'Official' : 'Community'");
+    expect(card).toContain('ext-browse-card-icon');
+    expect(card).toContain("provenance === 'community'");
     expect(source).not.toContain('marketplaceTags(entry)');
     expect(source).not.toContain("? 'Bundled' : 'Marketplace'");
   });

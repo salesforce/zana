@@ -153,6 +153,87 @@ export interface ConversationForkDescriptor {
   sourceProviderCheckpointId?: string;
 }
 
+/** True when the provider can clone a session (`thread/fork`) rather than start blank. */
+export function canCloneProviderSession(forkCapability: ProviderFork | undefined): boolean {
+  return forkCapability === 'tip' || forkCapability === 'checkpoint';
+}
+
+/** Newest-kept character budget for a transcript-only fork seed (Rule 5). */
+export const FORK_TRANSCRIPT_SEED_MAX_CHARS = 24_000;
+
+export const FORK_TRANSCRIPT_SEED_PREFIX = 'Prior conversation:\n\n';
+
+const TRANSCRIPT_TRUNCATION_MARK = '…(earlier conversation omitted)\n\n';
+
+function visibleRequestedText(payload: unknown): string | null {
+  const input = payloadRecord(payload)?.input;
+  if (!Array.isArray(input)) return null;
+  const texts: string[] = [];
+  for (const part of input) {
+    if (!part || typeof part !== 'object' || Array.isArray(part)) continue;
+    const item = part as { type?: unknown; text?: unknown; visibility?: unknown };
+    if (item.visibility === 'agent-only') continue;
+    if (item.type === 'text' && typeof item.text === 'string' && item.text.trim()) {
+      texts.push(item.text.trim());
+    }
+  }
+  return texts.length > 0 ? texts.join('\n') : null;
+}
+
+function agentMessageText(payload: unknown): string | null {
+  const item = payloadRecord(payload)?.item;
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+  const record = item as { type?: unknown; text?: unknown };
+  if (record.type === 'agentMessage' && typeof record.text === 'string' && record.text.trim()) {
+    return record.text.trim();
+  }
+  return null;
+}
+
+function capNewestTranscript(body: string, maxChars: number): string {
+  if (body.length <= maxChars) return body;
+  const keep = body.slice(Math.max(0, body.length - maxChars));
+  const cut = keep.indexOf('\n\n');
+  const tail = cut >= 0 ? keep.slice(cut + 2) : keep;
+  return `${TRANSCRIPT_TRUNCATION_MARK}${tail}`;
+}
+
+export interface ForkTranscriptSeed {
+  type: 'text';
+  text: string;
+  mentions: [];
+  visibility: 'agent-only';
+}
+
+/**
+ * Agent-only context for a fork whose provider cannot clone the source session.
+ * Copied events still render in the UI; this is what the new session actually sees.
+ */
+export function buildForkTranscriptSeed(
+  rows: readonly ConversationThreadEventRow[],
+  maxChars = FORK_TRANSCRIPT_SEED_MAX_CHARS
+): ForkTranscriptSeed | null {
+  const segments: string[] = [];
+  for (const row of rows) {
+    if (row.type === 'client/turn/requested') {
+      const text = visibleRequestedText(row.payload);
+      if (text) segments.push(`User:\n${text}`);
+      continue;
+    }
+    if (row.type === 'item/completed') {
+      const text = agentMessageText(row.payload);
+      if (text) segments.push(`Assistant:\n${text}`);
+    }
+  }
+  if (segments.length === 0) return null;
+  return {
+    type: 'text',
+    text: `${FORK_TRANSCRIPT_SEED_PREFIX}${capNewestTranscript(segments.join('\n\n'), maxChars)}`,
+    mentions: [],
+    visibility: 'agent-only'
+  };
+}
+
 function providerThreadIdFromPayload(payload: unknown): string | null {
   const record = payloadRecord(payload);
   return typeof record?.providerThreadId === 'string' && record.providerThreadId.trim()
@@ -254,6 +335,7 @@ export function describeCopiedForkStart(
   events: readonly ConversationThreadEventRow[],
   forkCapability: ProviderFork | undefined
 ): ConversationForkDescriptor | null {
+  if (!canCloneProviderSession(forkCapability)) return null;
   const completion = lastCompletedRow(events);
   if (!completion) return null;
   const sourceProviderThreadId = providerThreadIdFromPayload(completion.payload);

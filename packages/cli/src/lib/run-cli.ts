@@ -135,7 +135,7 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
       return await runGuideCommand(subcommand, jsonOutput);
     } else if (command === 'thread') {
       const { runThreadCommand } = await import('./commands/thread.js');
-      return await runThreadCommand(subcommand, rest, jsonOutput, httpDeps);
+      return await runThreadCommand(subcommand, rest, jsonOutput, httpDeps, dataDir);
     } else if (command === 'machine') {
       const { runMachineCommand } = await import('./commands/machine.js');
       return await runMachineCommand(subcommand, rest, jsonOutput, httpDeps);
@@ -157,6 +157,12 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
     } else if (command === 'environment') {
       const { runEnvironmentCommand } = await import('./commands/environment.js');
       return await runEnvironmentCommand(subcommand, rest, jsonOutput, httpDeps);
+    } else if (command === 'browser') {
+      const { runBrowserCommand } = await import('./commands/browser.js');
+      return await runBrowserCommand(subcommand, rest, jsonOutput, httpDeps);
+    } else if (command === 'file') {
+      const { runFileCommand } = await import('./commands/file.js');
+      return await runFileCommand(subcommand, rest, jsonOutput, httpDeps);
     } else if (command === 'personas' && subcommand === 'ls') {
       return await personasList(dataDir, jsonOutput);
     } else if (command === 'schedule' && subcommand === 'ls') {
@@ -178,6 +184,21 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
       return await statusDashboardHttp(jsonOutput, httpDeps);
     } else if (command === 'agent' && subcommand === 'ls') {
       return await live(dataDir, 'agent.list', {}, jsonOutput);
+    } else if (command === 'agent' && subcommand === 'launch') {
+      const { runAgentLaunch } = await import('./commands/agent.js');
+      return await runAgentLaunch(rest, jsonOutput, httpDeps, dataDir);
+    } else if (command === 'agent' && subcommand === 'wait') {
+      const { runAgentWait } = await import('./commands/agent.js');
+      return await runAgentWait(rest, jsonOutput, httpDeps);
+    } else if (command === 'agent' && subcommand === 'reply') {
+      const { runAgentReply } = await import('./commands/agent.js');
+      return await runAgentReply(rest, jsonOutput, httpDeps);
+    } else if (command === 'agent' && subcommand === 'stop') {
+      const { runAgentStop } = await import('./commands/agent.js');
+      return await runAgentStop(rest, jsonOutput, httpDeps);
+    } else if (command === 'live') {
+      const { runLiveCommand } = await import('./commands/live.js');
+      return await runLiveCommand(subcommand, rest, jsonOutput, dataDir, httpDeps);
     } else if (command === 'team') {
       const { runTeamCommand } = await import('./commands/team.js');
       const product = await runTeamCommand(subcommand, rest, jsonOutput, httpDeps);
@@ -222,7 +243,7 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
       );
     } else if (command === 'run') {
       const { runSpawnAlias } = await import('./commands/thread.js');
-      return await runSpawnAlias(subcommand ? [subcommand, ...rest] : rest, jsonOutput, httpDeps);
+      return await runSpawnAlias(subcommand ? [subcommand, ...rest] : rest, jsonOutput, httpDeps, dataDir);
     } else if (command === 'schedule' && subcommand === 'run-now') {
       const id = rest[0];
       if (!id) return errResult('schedule run-now requires a <scheduleId>', 2);
@@ -271,7 +292,7 @@ USAGE:
 OFFLINE (no app required):
   guide [chapter]          Print a chapter (overview, threads, projects, machines,
                            terminals, plugins, automations, agent-configuration,
-                           environments)
+                           environments, browser)
   plugin new <name>        Scaffold a TypeScript plugin (package.json zcc)
        [--dir PATH] [--app] [--kind panel|main-panel|mcp-consumer|agent-preset]
   plugin types [dir]       Sync bundled SDK .d.ts into the plugin [--check]
@@ -282,12 +303,14 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   plugin dev [dir]         Watch, rebuild UI, reload on save [--once]
   status                   Live dashboard: projects and threads
   thread list [--project ID]
-  thread spawn --project <id> --prompt "..." [--provider <id>] [--wait]
+  thread spawn --project <id> --prompt "..." [--provider <id>] [--model <id>]
+                           [--acp-mode <mode>] [--reasoning-level <level>] [--permission-mode <mode>]
+                           [--title] [--wait]
   thread show|log|tell|wait|stop|fork|archive|unarchive|interactions <id>
   thread background list|stop <id>
   thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
   machine list|show|join-code|rename|remove|provider-cli
-  project list|show|create|files|content|skills
+  project list|show|create|files|content|skills|processes
   projects ls              Alias of project list
   skill list|show|files|cli-skills-status|install-cli-skills
   settings show|general|experiment|appearance
@@ -295,7 +318,9 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   team launch --team <id> --project <id> --goal "..." [--mode structured|freeform]
        [--title] [--summary] [--wait] [--json]
   team status|wait|answer|stop <id>
-  environment status|diff|diff-files|pull-request <id>
+  environment status|diff|diff-files|pull-request|processes <id>
+  browser instances|tabs|create|acquire|connection|release|reveal|capture|close|watch|import-sources|import-cookies
+  file read <path> --host <id> [--root <path>]
   run <project> <prompt>   Deprecated alias of thread spawn
   agent send <id> <msg>    Deprecated alias of thread tell
   term ls|close            Deprecated aliases of terminal list|close
@@ -312,6 +337,16 @@ LIVE CONTROL PLANE (app must be running):
   plugin ls|install|enable|disable|remove|search|outdated|update|run|logs
   marketplace ls|add|refresh|remove|install
   agent ls                 List live agents + their state
+  agent launch --project <id> --prompt "..." [--profile claude]
+                           [--persona <id>] [--title] [--wait] [--timeout]
+                           [--execution-state plan|interactive|accept-edits|autonomous]
+                           [--model-level low|medium|high|extra-high] [--role <id>]
+                           Launch a CLI Agent over HTTP (no native confirm)
+  agent wait <id> [--until idle|working|done] [--timeout]
+  agent reply <id> "..."
+  agent stop <id>
+  live cleanup [--stale|--tag <runId>]
+                           Stop tagged live-control sessions leftover after tests
   team ls                  List the team catalogue (control plane)
   term reply <sessionId> <message>
   term close-summary <projectId> <sessionId...>
@@ -341,6 +376,7 @@ EXAMPLES:
   zcc status --json
   zcc thread spawn --project my-proj --prompt "review src/auth" --wait
   zcc thread tell <id> "also check the error paths"
+  zcc agent launch --project my-proj --prompt "review src/auth" --wait
   zcc machine list
   zcc guide threads
 `;

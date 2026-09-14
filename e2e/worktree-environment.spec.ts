@@ -12,6 +12,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync
 } from 'node:fs';
@@ -47,7 +48,7 @@ test.use({
     PATH: `${fakeGhDir}:${process.env.PATH ?? '/usr/bin:/bin'}`,
     ZCC_GH_BINARY: join(fakeGhDir, 'gh')
   },
-  initialConfig: { claudeBinary: join(fakeGhDir, 'claude'), defaultHarness: 'claude' }
+  initialConfig: { claudeBinary: join(fakeGhDir, 'claude'), defaultHarness: 'claude', sponsorPromptDismissed: true }
 });
 
 function git(cwd: string, args: string[]): void {
@@ -141,9 +142,18 @@ async function openLaunchedAgent(window: Page, title: string): Promise<void> {
   } catch {
     /* inspector may cover the launcher */
   }
-  if (await modal.isVisible().catch(() => false)) return;
+  if (await modal.first().isVisible().catch(() => false)) return;
   await window.getByRole('button', { name: new RegExp(title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).first().click();
-  await expect(modal).toBeVisible({ timeout: 15_000 });
+  await expect(modal.first()).toBeVisible({ timeout: 15_000 });
+  await expect(window.getByTestId('thread-modal')).toHaveCount(0);
+}
+
+async function showThreadWorkspaceActions(window: Page): Promise<void> {
+  const showPanel = window.getByTestId('thread-secondary-show');
+  if (await showPanel.isVisible().catch(() => false)) {
+    await showPanel.click();
+  }
+  await expect(window.locator('[data-testid="environment-actions"]')).toBeVisible({ timeout: 15_000 });
 }
 
 function writeSandboxClaudeBinary(home: string, bin: string): void {
@@ -198,9 +208,10 @@ async function openWorktreeLauncher(window: Page, projectName: string, prompt: s
   const modal = window.locator('[data-testid="launch-modal"]');
   await expect(modal).toBeVisible();
   // The launcher's agent surface is the CLI Agent composer (TipTap). The
-  // launching row already pinned the project (enterProjectFocus), so the
-  // composer's project chip is locked — no target-project pick needed.
+  // launching row seeds the project picker via selectProject (no workspace
+  // redirect); assert the chip shows this project after CLI Agent is selected.
   await modal.getByRole('button', { name: 'CLI Agent' }).click();
+  await expect(modal.getByRole('button', { name: 'Project', exact: true })).toContainText(projectName);
   const instruction = modal.getByTestId('legacy-agent-command-input');
   await instruction.click();
   await instruction.fill(prompt);
@@ -221,42 +232,55 @@ async function openWorktreeLauncher(window: Page, projectName: string, prompt: s
   await expect(workspace).toContainText('New worktree');
 }
 
-async function listProductThreads(window: Page): Promise<Array<{ id: string; cwd?: string | null; environmentId?: string | null }>> {
+async function sendWorktreeLaunch(window: Page): Promise<void> {
+  await window.getByTestId('launch-modal').getByTestId('legacy-agent-command-send').click();
+}
+
+async function listProductThreads(window: Page): Promise<Array<{ id: string }>> {
   return window.evaluate(async () => {
     const response = await fetch('/api/v1/threads', { headers: { 'x-zcc-app-surface': 'web' } });
-    const body = await response.json() as { threads?: Array<{ id: string; cwd?: string | null; environmentId?: string | null }> };
+    const body = await response.json() as { threads?: Array<{ id: string }> };
     return body.threads ?? [];
   });
 }
 
-async function threadOutput(window: Page, threadId: string): Promise<string> {
-  return window.evaluate(async (id) => {
-    const response = await fetch(`/api/v1/threads/${id}/output`, { headers: { 'x-zcc-app-surface': 'web' } });
-    const body = await response.json() as { output?: string };
-    return body.output ?? '';
-  }, threadId);
+async function listCliSessions(
+  window: Page,
+  projectName: string
+): Promise<Array<{
+  id: string;
+  cwd?: string;
+  workspaceEnvironmentId?: string;
+  title?: string;
+  status?: string;
+}>> {
+  return window.evaluate(async (name) => {
+    const projects = await window.cc.projects.list() as Array<{ id: string; name?: string }>;
+    const project = projects.find((row) => row.name === name);
+    if (!project) return [];
+    return await window.cc.terminals.list(project.id) as Array<{
+      id: string;
+      cwd?: string;
+      workspaceEnvironmentId?: string;
+      title?: string;
+      status?: string;
+    }>;
+  }, projectName);
 }
 
-async function typeIntoHostPty(window: Page, threadId: string, text: string, term = window.locator('.term .xterm').first()): Promise<void> {
+async function typeIntoCliPty(window: Page, sessionId: string, text: string): Promise<void> {
+  const term = window.locator('.term .xterm').first();
   await term.click();
   await window.keyboard.type(text);
   await window.evaluate(async ({ id, data }) => {
-    await fetch(`/api/v1/threads/${id}/input`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-zcc-app-surface': 'web' },
-      body: JSON.stringify({ data })
-    });
-  }, { id: threadId, data: text });
+    await window.cc.terminals.write(id, data);
+  }, { id: sessionId, data: text });
 }
 
-async function archiveThread(window: Page, threadId: string): Promise<void> {
+async function closeCliSession(window: Page, sessionId: string): Promise<void> {
   await window.evaluate(async (id) => {
-    await fetch(`/api/v1/threads/${id}/archive`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-zcc-app-surface': 'web' },
-      body: '{}'
-    });
-  }, threadId);
+    await window.cc.terminals.close(id);
+  }, sessionId);
 }
 
 test('launcher offers a workspace picker instead of an isolation checkbox', async ({ app }) => {
@@ -278,12 +302,7 @@ test('launcher offers a workspace picker instead of an isolation checkbox', asyn
   }
 });
 
-// Quarantined: the home composer's "New worktree" choice is dropped before it
-// reaches managed-environment provisioning, so no managed worktree/thread is
-// created. Fixing it is a cross-stack change (route the legacy home composer
-// through the threads/environments stack). Tracked in
-// https://github.com/salesforce/zana/issues/112 — un-skip when that lands.
-test.skip('New worktree lands under ~/.zcc/worktrees and typing reaches the host PTY', async ({ app }) => {
+test('New worktree lands under ~/.zcc/worktrees and typing reaches the host PTY', async ({ app }) => {
   const { window, home } = app;
   const agent = makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' });
   const { dir: projectDir, name: projectName } = initGitProject('zcc-wt-life-', home);
@@ -297,7 +316,7 @@ test.skip('New worktree lands under ~/.zcc/worktrees and typing reaches the host
   try {
     await prepareClaudeAndProject(window, home, agent.path, projectDir);
     await openWorktreeLauncher(window, projectName, 'inspect the checkout');
-    await window.locator('[data-testid="legacy-agent-command-send"]').click();
+    await sendWorktreeLaunch(window);
     await openLaunchedAgent(window, 'inspect the checkout');
 
     await expect.poll(() => listManagedWorktreePaths(home).filter((path) => !before.has(path)).length, {
@@ -309,19 +328,22 @@ test.skip('New worktree lands under ~/.zcc/worktrees and typing reaches the host
     expect(existsSync(join(worktreePath, 'README.md'))).toBe(true);
     expect(readFileSync(join(projectDir, 'README.md'), 'utf8')).toBe(readmeBefore);
 
-    await expect.poll(async () => (await listProductThreads(window)).length, { timeout: 20_000 }).toBeGreaterThan(0);
-    const thread = (await listProductThreads(window))[0]!;
+    expect(await listProductThreads(window)).toEqual([]);
+    await expect.poll(async () => (await listCliSessions(window, projectName)).length, { timeout: 20_000 }).toBeGreaterThan(0);
+    const session = (await listCliSessions(window, projectName))[0]!;
+    expect(session.workspaceEnvironmentId).toBeTruthy();
+    expect(realpathSync(session.cwd!)).toBe(realpathSync(worktreePath));
 
-    await typeIntoHostPty(window, thread.id, 'ZCC_WT_COMPOSER_MARKER');
+    await typeIntoCliPty(window, session.id, 'ZCC_WT_COMPOSER_MARKER');
     await expect.poll(async () => {
-      const fromApi = await threadOutput(window, thread.id);
+      const fromApi = await window.evaluate(async (id) => window.cc.terminals.backlog(id) as Promise<string>, session.id);
       const fromDom = await window.locator('.xterm').first().innerText().catch(() => '');
       return `${fromApi}\n${fromDom}`;
     }, { timeout: 20_000 }).toContain('ZCC_WT_COMPOSER_MARKER');
 
     writeFileSync(join(worktreePath, 'from-e2e.txt'), 'change\n');
+    await showThreadWorkspaceActions(window);
     const actions = window.locator('[data-testid="environment-actions"]');
-    await expect(actions).toBeVisible({ timeout: 15_000 });
     await expect(actions.locator('[data-testid="environment-commit"]')).toBeEnabled({ timeout: 15_000 });
     await actions.locator('[data-testid="environment-commit"]').click();
     await expect.poll(() => {
@@ -338,8 +360,32 @@ test.skip('New worktree lands under ~/.zcc/worktrees and typing reaches the host
     await actions.locator('[data-testid="environment-create-pr"]').click();
     await expect.poll(() => existsSync(join(fakeGhDir, 'created')), { timeout: 20_000 }).toBe(true);
 
-    await window.locator('[data-testid="agent-terminal-modal"]').getByLabel('Close').click();
-    await expect(window.locator('[data-testid="agent-terminal-modal"]')).toBeHidden();
+    const inspector = window.locator('[data-testid="agent-terminal-modal"]');
+    await inspector.getByLabel('Close').click();
+    await expect(inspector).toBeHidden();
+    const worktreeSessions = (await listCliSessions(window, projectName))
+      .filter((row) => row.workspaceEnvironmentId);
+    expect(worktreeSessions.length).toBeGreaterThan(0);
+    const environmentId = worktreeSessions[0]!.workspaceEnvironmentId!;
+    for (const row of worktreeSessions) {
+      await closeCliSession(window, row.id);
+    }
+    await expect.poll(async () => (
+      await listCliSessions(window, projectName)
+    ).filter((row) => row.workspaceEnvironmentId && row.status !== 'exited').length, {
+      timeout: 20_000
+    }).toBe(0);
+    const destroyed = await window.evaluate(async (id) => {
+      const response = await fetch(`/api/v1/environments/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: '{}'
+      });
+      return { status: response.status, body: await response.text() };
+    }, environmentId);
+    expect([200, 404], JSON.stringify(destroyed)).toContain(destroyed.status);
+    await expect.poll(() => existsSync(worktreePath), { timeout: 30_000 }).toBe(false);
+
     await ensureSidebarExpanded(window);
     await window.getByRole('button', { name: `Open ${projectName}` }).click();
     await window.getByTestId('project-nav-explorer').click();
@@ -347,34 +393,25 @@ test.skip('New worktree lands under ~/.zcc/worktrees and typing reaches the host
     await expect(srcRow).toBeVisible({ timeout: 15_000 });
     await srcRow.click({ button: 'right' });
     await window.getByText('Open shell here').click();
-    await expect(window.getByRole('tab', { name: /Shell/ })).toBeVisible({ timeout: 20_000 });
+    await expect(window.getByRole('tab', { name: /shell/i })).toBeVisible({ timeout: 20_000 });
     const shellTerm = window.locator('.term .xterm').last();
     await expect(shellTerm).toBeVisible({ timeout: 20_000 });
-    await expect.poll(async () => (await listProductThreads(window)).length, { timeout: 20_000 }).toBeGreaterThan(1);
-    const shellThread = (await listProductThreads(window)).at(-1)!;
-    await typeIntoHostPty(window, shellThread.id, 'printf ZCC_WT_SHELL_MARKER > e2e-shell-marker.txt\n', shellTerm);
+    await shellTerm.click();
+    await window.keyboard.type('printf ZCC_WT_SHELL_MARKER > e2e-shell-marker.txt\n');
     await expect.poll(() => [
       join(projectDir, 'src', 'e2e-shell-marker.txt'),
-      join(projectDir, 'e2e-shell-marker.txt'),
-      join(worktreePath, 'src', 'e2e-shell-marker.txt'),
-      join(worktreePath, 'e2e-shell-marker.txt')
+      join(projectDir, 'e2e-shell-marker.txt')
     ].some((path) => existsSync(path)), { timeout: 15_000 }).toBe(true);
-
-    for (const row of await listProductThreads(window)) {
-      await archiveThread(window, row.id);
+    for (const row of await listCliSessions(window, projectName)) {
+      await closeCliSession(window, row.id);
     }
-    await expect.poll(() => existsSync(worktreePath), { timeout: 20_000 }).toBe(false);
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
     agent.cleanup();
   }
 });
 
-// Quarantined: depends on managed-environment provisioning (.worktreeinclude
-// copy + .zcc-env-setup.sh rollback) that the home composer's "New worktree"
-// launch never reaches — the workspace choice is dropped. Tracked in
-// https://github.com/salesforce/zana/issues/112 — un-skip when that lands.
-test.skip('worktreeinclude copies .env and a failing setup script rolls back', async ({ app }) => {
+test('worktreeinclude copies .env and a failing setup script rolls back', async ({ app }) => {
   const { window, home } = app;
   const agent = makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' });
   const { dir: includeDir, name: includeName } = initGitProject('zcc-wt-inc-', home);
@@ -392,22 +429,23 @@ test.skip('worktreeinclude copies .env and a failing setup script rolls back', a
     await addProjectAndWait(window, failDir);
 
     await openWorktreeLauncher(window, includeName, 'copy env into the worktree');
-    await window.locator('[data-testid="legacy-agent-command-send"]').click();
+    await sendWorktreeLaunch(window);
     await openLaunchedAgent(window, 'copy env into the worktree');
     await expect.poll(() => listManagedWorktreePaths(home).filter((path) => !before.has(path)).length, {
       timeout: 30_000
     }).toBeGreaterThan(0);
     const includeWorktree = listManagedWorktreePaths(home).filter((path) => !before.has(path))[0]!;
     expect(readFileSync(join(includeWorktree, '.env'), 'utf8')).toBe('SECRET=copied\n');
-    for (const row of await listProductThreads(window)) {
-      await archiveThread(window, row.id);
+    expect(await listProductThreads(window)).toEqual([]);
+    for (const row of await listCliSessions(window, includeName)) {
+      await closeCliSession(window, row.id);
     }
     await window.locator('[data-testid="agent-terminal-modal"]').getByLabel('Close').click();
     await expect(window.locator('[data-testid="agent-terminal-modal"]')).toBeHidden();
 
     const afterInclude = new Set(listManagedWorktreePaths(home));
     await openWorktreeLauncher(window, failName, 'this setup should roll back');
-    await window.locator('[data-testid="legacy-agent-command-send"]').click();
+    await sendWorktreeLaunch(window);
     await expect(window.locator('[data-testid="launch-modal"]')).toBeVisible({ timeout: 15_000 });
     await expect.poll(() => listManagedWorktreePaths(home).filter((path) => !afterInclude.has(path)).length, {
       timeout: 20_000

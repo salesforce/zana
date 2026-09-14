@@ -1,0 +1,180 @@
+.wf-panel,
+.wf-card,
+.wf-banner {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.wf-panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+}
+
+.wf-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.wf-panel-footer {
+  flex-shrink: 0;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.wf-muted {
+  color: var(--text-muted);
+}
+
+.wf-error {
+  color: var(--danger, #c44);
+}
+
+.wf-title {
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.wf-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  font-size: 12px;
+}
+
+.wf-meta dt {
+  color: var(--text-muted);
+}
+
+.wf-meta dd {
+  margin: 0;
+  text-align: right;
+}
+
+.wf-phase {
+  margin: 0 0 12px;
+}
+
+.wf-phase h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.wf-call {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.wf-call button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.wf-call.is-actionable button:hover {
+  text-decoration: underline;
+}
+
+.wf-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.wf-card,
+.wf-banner-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg-panel));
+  overflow: hidden;
+}
+
+.wf-card-head,
+.wf-banner-head {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.wf-card-head button,
+.wf-banner-head button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.wf-card-toggle,
+.wf-banner-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.wf-card-open {
+  width: 32px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border) !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.wf-card-body {
+  border-top: 1px solid var(--border);
+  padding: 8px 10px 10px;
+}
+
+.wf-btn {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--danger, #c44);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.wf-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wf-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wf-invalid {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.wf-invalid code {
+  font-size: 11px;
+}

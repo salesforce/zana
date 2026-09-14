@@ -28,19 +28,19 @@ export class MarketplacePage {
     });
   }
 
-  /** All catalog rows. */
+  /** All catalog cards. */
   rows() {
-    return this.window.locator('.ext-market-list .ext-market-item');
+    return this.window.locator('.ext-market-item');
   }
 
-  /** A catalog row by its visible title. */
+  /** A catalog card by its visible title. */
   row(title: string) {
     return this.window
       .locator('.ext-market-item')
       .filter({ has: this.window.locator('.ext-market-item-title', { hasText: title }) });
   }
 
-  /** The action button inside a row (Install / Update / Installed / Incompatible). */
+  /** The action button inside a card (Install / Update / Installed / Incompatible). */
   rowButton(title: string) {
     return this.row(title).locator('.ext-market-item-action button');
   }
@@ -48,6 +48,12 @@ export class MarketplacePage {
   /** Confirm the full-trust dialog that follows an Install / Update click. */
   async confirmInstall(): Promise<void> {
     await this.window.getByRole('button', { name: 'Install with full trust' }).click();
+  }
+
+  /** After a successful catalog install, Browse navigates to Installed detail. */
+  async waitForInstalledDetail(title: string): Promise<void> {
+    await this.window.waitForURL(/view=installed/, { timeout: 30_000 });
+    await this.window.locator('.ext-hub-about-titles h3', { hasText: title }).waitFor();
   }
 
   /** Call a `window.cc.extensions.<method>(...args)` in the renderer. */

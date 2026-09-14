@@ -10,6 +10,12 @@
  *
  * Writing outside the project tree (rather than a `.mcp.json` inside it) is
  * deliberate — we don't own the project directory.
+ *
+ * This launcher file is the Claude CLI / PTY path. Conversation threads do
+ * not read it: plugin tools there come from `zcc.agents.registerTool` via
+ * the bb-bridge DynamicTools MCP. A plugin that must work on both surfaces
+ * declares `zcc.mcpServers` (PTY) and `registerTool` (conversation threads).
+ * There is no runtime `registerMcpServer`.
  */
 
 import { join, basename } from 'node:path';
@@ -193,6 +199,15 @@ function allAlwaysOnServerNames(): string[] {
     ...Object.values(alwaysOnServerNamesByExtension).flat(),
     ...Object.values(alwaysOnServerNamesByPlugin).flat()
   ];
+}
+
+/**
+ * Claude `--allowedTools` wildcards for always-on plugin/extension MCP servers.
+ * `.mcp.json` keys are `plugin:<id>:<name>` / `ext:<id>:<name>`; Claude names
+ * the server with colons turned into underscores (`mcp__plugin_id_name`).
+ */
+export function alwaysOnPluginMcpAllowlist(): string[] {
+  return allAlwaysOnServerNames().map((key) => `mcp__${key.replace(/:/g, '_')}`);
 }
 
 /**

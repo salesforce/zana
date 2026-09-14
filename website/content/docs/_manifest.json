@@ -20,6 +20,11 @@
     "group": "Start"
   },
   {
+    "slug": "control-sdk",
+    "title": "Control SDK",
+    "group": "Start"
+  },
+  {
     "slug": "extensions-quickstart",
     "title": "Build your first plugin",
     "group": "Plugins"

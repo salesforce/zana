@@ -14,22 +14,22 @@ export function PluginSettingsSections({ pluginId }: { pluginId: string }) {
   ).filter((section) => section.pluginId === pluginId);
   if (sections.length === 0) return null;
   return (
-    <div data-testid="plugin-settings-sections">
+    <div className="plugin-settings-sections" data-testid="plugin-settings-sections">
       {sections.map((section) => {
         const Component = section.component;
         return (
-          <section
+          <div
             key={`${section.pluginId}:${section.id}:${section.generation}`}
-            className="settings-section"
+            className="ext-plugin-settings-panel"
           >
-            {section.title ? <h3>{section.title}</h3> : null}
+            {section.title ? <h4 className="plugin-setting-label">{section.title}</h4> : null}
             {section.description ? (
-              <p className="settings-help">{section.description}</p>
+              <p className="plugin-setting-desc">{section.description}</p>
             ) : null}
             <PluginSlotBoundary pluginId={section.pluginId} generation={section.generation}>
               <Component pluginId={section.pluginId} />
             </PluginSlotBoundary>
-          </section>
+          </div>
         );
       })}
     </div>

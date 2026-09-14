@@ -27,8 +27,14 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
   };
 
   export interface PluginSettingsSnapshot {
-    descriptors: Record<string, { type: string; label: string; default?: string | boolean }>;
-    values: Record<string, string | boolean | undefined>;
+    descriptors: Record<string, {
+      type: string;
+      label: string;
+      default?: string | number | boolean;
+      min?: number;
+      max?: number;
+    }>;
+    values: Record<string, string | number | boolean | undefined>;
   }
 
   export interface PluginDatabase {
@@ -38,6 +44,7 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
       get(...params: unknown[]): unknown;
       run(...params: unknown[]): { changes: number };
     };
+    /** Append-only. Already-applied statements are skipped on later plugin loads. */
     migrate(statements: readonly string[]): void;
     transaction<T>(fn: () => T): T;
   }
@@ -53,10 +60,12 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
         secret?: true;
         multiline?: true;
         options?: string[];
-        default?: string | boolean;
+        default?: string | number | boolean;
+        min?: number;
+        max?: number;
       }>): {
-        get(): Promise<Record<string, string | boolean | undefined>>;
-        onChange(listener: (next: Record<string, string | boolean | undefined>) => void): void;
+        get(): Promise<Record<string, string | number | boolean | undefined>>;
+        onChange(listener: (next: Record<string, string | number | boolean | undefined>) => void): void;
       };
     };
     readonly http: {
@@ -98,7 +107,7 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
         commands?: Array<{ name: string; summary: string; usage: string }>;
         run(
           argv: string[],
-          ctx: { pluginId: string; argv: string[] }
+          ctx: { pluginId: string; argv: string[]; projectId?: string; threadId?: string; cwd?: string }
         ): { exitCode: number; stdout?: string; stderr?: string } | Promise<{
           exitCode: number;
           stdout?: string;
@@ -112,7 +121,9 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
       registerTool(registration: {
         name: string;
         description: string;
+        parameters?: unknown;
         inputSchema?: unknown;
+        instructions?: string;
         execute(input: unknown, ctx: { threadId: string; projectId: string; signal: AbortSignal }): unknown | Promise<unknown>;
       }): void;
       experimental_registerProvider(declaration: {
@@ -139,6 +150,38 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
         alwaysEnabled?: boolean;
         enableConfigKey?: string;
       }): { id: string; unregister(): void };
+      configure(
+        provider: (ctx: {
+          threadId?: string;
+          projectId?: string;
+          origin?: { kind?: 'fork' | null; pluginId?: string | null };
+          thread?: {
+            id: string;
+            projectId: string;
+            hostId: string;
+            environmentId: string | null;
+            providerId: string;
+            status: string;
+            originPluginId?: string | null;
+            visibility?: string;
+            title?: string | null;
+            parentThreadId?: string | null;
+          };
+          project?: { id: string; kind?: 'standard' | 'personal'; name?: string; gitRemoteUrl?: string | null };
+          environment?: {
+            id: string;
+            name?: string | null;
+            path?: string | null;
+            workspaceProvisionType?: 'unmanaged' | 'managed-worktree' | 'personal';
+            branchName?: string | null;
+          };
+          host?: { id: string; name: string };
+          provider?: { id: string; model?: string; capabilities?: { supportsNativeUserQuestion?: boolean } };
+        }) =>
+          | { tools?: Array<string | { name: string; parameters?: unknown }>; skills?: string[]; instructions?: string }
+          | void
+          | Promise<{ tools?: Array<string | { name: string; parameters?: unknown }>; skills?: string[]; instructions?: string } | void>
+      ): void;
     };
     readonly events: {
       on(
@@ -168,7 +211,18 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
     readonly status: { needsConfiguration(message: string): void };
     readonly sdk: {
       threads: {
-        spawn(args: { projectId: string; prompt: string; providerId?: string }): Promise<{ id: string }>;
+        spawn(args: {
+          projectId: string;
+          prompt: string;
+          providerId?: string;
+          parentThreadId?: string;
+          title?: string;
+          model?: string;
+          reasoningLevel?: string;
+          permissionMode?: string;
+          visibility?: 'visible' | 'hidden';
+          environment?: { kind: 'reuse'; environmentId: string };
+        }): Promise<{ id: string }>;
         get(args: { threadId: string }): Promise<{
           id: string;
           projectId: string;
@@ -176,6 +230,8 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
           environmentId: string | null;
           providerId: string;
           status: string;
+          originPluginId?: string | null;
+          visibility?: string;
         } | null>;
         events: {
           list(args: {
@@ -185,10 +241,49 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
             order?: 'asc' | 'desc';
           }): Promise<Array<{ seq: number; type: string; payload: unknown }>>;
         };
-        send(args: { threadId: string; prompt: string }): Promise<{ id: string }>;
+        send(args: {
+          threadId: string;
+          prompt: string;
+          visibility?: 'visible' | 'agent-only';
+          mode?: string;
+        }): Promise<{ id: string }>;
+        stop(args: { threadId: string }): Promise<{ ok: true }>;
+        output(args: { threadId: string }): Promise<{ output: string }>;
+        defaultExecutionOptions(args: { threadId: string }): Promise<{
+          model: string;
+          reasoningLevel: string;
+          permissionMode: string;
+        }>;
         archive(args: { threadId: string }): Promise<{ id: string }>;
-        fork(args: { threadId: string }): Promise<{ id: string }>;
+        fork(args: { threadId: string; visibility?: 'visible' | 'hidden' }): Promise<{ id: string }>;
         unarchive(args: { threadId: string }): Promise<{ id: string }>;
+      };
+      environments: {
+        get(args: { environmentId: string }): Promise<{
+          id: string;
+          projectId: string;
+          hostId: string;
+          path: string | null;
+        }>;
+      };
+      files: {
+        read(args: { hostId: string; path: string; rootPath: string }): Promise<{
+          content: string;
+          contentEncoding: 'utf8' | 'base64';
+          sizeBytes: number;
+        }>;
+      };
+      providers: {
+        list(args?: { environmentId?: string }): Promise<Array<{
+          id: string;
+          available: boolean;
+          capabilities?: { permissionModes?: string[] };
+        }>>;
+        models(args: { providerId: string; environmentId?: string }): Promise<{
+          models: Array<{ id: string; model: string; supportedReasoningEfforts: Array<{ reasoningEffort: string }> }>;
+          selectedOnlyModels: Array<{ id: string; model: string; supportedReasoningEfforts: Array<{ reasoningEffort: string }> }>;
+          modelLoadError: { providerId: string; code: string } | null;
+        }>;
       };
       inbox: {
         push(args: { projectId: string; comments: string }): Promise<{ id: string }>;

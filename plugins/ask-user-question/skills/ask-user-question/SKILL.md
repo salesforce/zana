@@ -14,6 +14,7 @@ From a plugin server factory:
 zcc.agents.registerTool({
   name: 'ask_user_question',
   description: 'Ask the operator a structured question',
+  parameters: { type: 'object' },
   execute(input, ctx) {
     return zcc.ui.requestInput({
       threadId: ctx.threadId,

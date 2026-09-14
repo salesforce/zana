@@ -1,10 +1,11 @@
+import { safeLocalStorage } from './safe-local-storage.js';
+
 const PREFS_EVENT = 'zcc-prefs';
 
 export function readBooleanPreference(key: string, defaultValue: boolean): boolean {
-  if (typeof localStorage === 'undefined') return defaultValue;
   try {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return defaultValue;
+    const raw = safeLocalStorage()?.getItem(key);
+    if (raw === null || raw === undefined) return defaultValue;
     if (raw === '1' || raw === 'true') return true;
     if (raw === '0' || raw === 'false') return false;
     return defaultValue;
@@ -14,9 +15,8 @@ export function readBooleanPreference(key: string, defaultValue: boolean): boole
 }
 
 export function writeBooleanPreference(key: string, value: boolean): void {
-  if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(key, value ? '1' : '0');
+    safeLocalStorage()?.setItem(key, value ? '1' : '0');
   } catch {
     /* quota / private mode */
   }

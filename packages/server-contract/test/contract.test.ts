@@ -98,6 +98,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "createThreadRequestSchema.sourceSeqEnd",
       "createThreadRequestSchema.sourceThreadId",
       "createThreadRequestSchema.title",
+      "createThreadRequestSchema.pluginMetadata",
     ],
   },
   {
@@ -1294,6 +1295,40 @@ describe("server-contract canonical schemas", () => {
       createThreadRequestSchema.parse({ ...base, visibility: "hidden" })
         .visibility,
     ).toBe("hidden");
+  });
+
+  it("seeds plugin metadata only for plugin-origin threads", () => {
+    const environment = {
+      type: "host" as const,
+      hostId: "host_abc",
+      workspace: { type: "unmanaged" as const, path: null },
+    };
+    expect(
+      createThreadRequestSchema.parse({
+        projectId: "proj_123",
+        origin: "plugin",
+        originPluginId: "notes",
+        pluginMetadata: { ticket: "W-1" },
+        input: [{ type: "text", text: "Ship it" }],
+        environment,
+      }).pluginMetadata,
+    ).toEqual({ ticket: "W-1" });
+    expect(() =>
+      createThreadRequestSchema.parse({
+        projectId: "proj_123",
+        origin: "app",
+        pluginMetadata: { ticket: "W-1" },
+        input: [{ type: "text", text: "Ship it" }],
+        environment,
+      }),
+    ).toThrow(/pluginMetadata requires origin/);
+    expect(() =>
+      contract.updateThreadPluginMetadataRequestSchema.parse({
+        pluginId: "notes",
+        set: { a: 1 },
+        remove: ["a"],
+      }),
+    ).toThrow(/overlap/);
   });
 
   it("allows assigning a hidden thread to a section at creation", () => {

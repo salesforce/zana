@@ -117,7 +117,7 @@ export function useComposerPromptField({
   const dismissedRef = useRef<{ from: number; to: number } | null>(null);
   const typeaheadRef = useRef({
     open: false,
-    applyCurrent: () => {},
+    applyCurrent: () => false as boolean,
     move: (_delta: number) => {},
     dismiss: () => {}
   });
@@ -256,9 +256,10 @@ export function useComposerPromptField({
             return true;
           }
           if (action === 'apply') {
-            event.preventDefault();
-            menu.applyCurrent();
-            return true;
+            if (menu.applyCurrent()) {
+              event.preventDefault();
+              return true;
+            }
           }
           if (action === 'dismiss') {
             event.preventDefault();
@@ -465,7 +466,11 @@ export function useComposerPromptField({
     open: menuOpen,
     applyCurrent: () => {
       const item = suggestions[highlighted];
-      if (item) applySuggestion(item);
+      if (item) {
+        applySuggestion(item);
+        return true;
+      }
+      return false;
     },
     move: (delta) => {
       setSelectedIndex(nextSuggestionIndex(highlighted, suggestions.length, delta));
@@ -500,21 +505,21 @@ export function useComposerPromptField({
 
   const typeaheadOpen = menuOpen;
   const submitIfIdle = useCallback((opts?: { modifierEnter?: boolean }) => {
-    if (typeaheadRef.current.open) return;
+    if (typeaheadRef.current.open && suggestions.length > 0) return;
     onSubmitRef.current(opts);
-  }, []);
+  }, [suggestions.length]);
 
   const handleChromeKeyDown = useCallback((event: Parameters<ComposerKeyInterceptor>[0]) => {
     if (interceptKeyDownRef.current?.(event)) return;
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-      if (typeaheadRef.current.open) {
+      if (typeaheadRef.current.open && suggestions.length > 0) {
         event.preventDefault();
         return;
       }
       event.preventDefault();
       onSubmitRef.current({ modifierEnter: true });
     }
-  }, []);
+  }, [suggestions.length]);
 
   const text = editor ? serializePromptEditor(editor.getJSON()).text : '';
 

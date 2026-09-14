@@ -10,5 +10,5 @@ export type RouteState = DecodedRoute;
  */
 export function useRouteState(): RouteState {
   const location = useLocation();
-  return decodeRoutePath(location.pathname, location.hash);
+  return decodeRoutePath(location.pathname, location.hash, location.search);
 }

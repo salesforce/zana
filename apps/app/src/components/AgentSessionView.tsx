@@ -18,6 +18,7 @@ import {
 } from './thread/secondary-panel/thread-plan-document.js';
 import { useSecondaryPanel } from './thread/secondary-panel/useThreadSecondaryPanel.js';
 import { useInAppBrowserPanel } from './thread/secondary-panel/useInAppBrowserPanel.js';
+import { useDesktopBrowserReveal } from '../lib/use-desktop-browser-reveal.js';
 import { useThreadOpenFileSignal } from './thread/secondary-panel/useThreadOpenFileSignal.js';
 import { appendThreadRecentItem, tabInputFromRecentItem } from './thread/secondary-panel/threadRecentItems.js';
 import {
@@ -133,6 +134,13 @@ export function AgentSessionView({
   const pane = useOptionalPaneContext();
   const panel = useSecondaryPanel(modal ? `${session.id}:modal` : session.id, { defaultOpen: !modal });
   useInAppBrowserPanel(modal ? `${session.id}:modal` : session.id, panel);
+  useDesktopBrowserReveal({
+    threadId: session.id,
+    isFocused: !modal || pane?.isFocused !== false,
+    browserTabs: panel.state.tabs.filter((tab) => tab.kind === 'browser'),
+    activateTab: panel.activateTab,
+    addTab: (tab) => panel.addTab(tab)
+  });
   useThreadOpenFileSignal({
     threadId: session.id,
     environmentId: session.cwd || null,
@@ -362,6 +370,9 @@ export function AgentSessionView({
               if (url) appendThreadRecentItem(session.id, { kind: 'browser', url, title: nextTitle });
             }}
             onStopAutomation={(targetId) => {
+              void getDesktopBrowserApi()?.releaseControl?.(
+                panel.state.tabs.find((row) => row.automationTargetId === targetId)?.id ?? targetId
+              );
               void getDesktopBrowserApi()?.stopAutomation?.(targetId);
               const tab = panel.state.tabs.find((row) => row.automationTargetId === targetId);
               if (tab) panel.patchTab(tab.id, { automationTargetId: null });

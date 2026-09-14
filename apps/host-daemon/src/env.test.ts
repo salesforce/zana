@@ -1,14 +1,17 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import * as fs from 'node:fs';
 import {
   augmentPath,
+  augmentPathWithNodePrefixes,
   augmentPathWithZcc,
+  fallbackDirs,
   resolveZccCliBinDir,
   ensureProcessPath,
   launchedPathOverrides,
+  nodePrefixBinDirs,
   stripInheritedClaudeSession,
   ensureInteractiveTerminalEnv,
   INHERITED_CLAUDE_SESSION_VARS
@@ -39,13 +42,14 @@ describe('augmentPath', () => {
     expect(result).toContain(local);
   });
 
-  describe('dotfile-installer `~/.<tool>/bin` discovery', () => {
+  describe('dotfile-installer `~/.<tool>/bin` and `~/.<tool>/local` discovery', () => {
     // Real dotfile-installer dirs (asdf, volta, cargo, AI Suite, …) live directly
     // under the real homedir(), which we can't control in a unit test — so we
     // seed one, assert it's picked up, then remove it. Skipped dirs a prior run
     // may have left behind are tolerated by using a unique, unlikely name.
     const marker = '.zcc-env-test-tool-marker';
     const markerBin = join(homedir(), marker, 'bin');
+    const markerLocal = join(homedir(), marker, 'local');
 
     afterEach(() => {
       rmSync(join(homedir(), marker), { recursive: true, force: true });
@@ -57,10 +61,17 @@ describe('augmentPath', () => {
       expect(result).toContain(markerBin);
     });
 
-    it('does not add a `~/.<tool>` dir that has no `bin/` subdirectory', () => {
+    it('picks up a `~/.<tool>/local` dir generically, without naming the tool', () => {
+      mkdirSync(markerLocal, { recursive: true });
+      const result = augmentPath('/usr/bin').split(':');
+      expect(result).toContain(markerLocal);
+    });
+
+    it('does not add a `~/.<tool>` dir that has no `bin/` or `local/` subdirectory', () => {
       mkdirSync(join(homedir(), marker), { recursive: true });
       const result = augmentPath('/usr/bin').split(':');
       expect(result).not.toContain(markerBin);
+      expect(result).not.toContain(markerLocal);
     });
   });
 
@@ -86,6 +97,42 @@ describe('augmentPath', () => {
   it('drops empty path segments', () => {
     const result = augmentPath('/usr/bin::/bin:').split(':');
     expect(result).not.toContain('');
+  });
+});
+
+describe('nodePrefixBinDirs', () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('follows a ~/.<tool>/bin/node symlink to the versioned prefix that holds npm globals', () => {
+    const home = mkdtempSync(join(tmpdir(), 'zcc-node-prefix-home-'));
+    tmpDirs.push(home);
+    const prefixBin = join(home, 'prefix', 'bin');
+    const shimBin = join(home, '.tool', 'bin');
+    mkdirSync(prefixBin, { recursive: true });
+    mkdirSync(shimBin, { recursive: true });
+    writeFileSync(join(prefixBin, 'node'), '#!/bin/sh\n');
+    chmodSync(join(prefixBin, 'node'), 0o755);
+    symlinkSync(join(prefixBin, 'node'), join(shimBin, 'node'));
+
+    expect(nodePrefixBinDirs(home).map((dir) => realpathSync(dir))).toContain(realpathSync(prefixBin));
+    expect(augmentPathWithNodePrefixes('/usr/bin', home).split(':').map((dir) => realpathSync(dir)))
+      .toContain(realpathSync(prefixBin));
+    // Remote-safe: fallbackDirs / augmentPath must not grow a local versioned prefix.
+    expect(fallbackDirs(home)).not.toContain(prefixBin);
+  });
+
+  it('does not add the shim dir itself when node is not a symlink elsewhere', () => {
+    const home = mkdtempSync(join(tmpdir(), 'zcc-node-prefix-plain-'));
+    tmpDirs.push(home);
+    const localBin = join(home, '.local', 'bin');
+    mkdirSync(localBin, { recursive: true });
+    writeFileSync(join(localBin, 'node'), '#!/bin/sh\n');
+    chmodSync(join(localBin, 'node'), 0o755);
+    expect(nodePrefixBinDirs(home)).not.toContain(localBin);
   });
 });
 

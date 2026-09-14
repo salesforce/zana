@@ -1,5 +1,6 @@
 import type {
   PluginCliExecutionResult,
+  PluginDatabase,
   PluginInteractionRequest,
   PluginInteractionResult,
   PluginSettingDescriptor,
@@ -10,6 +11,7 @@ import type {
 import { bindPluginServices, createPluginServicesRegistry } from '../server.js';
 import type { PluginServicesRegistry } from '../server.js';
 import { enforcePluginCliOutputLimit } from '../server.js';
+import { normalizeRegisteredAgentTool } from '../internal/host-policy.js';
 
 export { scanPublicSdkOnly as experimental_scanPublicSdkOnly } from './public-sdk-only.js';
 export type {
@@ -17,6 +19,17 @@ export type {
   PublicSdkOnlyScanOptions,
   PublicSdkOnlyViolation
 } from './public-sdk-only.js';
+
+export function makeThreadResponse(over: { id?: string } = {}): import('../server.js').PluginSdkThreadSummary {
+  return {
+    id: over.id ?? 'thr-1',
+    projectId: 'project-1',
+    hostId: 'host-1',
+    environmentId: null,
+    providerId: 'claude',
+    status: 'idle'
+  };
+}
 
 export class PluginContextStaleError extends Error {
   constructor(pluginId: string) {
@@ -38,6 +51,7 @@ export interface FakePluginHarness {
   ptyHarnesses: import('../server.js').PluginPtyHarnessDeclaration[];
   registrations: {
     providerRegistrations: import('../server.js').PluginProviderDeclaration[];
+    agentTools: import('../server.js').PluginAgentToolRecord[];
   };
   mentionProviders: import('../server.js').PluginMentionProviderRegistration[];
   agentConfigurers: Array<
@@ -49,7 +63,7 @@ export interface FakePluginHarness {
       | Promise<import('../server.js').PluginAgentConfigureResult | void>
   >;
   cli: import('../server.js').PluginCliRegistration | null;
-  agentTools: import('../server.js').PluginAgentToolRegistration[];
+  agentTools: import('../server.js').PluginAgentToolRecord[];
   httpRoutes: Array<{
     method: import('../server.js').PluginHttpMethod;
     path: string;
@@ -61,11 +75,49 @@ export interface FakePluginHarness {
     name: import('../server.js').PluginThreadEventName;
     handler: (event: import('../server.js').PluginThreadEvent) => void | Promise<void>;
   }>;
+  sdk: {
+    stub(path: string, implementation: (...args: never[]) => unknown): void;
+    callsTo(path: string): unknown[][];
+  };
+  behavior: {
+    callRpc(name: string, args?: unknown): Promise<unknown>;
+    runCli(
+      argv: string[],
+      context?: { projectId?: string; threadId?: string; cwd?: string }
+    ): Promise<PluginCliExecutionResult>;
+    emitThreadEvent(
+      name: import('../server.js').PluginThreadEventName,
+      payload: {
+        thread?: import('../server.js').PluginSdkThreadSummary;
+        lastAssistantText?: string | null;
+        error?: string | null;
+      }
+    ): Promise<{ errors: unknown[] }>;
+  };
+  lifecycle: {
+    dispose(): Promise<void>;
+  };
   needsConfiguration: string | null;
   setSettings(values: Record<string, PluginSettingValue | undefined>): void;
   callRpc(name: string, args?: unknown): Promise<unknown>;
   runSchedule(name?: string): Promise<void>;
-  runCli(argv: string[]): Promise<PluginCliExecutionResult>;
+  runCli(
+    argv: string[],
+    context?: { projectId?: string; threadId?: string; cwd?: string }
+  ): Promise<PluginCliExecutionResult>;
+  emitThreadEvent(
+    name: import('../server.js').PluginThreadEventName,
+    payload: {
+      thread?: import('../server.js').PluginSdkThreadSummary;
+      lastAssistantText?: string | null;
+      error?: string | null;
+    }
+  ): Promise<{ errors: unknown[] }>;
+  callAgentTool(
+    name: string,
+    input: unknown,
+    ctx?: { threadId?: string; projectId?: string }
+  ): Promise<unknown>;
   submitInteraction(value: unknown): void;
   cancelInteraction(): void;
   reload(factory: ZccPluginFactory): Promise<void>;
@@ -81,12 +133,8 @@ export interface FakePluginHost {
 
 export interface FakePluginHostOptions {
   pluginId?: string;
-  spawnThread?: (args: {
-    projectId: string;
-    prompt: string;
-    providerId?: string;
-    parentThreadId?: string;
-  }) => Promise<{ id: string }>;
+  agentSkillIds?: readonly string[];
+  spawnThread?: (args: import('../server.js').PluginSdkThreadSpawnArgs) => Promise<{ id: string }>;
   getThread?: (args: { threadId: string }) => Promise<
     import('../server.js').PluginSdkThreadSummary | null
   >;
@@ -96,7 +144,24 @@ export interface FakePluginHostOptions {
     types?: readonly string[];
     order?: 'asc' | 'desc';
   }) => Promise<import('../server.js').PluginSdkThreadEventRow[]>;
-  sendThread?: (args: { threadId: string; prompt: string }) => Promise<{ id: string }>;
+  sendThread?: (args: import('../server.js').PluginSdkThreadSendArgs) => Promise<{ id: string }>;
+  stopThread?: (args: { threadId: string }) => Promise<{ ok: true }>;
+  threadOutput?: (args: { threadId: string }) => Promise<import('../server.js').PluginSdkThreadOutput>;
+  defaultExecutionOptions?: (args: { threadId: string }) => Promise<
+    import('../server.js').PluginSdkExecutionOptions
+  >;
+  getEnvironment?: (args: { environmentId: string }) => Promise<
+    import('../server.js').PluginSdkEnvironment
+  >;
+  readWorkspaceFile?: (args: import('../server.js').PluginSdkFileReadArgs) => Promise<
+    import('../server.js').PluginSdkFileReadResult
+  >;
+  listProviders?: (args?: { environmentId?: string }) => Promise<
+    import('../server.js').PluginSdkProviderInfo[]
+  >;
+  loadProviderModels?: (args: { environmentId?: string; providerId: string }) => Promise<
+    import('../server.js').PluginSdkModelCatalog
+  >;
   archiveThread?: (args: { threadId: string }) => Promise<{ id: string }>;
   forkThread?: (args: {
     threadId: string;
@@ -120,10 +185,27 @@ export interface FakePluginHostOptions {
     senderThreadId?: string;
   }) => Promise<{ id: string }>;
   unarchiveThread?: (args: { threadId: string }) => Promise<{ id: string }>;
+  getPluginMetadata?: (args: {
+    threadId: string;
+    pluginId?: string;
+  }) => Promise<import('@zana-ai/zcc-domain/thread-runtime').JsonObject>;
+  updatePluginMetadata?: (args: {
+    threadId: string;
+    pluginId?: string;
+    set?: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
+    remove?: readonly string[];
+  }) => Promise<import('@zana-ai/zcc-domain/thread-runtime').JsonObject>;
   pushInbox?: (args: { projectId: string; comments: string }) => Promise<{ id: string }>;
   listProjects?: () =>
     | Array<{ id: string; name: string; path?: string }>
     | Promise<Array<{ id: string; name: string; path?: string }>>;
+  database?: PluginDatabase;
+  experimental_callHostRpc?: (call: {
+    method: string;
+    input: unknown;
+    hostId: string;
+    signal?: AbortSignal;
+  }) => unknown | Promise<unknown>;
   /** Shared registry so two fake hosts can provide/use each other. */
   services?: PluginServicesRegistry;
 }
@@ -144,7 +226,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   const ptyHarnesses: FakePluginHarness['ptyHarnesses'] = [];
   const mentionProviders: FakePluginHarness['mentionProviders'] = [];
   const agentConfigurers: FakePluginHarness['agentConfigurers'] = [];
-  const agentTools: import('../server.js').PluginAgentToolRegistration[] = [];
+  const agentTools: import('../server.js').PluginAgentToolRecord[] = [];
   const httpRoutes: FakePluginHarness['httpRoutes'] = [];
   const events: FakePluginHarness['events'] = [];
   let cliRegistration: import('../server.js').PluginCliRegistration | null = null;
@@ -158,6 +240,15 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   const assertLive = (): void => {
     if (stale) throw new PluginContextStaleError(pluginId);
   };
+  const sdkStubs = new Map<string, (...args: unknown[]) => unknown>();
+  const sdkCalls: Array<{ path: string; args: unknown[] }> = [];
+  function invokeSdk(path: string, fallback: (() => unknown) | undefined, ...args: unknown[]): unknown {
+    sdkCalls.push({ path, args });
+    const stub = sdkStubs.get(path);
+    if (stub) return stub(...args);
+    if (fallback) return fallback();
+    throw new Error(`zcc.sdk.${path} is not stubbed`);
+  }
 
   const servicesRegistry = options?.services ?? createPluginServicesRegistry();
   const services = bindPluginServices(pluginId, servicesRegistry, (hook) => {
@@ -206,6 +297,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         }
       },
       database() {
+        if (options?.database) return options.database;
         const rows = new Map<string, unknown[]>();
         return {
           runScript() {
@@ -254,10 +346,11 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
           return options.spawnThread(args);
         },
         async get(args) {
-          if (!options?.getThread) {
-            throw new Error('zcc.sdk is not available in this runtime');
-          }
-          return options.getThread(args);
+          return invokeSdk(
+            'threads.get',
+            options?.getThread ? () => options.getThread!(args) : undefined,
+            args
+          ) as Promise<import('../server.js').PluginSdkThreadSummary | null>;
         },
         events: {
           async list(args) {
@@ -272,6 +365,24 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
             throw new Error('zcc.sdk is not available in this runtime');
           }
           return options.sendThread(args);
+        },
+        async stop(args) {
+          if (!options?.stopThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.stopThread(args);
+        },
+        async output(args) {
+          if (!options?.threadOutput) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.threadOutput(args);
+        },
+        async defaultExecutionOptions(args) {
+          if (!options?.defaultExecutionOptions) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.defaultExecutionOptions(args);
         },
         async archive(args) {
           if (!options?.archiveThread) {
@@ -327,6 +438,18 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
             throw new Error('zcc.sdk is not available in this runtime');
           }
           return options.unarchiveThread(args);
+        },
+        async getPluginMetadata(args) {
+          if (!options?.getPluginMetadata) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.getPluginMetadata(args);
+        },
+        async updatePluginMetadata(args) {
+          if (!options?.updatePluginMetadata) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.updatePluginMetadata(args);
         }
       },
       inbox: {
@@ -344,16 +467,94 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
           }
           return options.listProjects();
         }
+      },
+      environments: {
+        async get(args) {
+          if (!options?.getEnvironment) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.getEnvironment(args);
+        }
+      },
+      files: {
+        async read(args) {
+          return invokeSdk(
+            'files.read',
+            options?.readWorkspaceFile ? () => options.readWorkspaceFile!(args) : undefined,
+            args
+          ) as Promise<import('../server.js').PluginSdkFileReadResult>;
+        }
+      },
+      library: {
+        async list(args) {
+          return invokeSdk('library.list', undefined, args) as Promise<
+            import('../server.js').PluginSdkLibraryDoc[]
+          >;
+        },
+        async read(args) {
+          return invokeSdk('library.read', undefined, args) as Promise<
+            { ok: true; content: string } | { ok: false; message: string }
+          >;
+        },
+        async write(args) {
+          return invokeSdk('library.write', undefined, args) as Promise<
+            { ok: true } | { ok: false; message: string }
+          >;
+        }
+      },
+      providers: {
+        async list(args) {
+          if (!options?.listProviders) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.listProviders(args);
+        },
+        async models(args) {
+          if (!options?.loadProviderModels) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.loadProviderModels(args);
+        }
+      },
+      experimental_desktopBrowsers: {
+        listInstances: (input) => invokeSdk('experimental_desktopBrowsers.listInstances', undefined, input),
+        listTabs: (input) => invokeSdk('experimental_desktopBrowsers.listTabs', undefined, input),
+        createTab: (input) => invokeSdk('experimental_desktopBrowsers.createTab', undefined, input),
+        acquireControl: (input) => invokeSdk('experimental_desktopBrowsers.acquireControl', undefined, input),
+        openConnection: (input) => invokeSdk('experimental_desktopBrowsers.openConnection', undefined, input),
+        releaseControl: (input) => invokeSdk('experimental_desktopBrowsers.releaseControl', undefined, input),
+        revealTab: (input) => invokeSdk('experimental_desktopBrowsers.revealTab', undefined, input),
+        closeTab: (input) => invokeSdk('experimental_desktopBrowsers.closeTab', undefined, input),
+        captureTab: (input) => invokeSdk('experimental_desktopBrowsers.captureTab', undefined, input),
+        listImportSources: (input) => invokeSdk('experimental_desktopBrowsers.listImportSources', undefined, input),
+        importCookies: (input) => invokeSdk('experimental_desktopBrowsers.importCookies', undefined, input),
+        subscribe(input) {
+          return invokeSdk('experimental_desktopBrowsers.subscribe', undefined, input) as { dispose(): void };
+        }
       }
     },
     host: {
-      async experimental_call() {
-        throw new Error('zcc.host is not available in this runtime');
+      async experimental_call(method, input) {
+        if (!options?.experimental_callHostRpc) {
+          throw new Error('zcc.host is not available in this runtime');
+        }
+        return options.experimental_callHostRpc({ method, input, hostId: 'test' });
       },
       experimental_client() {
         return {
-          async call() {
-            throw new Error('zcc.host is not available in this runtime');
+          async call(method, input, callOptions) {
+            if (!options?.experimental_callHostRpc) {
+              throw new Error('zcc.host is not available in this runtime');
+            }
+            return options.experimental_callHostRpc({
+              method,
+              input,
+              hostId: callOptions?.hostId ?? 'test',
+              signal: callOptions?.signal
+            });
+          },
+          experimental_onWorkerExit() {
+            return () => undefined;
           }
         };
       }
@@ -414,7 +615,14 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         extraSkillRoots.push(...rootPaths);
       },
       registerTool(registration) {
-        agentTools.push(registration);
+        const record = normalizeRegisteredAgentTool({
+          pluginId,
+          tool: registration
+        });
+        if (agentTools.some((existing) => existing.name === record.name)) {
+          throw new Error(`tool "${record.name}" is already registered`);
+        }
+        agentTools.push(record);
       },
       experimental_registerProvider: (declaration) => {
         assertLive();
@@ -477,7 +685,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     providers,
     ptyHarnesses,
     get registrations() {
-      return { providerRegistrations: providers };
+      return { providerRegistrations: providers, agentTools };
     },
     mentionProviders,
     agentConfigurers,
@@ -487,6 +695,20 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     agentTools,
     httpRoutes,
     events,
+    sdk: {
+      stub(path, implementation) {
+        sdkStubs.set(path, implementation as (...args: unknown[]) => unknown);
+      },
+      callsTo(path) {
+        return sdkCalls.filter((call) => call.path === path).map((call) => call.args);
+      }
+    },
+    get behavior() {
+      return this;
+    },
+    get lifecycle() {
+      return this;
+    },
     get needsConfiguration() {
       return needsConfiguration;
     },
@@ -497,7 +719,10 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         if (descriptor.type === 'boolean' && value !== undefined && typeof value !== 'boolean') {
           throw new Error(`setting ${key} expected boolean`);
         }
-        if (descriptor.type !== 'boolean' && value !== undefined && typeof value !== 'string') {
+        if (descriptor.type === 'number' && value !== undefined && typeof value !== 'number') {
+          throw new Error(`setting ${key} expected number`);
+        }
+        if (descriptor.type !== 'boolean' && descriptor.type !== 'number' && value !== undefined && typeof value !== 'string') {
           throw new Error(`setting ${key} expected string`);
         }
       }
@@ -509,6 +734,27 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       if (!handler) throw new Error(`unknown rpc ${name}`);
       return handler(args);
     },
+    async emitThreadEvent(name, payload) {
+      const thread = payload.thread;
+      const event: import('../server.js').PluginThreadEvent = {
+        name,
+        threadId: thread?.id ?? '',
+        ...(thread?.projectId ? { projectId: thread.projectId } : {}),
+        ...(thread ? { thread } : {}),
+        ...(payload.lastAssistantText !== undefined ? { lastAssistantText: payload.lastAssistantText } : {}),
+        ...(payload.error !== undefined ? { error: payload.error } : {})
+      };
+      const errors: unknown[] = [];
+      for (const record of events) {
+        if (record.name !== name) continue;
+        try {
+          await record.handler(event);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      return { errors };
+    },
     async runSchedule(name) {
       const jobs = typeof name === 'string'
         ? schedules.filter((row) => row.name === name)
@@ -518,11 +764,29 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
       for (const row of jobs) await row.job();
     },
-    async runCli(argv) {
+    async runCli(argv, context) {
       if (!cliRegistration) throw new Error('no cli command registered');
       return enforcePluginCliOutputLimit(
-        await cliRegistration.run(argv, { pluginId, argv })
+        await cliRegistration.run(argv, {
+          pluginId,
+          argv,
+          signal: new AbortController().signal,
+          ...(context?.projectId ? { projectId: context.projectId } : {}),
+          ...(context?.threadId ? { threadId: context.threadId } : {}),
+          ...(context?.cwd ? { cwd: context.cwd } : {})
+        })
       );
+    },
+    async callAgentTool(name, input, ctx) {
+      const tool = agentTools.find((row) => row.name === name);
+      if (!tool) throw new Error(`unknown agent tool ${name}`);
+      const parsed = tool.parse(input);
+      if (!parsed.ok) throw new Error(parsed.error);
+      return tool.execute(parsed.value, {
+        threadId: ctx?.threadId ?? 'thread-1',
+        projectId: ctx?.projectId ?? 'project-1',
+        signal: new AbortController().signal
+      });
     },
     submitInteraction(value) {
       pendingInteraction?.resolve({ outcome: 'submitted', value: value as PluginInteractionResult extends { value: infer V } ? V : never } as PluginInteractionResult);

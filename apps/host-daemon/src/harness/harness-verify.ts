@@ -4,20 +4,111 @@
  */
 
 import { execFile } from 'node:child_process';
+import { accessSync, constants, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { delimiter, isAbsolute, join } from 'node:path';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
+import { augmentPath, augmentPathWithNodePrefixes, fallbackDirs, nodePrefixBinDirs } from '../env.js';
 import { HARNESS_REGISTRATIONS } from './registry.js';
 
-function runVersion(cmd: string, args: readonly string[], timeoutMs = 8_000): Promise<{ ok: boolean; out: string }> {
+function runVersion(
+  cmd: string,
+  args: readonly string[],
+  searchPath: string,
+  timeoutMs = 8_000
+): Promise<{ ok: boolean; out: string }> {
   return new Promise((resolve) => {
-    execFile(cmd, [...args], { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(cmd, [...args], {
+      timeout: timeoutMs,
+      maxBuffer: 1024 * 1024,
+      env: { ...process.env, PATH: searchPath }
+    }, (err, stdout, stderr) => {
       resolve({ ok: !err, out: String(stdout ?? '').trim() || String(stderr ?? '').trim() });
     });
   });
 }
 
+function isExecutableFile(candidatePath: string): boolean {
+  try {
+    accessSync(candidatePath, constants.X_OK);
+    return statSync(candidatePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function wellKnownHarnessPaths(command: string, home: string): string[] {
+  return [
+    ...fallbackDirs(home).map((dir) => join(dir, command)),
+    ...nodePrefixBinDirs(home).map((dir) => join(dir, command)),
+    join(home, `.${command}`, 'local', command)
+  ];
+}
+
+export interface ResolveHarnessCommandOptions {
+  home?: string;
+  uid?: number;
+}
+
+/**
+ * Resolve a basename harness command against PATH, then well-known native
+ * install locations. Finder/Dock and the electron-vite sandbox often omit
+ * `~/.local/bin`, so `execFile('claude')` returns ENOENT even when the CLI is
+ * installed. Absolute overrides that exist and are executable stay as-is; a
+ * missing or non-executable override (stale `harnesses.byId.*.binary`) falls
+ * back to PATH search by basename so CLI Agents still launch.
+ */
+export function resolveHarnessCommand(
+  command: string,
+  pathEnv = process.env.PATH,
+  options: ResolveHarnessCommandOptions = {}
+): string {
+  if (!command) return command;
+  const original = command;
+  if (isAbsolute(command) || command.includes('/') || command.includes('\\')) {
+    if (isExecutableFile(command)) return command;
+    command = command.replace(/.*[/\\]/, '') || command;
+  }
+  for (const dir of (pathEnv ?? '').split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, command);
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  const uid = options.uid ?? process.getuid?.();
+  if (uid === 0) return original;
+  const home = options.home ?? homedir();
+  for (const candidate of wellKnownHarnessPaths(command, home)) {
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  return original;
+}
+
 /** Extract one exact numeric CLI version; ranges and aliases are deliberately unsupported. */
 export function normalizeHarnessVersion(output: string): string | undefined {
   return output.match(/(?:^|[^0-9])v?(\d+\.\d+\.\d+)(?:[^0-9]|$)/)?.[1];
+}
+
+/**
+ * Structured launch preflight needs a version string. Prefer the parsed
+ * semver; if the probe succeeded but the banner is non-numeric, still treat
+ * the harness as present so CLI Agents are not blocked while threads work.
+ */
+export function verifiableHarnessVersion(
+  row: Pick<HarnessVerifyResult, 'installed' | 'normalizedVersion' | 'version'> | undefined
+): string | undefined {
+  if (!row?.installed) return undefined;
+  return row.normalizedVersion
+    ?? (row.version ? normalizeHarnessVersion(row.version) : undefined)
+    ?? row.version;
+}
+
+export async function installedHarnessVersion(
+  config: AppConfig,
+  adapterId: string
+): Promise<string | undefined> {
+  return verifiableHarnessVersion(
+    (await verifyHarnesses(config)).find(({ family }) => family === adapterId)
+  );
 }
 
 /**
@@ -39,12 +130,14 @@ export function harnessEnabledFromProbe(input: {
 
 /** Verify every registered binary harness against its registration metadata. */
 export async function verifyHarnesses(config: AppConfig): Promise<HarnessVerifyResult[]> {
+  const searchPath = augmentPathWithNodePrefixes(augmentPath(process.env.PATH));
   const registrations = HARNESS_REGISTRATIONS.filter((registration) => registration.verification !== undefined);
   return Promise.all(registrations.map(async (registration): Promise<HarnessVerifyResult> => {
     const verification = registration.verification!;
     const profile = registration.defaultProfileId ?? registration.profiles[0]!.id;
-    const { command } = registration.implementation.resolveLaunch(profile, config, false);
-    const probe = await runVersion(command, verification.versionArgs);
+    const { command: launchCommand } = registration.implementation.resolveLaunch(profile, config, false);
+    const command = resolveHarnessCommand(launchCommand, searchPath);
+    const probe = await runVersion(command, verification.versionArgs, searchPath);
     const configEnabled = verification.enabledConfigKey !== undefined
       ? config[verification.enabledConfigKey as keyof AppConfig] as boolean | undefined
       : undefined;

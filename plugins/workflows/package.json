@@ -3,18 +3,43 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Inline workflow cards in assistant messages and a composer plus-menu.",
+  "description": "Durable QuickJS workflows that fan work out to hidden worker threads.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
+  "scripts": {
+    "build": "node scripts/build-app.mjs",
+    "package": "node scripts/build-app.mjs"
+  },
   "zcc": {
     "name": "Workflows",
-    "description": "Inline workflow cards in assistant messages and a composer plus-menu.",
-    "branding": {
-      "icon": "GitBranch"
-    },
+    "description": "Author JavaScript workflows that orchestrate hidden worker threads, with resume, CLI, and live progress.",
+    "branding": { "icon": "GitBranch" },
     "server": "./server.mjs",
-    "app": "./app.js"
+    "app": "./app.js",
+    "skills": ["skills"]
+  },
+  "dependencies": {
+    "@jitl/quickjs-singlefile-cjs-release-sync": "^0.32.0",
+    "@zana-ai/zcc-ui": "workspace:*",
+    "acorn": "8.16.0",
+    "acorn-walk": "^8.3.5",
+    "ajv": "^8.20.0",
+    "lucide-react": "^1.35.0",
+    "quickjs-emscripten-core": "^0.32.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-plugin-build": "workspace:*",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "better-sqlite3": "^12.11.1",
+    "happy-dom": "^20.10.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   }
 }

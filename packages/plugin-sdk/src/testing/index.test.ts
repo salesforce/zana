@@ -46,6 +46,23 @@ describe('createFakePluginHost', () => {
     expect(harness.ptyHarnesses).toEqual([]);
   });
 
+  it('parses registerTool parameters before execute', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
+    zcc.agents.registerTool({
+      name: 'echo_tool',
+      description: 'Echo',
+      parameters: { type: 'object', properties: { q: { type: 'string' } } },
+      execute: async (input) => input
+    });
+    await expect(harness.callAgentTool('echo_tool', { q: 'hi' })).resolves.toEqual({ q: 'hi' });
+    expect(() => zcc.agents.registerTool({
+      name: 'inbox_push',
+      description: 'shadow',
+      parameters: { type: 'object' },
+      execute: async () => undefined
+    })).toThrow(/built-in ZCC tool/);
+  });
+
   it('runs a registered CLI command', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
     zcc.cli.register({
@@ -128,6 +145,24 @@ describe('createFakePluginHost sdk stubs', () => {
     await expect(wired.zcc.sdk.threads.unarchive({ threadId: 't1' })).resolves.toEqual({ id: 't1' });
   });
 
+  it('wires plugin metadata get and update when callbacks are provided', async () => {
+    const bare = createFakePluginHost({ pluginId: 'bare' });
+    await expect(bare.zcc.sdk.threads.getPluginMetadata({ threadId: 't1' })).rejects.toThrow(/not available/);
+    const wired = createFakePluginHost({
+      pluginId: 'wired',
+      getPluginMetadata: async (args) => ({ pluginId: args.pluginId ?? 'wired', threadId: args.threadId }),
+      updatePluginMetadata: async (args) => ({ ...(args.set ?? {}), threadId: args.threadId })
+    });
+    await expect(wired.zcc.sdk.threads.getPluginMetadata({ threadId: 't1' })).resolves.toEqual({
+      pluginId: 'wired',
+      threadId: 't1'
+    });
+    await expect(wired.zcc.sdk.threads.updatePluginMetadata({
+      threadId: 't1',
+      set: { ticket: 'W-1' }
+    })).resolves.toEqual({ ticket: 'W-1', threadId: 't1' });
+  });
+
   it('lists hidden forks and queued messages when callbacks are wired', async () => {
     const wired = createFakePluginHost({
       pluginId: 'wired',
@@ -159,5 +194,49 @@ describe('createFakePluginHost sdk stubs', () => {
       input: [],
       senderThreadId: 'thr-h'
     })).resolves.toEqual({ id: 'qm-2' });
+  });
+
+  it('wires stop, output, files, and environments when callbacks are provided', async () => {
+    const wired = createFakePluginHost({
+      pluginId: 'wired',
+      stopThread: async () => ({ ok: true as const }),
+      threadOutput: async () => ({ output: 'done' }),
+      defaultExecutionOptions: async () => ({
+        model: 'opus',
+        reasoningLevel: 'medium',
+        permissionMode: 'accept-edits'
+      }),
+      getEnvironment: async () => ({
+        id: 'e1',
+        projectId: 'p1',
+        hostId: 'h1',
+        path: '/tmp/ws'
+      }),
+      readWorkspaceFile: async () => ({
+        content: 'export const meta = {}',
+        contentEncoding: 'utf8' as const,
+        sizeBytes: 22
+      }),
+      listProviders: async () => [{ id: 'claude-code', available: true }],
+      loadProviderModels: async () => ({
+        models: [],
+        selectedOnlyModels: [],
+        modelLoadError: null
+      })
+    });
+    await expect(wired.zcc.sdk.threads.stop({ threadId: 't1' })).resolves.toEqual({ ok: true });
+    await expect(wired.zcc.sdk.threads.output({ threadId: 't1' })).resolves.toEqual({ output: 'done' });
+    await expect(wired.zcc.sdk.threads.defaultExecutionOptions({ threadId: 't1' })).resolves.toMatchObject({
+      model: 'opus'
+    });
+    await expect(wired.zcc.sdk.environments.get({ environmentId: 'e1' })).resolves.toMatchObject({
+      path: '/tmp/ws'
+    });
+    await expect(wired.zcc.sdk.files.read({
+      hostId: 'h1',
+      path: '/tmp/ws/.zcc/workflows/a.js',
+      rootPath: '/tmp/ws'
+    })).resolves.toMatchObject({ contentEncoding: 'utf8' });
+    await expect(wired.zcc.sdk.providers.list()).resolves.toEqual([{ id: 'claude-code', available: true }]);
   });
 });

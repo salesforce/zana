@@ -13,7 +13,13 @@ function threadSummary(row: ConversationThreadRow): PluginSdkThreadSummary {
     hostId: row.hostId,
     environmentId: row.environmentId,
     providerId: row.providerId,
-    status: row.status
+    status: row.status,
+    originKind: row.originKind,
+    originPluginId: row.originPluginId,
+    visibility: row.visibility,
+    archivedAt: row.archivedAt,
+    createdAt: row.createdAt,
+    parentThreadId: row.parentThreadId
   };
 }
 
@@ -72,6 +78,19 @@ function lastMatchingText(
     return null;
   }
   return null;
+}
+
+export function conversationThreadOutput(
+  ctx: Pick<ProductHttpContext, 'db'>,
+  threadId: string
+): { output: string } {
+  return {
+    output: lastMatchingText(
+      ctx,
+      threadId,
+      (type) => type !== 'client/turn/requested' && !type.startsWith('system/')
+    ) ?? ''
+  };
 }
 
 export function enrichPluginThreadEvent(

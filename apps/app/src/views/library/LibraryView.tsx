@@ -16,9 +16,11 @@ import {
   type LibraryTreeNode,
   type LibraryPhantomFolder
 } from './libraryTree.js';
+import { matchLibraryDeepLink, type LibraryDeepLink } from './library-deep-link.js';
 
 interface Props {
   project: Project;
+  deepLink?: LibraryDeepLink | null;
 }
 
 // Width of the document list column. Persisted as a renderer-only UI pref under
@@ -50,7 +52,7 @@ interface ContextMenuState {
   node: LibraryTreeNode;
 }
 
-export function LibraryView({ project }: Props) {
+export function LibraryView({ project, deepLink = null }: Props) {
   const pushToast = useUi((s) => s.pushToast);
   // CRITICAL: select raw docs slice — inline filter/map infinite-loops React
   const allDocs = useLibrary((s) => s.docs);
@@ -300,19 +302,36 @@ export function LibraryView({ project }: Props) {
     setPendingRevealId(null);
   }, [pendingRevealId, docs]);
 
+  const [pendingDeepLink, setPendingDeepLink] = useState<LibraryDeepLink | null>(deepLink);
+  useEffect(() => {
+    setPendingDeepLink(deepLink);
+  }, [deepLink]);
+  useEffect(() => {
+    if (!pendingDeepLink) return;
+    const match = matchLibraryDeepLink(docs, pendingDeepLink);
+    if (match) {
+      setSearchQuery('');
+      setSelectedTags(new Set());
+      setSelectedDoc(match);
+      setPendingDeepLink(null);
+      return;
+    }
+    if (!loading) setPendingDeepLink(null);
+  }, [pendingDeepLink, docs, loading]);
+
   // Auto-select first doc if none selected. Skipped while a new idea OR a
   // deep-link reveal is pending so we don't briefly land on — and, on the cold
   // path where docs arrive after mount, get STUCK on — the wrong doc: both
   // pending latches resolve to a specific doc, and this effect must not race
   // them to filteredDocs[0] in the same commit.
   useEffect(() => {
-    if (pendingSelectId || pendingRevealId) return;
+    if (pendingSelectId || pendingRevealId || pendingDeepLink) return;
     if (!selectedDoc && filteredDocs.length > 0) {
       setSelectedDoc([...filteredDocs].sort((a, b) => b.updatedAt - a.updatedAt)[0]);
     } else if (selectedDoc && !filteredDocs.find((d) => d.id === selectedDoc.id)) {
       setSelectedDoc(null);
     }
-  }, [filteredDocs, selectedDoc, pendingSelectId, pendingRevealId]);
+  }, [filteredDocs, selectedDoc, pendingSelectId, pendingRevealId, pendingDeepLink]);
 
   useEffect(() => {
     if (!menu) return;

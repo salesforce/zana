@@ -163,9 +163,9 @@ interface ThreadCardMenuProps {
  * Thread right-click menu. Reuses the TabBar context-menu styling; stopPropagation
  * on mousedown keeps the global close-on-mousedown from firing before a click.
  *
- * Portaled to `document.body` so the Agents kanban's `.aurora-host` (container
- * queries + a more-specific `position: relative` on direct children) cannot
- * steal `position: fixed` and shove the menu outside the window.
+ * Portaled to `document.body` so the Agents kanban's container queries
+ * (`container-type: inline-size` on `.agents-board`) cannot steal
+ * `position: fixed` and shove the menu outside the window.
  */
 export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
   const navigate = useNavigate();

@@ -17,6 +17,7 @@ import { projectTerminalsAnchorId } from '@/lib/split-layout/agentSessionPortal'
 import { decodeRouteParam, getProjectModeRoutePath } from '@/lib/route-paths';
 import { useNavigate } from 'react-router-dom';
 import { SplitPaneHeaderActions } from '@/views/thread-detail/SplitPaneHeaderActions';
+import { PaneEmptyState } from '@/components/PaneEmptyState';
 import type { LaunchProfileId } from '@zana-ai/zcc-domain/product';
 
 const ExplorerView = lazy(() =>
@@ -137,12 +138,11 @@ export function ProjectModePane({
   if (!project) {
     return (
       <div className="project-mode-pane" data-testid="project-mode-pane" data-mode={mode}>
-        <div className="empty-project overlay">
-          <div className="empty-inner">
-            <h3>Project not found</h3>
-            <p>This workspace is no longer available.</p>
-          </div>
-        </div>
+        <PaneEmptyState
+          art="missing"
+          title="Project not found"
+          hint="This workspace is no longer available."
+        />
       </div>
     );
   }

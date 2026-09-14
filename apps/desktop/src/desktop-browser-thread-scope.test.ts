@@ -50,9 +50,14 @@ describe('desktop browser thread scope', () => {
     ).not.toThrow();
   });
 
-  it('uses a shared persist partition for agent automation tabs', () => {
+  it('hashes automation cookie jars per id', () => {
     expect(ZCC_BROWSER_AUTOMATION_PARTITION).toBe('persist:zcc-browser-automation');
-    expect(partitionForBrowserTab(true)).toBe(ZCC_BROWSER_AUTOMATION_PARTITION);
+    expect(partitionForBrowserTab(true, 'persist:zcc-browser', 'agent-a')).toMatch(
+      /^persist:zcc-browser-automation-[a-f0-9]{64}$/
+    );
+    expect(partitionForBrowserTab(true, 'persist:zcc-browser', 'agent-a')).not.toBe(
+      partitionForBrowserTab(true, 'persist:zcc-browser', 'agent-b')
+    );
     expect(partitionForBrowserTab(false)).toBe('persist:zcc-browser');
     expect(partitionForBrowserTab(false, 'persist:custom')).toBe('persist:custom');
   });

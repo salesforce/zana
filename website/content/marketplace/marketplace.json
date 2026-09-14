@@ -8,6 +8,7 @@
       "id": "provider-acp",
       "displayName": "ACP providers",
       "description": "Run Zana threads with ACP agents, including Cursor and OpenCode.",
+      "overview": "Use one ZCC workspace with the coding agents you already run on your machine. This plugin connects ZCC to agents that speak the Agent Client Protocol (ACP). Each agent appears as a provider in the thread composer.\n\n## What you get\n\n- Ready-made providers for Cursor, opencode, omp, Grok Build, and Hermes Agent.\n- A `Custom agents` setting. Add any other ACP agent as a JSON array with an `id`, a `displayName`, and a `command`.\n- Permission modes `accept-edits` and `full` for every ACP provider.\n- Reasoning levels and a model picker where the agent reports them.\n- Skills from the agent's own skill directories, listed next to ZCC skills.\n\n## How it works\n\nThe plugin launches the agent command on the host machine and talks to it over ACP. Cursor is always visible. The other agents appear after ZCC finds their command on a connected host. A background probe checks what each installed agent supports and updates the provider.\n\n## Requirements\n\n- Install the agent CLI on the host: `cursor-agent`, `opencode`, `omp`, `grok`, or `hermes`.\n- Sign in with the agent's own command, for example `cursor-agent login` or `opencode auth login`.\n- A custom agent needs a command that starts an ACP server on stdio.\n",
       "icon": {
         "lucide": "./icons/cursor.svg"
       },
@@ -31,6 +32,7 @@
       "id": "ask-user-question",
       "displayName": "Ask user question",
       "description": "Structured multiple-choice questions in the thread workbench.",
+      "overview": "Agents on providers without a native question tool can stop and ask you to choose. You answer in the thread, and the agent continues with your choice.\n\n## What you get\n\n- A question card in the thread with two to four options per question. Each option has a label and a description.\n- Up to four questions in one card. A question can accept one answer or several answers.\n- An \"Other\" field on every question for free-text input.\n- An optional preview under an option, for example a code snippet or a layout mockup.\n\n## How it works\n\nThe plugin gives agents an `AskUserQuestion` tool. The tool opens the card and waits for your answer. If you dismiss the card or do not answer in time, the agent continues with its own judgement. Only one card can wait for you at a time. The agent therefore puts all of its questions in one call.\n\nThe tool is added only to providers that lack a native question tool. Providers with their own question tool, such as Claude Code, keep their native behavior.\n",
       "icon": {
         "lucide": "CircleHelp"
       },
@@ -53,7 +55,8 @@
     {
       "id": "automations",
       "displayName": "Automations",
-      "description": "Author and inspect scheduled automations.",
+      "description": "Schedule recurring and one-shot agent or script work.",
+      "overview": "Schedule work once or on a repeat, and let ZCC run it while you do something else. An automation can start an agent thread with a prompt, or run a stored script on the ZCC server.\n\n## What you get\n\n- An Automations panel in the sidebar. Create, edit, pause, resume, and run automations there. Each automation shows its run history.\n- Two schedule types. Use a cron expression with a timezone for repeating work. Use a date, or a delay such as `2h`, for one-shot work.\n- Agent mode. Pick the provider, model, reasoning level, and permission mode. Start a new thread, re-prompt an existing thread, or create a new worktree for each run.\n- Script mode. Store a bash, sh, node, or python3 script. Each run records stdout, stderr, and the exit code. A script that prints nothing is recorded as a silent tick.\n\n## For agents\n\nAgents get the `automations` skill and the `zcc automation` command: `create`, `list`, `show`, `update`, `pause`, `resume`, `run`, `runs`, and `delete`. All commands accept `--json`. Threads that an automation starts cannot create automations.\n\nScripts run on the machine that hosts the ZCC server. Agent runs use the providers you already have installed.\n",
       "icon": {
         "lucide": "Workflow"
       },
@@ -74,9 +77,34 @@
       }
     },
     {
+      "id": "browser-automation",
+      "displayName": "Browser Automation",
+      "description": "Persistent browser scripts on desktop or enrolled hosts.",
+      "overview": "Run persistent browser scripts from a thread on the desktop app or an enrolled host.\n\n## What you get\n\n- Thread-owned desktop browser sessions (DevBrowser) and local headless sessions.\n- Capture, cookie import into the automation partition, and CDP access for the leased page.\n- The `zcc browser` command for the same lifecycle.\n\n## How it works\n\nZCC leases an in-app browser or a headless session bound to the thread. Personal signed-in profiles are not copied unless you opt in. Cookie values never appear in HTTP JSON.\n\n## Requirements\n\nDesktop BrowserView support for in-app sessions. Isolated product-server launches cannot drive the desktop browser.\n",
+      "icon": {
+        "lucide": "Globe"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/browser-automation",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
       "id": "harness-claude",
       "displayName": "Claude Code CLI Agent",
       "description": "CLI Agent TUI for the native claude coding CLI.",
+      "overview": "Launch Claude Code as a CLI Agent in ZCC. The plugin owns the terminal session for the native `claude` CLI.\n\n## What you get\n\n- A CLI Agent profile that opens Claude Code's own TUI inside ZCC.\n- The same spawn, stop, and routing controls as other CLI Agents.\n\n## How it works\n\nZCC starts `claude` on an enrolled host through this plugin's PTY provider. Threads that pick this harness talk to that CLI, not to a separate ACP adapter.\n\n## Requirements\n\n- Install `claude` on the host and keep it on `PATH`.\n- Sign in with the CLI, for example `claude /login`.\n",
       "icon": {
         "lucide": "./icons/claude-code.svg"
       },
@@ -100,6 +128,7 @@
       "id": "provider-claude-code",
       "displayName": "Claude Code provider",
       "description": "Run Zana threads with Claude Code.",
+      "overview": "Start a thread, pick Claude Code, and let it work in your repository from ZCC. The plugin drives the Claude Code CLI on the host machine. It streams the agent's work into the ZCC timeline.\n\n## What you get\n\n- Permission modes `accept-edits`, `auto`, and `full`, plus a plan action in the composer.\n- Reasoning levels from Low to Max, plus Ultracode, which turns on multi-agent workflow orchestration.\n- Checkpoint forks, manual compaction, and native questions from the agent.\n- Claude Code skills and CLAUDE.md files from your home directory and project.\n- Health, usage, and install status for Claude Code on each host, with an install or update action.\n\n## Settings\n\n- `Claude Code memory`: let Claude Code read and write its auto-memory.\n- `Disable provider subagents`: hide the native Task tool so the agent delegates through ZCC.\n- `Disable Workflow tool`: hide the native Workflow tool.\n- `Claude in Chrome`: start Claude Code with the browser tools.\n\n## Requirements\n\n- Install the Claude Code CLI (`claude`) on the host machine. The plugin can run the installer for you.\n- Sign in with `claude` on that machine. ZCC reads the sign-in state to show account and plan.\n- `Claude in Chrome` needs the Chrome extension and a claude.ai login on the host.\n",
       "icon": {
         "lucide": "./icons/claude-code.svg"
       },
@@ -123,6 +152,7 @@
       "id": "harness-codex",
       "displayName": "Codex CLI Agent",
       "description": "CLI Agent TUI for the native codex coding CLI.",
+      "overview": "Launch Codex as a CLI Agent in ZCC. The plugin owns the terminal session for the native `codex` CLI.\n\n## What you get\n\n- A CLI Agent profile that opens Codex's own TUI inside ZCC.\n- The same spawn, stop, and routing controls as other CLI Agents.\n\n## How it works\n\nZCC starts `codex` on an enrolled host through this plugin's PTY provider. Threads that pick this harness talk to that CLI, not to a separate ACP adapter.\n\n## Requirements\n\n- Install `codex` on the host and keep it on `PATH`.\n- Sign in with the CLI, for example `codex login`.\n",
       "icon": {
         "lucide": "./icons/codex.svg"
       },
@@ -146,6 +176,7 @@
       "id": "provider-codex",
       "displayName": "Codex provider",
       "description": "Run Zana threads with Codex.",
+      "overview": "Start a thread, pick Codex, and let it write and review code in your repository from ZCC. The plugin drives the Codex CLI on the host machine. It streams the agent's work into the ZCC timeline.\n\n## What you get\n\n- Permission modes `accept-edits`, `auto`, and `full`, plus plan and goal actions in the composer.\n- Reasoning levels from Low to Ultra. Ultra adds automatic task delegation.\n- A service tier picker with two tiers.\n- Checkpoint forks, manual compaction, thread rename, and thread archive.\n- Codex skills from your home directory and project, listed next to ZCC skills.\n- Health, usage, and install status on each host, with an install or update action.\n- A Codex AI service for inference and voice that other ZCC features can use.\n\n## Settings\n\n- `Codex memory`: let Codex recall and create memories from ZCC threads.\n- `Disable provider subagents`: stop native subagents so the agent delegates through ZCC.\n\n## Requirements\n\n- Install the Codex CLI (`codex`) on the host machine, version 0.136.0 or newer. The plugin can run the npm install for you.\n- Sign in with `codex login` on that machine. A ChatGPT account or an OpenAI API key both work.\n- Usage limits show only for ChatGPT accounts.\n",
       "icon": {
         "lucide": "./icons/codex.svg"
       },
@@ -169,6 +200,7 @@
       "id": "connect",
       "displayName": "Connect",
       "description": "Tunnel this ZCC to an enrolled host.",
+      "overview": "Open your ZCC from a phone or another computer. After you pair, this ZCC answers at `https://<handle>.getbb.app` for anyone signed in to your getbb.app account.\n\n## What you get\n\n- Remote access to the full ZCC app through a tunnel. Your ZCC makes an outbound connection, so you do not open ports or change your router.\n- Port shares. Publish a local HTTP server, such as a dev server, at a share URL. The link opens from any device with your session.\n- Pairing for the ZCC mobile app with a QR code or a one-time code.\n- A Remote access section in Settings, and a sidebar shortcut to it, with the connection state and the remote URL.\n\n## How it works\n\nGet a pairing code from the getbb.app dashboard and enter it in Settings. You can also run `zcc connect --code <code> --server <url>`. The plugin keeps the tunnel open in the background and reconnects after a drop. Disable the plugin to cut all remote access at once. `zcc connect off` also disconnects and forgets the pairing.\n\n## For agents\n\nWhen you view ZCC remotely, agents are told to share servers with `zcc connect expose <port>`. A localhost link would not open. The `share-server-links` skill explains the flow. Other commands: `zcc connect status`, `zcc connect unexpose <port>`, `zcc connect shares`, `zcc connect servers`, and `zcc connect machine-code`.\n\n## Requirements\n\nA getbb.app account. Share links open only for viewers with your getbb.app session; they are not public. Mobile pairing needs the \"Mobile app\" experiment.\n",
       "icon": {
         "lucide": "Cable"
       },
@@ -192,6 +224,7 @@
       "id": "harness-cursor",
       "displayName": "Cursor CLI Agent",
       "description": "CLI Agent TUI for the native cursor-agent coding CLI.",
+      "overview": "Launch Cursor as a CLI Agent in ZCC. The plugin owns the terminal session for the native `cursor-agent` CLI.\n\n## What you get\n\n- A CLI Agent profile that opens Cursor's own TUI inside ZCC.\n- The same spawn, stop, and routing controls as other CLI Agents.\n\n## How it works\n\nZCC starts `cursor-agent` on an enrolled host through this plugin's PTY provider. Threads that pick this harness talk to that CLI, not to a separate ACP adapter.\n\n## Requirements\n\n- Install `cursor-agent` on the host and keep it on `PATH`.\n- Sign in with the CLI, for example `cursor-agent login`.\n",
       "icon": {
         "lucide": "./icons/cursor.svg"
       },
@@ -215,6 +248,7 @@
       "id": "custom-instructions",
       "displayName": "Custom instructions",
       "description": "Add persistent custom instructions to agent threads on this host.",
+      "overview": "Tell every agent on this ZCC host the things you would otherwise repeat in each thread. Examples: your coding conventions, the tools you prefer, and the projects it should know about.\n\n## What you get\n\n- One text field in Settings, up to 4,096 characters.\n- The text is added to the instructions of every agent task on this host, for every provider and every project.\n- Changes apply to the next task. You do not restart anything.\n\n## How it works\n\nWrite the instructions as plain text or Markdown. Leave the field empty to add nothing. ZCC appends your text to the instructions it already gives the agent.\n\n## For agents and scripts\n\nUse the `zcc instructions` command:\n\n- `zcc instructions get` prints the current text.\n- `zcc instructions set <text...>` replaces it.\n- `zcc instructions clear` removes it.\n\nAdd `--json` for machine-readable output.\n",
       "icon": {
         "lucide": "ScrollText"
       },
@@ -238,6 +272,7 @@
       "id": "docs",
       "displayName": "Docs",
       "description": "Durable project knowledge: Docs rail, per-project Library, and the library-curator skill",
+      "overview": "Keep your notes, plans, and reports as plain Markdown files on disk, and edit them inside ZCC. Documents stay ordinary files in folders you choose, on this machine or on any connected host.\n\n## What you get\n\n- A Docs panel with a folder tree, search, and a rich Markdown editor. Tables, images, and YAML frontmatter are supported.\n- Vaults. Each vault is a folder on a host. A new install starts with a Personal vault at `~/Notes`. Add vaults on other machines that are enrolled as ZCC hosts.\n- Full HTML pages and embedded HTML blocks render in a sandboxed frame. Keep interactive reports next to your notes.\n- A Markdown opener for `.md` files from file links. Make it the default under Settings.\n- `@` mentions. Type `@` in the composer to attach a document. The agent gets its current content at send time.\n- Document cards in agent replies. The card opens the document in the thread side panel, with autosave.\n\n## For agents\n\nAgents get the `docs` skill and the `zcc docs` command. They list vaults with `zcc docs vaults` and read files with `zcc docs read`. They edit with `zcc docs pull`, `zcc docs status`, and `zcc docs push`. Push uses version checks, so a concurrent edit is reported as a conflict instead of being overwritten.\n",
       "icon": {
         "lucide": "Library"
       },
@@ -261,6 +296,7 @@
       "id": "monaco-editor",
       "displayName": "File Editor",
       "description": "Edit code files from a thread with the Monaco editor.",
+      "overview": "Edit a file in ZCC instead of only reading it. It applies to every place where ZCC opens a file: chat links, the file search, and `zcc thread open`. The editor is Monaco, the editor from VS Code.\n\n## What you get\n\n- Edit and save with Cmd+S, or Ctrl+S on Linux and Windows. If the file changed on disk since you opened it, the save stops and offers Reload or Overwrite.\n- Find in file with Cmd+F or Ctrl+F, multiple cursors, block selection, bracket matching, and code folding.\n- Syntax highlighting for about 86 common file types.\n- A file tree that you toggle from the file bar. Filter by path, expand directories, and open another file. Right-click a row to copy its absolute path, relative path, or filename.\n- Command palette actions for fold, unfold, sort selected lines, and copy the path of the current file.\n- Colors that follow your ZCC theme, including light and dark switches and custom palettes.\n\n## How it works\n\nThe plugin claims common code, configuration, and text extensions. Binary files such as images and PDFs stay with ZCC's own preview. Files larger than 8 MB open in the read-only preview.\n\nTo change the opener for one file type, go to Settings and open File openers. Right-click a file link for a one-off Open with choice.\n\nThere is no language server. Go-to-definition, find references, and type checking are not available.\n",
       "icon": {
         "lucide": "Code"
       },
@@ -284,6 +320,7 @@
       "id": "github",
       "displayName": "GitHub",
       "description": "Browse issues and pull requests from a GitHub repository.",
+      "overview": "See the open issues and pull requests of your repositories inside ZCC. Hand one to an agent with one click.\n\n## What you get\n\n- A GitHub panel with Issues and Pull requests tabs across every tracked repository. It has a repository filter and a New issue form.\n- Issue details: body, comments, a comment box, and editing of status, assignee, and labels.\n- Send agent on an issue, or Review with agent on a pull request. ZCC starts a thread in the repository's project and links it from the item.\n- Mentions. Type `@` or `#` in any composer to attach an issue or pull request. Its title, body, and state go to the agent at send time.\n\n## How it works\n\nThe plugin tracks every ZCC project whose checkout has a GitHub `origin` remote. Add more repositories in the Extra repositories setting as a comma-separated `owner/repo` list. Choose a Default project for repositories that are not attached to a project. A background service refreshes the cache at startup, then waits 15 minutes after each completed sync to reduce background GitHub traffic. Press Refresh in the panel to update now.\n\n## For agents\n\nThe `zcc github` command lists cached data. Use `zcc github repos`, `zcc github issues [owner/repo]`, `zcc github prs [owner/repo]`, or `zcc github sync`.\n\n## Requirements\n\nThe GitHub CLI must be installed and signed in with `gh auth login`. See https://cli.github.com for installation. The plugin uses your `gh` session and stores no tokens. Until `gh auth status` passes, the plugin reports that it needs configuration.\n",
       "icon": {
         "lucide": "Github"
       },
@@ -307,6 +344,7 @@
       "id": "harness-grok",
       "displayName": "Grok Build CLI Agent",
       "description": "CLI Agent TUI for the native grok Build coding CLI.",
+      "overview": "Launch Grok Build as a CLI Agent in ZCC. The plugin owns the terminal session for the native `grok` CLI.\n\n## What you get\n\n- A CLI Agent profile that opens Grok Build's own TUI inside ZCC.\n- The same spawn, stop, and routing controls as other CLI Agents.\n\n## How it works\n\nZCC starts `grok` on an enrolled host through this plugin's PTY provider. Threads that pick this harness talk to that CLI, not to a separate ACP adapter.\n\n## Requirements\n\n- Install `grok` on the host and keep it on `PATH`.\n- Sign in with the CLI, for example `grok login`.\n",
       "icon": {
         "lucide": "./icons/grok.svg"
       },
@@ -330,6 +368,7 @@
       "id": "inline-vis",
       "displayName": "Inline vis",
       "description": "Render ::vis{kind} charts in assistant markdown.",
+      "overview": "See an agent's chart, demo, report, or Markdown document in the conversation without opening a side panel. The agent writes an HTML or Markdown file to the workspace or the thread's storage directory. The plugin shows that file inside the assistant message.\n\n## What you get\n\n- A live HTML preview or formatted Markdown document in the message.\n- A default viewport height of 224 pixels. The agent can set a height from 120 to 1200 pixels.\n- A header action that opens workspace source files in the workspace viewer. Thread-storage previews omit this action.\n- A clear inline error when the file is missing, too large, or unsupported.\n\n## How it works\n\nThe agent emits a message directive that names a source-relative `.html`, `.htm`, `.md`, or `.markdown` file. Omitting `source` defaults to the workspace, and explicit `source=\"workspace\"` is equivalent:\n\n```text\n::inline-vis{file=\"charts/out.html\" height=\"480\"}\n::inline-vis{file=\"reports/summary.md\"}\n```\n\nRead-only artifacts in the thread's storage directory can be rendered without resolving the workspace:\n\n```text\n::inline-vis{source=\"thread-storage\" file=\"reports/result.html\"}\n```\n\nThe plugin confirms the file exists in the selected source before it renders. Files must be UTF-8 text with a maximum size of 5 MiB. Relative assets next to HTML files load as usual.\n\nHTML runs in a sandboxed iframe with an opaque origin. Scripts in the file cannot read the ZCC page, its cookies, or its storage. Markdown uses ZCC's renderer with raw HTML disabled.\n\n## For agents\n\nThe bundled `inline-vis` skill teaches the agent when to emit the directive and how to write the file. No account or external service is required.\n",
       "icon": {
         "lucide": "ChartNoAxesColumn"
       },
@@ -353,6 +392,7 @@
       "id": "keep-awake",
       "displayName": "Keep awake",
       "description": "Prevent the local machine from sleeping while ZCC is running.",
+      "overview": "Stop your Mac from going to idle sleep while ZCC runs long agent work. Enable the plugin once, and ZCC keeps the selected machines awake for as long as the app is running.\n\n## What you get\n\n- One switch in the plugin settings that turns idle-sleep prevention on or off.\n- A choice between all hosts and a list of specific hosts.\n- Automatic reconnection. When a host connects again, ZCC applies the setting again.\n\n## How it works\n\nThe plugin runs on each selected host and holds an idle-sleep assertion while ZCC is running. When ZCC stops, the assertion stops with it. The display can still turn off. Closing the lid or choosing Sleep still puts the Mac to sleep.\n\nUse the settings page or the CLI to manage the plugin:\n\n- `zcc keep-awake status` shows the current state and the host selection.\n- `zcc keep-awake enable` and `zcc keep-awake disable` change the switch.\n- `zcc keep-awake hosts all` selects every host. `zcc keep-awake hosts` followed by one or more host ids selects specific hosts.\n\nAdd `--json` to any command for machine-readable output.\n\n## Requirements\n\nOnly macOS hosts are supported. On a Linux or Windows host, the plugin does nothing and writes a warning to the log.\n",
       "icon": {
         "lucide": "Coffee"
       },
@@ -373,9 +413,34 @@
       }
     },
     {
+      "id": "harness-mastracode",
+      "displayName": "Mastra Code CLI Agent",
+      "description": "CLI Agent TUI for the native Mastra Code coding CLI.",
+      "overview": "Launch Mastra Code as a CLI Agent in ZCC. The plugin owns the terminal session for the native `mastracode` CLI.\n\n## What you get\n\n- A CLI Agent profile that opens Mastra Code's own TUI inside ZCC.\n- The same spawn, stop, and routing controls as other CLI Agents.\n\n## How it works\n\nZCC starts `mastracode` on an enrolled host through this plugin's PTY provider. Threads that pick this harness talk to that CLI, not to a separate ACP adapter.\n\n## Requirements\n\n- Install `mastracode` on the host and keep it on `PATH`.\n",
+      "icon": {
+        "lucide": "./icons/mastracode.svg"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/harness-mastracode",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
       "id": "memory",
       "displayName": "Memory",
-      "description": "Durable global and project memories the agent can search and update.",
+      "description": "Provider-independent durable memory for agents. We recommend disabling provider-native memory when using this plugin.",
+      "overview": "Give your agents a memory that survives across threads, projects, and providers. The agent reads a short catalog of past learning at the start of each turn. It saves new learning when that helps future work.\n\n## What you get\n\n- Global memories for user preferences and cross-project habits.\n- Project memories for commands, conventions, decisions, and verified quirks.\n- A summary catalog that ZCC adds to the agent's instructions on every turn. The catalog holds summaries only, up to 3,900 characters.\n- A table in the plugin settings where you review, edit, and delete every stored memory.\n- Kinds, tags, importance, pinning, provenance, and version history for each record.\n\n## How it works\n\nThe agent uses the `zcc memory` CLI. `zcc memory search` finds summaries with keyword search. `zcc memory get` reads one complete record. `zcc memory add`, `zcc memory update`, and `zcc memory forget` change the store with version checks. `zcc memory catalog` and `zcc memory history` list summaries and past versions.\n\nProject writes use the project of the current thread. Global writes must pass `--scope global`. The bundled `memory` skill teaches the agent when to search and what to save. The plugin rejects text that looks like a secret or a prompt injection.\n\n## Requirements\n\nDisable provider-native memory in Settings under Providers to avoid duplicate or conflicting stores. The CLI connects to the local ZCC server. Some provider sandboxes ask for approval before they allow that connection.\n",
       "icon": {
         "lucide": "Brain"
       },
@@ -399,6 +464,7 @@
       "id": "harness-opencode",
       "displayName": "OpenCode CLI Agent",
       "description": "CLI Agent TUI for the native opencode coding CLI.",
+      "overview": "Launch OpenCode as a CLI Agent in ZCC. The plugin owns the terminal session for the native `opencode` CLI.\n\n## What you get\n\n- A CLI Agent profile that opens OpenCode's own TUI inside ZCC.\n- The same spawn, stop, and routing controls as other CLI Agents.\n\n## How it works\n\nZCC starts `opencode` on an enrolled host through this plugin's PTY provider. Threads that pick this harness talk to that CLI, not to a separate ACP adapter.\n\n## Requirements\n\n- Install `opencode` on the host and keep it on `PATH`.\n- Sign in with the CLI, for example `opencode auth login`.\n",
       "icon": {
         "lucide": "./icons/opencode.svg"
       },
@@ -422,6 +488,7 @@
       "id": "pdf-preview",
       "displayName": "PDF preview",
       "description": "Preview PDF files in the thread side panel with the built-in viewer.",
+      "overview": "Open a PDF from a thread and read it in place. The plugin shows the document in the panel where ZCC normally shows a file preview.\n\n## What you get\n\n- Page navigation, zoom, and text search from your browser PDF viewer.\n- A loading indicator while ZCC fetches the file and while the viewer renders it.\n- A clear error message and a Retry button when the file does not load.\n\n## How it works\n\nThe plugin claims the `pdf` extension in ZCC's file opener. It works for files in a thread workspace, files on the host machine, and files in thread storage. ZCC fetches the file and confirms that the response is a PDF. It then hands the file to the browser viewer inside a frame.\n\nNo account, external service, or separate install is required. The browser or app shell must include a PDF viewer. The ZCC desktop app includes one.\n",
       "icon": {
         "lucide": "FileText"
       },
@@ -445,6 +512,7 @@
       "id": "harness-pi",
       "displayName": "Pi CLI Agent",
       "description": "CLI Agent TUI for the native pi coding CLI.",
+      "overview": "Launch Pi as a CLI Agent in ZCC. The plugin owns the terminal session for the native `pi` CLI.\n\n## What you get\n\n- A CLI Agent profile that opens Pi's own TUI inside ZCC.\n- The same spawn, stop, and routing controls as other CLI Agents.\n\n## How it works\n\nZCC starts `pi` on an enrolled host through this plugin's PTY provider. Threads that pick this harness talk to that CLI, not to a separate ACP adapter.\n\n## Requirements\n\n- Install `pi` on the host and keep it on `PATH`.\n",
       "icon": {
         "lucide": "./icons/pi.svg"
       },
@@ -468,6 +536,7 @@
       "id": "provider-pi",
       "displayName": "Pi provider",
       "description": "Run Zana threads with Pi.",
+      "overview": "Start a thread, pick Pi, and let the Pi coding agent work in your repository from ZCC. The plugin drives the Pi CLI on the host machine. It streams the agent's work into the ZCC timeline.\n\n## What you get\n\n- Reasoning levels from None to Max.\n- Checkpoint forks and manual compaction.\n- Pi skills from your home directory and project, listed next to ZCC skills.\n- Health and install status on each host, with an install or update action.\n\n## How it works\n\nThe plugin starts `pi` in RPC mode on the host and loads a small ZCC extension into it. Pi runs with full permissions in ZCC threads. ZCC checks the installed version before each session and shows an update action when it is too old.\n\n## Requirements\n\n- Install the Pi coding agent on the host machine: `npm install -g @earendil-works/pi-coding-agent`. Version 0.84.0 or newer is required.\n- Sign in with `pi` on that machine.\n- Optional: set `BB_PI_BRIDGE_COMMAND` and `BB_PI_BRIDGE_ARGS` on the host to use a Pi executable that is not on `PATH`.\n",
       "icon": {
         "lucide": "./icons/pi.svg"
       },
@@ -491,6 +560,7 @@
       "id": "plugin-guide",
       "displayName": "Plugin Guide",
       "description": "Annotated map of every surface a plugin can own — Copy for agent, then live-reload with zcc plugin dev.",
+      "overview": "An in-app map of every surface a ZCC plugin can own. Use it while you author a plugin, then copy a prompt and live-reload with `zcc plugin dev`.\n\n## What you get\n\n- A Plugin Guide panel that groups host surfaces: sidebar, thread, composer, settings, and more.\n- Copy-for-agent actions that seed a Creator thread with the right surface names.\n- The same roster the public Plugin Guide website uses.\n\n## How it works\n\nThe guide reads the host's plugin surface list. It does not install plugins for you. After you change plugin code, `zcc plugin dev` reloads the running plugin.\n\n## Requirements\n\nInstall this plugin from Browse. Keep the Creator or a shell open in the plugin project if you want live reload.\n",
       "icon": {
         "lucide": "Puzzle"
       },
@@ -513,7 +583,8 @@
     {
       "id": "posthog-analytics",
       "displayName": "PostHog Analytics",
-      "description": "Usage analytics, auto-installed and on by default for everyone: agent lifecycle events plus optional content-free UI-click ids. Opt out or point it at your own PostHog project anytime. Never sends prompt or response content.",
+      "description": "Anonymous usage analytics. Never sends prompts or replies.",
+      "overview": "Anonymous usage analytics for Zana. The plugin records agent activity only. It never sends prompts, replies, file paths, or titles.\n\n## What you get\n\n- A master switch to turn analytics on or off.\n- Optional click and page-view tracking that records button ids and section names only.\n- A place to point events at your own PostHog project instead of Zana's.\n\n## How it works\n\nWhen analytics is on, ZCC sends event names such as thread created, idle, or failed, plus a random install id stored on this machine. You can turn the plugin off at any time.\n\n## Requirements\n\nOfficial builds include a Zana PostHog project key. A local checkout sends nothing until you add a key in Settings, or you can leave the plugin off.\n",
       "icon": {
         "lucide": "LineChart"
       },
@@ -537,6 +608,7 @@
       "id": "pr-monitor",
       "displayName": "PR Monitor",
       "description": "Keep your authored pull requests visible: CI, review, merge-readiness, and inbox alerts.",
+      "overview": "Keep pull requests you authored visible in ZCC. The plugin watches CI, review, and merge-readiness through the local GitHub CLI.\n\n## What you get\n\n- A list of your open pull requests with CI and review status.\n- Inbox alerts when a PR needs attention.\n- The same `gh` session you already use in the terminal.\n\n## How it works\n\nPR Monitor calls `gh` on this host. It does not store GitHub tokens in ZCC. Status refreshes in the background while the plugin is enabled.\n\n## Requirements\n\n- Install the GitHub CLI (`gh`) and run `gh auth login`.\n- The host must be able to reach GitHub.\n",
       "icon": {
         "lucide": "GitPullRequest"
       },
@@ -560,6 +632,7 @@
       "id": "provider-retry",
       "displayName": "Provider retry",
       "description": "Continue turns after provider subscription limits reset.",
+      "overview": "Keep threads moving when a provider is overloaded or your subscription window is used up. This plugin watches for failed turns and schedules a retry at the right time. You do not have to come back and press send.\n\n## What you get\n\n- Automatic retry after a provider overload, with a short delay that doubles on each attempt.\n- Automatic retry after a subscription limit, timed to the reset the provider reports.\n- A queued message card on the thread that you can send now or cancel.\n- A cap of four retries per turn.\n\n## How it works\n\nThe plugin reacts to each failed turn. It only retries overload errors and subscription-window rate limits with a known reset time. Credit and spend limits are not retried. Each retry waits a little past the reset and adds a random spread. Many threads on one account then do not wake at the same instant.\n\n## Settings\n\n- `Maximum automatic wait`: skip a retry when the reset is farther away than 6 hours, 24 hours, or no limit.\n\n## CLI\n\n- `zcc provider-retry status [thread-id] [--json]`: show pending retries.\n- `zcc provider-retry retry <thread-id>`: send a pending retry now.\n- `zcc provider-retry cancel <thread-id>`: cancel a pending retry.\n",
       "icon": {
         "lucide": "RotateCcw"
       },
@@ -583,6 +656,7 @@
       "id": "salesforce",
       "displayName": "Salesforce",
       "description": "Org identity, doctor, Agentforce Playground and Preview, and API-native SOQL/Apex/LWC/Agentforce tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
+      "overview": "Salesforce DX inner loop for ZCC: org identity, SOQL, Apex, LWC, and Agentforce tools with fail-closed mutation confirms.\n\n## What you get\n\n- Org identity and doctor checks for the connected Salesforce org.\n- SOQL Explorer, Apex and LWC editors, and Agentforce playground and preview.\n- Agent tools that require an explicit confirm before any mutating API call.\n\n## How it works\n\nThe plugin talks to Salesforce APIs from this host. Reads can run unattended. Writes wait for your approval in the thread.\n\n## Requirements\n\nInstall with `zcc plugin install salesforce`, then authenticate the Salesforce CLI / DX org this project uses.\n",
       "icon": {
         "lucide": "Cloud"
       },
@@ -606,6 +680,7 @@
       "id": "secrets",
       "displayName": "Secrets",
       "description": "Prompt for a secret via pendingInteraction.",
+      "overview": "Give an agent the API keys it needs without pasting them into chat. The agent asks, you type the values into a masked form, and ZCC writes them to a dotenv file on the thread's host.\n\n## What you get\n\n- A secure form in the thread for each requested variable, with a show or hide control per field.\n- Values written directly to the dotenv file you chose, with file mode `0600`.\n- Existing assignments updated in place and new ones appended. Other lines stay unchanged.\n- A result for the agent that lists the path and the added, updated, and unchanged names. Values never appear in the transcript.\n\n## How it works\n\nThe agent runs one command from inside a thread:\n\n```\nZCC secret request OPENAI_API_KEY --purpose \"Configure the server\" --describe OPENAI_API_KEY \"OpenAI key\" --write-env .env.local\n```\n\nThe form shows the purpose, the destination path, and one field per name. Submit to write the file, or cancel to stop the command. Each value must be a single non-empty line of at most 16 KiB. The write is checked against the file version the plugin read, so an edit made at the same time does not get lost.\n\nThe bundled `secrets` skill tells agents to batch known variables into one request and to never read the completed file back.\n\n## Requirements\n\nThe command must run from a ZCC thread with a live host.\n",
       "icon": {
         "lucide": "KeyRound"
       },
@@ -629,6 +704,7 @@
       "id": "side-chat",
       "displayName": "Side chat",
       "description": "Reply to messages in hidden side-chat forks rendered in a thread panel.",
+      "overview": "Ask a follow-up question about one message without adding noise to the main conversation. A side chat is a fork of the thread that opens in a panel beside it.\n\n## What you get\n\n- A **Reply in side chat** action on any message. Select part of the message first to reply to only that text.\n- A **Start side chat** panel action for a fork that starts from the current thread state.\n- A panel that shows the quoted message and a compact chat with its own composer.\n- A **Send to main thread** action on side-chat replies. It queues the reply as a message in the original thread.\n\n## How it works\n\nThe fork copies the conversation up to the chosen message and reuses the same workspace. The quoted text is given to the agent as context. Side chats stay hidden from the sidebar, so they do not clutter your thread list.\n\nOnce per hour, the plugin looks for side chats older than 24 hours. A side chat with no user message and no queued message is archived. A side chat you used is kept.\n\nThe plugin adds no agent tools or CLI commands.\n",
       "icon": {
         "lucide": "MessagesSquare"
       },
@@ -651,7 +727,8 @@
     {
       "id": "tasks",
       "displayName": "Tasks",
-      "description": "Plan and track work: a sidebar panel, `zcc tasks`, and a generated-skill-friendly command.",
+      "description": "Plan and track work in a list or board: keys, statuses, priorities, and `zcc tasks`.",
+      "overview": "Turn a plan into tracked tasks, hand each task to an agent, and see the worker's progress on the task itself.\n\n## What you get\n\n- A **Tasks** panel with list and board views, filters, and a detail page for each task.\n- Projects with key prefixes such as `PROD-1`, nested folders, labels, priorities, due dates, subtasks, and file attachments.\n- Markdown comments with a **Notify last responding agent** switch. The comment goes to the worker thread and resumes it when idle.\n- A **Delegate** menu that starts a worker thread from a preset. A preset sets the provider, model, reasoning level, permission mode, and instructions.\n- Live thread cards on each task and a **Task** panel action inside a thread.\n\n## How it works\n\nLink a tracker project to a ZCC project. Delegation then creates a worker thread there, attaches it to the task, and moves the task to `in_progress`. The worker receives the description, subtasks, attachments, recent comments, and a report-back contract.\n\nType `@` in the composer and choose **Tasks** to send a task as context. Agents see a `::task{key=\"PROD-1\"}` card when they reference a task.\n\n## For agents\n\nThe `zcc tasks` CLI covers the full tracker: `create`, `list`, `show`, `update`, `comment`, `attachment`, `preset`, `delegate`, `attach`, `detach`, `threads`, `label`, `project`, and `folder`. Add `--json` for machine-readable output. The bundled `tasks` skill tells workers to read the task, comment at milestones, attach artifacts, and move finished work to `in_review`.\n\nPresets are user-defined. Create at least one before you delegate.\n",
       "icon": {
         "lucide": "ListTodo"
       },
@@ -674,7 +751,8 @@
     {
       "id": "workflows",
       "displayName": "Workflows",
-      "description": "Inline workflow cards in assistant messages and a composer plus-menu.",
+      "description": "Author JavaScript workflows that orchestrate hidden worker threads, with resume, CLI, and live progress.",
+      "overview": "Run a script that fans work out to many agent threads, pipelines their results, and returns structured data. The run survives restarts and continues from the last completed step.\n\n## What you get\n\n- A live run card in chat that shows the state, phases, active workers, and elapsed time.\n- A status card above the composer for each active run in the thread, with a stop control.\n- A **Workflow run** panel that lists every phase and worker call and links each worker to its thread.\n- A completion message delivered to the thread that started the run.\n- Settings for active runs, agent concurrency, call budget, run timeout, retention days, and notification size.\n\n## How it works\n\nA workflow is a JavaScript file. It runs in a sandbox with no file, shell, network, or clock access. Calls to `agent(...)` start normal ZCC worker threads with their usual tools and permissions. Scripts can pipeline stages, run parallel barriers, and request a JSON Schema for a worker's output. Successful calls are cached, so a resumed or restarted run replays them and continues live from the first change.\n\nWorker threads stay hidden from the sidebar. Expired runs are archived after the retention period.\n\n## For agents\n\nAgents start runs with the `bb_workflow_run` tool and inspect them with the `zcc workflows` CLI: `validate`, `run`, `status`, `history`, `list`, and `stop`. Scripts come from an inline `--script`, a `--file`, or a `--name` under `.ZCC/workflows/`. Structured workers return results with `bb_workflow_result`. The bundled `workflows` skill covers authoring, validation, and safe inspection.\n\n## Requirements\n\nThe plugin is off by default. Commands must run inside a ZCC project thread.\n",
       "icon": {
         "lucide": "GitBranch"
       },

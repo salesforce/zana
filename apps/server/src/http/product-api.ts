@@ -68,6 +68,10 @@ import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
 import { listThreadStorageFiles, readThreadStorageFile } from '../services/threads/thread-storage.js';
 import { getConversationThreadTabs, updateConversationThreadTabs } from '../services/threads/thread-tabs.js';
+import {
+  readConversationPluginMetadata,
+  updateConversationPluginMetadata
+} from '../services/threads/conversation-plugin-metadata.js';
 import { openThreadFilePreview, previewFileDepsFromContext } from '../services/threads/preview-file.js';
 import { listThreadProviders, bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
 import {
@@ -75,7 +79,7 @@ import {
   classifyModelListError,
   type ThreadModelLoadErrorCode
 } from '../services/threads/thread-execution-options.js';
-import { archiveThread, destroyEnvironment } from '../services/environments/environment-cleanup.js';
+import { archiveThread, destroyEnvironment, destroyEnvironmentIfIdle } from '../services/environments/environment-cleanup.js';
 import { clearConversationGoal, renameConversationOnHost } from '../services/threads/thread-host-commands.js';
 import { editConversationMessage } from '../services/threads/conversation-edit-message.js';
 import {
@@ -87,11 +91,17 @@ import {
   listProjectEnvironments,
   runEnvironmentAction
 } from '../services/environments/environment-actions.js';
+import {
+  killWorkspaceProcesses,
+  listWorkspaceProcesses
+} from '../services/environments/workspace-processes.js';
 import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
+import { provisionProjectEnvironment } from '../services/threads/spawn-environment-provision.js';
+import { isZccManagedWorkspacePath } from '../services/threads/worktree-paths.js';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
-import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, validatePluginMetadata, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
-import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema } from '@zana-ai/zcc-server-contract';
+import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema, threadPluginMetadataQuerySchema, updateThreadPluginMetadataRequestSchema } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify, harnessVerifyBundle } from './harness-via-rpc.js';
 import { mergeHealthIntoExtraInstalled, probeInstalledProviderHealth } from '../services/threads/provider-health-probe.js';
@@ -100,6 +110,8 @@ import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-
 import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
 import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, pinConversationThread, reorderPinnedConversationThread, unpinConversationThread, updateConversationThreadTitle } from '@zana-ai/zcc-db';
 import { handleHostsApi } from './hosts-api.js';
+import { handleDesktopBrowsersApi } from './desktop-browsers-api.js';
+import { handleCliAgentsApi } from './cli-agents-api.js';
 import { isThreadLiveInProject } from '../services/agents/thread-liveness.js';
 import type { MarketplaceCatalogRow } from '../plugins/marketplace-store.js';
 import { presentAppConfig } from './public-app-url.js';
@@ -249,7 +261,11 @@ async function handlePluginAppSettingsSet(
   }
 }
 
-function confineCwd(projectPath: string, cwd: string | undefined): string | null {
+function confineCwd(
+  ctx: ProductHttpContext,
+  projectPath: string,
+  cwd: string | undefined
+): string | null {
   const root = realpathSync(projectPath);
   if (!cwd) return root;
   let resolved: string;
@@ -258,7 +274,12 @@ function confineCwd(projectPath: string, cwd: string | undefined): string | null
   } catch {
     return null;
   }
-  return isContained(root, resolved) ? resolved : null;
+  if (isContained(root, resolved)) return resolved;
+  try {
+    return isZccManagedWorkspacePath({ dataDir: realpathSync(ctx.dataDir), path: resolved }) ? resolved : null;
+  } catch {
+    return null;
+  }
 }
 
 function resolveCloneRoot(ctx: ProductHttpContext): string {
@@ -366,6 +387,14 @@ export async function handleProductHttp(
     }
 
     if (await handleHostsApi(request, response, ctx, path, method, requestUrl)) {
+      return true;
+    }
+
+    if (await handleDesktopBrowsersApi(request, response, ctx, path, method)) {
+      return true;
+    }
+
+    if (await handleCliAgentsApi(request, response, ctx, path, method, requestUrl)) {
       return true;
     }
 
@@ -1091,6 +1120,40 @@ export async function handleProductHttp(
       return true;
     }
 
+    const threadEventsWait = routeParams(path, '/api/v1/threads/:id/events/wait');
+    if (threadEventsWait && method === 'GET') {
+      const thread = getConversationThread(ctx.db, threadEventsWait.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      const type = requestUrl.searchParams.get('type') ?? '';
+      if (!type) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'type is required' });
+        return true;
+      }
+      const afterSeqRaw = requestUrl.searchParams.get('afterSeq');
+      const waitMsRaw = requestUrl.searchParams.get('waitMs');
+      const afterSeq = afterSeqRaw && /^\d+$/.test(afterSeqRaw) ? Number(afterSeqRaw) : 0;
+      const waitMs = waitMsRaw && /^\d+$/.test(waitMsRaw)
+        ? Math.min(Math.max(Number(waitMsRaw), 0), 120_000)
+        : 30_000;
+      const deadline = Date.now() + waitMs;
+      while (true) {
+        const match = listConversationThreadEvents(ctx.db, thread.id)
+          .find((event) => event.type === type && event.sequence > afterSeq);
+        if (match) {
+          sendJson(response, 200, match);
+          return true;
+        }
+        if (Date.now() >= deadline) {
+          sendJson(response, 200, null);
+          return true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
     const threadEvents = routeParams(path, '/api/v1/threads/:id/events');
     if (threadEvents && method === 'GET') {
       const thread = getConversationThread(ctx.db, threadEvents.id);
@@ -1267,6 +1330,49 @@ export async function handleProductHttp(
           file: null
         });
         sendJson(response, 200, { delivered: ctx.hub.size() });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadPluginMetadata = routeParams(path, '/api/v1/threads/:id/plugin-metadata');
+    if (threadPluginMetadata && method === 'GET') {
+      const parsed = threadPluginMetadataQuerySchema.safeParse({
+        pluginId: requestUrl.searchParams.get('pluginId')
+      });
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'pluginId is required' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, readConversationPluginMetadata(ctx.db, threadPluginMetadata.id, parsed.data.pluginId));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+    if (threadPluginMetadata && method === 'PATCH') {
+      const parsed = updateThreadPluginMetadataRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid plugin metadata patch' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, updateConversationPluginMetadata(ctx.db, {
+          threadId: threadPluginMetadata.id,
+          pluginId: parsed.data.pluginId,
+          set: parsed.data.set ?? {},
+          remove: parsed.data.remove ?? []
+        }));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { error: error.code, message: error.message });
@@ -1788,7 +1894,27 @@ export async function handleProductHttp(
             : undefined,
           model: typeof body.model === 'string' ? body.model : undefined,
           reasoningLevel: parseReasoningLevel(body.reasoningLevel),
-          acpMode: typeof body.acpMode === 'string' ? body.acpMode : undefined
+          acpMode: typeof body.acpMode === 'string' ? body.acpMode : undefined,
+          parentThreadId: typeof body.parentThreadId === 'string' ? body.parentThreadId : undefined,
+          visibility: body.visibility === 'hidden' || body.visibility === 'visible'
+            ? body.visibility
+            : undefined,
+          originPluginId: typeof body.originPluginId === 'string' && body.originPluginId.trim()
+            ? body.originPluginId.trim()
+            : body.origin === 'sdk' ? 'sdk' : undefined,
+          ...(body.pluginMetadata !== undefined
+            ? (() => {
+                try {
+                  return { pluginMetadata: validatePluginMetadata(body.pluginMetadata) };
+                } catch (error) {
+                  throw new ThreadCreateError(
+                    400,
+                    'invalid-input',
+                    error instanceof Error ? error.message : 'pluginMetadata is invalid'
+                  );
+                }
+              })()
+            : {})
         });
         sendJson(response, 201, { ok: true, value: conversationThreadView(ctx, thread), thread: conversationThreadView(ctx, thread) });
       } catch (error) {
@@ -2100,6 +2226,96 @@ export async function handleProductHttp(
       sendJson(response, 200, {
         environments: listProjectEnvironments(ctx, projectEnvironments.id, requestUrl.searchParams.get('hostId') ?? undefined)
       });
+      return true;
+    }
+    if (projectEnvironments && method === 'POST') {
+      const body = (await readJsonBody(request)) as Record<string, unknown>;
+      const parsed = spawnEnvironmentChoiceSchema.safeParse(body.workspace ?? body.environment);
+      if (!parsed.success) {
+        sendJson(response, 400, { ok: false, code: 'invalid-environment', message: 'environment choice is invalid' });
+        return true;
+      }
+      try {
+        const environment = await provisionProjectEnvironment(ctx, {
+          projectId: projectEnvironments.id,
+          hostId: typeof body.hostId === 'string' ? body.hostId : undefined,
+          choice: parsed.data,
+          checkout: body.checkout && typeof body.checkout === 'object'
+            ? body.checkout as { kind: 'existing'; name: string } | { kind: 'new'; name: string; baseBranch: string }
+            : undefined
+        });
+        sendJson(response, 201, { ok: true, environment });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const projectProcessKill = routeParams(path, '/api/v1/projects/:id/processes/kill');
+    if (projectProcessKill && method === 'POST') {
+      try {
+        sendJson(response, 200, await killWorkspaceProcesses(
+          ctx,
+          { kind: 'project', projectId: projectProcessKill.id },
+          await readJsonBody(request)
+        ));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const projectProcesses = routeParams(path, '/api/v1/projects/:id/processes');
+    if (projectProcesses && method === 'GET') {
+      try {
+        sendJson(response, 200, await listWorkspaceProcesses(ctx, { kind: 'project', projectId: projectProcesses.id }));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const envProcessKill = routeParams(path, '/api/v1/environments/:id/processes/kill');
+    if (envProcessKill && method === 'POST') {
+      try {
+        sendJson(response, 200, await killWorkspaceProcesses(
+          ctx,
+          { kind: 'environment', environmentId: envProcessKill.id },
+          await readJsonBody(request)
+        ));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const envProcesses = routeParams(path, '/api/v1/environments/:id/processes');
+    if (envProcesses && method === 'GET') {
+      try {
+        sendJson(response, 200, await listWorkspaceProcesses(ctx, { kind: 'environment', environmentId: envProcesses.id }));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
       return true;
     }
 
@@ -2501,10 +2717,20 @@ export async function handleProductHttp(
         sendJson(response, 503, { ok: false, code: 'plugin-host-unavailable', message: 'plugin host is unavailable' });
         return true;
       }
-      const body = (await readJsonBody(request)) as { argv?: unknown };
+      const body = (await readJsonBody(request)) as {
+        argv?: unknown;
+        projectId?: unknown;
+        threadId?: unknown;
+        cwd?: unknown;
+      };
       const argv = Array.isArray(body?.argv) ? body.argv.map((item) => String(item)) : [];
+      const context = {
+        ...(typeof body?.projectId === 'string' ? { projectId: body.projectId } : {}),
+        ...(typeof body?.threadId === 'string' ? { threadId: body.threadId } : {}),
+        ...(typeof body?.cwd === 'string' ? { cwd: body.cwd } : {})
+      };
       try {
-        sendJson(response, 200, await ctx.plugins.runCliCommand(pluginId, argv));
+        sendJson(response, 200, await ctx.plugins.runCliCommand(pluginId, argv, context));
       } catch (error) {
         sendJson(response, 404, {
           ok: false,
@@ -2605,19 +2831,54 @@ export async function handleProductHttp(
         return true;
       }
       let cwd: string;
+      let workspaceEnvironmentId: string | undefined;
+      const workspaceChoice = body.workspace === undefined
+        ? undefined
+        : spawnEnvironmentChoiceSchema.safeParse(body.workspace);
+      if (workspaceChoice && !workspaceChoice.success) {
+        sendJson(response, 400, { ok: false, code: 'invalid-environment', message: 'environment choice is invalid' });
+        return true;
+      }
       try {
         if (!statSync(project.path).isDirectory()) throw new Error('not a directory');
-        const confined = confineCwd(project.path, body.cwd);
-        if (!confined) {
-          sendJson(response, 403, {
-            ok: false,
-            code: 'cwd-escape',
-            message: 'cwd is outside the registered project'
+        if (workspaceChoice?.data && workspaceChoice.data.kind !== 'unmanaged' && !body.isolateScratch) {
+          const environment = await provisionProjectEnvironment(ctx, {
+            projectId: project.id,
+            hostId: typeof body.hostId === 'string' ? body.hostId : undefined,
+            choice: workspaceChoice.data
           });
+          if (!environment.path) {
+            sendJson(response, 500, { ok: false, code: 'workspace-provision-failed', message: 'environment path is missing after provision' });
+            return true;
+          }
+          const confined = confineCwd(ctx, project.path, environment.path);
+          if (!confined) {
+            sendJson(response, 403, {
+              ok: false,
+              code: 'cwd-escape',
+              message: 'provisioned workspace is outside the authorized roots'
+            });
+            return true;
+          }
+          cwd = confined;
+          workspaceEnvironmentId = environment.id;
+        } else {
+          const confined = confineCwd(ctx, project.path, body.cwd);
+          if (!confined) {
+            sendJson(response, 403, {
+              ok: false,
+              code: 'cwd-escape',
+              message: 'cwd is outside the registered project'
+            });
+            return true;
+          }
+          cwd = confined;
+        }
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
           return true;
         }
-        cwd = confined;
-      } catch {
         sendJson(response, 403, {
           ok: false,
           code: 'cwd-escape',
@@ -2648,7 +2909,7 @@ export async function handleProductHttp(
           command: {
             type: 'terminal.start',
             sessionId,
-            root: realpathSync(project.path),
+            root: realpathSync(cwd),
             cwd,
             cols,
             rows,
@@ -2668,6 +2929,7 @@ export async function handleProductHttp(
           status: 'running',
           createdAt: Date.now(),
           hostId,
+          ...(workspaceEnvironmentId ? { workspaceEnvironmentId } : {}),
           ...(launchCommand ? { launchCommand } : {})
         };
         ctx.terminalSessions.set(sessionId, record);
@@ -2784,6 +3046,9 @@ export async function handleProductHttp(
         session.status = 'exited';
         session.finishedAt = Date.now();
         ctx.hub.emit('terminals:updated', publicTerminal(session));
+        if (session.workspaceEnvironmentId) {
+          await destroyEnvironmentIfIdle(ctx, session.workspaceEnvironmentId);
+        }
         sendJson(response, 200, { ok: true });
       } catch (error) {
         sendHostFailure(response, error);

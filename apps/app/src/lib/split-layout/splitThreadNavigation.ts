@@ -105,7 +105,7 @@ export function paneContentRoute(content: PaneContent): string {
     return getScheduleRoutePath(content.scheduleId, content.projectId);
   }
   if (content.kind === 'plugin-detail') {
-    return getPluginDetailRoutePath(content.pluginId);
+    return getPluginDetailRoutePath(content.pluginId, { view: 'installed' });
   }
   if (content.kind === 'agent-session') {
     return getAgentSessionRoutePath(content.sessionId, content.projectId);

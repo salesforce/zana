@@ -159,7 +159,7 @@ export function TeamComposer({
 
   const launch = async () => {
     if (!teamId || !project || launching) return;
-    if (field.typeaheadOpen) return;
+    if (field.typeaheadOpen && field.suggestions.length > 0) return;
     setError(null);
     setLaunching(true);
     try {

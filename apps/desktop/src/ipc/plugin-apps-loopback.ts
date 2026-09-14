@@ -200,7 +200,7 @@ export async function getPluginSettingsFromProductServer(
 
 export async function setPluginSettingsOnProductServer(
   pluginId: string,
-  values: Record<string, string | boolean | null>,
+  values: Record<string, string | number | boolean | null>,
   baseUrl = loopbackProductServerUrl()
 ): Promise<{ descriptors: Record<string, unknown>; values: Record<string, unknown> }> {
   if (!baseUrl) throw new Error('plugin host is unavailable');

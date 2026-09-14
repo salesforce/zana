@@ -160,6 +160,17 @@ describe('target-resolution main authorization', () => {
     }).contribution.args).toEqual(['--model', 'grok-4.5']);
   });
 
+  it('emits --model for a Mastra Code catalog id absent from the empty adapter snapshot', () => {
+    const mastracode = providerFor('mastracode');
+    expect(resolveModelTarget(mastracode, {
+      config: config(),
+      profile: 'mastracode',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { mastracode: { modelTargetId: 'anthropic/claude-opus-4-6' } } },
+      scope: 'local'
+    }).contribution.args).toEqual(['--model', 'anthropic/claude-opus-4-6']);
+  });
+
   it('lets Cursor and Codex pass through thread-catalog ids the same way Claude does', () => {
     expect(resolveModelTarget(providerFor('cursor'), {
       config: config(),

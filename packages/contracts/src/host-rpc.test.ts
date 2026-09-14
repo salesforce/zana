@@ -86,6 +86,31 @@ describe('host-rpc contract', () => {
       title: 'Ship it'
     }).type).toBe('workspace.pull_request_create');
     expect(HostRpcCommandSchema.parse({
+      type: 'workspace.processes.list',
+      workspacePath: '/tmp/proj',
+      workspaceProvisionType: 'unmanaged'
+    }).type).toBe('workspace.processes.list');
+    expect(HostRpcCommandSchema.parse({
+      type: 'workspace.processes.kill',
+      workspacePath: '/tmp/proj',
+      workspaceProvisionType: 'unmanaged',
+      pids: [4242]
+    }).type).toBe('workspace.processes.kill');
+    expect(HostRpcCommandSchema.safeParse({
+      type: 'workspace.processes.kill',
+      workspacePath: '/tmp/proj',
+      workspaceProvisionType: 'unmanaged',
+      pids: []
+    }).success).toBe(false);
+    expect(parseHostRpcResult('workspace.processes.list', {
+      processes: [{ pid: 7, cwd: '/tmp/proj', command: 'vite' }],
+      truncated: false,
+      supported: true
+    })).toMatchObject({ processes: [{ pid: 7, command: 'vite' }], supported: true });
+    expect(parseHostRpcResult('workspace.processes.kill', {
+      killed: [{ pid: 7, cwd: '/tmp/proj', command: 'vite' }]
+    })).toMatchObject({ killed: [{ pid: 7 }] });
+    expect(HostRpcCommandSchema.parse({
       type: 'thread.start',
       threadId,
       environmentId,
@@ -744,5 +769,52 @@ describe('host-rpc contract', () => {
       threadId,
       cleared: true
     })).toEqual({ threadId, cleared: true });
+  });
+
+  it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(26);
+    expect(HostRpcCommandSchema.parse({
+      type: 'desktop.browser.list_instances'
+    }).type).toBe('desktop.browser.list_instances');
+    expect(HostRpcCommandSchema.parse({
+      type: 'desktop.browser.list_tabs',
+      instanceId: 'window-1',
+      generation: 'gen-1',
+      threadId: 'thr_abcdefghij'
+    }).type).toBe('desktop.browser.list_tabs');
+    expect(parseHostRpcResult('desktop.browser.list_instances', {
+      instances: [{ instanceId: 'window-1', generation: 'gen-1', label: 'ZCC window 1' }]
+    })).toEqual({
+      instances: [{ instanceId: 'window-1', generation: 'gen-1', label: 'ZCC window 1' }]
+    });
+    expect(parseHostRpcResult('desktop.browser.create_tab', {
+      tab: {
+        tabId: 'browser:tab-1',
+        threadId: 'thr_abcdefghij',
+        url: 'about:blank',
+        title: '',
+        control: null,
+        profile: { kind: 'automation', id: randomUUID() },
+        presentation: 'hidden'
+      }
+    })).toMatchObject({ tab: { tabId: 'browser:tab-1', threadId: 'thr_abcdefghij' } });
+    const batch = HostEventBatchMessageSchema.parse({
+      type: 'host.event',
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      hostId,
+      instanceId,
+      events: [{
+        kind: 'desktop.browser.changed',
+        payload: {
+          type: 'desktop-browser.changed',
+          instanceId: 'window-1',
+          generation: 'gen-1',
+          threadId: 'thr_abcdefghij',
+          tabs: []
+        }
+      }]
+    });
+    expect(batch.events[0]?.kind).toBe('desktop.browser.changed');
+    expect((batch.events[0]?.payload as { threadId: string }).threadId).toBe('thr_abcdefghij');
   });
 });

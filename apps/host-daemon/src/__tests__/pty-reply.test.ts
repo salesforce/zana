@@ -46,7 +46,8 @@ vi.mock('node-pty', () => ({
 // in this suite never writes a real ~/.zcc/mcp file. Mirror the exports
 // pty.ts actually imports (the sync ensure), returning a throwaway path.
 vi.mock('../mcp-config.js', () => ({
-  ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`
+  ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`,
+  alwaysOnPluginMcpAllowlist: () => []
 }));
 
 import { PtyManager } from '../pty.js';

@@ -12,6 +12,11 @@ const config: AppConfig = {
   lastProjectId: null
 };
 
+function switchButton(html: string, label: string): string {
+  const start = html.lastIndexOf('<button', html.indexOf(`aria-label="${label}"`));
+  return html.slice(start, html.indexOf('</button>', start));
+}
+
 describe('ComposerSettingsView', () => {
   it('lists launch surfaces with CLI Agent first and one Team toggle', () => {
     const html = renderToStaticMarkup(
@@ -19,6 +24,7 @@ describe('ComposerSettingsView', () => {
     );
     expect(html).toContain('settings-anchor-launch-surfaces');
     expect(html).toContain('Launch surfaces');
+    expect(html).toContain('At least Modern or CLI Agent must stay on.');
     expect(html).toContain('aria-label="CLI Agent"');
     expect(html).toContain('aria-label="Modern"');
     expect(html).toContain('aria-label="Team"');
@@ -27,11 +33,29 @@ describe('ComposerSettingsView', () => {
     expect(html).not.toContain('aria-label="Autonomous Team"');
     expect(html).not.toContain('aria-label="Job Team"');
     expect(html.indexOf('aria-label="CLI Agent"')).toBeLessThan(html.indexOf('aria-label="Modern"'));
+    expect(switchButton(html, 'CLI Agent')).toContain('aria-checked="true"');
+    expect(switchButton(html, 'Modern')).toContain('aria-checked="true"');
+    expect(switchButton(html, 'Team')).toContain('aria-checked="true"');
     expect(html).toContain('Default launch mode');
     expect(html).toContain('Reload slash commands');
     expect(html).toContain('Discover additional native agents');
     expect(html).toContain('compatible coding harnesses');
     expect(html).toContain('settings-anchor-composer');
+  });
+
+  it('repairs a both-off pair so CLI Agent stays on and cannot be disabled', () => {
+    const html = renderToStaticMarkup(
+      <ComposerSettingsView
+        config={{ ...config, composerShowCliAgent: false, composerShowModern: false }}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    const cliBtn = switchButton(html, 'CLI Agent');
+    expect(cliBtn).toContain('aria-checked="true"');
+    expect(cliBtn).toContain('disabled=""');
+    const modernBtn = switchButton(html, 'Modern');
+    expect(modernBtn).toContain('aria-checked="false"');
+    expect(modernBtn).not.toContain('disabled=""');
   });
 
   it('disables the last remaining of Modern or CLI Agent', () => {

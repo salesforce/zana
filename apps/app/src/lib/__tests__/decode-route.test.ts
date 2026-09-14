@@ -25,7 +25,7 @@ describe('decodeRoutePath', () => {
     ['/extensions', { nav: 'extensions', extensionsTab: 'installed' }],
     ['/extensions/plugins', { nav: 'extensions', extensionsTab: 'installed' }],
     ['/extensions/plugins/browse', { nav: 'extensions', extensionsTab: 'marketplace' }],
-    ['/extensions/plugins/slack', { nav: 'extensions', extensionsTab: 'installed', settingsExtensionId: 'slack' }],
+    ['/extensions/plugins/slack', { nav: 'extensions', extensionsTab: 'marketplace', settingsExtensionId: 'slack' }],
     ['/extensions/skills', { nav: 'extensions', extensionsTab: 'skills' }],
     ['/extensions/mcp', { nav: 'extensions', extensionsTab: 'mcp' }],
     [
@@ -78,6 +78,33 @@ describe('decodeRoutePath', () => {
   it('lets /extensions/plugins/browse win over :pluginId', () => {
     expect(decodeRoutePath('/extensions/plugins/browse').extensionsTab).toBe('marketplace');
     expect(decodeRoutePath('/extensions/plugins/browse').settingsExtensionId).toBeNull();
+  });
+
+  it('keeps Browse when an author query is present', () => {
+    expect(decodeRoutePath('/extensions/plugins/browse', '', '?author=Ada')).toEqual(
+      expect.objectContaining({
+        nav: 'extensions',
+        extensionsTab: 'marketplace',
+        settingsExtensionId: null
+      })
+    );
+  });
+
+  it('opens catalog detail beside Browse unless view=installed', () => {
+    expect(decodeRoutePath('/extensions/plugins/tasks')).toEqual(
+      expect.objectContaining({
+        nav: 'extensions',
+        extensionsTab: 'marketplace',
+        settingsExtensionId: 'tasks'
+      })
+    );
+    expect(decodeRoutePath('/extensions/plugins/tasks', '', '?view=installed')).toEqual(
+      expect.objectContaining({
+        nav: 'extensions',
+        extensionsTab: 'installed',
+        settingsExtensionId: 'tasks'
+      })
+    );
   });
 
   it('round-trips Plugins hub page subPaths', () => {

@@ -287,6 +287,33 @@ describe('ConversationRow plugin message actions', () => {
     expect(screen.getByRole('dialog').querySelector('img')?.getAttribute('src'))
       .toBe('https://example.com/cat.png');
   });
+
+  it('navigates attached images in the lightbox gallery', () => {
+    render(
+      <ConversationRow
+        projectId="proj-1"
+        onCopy={() => undefined}
+        row={{
+          ...userRow,
+          id: 'u-gallery',
+          text: '',
+          attachments: {
+            webImages: 0,
+            localImages: 2,
+            localFiles: 0,
+            imageUrls: [],
+            localImagePaths: ['shot-1.png', 'shot-2.png'],
+            localFilePaths: []
+          }
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'shot-1.png' }));
+    expect(screen.getByTestId('thread-image-lightbox-count').textContent).toBe('1 of 2');
+    fireEvent.click(screen.getByRole('button', { name: 'Next image' }));
+    expect(screen.getByRole('dialog', { name: 'shot-2.png' })).toBeTruthy();
+    expect(screen.getByTestId('thread-image-lightbox-count').textContent).toBe('2 of 2');
+  });
 });
 
 describe('ConversationRow request labels', () => {

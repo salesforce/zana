@@ -35,6 +35,7 @@ describe('ErrorBoundary', () => {
     );
     expect(screen.getByRole('heading', { name: 'Renderer crashed' })).toBeTruthy();
     expect(screen.getByText('Minified React error #185')).toBeTruthy();
+    expect(document.querySelector('[data-art="error"]')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Reload app' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Report a bug' })).toBeTruthy();
   });

@@ -32,7 +32,7 @@ import {
   deleteInboxEntry,
   toggleInboxKeep
 } from '../store.js';
-import { inboxQuestions, hasBlockingQuestion, type InboxEntry } from '@zana-ai/zcc-domain/product';
+import { type InboxEntry } from '@zana-ai/zcc-domain/product';
 import {
   groupByBucketThenProject,
   groupByBucketFlat,
@@ -44,7 +44,14 @@ import {
   type GroupedSection,
   type ProjectSubGroup
 } from '@zana-ai/zcc-domain/inbox-grouping';
-import { inboxPrimaryTitle, inboxSecondaryLine, inboxPreview, inboxContextLine } from '../lib/inboxPresentation.js';
+import {
+  inboxPrimaryTitle,
+  inboxSecondaryLine,
+  inboxPreview,
+  inboxContextLine,
+  isPinnedBlockingQuestion,
+  isUnansweredQuestion
+} from '../lib/inboxPresentation.js';
 import { isReport } from '@zana-ai/zcc-domain/feed-categories';
 import { DelayedStencilList } from './ui/Skeleton.js';
 
@@ -70,8 +77,6 @@ function sectionIcon(name?: string): LucideIcon {
 /** How many pending questions the "Needs your answer" band shows before the
  *  "show N more" toggle. Keeps the band from shoving the date buckets off-screen. */
 const PINNED_QUESTION_COLLAPSED_COUNT = 5;
-/** Questions older than this drop off the pinned band (still reachable inline). */
-const PINNED_QUESTION_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
 /**
  * Inbox sidebar list.
@@ -99,7 +104,7 @@ export function InboxSidebar({
   query?: string;
   unreadOnly?: boolean;
   /** When set, show ONLY entries explicitly flagged `report: true` (the Reports
-   *  tab / Reports filter). Narrows the feed to deliverables. */
+   *  filter). Narrows the feed to deliverables. */
   reportsOnly?: boolean;
   /** When set, show only this project's entries (focused/scoped view). */
   scopeProjectId?: string | null;
@@ -180,12 +185,8 @@ export function InboxSidebar({
   // home, not a duplicate surface). Stale questions (> 3 days) drop off the band
   // and are excluded here too, so they fall back to rendering inline.
   const pendingQuestionEntries = useMemo(() => {
-    const cutoff = Date.now() - PINNED_QUESTION_MAX_AGE_MS;
     return filtered
-      .filter(
-        (e) =>
-          e.ts >= cutoff && hasPendingQuestion(e, answeredIds) && hasBlockingQuestion(e)
-      )
+      .filter((e) => isPinnedBlockingQuestion(e, answeredIds))
       .sort((a, b) => b.ts - a.ts);
   }, [filtered, answeredIds]);
 
@@ -438,7 +439,7 @@ export function InboxSidebar({
                   active={entry.id === selectedId}
                   unread={!readIds[entry.id]}
                   kept={!!keptIds[entry.id]}
-                  pendingQuestion={hasPendingQuestion(entry, answeredIds)}
+                  pendingQuestion={isUnansweredQuestion(entry, answeredIds)}
                   onClick={() => selectAndRead(entry.id)}
                   onContextMenu={(e) => openRowMenu(e, entry)}
                   projectName={project?.name ?? entry.projectLabel ?? entry.projectId}
@@ -477,9 +478,9 @@ export function InboxSidebar({
             // sections) — surfaced on the collapsed header so a pending question
             // is visible even when the project is folded shut.
             const pendingQuestions =
-              sg.entries.filter((e) => hasPendingQuestion(e, answeredIds)).length +
+              sg.entries.filter((e) => isUnansweredQuestion(e, answeredIds)).length +
               sg.groupedSections.reduce(
-                (n, s) => n + s.entries.filter((e) => hasPendingQuestion(e, answeredIds)).length,
+                (n, s) => n + s.entries.filter((e) => isUnansweredQuestion(e, answeredIds)).length,
                 0
               );
             return (
@@ -532,7 +533,7 @@ export function InboxSidebar({
                     active={entry.id === selectedId}
                     unread={!readIds[entry.id]}
                     kept={!!keptIds[entry.id]}
-                    pendingQuestion={hasPendingQuestion(entry, answeredIds)}
+                    pendingQuestion={isUnansweredQuestion(entry, answeredIds)}
                     onClick={() => selectAndRead(entry.id)}
                     onContextMenu={(e) => openRowMenu(e, entry)}
                   />
@@ -741,7 +742,7 @@ function FoldedSection({
             active={entry.id === selectedId}
             unread={!readIds[entry.id]}
             kept={!!keptIds[entry.id]}
-            pendingQuestion={hasPendingQuestion(entry, answeredIds)}
+            pendingQuestion={isUnansweredQuestion(entry, answeredIds)}
             onClick={() => onSelect(entry.id)}
             onContextMenu={(e) => onRowContextMenu(e, entry)}
             indented
@@ -950,19 +951,6 @@ export function rowTitle(entry: InboxEntry): string {
  */
 function rowSubtitle(entry: InboxEntry): string {
   return inboxSecondaryLine(entry);
-}
-
-/**
- * True when an entry carries a structured `inbox_ask` question the user hasn't
- * answered/skipped yet — the signal for the row's "needs your answer" flag. An
- * answered entry drops the flag (mirrors the detail pane's collapsed state), so
- * the sidebar highlights only what's still waiting on the user.
- */
-function hasPendingQuestion(
-  entry: InboxEntry,
-  answeredIds: Record<string, true>
-): boolean {
-  return inboxQuestions(entry).length > 0 && !answeredIds[entry.id];
 }
 
 /**

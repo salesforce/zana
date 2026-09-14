@@ -10,6 +10,7 @@ export const RESERVED_ACP_PROVIDER_IDS = [
   'acp-opencode',
   'acp-omp',
   'acp-grok',
+  'acp-mastracode',
   'acp-hermes-agent',
   'claude-code',
   'codex',

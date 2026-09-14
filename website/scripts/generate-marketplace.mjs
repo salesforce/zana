@@ -19,6 +19,8 @@ const OUT_FILE = join(OUT_DIR, 'marketplace.json');
 const REPO_GIT = 'https://github.com/salesforce/zana';
 
 const PLUGIN_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const MARKETPLACE_OVERVIEW_MAX_CHARS = 4000;
+const OVERVIEW_HTML_OR_IMAGE_PATTERN = /<[A-Za-z!/?]|!\[/u;
 
 export function derivePluginId(packageName) {
   const base = packageName.includes('/')
@@ -36,7 +38,39 @@ export function derivePluginId(packageName) {
   return id;
 }
 
-export function pluginEntryFromPackage(pkg, dirName) {
+export function normalizePluginOverviewText(text) {
+  return `${String(text)
+    .replace(/^\uFEFF/u, '')
+    .replace(/\r\n?/gu, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/u, ''))
+    .join('\n')
+    .replace(/^\n+/u, '')
+    .replace(/\n+$/u, '')}\n`;
+}
+
+export function readPluginOverviewFile(overviewPath, pluginName) {
+  if (!existsSync(overviewPath)) return undefined;
+  const overview = normalizePluginOverviewText(readFileSync(overviewPath, 'utf8'));
+  const length = [...overview.replace(/\n$/u, '')].length;
+  if (length === 0) {
+    throw new Error(`bundled plugin ${pluginName} has an empty PLUGIN_OVERVIEW.md`);
+  }
+  if (length > MARKETPLACE_OVERVIEW_MAX_CHARS) {
+    throw new Error(
+      `bundled plugin ${pluginName} PLUGIN_OVERVIEW.md has ${length} characters; the maximum is ${MARKETPLACE_OVERVIEW_MAX_CHARS}`
+    );
+  }
+  const prose = overview.replace(/```[\s\S]*?```/gu, '').replace(/`[^`\n]*`/gu, '');
+  if (OVERVIEW_HTML_OR_IMAGE_PATTERN.test(prose)) {
+    throw new Error(
+      `bundled plugin ${pluginName} PLUGIN_OVERVIEW.md must not hold raw HTML or an image`
+    );
+  }
+  return overview;
+}
+
+export function pluginEntryFromPackage(pkg, dirName, extra = {}) {
   const zcc = pkg?.zcc;
   if (!pkg || typeof pkg.name !== 'string' || !zcc || typeof zcc !== 'object') return null;
   const id = derivePluginId(pkg.name);
@@ -50,10 +84,12 @@ export function pluginEntryFromPackage(pkg, dirName) {
     typeof zcc.branding?.icon === 'string' && zcc.branding.icon.trim()
       ? { lucide: zcc.branding.icon.trim() }
       : undefined;
+  const overview = typeof extra.overview === 'string' && extra.overview.trim() ? extra.overview : undefined;
   return {
     id,
     displayName,
     description,
+    ...(overview ? { overview } : {}),
     ...(icon ? { icon } : {}),
     tags: ['official'],
     author: { name: 'Zana', github: 'salesforce', url: REPO_GIT },
@@ -88,7 +124,8 @@ export function readFirstPartyPluginEntries(pluginsRoot = PLUGINS_ROOT) {
     if (!existsSync(pkgPath)) continue;
     try {
       const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-      const entry = pluginEntryFromPackage(pkg, name);
+      const overview = readPluginOverviewFile(join(pluginsRoot, name, 'PLUGIN_OVERVIEW.md'), name);
+      const entry = pluginEntryFromPackage(pkg, name, { overview });
       if (entry) entries.push(entry);
     } catch {
       /* skip malformed package.json */

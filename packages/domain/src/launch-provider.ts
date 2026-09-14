@@ -29,6 +29,9 @@ export const VALID_PROFILES = [
   'grok',
   'grok-resume',
   'grok-yolo',
+  'mastracode',
+  'mastracode-resume',
+  'mastracode-yolo',
   'shell'
 ] as const satisfies readonly LaunchProfileId[];
 
@@ -85,6 +88,12 @@ export function profileLabel(p: LaunchProfileId): string {
       return 'Grok Build Resume';
     case 'grok-yolo':
       return 'Grok Build YOLO';
+    case 'mastracode':
+      return 'Mastra Code';
+    case 'mastracode-resume':
+      return 'Mastra Code Resume';
+    case 'mastracode-yolo':
+      return 'Mastra Code YOLO';
     case 'shell':
       return 'Shell';
     default:
@@ -125,6 +134,11 @@ export function isGrokProfile(p: LaunchProfileId): boolean {
   return p === 'grok' || p === 'grok-resume' || p === 'grok-yolo';
 }
 
+/** True for the Mastra Code-family profiles (`mastracode` CLI TUI). */
+export function isMastracodeProfile(p: LaunchProfileId): boolean {
+  return p === 'mastracode' || p === 'mastracode-resume' || p === 'mastracode-yolo';
+}
+
 /**
  * True for any profile we treat as an "agent" (a coding CLI with a conversation)
  * as opposed to a plain interactive shell. This is the single predicate the
@@ -137,7 +151,8 @@ export function isAgentProfile(p: LaunchProfileId): boolean {
     isCodexProfile(p) ||
     isPiProfile(p) ||
     isOpenCodeProfile(p) ||
-    isGrokProfile(p)
+    isGrokProfile(p) ||
+    isMastracodeProfile(p)
   );
 }
 
@@ -154,6 +169,7 @@ export function harnessFamilyOf(p: LaunchProfileId): HarnessFamily | null {
   if (isPiProfile(p)) return 'pi';
   if (isOpenCodeProfile(p)) return 'opencode';
   if (isGrokProfile(p)) return 'grok';
+  if (isMastracodeProfile(p)) return 'mastracode';
   return null;
 }
 
@@ -448,6 +464,25 @@ export function providerCapabilities(profile: LaunchProfileId): ProviderCapabili
     };
   }
 
+  if (isMastracodeProfile(profile)) {
+    return {
+      // v1: Mastra Code (`mastracode`) is a TUI in a PTY. `--prompt` / a
+      // positional prompt forks headless and exits when the task ends, so the
+      // seed-prompt channel stays OFF. `--mode` / `--continue` / `--thinking-level`
+      // are headless-only; the TUI honors `MASTRACODE_YOLO` and
+      // `MASTRACODE_MODEL_ID`. Thread already speaks ACP (`mastracode --acp`).
+      hasTranscript: false,
+      injectsClaudeMcpConfig: false,
+      acceptsPermissionMode: false,
+      acceptsPromptArgv: false,
+      supportsHooks: false,
+      isAgent: true,
+      acceptsSessionId: false,
+      emitsOscStatus: false,
+      canAutoCloseOnFinish: false
+    };
+  }
+
   if (profile === 'shell') {
     // A plain interactive shell: none of the above. Shell's floor happens to be
     // byte-identical to LEAST_CAPABLE, but we return a fresh (mutable) object
@@ -493,6 +528,7 @@ export function seedPromptArgs(profile: LaunchProfileId, prompt: string): string
   if (!body) return [];
   if (!providerCapabilities(profile).acceptsPromptArgv) return [];
   // OpenCode: the positional is the project dir, so the seed prompt is a flag.
+  // Mastra Code: `--prompt` / a positional forks headless (gated off above).
   if (isOpenCodeProfile(profile)) return ['--prompt', body];
   // Positional seed prompt (claude/cursor/codex/pi/grok): escape a dash-leading
   // body with `--` so the CLI treats it as the prompt, not an unknown flag.

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import type { LaunchProfileId, Persona } from '@zana-ai/zcc-domain/product';
 import { GrokIcon } from '../components/icons/GrokIcon.js';
+import { MastracodeIcon } from '../components/icons/MastracodeIcon.js';
 
 export function profileIcon(profile: LaunchProfileId, size = 11) {
   switch (profile) {
@@ -59,6 +60,12 @@ export function profileIcon(profile: LaunchProfileId, size = 11) {
     case 'grok-resume':
       return <History size={size} />;
     case 'grok-yolo':
+      return <Zap size={size} />;
+    case 'mastracode':
+      return <MastracodeIcon size={size} />;
+    case 'mastracode-resume':
+      return <History size={size} />;
+    case 'mastracode-yolo':
       return <Zap size={size} />;
     case 'shell':
       return <Play size={size} />;

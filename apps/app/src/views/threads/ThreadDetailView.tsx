@@ -51,6 +51,7 @@ import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { copyText } from '../../components/thread/secondary-panel/threadSecondaryPanelLogic.js';
 import { useThreadSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
 import { useInAppBrowserPanel } from '../../components/thread/secondary-panel/useInAppBrowserPanel.js';
+import { useDesktopBrowserReveal } from '../../lib/use-desktop-browser-reveal.js';
 import {
   dispatchThreadOpenFile,
   useThreadOpenFileSignal
@@ -116,6 +117,13 @@ export function ThreadDetail({
   const hostedSecondary = pane?.secondaryPanelHost != null;
   const panel = useThreadSecondaryPanel(threadId);
   useInAppBrowserPanel(threadId, panel);
+  useDesktopBrowserReveal({
+    threadId,
+    isFocused: pane?.isFocused !== false,
+    browserTabs: panel.state.tabs.filter((tab) => tab.kind === 'browser'),
+    activateTab: panel.activateTab,
+    addTab: (tab) => panel.addTab(tab)
+  });
   const [title, setTitle] = useState('Agent');
   const [status, setStatus] = useState('starting');
   const [cwd, setCwd] = useState<string | null>(null);
@@ -136,6 +144,7 @@ export function ThreadDetail({
   const [backgroundCommands, setBackgroundCommands] = useState<TimelineViewWorkflowWorkRow[]>([]);
   const [modelFallback, setModelFallback] = useState<ThreadTimelineModelFallback | null>(null);
   const [parentThreadId, setParentThreadId] = useState<string | null>(null);
+  const [originKind, setOriginKind] = useState<string | null>(null);
   const [promptMode, setPromptMode] = useState<{ mode: string; prompt?: string } | null>(null);
   const [executionModeRequested, setExecutionModeRequested] = useState<string | null>(null);
   const [durablePlan, setDurablePlan] = useState<(DurablePlanPanelView & { filePath?: string | null }) | null>(null);
@@ -322,6 +331,9 @@ export function ThreadDetail({
         setThreadReasoning(typeof thread.reasoningLevel === 'string' ? thread.reasoningLevel : null);
         setThreadAcpMode(typeof thread.acpMode === 'string' ? thread.acpMode : null);
         setParentThreadId((thread as { parentThreadId?: string | null }).parentThreadId ?? null);
+        setOriginKind(typeof (thread as { originKind?: unknown }).originKind === 'string'
+          ? (thread as { originKind: string }).originKind
+          : null);
         if (thread.id) {
           upsertThread({
             id: thread.id,
@@ -566,6 +578,9 @@ export function ThreadDetail({
               if (url) appendThreadRecentItem(threadId, { kind: 'browser', url, title: resolvedTitle });
             }}
             onStopAutomation={(targetId) => {
+              void getDesktopBrowserApi()?.releaseControl?.(
+                panel.state.tabs.find((row) => row.automationTargetId === targetId)?.id ?? targetId
+              );
               void getDesktopBrowserApi()?.stopAutomation?.(targetId);
               const tab = panel.state.tabs.find((row) => row.automationTargetId === targetId);
               if (tab) panel.patchTab(tab.id, { automationTargetId: null });
@@ -749,6 +764,7 @@ export function ThreadDetail({
                 branchName={branchName}
                 isWorktree={isWorktree}
                 parentThreadId={parentThreadId}
+                originKind={originKind}
                 childCount={childThreads.length}
                 environmentId={environmentId}
               />

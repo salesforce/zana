@@ -129,6 +129,7 @@ describe('ScheduleDetailPage', () => {
     render(<ScheduleDetailPage projectId={null} scheduleId="missing" />);
     expect(screen.getByTestId('schedule-missing')).toBeTruthy();
     expect(screen.getByText('This schedule is no longer available.')).toBeTruthy();
+    expect(screen.getByText('It was deleted or is no longer on this machine. You can close this pane.')).toBeTruthy();
     expect(screen.queryByTestId('schedule-detail')).toBeNull();
     expect(screen.getByRole('heading', { name: 'Schedule unavailable' })).toBeTruthy();
   });

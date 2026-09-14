@@ -20,10 +20,12 @@ import {
   PROFILE_BY_FAMILY,
   readCliExtraArgs,
   resolveCliAgentFamily,
+  resolveCliAgentSpawnProfile,
   resolveCliLaunchProfile,
   rewritePromptPaths,
   stageRemoteComposerAttachments,
   type StageRemoteComposerAttachmentsInput,
+  threadPermissionMode,
   threadProviderIdForFamily,
   unrestrictedProfileId,
   withExecutionState,
@@ -49,7 +51,8 @@ describe('PROFILE_BY_FAMILY', () => {
       codex: 'codex',
       pi: 'pi',
       opencode: 'opencode',
-      grok: 'grok'
+      grok: 'grok',
+      mastracode: 'mastracode'
     });
   });
 });
@@ -62,13 +65,24 @@ describe('thread provider id mapping', () => {
     expect(threadProviderIdForFamily('codex')).toBe('codex');
     expect(threadProviderIdForFamily('pi')).toBe('pi');
     expect(threadProviderIdForFamily('grok')).toBe('acp-grok');
+    expect(threadProviderIdForFamily('mastracode')).toBe('acp-mastracode');
     expect(threadProviderIdForFamily('shell')).toBeNull();
     expect(familyForThreadProviderId('claude-code')).toBe('claude');
     expect(familyForThreadProviderId('acp-cursor')).toBe('cursor');
     expect(familyForThreadProviderId('acp-opencode')).toBe('opencode');
     expect(familyForThreadProviderId('codex')).toBe('codex');
     expect(familyForThreadProviderId('acp-grok')).toBe('grok');
+    expect(familyForThreadProviderId('acp-mastracode')).toBe('mastracode');
     expect(familyForThreadProviderId('unknown')).toBeNull();
+  });
+});
+
+describe('threadPermissionMode', () => {
+  it('passes through thread-create permission modes and drops CLI-only ids', () => {
+    expect(threadPermissionMode('accept-edits')).toBe('accept-edits');
+    expect(threadPermissionMode('auto')).toBe('auto');
+    expect(threadPermissionMode('full')).toBe('full');
+    expect(threadPermissionMode('default')).toBeUndefined();
   });
 });
 
@@ -119,6 +133,56 @@ describe('resolveCliAgentFamily', () => {
       rememberedFamilyId: 'pi',
       effectiveDefaultFamilyId: 'claude'
     })).toBe('pi');
+  });
+});
+
+describe('resolveCliAgentSpawnProfile', () => {
+  it('falls back to the family default when a remembered Codex pick never got an automatic profile', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'automatic',
+      automaticProfile: null,
+      familyId: 'codex'
+    })).toBe('codex');
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'explicit',
+      automaticProfile: null,
+      familyId: 'codex'
+    })).toBe('codex');
+  });
+
+  it('prefers a resolved automatic profile such as a yolo default', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'automatic',
+      automaticProfile: 'codex-yolo',
+      harnessDefaultProfileId: 'codex',
+      familyId: 'codex'
+    })).toBe('codex-yolo');
+  });
+
+  it('ignores automaticProfile once the user picked the family explicitly', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'explicit',
+      automaticProfile: 'codex-yolo',
+      harnessDefaultProfileId: 'codex',
+      familyId: 'codex'
+    })).toBe('codex');
+  });
+
+  it('prefers the harness default over the family map', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'explicit',
+      automaticProfile: null,
+      harnessDefaultProfileId: 'codex-yolo',
+      familyId: 'codex'
+    })).toBe('codex-yolo');
+  });
+
+  it('returns undefined for an unknown family with no automatic or harness profile', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'automatic',
+      automaticProfile: null,
+      familyId: 'unknown'
+    })).toBeUndefined();
   });
 });
 
@@ -379,7 +443,9 @@ describe('CLI permission modes', () => {
       { family: 'opencode', mode: 'accept-edits', unrestrictedId: 'opencode-yolo', expected: { executionState: 'accept-edits' } },
       { family: 'opencode', mode: 'full', unrestrictedId: 'opencode-yolo', expected: { profileId: 'opencode-yolo' } },
       { family: 'grok', mode: 'accept-edits', unrestrictedId: 'grok-yolo', expected: { executionState: 'accept-edits' } },
-      { family: 'grok', mode: 'full', unrestrictedId: 'grok-yolo', expected: { profileId: 'grok-yolo' } }
+      { family: 'grok', mode: 'full', unrestrictedId: 'grok-yolo', expected: { profileId: 'grok-yolo' } },
+      { family: 'mastracode', mode: 'accept-edits', unrestrictedId: 'mastracode-yolo', expected: { executionState: 'accept-edits' } },
+      { family: 'mastracode', mode: 'full', unrestrictedId: 'mastracode-yolo', expected: { profileId: 'mastracode-yolo' } }
     ];
     for (const row of rows) {
       expect(
@@ -674,6 +740,7 @@ describe('cliComposerModeChip', () => {
     expect(cliComposerModeChip('codex')).toBe('work-mode');
     expect(cliComposerModeChip('pi')).toBe('none');
     expect(cliComposerModeChip('grok')).toBe('none');
+    expect(cliComposerModeChip('mastracode')).toBe('none');
     expect(cliComposerModeChip('')).toBe('none');
   });
 });

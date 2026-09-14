@@ -45,6 +45,13 @@ describe('findActiveTrigger', () => {
     });
   });
 
+  it('does not treat an absolute file path as a slash command', () => {
+    expect(
+      findActiveTrigger(editorWithText('Read /Users/me/project/issue.md'), COMPOSER_TRIGGERS)
+    ).toBeNull();
+    expect(findActiveTrigger(editorWithText('/tmp/issue.md'), COMPOSER_TRIGGERS)).toBeNull();
+  });
+
   it('detects an @ mention at the start of input', () => {
     expect(
       findActiveTrigger(editorWithText('@src/fo'), COMPOSER_TRIGGERS)

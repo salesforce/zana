@@ -25,7 +25,7 @@ import {
   type MessageBoxOptions
 } from 'electron';
 import { join, isAbsolute, resolve, sep, basename } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, relative } from 'node:path';
@@ -39,14 +39,23 @@ import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-hos
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
 import { registerDesktopBrowserIpc } from './desktop-browser-main-ipc.js';
+import {
+  DESKTOP_BROWSER_DEFAULT_KEYBINDINGS,
+  resolveDesktopBrowserAppCommand
+} from './desktop-browser-shortcuts.js';
 import { createDesktopBrowserAutomationHost } from './desktop-browser-automation.js';
+import { createDesktopBrowserBroker } from './desktop-browser-broker.js';
+import { createDesktopBrowserBrokerClient } from './desktop-browser-broker-client.js';
+import { createBrowserImportService } from './browser-import/browser-import.js';
 import { setBrowserAutomationHost } from '@zana-ai/zcc-server/services/threads/browser-automation';
+import { setDesktopBrowserBroker } from '@zana-ai/zcc-server/services/threads/desktop-browser-broker-registry';
 import { registerIpcFamilies } from './ipc/register.js';
 import type { IpcCtx } from './ipc/ctx.js';
 import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
-import { titleFromObjective } from '@zana-ai/zcc-domain';
+import { titleFromObjective, MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME } from '@zana-ai/zcc-domain';
 import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
+import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { sshPairingSession } from '@zana-ai/zcc-host-daemon/ssh-pairing-pty';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
@@ -205,7 +214,7 @@ import {
   asSshSyncResult,
   mergeSshHosts
 } from './extensions/ssh-host-provider-registry.js';
-import { ensureProcessPath } from '@zana-ai/zcc-host-daemon/env';
+import { augmentPath, ensureProcessPath } from '@zana-ai/zcc-host-daemon/env';
 import { SchedulerManager } from '@zana-ai/zcc-server/services/scheduler/scheduler';
 import { GoalManager } from '@zana-ai/zcc-server/services/goals/goal-manager';
 import { FollowUpManager } from '@zana-ai/zcc-server/services/followups/followup-manager';
@@ -254,7 +263,7 @@ import { TranscriptSource } from '@zana-ai/zcc-server/services/misc/transcript-s
 import type { HarnessAuthKey, HarnessAuthStatusInfo } from '@zana-ai/zcc-domain/product';
 import { getHarnessAuthStatus, setHarnessAuth } from '@zana-ai/zcc-host-daemon/harness-auth';
 import { microVmPlatformSupported } from '@zana-ai/zcc-host-daemon/harness/microvm-environment';
-import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
+import { installedHarnessVersion } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { verifyEditors } from '@zana-ai/zcc-server/services/projects/editor-verify';
 import { PersonaStore, resolvePersonaLaunch } from '@zana-ai/zcc-server/services/agents/persona-store';
 import { TeamStore } from '@zana-ai/zcc-server/services/agents/team-store';
@@ -794,8 +803,51 @@ function anyWindow(): BrowserWindow | null {
   return null;
 }
 const ptys = new PtyManager();
-const desktopBrowserViewManager = createDesktopBrowserViewManager();
-setBrowserAutomationHost(createDesktopBrowserAutomationHost(desktopBrowserViewManager));
+const desktopBrowserViewManager = createDesktopBrowserViewManager({
+  appCommands: {
+    dispatchAppCommand({ command, hostWebContentsId }) {
+      const browserWindow = BrowserWindow.getAllWindows().find(
+        (candidate) => candidate.webContents.id === hostWebContentsId
+      );
+      if (browserWindow === undefined || browserWindow.isDestroyed()) return;
+      browserWindow.webContents.send(IPC.browser.appCommand, command);
+    },
+    focusHostWebContents(hostWebContentsId) {
+      const browserWindow = BrowserWindow.getAllWindows().find(
+        (candidate) => candidate.webContents.id === hostWebContentsId
+      );
+      if (browserWindow !== undefined && !browserWindow.isDestroyed()) {
+        browserWindow.webContents.focus();
+      }
+    },
+    resolveAppCommand(input) {
+      return resolveDesktopBrowserAppCommand({
+        input,
+        isMac: process.platform === 'darwin',
+        keybindings: DESKTOP_BROWSER_DEFAULT_KEYBINDINGS
+      });
+    }
+  }
+});
+const browserImportService = createBrowserImportService({
+  context: { platform: process.platform, home: homedir() },
+  log(message, details) {
+    logMainError(`[desktop-browser] ${message}`, details ? JSON.stringify(details) : undefined);
+  }
+});
+const desktopBrowserBroker = createDesktopBrowserBroker({
+  manager: desktopBrowserViewManager,
+  product: `Chrome/${process.versions.chrome}`,
+  browserImport: browserImportService
+});
+desktopBrowserBroker.setHostId('local');
+setDesktopBrowserBroker(desktopBrowserBroker);
+const desktopBrowserBrokerClient = createDesktopBrowserBrokerClient({
+  broker: desktopBrowserBroker,
+  dataDir: electronZccDataDir(),
+  getServerUrl: () => productServerUrl()
+});
+setBrowserAutomationHost(createDesktopBrowserAutomationHost(desktopBrowserBroker));
 const conversationHistory = new ConversationHistoryService({
   projects: () => store.listProjects(),
   claude: (project, limit) => listClaudeSessions(project.path, limit),
@@ -899,6 +951,7 @@ export function sanitizeRendererTerminalRequest(req: CreateTerminalRequest): Cre
     cohort: _cohort,
     headless: _headless,
     worktreeInfo: _worktreeInfo,
+    workspaceEnvironmentId: _workspaceEnvironmentId,
     ...safe
   } = req;
   return safe;
@@ -926,15 +979,33 @@ const executionConsentManagement = createExecutionConsentManagement({
 const executionConsentService = new ExecutionConsentService({
   store: executionConsentStore
 });
+function workspaceTrustRoots(): string[] {
+  const dataDir = electronZccDataDir();
+  return [
+    worktreeRoot(),
+    join(dataDir, MANAGED_WORKTREE_DIR_NAME),
+    join(dataDir, PERSONAL_WORKSPACE_DIR_NAME)
+  ];
+}
+
+function isWithinTrustedWorkspace(realPath: string): boolean {
+  for (const root of workspaceTrustRoots()) {
+    try {
+      if (isWithin(realPath, realpathSync(root))) return true;
+    } catch {
+      /* root may not exist yet */
+    }
+  }
+  return false;
+}
+
 // Rule 2 / 0.4: supply the registered-project roots so PtyManager can re-confine
 // a local spawn cwd (realpath) at the moment of spawn — a lazy closure, so it
 // always reflects the current project set and has no boot-ordering dependency.
-// The app-managed worktree root (`~/zcc-worktrees`) is included as a trust
-// anchor so an ISOLATED-WORKTREE launch (cwd under that root) passes the spawn
-// gate: it's app-owned (only `createWorktree` in git.ts ever writes there — a
-// worktree of a registered project), and confinement stays realpath-based so a
-// symlink escaping the managed root still resolves outside it and is rejected.
-ptys.setProjectRoots(() => [...store.listProjects().map((p) => p.path), worktreeRoot()]);
+// App-managed checkout roots (`~/zcc-worktrees`, `~/.zcc/worktrees`,
+// `~/.zcc/personal-workspaces`) are included as trust anchors so an isolated
+// or New-worktree launch (cwd under those roots) passes the spawn gate.
+ptys.setProjectRoots(() => [...store.listProjects().map((p) => p.path), ...workspaceTrustRoots()]);
 // WARP-C5: resolve the operator's layered RULES.md (~/.zcc/RULES.md +
 // <project>/.zcc/RULES.md) for each launch. Maps the projectId to the registered
 // project's path HERE (main authorizes — Rule 1), where the store is available;
@@ -1604,6 +1675,8 @@ const TITLE_CACHE_CAP = 400;
  */
 const worktreeBySession = new Map<string, { worktree: SessionWorktree; projectPath: string }>();
 const pendingWorktreeUsers = new Map<string, number>();
+/** Managed Environment occupancy for CLI Agent New worktree / reuse / personal. */
+const environmentBySession = new Map<string, string>();
 
 function worktreeUseKey(path: string): string {
   return path;
@@ -2549,6 +2622,32 @@ let extensionsChangeDebounce: NodeJS.Timeout | null = null;
 let mcpServer: McpServerHandle | null = null;
 let controlPlane: ControlPlaneHandle | null = null;
 let runtimeSupervisor: RuntimeSupervisor | null = null;
+/** Boot-injected, env-only. Never written to disk, never assigned onto process.env (PTY children inherit that). */
+let productServerCredential = '';
+
+function ensureProductServerCredential(): string {
+  if (!productServerCredential) {
+    const fromEnv = process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
+    productServerCredential =
+      typeof fromEnv === 'string' && fromEnv.length >= 32 ? fromEnv : randomBytes(32).toString('hex');
+    // Drop the inherited copy so PTY children never see the skip-confirm secret.
+    delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
+  }
+  return productServerCredential;
+}
+
+function verifyProductServerCredential(credential: unknown): boolean {
+  const expected = productServerCredential;
+  if (!expected || typeof credential !== 'string') return false;
+  const left = Buffer.from(credential);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length) return false;
+  try {
+    return timingSafeEqual(left, right);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Owner-session liveness probe for the Modern/ACP loopback owner-auth gate when
@@ -2589,7 +2688,8 @@ async function ensureRendererStaticHost(): Promise<void> {
     rendererRoot: rootDir,
     dataDir: resolveZccDataDir(process.env, app.getPath('home')),
     runtimeDir: __dirname,
-    version: resolvedAppVersion()
+    version: resolvedAppVersion(),
+    extraEnv: { ZCC_PRODUCT_SERVER_CREDENTIAL: ensureProductServerCredential() }
   });
   runtimeSupervisor.onProjectSettingsChanged((projectId) => {
     safeSend(IPC.projectSettings.onChanged, projectId);
@@ -2934,25 +3034,121 @@ export function frameworkPersonaFromEntries(
 }
 
 /**
- * ASYNC pre-step for an ISOLATED-WORKTREE launch: resolve `req.worktree` (the
- * intent flag) into a concrete `req.worktreeInfo` (a minted/adopted checkout) so
- * the synchronous {@link createTerminalConfined} can use it as the cwd without
- * itself shelling git. Runs ONLY in the `terminals:create` IPC handler (the one
- * async entry point); the control plane / team launcher skip it (they never set
- * `worktree`), keeping `createTerminalConfined`'s signature synchronous.
+ * Turn a CLI Agent `workspace` choice (New worktree / reuse / personal) into a
+ * concrete checkout via the product Environment API — same host provision as
+ * Modern threads, without creating a Thread. Renderer never supplies a path.
+ */
+async function provisionWorkspaceForRequest(
+  req: CreateTerminalRequest
+): Promise<Result<{ path: string; branch?: string; environmentId: string }>> {
+  try {
+    const url = new URL(`api/v1/projects/${encodeURIComponent(req.projectId)}/environments`, productServerUrl());
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: req.workspace })
+    });
+    const body = await response.json() as {
+      ok?: boolean;
+      environment?: { id?: string; path?: string | null; branchName?: string | null };
+      code?: string;
+      message?: string;
+    };
+    const path = body.environment?.path;
+    const environmentId = body.environment?.id;
+    if (!response.ok || !path || !environmentId) {
+      return {
+        ok: false,
+        code: body.code ?? 'WORKTREE_CREATE_FAILED',
+        message: body.message ?? 'Could not prepare workspace'
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        path,
+        branch: body.environment?.branchName ?? undefined,
+        environmentId
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'WORKTREE_CREATE_FAILED',
+      message: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+async function destroyProvisionedEnvironment(environmentId: string): Promise<void> {
+  try {
+    const url = new URL(`api/v1/environments/${encodeURIComponent(environmentId)}`, productServerUrl());
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const response = await fetch(url, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: '{}'
+      });
+      if (response.ok || response.status === 404) return;
+      if (response.status !== 409 || attempt === 2) {
+        logMainError(
+          'destroyProvisionedEnvironment',
+          new Error(`DELETE ${environmentId} failed: ${response.status}`)
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  } catch (error) {
+    logMainError('destroyProvisionedEnvironment', error);
+  }
+}
+
+/**
+ * ASYNC pre-step for an isolated-worktree / CLI Agent workspace launch: resolve
+ * `req.workspace` or `req.worktree` into a concrete `req.worktreeInfo` so the
+ * synchronous {@link createTerminalConfined} can use it as the cwd without
+ * itself shelling git. Runs ONLY in the `terminals:create` IPC handler.
+ *
+ * `workspace` (CLI Agent New worktree / reuse / personal) provisions a host
+ * Environment under `~/.zcc/worktrees` — never a product Thread. Legacy
+ * `worktree` still mints under `~/zcc-worktrees`.
  *
  * Ineligible targets preserve existing behavior and return the request unchanged.
  * Named requests fail closed when the name is invalid or git cannot create/reuse
  * the checkout; legacy boolean requests retain generated fallback behavior.
  * main re-authorizes everything — renderer never supplies a path (Rule 1). Any
- * renderer-set `worktreeInfo` is stripped first so it cannot smuggle a cwd.
+ * renderer-set `worktreeInfo` / `workspaceEnvironmentId` is stripped first so it
+ * cannot smuggle a cwd.
  */
 export async function resolveWorktreeForRequest(
   req: CreateTerminalRequest
 ): Promise<Result<CreateTerminalRequest>> {
-  // Strip any untrusted pre-set worktreeInfo — only THIS function may set it.
-  const { worktreeInfo: _ignored, ...base } = req;
-  if (!req.worktree || req.cwd) return { ok: true, value: base };
+  // Strip any untrusted pre-set worktreeInfo / environment id — only THIS
+  // function may set them.
+  const { worktreeInfo: _ignored, workspaceEnvironmentId: _ignoredEnv, ...base } = req;
+  if (req.cwd || req.isolateScratch) return { ok: true, value: base };
+
+  const wantsManagedWorkspace = req.workspace && req.workspace.kind !== 'unmanaged';
+  if (wantsManagedWorkspace) {
+    const project = store.listProjects().find((p) => p.id === req.projectId);
+    if (!project || project.remote || project.quickAgent) return { ok: true, value: base };
+    const provisioned = await provisionWorkspaceForRequest(req);
+    if (!provisioned.ok) return provisioned;
+    return {
+      ok: true,
+      value: {
+        ...base,
+        worktreeInfo: {
+          path: provisioned.value.path,
+          branch: provisioned.value.branch ?? 'worktree'
+        },
+        workspaceEnvironmentId: provisioned.value.environmentId
+      }
+    };
+  }
+
+  if (!req.worktree) return { ok: true, value: base };
   const requested =
     typeof req.worktree === 'object' && req.worktree.branch ? req.worktree.branch : undefined;
   const explicitName = typeof req.worktree === 'object';
@@ -3048,6 +3244,19 @@ export async function maybePruneWorktreeOnExit(sessionId: string): Promise<void>
   }
 }
 
+async function maybeDestroyManagedEnvironmentOnExit(sessionId: string): Promise<void> {
+  const environmentId = environmentBySession.get(sessionId);
+  environmentBySession.delete(sessionId);
+  if (!environmentId) return;
+  const stillLive = ptys.listAll().some((session) => (
+    session.id !== sessionId
+    && session.workspaceEnvironmentId === environmentId
+    && session.status !== 'exited'
+  ));
+  if (stillLive) return;
+  await destroyProvisionedEnvironment(environmentId);
+}
+
 interface EffectiveLaunch {
   projectRoot: string;
   cwd: string;
@@ -3093,7 +3302,7 @@ export function resolveEffectiveLaunch(
   ) {
     try {
       const realWt = realpathSync(req.worktreeInfo.path);
-      if (isWithin(realWt, realpathSync(worktreeRoot()))) {
+      if (isWithinTrustedWorkspace(realWt)) {
         return {
           projectRoot,
           cwd: realWt,
@@ -3139,7 +3348,18 @@ export function revalidateEffectiveLaunch(
   } catch {
     return { ok: false, reason: 'effective launch path changed after preflight' };
   }
-  const trustedRoot = effective.worktree ? realpathSync(worktreeRoot()) : effective.projectRoot;
+  const trustedRoot = effective.worktree
+    ? workspaceTrustRoots().map((root) => {
+      try {
+        return realpathSync(root);
+      } catch {
+        return null;
+      }
+    }).find((root) => root && isWithin(effective.cwd, root))
+    : effective.projectRoot;
+  if (!trustedRoot) {
+    return { ok: false, reason: 'effective launch path changed after preflight' };
+  }
   return isWithin(effective.cwd, trustedRoot)
     ? { ok: true }
     : { ok: false, reason: 'effective launch path changed after preflight' };
@@ -3184,6 +3404,10 @@ export function createTerminalConfined(
     tabNamerPrompt?: string | null;
   }
 ): Result<TerminalSession> {
+  // Cheap PATH repair so Electron CLI Agent spawns resolve `claude` /
+  // `opencode` the same way host-daemon threads do. Does not re-run the
+  // login-shell probe (that stays a boot-time ensureProcessPath()).
+  process.env.PATH = augmentPath(process.env.PATH);
   const project = opts?.launchSnapshot?.project
     ?? store.listProjects().find((p) => p.id === req.projectId);
   if (!project) return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
@@ -3312,6 +3536,7 @@ export function createTerminalConfined(
       // (Rule 1). Absent on a fresh launch.
       resumeSessionId: req.resumeSessionId,
       worktree: worktreeInfo,
+      workspaceEnvironmentId: req.workspaceEnvironmentId,
       // Execution environment (WHERE it runs): renderer INTENT, re-resolved by
       // the pty layer through `environmentFor` (Rule 1 — the value only SELECTS a
       // registered environment, it can't define one). A kernel sandbox that can't
@@ -3336,7 +3561,12 @@ export function createTerminalConfined(
     // done (the `exit` event fires after the live session is dropped, so we
     // can't recover it from the session record then). Cache the owning project
     // root too — `git worktree remove` runs from the repo, not the worktree.
-    if (worktreeInfo) {
+    if (req.workspaceEnvironmentId) {
+      environmentBySession.delete(session.id);
+      environmentBySession.set(session.id, req.workspaceEnvironmentId);
+    } else if (worktreeInfo) {
+      // Legacy ~/zcc-worktrees isolation — prune on exit. Managed Environments
+      // are destroyed via maybeDestroyManagedEnvironmentOnExit instead.
       worktreeBySession.delete(session.id);
       worktreeBySession.set(session.id, { worktree: worktreeInfo, projectPath: project.path });
     }
@@ -3460,8 +3690,7 @@ async function launchAuthorizedTerminal(
   }, {
     consentStore: executionConsentStore,
     consentService: executionConsentService,
-    installedVersion: async (adapterId) => (await verifyHarnesses(config))
-      .find(({ family }) => family === adapterId)?.normalizedVersion
+    installedVersion: (adapterId) => installedHarnessVersion(config, adapterId)
   });
   if (executionAuthorization.decision === 'blocked') {
     return { ok: false, code: 'DENIED', message: `Structured execution unavailable: ${executionAuthorization.reason}` };
@@ -3650,8 +3879,7 @@ async function launchAuthorizedTerminal(
       legacyPersonaFacetCompatibility
     }, {
       consentStore: executionConsentStore,
-      installedVersion: async (adapterId) => (await verifyHarnesses(currentConfig))
-        .find(({ family }) => family === adapterId)?.normalizedVersion
+      installedVersion: (adapterId) => installedHarnessVersion(currentConfig, adapterId)
     });
     if (currentExecution.decision === 'blocked') return { ok: false, reason: currentExecution.reason };
     const currentBinding = {
@@ -3674,7 +3902,14 @@ async function launchAuthorizedTerminal(
 async function createInteractiveTerminal(req: CreateTerminalRequest): Promise<Result<TerminalSession>> {
   const release = req.worktreeInfo ? reserveWorktree(req.worktreeInfo.path) : undefined;
   try {
-    return await launchAuthorizedTerminal(req, { kind: 'interactive-user', id: 'interactive:local' });
+    const launched = await launchAuthorizedTerminal(req, { kind: 'interactive-user', id: 'interactive:local' });
+    if (!launched.ok && req.workspaceEnvironmentId) {
+      await destroyProvisionedEnvironment(req.workspaceEnvironmentId);
+    }
+    return launched;
+  } catch (error) {
+    if (req.workspaceEnvironmentId) await destroyProvisionedEnvironment(req.workspaceEnvironmentId);
+    throw error;
   } finally {
     release?.();
   }
@@ -3728,8 +3963,7 @@ async function launchBackgroundTerminal(
     idempotencyKey: plan.idempotencyKey
   }, {
     consentStore: executionConsentStore,
-    installedVersion: async (adapterId) => (await verifyHarnesses(opts.config))
-      .find(({ family }) => family === adapterId)?.normalizedVersion
+    installedVersion: (adapterId) => installedHarnessVersion(opts.config, adapterId)
   });
   if (executionAuthorization.decision === 'blocked') {
     throw new LaunchSpawnError('DENIED', `Structured execution unavailable: ${executionAuthorization.reason}`);
@@ -3784,8 +4018,7 @@ async function launchBackgroundTerminal(
         idempotencyKey: authorizedPlan.idempotencyKey
       }, {
         consentStore: executionConsentStore,
-        installedVersion: async (adapterId) => (await verifyHarnesses(currentConfig))
-          .find(({ family }) => family === adapterId)?.normalizedVersion
+        installedVersion: (adapterId) => installedHarnessVersion(currentConfig, adapterId)
       });
       if (currentExecution.decision === 'blocked') return { ok: false as const, reason: currentExecution.reason };
       return launchDigest({
@@ -5012,6 +5245,7 @@ function createWindow(projectId?: string, repairOnly = false) {
   });
 
   windows.set(win.id, { win, projectId });
+  desktopBrowserBroker.registerWindow(win);
   // E2E hard guarantee: never let a window become visible or take focus during a
   // local Playwright run, no matter which code path (boot maximize, native
   // restore, menu action, or a stray show()) tries to reveal it. `show: false`
@@ -5044,6 +5278,7 @@ function createWindow(projectId?: string, repairOnly = false) {
       clearTimeout(browserResizeSettleTimer);
       browserResizeSettleTimer = null;
     }
+    desktopBrowserBroker.releaseWindow(hostWebContentsId);
     desktopBrowserViewManager.releaseWindow(hostWebContentsId);
     conversationHistory.releaseWindow(win.id);
     windows.delete(win.id);
@@ -5269,6 +5504,7 @@ function wireBridgeListeners() {
     // slow `git worktree remove` can't stall teardown; it consumes its own cache
     // entry (Rule 3). A non-worktree session is a cheap no-op.
     void maybePruneWorktreeOnExit(sessionId);
+    void maybeDestroyManagedEnvironmentOnExit(sessionId);
     if (activeForegroundSessionId === sessionId) activeForegroundSessionId = null;
     mailDrain.remove(sessionId);
     executionDeliveryDrain.remove(sessionId);
@@ -5493,7 +5729,10 @@ async function cloneAndRegisterProject(
 }
 
 function registerIpc() {
-  registerDesktopBrowserIpc(desktopBrowserViewManager);
+  registerDesktopBrowserIpc(desktopBrowserViewManager, {
+    broker: desktopBrowserBroker,
+    browserImport: browserImportService
+  });
   registerIpcFamilies({
     get E2E_TAP_ENABLED() { return E2E_TAP_ENABLED; },
     get MENUBAR_REPLY_MAX_CHARS() { return MENUBAR_REPLY_MAX_CHARS; },
@@ -5900,7 +6139,11 @@ async function bootstrapNormal() {
   // Arm the e2e observability tap FIRST (before registerIpc/wireBridgeListeners
   // below) so the very first main→renderer push and log is captured. No-op unless
   // ZCC_E2E was set at boot. See test-tap.ts / the E2E_TAP_ENABLED gate.
-  if (E2E_TAP_ENABLED) testTap.enable();
+  if (E2E_TAP_ENABLED) {
+    testTap.enable();
+    (globalThis as { __zccDesktopBrowserBroker?: typeof desktopBrowserBroker }).__zccDesktopBrowserBroker =
+      desktopBrowserBroker;
+  }
   // The claude-cli provider was constructed at module-eval (above), before the
   // data dir was guaranteed present. Re-bind it now that the store can resolve
   // its config so a custom `claudeBinary` takes effect this session (not just
@@ -7033,6 +7276,7 @@ async function bootstrapNormal() {
   // authority: createTerminalConfined for path confinement, the scheduler/store
   // APIs the IPC handlers use, and the agent registry/message log the mesh uses.
   const controlDir = resolveZccDataDir(process.env, app.getPath('home'));
+  ensureProductServerCredential();
   startControlPlane({
     socketPath: join(controlDir, 'control.sock'),
     tokenPath: join(controlDir, 'control.token'),
@@ -7040,9 +7284,8 @@ async function bootstrapNormal() {
     listProjects: () =>
       store.listProjects().map((p) => ({ id: p.id, name: p.name, tag: p.tag, path: p.path })),
     listTerminals: (projectId?: string) =>
-      projectId
-        ? ptys.list(projectId)
-        : store.listProjects().flatMap((p) => ptys.list(p.id)),
+      projectId ? ptys.list(projectId) : ptys.listAll(),
+    getSession: (sessionId) => ptys.getRememberedSession(sessionId),
     createTerminal: (req, caller) => {
       const owner = caller.class === 'orchestrator' && caller.sessionId
         ? ptys.getSession(caller.sessionId)
@@ -7062,9 +7305,11 @@ async function bootstrapNormal() {
       });
     },
     closeTerminal: (sessionId) => {
-      if (!ptys.getSession(sessionId)) return false;
-      ptys.close(sessionId);
-      return true;
+      if (ptys.getSession(sessionId)) {
+        ptys.close(sessionId);
+        return true;
+      }
+      return ptys.getRememberedSession(sessionId) !== null;
     },
     // `term close-summary`: summarize the sessions' work to the inbox, then
     // close them. Reuses the SAME CloseSummaryService the Agents-board
@@ -7081,6 +7326,7 @@ async function bootstrapNormal() {
     isOrchestratorSession: (sessionId) =>
       ptys.getSession(sessionId)?.cohort?.role === 'orchestrator',
     verifySessionCredential: verifySessionControlCredential,
+    verifyProductServerCredential,
     authorizeOrchestratorMutation: (sessionId, op, args) => {
       const orchestrator = ptys.getSession(sessionId);
       if (!orchestrator || orchestrator.cohort?.role !== 'orchestrator') {
@@ -7106,23 +7352,6 @@ async function bootstrapNormal() {
       return closable
         ? { ok: true }
         : { ok: false, reason: 'orchestrator may close only sessions in its cohort' };
-    },
-    confirmOperatorMutation: async (op) => {
-      const parent = BrowserWindow.getFocusedWindow() ?? undefined;
-      const options = {
-        type: 'warning' as const,
-        title: 'Allow ZCC CLI action?',
-        message: `A local process requested privileged control action "${op}".`,
-        detail: 'Approve only if you initiated this action from a trusted operator shell.',
-        buttons: ['Allow once', 'Cancel'],
-        defaultId: 1,
-        cancelId: 1,
-        noLink: true
-      };
-      const answer = parent && !parent.isDestroyed()
-        ? await dialog.showMessageBox(parent, options)
-        : await dialog.showMessageBox(options);
-      return answer.response === 0;
     },
     listAgents: () => agentRegistry.list(),
     // Persona catalogue → non-sensitive metadata (id/name/description/profile/
@@ -7187,7 +7416,7 @@ async function bootstrapNormal() {
           refreshMarketplace: (url) => runtimeSupervisor!.refreshMarketplace(url),
           removeMarketplace: (url) => runtimeSupervisor!.removeMarketplace(url),
           cliContributions: () => runtimeSupervisor!.pluginCliContributions(),
-          runCliCommand: (id, argv) => runtimeSupervisor!.runPluginCli(id, argv)
+          runCliCommand: (id, argv, context) => runtimeSupervisor!.runPluginCli(id, argv, context)
         }
       : undefined
   })
@@ -7322,8 +7551,11 @@ app.on('before-quit', (event) => {
   // marks Team lifecycle state dead before next launch can reattach.
   ptys.killAll({ preserveLocalTmux: true });
   sshPairingSession.stop();
+  desktopBrowserBrokerClient.stop();
+  desktopBrowserBroker.dispose();
   desktopBrowserViewManager.destroyAll();
   setBrowserAutomationHost(null);
+  setDesktopBrowserBroker(null);
   if (mcpServer) {
     const handle = mcpServer;
     mcpServer = null;

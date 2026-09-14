@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Author and inspect scheduled automations.",
+  "description": "Schedule recurring and one-shot agent or script work.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
   "zcc": {
     "name": "Automations",
-    "description": "Author and inspect scheduled automations.",
+    "description": "Schedule recurring and one-shot agent or script work.",
     "branding": {
       "icon": "Workflow"
     },

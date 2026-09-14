@@ -97,6 +97,7 @@ posixOnly("process tree helpers", () => {
       expect.arrayContaining([child.pid, grandchildPid]),
     );
     expect(found.map((entry) => entry.pid)).not.toContain(process.pid);
+    expect(found.some((entry) => entry.command.length > 0)).toBe(true);
 
     const killed = await killProcessesWithCwdUnder({
       directory: dir,
@@ -178,9 +179,11 @@ posixOnly("process tree helpers", () => {
     cleanupPids.push(child.pid ?? 0);
     await waitFor(() => (child.pid ?? 0) > 0);
 
-    expect(await listProcessesWithCwdUnder({ directory: target })).toEqual([
-      { pid: child.pid, cwd: target },
+    const found = await listProcessesWithCwdUnder({ directory: target });
+    expect(found).toEqual([
+      expect.objectContaining({ pid: child.pid, cwd: target }),
     ]);
+    expect(found[0]?.command).toMatch(/sleep/);
     expect(await listProcessesWithCwdUnder({ directory: link })).toEqual([]);
   });
 
@@ -265,5 +268,35 @@ posixOnly("process tree helpers", () => {
     const dir = mkdtempSync(join(tmpdir(), "bb-cwd-empty-"));
     cleanupDirs.push(dir);
     expect(await listProcessesWithCwdUnder({ directory: dir })).toEqual([]);
+  });
+
+  it("refuses to kill a pid whose cwd is outside the directory", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "bb-cwd-kill-in-")));
+    const other = realpathSync(mkdtempSync(join(tmpdir(), "bb-cwd-kill-out-")));
+    cleanupDirs.push(dir, other);
+    const child = spawn("sleep", ["300"], {
+      cwd: dir,
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    cleanupPids.push(child.pid ?? 0);
+    expect(isAlive(child.pid ?? 0)).toBe(true);
+
+    const ignored = await killProcessesWithCwdUnder({
+      directory: other,
+      pids: [child.pid ?? 0],
+      graceMs: 200,
+    });
+    expect(ignored).toEqual([]);
+    expect(isAlive(child.pid ?? 0)).toBe(true);
+
+    const killed = await killProcessesWithCwdUnder({
+      directory: dir,
+      pids: [child.pid ?? 0],
+      graceMs: 200,
+    });
+    expect(killed.map((entry) => entry.pid)).toContain(child.pid);
+    await waitFor(() => !isAlive(child.pid ?? 0));
   });
 });

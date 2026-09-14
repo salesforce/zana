@@ -46,6 +46,7 @@ import { fleetMatchesLane, resolveMonitorSelection, type FleetItem } from './fle
 import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
 import { openScheduleFromAgents } from './scheduler/openScheduledLive.js';
 import { groupSessionsByTeamRun } from '../lib/teamRunOrganization.js';
+import { PaneEmptyState } from './PaneEmptyState.js';
 
 /**
  * The Agents "List" view: a live monitor — item list (left), the selected
@@ -189,11 +190,12 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
 
   if (cards.length === 0) {
     return (
-      <div className="agent-monitor agent-monitor--empty">
-        <Bot size={28} aria-hidden="true" />
-        <h4>No agents</h4>
-        <p>Start an agent and it will appear here to watch live.</p>
-      </div>
+      <PaneEmptyState
+        className="agent-monitor agent-monitor--empty"
+        art="agents"
+        title="No agents"
+        hint="Start an agent and it will appear here to watch live."
+      />
     );
   }
 
@@ -493,7 +495,7 @@ function AgentMonitorSession({
   const canSummarize = isClaudeProfile(t.profile);
   const canFollowupClose = canCloseWithFollowup(t);
   const [summarizing, setSummarizing] = useState(false);
-  const [closingWithFollowup, setClosingWithFollowup] = useState(false);
+  const closingWithFollowup = useData((s) => s.closingFollowupIds.has(t.id));
   const summarize = async () => {
     if (summarizing) return;
     setSummarizing(true);
@@ -505,18 +507,12 @@ function AgentMonitorSession({
   };
   const closeWithFollowup = async () => {
     if (closingWithFollowup) return;
-    setClosingWithFollowup(true);
-    try {
-      await closeAgentWithFollowup(t, card.projectId);
-    } finally {
-      setClosingWithFollowup(false);
-    }
+    await closeAgentWithFollowup(t, card.projectId);
   };
   const prevId = useRef(t.id);
   if (prevId.current !== t.id) {
     prevId.current = t.id;
     if (summarizing) setSummarizing(false);
-    if (closingWithFollowup) setClosingWithFollowup(false);
   }
 
   const monitorActions = (

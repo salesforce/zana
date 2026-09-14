@@ -419,6 +419,26 @@ describe('conversation and banners', () => {
     expect(html).toContain('Show more');
   });
 
+  it('turns assistant inline filenames into file-preview chips', () => {
+    const html = renderToStaticMarkup(
+      <ConversationRow
+        threadId="t1"
+        filePathHints={['docs/student-to-software-engineer.md']}
+        row={{
+          ...workBase,
+          id: 'a-chip',
+          kind: 'conversation',
+          role: 'assistant',
+          text: 'Wrote `student-to-software-engineer.md` with the 5 steps.',
+          attachments: null,
+          turnRequest: null
+        }}
+      />
+    );
+    expect(html).toContain('inbox-md-file-chip');
+    expect(html).toContain('title="docs/student-to-software-engineer.md"');
+  });
+
   it('does not offer Preview without a thread id or a leading file path', () => {
     const dump = `docs/architecture/high-level-architecture.md\n\n# Title\n${'x'.repeat(2100)}`;
     const noThread = renderToStaticMarkup(

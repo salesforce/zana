@@ -10,6 +10,7 @@ export const DESKTOP_BROWSER_MAX_SNAPSHOT_DATA_URL_LENGTH = 8_388_608;
 export const DESKTOP_BROWSER_MAX_SELECTOR_LENGTH = 1024;
 export const DESKTOP_BROWSER_MAX_TYPED_TEXT_LENGTH = 8192;
 export const DESKTOP_BROWSER_MAX_EVAL_SCRIPT_LENGTH = 16_384;
+export const DESKTOP_BROWSER_MAX_FIND_TEXT_LENGTH = 1024;
 
 export interface DesktopBrowserViewBounds {
   x: number;
@@ -92,6 +93,35 @@ export interface DesktopBrowserAttachRequest {
   url: string;
   bounds: DesktopBrowserViewBounds;
   visible: boolean;
+  threadId?: string;
+}
+
+export interface DesktopBrowserControlState {
+  tabId: string;
+  threadId: string;
+  control: {
+    leaseId: string;
+    controllerLabel: string;
+    expiresAt: number;
+  } | null;
+}
+
+export interface DesktopBrowserTarget {
+  hostId: string;
+  instanceId: string;
+  generation: string;
+}
+
+export interface DesktopBrowserRevealRequest {
+  tabId: string;
+  threadId: string;
+  desktopTarget?: DesktopBrowserTarget | null;
+}
+
+export interface DesktopBrowserImportCookiesRequest {
+  sourceId: string;
+  sourceProfileDirectory: string;
+  intoAutomation?: boolean;
 }
 
 export interface DesktopBrowserNavigateRequest {
@@ -137,6 +167,28 @@ export interface DesktopBrowserSnapshot {
   dataUrl: string | null;
 }
 
+export interface DesktopBrowserFindInPageRequest {
+  tabId: string;
+  text: string;
+  forward: boolean;
+  newSession: boolean;
+}
+
+export type DesktopBrowserStopFindAction = 'clearSelection' | 'keepSelection' | 'activateSelection';
+
+export interface DesktopBrowserStopFindInPageRequest {
+  tabId: string;
+  action: DesktopBrowserStopFindAction;
+}
+
+export interface DesktopBrowserFindResult {
+  tabId: string;
+  requestId: number;
+  activeMatchOrdinal: number;
+  matches: number;
+  finalUpdate: boolean;
+}
+
 export interface DesktopBrowserAutomationOpenRequest {
   threadId: string;
   tabId: string;
@@ -149,16 +201,29 @@ export interface DesktopBrowserAutomationTargetRef {
 }
 
 export function parseDesktopBrowserAttachRequest(value: unknown): ParseResult<DesktopBrowserAttachRequest> {
-  if (!isRecord(value) || extraKeys(value, ['tabId', 'url', 'bounds', 'visible'])) {
+  if (!isRecord(value) || extraKeys(value, ['tabId', 'url', 'bounds', 'visible', 'threadId'])) {
     return { success: false };
   }
   const tabId = parseBoundedString(value.tabId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
   const url = parseBoundedString(value.url, DESKTOP_BROWSER_MAX_URL_LENGTH);
   const bounds = parseBounds(value.bounds);
-  if (tabId === null || url === null || bounds === null || typeof value.visible !== 'boolean') {
+  const threadId =
+    value.threadId === undefined
+      ? undefined
+      : parseBoundedString(value.threadId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  if (
+    tabId === null ||
+    url === null ||
+    bounds === null ||
+    typeof value.visible !== 'boolean' ||
+    threadId === null
+  ) {
     return { success: false };
   }
-  return { success: true, data: { tabId, url, bounds, visible: value.visible } };
+  return {
+    success: true,
+    data: { tabId, url, bounds, visible: value.visible, ...(threadId ? { threadId } : {}) }
+  };
 }
 
 export function parseDesktopBrowserNavigateRequest(value: unknown): ParseResult<DesktopBrowserNavigateRequest> {
@@ -189,6 +254,67 @@ export function parseDesktopBrowserTabRef(value: unknown): ParseResult<DesktopBr
   const tabId = parseBoundedString(value.tabId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
   if (tabId === null) return { success: false };
   return { success: true, data: { tabId } };
+}
+
+const STOP_FIND_ACTIONS: readonly DesktopBrowserStopFindAction[] = [
+  'clearSelection',
+  'keepSelection',
+  'activateSelection'
+];
+
+export function parseDesktopBrowserFindInPageRequest(
+  value: unknown
+): ParseResult<DesktopBrowserFindInPageRequest> {
+  if (!isRecord(value) || extraKeys(value, ['tabId', 'text', 'forward', 'newSession'])) {
+    return { success: false };
+  }
+  const tabId = parseBoundedString(value.tabId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  const text = parseBoundedString(value.text, DESKTOP_BROWSER_MAX_FIND_TEXT_LENGTH, 1);
+  if (tabId === null || text === null || typeof value.forward !== 'boolean' || typeof value.newSession !== 'boolean') {
+    return { success: false };
+  }
+  return { success: true, data: { tabId, text, forward: value.forward, newSession: value.newSession } };
+}
+
+export function parseDesktopBrowserStopFindInPageRequest(
+  value: unknown
+): ParseResult<DesktopBrowserStopFindInPageRequest> {
+  if (!isRecord(value) || extraKeys(value, ['tabId', 'action'])) return { success: false };
+  const tabId = parseBoundedString(value.tabId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  if (
+    tabId === null
+    || typeof value.action !== 'string'
+    || !STOP_FIND_ACTIONS.includes(value.action as DesktopBrowserStopFindAction)
+  ) {
+    return { success: false };
+  }
+  return { success: true, data: { tabId, action: value.action as DesktopBrowserStopFindAction } };
+}
+
+export function parseDesktopBrowserFindResult(value: unknown): ParseResult<DesktopBrowserFindResult> {
+  if (
+    !isRecord(value)
+    || extraKeys(value, ['tabId', 'requestId', 'activeMatchOrdinal', 'matches', 'finalUpdate'])
+  ) {
+    return { success: false };
+  }
+  const tabId = parseBoundedString(value.tabId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  const requestId = parseInteger(value.requestId);
+  const activeMatchOrdinal = parseNonNegativeInteger(value.activeMatchOrdinal);
+  const matches = parseNonNegativeInteger(value.matches);
+  if (
+    tabId === null
+    || requestId === null
+    || activeMatchOrdinal === null
+    || matches === null
+    || typeof value.finalUpdate !== 'boolean'
+  ) {
+    return { success: false };
+  }
+  return {
+    success: true,
+    data: { tabId, requestId, activeMatchOrdinal, matches, finalUpdate: value.finalUpdate }
+  };
 }
 
 export function parseDesktopBrowserState(value: unknown): ParseResult<DesktopBrowserState> {
@@ -274,6 +400,89 @@ export function parseDesktopBrowserAutomationOpenRequest(
   return { success: true, data: { threadId, tabId, targetId, url } };
 }
 
+function parseDesktopBrowserTarget(value: unknown): DesktopBrowserTarget | null {
+  if (!isRecord(value) || extraKeys(value, ['hostId', 'instanceId', 'generation'])) return null;
+  const hostId = parseBoundedString(value.hostId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  const instanceId = parseBoundedString(value.instanceId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  const generation = parseBoundedString(value.generation, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  if (hostId === null || instanceId === null || generation === null) return null;
+  return { hostId, instanceId, generation };
+}
+
+export function parseDesktopBrowserRevealRequest(
+  value: unknown
+): ParseResult<DesktopBrowserRevealRequest> {
+  if (!isRecord(value) || extraKeys(value, ['tabId', 'threadId', 'desktopTarget'])) {
+    return { success: false };
+  }
+  const tabId = parseBoundedString(value.tabId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  const threadId = parseBoundedString(value.threadId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  if (tabId === null || threadId === null) return { success: false };
+  if (value.desktopTarget === undefined || value.desktopTarget === null) {
+    return { success: true, data: { tabId, threadId, desktopTarget: value.desktopTarget ?? null } };
+  }
+  const desktopTarget = parseDesktopBrowserTarget(value.desktopTarget);
+  if (desktopTarget === null) return { success: false };
+  return { success: true, data: { tabId, threadId, desktopTarget } };
+}
+
+export function parseDesktopBrowserControlState(
+  value: unknown
+): ParseResult<DesktopBrowserControlState> {
+  if (!isRecord(value) || extraKeys(value, ['tabId', 'threadId', 'control'])) {
+    return { success: false };
+  }
+  const tabId = parseBoundedString(value.tabId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  const threadId = parseBoundedString(value.threadId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  if (tabId === null || threadId === null) return { success: false };
+  if (value.control === null) {
+    return { success: true, data: { tabId, threadId, control: null } };
+  }
+  if (!isRecord(value.control) || extraKeys(value.control, ['leaseId', 'controllerLabel', 'expiresAt'])) {
+    return { success: false };
+  }
+  const leaseId = parseBoundedString(value.control.leaseId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  const controllerLabel = parseBoundedString(
+    value.control.controllerLabel,
+    DESKTOP_BROWSER_MAX_TITLE_LENGTH,
+    1
+  );
+  const expiresAt = parseInteger(value.control.expiresAt);
+  if (leaseId === null || controllerLabel === null || expiresAt === null || expiresAt <= 0) {
+    return { success: false };
+  }
+  return { success: true, data: { tabId, threadId, control: { leaseId, controllerLabel, expiresAt } } };
+}
+
+export function parseDesktopBrowserImportCookiesRequest(
+  value: unknown
+): ParseResult<DesktopBrowserImportCookiesRequest> {
+  if (
+    !isRecord(value)
+    || extraKeys(value, ['sourceId', 'sourceProfileDirectory', 'intoAutomation'])
+  ) {
+    return { success: false };
+  }
+  const sourceId = parseBoundedString(value.sourceId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
+  const sourceProfileDirectory = parseBoundedString(
+    value.sourceProfileDirectory,
+    DESKTOP_BROWSER_MAX_URL_LENGTH,
+    1
+  );
+  if (sourceId === null || sourceProfileDirectory === null) return { success: false };
+  if (value.intoAutomation !== undefined && typeof value.intoAutomation !== 'boolean') {
+    return { success: false };
+  }
+  return {
+    success: true,
+    data: {
+      sourceId,
+      sourceProfileDirectory,
+      ...(value.intoAutomation === true ? { intoAutomation: true } : {})
+    }
+  };
+}
+
 export type DesktopBrowserUnsubscribe = () => void;
 
 export interface DesktopBrowserApi {
@@ -286,6 +495,13 @@ export interface DesktopBrowserApi {
   stop(tabId: string): void;
   setBounds(request: DesktopBrowserSetBoundsRequest): void;
   setVisible(request: DesktopBrowserSetVisibleRequest): void;
+  setVisibleWithoutFocus?(request: DesktopBrowserSetVisibleRequest): void;
+  focus?(tabId: string): void;
+  findInPage?(request: DesktopBrowserFindInPageRequest): void;
+  stopFindInPage?(request: DesktopBrowserStopFindInPageRequest): void;
+  onFindResult?(listener: (result: DesktopBrowserFindResult) => void): DesktopBrowserUnsubscribe;
+  onAppCommand?(listener: (command: string) => void): DesktopBrowserUnsubscribe;
+  getControl?(tabId: string): Promise<DesktopBrowserControlState | null>;
   onState(listener: (state: DesktopBrowserState) => void): DesktopBrowserUnsubscribe;
   onOpenTab(listener: (request: DesktopBrowserOpenTabRequest) => void): DesktopBrowserUnsubscribe;
   onScopedOpenTab?(
@@ -298,4 +514,12 @@ export interface DesktopBrowserApi {
   registerAutomationTarget?(request: { targetId: string; tabId: string; threadId: string }): Promise<{ ok: boolean }>;
   unregisterAutomationTarget?(targetId: string): Promise<{ ok: boolean }>;
   stopAutomation?(targetId: string): Promise<{ ok: boolean }>;
+  onReveal?(listener: (request: DesktopBrowserRevealRequest) => void): DesktopBrowserUnsubscribe;
+  onControl?(listener: (state: DesktopBrowserControlState) => void): DesktopBrowserUnsubscribe;
+  listImportSources?(): Promise<{ sources: import('./browser-import.js').DesktopBrowserImportSource[] }>;
+  importCookies?(
+    request: DesktopBrowserImportCookiesRequest
+  ): Promise<import('./browser-import.js').DesktopBrowserImportOutcome>;
+  openFullDiskAccessSettings?(): Promise<{ ok: boolean }>;
+  releaseControl?(tabId: string): Promise<{ ok: boolean }>;
 }

@@ -29,6 +29,7 @@ import { TimelineDetailScroll } from './TimelineDetailScroll.js';
 import { stickyTurnRanges } from './timeline-sticky-user.js';
 import type { TimelineTitleActionHandler, TimelineTitleLinkHandler } from './TimelineTitleView.js';
 import type { PlanExecutionTask } from './plan-execution-card.js';
+import { collectTimelineFilePreviewPaths } from './timeline-file-preview-paths.js';
 
 const TITLE_OPTIONS = { summaryStyle: 'bundle' as const, workStyle: 'default' as const };
 
@@ -73,10 +74,13 @@ interface TimelineRowsProps {
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
   planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
+  filePathHints?: readonly string[];
 }
 
 export function TimelineRows(props: TimelineRowsProps) {
   const { rows, unreadRowId, nested, scopeActive = false, planExecution } = props;
+  const filePathHints = props.filePathHints ?? collectTimelineFilePreviewPaths(rows);
+  const rowProps = { ...props, filePathHints };
   const activeLatestBundleId = findActiveLatestBundleId(rows);
   const turns = stickyTurnRanges(rows);
   const latestUserRowId = !nested && turns.length > 0 ? rows[turns[turns.length - 1]!.start]?.id : null;
@@ -97,7 +101,7 @@ export function TimelineRows(props: TimelineRowsProps) {
             </div>
           ) : null}
           <TimelineRowView
-            {...props}
+            {...rowProps}
             row={row}
             title={title}
             activeLatestBundleId={activeLatestBundleId}
@@ -147,7 +151,8 @@ function TimelineRowView({
   onFork,
   messageActions,
   includePluginMessageActions,
-  planExecution
+  planExecution,
+  filePathHints
 }: TimelineRowsProps & {
   row: ThreadTimelineViewRow;
   title: TimelineTitle;
@@ -180,7 +185,8 @@ function TimelineRowView({
     threadIdle,
     onFork,
     messageActions,
-    includePluginMessageActions
+    includePluginMessageActions,
+    filePathHints
   };
 
   if (row.kind === 'conversation') {
@@ -197,6 +203,7 @@ function TimelineRowView({
         messageActions={messageActions}
         includePluginMessageActions={includePluginMessageActions}
         planExecution={planExecution}
+        filePathHints={filePathHints}
       />
     );
   }
@@ -255,6 +262,7 @@ function TimelineRowView({
         onFork={onFork}
         messageActions={messageActions}
         includePluginMessageActions={includePluginMessageActions}
+        filePathHints={filePathHints}
       />
     );
   }

@@ -8,6 +8,7 @@ import { listMessageActions, subscribePluginSlots } from '../../../plugins/plugi
 import { openPluginThreadPanel } from '../../../plugins/plugin-thread-panel.js';
 import { conversationImageSrc } from '../../../lib/prompt-attachments.js';
 import { extractInlineThreadImages, threadImageStubLabel } from './thread-inline-images.js';
+import { mergeLightboxItems, type ThreadLightboxItem } from './thread-image-lightbox.js';
 import { ThreadDisplayedImage } from './ThreadDisplayedImage.js';
 import { splitStreamingMarkdown } from './streaming-markdown-split.js';
 import { repairStreamingMarkdownTail } from './repair-streaming-markdown-tail.js';
@@ -50,7 +51,8 @@ export const ConversationRow = memo(function ConversationRow({
   onFork,
   messageActions,
   includePluginMessageActions = true,
-  planExecution
+  planExecution,
+  filePathHints
 }: {
   row: Extract<ThreadTimelineViewRow, { kind: 'conversation' }>;
   onCopy?: (text: string) => void;
@@ -63,6 +65,7 @@ export const ConversationRow = memo(function ConversationRow({
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
   planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
+  filePathHints?: readonly string[];
 }) {
   const testId = row.role === 'assistant' ? 'thread-assistant-text' : 'thread-user-text';
   const mentions = row.role === 'user' ? row.mentions : [];
@@ -95,6 +98,17 @@ export const ConversationRow = memo(function ConversationRow({
     }
     return refs;
   }, [extracted.images, row.attachments, row.role]);
+  const galleryItems = useMemo(() => {
+    const items: ThreadLightboxItem[] = [];
+    const seen = new Set<string>();
+    for (const image of imageRefs) {
+      const src = conversationImageSrc(projectId, image.path);
+      if (!src || seen.has(src)) continue;
+      seen.add(src);
+      items.push({ src, alt: image.name });
+    }
+    return items;
+  }, [imageRefs, projectId]);
   const fileNames = row.role === 'user' ? (row.attachments?.localFilePaths ?? []) : [];
   const previewPaths = useMemo(
     () => conversationFilePreviewPaths(row.text ?? '', fileNames),
@@ -305,6 +319,7 @@ export const ConversationRow = memo(function ConversationRow({
                     projectId={projectId}
                     messageId={row.id}
                     threadMentions
+                    filePathHints={filePathHints}
                   />
                   <div className="thread-timeline-streaming-tail" data-testid="thread-streaming-tail">
                     <PluginMarkdownDirectives
@@ -313,6 +328,7 @@ export const ConversationRow = memo(function ConversationRow({
                       projectId={projectId}
                       messageId={`${row.id}:tail`}
                       threadMentions
+                      filePathHints={filePathHints}
                     />
                   </div>
                 </>
@@ -323,10 +339,11 @@ export const ConversationRow = memo(function ConversationRow({
                   projectId={projectId}
                   messageId={row.id}
                   threadMentions
+                  filePathHints={filePathHints}
                 />
               )
             ) : (
-              <MarkdownContent text={visibleText} breaks threadId={threadId} projectId={projectId} />
+              <MarkdownContent text={visibleText} breaks threadId={threadId} projectId={projectId} filePathHints={filePathHints} />
             )
           ) : null}
           {(threadId && previewPaths.length > 0 && !editing)
@@ -376,6 +393,7 @@ export const ConversationRow = memo(function ConversationRow({
         <ThreadImageLightbox
           src={lightbox.src}
           alt={lightbox.name}
+          items={mergeLightboxItems(galleryItems, { src: lightbox.src, alt: lightbox.name })}
           onClose={() => setLightbox(null)}
         />
       ) : null}

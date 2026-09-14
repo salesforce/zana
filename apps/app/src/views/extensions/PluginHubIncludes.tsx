@@ -50,30 +50,41 @@ export function PluginHubIncludes({ plugin }: { plugin: PluginAppEntry }) {
     return null;
   }
   return (
-    <section className="settings-section" data-testid="plugin-includes">
-      <h3>Includes</h3>
-      {lines.length > 0 ? (
-        <ul className="ext-hub-perm-list">
-          {lines.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      ) : null}
-      {skills.length > 0 ? (
-        <p className="settings-help">
-          Skills:{' '}
-          {skills.map((name, index) => (
-            <span key={name}>
-              {index > 0 ? ', ' : null}
-              <Link to={`${getSkillsRoutePath()}?q=${encodeURIComponent(name)}`}>{name}</Link>
-            </span>
-          ))}
-        </p>
-      ) : null}
-      {cli.length > 0 ? <p className="settings-help">CLI: {cli.map((name) => `zcc ${name}`).join(', ')}</p> : null}
-      {mcp.length > 0 ? (
-        <p className="settings-help">MCP: {mcp.map((server) => server.name).join(', ')}</p>
-      ) : null}
+    <section className="ext-plugin-section" data-testid="plugin-includes">
+      <h3>Capabilities</h3>
+      <dl className="ext-plugin-table">
+        {lines.map((line) => (
+          <div key={line}>
+            <dt>{line.replace(/\s+\(.*\)/, '').split(' (')[0] ?? line}</dt>
+            <dd>{line}</dd>
+          </div>
+        ))}
+        {skills.length > 0 ? (
+          <div>
+            <dt>Skills</dt>
+            <dd>
+              {skills.map((name, index) => (
+                <span key={name}>
+                  {index > 0 ? ', ' : null}
+                  <Link to={`${getSkillsRoutePath()}?q=${encodeURIComponent(name)}`}>{name}</Link>
+                </span>
+              ))}
+            </dd>
+          </div>
+        ) : null}
+        {cli.length > 0 ? (
+          <div>
+            <dt>CLI</dt>
+            <dd>{cli.map((name) => `zcc ${name}`).join(', ')}</dd>
+          </div>
+        ) : null}
+        {mcp.length > 0 ? (
+          <div>
+            <dt>MCP</dt>
+            <dd>{mcp.map((server) => server.name).join(', ')}</dd>
+          </div>
+        ) : null}
+      </dl>
     </section>
   );
 }

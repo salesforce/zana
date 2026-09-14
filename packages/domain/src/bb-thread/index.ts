@@ -32,6 +32,7 @@ export * from "./plugin-catalog-category.js";
 export * from "./plugin-cli.js";
 export * from "./plugin-icon.js";
 export * from "./plugin-id.js";
+export * from "./plugin-metadata.js";
 export * from "./plugin-manifest.js";
 export * from "./plugin-marketplace-entry.js";
 export * from "./plugin-sdk-version.js";

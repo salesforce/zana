@@ -133,7 +133,7 @@ export class MenubarController {
     let working = 0;
 
     for (const session of this.allLiveSessions()) {
-      const state = this.deps.agentStatus.get(session.id);
+      const state = attentionState(session, this.deps.agentStatus.get(session.id));
       if (!SURFACED.includes(state)) continue;
       if (state === 'blocked') needsYou++;
       else if (state === 'working') working++;
@@ -178,7 +178,7 @@ export class MenubarController {
     let needsYou = 0;
     let working = 0;
     for (const session of this.allLiveSessions()) {
-      const state = this.deps.agentStatus.get(session.id);
+      const state = attentionState(session, this.deps.agentStatus.get(session.id));
       if (state === 'blocked') needsYou++;
       else if (state === 'working') working++;
     }
@@ -298,5 +298,20 @@ function clamp(v: number, lo: number, hi: number): number {
  * the `menubar:reply` handler re-checks the same gate authoritatively (Rule 1).
  */
 export function isRepliable(session: TerminalSession): boolean {
-  return !session.scheduled && !session.headless;
+  return !isBackgroundSession(session);
+}
+
+/** Same predicate as the Agents board `isBackgroundAgent`. */
+function isBackgroundSession(session: Pick<TerminalSession, 'scheduled' | 'headless'>): boolean {
+  return !!session.scheduled || !!session.headless;
+}
+
+/**
+ * Board-matching attention remap: a blocked scheduled/headless session never
+ * nags as Needs you (the board puts it in Working; `isRepliable` already
+ * refuses a menu-bar reply into a detached job).
+ */
+function attentionState(session: Pick<TerminalSession, 'scheduled' | 'headless'>, state: AgentState): AgentState {
+  if (state === 'blocked' && isBackgroundSession(session)) return 'working';
+  return state;
 }

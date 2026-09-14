@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   extractInlineThreadImages,
+  collectMarkdownLightboxItems,
   isDiskImagePath,
   isSafeImageDataUrl,
   shouldLiftMarkdownImageSrc,
@@ -57,5 +58,16 @@ describe('thread inline images', () => {
     expect(transformMarkdownMediaUrl('javascript:alert(1)', deny)).toBe('');
     expect(transformMarkdownMediaUrl('https://example.com/a.png', (url) => url))
       .toBe('https://example.com/a.png');
+  });
+
+  it('collects markdown images for lightbox galleries in document order', () => {
+    expect(
+      collectMarkdownLightboxItems(
+        '![cat](https://example.com/cat.png) and ![dog](https://example.com/dog.png)'
+      )
+    ).toEqual([
+      { src: 'https://example.com/cat.png', alt: 'cat' },
+      { src: 'https://example.com/dog.png', alt: 'dog' }
+    ]);
   });
 });

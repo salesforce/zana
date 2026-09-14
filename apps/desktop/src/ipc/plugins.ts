@@ -230,8 +230,8 @@ export function registerPluginsIpc(): void {
   );
   ctx.safeHandle(
     IPC.pluginApps.setSettings,
-    async (pluginId: string, values: Record<string, string | boolean | undefined>) => {
-      const payload: Record<string, string | boolean | null> = {};
+    async (pluginId: string, values: Record<string, string | number | boolean | undefined>) => {
+      const payload: Record<string, string | number | boolean | null> = {};
       for (const [key, value] of Object.entries(values)) {
         payload[key] = value === undefined ? null : value;
       }

@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductHttpContext } from '../../http/product-context.js';
-import { invokeHostSessionTool, isHostSessionTool, mergeHostSessionTooling } from './host-session-tools.js';
-import { setBrowserAutomationHost, type BrowserAutomationHost } from './browser-automation.js';
+import { invokeHostSessionTool, isHostSessionTool, mergeHostSessionTooling, HOST_SHARE_TOOL_NAMES } from './host-session-tools.js';
+import { HOST_SESSION_INSTRUCTION } from './host-session-tools.js';
 import { HOST_PREVIEW_FILE_TOOL_NAME } from './host-preview-file-tool.js';
 
 function hub() {
@@ -41,26 +41,6 @@ function ctx(over: Partial<ProductHttpContext> = {}): ProductHttpContext {
   } as unknown as ProductHttpContext;
 }
 
-const stubHost: BrowserAutomationHost = {
-  open: async () => ({ targetId: 'tgt_1', tabId: 'browser:1' }),
-  list: async () => [{ targetId: 'tgt_1', tabId: 'browser:1', url: 'https://a.test', title: 'A' }],
-  snapshot: async () => ({
-    targetId: 'tgt_1',
-    tabId: 'browser:1',
-    url: 'https://a.test',
-    title: 'A',
-    dataUrl: null
-  }),
-  click: async () => undefined,
-  type: async () => undefined,
-  evaluate: async () => 'ok',
-  close: async () => undefined
-};
-
-afterEach(() => {
-  setBrowserAutomationHost(null);
-});
-
 describe('invokeHostSessionTool', () => {
   it('answers inbox_push from the owning thread and ignores a forged projectId', async () => {
     const append = vi.fn(async (input: { projectId: string; sessionId?: string }) => ({
@@ -81,40 +61,6 @@ describe('invokeHostSessionTool', () => {
       comments: 'done'
     }));
     expect(append.mock.calls[0]?.[0]).not.toHaveProperty('question');
-  });
-
-  it('opens a browser tab on the owning thread and ignores a forged threadId', async () => {
-    const open = vi.fn(async () => ({ targetId: 'tgt_1', tabId: 'browser:1' }));
-    setBrowserAutomationHost({ ...stubHost, open });
-    const result = await invokeHostSessionTool(ctx(), {
-      name: 'browser_open',
-      threadId: 'thr-1',
-      projectId: 'proj-1',
-      input: { url: 'https://a.test', threadId: 'other-thread' }
-    });
-    expect(result.success).toBe(true);
-    expect(open).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thr-1', url: 'https://a.test' }));
-  });
-
-  it('falls back to a hub event when browser automation is not in-process', async () => {
-    const product = ctx();
-    const result = await invokeHostSessionTool(product, {
-      name: 'browser_open',
-      threadId: 'thr-1',
-      projectId: 'proj-1',
-      input: { url: 'https://a.test' }
-    });
-    expect(result.success).toBe(true);
-    expect((product.hub as unknown as { events: Array<{ type: string }> }).events[0]?.type).toBe('threads:browser');
-    const closed = ctx();
-    (closed.hub as unknown as { size: () => number }).size = () => 0;
-    const undelivered = await invokeHostSessionTool(closed, {
-      name: 'browser_open',
-      threadId: 'thr-1',
-      projectId: 'proj-1',
-      input: { url: 'https://a.test' }
-    });
-    expect(undelivered.success).toBe(false);
   });
 
   it('lists and writes library docs under the owning project', async () => {
@@ -198,6 +144,10 @@ describe('invokeHostSessionTool', () => {
   });
 
   it('lists schedules for this project and emits run-now on the hub', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-data-'));
+    const previousDataDir = process.env.ZCC_DATA_DIR;
+    process.env.ZCC_DATA_DIR = dataDir;
+    try {
     const root = mkdtempSync(join(tmpdir(), 'zcc-sched-'));
     const dir = join(root, '.zcc', 'schedules');
     mkdirSync(dir, { recursive: true });
@@ -239,6 +189,10 @@ describe('invokeHostSessionTool', () => {
       input: { id: 'sched-1', enabled: false }
     });
     expect(toggled.success).toBe(true);
+    } finally {
+      if (previousDataDir === undefined) delete process.env.ZCC_DATA_DIR;
+      else process.env.ZCC_DATA_DIR = previousDataDir;
+    }
   });
 
   it('answers inbox_search and suggest_action', async () => {
@@ -282,50 +236,9 @@ describe('invokeHostSessionTool', () => {
     expect(rejected.success).toBe(false);
   });
 
-  it('drives browser snapshot/click/type/eval/close through the desktop host', async () => {
-    const host = {
-      ...stubHost,
-      snapshot: vi.fn(stubHost.snapshot),
-      click: vi.fn(stubHost.click),
-      type: vi.fn(stubHost.type),
-      evaluate: vi.fn(stubHost.evaluate),
-      close: vi.fn(stubHost.close),
-      list: vi.fn(stubHost.list)
-    };
-    setBrowserAutomationHost(host);
-    const product = ctx();
-    expect((await invokeHostSessionTool(product, {
-      name: 'browser_list', threadId: 'thr-1', projectId: 'proj-1', input: {}
-    })).success).toBe(true);
-    expect(host.list).toHaveBeenCalledWith('thr-1');
-    expect((await invokeHostSessionTool(product, {
-      name: 'browser_snapshot', threadId: 'thr-1', projectId: 'proj-1', input: { targetId: 'tgt_1' }
-    })).success).toBe(true);
-    expect(host.snapshot).toHaveBeenCalledWith('tgt_1', 'thr-1');
-    expect((await invokeHostSessionTool(product, {
-      name: 'browser_click', threadId: 'thr-1', projectId: 'proj-1', input: { targetId: 'tgt_1', selector: 'button' }
-    })).success).toBe(true);
-    expect(host.click).toHaveBeenCalledWith('tgt_1', expect.objectContaining({ selector: 'button' }), 'thr-1');
-    expect((await invokeHostSessionTool(product, {
-      name: 'browser_type', threadId: 'thr-1', projectId: 'proj-1', input: { targetId: 'tgt_1', text: 'hi' }
-    })).success).toBe(true);
-    expect(host.type).toHaveBeenCalledWith('tgt_1', expect.objectContaining({ text: 'hi' }), 'thr-1');
-    expect((await invokeHostSessionTool(product, {
-      name: 'browser_eval', threadId: 'thr-1', projectId: 'proj-1', input: { targetId: 'tgt_1', script: '1+1' }
-    })).success).toBe(true);
-    expect(host.evaluate).toHaveBeenCalledWith('tgt_1', '1+1', 'thr-1');
-    expect((await invokeHostSessionTool(product, {
-      name: 'browser_close', threadId: 'thr-1', projectId: 'proj-1', input: { targetId: 'tgt_1' }
-    })).success).toBe(true);
-    expect(host.close).toHaveBeenCalledWith('tgt_1', 'thr-1');
-    setBrowserAutomationHost(null);
-    const missing = await invokeHostSessionTool(ctx(), {
-      name: 'browser_snapshot',
-      threadId: 'thr-1',
-      projectId: 'proj-1',
-      input: { targetId: 'tgt_1' }
-    });
-    expect(missing.success).toBe(false);
+  it('does not pack native browser tools; agents drive tabs through zcc browser', () => {
+    expect(HOST_SESSION_INSTRUCTION).not.toContain('browser_open');
+    expect(HOST_SHARE_TOOL_NAMES).not.toContain('browser_open');
   });
 
   it('reports unsupported for names that are not host SHARE tools', async () => {

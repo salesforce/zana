@@ -5,7 +5,7 @@ Electron guests.
 
 - Manifest: `package.json` → `zcc` (not `extension.json`)
 - Skills: `zcc.skills` directory roots (`skills/<name>/SKILL.md`), default `["skills"]`
-- MCP: `zcc.mcpServers` map (Claude CLI); host namespaces `plugin:<id>:<name>`
+- MCP: `zcc.mcpServers` map (Claude CLI / PTY); host namespaces `plugin:<id>:<name>`. Conversation threads use `zcc.agents.registerTool` instead (bb-bridge). There is no runtime `registerMcpServer`.
 - Extra: `zcc.extra` opaque bag (not executed)
 - Server: `zcc.server` loads **in-process** on `apps/server` via `ZccPluginApi`
 - App: `zcc.app` registers **slots** with `definePluginApp`
@@ -50,6 +50,7 @@ them elsewhere.
 | `provider-pi` | Pi thread provider |
 | `provider-acp` | ACP thread provider (Cursor and OpenCode) |
 | `custom-instructions` | Project custom instructions |
+| `memory` | Durable global and project memory |
 | `ask-user-question` | Agent questions that surface in the Inbox |
 | `plugin-guide` | Plugin Guide — annotated SDK surface map under Plugins |
 
@@ -66,16 +67,16 @@ or `zcc plugin install <name>`):
 | `side-chat` | Side chat |
 | `inline-vis` | Inline visualizations |
 | `provider-retry` | Provider retry |
-| `memory` | Durable memory |
 | `monaco-editor` | Thread code editor (does not replace Explorer) |
 | `pdf-preview` | Thread PDF viewer |
 | `keep-awake` | Host keep-awake |
+| `browser-automation` | Opt-in DevBrowser desktop and local headless sessions |
 | `secrets` | Host secrets |
 | `connect` | Host connect |
 
-Packages that live under repo `plugins/` today include `docs`, `plugin-guide`,
-and `salesforce`; other official plugins may ship from the catalog without a
-tree copy.
+Packages that live under repo `plugins/` today include `docs`, `memory`,
+`plugin-guide`, and `salesforce`; other official plugins may ship from the
+catalog without a tree copy.
 
 ## CLI
 
