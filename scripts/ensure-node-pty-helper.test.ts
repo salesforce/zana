@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -21,6 +21,7 @@ describe('ensure-node-pty-helper', () => {
 
   it('makes the Unix spawn-helper executable when present', () => {
     if (process.platform === 'win32') return;
+    if (!existsSync(nodePtySpawnHelperPath())) return;
     expect(ensureNodePtySpawnHelperExecutable()).toBe(true);
   });
 

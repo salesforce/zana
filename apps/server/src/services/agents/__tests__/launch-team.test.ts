@@ -179,21 +179,28 @@ vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
 }));
 
 // launchTeam's execution preflight probes each harness's installed CLI version
-// via verifyHarnesses (a real `<binary> --version` exec). Pin it to the
-// evidence-registry's approved versions so structured-routing assertions are
-// deterministic regardless of what's actually installed on the machine
-// running the suite (see evidence-registry.ts's per-family cliVersion pins).
+// via installedHarnessVersion → verifyHarnesses (a real `<binary> --version`
+// exec). Pin both exports: installedHarnessVersion calls verifyHarnesses in
+// the same module, so mocking only the named export still execs the real
+// probe on CI machines that don't have OpenCode/Grok/Mastra Code installed.
 vi.mock('@zana-ai/zcc-host-daemon/harness/harness-verify', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@zana-ai/zcc-host-daemon/harness/harness-verify')>();
+  const verifyHarnesses = async () => ([
+    { family: 'claude', label: 'Claude Code', binary: 'claude', enabled: true, alwaysEnabled: true, installed: true, normalizedVersion: '2.1.220' },
+    { family: 'cursor', label: 'Cursor', binary: 'cursor', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '2026.01.23' },
+    { family: 'codex', label: 'Codex', binary: 'codex', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.140.0' },
+    { family: 'pi', label: 'PI', binary: 'pi', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.52.12' },
+    { family: 'opencode', label: 'OpenCode', binary: 'opencode', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '1.18.10' },
+    { family: 'grok', label: 'Grok Build', binary: 'grok', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '1.0.24' },
+    { family: 'mastracode', label: 'Mastra Code', binary: 'mastracode', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.38.0' }
+  ]);
   return {
     ...actual,
-    verifyHarnesses: async () => ([
-      { family: 'claude', label: 'Claude Code', binary: 'claude', enabled: true, alwaysEnabled: true, installed: true, normalizedVersion: '2.1.220' },
-      { family: 'cursor', label: 'Cursor', binary: 'cursor', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '2026.01.23' },
-      { family: 'codex', label: 'Codex', binary: 'codex', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.140.0' },
-      { family: 'pi', label: 'PI', binary: 'pi', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.52.12' },
-      { family: 'opencode', label: 'OpenCode', binary: 'opencode', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '1.18.10' }
-    ])
+    verifyHarnesses,
+    installedHarnessVersion: async (_config: unknown, adapterId: string) =>
+      actual.verifiableHarnessVersion(
+        (await verifyHarnesses()).find(({ family }) => family === adapterId)
+      )
   };
 });
 
