@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, MAX_USAGE_OBSERVATIONS_PER_EXECUTION } from '../store.js';
+import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS } from '../store.js';
 import { usageRollup } from '../contracts.js';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../../launch/team-lifecycle-store.js';
 
@@ -1097,10 +1097,11 @@ describe('execution store', () => {
   }));
 
   it('compacts usage observations into a durable monotonic baseline beyond cap', async () => fixture(async (filePath) => {
-    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const observationCap = 3;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', maxUsageObservationsPerExecution: observationCap });
     const claimed = await store.claim(request());
     if (claimed.outcome !== 'claimed') throw new Error('expected claim');
-    for (let sequence = 1; sequence <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION + 2; sequence += 1) {
+    for (let sequence = 1; sequence <= observationCap + 2; sequence += 1) {
       await store.appendUsageObservation(claimed.record.id, {
         observationId: `o-${sequence}`, executionAttempt: 1, role: 'worker', slotId: 'slot-1', sessionId: 'worker', workAttempt: 0,
         claimGeneration: 0, adapterEpoch: 0, sampleKind: 'heartbeat', sequence, provider: 'p', routingIdentity: 'r',
@@ -1108,20 +1109,21 @@ describe('execution store', () => {
       });
     }
     const record = await store.get(claimed.record.id);
-    expect(record?.usageObservations).toHaveLength(MAX_USAGE_OBSERVATIONS_PER_EXECUTION);
+    expect(record?.usageObservations).toHaveLength(observationCap);
     expect(record?.usageBaseline).toMatchObject({ inputTokens: 2, providerCostUsd: 0.02, observationCount: 2 });
-    expect(usageRollup(record!.usageObservations!, record!.usageBaseline)).toMatchObject({ inputTokens: MAX_USAGE_OBSERVATIONS_PER_EXECUTION + 2, observationCount: MAX_USAGE_OBSERVATIONS_PER_EXECUTION + 2 });
+    expect(usageRollup(record!.usageObservations!, record!.usageBaseline)).toMatchObject({ inputTokens: observationCap + 2, observationCount: observationCap + 2 });
   }));
 
   it('preserves last cumulative cursor when a compacted usage identity returns', async () => fixture(async (filePath) => {
-    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const observationCap = 3;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', maxUsageObservationsPerExecution: observationCap });
     const claimed = await store.claim(request());
     await store.appendUsageObservation(claimed.record.id, {
       observationId: 'returning-1', executionAttempt: 1, role: 'worker', slotId: 'slot-1', sessionId: 'returning', workAttempt: 0,
       claimGeneration: 0, adapterEpoch: 0, sampleKind: 'heartbeat', sequence: 1, provider: 'p', routingIdentity: 'returning-route',
       cumulative: { inputTokens: 10 }, completeness: 'complete', observedAt: 1
     });
-    for (let sequence = 1; sequence <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION; sequence += 1) {
+    for (let sequence = 1; sequence <= observationCap; sequence += 1) {
       await store.appendUsageObservation(claimed.record.id, {
         observationId: `other-${sequence}`, executionAttempt: 1, role: 'worker', slotId: 'slot-2', sessionId: 'other', workAttempt: 0,
         claimGeneration: 0, adapterEpoch: 0, sampleKind: 'heartbeat', sequence, provider: 'p', routingIdentity: 'other-route',
@@ -1134,7 +1136,7 @@ describe('execution store', () => {
       cumulative: { inputTokens: 15 }, completeness: 'complete', observedAt: 2_000
     });
     expect(returned.observation.delta).toEqual({ inputTokens: 5 });
-    expect(usageRollup(returned.record.usageObservations!, returned.record.usageBaseline).inputTokens).toBe(1_015);
+    expect(usageRollup(returned.record.usageObservations!, returned.record.usageBaseline).inputTokens).toBe(18);
   }));
 
   it('records one immutable host-issued authorization context', async () => fixture(async (filePath) => {
