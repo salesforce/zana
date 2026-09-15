@@ -384,6 +384,7 @@ export interface McpServerOptions {
    */
   launchTeam?: RegisterLaunchTeamToolOpts['launchTeam'];
   authorizeTeamLaunch?: RegisterLaunchTeamToolOpts['authorizeTeamLaunch'];
+  evaluateTeamAdmission?: RegisterLaunchTeamToolOpts['evaluateAdmission'];
   cancelTeamLaunch?: RegisterLaunchTeamToolOpts['cancelTeamLaunch'];
   getTeamLaunch?: RegisterLaunchTeamToolOpts['getTeamLaunch'];
   reportTeamTask?: RegisterLaunchTeamToolOpts['reportTeamTask'];
@@ -543,6 +544,7 @@ function buildProjectMcpServer(opts: {
   listTeams?: McpServerOptions['listTeams'];
   launchTeam?: McpServerOptions['launchTeam'];
   authorizeTeamLaunch?: McpServerOptions['authorizeTeamLaunch'];
+  evaluateTeamAdmission?: McpServerOptions['evaluateTeamAdmission'];
   cancelTeamLaunch?: McpServerOptions['cancelTeamLaunch'];
   getTeamLaunch?: McpServerOptions['getTeamLaunch'];
   reportTeamTask?: McpServerOptions['reportTeamTask'];
@@ -784,6 +786,7 @@ function buildProjectMcpServer(opts: {
       projectId: opts.projectId,
       launchTeam: opts.launchTeam,
       authorizeTeamLaunch: opts.authorizeTeamLaunch,
+      evaluateAdmission: opts.evaluateTeamAdmission,
       cancelTeamLaunch: opts.cancelTeamLaunch,
       getTeamLaunch: opts.getTeamLaunch,
       reportTeamTask: opts.reportTeamTask,
@@ -1746,6 +1749,7 @@ async function handleRequest(
     listTeams: opts.listTeams,
     launchTeam: opts.launchTeam,
     authorizeTeamLaunch: opts.authorizeTeamLaunch,
+    evaluateTeamAdmission: opts.evaluateTeamAdmission,
     cancelTeamLaunch: opts.cancelTeamLaunch,
     getTeamLaunch: opts.getTeamLaunch,
     reportTeamTask: opts.reportTeamTask,

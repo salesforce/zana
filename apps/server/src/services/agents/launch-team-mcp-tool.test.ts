@@ -63,6 +63,25 @@ const structuredLaunchArgs = {
 };
 
 describe('registerLaunchTeamTool', () => {
+  it('revalidates admission digest between authorization and launch', async () => {
+    const { server, tools } = fakeServer();
+    let calls = 0;
+    const launchTeam = vi.fn();
+    registerLaunchTeamTool(server as never, makeOpts({
+      launchTeam,
+      authorizeTeamLaunch: vi.fn(() => ({ ok: true, value: { teamId: 'squad', projectId: 'p1', slots: [], admissionDigest: 'digest-1' } })),
+      evaluateAdmission: vi.fn(async () => ({ ready: true, digest: `digest-${++calls}` }))
+    }));
+    const authorized = await tools.get('authorize_team_launch')!({
+      teamId: 'squad', launchRequestId: 'request-structured', slots: [{ initialTask: 'Review exact bytes' }]
+    });
+    const digest = JSON.parse(text(authorized)).admissionDigest;
+    const result = await tools.get('launch_team')!({ ...structuredLaunchArgs, admissionDigest: digest });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('Team admission changed after authorization');
+    expect(launchTeam).not.toHaveBeenCalled();
+  });
+
   it('registers the launch_team tool', () => {
     const { server, tools } = fakeServer();
     registerLaunchTeamTool(server as never, makeOpts());

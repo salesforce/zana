@@ -454,12 +454,14 @@ export class PtyManager extends EventEmitter {
   }
 
   /** Resolve only after an async backend owns a real execution handle. */
-  waitForReady(sessionId: string): Promise<TerminalSession> {
+  waitForReady(sessionId: string, timeoutMs?: number): Promise<TerminalSession> {
     const current = this.getSession(sessionId);
     if (!current) return Promise.reject(new Error('terminal failed before execution handle was ready'));
     if (current.status === 'running') return Promise.resolve(current);
     return new Promise((resolve, reject) => {
+      let timer: NodeJS.Timeout | undefined;
       const cleanup = () => {
+        if (timer) clearTimeout(timer);
         this.off('sessionUpdated', onUpdate);
         this.off('exit', onExit);
       };
@@ -477,6 +479,12 @@ export class PtyManager extends EventEmitter {
       };
       this.on('sessionUpdated', onUpdate);
       this.on('exit', onExit);
+      if (timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          cleanup();
+          reject(new Error(`terminal execution handle was not ready within ${timeoutMs}ms`));
+        }, Math.max(1, timeoutMs));
+      }
     });
   }
 
