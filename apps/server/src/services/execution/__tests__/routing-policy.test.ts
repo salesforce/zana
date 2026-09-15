@@ -29,6 +29,8 @@ describe('evaluateSlotEligibility', () => {
       .toMatchObject({ status: 'PASS' });
     expect(evaluateSlotEligibility({ version: 1, estimatedContextBytes: 10 }, { ...slot, provider: 'unknown', model: 'unknown' }, 200))
       .not.toHaveProperty('estimatedInputUsd');
+    expect(evaluateSlotEligibility({ version: 1 }, { ...slot, health: 'unavailable' }, 2_000))
+      .toMatchObject({ status: 'UNKNOWN' });
   });
 
   it('does not reject role-owned model unknown without a hard model requirement', () => {

@@ -1154,4 +1154,18 @@ describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
     expect(assignments).toMatchObject([{ workUnitId: 'qualified', slotId: 'beta' }]);
     expect(updated.workUnits?.find((unit) => unit.id === 'impossible')).toMatchObject({ state: 'FAILED', failureCode: 'NO_QUALIFIED_ROUTE' });
   }));
+
+  it('enforcement recomputes free qualified slots after an earlier claim', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'a', dependencies: [], files: ['a.txt'], routing: { version: 1, requiredRole: 'worker' } },
+      { id: 'b', title: 'B', task: 'b', dependencies: [], files: ['b.txt'], routing: { version: 1, requiredRole: 'worker' } }
+    ]);
+    const { assignments, record: updated } = await store.dispatchReady(record.id, { enforceRouting: true });
+    expect(updated.routingDecisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workUnitId: 'a', recommendedSlotId: 'slot-1' }),
+      expect.objectContaining({ workUnitId: 'b', recommendedSlotId: 'slot-2' })
+    ]));
+    expect(new Set(assignments.map((assignment) => assignment.slotId))).toEqual(new Set(['slot-1', 'slot-2']));
+  }));
 });

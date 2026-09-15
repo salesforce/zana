@@ -4340,6 +4340,8 @@ async function resolveTeamModelSnapshots(
     const roleOwnedModel = !!role.targetId && provider.nativeRolePinsModel;
     const target = provider.adapter.descriptor.targets?.models.find((candidate) => candidate.id === model.targetId);
     const verifiedProvider = verified.find((candidate) => candidate.family === provider.adapter.descriptor.id);
+    const providerAvailable = provider.adapter.descriptor.id === 'shell'
+      || (verifiedProvider?.enabled === true && verifiedProvider.installed);
     return {
       // Execution MCP supplies opaque ordered tasks; index disambiguates duplicate personas.
       slotId: slots[index].slotId,
@@ -4348,7 +4350,7 @@ async function resolveTeamModelSnapshots(
       ...(roleOwnedModel || !model.targetId ? {} : { model: model.targetId }),
       ...(model.level ? { level: model.level } : {}),
       ...(target?.level ? { level: target.level } : {}),
-      health: provider.adapter.descriptor.id === 'shell' || verifiedProvider?.enabled && verifiedProvider.installed ? 'available' as const : 'unknown' as const,
+      health: providerAvailable ? 'available' as const : 'unknown' as const,
       observedAt,
       maxAgeMs: 30_000,
       ...(roleOwnedModel ? { roleOwnedModel: true } : {})

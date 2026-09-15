@@ -896,12 +896,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  async function mutateRecord(executionId: string, expectedStateVersion: number, operation: (record: ExecutionRecord, timestamp: number) => void, summary: string): Promise<ExecutionRecord> {
+  async function mutateRecord(executionId: string, expectedStateVersion: number | undefined, operation: (record: ExecutionRecord, timestamp: number) => void, summary: string): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record) throw new Error('execution not found');
-      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      if (expectedStateVersion !== undefined && record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
       assertActive(record);
       const timestamp = now();
       operation(record, timestamp);
@@ -1030,7 +1030,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
                 // bounded refresh and timeout before this becomes terminal.
                 continue;
               }
-              const qualified = candidates.filter((candidate) => candidate.status === 'PASS' && !busy.has(candidate.slotId)).sort((left, right) => {
+              const qualified = candidates.filter((candidate) => candidate.status === 'PASS' && freeSlots.some((slot) => slot.slotId === candidate.slotId)).sort((left, right) => {
                 if (left.estimatedInputUsd === undefined && right.estimatedInputUsd !== undefined) return 1;
                 if (left.estimatedInputUsd !== undefined && right.estimatedInputUsd === undefined) return -1;
                 return (left.estimatedInputUsd ?? 0) - (right.estimatedInputUsd ?? 0) || left.slotId.localeCompare(right.slotId);
@@ -1047,10 +1047,31 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
               decisionsChanged = true;
               recommendation = decision.recommendedSlotId;
               routeImpossible = candidates.length === 0 || candidates.every((candidate) => candidate.status === 'FAIL');
-            } else {
+            } else if (!opts?.enforceRouting) {
               const decision = record.routingDecisions?.find((candidate) => `${candidate.workUnitId}\0${candidate.attempt}\0${candidate.policyVersion}` === key);
               recommendation = decision?.recommendedSlotId;
               routeImpossible = !recommendation && (decision?.candidates.length === 0 || decision?.candidates.every((candidate) => candidate.status === 'FAIL')) === true;
+            } else {
+              // Shadow evidence is immutable. Enforcement must re-evaluate free
+              // slots, because availability changes without incrementing attempt.
+              const modelBySlot = new Map(record.resolvedModels.map((model) => [model.slotId, model]));
+              const candidates = workerSlots.map((slot) => {
+                const model = modelBySlot.get(slot.slotId);
+                const eligibility = evaluateSlotEligibility(unit.routing!, {
+                  slotId: slot.slotId, personaId: slot.personaId, provider: model?.provider, model: model?.model,
+                  level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,
+                  modalities: model?.modalities, maxContextBytes: model?.maxContextBytes, health: model?.health,
+                  observedAt: model?.observedAt, maxAgeMs: model?.maxAgeMs
+                });
+                return { slotId: slot.slotId, status: eligibility.status, estimatedInputUsd: eligibility.estimatedInputUsd };
+              });
+              const qualified = candidates.filter((candidate) => candidate.status === 'PASS' && freeSlots.some((slot) => slot.slotId === candidate.slotId)).sort((left, right) => {
+                if (left.estimatedInputUsd === undefined && right.estimatedInputUsd !== undefined) return 1;
+                if (left.estimatedInputUsd !== undefined && right.estimatedInputUsd === undefined) return -1;
+                return (left.estimatedInputUsd ?? 0) - (right.estimatedInputUsd ?? 0) || left.slotId.localeCompare(right.slotId);
+              });
+              recommendation = qualified[0]?.slotId;
+              routeImpossible = candidates.length === 0 || candidates.every((candidate) => candidate.status === 'FAIL');
             }
           }
           if (opts?.enforceRouting && routeImpossible) {
@@ -1099,6 +1120,25 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       }
       return { record: clone(record), assignments };
     });
+  }
+
+  async function replaceResolvedModels(executionId: string, resolvedModels: ResolvedModelSnapshotV1[]): Promise<ExecutionRecord> {
+    return mutateRecord(executionId, undefined, (record) => {
+      record.resolvedModels = resolvedModels.map(normalizeModelSnapshot);
+    }, 'Team route facts refreshed');
+  }
+
+  async function failRouteFacts(executionId: string): Promise<ExecutionRecord> {
+    return mutateRecord(executionId, undefined, (record, timestamp) => {
+      for (const unit of record.workUnits ?? []) {
+        if (!unit.routing || (unit.state !== 'READY' && unit.state !== 'CLAIMED')) continue;
+        unit.state = 'FAILED';
+        unit.failureCode = 'ROUTE_FACTS_UNAVAILABLE';
+        unit.failure = 'authorized worker route facts could not be refreshed';
+        unit.history.push({ action: 'failed', attempt: unit.attempt, at: timestamp, detail: unit.failure });
+      }
+      deriveReadiness(record);
+    }, 'Work routing facts unavailable');
   }
 
   async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string): Promise<ExecutionRecord> {
@@ -1619,7 +1659,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, releaseUndelivered, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {

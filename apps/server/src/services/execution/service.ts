@@ -17,6 +17,7 @@ const SNAPSHOT_TIMEOUT_MS = 15_000;
 /** Hard cap on event pages walked per snapshot (Rule 5: bound unbounded reads). */
 const MAX_SNAPSHOT_EVENT_PAGES = 1_000;
 const AUTO_FINALIZE_RETRY_MS = 1_000;
+const ROUTE_FACTS_TIMEOUT_MS = 15_000;
 
 export interface ExecutionCohortBinding extends ExecutionCohortAuthority {
   executionId: string;
@@ -309,6 +310,11 @@ export class ExecutionService {
     return evaluateTeamAdmission(input);
   }
 
+  private async evaluateResolvedAdmission(projectId: string, request: ExecutionRequestV1): Promise<TeamAdmissionResultV1> {
+    const input = await this.resolveAdmissionInput(projectId, request);
+    return evaluateTeamAdmission(input);
+  }
+
   private async withResolvedRouteFacts(projectId: string, request: ExecutionRequestV1): Promise<ExecutionRequestV1> {
     if (!this.deps.resolveTeamModelSnapshots) return request;
     return { ...request, resolvedModels: await this.deps.resolveTeamModelSnapshots(projectId, request) };
@@ -333,7 +339,7 @@ export class ExecutionService {
     let admission: TeamAdmissionResultV1;
     let issuedAuthorizationIds: string[] = [];
     try {
-      admission = await this.dryRun(projectId, resolvedRequest);
+      admission = await this.evaluateResolvedAdmission(projectId, resolvedRequest);
     } catch (error) {
       this.deps.logError?.(`Team admission input failed for ${projectId}:${request.launchRequestId}`, error);
       return { ok: false, code: 'ADMISSION_FAILED', message: 'Team admission could not be evaluated' };
@@ -445,7 +451,7 @@ export class ExecutionService {
       });
       let revalidatedAdmission: TeamAdmissionResultV1;
       try {
-        revalidatedAdmission = await this.dryRun(projectId, resolvedRequest);
+        revalidatedAdmission = await this.evaluateResolvedAdmission(projectId, resolvedRequest);
       } catch (error) {
         this.deps.logError?.(`Team admission revalidation failed for ${projectId}:${request.launchRequestId}`, error);
         await this.transitionOrCurrent(record, 'BLOCKED', 'warning', 'Team admission could not be revalidated');
@@ -680,7 +686,8 @@ export class ExecutionService {
       return invalidBound(new Error('no structured plan to dispatch — register a work DAG with execution.plan.register before execution.work.dispatch_ready'));
     }
     try {
-      const { record: updated, assignments } = await this.deps.store.dispatchReady(record.id, { enforceRouting: this.deps.routingEnforcementEnabled?.() === true });
+      const routed = await this.refreshRouteFacts(record);
+      const { record: updated, assignments } = await this.deps.store.dispatchReady(routed.id, { enforceRouting: this.deps.routingEnforcementEnabled?.() === true });
       await this.pushAssignments(updated, assignments);
       await this.maybeAutoFinalize(updated.id);
       return { ok: true as const, value: updated };
@@ -784,11 +791,36 @@ export class ExecutionService {
    */
   private async cascadeDispatch(executionId: string, deprioritizeSlotId?: string): Promise<void> {
     try {
-      const { record, assignments } = await this.deps.store.dispatchReady(executionId, {
+      const existing = await this.deps.store.get(executionId);
+      if (!existing) return;
+      const routed = await this.refreshRouteFacts(existing);
+      const { record, assignments } = await this.deps.store.dispatchReady(routed.id, {
         ...(deprioritizeSlotId ? { deprioritizeSlotId } : {}), enforceRouting: this.deps.routingEnforcementEnabled?.() === true
       });
       await this.pushAssignments(record, assignments);
+      if (this.deps.routingEnforcementEnabled?.() === true) await this.maybeAutoFinalize(record.id);
     } catch { /* best-effort */ }
+  }
+
+  private async refreshRouteFacts(record: ExecutionRecord): Promise<ExecutionRecord> {
+    if (this.deps.routingEnforcementEnabled?.() !== true || !record.workUnits?.some((unit) => unit.routing)) return record;
+    if (!this.deps.resolveTeamModelSnapshots || !routeFactsNeedRefresh(record)) return record;
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      const resolvedModels = await Promise.race([
+        Promise.resolve(this.deps.resolveTeamModelSnapshots(record.projectId, { teamId: record.teamId, slots: record.request.slots })),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('route facts timed out')), ROUTE_FACTS_TIMEOUT_MS); })
+      ]);
+      if (!hasUniqueModelSlots(resolvedModels)) throw new Error('duplicate resolved model slot');
+      return this.deps.store.replaceResolvedModels(record.id, resolvedModels);
+    } catch (error) {
+      this.deps.logError?.(`Team route facts refresh failed for ${record.id}`, error);
+      const failed = await this.deps.store.failRouteFacts(record.id);
+      await this.maybeAutoFinalize(failed.id);
+      throw error;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   /**
@@ -1873,6 +1905,12 @@ function hasUniqueModelSlots(models: readonly ResolvedModelSnapshotV1[]): boolea
     slots.add(model.slotId);
   }
   return true;
+}
+
+function routeFactsNeedRefresh(record: ExecutionRecord, now = Date.now()): boolean {
+  return record.resolvedModels.length === 0 || record.resolvedModels.some((model) =>
+    model.observedAt === undefined || model.maxAgeMs === undefined || now < model.observedAt || now - model.observedAt > model.maxAgeMs
+  );
 }
 
 
