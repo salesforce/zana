@@ -82,6 +82,66 @@ describe('registerLaunchTeamTool', () => {
     expect(launchTeam).not.toHaveBeenCalled();
   });
 
+  it('revalidates admission with the same authorized slot shape', async () => {
+    const { server, tools } = fakeServer();
+    const evaluateAdmission = vi.fn(async () => ({ ready: true, digest: 'digest-1' }));
+    const launchTeam = vi.fn((): Result<any> => ({ ok: true, value: { launched: 1, cohortId: 'cohort-1' } }));
+    registerLaunchTeamTool(server as never, makeOpts({ evaluateAdmission, launchTeam }));
+    await tools.get('launch_team')!({ ...structuredLaunchArgs, admissionDigest: 'digest-1' });
+    expect(evaluateAdmission).toHaveBeenCalledWith({
+      projectId: 'p1', teamId: 'squad', slots: structuredLaunchArgs.slots, policy: {}
+    });
+    expect(launchTeam).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when admission evaluation rejects', async () => {
+    const { server, tools } = fakeServer();
+    const authorizeTeamLaunch = vi.fn();
+    registerLaunchTeamTool(server as never, makeOpts({
+      authorizeTeamLaunch,
+      evaluateAdmission: vi.fn(async () => { throw new Error('inventory secret'); })
+    }));
+    const result = await tools.get('authorize_team_launch')!({
+      teamId: 'squad', launchRequestId: 'request-structured', slots: [{ initialTask: 'Review exact bytes' }]
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('Team admission could not be evaluated');
+    expect(text(result)).not.toContain('inventory secret');
+    expect(authorizeTeamLaunch).not.toHaveBeenCalled();
+  });
+
+  it('revokes supplied authorizations when admission revalidation rejects', async () => {
+    const { server, tools } = fakeServer();
+    const launchTeam = vi.fn();
+    const revokeTeamAuthorizations = vi.fn();
+    registerLaunchTeamTool(server as never, makeOpts({
+      launchTeam, revokeTeamAuthorizations,
+      evaluateAdmission: vi.fn(async () => { throw new Error('inventory secret'); })
+    }));
+    const result = await tools.get('launch_team')!({ ...structuredLaunchArgs, admissionDigest: 'digest-1' });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('Team admission could not be revalidated');
+    expect(revokeTeamAuthorizations).toHaveBeenCalledWith({
+      callerPrincipalId: 'caller', projectId: 'p1', teamId: 'squad',
+      launchRequestId: 'request-structured', slots: structuredLaunchArgs.slots
+    });
+    expect(launchTeam).not.toHaveBeenCalled();
+  });
+
+  it('revokes supplied authorizations when launch throws', async () => {
+    const { server, tools } = fakeServer();
+    const revokeTeamAuthorizations = vi.fn();
+    registerLaunchTeamTool(server as never, makeOpts({
+      revokeTeamAuthorizations,
+      launchTeam: vi.fn(async () => { throw new Error('transport secret'); })
+    }));
+    const result = await tools.get('launch_team')!(structuredLaunchArgs);
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('Team launch could not be completed');
+    expect(text(result)).not.toContain('transport secret');
+    expect(revokeTeamAuthorizations).toHaveBeenCalledOnce();
+  });
+
   it('registers the launch_team tool', () => {
     const { server, tools } = fakeServer();
     registerLaunchTeamTool(server as never, makeOpts());

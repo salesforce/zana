@@ -72,7 +72,7 @@ export interface TeamAdmissionInput {
   sourceBytes?: number;
   requiredSkills?: readonly string[];
   requiredMcpServers?: readonly string[];
-  requiredModels?: readonly string[];
+  requiredModels?: readonly AdmissionModelRequirement[];
   requiredProviders?: readonly string[];
   budget?: AdmissionBudgetV1;
   inventory?: AdmissionCapabilityInventoryV1;
@@ -82,7 +82,7 @@ export interface TeamAdmissionInput {
 export interface TeamAdmissionRequirements {
   requiredSkills?: readonly string[];
   requiredMcpServers?: readonly string[];
-  requiredModels?: readonly string[];
+  requiredModels?: readonly AdmissionModelRequirement[];
   requiredProviders?: readonly string[];
   budget?: AdmissionBudgetV1;
 }
@@ -90,10 +90,16 @@ export interface TeamAdmissionRequirements {
 export interface TeamAdmissionInventorySources {
   listSkills: () => Promise<readonly { name: string; enabled: boolean }[]>;
   listMcpServers: () => Promise<readonly { name: string; enabled: boolean }[]>;
-  modelHealth: (ids: readonly string[]) => Promise<readonly { id: string; provider: string; status: 'available' | 'unavailable' | 'unknown' }[]>;
+  modelHealth: (models: readonly AdmissionModelRequirement[]) => Promise<readonly { id: string; provider: string; status: 'available' | 'unavailable' | 'unknown' }[]>;
   providerHealth: (ids: readonly string[]) => Promise<readonly { id: string; status: 'available' | 'unavailable' | 'unknown' }[]>;
   now?: () => number;
   maxAgeMs?: number;
+  onError?: (source: 'skills' | 'mcpServers' | 'models' | 'providers', error: unknown) => void;
+}
+
+export interface AdmissionModelRequirement {
+  id: string;
+  provider: string;
 }
 
 export interface TeamAdmissionResultV1 {
@@ -105,6 +111,14 @@ export interface TeamAdmissionResultV1 {
 }
 
 const MAX_ADMISSION_REQUIREMENTS = 100;
+const DEFAULT_INVENTORY_MAX_AGE_MS = 30_000;
+const MAX_INVENTORY_MAX_AGE_MS = 5 * 60_000;
+
+class PlanValidationError extends Error {
+  constructor(readonly check: 'dag' | 'file', message: string) {
+    super(message);
+  }
+}
 
 /** Pure Team admission policy used by preview and launch. Required non-PASS checks fail closed. */
 export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionResultV1 {
@@ -119,8 +133,9 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
     add({ code: 'FILE_SCOPES_VALID', status: input.workUnits ? 'PASS' : 'SKIPPED', required: !!input.workUnits, message: input.workUnits ? 'File scopes are valid' : 'No file scopes supplied' });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    add({ code: 'DAG_VALID', status: message.includes('file scope') ? 'PASS' : 'FAIL', required: true, message });
-    add({ code: 'FILE_SCOPES_VALID', status: message.includes('file scope') ? 'FAIL' : 'UNKNOWN', required: true, message });
+    const check = error instanceof PlanValidationError ? error.check : 'dag';
+    add({ code: 'DAG_VALID', status: check === 'dag' ? 'FAIL' : 'UNKNOWN', required: true, message });
+    add({ code: 'FILE_SCOPES_VALID', status: check === 'file' ? 'FAIL' : 'UNKNOWN', required: true, message });
   }
   add({
     code: 'SLOT_CAPACITY', status: input.slotCount > 0 && input.slotCount <= input.maxSlots ? 'PASS' : 'FAIL', required: true,
@@ -128,12 +143,18 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
   });
 
   const now = input.now ?? Date.now();
-  const inventoryFresh = !!input.inventory && input.inventory.maxAgeMs >= 0
-    && now - input.inventory.observedAt <= input.inventory.maxAgeMs;
-  capabilityChecks('SKILL_AVAILABLE', bounded(input.requiredSkills), input.inventory?.skills, inventoryFresh, add);
-  capabilityChecks('MCP_AVAILABLE', bounded(input.requiredMcpServers), input.inventory?.mcpServers, inventoryFresh, add);
-  healthChecks('MODEL_HEALTH', bounded(input.requiredModels), input.inventory?.models, inventoryFresh, add);
-  healthChecks('PROVIDER_HEALTH', bounded(input.requiredProviders), input.inventory?.providers, inventoryFresh, add);
+  const inventoryAge = input.inventory ? now - input.inventory.observedAt : Number.NaN;
+  const inventoryFresh = !!input.inventory && Number.isFinite(input.inventory.maxAgeMs)
+    && Number.isFinite(inventoryAge) && inventoryAge >= 0 && input.inventory.maxAgeMs >= 0
+    && inventoryAge <= input.inventory.maxAgeMs;
+  const requiredSkills = boundedStrings(input.requiredSkills);
+  const requiredMcpServers = boundedStrings(input.requiredMcpServers);
+  const requiredModels = boundedModels(input.requiredModels);
+  const requiredProviders = boundedStrings(input.requiredProviders);
+  capabilityChecks('SKILL_AVAILABLE', requiredSkills, input.inventory?.skills, inventoryFresh, add);
+  capabilityChecks('MCP_AVAILABLE', requiredMcpServers, input.inventory?.mcpServers, inventoryFresh, add);
+  modelHealthChecks(requiredModels, input.inventory?.models, inventoryFresh, add);
+  healthChecks('PROVIDER_HEALTH', requiredProviders, input.inventory?.providers, inventoryFresh, add);
 
   const contextBytes = input.initialTasks.reduce((sum, value) => sum + Buffer.byteLength(value, 'utf8'), 0)
     + (normalizedPlan ?? input.workUnits ?? []).reduce((sum, unit) => sum + Buffer.byteLength(`${unit.title}\n${unit.task}\n${unit.verification?.join('\n') ?? ''}`, 'utf8'), 0)
@@ -157,18 +178,18 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
     maxSlots: input.maxSlots,
     initialTasks: input.initialTasks,
     sourceBytes: input.sourceBytes,
-    requiredSkills: bounded(input.requiredSkills),
-    requiredMcpServers: bounded(input.requiredMcpServers),
-    requiredModels: bounded(input.requiredModels),
-    requiredProviders: bounded(input.requiredProviders),
+    requiredSkills,
+    requiredMcpServers,
+    requiredModels,
+    requiredProviders,
     budget: input.budget,
     inventory: input.inventory && {
       version: input.inventory.version,
       maxAgeMs: input.inventory.maxAgeMs,
-      skills: input.inventory.skills,
-      mcpServers: input.inventory.mcpServers,
-      models: input.inventory.models,
-      providers: input.inventory.providers
+      skills: canonicalCapabilities(input.inventory.skills),
+      mcpServers: canonicalCapabilities(input.inventory.mcpServers),
+      models: [...input.inventory.models].sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`)),
+      providers: [...input.inventory.providers].sort((a, b) => a.id.localeCompare(b.id))
     }
   };
   return { version: 1, ready, digest: launchDigest({ version: 1, identity, estimate, checks }), estimate, checks };
@@ -181,35 +202,41 @@ export async function collectTeamAdmissionInventory(
 ): Promise<AdmissionCapabilityInventoryV1> {
   const observedAt = (sources.now ?? Date.now)();
   const [skills, mcpServers, models, providers] = await Promise.all([
-    safeInventory(() => sources.listSkills(), []),
-    safeInventory(() => sources.listMcpServers(), []),
-    safeInventory(() => sources.modelHealth(bounded(requirements.requiredModels)), []),
-    safeInventory(() => sources.providerHealth(bounded(requirements.requiredProviders)), [])
+    safeInventory('skills', () => sources.listSkills(), sources.onError),
+    safeInventory('mcpServers', () => sources.listMcpServers(), sources.onError),
+    safeInventory('models', () => sources.modelHealth(boundedModels(requirements.requiredModels)), sources.onError),
+    safeInventory('providers', () => sources.providerHealth(boundedStrings(requirements.requiredProviders)), sources.onError)
   ]);
+  const requiredSkills = new Set(boundedStrings(requirements.requiredSkills));
+  const requiredMcpServers = new Set(boundedStrings(requirements.requiredMcpServers));
+  const requiredModels = new Set(boundedModels(requirements.requiredModels).map(({ provider, id }) => `${provider}\0${id}`));
+  const requiredProviders = new Set(boundedStrings(requirements.requiredProviders));
   return {
     version: 1,
     observedAt,
-    maxAgeMs: Math.max(0, sources.maxAgeMs ?? 30_000),
-    skills: skills.slice(0, MAX_ADMISSION_REQUIREMENTS).map((skill) => ({ name: skill.name, available: skill.enabled })),
-    mcpServers: mcpServers.slice(0, MAX_ADMISSION_REQUIREMENTS).map((server) => ({ name: server.name, available: server.enabled })),
-    models: models.slice(0, MAX_ADMISSION_REQUIREMENTS),
-    providers: providers.slice(0, MAX_ADMISSION_REQUIREMENTS)
+    maxAgeMs: normalizeMaxAge(sources.maxAgeMs),
+    skills: canonicalCapabilities(skills.filter((skill) => requiredSkills.has(skill.name)).map((skill) => ({ name: skill.name, available: skill.enabled }))),
+    mcpServers: canonicalCapabilities(mcpServers.filter((server) => requiredMcpServers.has(server.name)).map((server) => ({ name: server.name, available: server.enabled }))),
+    models: models.filter((model) => requiredModels.has(`${model.provider}\0${model.id}`)).slice(0, MAX_ADMISSION_REQUIREMENTS)
+      .sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`)),
+    providers: providers.filter((provider) => requiredProviders.has(provider.id)).slice(0, MAX_ADMISSION_REQUIREMENTS)
+      .sort((a, b) => a.id.localeCompare(b.id))
   };
 }
 
-export function normalizeExecutionPlan<T extends AdmissionWorkUnitInput>(inputs: readonly T[], requireComplete = false): T[] {
-  if (!Array.isArray(inputs) || inputs.length < 1 || inputs.length > 100) throw new Error('invalid execution work unit count');
+export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[], requireComplete = false): AdmissionWorkUnitInput[] {
+  if (!Array.isArray(inputs) || inputs.length < 1 || inputs.length > 100) throw new PlanValidationError('dag', 'invalid execution work unit count');
   const ids = new Set<string>();
   const units = inputs.map((input) => {
     const id = boundedString(input.id, 'work unit id');
-    if (ids.has(id)) throw new Error('duplicate work unit id');
+    if (ids.has(id)) throw new PlanValidationError('dag', 'duplicate work unit id');
     ids.add(id);
-    if (!Array.isArray(input.dependencies) || input.dependencies.length > 100) throw new Error('invalid work unit dependencies');
+    if (!Array.isArray(input.dependencies) || input.dependencies.length > 100) throw new PlanValidationError('dag', 'invalid work unit dependencies');
     const dependencies = input.dependencies.map((dependency: string) => boundedString(dependency, 'work unit dependency'));
     const files = input.files?.map(normalizeFileScope);
     const verification = input.verification?.map((step: string) => boundedString(step, 'work unit verification'));
-    if (requireComplete && !input.readOnly && !files?.length) throw new Error('mutating work unit requires file scope');
-    if (requireComplete && !verification?.length) throw new Error('work unit requires verification');
+    if (requireComplete && !input.readOnly && !files?.length) throw new PlanValidationError('file', 'mutating work unit requires file scope');
+    if (requireComplete && !verification?.length) throw new PlanValidationError('dag', 'work unit requires verification');
     return {
       id,
       title: boundedString(input.title, 'work unit title'),
@@ -219,14 +246,14 @@ export function normalizeExecutionPlan<T extends AdmissionWorkUnitInput>(inputs:
       ...(files ? { files } : {}),
       ...(verification ? { verification } : {}),
       ...(input.readOnly ? { readOnly: true } : {})
-    } as T;
+    };
   });
-  for (const unit of units) for (const dependency of unit.dependencies) if (!ids.has(dependency)) throw new Error('missing work unit dependency');
+  for (const unit of units) for (const dependency of unit.dependencies) if (!ids.has(dependency)) throw new PlanValidationError('dag', 'missing work unit dependency');
   const visiting = new Set<string>();
   const visited = new Set<string>();
   const byId = new Map(units.map((unit) => [unit.id, unit]));
   const visit = (id: string) => {
-    if (visiting.has(id)) throw new Error('work unit dependency cycle');
+    if (visiting.has(id)) throw new PlanValidationError('dag', 'work unit dependency cycle');
     if (visited.has(id)) return;
     visiting.add(id);
     for (const dependency of byId.get(id)!.dependencies) visit(dependency);
@@ -238,15 +265,18 @@ export function normalizeExecutionPlan<T extends AdmissionWorkUnitInput>(inputs:
 }
 
 function normalizeFileScope(value: string): string {
-  const raw = boundedString(value, 'work unit file scope').replace(/\\/g, '/');
-  if (raw.startsWith('/') || /^[A-Za-z]:\//.test(raw)) throw new Error('invalid work unit file scope');
+  if (typeof value !== 'string' || !value.trim() || value.length > 2_048) {
+    throw new PlanValidationError('file', 'invalid work unit file scope');
+  }
+  const raw = value.trim().replace(/\\/g, '/');
+  if (raw.startsWith('/') || /^[A-Za-z]:\//.test(raw)) throw new PlanValidationError('file', 'invalid work unit file scope');
   const parts: string[] = [];
   for (const part of raw.split('/')) {
     if (!part || part === '.') continue;
-    if (part === '..') throw new Error('invalid work unit file scope');
+    if (part === '..') throw new PlanValidationError('file', 'invalid work unit file scope');
     parts.push(part);
   }
-  if (!parts.length) throw new Error('invalid work unit file scope');
+  if (!parts.length) throw new PlanValidationError('file', 'invalid work unit file scope');
   return parts.join('/');
 }
 
@@ -255,12 +285,33 @@ function boundedString(value: unknown, label: string): string {
   return value.trim();
 }
 
-function bounded(values: readonly string[] | undefined): readonly string[] {
-  return (values ?? []).slice(0, MAX_ADMISSION_REQUIREMENTS);
+function boundedStrings(values: readonly string[] | undefined): readonly string[] {
+  return [...new Set(values ?? [])].sort().slice(0, MAX_ADMISSION_REQUIREMENTS);
 }
 
-async function safeInventory<T>(read: () => Promise<readonly T[]>, fallback: readonly T[]): Promise<readonly T[]> {
-  try { return await read(); } catch { return fallback; }
+function boundedModels(values: readonly AdmissionModelRequirement[] | undefined): readonly AdmissionModelRequirement[] {
+  return [...new Map((values ?? []).map((model) => [`${model.provider}\0${model.id}`, model])).values()]
+    .sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`))
+    .slice(0, MAX_ADMISSION_REQUIREMENTS);
+}
+
+function canonicalCapabilities(values: readonly { name: string; available: boolean }[]): { name: string; available: boolean }[] {
+  const merged = new Map<string, boolean>();
+  for (const value of values) merged.set(value.name, (merged.get(value.name) ?? false) || value.available);
+  return [...merged].map(([name, available]) => ({ name, available })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function normalizeMaxAge(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_INVENTORY_MAX_AGE_MS;
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(MAX_INVENTORY_MAX_AGE_MS, Math.max(0, value));
+}
+
+async function safeInventory<T>(source: 'skills' | 'mcpServers' | 'models' | 'providers', read: () => Promise<readonly T[]>, onError?: TeamAdmissionInventorySources['onError']): Promise<readonly T[]> {
+  try { return await read(); } catch (error) {
+    try { onError?.(source, error); } catch { /* Diagnostics must not defeat fail-closed fallback. */ }
+    return [];
+  }
 }
 
 function capabilityChecks(
@@ -286,6 +337,21 @@ function healthChecks(
     const found = inventory?.find((item) => item.id === subject);
     const status = !fresh || !found || found.status === 'unknown' ? 'UNKNOWN' : found.status === 'available' ? 'PASS' : 'FAIL';
     add({ code, status, required: true, subject, message: status === 'PASS' ? `${subject} is available` : status === 'FAIL' ? `${subject} is unavailable` : `${subject} health is unknown` });
+  }
+}
+
+function modelHealthChecks(
+  required: readonly AdmissionModelRequirement[],
+  inventory: AdmissionCapabilityInventoryV1['models'] | undefined,
+  fresh: boolean,
+  add: (check: AdmissionCheck) => void
+): void {
+  if (!required.length) return add({ code: 'MODEL_HEALTH', status: 'SKIPPED', required: false, message: 'No requirements supplied' });
+  for (const requirement of required) {
+    const found = inventory?.find((item) => item.id === requirement.id && item.provider === requirement.provider);
+    const status = !fresh || !found || found.status === 'unknown' ? 'UNKNOWN' : found.status === 'available' ? 'PASS' : 'FAIL';
+    const subject = `${requirement.provider}:${requirement.id}`;
+    add({ code: 'MODEL_HEALTH', status, required: true, subject, message: status === 'PASS' ? `${subject} is available` : status === 'FAIL' ? `${subject} is unavailable` : `${subject} health is unknown` });
   }
 }
 

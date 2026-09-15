@@ -114,6 +114,42 @@ describe('execution admission', () => {
     expect(launchTeam).not.toHaveBeenCalled();
     expect(revokeTeamAuthorizations).toHaveBeenCalledWith(['auth-1']);
   }));
+
+  it('returns a stable fail-closed result when admission input rejects', async () => fixture(async (filePath) => {
+    const authorizeTeamLaunch = vi.fn();
+    const logError = vi.fn();
+    const service = new ExecutionService(deps(filePath, {
+      authorizeTeamLaunch, logError,
+      admissionInput: async () => { throw new Error('provider credentials leaked detail'); }
+    }));
+    await expect(service.start('owner', 'project-1', request)).resolves.toEqual({
+      ok: false, code: 'ADMISSION_FAILED', message: 'Team admission could not be evaluated'
+    });
+    expect(authorizeTeamLaunch).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('project-1:request-1'), expect.any(Error));
+  }));
+
+  it('revokes authorization when admission revalidation rejects', async () => fixture(async (filePath) => {
+    let calls = 0;
+    const revokeTeamAuthorizations = vi.fn();
+    const launchTeam = vi.fn();
+    const service = new ExecutionService(deps(filePath, {
+      launchTeam, revokeTeamAuthorizations,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: {
+        teamId: 'team-1', projectId: 'project-1', slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTask: 'Run tests', authorizationId: 'auth-1' }],
+        context: { version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [] }
+      } }),
+      admissionInput: async () => {
+        if (++calls > 1) throw new Error('inventory failed');
+        return { slotCount: 1, maxSlots: 1, initialTasks: ['work'] };
+      }
+    }));
+    await expect(service.start('owner', 'project-1', request)).resolves.toEqual({
+      ok: false, code: 'STALE_PREFLIGHT', message: 'Team admission could not be revalidated'
+    });
+    expect(revokeTeamAuthorizations).toHaveBeenCalledWith(['auth-1']);
+    expect(launchTeam).not.toHaveBeenCalled();
+  }));
 });
 
 describe('KeyedColdStartSemaphore', () => {
@@ -157,6 +193,23 @@ describe('KeyedColdStartSemaphore', () => {
     canceled = true;
     first?.();
     await expect(canceledWaiter).resolves.toBeUndefined();
+    const release = await liveWaiter;
+    expect(release).toBeTypeOf('function');
+    release?.();
+  });
+
+  it('wakes a live waiter behind a canceled predicate that throws', async () => {
+    const semaphore = new KeyedColdStartSemaphore(1);
+    const first = await semaphore.acquire('provider:account');
+    let checks = 0;
+    const throwingWaiter = semaphore.acquire('provider:account', () => {
+      if (++checks > 1) throw new Error('cancel probe failed');
+      return false;
+    });
+    const liveWaiter = semaphore.acquire('provider:account');
+    await Promise.resolve();
+    first?.();
+    await expect(throwingWaiter).rejects.toThrow('cancel probe failed');
     const release = await liveWaiter;
     expect(release).toBeTypeOf('function');
     release?.();

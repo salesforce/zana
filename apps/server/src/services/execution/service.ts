@@ -182,7 +182,14 @@ export class KeyedColdStartSemaphore {
   ): Promise<(() => void) | undefined> {
     const deadline = Date.now() + Math.max(0, timeoutMs);
     while (true) {
-      if (await canceled() || Date.now() >= deadline) {
+      let isCanceled: boolean;
+      try {
+        isCanceled = await canceled();
+      } catch (error) {
+        this.wakeNext(key);
+        throw error;
+      }
+      if (isCanceled || Date.now() >= deadline) {
         this.wakeNext(key);
         return undefined;
       }
@@ -305,7 +312,14 @@ export class ExecutionService {
       || !request.teamId?.trim() || !request.launchRequestId?.trim() || !request.slots?.length) {
       return { ok: false, code: 'INVALID', message: 'invalid execution request' };
     }
-    const admission = await this.dryRun(projectId, request);
+    let admission: TeamAdmissionResultV1;
+    let issuedAuthorizationIds: string[] = [];
+    try {
+      admission = await this.dryRun(projectId, request);
+    } catch (error) {
+      this.deps.logError?.(`Team admission input failed for ${projectId}:${request.launchRequestId}`, error);
+      return { ok: false, code: 'ADMISSION_FAILED', message: 'Team admission could not be evaluated' };
+    }
     if (!admission.ready) {
       const failed = admission.checks.find((check) => check.required && check.status !== 'PASS');
       return { ok: false, code: 'ADMISSION_FAILED', message: failed?.message ?? 'Team admission failed' };
@@ -392,7 +406,9 @@ export class ExecutionService {
           await this.transitionOrCurrent(record, 'BLOCKED', 'warning', authorization.message);
           return { ok: false, code: authorization.code, message: authorization.message };
       }
+        issuedAuthorizationIds = authorization.value.slots.map((slot) => slot.authorizationId);
         if (!authorization.value.context) {
+          await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
           await this.transitionOrCurrent(record, 'BLOCKED', 'warning', 'Team authorization context unavailable');
           return { ok: false, code: 'AUTHORIZATION_CONTEXT_UNAVAILABLE', message: 'Team authorization context unavailable' };
       }
@@ -411,7 +427,15 @@ export class ExecutionService {
           initialTaskDigest: launchDigest(initialTask)
         }))
       });
-      const revalidatedAdmission = await this.dryRun(projectId, request);
+      let revalidatedAdmission: TeamAdmissionResultV1;
+      try {
+        revalidatedAdmission = await this.dryRun(projectId, request);
+      } catch (error) {
+        this.deps.logError?.(`Team admission revalidation failed for ${projectId}:${request.launchRequestId}`, error);
+        await this.transitionOrCurrent(record, 'BLOCKED', 'warning', 'Team admission could not be revalidated');
+        await this.deps.revokeTeamAuthorizations?.(authorization.value.slots.map((slot) => slot.authorizationId));
+        return { ok: false, code: 'STALE_PREFLIGHT', message: 'Team admission could not be revalidated' };
+      }
       if (!revalidatedAdmission.ready || revalidatedAdmission.digest !== admission.digest) {
         const failed = revalidatedAdmission.checks.find((check) => check.required && check.status !== 'PASS');
         const message = failed?.message ?? 'Team admission changed after authorization';
@@ -437,6 +461,7 @@ export class ExecutionService {
         } } : {})
       });
       if (!launched.ok) {
+        await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
         await this.transitionOrCurrent(record, 'FAILED', 'error', launched.message ?? 'Team launch failed');
         return { ok: false, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed' };
       }
@@ -454,6 +479,7 @@ export class ExecutionService {
       return { ok: true, value: { ...record, ...(resumeGrant ? { resumeToken: resumeGrant.token, resumeTokenExpiresAt: resumeGrant.expiresAt } : {}) } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
       const current = await this.failLaunch(record, `Team launch error: ${message}`);
       return current.state === 'FAILED'
         ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message }
@@ -936,14 +962,23 @@ export class ExecutionService {
       return { ok: false as const, code: 'RETRY_NOT_ALLOWED', message: error instanceof Error ? error.message : String(error) };
     }
     const request = retry.request;
+    const admissionRequest: ExecutionRequestV1 = {
+      ...request,
+      teamId: retry.teamId,
+      launchRequestId: retry.launchRequestId,
+      workUnits: retry.workUnits?.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, ...unit }) => unit),
+      coordinationMode: retry.coordinationMode
+    };
+    let issuedAuthorizationIds: string[] = [];
     try {
-      const admission = await this.dryRun(projectId, {
-        ...request,
-        teamId: retry.teamId,
-        launchRequestId: retry.launchRequestId,
-        workUnits: retry.workUnits?.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, ...unit }) => unit),
-        coordinationMode: retry.coordinationMode
-      });
+      let admission: TeamAdmissionResultV1;
+      try {
+        admission = await this.dryRun(projectId, admissionRequest);
+      } catch (error) {
+        this.deps.logError?.(`Team retry admission input failed for ${projectId}:${retry.launchRequestId}`, error);
+        const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', 'Team admission could not be evaluated');
+        return { ok: false as const, code: 'ADMISSION_FAILED', message: 'Team admission could not be evaluated', value: blocked };
+      }
       if (!admission.ready) {
         const failed = admission.checks.find((check) => check.required && check.status !== 'PASS');
         const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', failed?.message ?? 'Team admission failed');
@@ -961,21 +996,28 @@ export class ExecutionService {
         request.policy ?? {}, request.slots, retry.coordinationMode, admission.digest
       );
       if (!authorization.ok || !authorization.value.context) {
+        if (authorization.ok) {
+          issuedAuthorizationIds = authorization.value.slots.map((slot) => slot.authorizationId);
+          await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
+        }
         const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', authorization.ok ? 'Team authorization context unavailable' : authorization.message);
         return { ok: false as const, code: authorization.ok ? 'AUTHORIZATION_CONTEXT_UNAVAILABLE' : authorization.code, message: authorization.ok ? 'Team authorization context unavailable' : authorization.message, value: blocked };
       }
+      issuedAuthorizationIds = authorization.value.slots.map((slot) => slot.authorizationId);
       let current = await this.deps.store.setAuthorizationContext(retry.id, retry.stateVersion, authorization.value.context, launchDigest(authorization.value.context));
       current = await this.deps.store.prepareLaunchIntent(current.id, current.stateVersion, {
         version: 1, authorizationContextDigest: current.authorizationContextDigest!,
         slots: authorization.value.slots.map(({ slotId, personaId, initialTask }) => ({ slotId, personaId, initialTaskDigest: launchDigest(initialTask) }))
       });
-      const revalidatedAdmission = await this.dryRun(projectId, {
-        ...request,
-        teamId: retry.teamId,
-        launchRequestId: retry.launchRequestId,
-        workUnits: retry.workUnits?.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, ...unit }) => unit),
-        coordinationMode: retry.coordinationMode
-      });
+      let revalidatedAdmission: TeamAdmissionResultV1;
+      try {
+        revalidatedAdmission = await this.dryRun(projectId, admissionRequest);
+      } catch (error) {
+        this.deps.logError?.(`Team retry admission revalidation failed for ${projectId}:${retry.launchRequestId}`, error);
+        const blocked = await this.transitionOrCurrent(current, 'BLOCKED', 'warning', 'Team admission could not be revalidated');
+        await this.deps.revokeTeamAuthorizations?.(authorization.value.slots.map((slot) => slot.authorizationId));
+        return { ok: false as const, code: 'STALE_PREFLIGHT', message: 'Team admission could not be revalidated', value: blocked };
+      }
       if (!revalidatedAdmission.ready || revalidatedAdmission.digest !== admission.digest) {
         const failed = revalidatedAdmission.checks.find((check) => check.required && check.status !== 'PASS');
         const message = failed?.message ?? 'Team admission changed after authorization';
@@ -1001,6 +1043,7 @@ export class ExecutionService {
         } } : {})
       });
       if (!launched.ok) {
+        await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
         const failed = await this.failLaunch(current, launched.message ?? 'Team launch failed');
         return { ok: false as const, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed', value: failed };
       }
@@ -1010,6 +1053,7 @@ export class ExecutionService {
       return { ok: true as const, value: await this.transitionOrCurrent(current, 'RUNNING', 'info', 'Team retry launch started') };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
       return { ok: false as const, code: 'TEAM_LAUNCH_FAILED', message, value: await this.failLaunch(retry, `Team retry launch error: ${message}`) };
     } finally {
       this.endStarting(record.id);
