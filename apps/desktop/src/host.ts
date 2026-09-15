@@ -3494,9 +3494,16 @@ export function createTerminalConfined(
       : undefined;
     const effectivePersona = persona ?? selectedPersona;
     const promptArgs = req.prompt ? seedPromptArgs(selection.profile, req.prompt) : [];
-    const extraArgs = promptArgs.length
+    let extraArgs = promptArgs.length
       ? [...safeExtraArgs, ...promptArgs]
-      : safeExtraArgs.length ? safeExtraArgs : undefined;
+      : safeExtraArgs.length ? [...safeExtraArgs] : [];
+    if (selection.profile === 'shell') {
+      const command = req.prompt?.trim();
+      if (command) {
+        extraArgs.push('-lc', command.length > 10_000 ? command.slice(0, 10_000) : command);
+      }
+    }
+    const extraArgsOrUndef = extraArgs.length > 0 ? extraArgs : undefined;
     // microVM image override chain (env `'microvm'` only): explicit launcher
     // hint > persona default > project default > (builder allowlist default when
     // all absent). Every candidate is ADVISORY — the microVM builder re-resolves
@@ -3541,7 +3548,7 @@ export function createTerminalConfined(
       rows: req.rows,
       config: launchConfig,
       projectSettings: projectMicroVmSettings,
-      extraArgs,
+      extraArgs: extraArgsOrUndef,
       openingPrompt,
       harnessRouting: req.harnessRouting,
       title: req.title,
@@ -6644,6 +6651,32 @@ async function bootstrapNormal() {
         source: body.source ?? source
       };
     },
+    runInTerminal: async ({ threadId, projectId, command, title }) => {
+      const response = await fetch(new URL(`api/v1/threads/${encodeURIComponent(threadId)}/open`, productServerUrl()), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          terminal: { command, title }
+        })
+      });
+      const body = await response.json() as {
+        delivered?: number;
+        command?: string | null;
+        title?: string | null;
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error ?? 'terminal open failed');
+      }
+      return {
+        delivered: typeof body.delivered === 'number' ? body.delivered : 0,
+        command: body.command ?? command,
+        title: body.title ?? title
+      };
+    },
+    inAppAgentTerminalsEnabled: () => store.getConfig().inAppAgentTerminalsEnabled === true,
     // Suppress-while-working gate for BLOCKING inbox questions (default ON). The
     // inbox tools call `heldQuestions.maybeHold(...)` at push time; a held
     // question surfaces later on the agent's idle/blocked edge (Rule 1: the gate

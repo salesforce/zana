@@ -1,0 +1,24 @@
+{
+  "id": "posthog-analytics",
+  "displayName": "PostHog Analytics",
+  "description": "Anonymous usage analytics. Never sends prompts or replies.",
+  "overview": "Anonymous usage analytics for Zana. The plugin records agent activity only. It never sends prompts, replies, file paths, or titles.\n\n## What you get\n\n- A master switch to turn analytics on or off.\n- Optional click and page-view tracking that records button ids and section names only.\n- A place to point events at your own PostHog project instead of Zana's.\n\n## How it works\n\nWhen analytics is on, ZCC sends event names such as thread created, idle, or failed, plus a random install id stored on this machine. You can turn the plugin off at any time.\n\n## Requirements\n\nOfficial builds include a Zana PostHog project key. A local checkout sends nothing until you add a key in Settings, or you can leave the plugin off.\n",
+  "icon": {
+    "lucide": "LineChart"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/posthog-analytics",
+      "ref": "HEAD"
+    }
+  }
+}

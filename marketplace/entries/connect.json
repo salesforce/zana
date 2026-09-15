@@ -1,0 +1,24 @@
+{
+  "id": "connect",
+  "displayName": "Connect",
+  "description": "Tunnel this ZCC to an enrolled host.",
+  "overview": "Open your ZCC from a phone or another computer. After you pair, this ZCC answers at `https://<handle>.getbb.app` for anyone signed in to your getbb.app account.\n\n## What you get\n\n- Remote access to the full ZCC app through a tunnel. Your ZCC makes an outbound connection, so you do not open ports or change your router.\n- Port shares. Publish a local HTTP server, such as a dev server, at a share URL. The link opens from any device with your session.\n- Pairing for the ZCC mobile app with a QR code or a one-time code.\n- A Remote access section in Settings, and a sidebar shortcut to it, with the connection state and the remote URL.\n\n## How it works\n\nGet a pairing code from the getbb.app dashboard and enter it in Settings. You can also run `zcc connect --code <code> --server <url>`. The plugin keeps the tunnel open in the background and reconnects after a drop. Disable the plugin to cut all remote access at once. `zcc connect off` also disconnects and forgets the pairing.\n\n## For agents\n\nWhen you view ZCC remotely, agents are told to share servers with `zcc connect expose <port>`. A localhost link would not open. The `share-server-links` skill explains the flow. Other commands: `zcc connect status`, `zcc connect unexpose <port>`, `zcc connect shares`, `zcc connect servers`, and `zcc connect machine-code`.\n\n## Requirements\n\nA getbb.app account. Share links open only for viewers with your getbb.app session; they are not public. Mobile pairing needs the \"Mobile app\" experiment.\n",
+  "icon": {
+    "lucide": "Cable"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/connect",
+      "ref": "HEAD"
+    }
+  }
+}

@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  handleHttpLinkClick,
+  inAppBrowserEventMatchesOwner,
   isHttpOrHttpsUrl,
-  openUrlByPreference,
-  resolveUrlOpenTarget
+  isSidePanelModifierClick,
+  OPEN_IN_APP_BROWSER_EVENT
 } from './in-app-browser-link-preference.js';
+
+const DOCS_URL = 'https://example.com/docs';
 
 describe('isHttpOrHttpsUrl', () => {
   it('accepts http and https URLs', () => {
@@ -22,76 +27,83 @@ describe('isHttpOrHttpsUrl', () => {
   });
 });
 
-describe('resolveUrlOpenTarget', () => {
-  it('routes http(s) links into the in-app browser on desktop when enabled', () => {
-    expect(resolveUrlOpenTarget({
-      desktopBrowserAvailable: true,
-      openLinksInAppBrowser: true,
-      url: 'https://example.com/docs'
-    })).toBe('in-app-browser');
-  });
-
-  it('routes http(s) links to the external browser when the preference is off', () => {
-    expect(resolveUrlOpenTarget({
-      desktopBrowserAvailable: true,
-      openLinksInAppBrowser: false,
-      url: 'https://example.com/docs'
-    })).toBe('external-browser');
-  });
-
-  it('routes http(s) links to the external browser when the desktop browser is unavailable', () => {
-    expect(resolveUrlOpenTarget({
-      desktopBrowserAvailable: false,
-      openLinksInAppBrowser: true,
-      url: 'https://example.com/docs'
-    })).toBe('external-browser');
-  });
-
-  it('does not handle non-http links', () => {
-    expect(resolveUrlOpenTarget({
-      desktopBrowserAvailable: true,
-      openLinksInAppBrowser: true,
-      url: 'mailto:hi@example.com'
-    })).toBe('unhandled');
+describe('isSidePanelModifierClick', () => {
+  it('treats Cmd and Ctrl as the side-panel modifier', () => {
+    expect(isSidePanelModifierClick({ metaKey: true, ctrlKey: false })).toBe(true);
+    expect(isSidePanelModifierClick({ metaKey: false, ctrlKey: true })).toBe(true);
+    expect(isSidePanelModifierClick({ metaKey: false, ctrlKey: false })).toBe(false);
   });
 });
 
-describe('openUrlByPreference', () => {
-  it('opens http(s) URLs in the in-app browser when enabled', () => {
-    const openedInApp: string[] = [];
-    const openedExternally: string[] = [];
-    expect(openUrlByPreference({
-      desktopBrowserAvailable: true,
-      openExternalBrowser: (url) => openedExternally.push(url),
-      openInAppBrowser: (url) => openedInApp.push(url),
-      openLinksInAppBrowser: true,
-      url: 'https://example.com/docs'
-    })).toBe(true);
-    expect(openedInApp).toEqual(['https://example.com/docs']);
-    expect(openedExternally).toEqual([]);
+describe('inAppBrowserEventMatchesOwner', () => {
+  it('matches the same owner and the session modal suffix', () => {
+    expect(inAppBrowserEventMatchesOwner(undefined, 'sess-1')).toBe(true);
+    expect(inAppBrowserEventMatchesOwner('sess-1', 'sess-1')).toBe(true);
+    expect(inAppBrowserEventMatchesOwner('sess-1', 'sess-1:modal')).toBe(true);
+    expect(inAppBrowserEventMatchesOwner('sess-1', 'sess-2')).toBe(false);
+  });
+});
+
+describe('handleHttpLinkClick', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(window, 'cc');
   });
 
-  it('opens http(s) URLs externally when disabled', () => {
-    const openedInApp: string[] = [];
-    const openedExternally: string[] = [];
-    expect(openUrlByPreference({
-      desktopBrowserAvailable: true,
-      openExternalBrowser: (url) => openedExternally.push(url),
-      openInAppBrowser: (url) => openedInApp.push(url),
-      openLinksInAppBrowser: false,
-      url: 'https://example.com/docs'
+  it('opens http(s) URLs in the OS browser on a plain click', () => {
+    Object.assign(window, { cc: { browser: {} } });
+    const open = vi.fn(() => null);
+    vi.stubGlobal('open', open);
+    const seen: string[] = [];
+    const onOpen = (event: Event) => {
+      seen.push((event as CustomEvent<{ url: string }>).detail.url);
+    };
+    window.addEventListener(OPEN_IN_APP_BROWSER_EVENT, onOpen);
+    try {
+      expect(handleHttpLinkClick(DOCS_URL)).toBe(true);
+      expect(open).toHaveBeenCalledWith(DOCS_URL, '_blank', 'noopener,noreferrer');
+      expect(seen).toEqual([]);
+    } finally {
+      window.removeEventListener(OPEN_IN_APP_BROWSER_EVENT, onOpen);
+    }
+  });
+
+  it('opens the in-app side panel on Cmd-click when a listener handles it', () => {
+    Object.assign(window, { cc: { browser: {} } });
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    const seen: Array<{ url: string; ownerId?: string }> = [];
+    const onOpen = (event: Event) => {
+      event.preventDefault();
+      seen.push((event as CustomEvent<{ url: string; ownerId?: string }>).detail);
+    };
+    window.addEventListener(OPEN_IN_APP_BROWSER_EVENT, onOpen);
+    try {
+      expect(handleHttpLinkClick(DOCS_URL, {
+        event: { metaKey: true, ctrlKey: false },
+        ownerId: 'thread-1'
+      })).toBe(true);
+      expect(seen).toEqual([{ url: DOCS_URL, ownerId: 'thread-1' }]);
+      expect(open).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener(OPEN_IN_APP_BROWSER_EVENT, onOpen);
+    }
+  });
+
+  it('falls back to the OS browser on Cmd-click when no panel listens', () => {
+    Object.assign(window, { cc: { browser: {} } });
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    expect(handleHttpLinkClick(DOCS_URL, {
+      event: { metaKey: true, ctrlKey: false }
     })).toBe(true);
-    expect(openedInApp).toEqual([]);
-    expect(openedExternally).toEqual(['https://example.com/docs']);
+    expect(open).toHaveBeenCalledWith(DOCS_URL, '_blank', 'noopener,noreferrer');
   });
 
   it('leaves non-web schemes unhandled', () => {
-    expect(openUrlByPreference({
-      desktopBrowserAvailable: true,
-      openExternalBrowser: () => undefined,
-      openInAppBrowser: () => undefined,
-      openLinksInAppBrowser: true,
-      url: 'file:///Users/me/app.ts'
-    })).toBe(false);
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    expect(handleHttpLinkClick('file:///Users/me/app.ts')).toBe(false);
+    expect(open).not.toHaveBeenCalled();
   });
 });

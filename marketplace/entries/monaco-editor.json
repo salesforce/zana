@@ -1,0 +1,24 @@
+{
+  "id": "monaco-editor",
+  "displayName": "File Editor",
+  "description": "Edit code files from a thread with the Monaco editor.",
+  "overview": "Edit a file in ZCC instead of only reading it. It applies to every place where ZCC opens a file: chat links, the file search, and `zcc thread open`. The editor is Monaco, the editor from VS Code.\n\n## What you get\n\n- Edit and save with Cmd+S, or Ctrl+S on Linux and Windows. If the file changed on disk since you opened it, the save stops and offers Reload or Overwrite.\n- Find in file with Cmd+F or Ctrl+F, multiple cursors, block selection, bracket matching, and code folding.\n- Syntax highlighting for about 86 common file types.\n- A file tree that you toggle from the file bar. Filter by path, expand directories, and open another file. Right-click a row to copy its absolute path, relative path, or filename.\n- Command palette actions for fold, unfold, sort selected lines, and copy the path of the current file.\n- Colors that follow your ZCC theme, including light and dark switches and custom palettes.\n\n## How it works\n\nThe plugin claims common code, configuration, and text extensions. Binary files such as images and PDFs stay with ZCC's own preview. Files larger than 8 MB open in the read-only preview.\n\nTo change the opener for one file type, go to Settings and open File openers. Right-click a file link for a one-off Open with choice.\n\nThere is no language server. Go-to-definition, find references, and type checking are not available.\n",
+  "icon": {
+    "lucide": "Code"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/monaco-editor",
+      "ref": "HEAD"
+    }
+  }
+}

@@ -794,6 +794,7 @@ function mirroredConfigFlags(config: AppConfig) {
     autoCloseIdleEnabled: config.autoCloseIdleEnabled ?? false,
     overseerMode: config.overseerMode ?? 'off',
     catchUpSummaryEnabled: config.catchUpSummaryEnabled ?? false,
+    classicSessionViewEnabled: config.classicSessionViewEnabled ?? false,
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
     autoOpenThreadPlanPanel: config.autoOpenThreadPlanPanel ?? false,
@@ -1551,6 +1552,10 @@ interface DataState {
    *  in the agent modal (EXPERIMENTAL). Hydrated on init, kept live by the Settings
    *  toggle. Default off. */
   catchUpSummaryEnabled: boolean;
+  /** Mirror of AppConfig.classicSessionViewEnabled — skip the inspector overlay
+   *  and open CLI agents / threads as full pages (EXPERIMENTAL). Hydrated on init,
+   *  kept live by the Settings toggle. Default off. */
+  classicSessionViewEnabled: boolean;
   /** Mirror of AppConfig.catchUpSummaryDelaySeconds — idle/blocked dwell before
    *  the add-on fires. Hydrated on init. Default 20. Used by the card to compute
    *  the shimmer threshold. */
@@ -1642,6 +1647,7 @@ interface DataState {
   setCliRemoteHostCatalogEnabled: (on: boolean) => void;
   setFollowUpsEnabled: (on: boolean) => void;
   setCatchUpSummaryEnabled: (on: boolean) => void;
+  setClassicSessionViewEnabled: (on: boolean) => void;
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
   setAutoOpenThreadPlanPanel: (on: boolean) => void;
@@ -2012,6 +2018,7 @@ export const useData = create<DataState>((set, get) => ({
   overseerMode: 'off',
   reviewerApprovalMode: 'ask',
   catchUpSummaryEnabled: false,
+  classicSessionViewEnabled: false,
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
   autoOpenThreadPlanPanel: false,
@@ -2082,6 +2089,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setCatchUpSummaryEnabled(on) {
     set({ catchUpSummaryEnabled: on });
+  },
+
+  setClassicSessionViewEnabled(on) {
+    set({ classicSessionViewEnabled: on });
   },
 
   setFeedNoiseClassifierEnabled(on) {

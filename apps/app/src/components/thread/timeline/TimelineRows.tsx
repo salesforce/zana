@@ -10,7 +10,7 @@ import {
   type TimelineViewWorkRow
 } from '@zana-ai/zcc-thread-view';
 import { isBackgroundAgentTaskType, isBackgroundCommandTaskType } from '@zana-ai/zcc-domain/thread-runtime';
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { ExpandableTimelineRow } from './ExpandableTimelineRow.js';
 import { ConversationRow } from './ConversationRow.js';
@@ -29,7 +29,10 @@ import { TimelineDetailScroll } from './TimelineDetailScroll.js';
 import { stickyTurnRanges } from './timeline-sticky-user.js';
 import type { TimelineTitleActionHandler, TimelineTitleLinkHandler } from './TimelineTitleView.js';
 import type { PlanExecutionTask } from './plan-execution-card.js';
-import { collectTimelineFilePreviewPaths } from './timeline-file-preview-paths.js';
+import {
+  collectTimelineFilePreviewPaths,
+  reuseStringListIfEqual
+} from './timeline-file-preview-paths.js';
 
 const TITLE_OPTIONS = { summaryStyle: 'bundle' as const, workStyle: 'default' as const };
 
@@ -79,7 +82,12 @@ interface TimelineRowsProps {
 
 export function TimelineRows(props: TimelineRowsProps) {
   const { rows, unreadRowId, nested, scopeActive = false, planExecution } = props;
-  const filePathHints = props.filePathHints ?? collectTimelineFilePreviewPaths(rows);
+  const filePathHintsRef = useRef<readonly string[]>([]);
+  const filePathHints = reuseStringListIfEqual(
+    filePathHintsRef.current,
+    props.filePathHints ?? collectTimelineFilePreviewPaths(rows)
+  );
+  filePathHintsRef.current = filePathHints;
   const rowProps = { ...props, filePathHints };
   const activeLatestBundleId = findActiveLatestBundleId(rows);
   const turns = stickyTurnRanges(rows);

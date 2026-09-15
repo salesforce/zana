@@ -21,7 +21,9 @@ import {
   storageKeyForThread,
   toggleSecondaryPanelMaximized,
   uniqueTabSuffix,
-  activePinnedView
+  activePinnedView,
+  applySecondaryPanelOpenWidth,
+  secondaryPanelOpenWidthPx
 } from './threadSecondaryPanelState.js';
 
 describe('thread secondary panel state', () => {
@@ -34,6 +36,29 @@ describe('thread secondary panel state', () => {
     expect(setSecondaryPanelWidth(state, state.widthPx)).toBe(state);
     expect(secondaryPanelStatesEqual(state, emptySecondaryPanelState())).toBe(true);
     expect(secondaryPanelStatesEqual(state, { ...state, isOpen: true })).toBe(false);
+  });
+
+  it('opens the side panel at 50% normally and 33% in a modal', () => {
+    expect(secondaryPanelOpenWidthPx(1000, false)).toBe(500);
+    expect(secondaryPanelOpenWidthPx(1000, true)).toBe(330);
+    const closed = emptySecondaryPanelState();
+    const opened = { ...closed, isOpen: true };
+    expect(applySecondaryPanelOpenWidth(closed, opened, {
+      containerWidthPx: 1000,
+      modal: false
+    }).widthPx).toBe(500);
+    expect(applySecondaryPanelOpenWidth(closed, opened, {
+      containerWidthPx: 1000,
+      modal: true
+    }).widthPx).toBe(330);
+    expect(applySecondaryPanelOpenWidth(opened, opened, {
+      containerWidthPx: 1000,
+      modal: true
+    })).toBe(opened);
+    expect(applySecondaryPanelOpenWidth(closed, opened, {
+      containerWidthPx: 0,
+      modal: false
+    })).toBe(opened);
   });
 
   it('opens onto the Info pin by default', () => {

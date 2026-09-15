@@ -165,13 +165,13 @@ describe('launcher post-launch stay-put', () => {
   });
 
   it('opens the inspector from Inbox and Library spawn without entering project view', () => {
-    const modal = 'onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}';
+    const launched = 'onLaunched={(session, projectId) => inspectAgentSession(session.id, projectId, navigate)}';
     for (const file of [
       new URL('../InboxDetail.tsx', import.meta.url),
       new URL('../../views/library/LibraryView.tsx', import.meta.url),
       new URL('../../views/library/LibraryPanel.tsx', import.meta.url)
     ]) {
-      expect(readFileSync(file, 'utf8'), file.pathname).toContain(modal);
+      expect(readFileSync(file, 'utf8'), file.pathname).toContain(launched);
     }
   });
 });

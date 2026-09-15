@@ -908,6 +908,7 @@ describe('inbox MCP server (end-to-end)', () => {
     const tools = await client.listTools();
     expect(tools.tools.find((t) => t.name === 'browser_open')).toBeFalsy();
     expect(tools.tools.find((t) => t.name === 'preview_file'), 'preview_file tool is registered').toBeTruthy();
+    expect(tools.tools.find((t) => t.name === 'run_in_terminal')).toBeFalsy();
     expect(tools.tools.find((t) => t.name === 'browser_click')).toBeFalsy();
     expect(tools.tools.find((t) => t.name === 'browser_type')).toBeFalsy();
     expect(tools.tools.find((t) => t.name === 'browser_eval')).toBeFalsy();
@@ -956,6 +957,40 @@ describe('inbox MCP server (end-to-end)', () => {
     clients.push(projectOnly);
     const listed = await projectOnly.listTools();
     expect(listed.tools.find((t) => t.name === 'preview_file')).toBeFalsy();
+  });
+
+  it('run_in_terminal is absent until the experiment is on, then closes over the session URL', async () => {
+    const seen: unknown[] = [];
+    handle = await startMcpServer({
+      inboxStore: createMemoryInboxStore(),
+      suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: (id) => (id === 'proj-1' ? makeProject('proj-1', 'My Project') : null) },
+      inAppAgentTerminalsEnabled: true,
+      runInTerminal: async (input) => {
+        seen.push(input);
+        return { delivered: 1, command: input.command, title: input.title };
+      },
+      log: () => {}
+    });
+    const client = await connectClient(handle.url, 'proj-1/sess-A');
+    clients.push(client);
+    const tools = await client.listTools();
+    expect(tools.tools.find((t) => t.name === 'run_in_terminal')).toBeTruthy();
+    const schema = tools.tools.find((t) => t.name === 'run_in_terminal')!;
+    const props = (schema.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+    expect(Object.keys(props)).not.toContain('threadId');
+    expect(Object.keys(props)).not.toContain('projectId');
+    const res = await client.callTool({
+      name: 'run_in_terminal',
+      arguments: { command: 'npm test', title: 'Tests', threadId: 'other-thread' }
+    });
+    expect((res as { isError?: boolean }).isError).toBeFalsy();
+    expect(seen).toEqual([{
+      threadId: 'sess-A',
+      projectId: 'proj-1',
+      command: 'npm test',
+      title: 'Tests'
+    }]);
   });
 
   it('9. schedule_* tools are absent when scheduleAgentApi is not wired', async () => {

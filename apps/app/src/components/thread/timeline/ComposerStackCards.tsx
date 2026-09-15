@@ -212,6 +212,7 @@ export function BackgroundCommandsCard({
 const PROMPT_CONTEXT_POLL_MS = 3_000;
 
 export function PromptContextBanner({
+  threadId,
   branchName,
   isWorktree,
   parentThreadId,
@@ -219,6 +220,7 @@ export function PromptContextBanner({
   childCount,
   environmentId
 }: {
+  threadId?: string;
   branchName?: string | null;
   isWorktree?: boolean;
   parentThreadId?: string | null;
@@ -268,10 +270,10 @@ export function PromptContextBanner({
           href={pullRequest.url}
           target="_blank"
           rel="noreferrer"
-          onClick={(event) => {
-            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-            if (handleHttpLinkClick(pullRequest.url)) event.preventDefault();
-          }}
+            onClick={(event) => {
+              if (event.shiftKey || event.altKey) return;
+              if (handleHttpLinkClick(pullRequest.url, { event, ownerId: threadId })) event.preventDefault();
+            }}
         >
           PR #{pullRequest.number}
         </a>

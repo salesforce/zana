@@ -369,6 +369,15 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ catchUpSummaryEnabled: 1 }).catchUpSummaryEnabled).toBeUndefined();
   });
 
+  it('passes through a boolean classicSessionViewEnabled, drops non-booleans', () => {
+    expect(normalizeConfig({ classicSessionViewEnabled: true }).classicSessionViewEnabled).toBe(true);
+    expect(normalizeConfig({ classicSessionViewEnabled: false }).classicSessionViewEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ classicSessionViewEnabled: 'yes' }).classicSessionViewEnabled).toBeUndefined();
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ classicSessionViewEnabled: 1 }).classicSessionViewEnabled).toBeUndefined();
+  });
+
   it('passes through a boolean heldQuestionsEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ heldQuestionsEnabled: true }).heldQuestionsEnabled).toBe(true);
     expect(normalizeConfig({ heldQuestionsEnabled: false }).heldQuestionsEnabled).toBe(false);
@@ -381,6 +390,13 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ feedNoiseClassifierEnabled: false }).feedNoiseClassifierEnabled).toBe(false);
     // @ts-expect-error intentional bad input
     expect(normalizeConfig({ feedNoiseClassifierEnabled: 'yes' }).feedNoiseClassifierEnabled).toBeUndefined();
+  });
+
+  it('passes through a boolean inAppAgentTerminalsEnabled, drops non-booleans', () => {
+    expect(normalizeConfig({ inAppAgentTerminalsEnabled: true }).inAppAgentTerminalsEnabled).toBe(true);
+    expect(normalizeConfig({ inAppAgentTerminalsEnabled: false }).inAppAgentTerminalsEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ inAppAgentTerminalsEnabled: 'yes' }).inAppAgentTerminalsEnabled).toBeUndefined();
   });
 
   it('passes through a boolean cliRemoteHostCatalogEnabled, drops non-booleans', () => {

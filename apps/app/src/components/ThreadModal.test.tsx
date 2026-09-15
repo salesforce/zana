@@ -85,15 +85,13 @@ describe('ThreadModal', () => {
   });
 
   it('is opened from the kanban inspect path and hosted beside the agent modal', () => {
-    const inspect = board.slice(
-      board.indexOf('const inspect = (item: FleetItem) =>'),
-      board.indexOf('const pick = (item: FleetItem) =>')
-    );
-    expect(inspect).toContain('openThreadModal(item.id)');
+    const inspect = board.slice(board.indexOf('const inspect = (item: FleetItem) =>'));
+    expect(inspect).toContain('inspectThread(item.id, item.projectId, navigate)');
     expect(inspect).not.toContain('getThreadRoutePath');
-    expect(board).toContain('getThreadRoutePath(item.id, threadProjectId)');
     expect(app).toContain('<ThreadModalHost />');
     expect(app).toContain('<ThreadModal threadId={threadModal.threadId} onClose={close} />');
+    expect(app).toContain('if (classicSessionViewEnabled || !threadModal) return null');
+    expect(app).toContain('if (classicSessionViewEnabled || !agentModal) return null');
     expect(store).toContain('openThreadModal: (threadId) => set({ threadModal: { threadId }, agentModal: null })');
     expect(store).toContain('set({ agentModal: { sessionId, projectId }, threadModal: null })');
   });

@@ -12,7 +12,8 @@ export const BUNDLED_PRODUCT_SKILLS = [
   { id: 'submit-a-plugin', label: 'Submit a plugin' },
   { id: 'brainstorm', label: 'Brainstorm' },
   { id: 'saved-reports', label: 'Saved reports' },
-  { id: 'zcc-preview', label: 'Preview' }
+  { id: 'zcc-preview', label: 'Preview' },
+  { id: 'zcc-terminal', label: 'In-app terminals' }
 ] as const;
 
 export type BundledProductSkillId = (typeof BUNDLED_PRODUCT_SKILLS)[number]['id'];

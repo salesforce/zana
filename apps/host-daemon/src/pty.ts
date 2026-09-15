@@ -1184,6 +1184,9 @@ export class PtyManager extends EventEmitter {
     // Still gated on `mcpConfigPath` (no zcc-inbox server is even wired into
     // the session without it, so allowing it is moot).
     const trustAllZcc = opts.config.trustZccToolsEnabled === true;
+    const runInTerminalAllow = opts.config.inAppAgentTerminalsEnabled === true
+      ? ['mcp__zcc-inbox__run_in_terminal']
+      : [];
     // `inbox_search` is read-only (never mutates the inbox), so it's safe to
     // pre-approve alongside the other read tools — same rationale as `agent_inbox`.
     const inboxAllow = !mcpConfigPath
@@ -1202,7 +1205,8 @@ export class PtyManager extends EventEmitter {
               ...agentDataAllow,
               ...remoteExecAllow,
               ...microvmExecAllow,
-              ...remoteFsAllow
+              ...remoteFsAllow,
+              ...runInTerminalAllow
             ]
           : [
               'mcp__zcc-inbox__inbox_push',
@@ -1214,7 +1218,8 @@ export class PtyManager extends EventEmitter {
               ...agentDataAllow,
               ...remoteExecAllow,
               ...microvmExecAllow,
-              ...remoteFsAllow
+              ...remoteFsAllow,
+              ...runInTerminalAllow
             ];
     // Per-tab Claude session id. Forcing `--session-id <uuid>` at first launch
     // gives each claude tab a *stable, distinct* transcript id, so restore can

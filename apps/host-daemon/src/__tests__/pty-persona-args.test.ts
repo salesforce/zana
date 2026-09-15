@@ -466,6 +466,24 @@ describe('PtyManager.create — trustZccToolsEnabled (whole-server pre-approval)
     expect(tools).not.toContain('mcp__zcc-inbox');
     expect(tools).not.toContain('mcp__zcc-inbox__library_remove');
     expect(tools).not.toContain('mcp__plugin_example_browser');
+    expect(tools).not.toContain('mcp__zcc-inbox__run_in_terminal');
+  });
+
+  it('pre-approves run_in_terminal only when the in-app terminals experiment is on', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl('http://127.0.0.1:3000');
+    mgr.create({
+      projectId: 'proj1',
+      profile: 'claude',
+      cwd: '/tmp',
+      cols: 80,
+      rows: 24,
+      config: { ...CONFIG, trustZccToolsEnabled: false, inAppAgentTerminalsEnabled: true }
+    });
+    const argv = spawned[0].args;
+    const idx = argv.indexOf('--allowedTools');
+    const tools = argv[idx + 1].split(',');
+    expect(tools).toContain('mcp__zcc-inbox__run_in_terminal');
   });
 });
 

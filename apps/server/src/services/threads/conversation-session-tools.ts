@@ -20,7 +20,9 @@ export async function packConversationSessionTooling(
       ? () => ctx.plugins!.sessionTools(conversationConfigureContext(ctx, args))
       : undefined
   );
-  return mergeHostSessionTooling(packed);
+  return mergeHostSessionTooling(packed, {
+    inAppAgentTerminalsEnabled: ctx.config?.getConfig?.().inAppAgentTerminalsEnabled === true
+  });
 }
 
 export function conversationConfigureContext(

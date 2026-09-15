@@ -57,6 +57,36 @@ describe('Experimental CLI Agent host catalog', () => {
   });
 });
 
+describe('Experimental in-app agent terminals', () => {
+  it('offers an off-by-default toggle to keep agent shells inside ZCC', () => {
+    const html = renderToStaticMarkup(
+      <ExperimentalView
+        config={base}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn()}
+      />
+    );
+    expect(html).toContain('Keep agent terminals in ZCC');
+    expect(html).toContain('Terminal.app');
+    expect(html).toContain('new sessions only');
+  });
+});
+
+describe('Experimental classic session view', () => {
+  it('offers an off-by-default toggle to skip the inspector overlay', () => {
+    const html = renderToStaticMarkup(
+      <ExperimentalView
+        config={base}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn()}
+      />
+    );
+    expect(html).toContain('Classic session view');
+    expect(html).toContain('inspector overlay');
+    expect(html).toContain('full session or thread page');
+  });
+});
+
 describe('Experimental CLI Agent remote tools', () => {
   it('hides the CLI remote-tools toggle (CLI Agent is Remote host only)', () => {
     const html = renderToStaticMarkup(

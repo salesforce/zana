@@ -372,6 +372,7 @@ export interface PluginServiceOptions {
   getAppConfig?: () => {
     injectBundledSkills?: boolean;
     disabledBundledSkills?: string[];
+    inAppAgentTerminalsEnabled?: boolean;
   };
 }
 
@@ -736,7 +737,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         ...selectBuiltinSkillDirectoryRoots({
           dataDir: opts.dataDir,
           injectBundledSkills: config.injectBundledSkills,
-          disabledBundledSkills: config.disabledBundledSkills
+          disabledBundledSkills: [
+            ...(config.disabledBundledSkills ?? []),
+            ...(config.inAppAgentTerminalsEnabled === true ? [] : ['zcc-terminal'])
+          ]
         }),
         generatedSkillsRootPath(opts.dataDir)
       ];

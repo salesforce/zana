@@ -1,0 +1,24 @@
+{
+  "id": "provider-claude-code",
+  "displayName": "Claude Code provider",
+  "description": "Run Zana threads with Claude Code.",
+  "overview": "Start a thread, pick Claude Code, and let it work in your repository from ZCC. The plugin drives the Claude Code CLI on the host machine. It streams the agent's work into the ZCC timeline.\n\n## What you get\n\n- Permission modes `accept-edits`, `auto`, and `full`, plus a plan action in the composer.\n- Reasoning levels from Low to Max, plus Ultracode, which turns on multi-agent workflow orchestration.\n- Checkpoint forks, manual compaction, and native questions from the agent.\n- Claude Code skills and CLAUDE.md files from your home directory and project.\n- Health, usage, and install status for Claude Code on each host, with an install or update action.\n\n## Settings\n\n- `Claude Code memory`: let Claude Code read and write its auto-memory.\n- `Disable provider subagents`: hide the native Task tool so the agent delegates through ZCC.\n- `Disable Workflow tool`: hide the native Workflow tool.\n- `Claude in Chrome`: start Claude Code with the browser tools.\n\n## Requirements\n\n- Install the Claude Code CLI (`claude`) on the host machine. The plugin can run the installer for you.\n- Sign in with `claude` on that machine. ZCC reads the sign-in state to show account and plan.\n- `Claude in Chrome` needs the Chrome extension and a claude.ai login on the host.\n",
+  "icon": {
+    "lucide": "./icons/claude-code.svg"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/provider-claude-code",
+      "ref": "HEAD"
+    }
+  }
+}

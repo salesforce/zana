@@ -26,6 +26,8 @@ describe('InboxDetail attention layout', () => {
   });
 
   it('opens the agent inspector after spawn without leaving the inbox', () => {
-    expect(source).toContain('onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}');
+    expect(source).toContain(
+      'onLaunched={(session, projectId) => inspectAgentSession(session.id, projectId, navigate)}'
+    );
   });
 });

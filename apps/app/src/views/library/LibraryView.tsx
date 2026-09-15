@@ -1,10 +1,12 @@
 import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { FileText, Trash2, ExternalLink, X, Search, Plus, AtSign, BotMessageSquare } from 'lucide-react';
 
 import type { Project, LibraryDoc, LibraryScope, LibrarySearchHit } from '@zana-ai/zcc-domain/product';
 import { useLibrary, useUi } from '@/store';
 import { AgentLauncher } from '@/components/AgentLauncher';
+import { inspectAgentSession } from '@/lib/inspect-session';
 import { DocPreview } from './library/DocPreview.js';
 import { DelayedStencilList } from '@/components/ui/Skeleton';
 import { LibraryTreeRows } from './library/LibraryTreeRows.js';
@@ -53,6 +55,7 @@ interface ContextMenuState {
 }
 
 export function LibraryView({ project, deepLink = null }: Props) {
+  const navigate = useNavigate();
   const pushToast = useUi((s) => s.pushToast);
   // CRITICAL: select raw docs slice — inline filter/map infinite-loops React
   const allDocs = useLibrary((s) => s.docs);
@@ -866,7 +869,7 @@ export function LibraryView({ project, deepLink = null }: Props) {
         <AgentLauncher
           project={project}
           initialPrompt={buildSpawnPrompt(selectedDoc)}
-          onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}
+          onLaunched={(session, projectId) => inspectAgentSession(session.id, projectId, navigate)}
           onClose={() => setLauncherOpen(false)}
         />
       )}

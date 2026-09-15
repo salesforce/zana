@@ -1,7 +1,9 @@
 import { useMemo, type CSSProperties } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Star, X } from 'lucide-react';
 import type { AgentState } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useFavoriteAgents, favoriteKey, threadFavoriteKey } from '../store.js';
+import { inspectAgentSession, inspectThread } from '../lib/inspect-session.js';
 import { useAllAgentCards } from '../hooks/useAgentCards.js';
 import { useThreads, type ThreadListItem } from '../thread-store.js';
 import type { AgentCard } from './AgentBoard.js';
@@ -19,9 +21,9 @@ import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
  *   Needs you (blocked) → Working → Idle → Background (headless) → Done (exited).
  * "Background" overrides state: any headless (scheduled / detached) session
  * sinks to its own group at the bottom, mirroring how the rest of the app
- * separates background work. Rows reuse the sidebar tray's row style; clicking
- * a CLI agent opens the agent-inspector modal; a thread opens the thread
- * inspector.
+ * separates background work. Rows reuse the sidebar tray's row style. Clicking a
+ * row peeks the inspector overlay, or the full session/thread page when Classic
+ * session view is on.
  *
  * Reads the favorites set + live CLI cards and visible threads; a starred id
  * whose session/thread is gone is simply absent, so it drops out with no cleanup.
@@ -82,6 +84,7 @@ export function sectionOfEntry(entry: FollowedEntry): FavSectionId {
 }
 
 export function FavoriteAgentsDrawer() {
+  const navigate = useNavigate();
   const open = useUi((s) => s.favoritesDrawerOpen);
   const setOpen = useUi((s) => s.setFavoritesDrawerOpen);
   const favoriteIds = useFavoriteAgents((s) => s.favoriteIds);
@@ -124,10 +127,10 @@ export function FavoriteAgentsDrawer() {
 
   const inspect = (entry: FollowedEntry) => {
     if (entry.kind === 'thread') {
-      useUi.getState().openThreadModal(entry.thread.id);
+      inspectThread(entry.thread.id, entry.thread.projectId, navigate);
       return;
     }
-    useUi.getState().openAgentModal(entry.card.session.id, entry.card.projectId);
+    inspectAgentSession(entry.card.session.id, entry.card.projectId, navigate);
   };
 
   const total = sections.starred.length;

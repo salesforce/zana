@@ -7,6 +7,8 @@ describe('ProjectFocusView session rows', () => {
     expect(source).toContain('onContextMenu={(e) => openAgentCardMenu(e, t)}');
     expect(source).toContain('useAgentCardActions()');
     expect(source).toContain('<AgentCardMenu');
+    expect(source).toContain('getAgentSessionRoutePath(t.id, project.id)');
+    expect(source).toContain('getAgentSessionRoutePath(session.id, project.id)');
     expect(source).toContain('isRemoteWorkspaceProject(project)');
     expect(source).toContain('className="project-remote-icon"');
     expect(source).toContain('<ProjectDot project={project} />');

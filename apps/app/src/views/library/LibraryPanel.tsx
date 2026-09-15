@@ -1,10 +1,12 @@
 import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { RefreshCw, Search, X, Trash2, ExternalLink, AtSign, BotMessageSquare } from 'lucide-react';
 
 import type { LibraryDoc, LibraryScope } from '@zana-ai/zcc-domain/product';
 import { useLibrary, useUi, useData } from '@/store';
 import { AgentLauncher } from '@/components/AgentLauncher';
+import { inspectAgentSession } from '@/lib/inspect-session';
 import { PromptModal } from '@/components/PromptModal';
 import { DocPreview } from './library/DocPreview.js';
 import { DelayedStencilList } from '@/components/ui/Skeleton';
@@ -51,6 +53,7 @@ interface ContextMenuState {
  * place" surface the left-nav Library entry opens.
  */
 export function LibraryPanel({ deepLink = null }: { deepLink?: LibraryDeepLink | null }) {
+  const navigate = useNavigate();
   const pushToast = useUi((s) => s.pushToast);
   const docs = useLibrary((s) => s.docs);
   const loading = useLibrary((s) => s.loading);
@@ -659,7 +662,7 @@ export function LibraryPanel({ deepLink = null }: { deepLink?: LibraryDeepLink |
         <AgentLauncher
           project={launcherProject}
           initialPrompt={buildSpawnPrompt(selectedDoc)}
-          onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}
+          onLaunched={(session, projectId) => inspectAgentSession(session.id, projectId, navigate)}
           onClose={() => setLauncherOpen(false)}
         />
       )}

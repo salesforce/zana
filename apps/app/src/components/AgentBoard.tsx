@@ -689,12 +689,10 @@ interface AgentBoardLanesProps {
   activeId?: string;
   /**
    * Card click — peek at an agent or thread (inspector modal).
-   * The context-menu "Open"/"View" item uses {@link onPick} for the heavier
-   * navigate-to-workspace path instead, so a glance and a jump stay distinct.
+   * Context-menu "Open"/"View" navigates to the first-class session or thread
+   * page, so a glance and a jump stay distinct.
    */
   onInspect: (c: FleetItem) => void;
-  /** Navigate to the agent's workspace tab (context-menu "Open"/"View"). */
-  onPick: (c: FleetItem) => void;
   /** Show a per-card project chip (the global, cross-project board). */
   showProject?: boolean;
   executions?: ExecutionBoardProjection[];
@@ -708,7 +706,7 @@ interface AgentBoardLanesProps {
  * "running for X" timers. Caller computes `cards` behind a memo so a status
  * tick doesn't rebuild the world (render-storm guard).
  */
-export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProject, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution }: AgentBoardLanesProps) {
+export function AgentBoardLanes({ cards, activeId, onInspect, showProject, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution }: AgentBoardLanesProps) {
   const personas = usePersonas((s) => s.personas);
   // Idle-attention sensitivity (mirror of AppConfig, hydrated in the data
   // store): governs which triaged idle agents the "Needs you" lane pulls up.
@@ -1276,7 +1274,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         })}
       </Kanban>
       {menu && (
-        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={(card) => onPick(agentFleetItem(card))} />
+        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} />
       )}
       {threadMenu && (
         <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />

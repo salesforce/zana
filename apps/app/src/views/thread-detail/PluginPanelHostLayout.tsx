@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, useRef } from 'react';
 import { PanelRight } from 'lucide-react';
 import { getDesktopBrowserApi } from '../../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../../lib/browser-url.js';
@@ -41,7 +41,10 @@ function PluginPanelBrowserHost({
   children: ReactNode;
 }) {
   const ownerId = pluginPanelBrowserOwnerId(pluginId, panelPath);
-  const panel = useSecondaryPanel(ownerId);
+  const viewRef = useRef<HTMLDivElement>(null);
+  const panel = useSecondaryPanel(ownerId, {
+    getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
+  });
   const closable = activeClosableTab(panel.state);
   const panelOpen = panel.state.isOpen;
 
@@ -62,6 +65,7 @@ function PluginPanelBrowserHost({
 
   return (
     <div
+      ref={viewRef}
       className={`plugin-panel-host-layout${panelOpen ? ' is-secondary-open' : ''}`}
       data-testid="plugin-panel-host-layout"
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}

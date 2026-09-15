@@ -356,18 +356,6 @@ export function ProjectsList({
     setAgentMenu({ card: sessionToCard(session, project), ...clampMenuAnchor(e) });
   };
 
-  const pickAgent = (card: AgentCard) => {
-    const ui = useUi.getState();
-    ui.setNav('projects');
-    ui.enterProjectFocus(card.projectId);
-    if (card.session.headless && card.session.status !== 'exited') {
-      void useData.getState().restoreTerminal(card.session.id, card.projectId);
-    } else {
-      ui.selectTab(card.projectId, card.session.id);
-    }
-    ui.setProjectView(card.projectId, 'terminals');
-  };
-
   const commitRename = () => {
     if (renamingId) {
       const v = renameValue.trim();
@@ -1333,7 +1321,7 @@ export function ProjectsList({
         );
       })()}
       {agentMenu && (
-        <AgentCardMenu menu={agentMenu} setMenu={setAgentMenu} actions={agentActions} onPick={pickAgent} />
+        <AgentCardMenu menu={agentMenu} setMenu={setAgentMenu} actions={agentActions} />
       )}
       {threadMenu && (
         <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />

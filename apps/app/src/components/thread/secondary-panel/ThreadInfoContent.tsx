@@ -49,6 +49,7 @@ export function ThreadInfoRows({
   remoteDirectory = null,
   machineName = null,
   startPathSource = null,
+  ownerId,
   header,
   children
 }: {
@@ -67,6 +68,7 @@ export function ThreadInfoRows({
   remoteDirectory?: string | null;
   machineName?: string | null;
   startPathSource?: string | null;
+  ownerId?: string;
   header?: ReactNode;
   children?: ReactNode;
 }) {
@@ -170,8 +172,8 @@ export function ThreadInfoRows({
             target="_blank"
             rel="noreferrer"
             onClick={(event) => {
-              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-              if (handleHttpLinkClick(pullRequest.url)) event.preventDefault();
+              if (event.shiftKey || event.altKey) return;
+              if (handleHttpLinkClick(pullRequest.url, { event, ownerId })) event.preventDefault();
             }}
           >
             #{pullRequest.number} {pullRequest.state}
@@ -306,6 +308,7 @@ export function ThreadInfoContent({
       remoteDirectory={remoteDirectory}
       machineName={inspection?.machineName ?? null}
       startPathSource={inspection?.sourceLabel ?? null}
+      ownerId={threadId}
       header={<EnvironmentActions environmentId={environmentId} />}
     >
       <ThreadStorageBrowser threadId={threadId} onOpenFile={onOpenStorageFile} />

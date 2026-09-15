@@ -1,5 +1,6 @@
 import { useThreads } from '../../thread-store.js';
 import { getAgentSessionRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
+import { inspectAgentSession, inspectThread } from '../../lib/inspect-session.js';
 import { useUi } from '../../store.js';
 import type { ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { liveSessionIdForTask } from './schedulerUtils.js';
@@ -25,22 +26,23 @@ export function openScheduledLive(
 }
 
 /**
- * Agent View: a running job peeks its inspector modal; an armed job with no
- * live session opens the schedule editor. Scheduler Overview uses
- * {@link openScheduledLive} for a first-class page instead.
+ * Agent View: a running job peeks its inspector (or the first-class page when
+ * Classic session view is on); an armed job with no live session opens the
+ * schedule editor. Scheduler Overview uses {@link openScheduledLive} for a
+ * first-class page instead.
  */
 export function openScheduleFromAgents(
   task: ScheduledTask,
-  terminals: Record<string, TerminalSession[] | undefined>
+  terminals: Record<string, TerminalSession[] | undefined>,
+  navigate: (to: string) => void
 ): void {
   const sessionId = liveSessionIdForTask(task, terminals);
   if (sessionId) {
-    const ui = useUi.getState();
     if (useThreads.getState().threads.some((row) => row.id === sessionId)) {
-      ui.openThreadModal(sessionId);
+      inspectThread(sessionId, task.projectId, navigate);
       return;
     }
-    ui.openAgentModal(sessionId, task.projectId);
+    inspectAgentSession(sessionId, task.projectId, navigate);
     return;
   }
   useUi.getState().revealSchedule(task.id);

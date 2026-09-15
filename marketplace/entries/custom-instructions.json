@@ -1,0 +1,24 @@
+{
+  "id": "custom-instructions",
+  "displayName": "Custom instructions",
+  "description": "Add persistent custom instructions to agent threads on this host.",
+  "overview": "Tell every agent on this ZCC host the things you would otherwise repeat in each thread. Examples: your coding conventions, the tools you prefer, and the projects it should know about.\n\n## What you get\n\n- One text field in Settings, up to 4,096 characters.\n- The text is added to the instructions of every agent task on this host, for every provider and every project.\n- Changes apply to the next task. You do not restart anything.\n\n## How it works\n\nWrite the instructions as plain text or Markdown. Leave the field empty to add nothing. ZCC appends your text to the instructions it already gives the agent.\n\n## For agents and scripts\n\nUse the `zcc instructions` command:\n\n- `zcc instructions get` prints the current text.\n- `zcc instructions set <text...>` replaces it.\n- `zcc instructions clear` removes it.\n\nAdd `--json` for machine-readable output.\n",
+  "icon": {
+    "lucide": "ScrollText"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/custom-instructions",
+      "ref": "HEAD"
+    }
+  }
+}

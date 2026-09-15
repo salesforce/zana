@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   HOST_ADAPT_TOOL_NAMES,
+  HOST_OPTIONAL_SHARE_TOOL_NAMES,
   HOST_PTY_ONLY_TOOL_NAMES,
   HOST_SHARE_TOOL_NAMES,
   mergeHostSessionTooling
@@ -54,7 +55,11 @@ describe('host session tool policy', () => {
       '@zana-ai/zcc-plugin-sdk/internal/host-policy'
     );
     expect(RESERVED_AGENT_TOOL_NAMES).toEqual(
-      expect.arrayContaining(['update_environment_directory', ...HOST_SHARE_TOOL_NAMES])
+      expect.arrayContaining([
+        'update_environment_directory',
+        ...HOST_SHARE_TOOL_NAMES,
+        ...HOST_OPTIONAL_SHARE_TOOL_NAMES
+      ])
     );
   });
 });

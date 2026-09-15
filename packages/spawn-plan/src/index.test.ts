@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSystemPromptGuidance } from './index.js';
+import { buildSystemPromptGuidance, inboxAllowedTools } from './index.js';
 
 // Distinctive per-block markers (a tool id unique to each guidance block).
 const MESH = 'register_agent';
@@ -47,5 +47,13 @@ describe('buildSystemPromptGuidance', () => {
     const inboxAt = g.indexOf('inbox_push');
     expect(inboxAt).toBeGreaterThanOrEqual(0);
     expect(inboxAt).toBeLessThan(g.indexOf(AWARENESS));
+  });
+});
+
+describe('inboxAllowedTools', () => {
+  it('omits run_in_terminal unless the experiment is on', () => {
+    expect(inboxAllowedTools(false)).not.toContain('mcp__zcc-inbox__run_in_terminal');
+    expect(inboxAllowedTools(true)).not.toContain('mcp__zcc-inbox__run_in_terminal');
+    expect(inboxAllowedTools(false, { runInTerminal: true })).toContain('mcp__zcc-inbox__run_in_terminal');
   });
 });

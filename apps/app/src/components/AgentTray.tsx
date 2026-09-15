@@ -6,7 +6,7 @@ import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useAgentStatus, useIdleTriage } from '../store.js';
 import { useThreads } from '../thread-store.js';
 import { useEnsureThreads } from '../hooks/useEnsureThreads.js';
-import { getThreadRoutePath } from '../lib/route-paths.js';
+import { getAgentSessionRoutePath, getThreadRoutePath } from '../lib/route-paths.js';
 import { FavoriteStar } from './FavoriteStar.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCardActions.js';
@@ -104,18 +104,6 @@ export function AgentTray({
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
   const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
 
-  const pickAgent = (card: AgentCard) => {
-    const ui = useUi.getState();
-    ui.setNav('projects');
-    ui.enterProjectFocus(card.projectId);
-    if (card.session.headless && card.session.status !== 'exited') {
-      void useData.getState().restoreTerminal(card.session.id, card.projectId);
-    } else {
-      ui.selectTab(card.projectId, card.session.id);
-    }
-    ui.setProjectView(card.projectId, 'terminals');
-  };
-
   const openAgentMenu = (e: MouseEvent, a: TrayAgent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -184,7 +172,7 @@ export function AgentTray({
   const blockedCount = items.reduce((n, item) => n + (item.state === 'blocked' ? 1 : 0), 0);
 
   const inspectAgent = (a: TrayAgent) => {
-    useUi.getState().openAgentModal(a.session.id, a.projectId);
+    navigate(getAgentSessionRoutePath(a.session.id, projectId ?? a.projectId));
   };
 
   if (items.length === 0) {
@@ -303,7 +291,7 @@ export function AgentTray({
         })}
       </div>
       {menu && (
-        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={pickAgent} />
+        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} />
       )}
       {threadMenu && (
         <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />

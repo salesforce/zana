@@ -1,56 +1,52 @@
 import { getDesktopBrowserApi } from './desktop-browser.js';
-import { readBooleanPreference } from './boolean-preference.js';
-import { useBooleanPreference } from './use-boolean-preference.js';
-
-export const OPEN_LINKS_IN_APP_BROWSER_STORAGE_KEY = 'zcc.openLinksInAppBrowser';
-export const OPEN_LINKS_IN_APP_BROWSER_DEFAULT = true;
-
-export type UrlOpenTarget = 'in-app-browser' | 'external-browser' | 'unhandled';
 
 export const OPEN_IN_APP_BROWSER_EVENT = 'zcc:open-in-app-browser';
 
 const HTTP_URL_SCHEME_PATTERN = /^https?:\/\//iu;
+const MODAL_OWNER_SUFFIX = ':modal';
 
 export function isHttpOrHttpsUrl(url: string): boolean {
   return HTTP_URL_SCHEME_PATTERN.test(url);
 }
 
-export function resolveUrlOpenTarget(args: {
-  desktopBrowserAvailable: boolean;
-  openLinksInAppBrowser: boolean;
-  url: string;
-}): UrlOpenTarget {
-  if (!isHttpOrHttpsUrl(args.url)) {
-    return 'unhandled';
-  }
-  if (args.desktopBrowserAvailable && args.openLinksInAppBrowser) {
-    return 'in-app-browser';
-  }
-  return 'external-browser';
+export function isSidePanelModifierClick(event: Pick<MouseEvent, 'metaKey' | 'ctrlKey'>): boolean {
+  return event.metaKey === true || event.ctrlKey === true;
 }
 
-export function openUrlByPreference(args: {
-  desktopBrowserAvailable: boolean;
-  openExternalBrowser: (url: string) => void;
-  openInAppBrowser: (url: string) => void;
-  openLinksInAppBrowser: boolean;
-  url: string;
-}): boolean {
-  const target = resolveUrlOpenTarget(args);
-  switch (target) {
-    case 'in-app-browser':
-      args.openInAppBrowser(args.url);
-      return true;
-    case 'external-browser':
-      args.openExternalBrowser(args.url);
-      return true;
-    case 'unhandled':
-      return false;
-  }
+/** Cmd/Ctrl-click events scoped to a session also match that session's modal panel. */
+export function inAppBrowserEventMatchesOwner(
+  eventOwnerId: string | undefined,
+  panelOwnerId: string
+): boolean {
+  if (!eventOwnerId) return true;
+  if (eventOwnerId === panelOwnerId) return true;
+  return panelOwnerId === `${eventOwnerId}${MODAL_OWNER_SUFFIX}`;
 }
 
-export function useOpenLinksInAppBrowserPreference() {
-  return useBooleanPreference(OPEN_LINKS_IN_APP_BROWSER_STORAGE_KEY, OPEN_LINKS_IN_APP_BROWSER_DEFAULT);
+export type HttpLinkClickOptions = {
+  event?: Pick<MouseEvent, 'metaKey' | 'ctrlKey'>;
+  ownerId?: string;
+};
+
+/**
+ * Open an http(s) URL.
+ *
+ * Plain click → OS browser (`window.open` → Electron `shell.openExternal`).
+ * Cmd/Ctrl-click on desktop → in-app side panel when a listener handles the
+ * event; otherwise fall back to the OS browser.
+ */
+export function handleHttpLinkClick(url: string, opts: HttpLinkClickOptions = {}): boolean {
+  if (!isHttpOrHttpsUrl(url)) return false;
+  if (opts.event && isSidePanelModifierClick(opts.event) && getDesktopBrowserApi()) {
+    const opened = new CustomEvent(OPEN_IN_APP_BROWSER_EVENT, {
+      cancelable: true,
+      detail: { url, ownerId: opts.ownerId }
+    });
+    window.dispatchEvent(opened);
+    if (opened.defaultPrevented) return true;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
+  return true;
 }
 
 export function dispatchOpenInAppBrowser(url: string, ownerId?: string): void {
@@ -58,19 +54,4 @@ export function dispatchOpenInAppBrowser(url: string, ownerId?: string): void {
   window.dispatchEvent(new CustomEvent(OPEN_IN_APP_BROWSER_EVENT, {
     detail: { url, ownerId }
   }));
-}
-
-export function handleHttpLinkClick(url: string, ownerId?: string): boolean {
-  return openUrlByPreference({
-    desktopBrowserAvailable: getDesktopBrowserApi() !== null,
-    openLinksInAppBrowser: readBooleanPreference(
-      OPEN_LINKS_IN_APP_BROWSER_STORAGE_KEY,
-      OPEN_LINKS_IN_APP_BROWSER_DEFAULT
-    ),
-    openInAppBrowser: (next) => dispatchOpenInAppBrowser(next, ownerId),
-    openExternalBrowser: (next) => {
-      window.open(next, '_blank', 'noopener,noreferrer');
-    },
-    url
-  });
 }

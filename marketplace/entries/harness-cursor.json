@@ -1,0 +1,24 @@
+{
+  "id": "harness-cursor",
+  "displayName": "Cursor CLI Agent",
+  "description": "CLI Agent TUI for the native cursor-agent coding CLI.",
+  "overview": "Launch Cursor as a CLI Agent in ZCC. The plugin owns the terminal session for the native `cursor-agent` CLI.\n\n## What you get\n\n- A CLI Agent profile that opens Cursor's own TUI inside ZCC.\n- The same spawn, stop, and routing controls as other CLI Agents.\n\n## How it works\n\nZCC starts `cursor-agent` on an enrolled host through this plugin's PTY provider. Threads that pick this harness talk to that CLI, not to a separate ACP adapter.\n\n## Requirements\n\n- Install `cursor-agent` on the host and keep it on `PATH`.\n- Sign in with the CLI, for example `cursor-agent login`.\n",
+  "icon": {
+    "lucide": "./icons/cursor.svg"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/harness-cursor",
+      "ref": "HEAD"
+    }
+  }
+}

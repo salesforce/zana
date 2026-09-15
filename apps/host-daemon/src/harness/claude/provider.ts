@@ -482,7 +482,11 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
     // The inbox allowlist, folded into the single `--allowedTools` flag below so a
     // persona/project allowlist can't drop it (last-wins). Empty when MCP is off,
     // so the historical no-inbox remote argv is byte-identical.
-    const inboxAllow = mcpEnabled ? inboxAllowedTools(input.scheduled ?? false) : [];
+    const inboxAllow = mcpEnabled
+      ? inboxAllowedTools(input.scheduled ?? false, {
+          runInTerminal: input.config.inAppAgentTerminalsEnabled === true
+        })
+      : [];
     // Per-tab claude session id — the remote twin of the local `create()` block. Mint
     // a stable `--session-id` ONLY when we own it: skip when the caller already
     // pins a session (resume/continue/session-id in extraArgs, or the

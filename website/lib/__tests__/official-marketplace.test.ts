@@ -1,86 +1,64 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { buildMarketplace } from '../../../marketplace/scripts/build.mjs';
 import {
-  buildOfficialMarketplace,
-  pluginEntryFromPackage,
-  readFirstPartyPluginEntries
-} from '../../scripts/generate-marketplace.mjs';
-import {
+  FALLBACK_PUBLIC_MARKETPLACE_ORIGIN,
   marketplaceCardsFromIndex,
   officialMarketplaceAddCommand,
   officialMarketplaceFeedUrl,
   officialMarketplaceIndex
 } from '../official-marketplace';
 
-describe('official marketplace.json', () => {
-  it('builds pointer entries from first-party package.json files', () => {
-    const entry = pluginEntryFromPackage(
-      {
-        name: '@zcc-ext/docs',
-        description: 'pkg description',
-        zcc: {
-          name: 'Docs',
-          description: 'Durable project knowledge',
-          branding: { icon: 'Library' }
-        }
-      },
-      'docs'
-    );
-    expect(entry).toMatchObject({
-      id: 'docs',
-      displayName: 'Docs',
-      tags: ['official'],
-      source: { git: { url: 'https://github.com/salesforce/zana', subdir: 'plugins/docs', ref: 'HEAD' } }
-    });
-    expect(pluginEntryFromPackage({ name: '@zcc-ext/docs', zcc: { name: 'Docs' } }, 'other')).toBeNull();
-    expect(
-      pluginEntryFromPackage(
-        {
-          name: '@zcc-ext/docs',
-          zcc: { name: 'Docs', description: 'Durable project knowledge' }
-        },
-        'docs',
-        { overview: '## What you get\n\n- A library.\n' }
-      )?.overview
-    ).toContain('## What you get');
-  });
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+const MARKETPLACE_ROOT = join(REPO_ROOT, 'marketplace');
 
+describe('official marketplace.json', () => {
   it('committed feed parses as schemaVersion 1 official catalog', () => {
     const index = officialMarketplaceIndex();
     expect(index.schemaVersion).toBe(1);
     expect(index.name).toBe('official');
     expect(index.plugins.length).toBeGreaterThanOrEqual(7);
-    expect(index.plugins.every((plugin) => plugin.source.git?.subdir === `plugins/${plugin.id}`)).toBe(
-      true
-    );
-    expect(marketplaceCardsFromIndex(index).some((card) => card.id === 'docs')).toBe(true);
+    expect(
+      index.plugins.every((plugin) => plugin.source.git?.subdir === `plugins/${plugin.id}`)
+    ).toBe(true);
+    expect(
+      marketplaceCardsFromIndex(index).some((card) => card.id === 'docs' || card.id === 'memory')
+    ).toBe(true);
   });
 
-  it('lists every first-party plugin dir when plugins/ is present', () => {
-    const fromDisk = buildOfficialMarketplace(readFirstPartyPluginEntries());
-    if (fromDisk.plugins.length === 0) return;
-    const committed = officialMarketplaceIndex();
-    expect(committed.plugins.map((plugin) => plugin.id).sort()).toEqual(
-      fromDisk.plugins.map((plugin) => plugin.id).sort()
+  it('marketplace/entries build matches the committed website feed', () => {
+    const { index } = buildMarketplace(MARKETPLACE_ROOT, {
+      validate: false,
+      outputs: []
+    });
+    const committed = JSON.parse(
+      readFileSync(join(REPO_ROOT, 'website/content/marketplace/marketplace.json'), 'utf8')
+    );
+    expect(index.name).toBe('official');
+    expect(index.plugins.map((plugin) => plugin.id).sort()).toEqual(
+      committed.plugins.map((plugin) => plugin.id).sort()
     );
   });
 });
 
 describe('officialMarketplaceAddCommand', () => {
   it('uses PUBLIC_BASE_URL when it is a public origin, stripping a trailing slash', () => {
-    expect(officialMarketplaceFeedUrl('https://zcc-7808c5bc8f3d.herokuapp.com/')).toBe(
-      'https://zcc-7808c5bc8f3d.herokuapp.com/marketplace/v1/marketplace.json'
+    expect(officialMarketplaceFeedUrl(`${FALLBACK_PUBLIC_MARKETPLACE_ORIGIN}/`)).toBe(
+      `${FALLBACK_PUBLIC_MARKETPLACE_ORIGIN}/marketplace/v1/marketplace.json`
     );
-    expect(officialMarketplaceAddCommand('https://zcc-7808c5bc8f3d.herokuapp.com/')).toBe(
-      'zcc marketplace add https://zcc-7808c5bc8f3d.herokuapp.com/marketplace/v1/marketplace.json'
+    expect(officialMarketplaceAddCommand(`${FALLBACK_PUBLIC_MARKETPLACE_ORIGIN}/`)).toBe(
+      `zcc marketplace add ${FALLBACK_PUBLIC_MARKETPLACE_ORIGIN}/marketplace/v1/marketplace.json`
     );
   });
 
   it('does not advertise localhost — falls back to the public catalog origin', () => {
     expect(officialMarketplaceAddCommand('http://localhost:4321')).toBe(
-      'zcc marketplace add https://zcc-7808c5bc8f3d.herokuapp.com/marketplace/v1/marketplace.json'
+      `zcc marketplace add ${FALLBACK_PUBLIC_MARKETPLACE_ORIGIN}/marketplace/v1/marketplace.json`
     );
     expect(officialMarketplaceAddCommand('')).toBe(
-      'zcc marketplace add https://zcc-7808c5bc8f3d.herokuapp.com/marketplace/v1/marketplace.json'
+      `zcc marketplace add ${FALLBACK_PUBLIC_MARKETPLACE_ORIGIN}/marketplace/v1/marketplace.json`
     );
   });
 

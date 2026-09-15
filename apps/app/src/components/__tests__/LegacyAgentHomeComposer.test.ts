@@ -8,7 +8,7 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).not.toContain('product.threads.create');
     expect(source).not.toContain('shouldLaunchManagedThread');
     expect(source).toContain('buildLaunchArgs');
-    expect(source).toContain('openAgentModal');
+    expect(source).toContain('inspectAgentSession');
     expect(source).not.toContain('openThreadModal');
     expect(source).toContain('product.harness.effectiveDefault');
     expect(source).toContain('<ModelReasoningPicker');
@@ -276,7 +276,7 @@ describe('LegacyAgentHomeComposer', () => {
     const launchBlock = source.slice(launchStart, source.indexOf('onClose?.();', launchStart));
     expect(launchBlock).toContain('onLaunched(session, project.id)');
     expect(launchBlock).toContain('selectTab(project.id, session.id)');
-    expect(launchBlock).toContain('if (!onClose) useUi.getState().openAgentModal(session.id, project.id)');
+    expect(launchBlock).toContain('if (!onClose) inspectAgentSession(session.id, project.id, navigate)');
     expect(launchBlock).not.toContain('enterProjectFocus');
   });
 });
