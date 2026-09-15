@@ -41,6 +41,7 @@ export default defineConfig({
       '.claude/worktrees/**',
       '.worktrees/**',
       'salesforce-only/**',
+      'marketplace/**',
       'packages/agent-runtime/src/integration*.test.ts',
       'packages/host-daemon-contract/test/**',
       'packages/server-contract/test/**',
