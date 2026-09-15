@@ -1929,6 +1929,16 @@ describe('SquadExecutionService', () => {
     expect(duplicate).toEqual({ ok: false, code: 'INVALID', message: 'duplicate resolved model slot' });
   }));
 
+  it('uses main-resolved route facts instead of caller-supplied snapshots', async () => fixture(async (filePath) => {
+    const service = new SquadExecutionService(deps(filePath, {
+      resolveTeamModelSnapshots: () => [{ slotId: 'slot-1', personaId: 'trusted', provider: 'provider', model: 'trusted-model' }]
+    }));
+    const started = await service.start('session-1', 'project-1', {
+      ...request, resolvedModels: [{ slotId: 'forged', provider: 'forged', model: 'forged-model' }]
+    });
+    expect(started).toMatchObject({ ok: true, value: { resolvedModels: [{ slotId: 'slot-1', personaId: 'trusted', model: 'trusted-model' }] } });
+  }));
+
   it('records optional policy result without rewriting generic execution completion', async () => fixture(async (filePath) => {
     const service = new SquadExecutionService(deps(filePath));
     await service.start('session-1', 'project-1', request);

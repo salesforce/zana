@@ -144,7 +144,10 @@ describe('execution MCP tools', () => {
   it('does not expose raw recovery credentials from routine execution.start', async () => {
     const execution = service();
     const { server, tools } = fakeServer();
-    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
+    registerExecutionTools(server as never, {
+      sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true,
+      resolveCohortBinding: () => ({ executionId: 'execution-1', projectId: 'project-1', role: 'orchestrator', slotId: 'orchestrator:lead' })
+    });
     const result = await tools.get('execution.start')!({ version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }] });
     expect(JSON.parse(text(result))).toEqual({ id: 'execution-1', state: 'RUNNING' });
   });
@@ -158,6 +161,25 @@ describe('execution MCP tools', () => {
       version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }], workUnits
     })).resolves.not.toMatchObject({ isError: true });
     expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({ workUnits }));
+  });
+
+  it('accepts bounded versioned routing metadata without caller slot authority', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, {
+      sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true,
+      resolveCohortBinding: () => ({ executionId: 'execution-1', projectId: 'project-1', role: 'orchestrator', slotId: 'orchestrator:lead' })
+    });
+    await tools.get('execution.plan.register')!({
+      executionId: 'execution-1',
+      workUnits: [{ id: 'unit-1', title: 'Unit', task: 'Do it', dependencies: [], routing: {
+        version: 1, requiredRole: 'reviewer', hardSlotId: 'slot-1', minimumLevel: 'high',
+        requiredCapabilities: ['review'], requiredModalities: ['text'], estimatedContextBytes: 1024
+      } }]
+    });
+    expect(execution.registerPlan).toHaveBeenCalledWith(expect.anything(), expect.arrayContaining([
+      expect.objectContaining({ routing: expect.objectContaining({ hardSlotId: 'slot-1', requiredRole: 'reviewer' }) })
+    ]));
   });
 
   it('rejects aggregate preplanned work larger than the bounded start budget', async () => {

@@ -73,6 +73,7 @@ import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/sto
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
+import type { ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { IdleGatedInjector } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
@@ -4313,6 +4314,48 @@ function resolvedTeamProfile(project: Project, personaSnapshot: readonly Persona
   return selected.ok ? selected.profile : 'claude';
 }
 
+/** Resolve Team slot route facts in main before durable execution is claimed. */
+async function resolveTeamModelSnapshots(
+  projectId: string,
+  request: { teamId: string; slots: readonly { initialTask: string }[] }
+): Promise<ResolvedModelSnapshotV1[]> {
+  const project = store.listProjects().find((candidate) => candidate.id === projectId);
+  const team = teams.list().find((candidate) => candidate.id === request.teamId);
+  if (!project || !team) throw new Error('team or project not found');
+  const slots = expandTeamSlots(team);
+  if (slots.length !== request.slots.length) throw new Error('task count does not match host-expanded Team slots');
+  const config = store.getConfig();
+  const projectSettings = await getAuthoritativeProjectSettings(projectId);
+  const personaSnapshot = personas.list();
+  const verified = await verifyHarnesses(config);
+  const observedAt = Date.now();
+  return slots.map((slot, index) => {
+    const persona = personaSnapshot.find((candidate) => candidate.id === slot.personaId);
+    if (!persona) throw new Error(`unknown persona: ${slot.personaId}`);
+    const profile = resolvedTeamProfile(project, personaSnapshot, persona);
+    const provider = providerFor(profile);
+    const input = { config, persona, projectSettings, profile, extraArgs: [], scope: launchExecutionScope(project, {}, config) };
+    const model = resolveModelTarget(provider, input);
+    const role = resolveRoleTarget(provider, input);
+    const roleOwnedModel = !!role.targetId && provider.nativeRolePinsModel;
+    const target = provider.adapter.descriptor.targets?.models.find((candidate) => candidate.id === model.targetId);
+    const verifiedProvider = verified.find((candidate) => candidate.family === provider.adapter.descriptor.id);
+    return {
+      // Execution MCP supplies opaque ordered tasks; index disambiguates duplicate personas.
+      slotId: slots[index].slotId,
+      personaId: slot.personaId,
+      provider: provider.adapter.descriptor.id,
+      ...(roleOwnedModel || !model.targetId ? {} : { model: model.targetId }),
+      ...(model.level ? { level: model.level } : {}),
+      ...(target?.level ? { level: target.level } : {}),
+      health: provider.adapter.descriptor.id === 'shell' || verifiedProvider?.enabled && verifiedProvider.installed ? 'available' as const : 'unknown' as const,
+      observedAt,
+      maxAgeMs: 30_000,
+      ...(roleOwnedModel ? { roleOwnedModel: true } : {})
+    };
+  });
+}
+
 export function authorizeTeamLaunch(
   callerPrincipalId: string,
   teamId: string,
@@ -4984,6 +5027,8 @@ const squadExecutionService = new SquadExecutionService({
     const team = teams.list().find((candidate) => candidate.id === teamId);
     return team ? preflightWorkflowProfile(workflow, team, personas.list()) : { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile Team is unavailable' };
   }
+  , resolveTeamModelSnapshots
+  , routingEnforcementEnabled: () => store.getConfig().teamRoutingEnforcementEnabled === true
   , admissionInput: async (projectId, request) => {
     const project = store.listProjects().find((candidate) => candidate.id === projectId);
     const team = teams.list().find((candidate) => candidate.id === request.teamId);
@@ -5052,6 +5097,12 @@ const squadExecutionService = new SquadExecutionService({
       },
       onError: (source, error) => logMainError(`Team admission ${source} inventory failed`, error)
     });
+    const slotRoutes = (request.resolvedModels ?? []).map((model) => ({
+      slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
+      level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
+      modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
+      observedAt: model.observedAt, maxAgeMs: model.maxAgeMs
+    }));
     return {
       workUnits: request.workUnits,
       requireCompletePlan: isDurableCoordination(request.coordinationMode),
@@ -5059,7 +5110,7 @@ const squadExecutionService = new SquadExecutionService({
       maxSlots: Math.min(request.policy?.maxLaunches ?? 32, 32),
       initialTasks: request.slots.map((slot) => slot.initialTask),
       sourceBytes: request.sourceBundle?.sources.reduce((sum, source) => sum + source.byteSize, 0),
-      requiredMcpServers, requiredModels, requiredProviders, inventory
+      requiredMcpServers, requiredModels, requiredProviders, inventory, slotRoutes
     };
   }
   , now: Date.now

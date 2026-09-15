@@ -10,6 +10,7 @@ import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
 import type { InboxInput } from '../inbox/inbox-store.js';
 import { ExecutionDeadlineWatchdog } from './deadline-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
+import { evaluateSlotEligibility } from './routing-policy.js';
 
 /** Wall-clock ceiling for a single bounded snapshot read. */
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -90,6 +91,9 @@ export interface ExecutionServiceDeps {
   inbox?: { append: (input: InboxInput) => Promise<unknown> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
   admissionInput?: (projectId: string, request: ExecutionRequestV1) => Promise<TeamAdmissionInput> | TeamAdmissionInput;
+  /** Main-owned snapshot resolver. Agent/renderer model claims never authorize routing. */
+  resolveTeamModelSnapshots?: (projectId: string, request: Pick<ExecutionRequestV1, 'teamId' | 'slots'>) => Promise<ResolvedModelSnapshotV1[]> | ResolvedModelSnapshotV1[];
+  routingEnforcementEnabled?: () => boolean;
   resumeGrants?: ReturnType<typeof createResumeGrantStore>;
   hasLivePredecessor?: (projectId: string, ownerPrincipalIds: readonly string[]) => boolean;
   clearResumeToken?: (projectId: string, executionId: string) => void | Promise<void>;
@@ -301,8 +305,13 @@ export class ExecutionService {
   }
 
   async dryRun(projectId: string, request: ExecutionRequestV1): Promise<TeamAdmissionResultV1> {
-    const input = await this.resolveAdmissionInput(projectId, request);
+    const input = await this.resolveAdmissionInput(projectId, await this.withResolvedRouteFacts(projectId, request));
     return evaluateTeamAdmission(input);
+  }
+
+  private async withResolvedRouteFacts(projectId: string, request: ExecutionRequestV1): Promise<ExecutionRequestV1> {
+    if (!this.deps.resolveTeamModelSnapshots) return request;
+    return { ...request, resolvedModels: await this.deps.resolveTeamModelSnapshots(projectId, request) };
   }
 
   async start(callerPrincipalId: string, projectId: string, request: ExecutionRequestV1): Promise<
@@ -312,10 +321,19 @@ export class ExecutionService {
       || !request.teamId?.trim() || !request.launchRequestId?.trim() || !request.slots?.length) {
       return { ok: false, code: 'INVALID', message: 'invalid execution request' };
     }
+    let resolvedModels: ResolvedModelSnapshotV1[];
+    try {
+      resolvedModels = (await this.withResolvedRouteFacts(projectId, request)).resolvedModels ?? [];
+    } catch (error) {
+      this.deps.logError?.(`Team route facts failed for ${projectId}:${request.launchRequestId}`, error);
+      return { ok: false, code: 'ADMISSION_FAILED', message: 'Team route facts could not be evaluated' };
+    }
+    if (!hasUniqueModelSlots(resolvedModels)) return { ok: false, code: 'INVALID', message: 'duplicate resolved model slot' };
+    const resolvedRequest = { ...request, resolvedModels };
     let admission: TeamAdmissionResultV1;
     let issuedAuthorizationIds: string[] = [];
     try {
-      admission = await this.dryRun(projectId, request);
+      admission = await this.dryRun(projectId, resolvedRequest);
     } catch (error) {
       this.deps.logError?.(`Team admission input failed for ${projectId}:${request.launchRequestId}`, error);
       return { ok: false, code: 'ADMISSION_FAILED', message: 'Team admission could not be evaluated' };
@@ -326,8 +344,6 @@ export class ExecutionService {
     }
     const jobTitle = deriveJobTitle(request);
     const summary = request.summary?.trim() || undefined;
-    const resolvedModels = request.resolvedModels ?? [];
-    if (!hasUniqueModelSlots(resolvedModels)) return { ok: false, code: 'INVALID', message: 'duplicate resolved model slot' };
     const startingKey = `${callerPrincipalId}:${request.launchRequestId}`;
     this.beginStarting(startingKey);
     let claim;
@@ -341,7 +357,7 @@ export class ExecutionService {
         request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: request.policy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective },
         ...(request.workUnits ? { workUnits: request.workUnits } : {}),
         resolvedModels,
-        requestDigest: launchDigest({ callerPrincipalId, projectId, request: { ...withoutDefaultLaunchKind(request), jobTitle, summary } })
+        requestDigest: launchDigest({ callerPrincipalId, projectId, request: { ...withoutDefaultLaunchKind(resolvedRequest), jobTitle, summary } })
       });
     } catch (error) {
       this.endStarting(startingKey);
@@ -429,7 +445,7 @@ export class ExecutionService {
       });
       let revalidatedAdmission: TeamAdmissionResultV1;
       try {
-        revalidatedAdmission = await this.dryRun(projectId, request);
+        revalidatedAdmission = await this.dryRun(projectId, resolvedRequest);
       } catch (error) {
         this.deps.logError?.(`Team admission revalidation failed for ${projectId}:${request.launchRequestId}`, error);
         await this.transitionOrCurrent(record, 'BLOCKED', 'warning', 'Team admission could not be revalidated');
@@ -498,6 +514,12 @@ export class ExecutionService {
       maxSlots: Math.min(request.policy?.maxLaunches ?? 32, 32),
       initialTasks: request.slots.map((slot) => slot.initialTask),
       sourceBytes: request.sourceBundle?.sources.reduce((sum, source) => sum + source.byteSize, 0)
+      , slotRoutes: (request.resolvedModels ?? []).map((model) => ({
+        slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
+        level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
+        modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
+        observedAt: model.observedAt, maxAgeMs: model.maxAgeMs
+      }))
     };
   }
 
@@ -658,8 +680,9 @@ export class ExecutionService {
       return invalidBound(new Error('no structured plan to dispatch — register a work DAG with execution.plan.register before execution.work.dispatch_ready'));
     }
     try {
-      const { record: updated, assignments } = await this.deps.store.dispatchReady(record.id);
+      const { record: updated, assignments } = await this.deps.store.dispatchReady(record.id, { enforceRouting: this.deps.routingEnforcementEnabled?.() === true });
       await this.pushAssignments(updated, assignments);
+      await this.maybeAutoFinalize(updated.id);
       return { ok: true as const, value: updated };
     } catch (error) {
       return invalidBound(error);
@@ -761,7 +784,9 @@ export class ExecutionService {
    */
   private async cascadeDispatch(executionId: string, deprioritizeSlotId?: string): Promise<void> {
     try {
-      const { record, assignments } = await this.deps.store.dispatchReady(executionId, deprioritizeSlotId ? { deprioritizeSlotId } : undefined);
+      const { record, assignments } = await this.deps.store.dispatchReady(executionId, {
+        ...(deprioritizeSlotId ? { deprioritizeSlotId } : {}), enforceRouting: this.deps.routingEnforcementEnabled?.() === true
+      });
       await this.pushAssignments(record, assignments);
     } catch { /* best-effort */ }
   }
@@ -785,6 +810,21 @@ export class ExecutionService {
       if (!worker?.sessionId) {
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
         continue;
+      }
+      const unit = record.workUnits?.find((candidate) => candidate.id === assignment.workUnitId);
+      const model = record.resolvedModels.find((candidate) => candidate.slotId === assignment.slotId);
+      const authorization = record.authorizationContext?.slots.find((candidate) => candidate.slotId === assignment.slotId);
+      if (this.deps.routingEnforcementEnabled?.() === true && unit?.routing && authorization) {
+        const eligibility = evaluateSlotEligibility(unit.routing, {
+          slotId: assignment.slotId, personaId: authorization.personaId, provider: model?.provider, model: model?.model,
+          level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,
+          modalities: model?.modalities, maxContextBytes: model?.maxContextBytes, health: model?.health,
+          observedAt: model?.observedAt, maxAgeMs: model?.maxAgeMs
+        });
+        if (eligibility.status !== 'PASS') {
+          await this.releaseUndeliveredAssignments(record.id, [assignment]);
+          continue;
+        }
       }
       const upstream = dependencyResultsSection(record, assignment.workUnitId);
       const text = `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${upstream}\n\nClose the unit through exactly one structured outcome: execution.work.complete, execution.work.block, execution.work.fail, or execution.work.release. Do not send routine progress or results to the coordinator.`;
@@ -1829,7 +1869,7 @@ export function deriveJobTitle(request: Pick<ExecutionRequestV1, 'jobTitle' | 's
 function hasUniqueModelSlots(models: readonly ResolvedModelSnapshotV1[]): boolean {
   const slots = new Set<string>();
   for (const model of models) {
-    if (!model.slotId?.trim() || !model.provider?.trim() || !model.model?.trim() || slots.has(model.slotId)) return false;
+    if (!model.slotId?.trim() || !model.provider?.trim() || (model.model !== undefined && !model.model.trim()) || slots.has(model.slotId)) return false;
     slots.add(model.slotId);
   }
   return true;

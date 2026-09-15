@@ -13,6 +13,8 @@ import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthoriza
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
 import { normalizeExecutionPlan } from '../launch/preflight.js';
+import { evaluateSlotEligibility, type WorkUnitRoutingV1 } from './routing-policy.js';
+import { MODEL_PRICING_CATALOG_ID, MODEL_PRICING_CATALOG_VERSION } from './model-pricing-catalog.js';
 
 export type ExecutionState = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
 export type ExecutionWorkUnitState = 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
@@ -33,6 +35,7 @@ export interface ExecutionWorkUnitInput {
   files?: string[];
   verification?: string[];
   readOnly?: boolean;
+  routing?: WorkUnitRoutingV1;
 }
 
 export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
@@ -113,6 +116,8 @@ export interface ExecutionRecord {
   stateVersion: number;
   lastEventSequence?: number;
   resolvedModels: ResolvedModelSnapshotV1[];
+  /** Shadow-only routing evidence; legacy assignment remains authoritative. */
+  routingDecisions?: RoutingDecisionV1[];
   authorizationContext?: TeamLaunchAuthorizationContextV1;
   authorizationContextDigest?: string;
   launchIntent?: ExecutionLaunchIntentV1;
@@ -165,9 +170,30 @@ export interface ExecutionLaunchIntentV1 {
 
 export interface ResolvedModelSnapshotV1 {
   slotId: string;
+  personaId?: string;
   provider: string;
-  model: string;
+  /** Undefined only when a native role owns its model and no model is exposed. */
+  model?: string;
   reasoning?: string;
+  level?: import('@zana-ai/zcc-domain/harness-adapter').ModelLevel;
+  roleOwnedModel?: boolean;
+  capabilities?: string[];
+  modalities?: string[];
+  maxContextBytes?: number;
+  health?: 'available' | 'unavailable' | 'unknown';
+  observedAt?: number;
+  maxAgeMs?: number;
+}
+
+export interface RoutingDecisionV1 {
+  workUnitId: string;
+  attempt: number;
+  policyVersion: 1;
+  observedStateVersion: number;
+  pricingCatalogId: string;
+  pricingCatalogVersion: number;
+  recommendedSlotId?: string;
+  candidates: Array<{ slotId: string; status: 'PASS' | 'FAIL' | 'UNKNOWN'; reasons: string[]; estimatedInputUsd?: number }>;
 }
 
 export interface ExecutionEvent {
@@ -220,6 +246,7 @@ const MAX_WORK_UNITS = 100;
 const MAX_UNIT_LIST = 100;
 const MAX_DELIVERIES_PER_EXECUTION = 128;
 const MAX_COORDINATOR_WAKES = 100;
+export const MAX_ROUTING_DECISIONS_PER_EXECUTION = 256;
 const MAX_DELIVERY_TEXT_BYTES = 16 * 1024;
 const MAX_DELIVERY_ERROR_BYTES = 1024;
 export const MAX_DELIVERY_ATTEMPTS = 8;
@@ -256,6 +283,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && isState(record.state) && Number.isInteger(record.stateVersion)
     && (record.lastEventSequence === undefined || Number.isInteger(record.lastEventSequence) && record.lastEventSequence >= 0)
     && Array.isArray(record.resolvedModels) && record.resolvedModels.every(validModelSnapshot)
+    && (record.routingDecisions === undefined || Array.isArray(record.routingDecisions) && record.routingDecisions.length <= MAX_ROUTING_DECISIONS_PER_EXECUTION && record.routingDecisions.every(validRoutingDecision))
     && (record.authorizationContext === undefined || validAuthorizationContext(record.authorizationContext))
     && (record.authorizationContextDigest === undefined || validString(record.authorizationContextDigest))
     && (record.launchIntent === undefined || validLaunchIntent(record.launchIntent))
@@ -285,6 +313,7 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.files === undefined || Array.isArray(unit.files) && unit.files.length <= MAX_UNIT_LIST && unit.files.every(validString))
     && (unit.verification === undefined || Array.isArray(unit.verification) && unit.verification.length <= MAX_UNIT_LIST && unit.verification.every(validString))
     && (unit.readOnly === undefined || typeof unit.readOnly === 'boolean')
+    && (unit.routing === undefined || validRouting(unit.routing))
     && (unit.state === 'PENDING' || unit.state === 'READY' || unit.state === 'CLAIMED' || unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')
     && (unit.assignedSlotId === undefined || validString(unit.assignedSlotId)) && Number.isInteger(unit.attempt) && (unit.attempt ?? -1) >= 0
     && (unit.failureCode === undefined || failureCodes.has(unit.failureCode))
@@ -332,8 +361,51 @@ function validPolicyResult(value: unknown): value is WorkflowPolicyResultV1 {
 function validModelSnapshot(value: unknown): value is ResolvedModelSnapshotV1 {
   if (!value || typeof value !== 'object') return false;
   const snapshot = value as Partial<ResolvedModelSnapshotV1>;
-  return validString(snapshot.slotId) && validString(snapshot.provider) && validString(snapshot.model)
-    && (snapshot.reasoning === undefined || validString(snapshot.reasoning));
+  return validString(snapshot.slotId) && validString(snapshot.provider) && (snapshot.model === undefined || validString(snapshot.model))
+    && (snapshot.personaId === undefined || validString(snapshot.personaId))
+    && (snapshot.reasoning === undefined || validString(snapshot.reasoning))
+    && (snapshot.level === undefined || ['low', 'medium', 'high', 'extra-high'].includes(snapshot.level))
+    && (snapshot.roleOwnedModel === undefined || typeof snapshot.roleOwnedModel === 'boolean')
+    && (snapshot.capabilities === undefined || validStringList(snapshot.capabilities))
+    && (snapshot.modalities === undefined || validStringList(snapshot.modalities))
+    && (snapshot.maxContextBytes === undefined || validNonNegativeInteger(snapshot.maxContextBytes))
+    && (snapshot.health === undefined || snapshot.health === 'available' || snapshot.health === 'unavailable' || snapshot.health === 'unknown')
+    && (snapshot.observedAt === undefined || typeof snapshot.observedAt === 'number' && Number.isFinite(snapshot.observedAt) && snapshot.observedAt >= 0)
+    && (snapshot.maxAgeMs === undefined || validNonNegativeInteger(snapshot.maxAgeMs));
+}
+
+function validRouting(value: unknown): value is WorkUnitRoutingV1 {
+  if (!value || typeof value !== 'object') return false;
+  const routing = value as Partial<WorkUnitRoutingV1>;
+  return routing.version === 1
+    && (routing.taskClass === undefined || validString(routing.taskClass))
+    && (routing.minimumLevel === undefined || ['low', 'medium', 'high', 'extra-high'].includes(routing.minimumLevel))
+    && (routing.requiredCapabilities === undefined || validStringList(routing.requiredCapabilities))
+    && (routing.requiredModalities === undefined || validStringList(routing.requiredModalities))
+    && (routing.estimatedContextBytes === undefined || validNonNegativeInteger(routing.estimatedContextBytes))
+    && (routing.requiredRole === undefined || validString(routing.requiredRole))
+    && (routing.preferredRole === undefined || validString(routing.preferredRole))
+    && (routing.hardSlotId === undefined || validString(routing.hardSlotId));
+}
+
+function validStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length <= MAX_UNIT_LIST && value.every((item) => validString(item));
+}
+
+function validNonNegativeInteger(value: unknown): boolean {
+  return Number.isInteger(value) && (value as number) >= 0;
+}
+
+function validRoutingDecision(value: unknown): value is RoutingDecisionV1 {
+  if (!value || typeof value !== 'object') return false;
+  const decision = value as Partial<RoutingDecisionV1>;
+  return validString(decision.workUnitId) && validNonNegativeInteger(decision.attempt) && decision.policyVersion === 1
+    && validNonNegativeInteger(decision.observedStateVersion) && validString(decision.pricingCatalogId) && validNonNegativeInteger(decision.pricingCatalogVersion)
+    && (decision.recommendedSlotId === undefined || validString(decision.recommendedSlotId))
+    && Array.isArray(decision.candidates) && decision.candidates.length <= 32 && decision.candidates.every((candidate) =>
+      !!candidate && validString(candidate.slotId) && (candidate.status === 'PASS' || candidate.status === 'FAIL' || candidate.status === 'UNKNOWN')
+      && Array.isArray(candidate.reasons) && candidate.reasons.length <= 16 && candidate.reasons.every((reason) => validString(reason))
+      && (candidate.estimatedInputUsd === undefined || typeof candidate.estimatedInputUsd === 'number' && Number.isFinite(candidate.estimatedInputUsd) && candidate.estimatedInputUsd >= 0));
 }
 
 function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshotV1 {
@@ -544,10 +616,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       requestDigest: string(input.requestDigest, 'request digest'),
       launchRequestId: string(input.launchRequestId, 'launch request id'),
       request,
-      resolvedModels: input.resolvedModels.map((snapshot) => ({
-        slotId: string(snapshot.slotId, 'model slot id'), provider: string(snapshot.provider, 'model provider'),
-        model: string(snapshot.model, 'model'), ...(snapshot.reasoning === undefined ? {} : { reasoning: string(snapshot.reasoning, 'model reasoning') })
-      })),
+      resolvedModels: input.resolvedModels.map(normalizeModelSnapshot),
       ...(workUnits ? { workUnits, blockers: [] } : {}),
       ...(input.coordinationMode ? { coordinationMode: input.coordinationMode } : {}),
       ...(input.origin ? { origin: input.origin } : {})
@@ -910,9 +979,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
    * in flight (incl. one just claimed in this pass) is left READY for a later
    * cascade. Reads the live record inside the store queue — no optimistic version
    * needed, this is the engine, not a client — and bumps the version ONLY when it
-   * actually assigns, so an idle cascade is a true no-op (no spurious event/bump).
+    * actually assigns or writes first-time shadow evidence; later idle cascades
+    * remain true no-ops (no spurious event/bump).
    */
-  async function dispatchReady(executionId: string, opts?: { deprioritizeSlotId?: string }): Promise<{ record: ExecutionRecord; assignments: ExecutionDispatchAssignment[] }> {
+  async function dispatchReady(executionId: string, opts?: { deprioritizeSlotId?: string; enforceRouting?: boolean }): Promise<{ record: ExecutionRecord; assignments: ExecutionDispatchAssignment[] }> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
@@ -932,15 +1002,77 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           freeSlots.sort((a, b) => Number(a.slotId === opts.deprioritizeSlotId) - Number(b.slotId === opts.deprioritizeSlotId));
         }
         const timestamp = now();
+        let decisionsChanged = false;
         for (const unit of record.workUnits ?? []) {
-          if (!freeSlots.length) break;
           if (unit.state !== 'READY') continue;
+          let recommendation: string | undefined;
+          let routeImpossible = false;
+          if (unit.routing) {
+            // Decision applies to assignment about to claim this unit, so use
+            // next attempt value. A later no-op dispatch sees same identity.
+            const decisionAttempt = unit.attempt + 1;
+            const key = `${unit.id}\0${decisionAttempt}\0${unit.routing.version}`;
+            const existing = record.routingDecisions?.some((decision) => `${decision.workUnitId}\0${decision.attempt}\0${decision.policyVersion}` === key);
+            if (!existing) {
+              const modelBySlot = new Map(record.resolvedModels.map((model) => [model.slotId, model]));
+              const candidates = workerSlots.map((slot) => {
+                const model = modelBySlot.get(slot.slotId);
+                const eligibility = evaluateSlotEligibility(unit.routing, {
+                  slotId: slot.slotId, personaId: slot.personaId, provider: model?.provider, model: model?.model,
+                  level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,
+                  modalities: model?.modalities, maxContextBytes: model?.maxContextBytes, health: model?.health,
+                  observedAt: model?.observedAt, maxAgeMs: model?.maxAgeMs
+                });
+                return { slotId: slot.slotId, status: eligibility.status, reasons: eligibility.reasons, ...(eligibility.estimatedInputUsd === undefined ? {} : { estimatedInputUsd: eligibility.estimatedInputUsd }), pricingCatalogId: eligibility.pricingCatalogId, pricingCatalogVersion: eligibility.pricingCatalogVersion };
+              });
+              if (opts?.enforceRouting && candidates.length && candidates.every((candidate) => candidate.status === 'UNKNOWN')) {
+                // Facts might recover on next inventory snapshot; Phase 04 owns
+                // bounded refresh and timeout before this becomes terminal.
+                continue;
+              }
+              const qualified = candidates.filter((candidate) => candidate.status === 'PASS' && !busy.has(candidate.slotId)).sort((left, right) => {
+                if (left.estimatedInputUsd === undefined && right.estimatedInputUsd !== undefined) return 1;
+                if (left.estimatedInputUsd !== undefined && right.estimatedInputUsd === undefined) return -1;
+                return (left.estimatedInputUsd ?? 0) - (right.estimatedInputUsd ?? 0) || left.slotId.localeCompare(right.slotId);
+              });
+              const decision: RoutingDecisionV1 = {
+                workUnitId: unit.id, attempt: decisionAttempt, policyVersion: 1, observedStateVersion: record.stateVersion,
+                pricingCatalogId: MODEL_PRICING_CATALOG_ID,
+                pricingCatalogVersion: MODEL_PRICING_CATALOG_VERSION,
+                ...(qualified[0] ? { recommendedSlotId: qualified[0].slotId } : {}), candidates: candidates.map(({ pricingCatalogId: _id, pricingCatalogVersion: _version, ...candidate }) => candidate)
+              };
+              record.routingDecisions = [...(record.routingDecisions ?? []), decision]
+                .sort((left, right) => left.observedStateVersion - right.observedStateVersion || left.workUnitId.localeCompare(right.workUnitId))
+                .slice(-MAX_ROUTING_DECISIONS_PER_EXECUTION);
+              decisionsChanged = true;
+              recommendation = decision.recommendedSlotId;
+              routeImpossible = candidates.length === 0 || candidates.every((candidate) => candidate.status === 'FAIL');
+            } else {
+              const decision = record.routingDecisions?.find((candidate) => `${candidate.workUnitId}\0${candidate.attempt}\0${candidate.policyVersion}` === key);
+              recommendation = decision?.recommendedSlotId;
+              routeImpossible = !recommendation && (decision?.candidates.length === 0 || decision?.candidates.every((candidate) => candidate.status === 'FAIL')) === true;
+            }
+          }
+          if (opts?.enforceRouting && routeImpossible) {
+            unit.state = 'FAILED';
+            unit.failureCode = 'NO_QUALIFIED_ROUTE';
+            unit.failure = 'no authorized worker slot satisfies hard routing requirements';
+            unit.history.push({ action: 'failed', attempt: unit.attempt, at: timestamp, detail: unit.failure });
+            deriveReadiness(record);
+            continue;
+          }
+          if (!freeSlots.length) break;
           // Never claim a mutating unit whose file scope overlaps one already in
           // flight (incl. one just claimed in this pass) — leave it READY.
           try { assertScopeAvailable(record, unit); } catch { continue; }
           let index = -1;
           if (unit.assignedSlotId) {
             index = freeSlots.findIndex((slot) => slot.slotId === unit.assignedSlotId);
+            if (index < 0) continue;
+          }
+          if (index < 0 && opts?.enforceRouting && unit.routing) {
+            if (!recommendation) continue;
+            index = freeSlots.findIndex((slot) => slot.slotId === recommendation);
             if (index < 0) continue;
           }
           if (index < 0 && unit.preferredRole) index = freeSlots.findIndex((slot) => slot.personaId === unit.preferredRole);
@@ -955,11 +1087,13 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           freeSlots.splice(index, 1);
           assignments.push({ workUnitId: unit.id, slotId: slot.slotId, title: unit.title, task: unit.task, ...(unit.files?.length ? { files: unit.files } : {}) });
         }
-        if (assignments.length) {
+        if (assignments.length || decisionsChanged) {
           record.coordinatorState = 'PARKED';
+          // Shadow records are durable evidence. They advance version without an
+          // assignment event, preserving true no-op behavior on later calls.
           record.stateVersion += 1;
           record.updatedAt = timestamp;
-          append(snapshot.state, record, record.state, 'info', `Coordinator parked; auto-dispatched ${assignments.length} ready work unit(s)`, timestamp, { kind: 'command' });
+          if (assignments.length) append(snapshot.state, record, record.state, 'info', `Coordinator parked; auto-dispatched ${assignments.length} ready work unit(s)`, timestamp, { kind: 'command' });
           persist(snapshot.state, snapshot.hash);
         }
       }
@@ -1486,6 +1620,40 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   }
 
   return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, completeWork, failWork, releaseWork, releaseUndelivered, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+}
+
+function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {
+  const normalized: ResolvedModelSnapshotV1 = {
+    slotId: string(snapshot.slotId, 'model slot id'), provider: string(snapshot.provider, 'model provider'),
+    ...(snapshot.personaId === undefined ? {} : { personaId: string(snapshot.personaId, 'model persona id') }),
+    ...(snapshot.model === undefined ? {} : { model: string(snapshot.model, 'model') }),
+    ...(snapshot.reasoning === undefined ? {} : { reasoning: string(snapshot.reasoning, 'model reasoning') }),
+    ...(snapshot.level === undefined ? {} : { level: snapshot.level }),
+    ...(snapshot.roleOwnedModel === undefined ? {} : { roleOwnedModel: snapshot.roleOwnedModel }),
+    ...(snapshot.capabilities === undefined ? {} : { capabilities: normalizeStringList(snapshot.capabilities, 'model capability') }),
+    ...(snapshot.modalities === undefined ? {} : { modalities: normalizeStringList(snapshot.modalities, 'model modality') }),
+    ...(snapshot.maxContextBytes === undefined ? {} : { maxContextBytes: nonNegativeInteger(snapshot.maxContextBytes, 'model context ceiling') }),
+    ...(snapshot.health === undefined ? {} : { health: snapshot.health }),
+    ...(snapshot.observedAt === undefined ? {} : { observedAt: finiteTimestamp(snapshot.observedAt, 'model observation time') }),
+    ...(snapshot.maxAgeMs === undefined ? {} : { maxAgeMs: nonNegativeInteger(snapshot.maxAgeMs, 'model max age') })
+  };
+  if (!validModelSnapshot(normalized)) throw new Error('invalid resolved model snapshot');
+  return normalized;
+}
+
+function normalizeStringList(values: string[], label: string): string[] {
+  if (!Array.isArray(values) || values.length > MAX_UNIT_LIST) throw new Error(`invalid execution ${label}`);
+  return [...new Set(values.map((value) => string(value, label)))].sort();
+}
+
+function nonNegativeInteger(value: number, label: string): number {
+  if (!validNonNegativeInteger(value)) throw new Error(`invalid execution ${label}`);
+  return value;
+}
+
+function finiteTimestamp(value: number, label: string): number {
+  if (!Number.isFinite(value) || value < 0) throw new Error(`invalid execution ${label}`);
+  return value;
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

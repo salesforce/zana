@@ -11,6 +11,8 @@ import type {
   ExecutionConsentScope
 } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { ExecutionConsentCeremonyInput } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
+import type { WorkUnitRoutingV1 } from '../execution/routing-policy.js';
+import { evaluateSlotEligibility, type SlotRouteSnapshotV1 } from '../execution/routing-policy.js';
 
 export type AdmissionCheckStatus = 'PASS' | 'FAIL' | 'SKIPPED' | 'UNKNOWN';
 
@@ -24,7 +26,8 @@ export type AdmissionCheckCode =
   | 'PROVIDER_HEALTH'
   | 'CONTEXT_BUDGET'
   | 'TOKEN_BUDGET'
-  | 'USD_BUDGET';
+  | 'USD_BUDGET'
+  | 'ROUTE_ELIGIBILITY';
 
 export interface AdmissionCheck {
   code: AdmissionCheckCode;
@@ -61,6 +64,7 @@ export interface AdmissionWorkUnitInput {
   files?: string[];
   verification?: string[];
   readOnly?: boolean;
+  routing?: WorkUnitRoutingV1;
 }
 
 export interface TeamAdmissionInput {
@@ -76,6 +80,8 @@ export interface TeamAdmissionInput {
   requiredProviders?: readonly string[];
   budget?: AdmissionBudgetV1;
   inventory?: AdmissionCapabilityInventoryV1;
+  /** Main-derived pre-spawn facts for already-authorized Team slots. */
+  slotRoutes?: readonly SlotRouteSnapshotV1[];
   now?: number;
 }
 
@@ -155,6 +161,16 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
   capabilityChecks('MCP_AVAILABLE', requiredMcpServers, input.inventory?.mcpServers, inventoryFresh, add);
   modelHealthChecks(requiredModels, input.inventory?.models, inventoryFresh, add);
   healthChecks('PROVIDER_HEALTH', requiredProviders, input.inventory?.providers, inventoryFresh, add);
+  for (const unit of normalizedPlan ?? []) {
+    if (!unit.routing) continue;
+    const eligible = (input.slotRoutes ?? []).filter((slot) => !slot.slotId.startsWith('orchestrator:'))
+      .map((slot) => evaluateSlotEligibility(unit.routing, slot, now));
+    const status: AdmissionCheckStatus = eligible.some((result) => result.status === 'PASS') ? 'PASS'
+      : eligible.some((result) => result.status === 'UNKNOWN') ? 'UNKNOWN' : 'FAIL';
+    add({ code: 'ROUTE_ELIGIBILITY', status, required: true, subject: unit.id,
+      message: status === 'PASS' ? `work unit ${unit.id} has a qualified route`
+        : status === 'UNKNOWN' ? `work unit ${unit.id} route facts are unknown` : `work unit ${unit.id} has no qualified route` });
+  }
 
   const contextBytes = input.initialTasks.reduce((sum, value) => sum + Buffer.byteLength(value, 'utf8'), 0)
     + (normalizedPlan ?? input.workUnits ?? []).reduce((sum, unit) => sum + Buffer.byteLength(`${unit.title}\n${unit.task}\n${unit.verification?.join('\n') ?? ''}`, 'utf8'), 0)
@@ -190,7 +206,9 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
       mcpServers: canonicalCapabilities(input.inventory.mcpServers),
       models: [...input.inventory.models].sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`)),
       providers: [...input.inventory.providers].sort((a, b) => a.id.localeCompare(b.id))
-    }
+    },
+    slotRoutes: input.slotRoutes?.map(({ observedAt: _observedAt, ...slot }) => ({ ...slot, capabilities: slot.capabilities?.slice().sort(), modalities: slot.modalities?.slice().sort() }))
+      .sort((a, b) => a.slotId.localeCompare(b.slotId))
   };
   return { version: 1, ready, digest: launchDigest({ version: 1, identity, estimate, checks }), estimate, checks };
 }
@@ -245,7 +263,8 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
       ...(input.preferredRole ? { preferredRole: boundedString(input.preferredRole, 'work unit preferred role') } : {}),
       ...(files ? { files } : {}),
       ...(verification ? { verification } : {}),
-      ...(input.readOnly ? { readOnly: true } : {})
+      ...(input.readOnly ? { readOnly: true } : {}),
+      ...(input.routing ? { routing: normalizeRouting(input.routing) } : {})
     };
   });
   for (const unit of units) for (const dependency of unit.dependencies) if (!ids.has(dependency)) throw new PlanValidationError('dag', 'missing work unit dependency');
@@ -262,6 +281,31 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
   };
   for (const unit of units) visit(unit.id);
   return units;
+}
+
+function normalizeRouting(routing: WorkUnitRoutingV1): WorkUnitRoutingV1 {
+  if (routing.version !== 1) throw new PlanValidationError('dag', 'invalid work unit routing version');
+  const list = (values: string[] | undefined, label: string) => values === undefined ? undefined
+    : [...new Set(values.map((value) => boundedString(value, label)))].sort().slice(0, MAX_ADMISSION_REQUIREMENTS);
+  const requiredCapabilities = list(routing.requiredCapabilities, 'work unit capability');
+  const requiredModalities = list(routing.requiredModalities, 'work unit modality');
+  if (routing.minimumLevel !== undefined && !['low', 'medium', 'high', 'extra-high'].includes(routing.minimumLevel)) {
+    throw new PlanValidationError('dag', 'invalid work unit minimum level');
+  }
+  if (routing.estimatedContextBytes !== undefined && (!Number.isInteger(routing.estimatedContextBytes) || routing.estimatedContextBytes < 0)) {
+    throw new PlanValidationError('dag', 'invalid work unit estimated context bytes');
+  }
+  return {
+    version: 1,
+    ...(routing.taskClass ? { taskClass: boundedString(routing.taskClass, 'work unit task class') } : {}),
+    ...(routing.minimumLevel ? { minimumLevel: routing.minimumLevel } : {}),
+    ...(requiredCapabilities ? { requiredCapabilities } : {}),
+    ...(requiredModalities ? { requiredModalities } : {}),
+    ...(routing.estimatedContextBytes === undefined ? {} : { estimatedContextBytes: routing.estimatedContextBytes }),
+    ...(routing.requiredRole ? { requiredRole: boundedString(routing.requiredRole, 'work unit required role') } : {}),
+    ...(routing.preferredRole ? { preferredRole: boundedString(routing.preferredRole, 'work unit preferred role') } : {}),
+    ...(routing.hardSlotId ? { hardSlotId: boundedString(routing.hardSlotId, 'work unit hard slot') } : {})
+  };
 }
 
 function normalizeFileScope(value: string): string {
