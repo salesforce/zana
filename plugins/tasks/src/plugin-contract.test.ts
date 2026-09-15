@@ -47,6 +47,7 @@ describe('tasks plugin', () => {
     await expect(harness.mentionProviders[0]!.search({ query: 'Loop' })).resolves.toEqual([
       expect.objectContaining({ label: expect.stringContaining('Loop'), insertText: '::task{key="TSK-1"}' })
     ]);
+    await expect(harness.mentionProviders[0]!.search({} as never)).resolves.toEqual([]);
     await expect(harness.mentionProviders[0]!.resolve(added.id)).resolves.toMatchObject({
       context: expect.stringContaining('Loop')
     });

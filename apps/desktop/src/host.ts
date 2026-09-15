@@ -100,7 +100,7 @@ import { runStartupGate, type StartupState } from './startup-gate.js';
 import { DEFAULT_RENDERER_ZOOM_FACTOR } from './window/window-zoom.js';
 import { resolveLaunchSelection } from '@zana-ai/zcc-host-daemon/harness/launch-selection';
 import { resolveEffectiveHarnessDefault } from '@zana-ai/zcc-host-daemon/harness/effective-default';
-import { resolveExecutionState } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
+import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { listClaudeSessions } from '@zana-ai/zcc-server/services/projects/claude';
 import { listOpenCodeSessions } from '@zana-ai/zcc-server/services/projects/opencode-sessions';
 import { ConversationHistoryService } from '@zana-ai/zcc-host-daemon/conversation-history';
@@ -3809,7 +3809,7 @@ async function launchAuthorizedTerminal(
       try {
         return await ptys.waitForReady(result.value.id, 30_000);
       } catch (error) {
-        terminateSession(result.value.id);
+        await terminateSession(result.value.id);
         throw error;
       }
     },
@@ -4985,47 +4985,70 @@ const squadExecutionService = new SquadExecutionService({
   , admissionInput: async (projectId, request) => {
     const project = store.listProjects().find((candidate) => candidate.id === projectId);
     const team = teams.list().find((candidate) => candidate.id === request.teamId);
+    const config = store.getConfig();
+    const projectSettings = project ? await getAuthoritativeProjectSettings(projectId) : undefined;
     const personaSnapshot = personas.list();
-    const personaIds = [...new Set([...(team?.slots.map((slot) => slot.personaId) ?? []), ...(team?.orchestratorPersonaId ? [team.orchestratorPersonaId] : [])])];
+    const personaIds = [...new Set([...(team?.slots.map((slot) => slot.personaId) ?? []), ...(team?.orchestratorPersonaId ? [team.orchestratorPersonaId] : [])])].sort();
     const slotPersonas = personaIds.map((id) => personaSnapshot.find((persona) => persona.id === id)).filter((persona): persona is Persona => !!persona);
     const profileForAdmission = (persona: Persona): LaunchProfileId => {
       if (!project) return 'claude';
       return resolvedTeamProfile(project, personaSnapshot, persona);
     };
     const profiles = slotPersonas.map(profileForAdmission);
-    const requiredProviders = [...new Set(profiles.map((profile) => providerFor(profile).adapter.descriptor.id))];
+    const providers = new Map<string, ReturnType<typeof providerFor>>(profiles.map((profile) => {
+      const provider = providerFor(profile);
+      return [provider.adapter.descriptor.id, provider] as const;
+    }));
+    const requiredProviders = [...providers.keys()].sort();
     const requiredModels = slotPersonas.flatMap((persona) => {
       const profile = profileForAdmission(persona);
-      const adapter = providerFor(profile).adapter.descriptor.id;
-      const model = adapter === 'shell' ? persona.model : persona.harnessRouting?.byAdapter[adapter]?.modelTargetId ?? persona.model;
-      return model && model !== 'default' ? [model] : [];
-    });
-    const requiredMcpServers = [...new Set(slotPersonas.flatMap((persona) => persona.mcpServers ?? []))];
+      const provider = providerFor(profile);
+      const resolutionInput = { config, persona, projectSettings, profile, extraArgs: [], scope: project ? launchExecutionScope(project, {}, config) : 'local' as const };
+      const model = resolveModelTarget(provider, resolutionInput);
+      const role = resolveRoleTarget(provider, resolutionInput);
+      return model.targetId && !(role.targetId && provider.nativeRolePinsModel)
+        ? [{ id: model.targetId, provider: provider.adapter.descriptor.id }]
+        : [];
+    }).sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`));
+    const requiredMcpServers = [...new Set(slotPersonas.flatMap((persona) => persona.mcpServers ?? []))].sort();
     const inventory = await collectTeamAdmissionInventory({ requiredMcpServers, requiredModels, requiredProviders }, {
       listSkills: () => project ? listSkills({ projectPath: project.path, projectId }) : Promise.resolve([]),
       listMcpServers: () => project ? listMcpServers(project.path) : Promise.resolve([]),
       providerHealth: async (ids) => {
-        const verify = await verifyHarnesses(store.getConfig());
+        const verify = await verifyHarnesses(config);
         return ids.map((id) => {
-          const provider = profiles.map((profile) => providerFor(profile)).find((candidate) => candidate.adapter.descriptor.id === id);
+          const provider = providers.get(id);
           if (provider?.adapter.descriptor.id === 'shell') return { id, status: 'available' as const };
           const found = verify.find((item) => item.family === id);
           return { id, status: !found ? 'unknown' as const : found.enabled && found.installed ? 'available' as const : 'unavailable' as const };
         });
       },
-      modelHealth: async (ids) => Promise.all(ids.map(async (id) => {
-        const owner = profiles.map((profile) => providerFor(profile)).find((provider) =>
-          provider.adapter.descriptor.targets?.models.some((model) => model.id === id)
-          || provider.acceptsUnlistedModelTargets === true
-        );
-        if (!owner) return { id, provider: 'unknown', status: 'unknown' as const };
-        const live = project && owner.discoverModelTargets ? await owner.discoverModelTargets({ cwd: project.path, config: store.getConfig() }) : undefined;
-        if (owner.discoverModelTargets) {
-          return { id, provider: owner.id, status: live === undefined ? 'unknown' as const : live.includes(id) ? 'available' as const : 'unavailable' as const };
-        }
-        const listed = owner.adapter.descriptor.targets?.models.some((model) => model.id === id) ?? false;
-        return { id, provider: owner.adapter.descriptor.id, status: listed || owner.acceptsUnlistedModelTargets ? 'available' as const : 'unavailable' as const };
-      }))
+      modelHealth: async (models) => {
+        const requiredProviderIds = new Set(models.map((model) => model.provider));
+        const liveByProvider = new Map(await Promise.all([...providers]
+          .filter(([id]) => requiredProviderIds.has(id))
+          .map(async ([id, provider]) => {
+            try {
+              return [id, project && provider.discoverModelTargets
+                ? await provider.discoverModelTargets({ cwd: project.path, config })
+                : undefined] as const;
+            } catch (error) {
+              logMainError(`Team admission models inventory failed for ${id}`, error);
+              return [id, undefined] as const;
+            }
+          }))) as Map<string, readonly string[] | undefined>;
+        return models.map(({ id, provider: providerId }) => {
+          const owner = providers.get(providerId);
+          if (!owner) return { id, provider: providerId, status: 'unknown' as const };
+          if (owner.discoverModelTargets) {
+            const live = liveByProvider.get(providerId);
+            return { id, provider: providerId, status: live === undefined ? 'unknown' as const : live.includes(id) ? 'available' as const : 'unavailable' as const };
+          }
+          const listed = owner.adapter.descriptor.targets?.models.some((model) => model.id === id) ?? false;
+          return { id, provider: providerId, status: listed || owner.acceptsUnlistedModelTargets ? 'available' as const : 'unavailable' as const };
+        });
+      },
+      onError: (source, error) => logMainError(`Team admission ${source} inventory failed`, error)
     });
     return {
       workUnits: request.workUnits,
@@ -7023,6 +7046,16 @@ async function bootstrapNormal() {
       const failed = result.checks.find((check) => check.required && check.status !== 'PASS');
       return { ready: result.ready, digest: result.digest, ...(failed ? { message: failed.message } : {}) };
     } : undefined,
+    revokeTeamAuthorizations: ({ callerPrincipalId, projectId, teamId, launchRequestId, slots }) => {
+      const principalId = `team:${teamId}:${callerPrincipalId}:${launchRequestId}`;
+      for (const slot of slots) {
+        const authorization = launchAuthorization.get(slot.authorizationId!);
+        if (authorization?.principal.id !== principalId || authorization.projectId !== projectId) continue;
+        if (authorization.binding.teamId !== teamId || authorization.binding.slotId !== slot.slotId) continue;
+        if (authorization.binding.initialTaskDigest !== launchDigest(slot.initialTask)) continue;
+        launchAuthorization.revoke(authorization.id);
+      }
+    },
     cancelTeamLaunch: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? cancelTeamLaunch : undefined,
     getTeamLaunch: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? getTeamLaunch : undefined,
     reportTeamTask: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? reportTeamTask : undefined,

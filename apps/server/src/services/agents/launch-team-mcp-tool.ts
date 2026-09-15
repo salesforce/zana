@@ -119,6 +119,13 @@ export interface RegisterLaunchTeamToolOpts {
     slots: TeamLaunchAuthorizationInputSlot[];
     policy: NonNullable<TeamLaunchRequestInput['policy']>;
   }) => Promise<{ ready: boolean; digest: string; message?: string }>;
+  revokeTeamAuthorizations?: (input: {
+    callerPrincipalId: string;
+    projectId: string;
+    teamId: string;
+    launchRequestId: string;
+    slots: TeamLaunchRequestInput['slots'];
+  }) => void | Promise<void>;
   cancelTeamLaunch?: (
     callerPrincipalId: string,
     launchRequestId: string
@@ -147,7 +154,7 @@ export function registerLaunchTeamTool(
   server: McpServer,
   opts: RegisterLaunchTeamToolOpts
 ): void {
-  const { sessionId, projectId, launchTeam, authorizeTeamLaunch, cancelTeamLaunch, getTeamLaunch, reportTeamTask, validateRouteIdentity, evaluateAdmission } = opts;
+  const { sessionId, projectId, launchTeam, authorizeTeamLaunch, cancelTeamLaunch, getTeamLaunch, reportTeamTask, validateRouteIdentity, evaluateAdmission, revokeTeamAuthorizations } = opts;
 
   // validateRouteIdentity may hit an async probe (HTTP /live fallback). A
   // rejecting probe must DENY, not throw out of the tool handler — treat any
@@ -177,7 +184,12 @@ export function registerLaunchTeamTool(
         ...(maxConcurrent === undefined ? {} : { maxConcurrent }),
         ...(maxLaunches === undefined ? {} : { maxLaunches })
       };
-      const admission = await evaluateAdmission?.({ projectId, teamId, slots, policy });
+      let admission: Awaited<ReturnType<NonNullable<typeof evaluateAdmission>>> | undefined;
+      try {
+        admission = await evaluateAdmission?.({ projectId, teamId, slots, policy });
+      } catch {
+        return { isError: true, content: [{ type: 'text' as const, text: 'authorize_team_launch failed: Team admission could not be evaluated.' }] };
+      }
       if (admission && !admission.ready) {
         return { isError: true, content: [{ type: 'text' as const, text: `authorize_team_launch failed: ${admission.message ?? 'Team admission failed'}` }] };
       }
@@ -233,23 +245,36 @@ export function registerLaunchTeamTool(
         requirePreauthorization: true,
         admissionDigest
       };
+      const revokeAuthorizedSlots = () => revokeTeamAuthorizations?.({
+        callerPrincipalId: sessionId, projectId, teamId, launchRequestId, slots
+      });
       if (evaluateAdmission && !admissionDigest) {
+        await revokeAuthorizedSlots();
         return { isError: true, content: [{ type: 'text' as const, text: 'launch_team failed: admissionDigest from authorize_team_launch is required.' }] };
       }
       if (evaluateAdmission) {
-        const currentAdmission = await evaluateAdmission({
-          projectId,
-          teamId,
-          slots: slots.map(({ initialTask }) => ({ initialTask })),
-          policy: request.policy
-        });
+        let currentAdmission: Awaited<ReturnType<typeof evaluateAdmission>>;
+        try {
+          currentAdmission = await evaluateAdmission({ projectId, teamId, slots, policy: request.policy });
+        } catch {
+          await revokeAuthorizedSlots();
+          return { isError: true, content: [{ type: 'text' as const, text: 'launch_team failed: Team admission could not be revalidated.' }] };
+        }
         if (!currentAdmission.ready || currentAdmission.digest !== admissionDigest) {
+          await revokeAuthorizedSlots();
           return { isError: true, content: [{ type: 'text' as const, text: `launch_team failed: ${currentAdmission.message ?? 'Team admission changed after authorization'}` }] };
         }
       }
       const resolvedProjectId = projectId;
-      const res = await launchTeam(teamId, resolvedProjectId, request);
+      let res: Awaited<ReturnType<typeof launchTeam>>;
+      try {
+        res = await launchTeam(teamId, resolvedProjectId, request);
+      } catch {
+        await revokeAuthorizedSlots();
+        return { isError: true, content: [{ type: 'text' as const, text: 'launch_team failed: Team launch could not be completed.' }] };
+      }
       if (!res.ok) {
+        await revokeAuthorizedSlots();
         return {
           isError: true,
           content: [{ type: 'text' as const, text: `launch_team failed: ${res.message}` }]
