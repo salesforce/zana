@@ -63,6 +63,8 @@ function ensureNodePtySpawnHelperExecutable(): void {
 
 /** Opt-in debug capture (ZCC_DEBUG_YOLO_CAPTURE) has no expiry — bound it here so a long-lived dev box doesn't accumulate `.jsonl` files forever. */
 const DIAGNOSTIC_CAPTURE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/** Wait after first TUI output before typing a stdin-after-ready opening task. */
+const STDIN_OPENING_PROMPT_AFTER_READY_MS = 500;
 
 function sweepStaleDiagnosticCaptures(dir: string): void {
   try {
@@ -755,6 +757,13 @@ export class PtyManager extends EventEmitter {
      * after re-authorizing Experimental + store `project.remote` (Rule 1).
      */
     remoteToolProxy?: boolean;
+    /**
+     * Interactive opening task for a harness whose TUI cannot take a seed argv
+     * (`initialTaskDelivery: stdin-after-ready`). Typed via {@link reply} after
+     * first output. Absent for spawn-arg harnesses (prompt already on argv) and
+     * for resume / scheduled launches.
+     */
+    openingPrompt?: string;
   }): TerminalSession {
     if (opts.remote) {
       return this.createRemote({ ...opts, remote: opts.remote });
@@ -1644,7 +1653,14 @@ export class PtyManager extends EventEmitter {
   private wireSessionIo(
     session: TerminalSession,
     proc: pty.IPty | ExecutionSession,
-    opts: { autonomous?: boolean; persona?: Persona; scheduled?: boolean; suppressPersonaInitialPrompt?: boolean },
+    opts: {
+      autonomous?: boolean;
+      persona?: Persona;
+      scheduled?: boolean;
+      resume?: boolean;
+      suppressPersonaInitialPrompt?: boolean;
+      openingPrompt?: string;
+    },
     caps: { injectsClaudeMcpConfig: boolean }
   ): void {
     proc.onData((data) => {
@@ -1683,6 +1699,9 @@ export class PtyManager extends EventEmitter {
       };
       proc.onData(writePrompt);
     }
+    if (opts.openingPrompt && !opts.scheduled && !opts.resume) {
+      this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc);
+    }
     proc.onExit((event) => {
       const { exitCode } = event;
       const signal = 'signal' in event && typeof event.signal === 'number' ? event.signal : undefined;
@@ -1720,7 +1739,7 @@ export class PtyManager extends EventEmitter {
     envCtx: ExecEnvContext,
     sessionEnv: Record<string, string>,
     spawnEnv: Record<string, string>,
-    opts: { autonomous?: boolean; persona?: Persona; scheduled?: boolean; cols: number; rows: number },
+    opts: { autonomous?: boolean; persona?: Persona; scheduled?: boolean; resume?: boolean; cols: number; rows: number; openingPrompt?: string },
     caps: { injectsClaudeMcpConfig: boolean }
   ): Promise<void> {
     let exec: ExecutionSession;
@@ -1912,6 +1931,11 @@ export class PtyManager extends EventEmitter {
      * the on-disk transcript instead of starting cold. No-op for shell profiles.
      */
     resume?: boolean;
+    /**
+     * See {@link create}'s `openingPrompt`. Typed after first remote output.
+     * Reconnect re-attach must not replay it (bindRemoteProc is reused without this).
+     */
+    openingPrompt?: string;
   }): TerminalSession {
     const { remote } = opts;
     // The session record is consumed by the renderer for remote file drops. It
@@ -2260,6 +2284,9 @@ export class PtyManager extends EventEmitter {
         }
       : undefined;
     this.bindRemoteProc(session, proc, reattach);
+    if (opts.openingPrompt && !opts.scheduled && !opts.resume) {
+      this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc);
+    }
     this.emit('sessionUpdated', session);
 
     return session;
@@ -2424,6 +2451,30 @@ export class PtyManager extends EventEmitter {
     if (!l.reattach) return;
     if (l.reattach.timer) clearTimeout(l.reattach.timer);
     l.reattach = undefined;
+  }
+
+  /**
+   * Type an opening task into a TUI that cannot take seed argv. Waits for first
+   * output (banner / prompt paint) then uses {@link reply} so the submit CR is
+   * a discrete keypress rather than a paste burst.
+   */
+  private scheduleStdinOpeningPrompt(
+    sessionId: string,
+    prompt: string,
+    proc: pty.IPty | ExecutionSession
+  ): void {
+    const body = prompt.trim();
+    if (!body) return;
+    let armed = false;
+    const arm = () => {
+      if (armed) return;
+      armed = true;
+      setTimeout(() => {
+        if (!this.live.get(sessionId)) return;
+        this.reply(sessionId, body);
+      }, STDIN_OPENING_PROMPT_AFTER_READY_MS);
+    };
+    proc.onData(arm);
   }
 
   write(id: string, data: string) {

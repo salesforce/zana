@@ -2918,10 +2918,10 @@ export interface CreateTerminalRequest {
    */
   workspaceEnvironmentId?: string;
   /**
-   * Optional opening prompt for claude-family profiles — appended as the
-   * positional `[prompt]` argv element so the spawned interactive session runs
-   * it on first turn (e.g. a slash command like `/eq-craft`). Ignored for the
-   * `shell` profile, where it would be parsed as a shell command.
+   * Optional opening prompt. Spawn-arg harnesses append it as the trailing
+   * `[prompt]` / `--prompt` argv so the session runs it on first turn. Harnesses
+   * whose TUI cannot take a seed argv (stdin-after-ready) receive it as a typed
+   * submit after the process is ready. Ignored for `shell`.
    */
   prompt?: string;
   /**

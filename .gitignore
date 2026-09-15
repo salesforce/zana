@@ -1,6 +1,8 @@
 node_modules
 out
 dist
+# node-gyp configure dump at repo root (not a source tree).
+/build/
 .turbo/
 
 # Test/coverage artifacts (Vitest coverage HTML, Playwright traces/screenshots)

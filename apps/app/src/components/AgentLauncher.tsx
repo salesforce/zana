@@ -46,8 +46,9 @@ import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap.js';
 
 /**
  * Build raw prompt intent and title for a launch. Main converts `prompt` to
- * provider argv after it resolves the effective profile, keeping this renderer
- * request advisory and preserving prompt text for spawn-time features.
+ * provider argv (or types it into a TUI that cannot take seed argv) after it
+ * resolves the effective profile, keeping this renderer request advisory and
+ * preserving prompt text for spawn-time features.
  */
 export function buildLaunchArgs(
   rawPrompt: string,

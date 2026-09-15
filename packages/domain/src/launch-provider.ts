@@ -468,9 +468,11 @@ export function providerCapabilities(profile: LaunchProfileId): ProviderCapabili
     return {
       // v1: Mastra Code (`mastracode`) is a TUI in a PTY. `--prompt` / a
       // positional prompt forks headless and exits when the task ends, so the
-      // seed-prompt channel stays OFF. `--mode` / `--continue` / `--thinking-level`
-      // are headless-only; the TUI honors `MASTRACODE_YOLO` and
-      // `MASTRACODE_MODEL_ID`. Thread already speaks ACP (`mastracode --acp`).
+      // seed-prompt ARGV channel stays OFF. Interactive first tasks ride
+      // stdin-after-ready (see the adapter's initialTaskDelivery). `--mode` /
+      // `--continue` / `--thinking-level` are headless-only; the TUI honors
+      // `MASTRACODE_YOLO` and `MASTRACODE_MODEL_ID`. Thread already speaks ACP
+      // (`mastracode --acp`).
       hasTranscript: false,
       injectsClaudeMcpConfig: false,
       acceptsPermissionMode: false,
@@ -519,7 +521,9 @@ export function providerCapabilities(profile: LaunchProfileId): ProviderCapabili
  *    (`Failed to change directory to …/<prompt>`). Its seed prompt rides the
  *    `--prompt <text>` flag instead.
  *  - `shell` (and any profile without `acceptsPromptArgv`) takes NO seed prompt
- *    — a shell would run it as a command. Returns `[]`.
+ *    as argv — a shell would run it as a command. Returns `[]`. Mastra Code's
+ *    TUI is in this set: `--prompt` forks headless, so the interactive first
+ *    task is typed stdin after ready (see host-daemon `stdinOpeningPrompt`).
  *
  * An empty / whitespace-only prompt yields `[]` for every profile.
  */
@@ -528,7 +532,8 @@ export function seedPromptArgs(profile: LaunchProfileId, prompt: string): string
   if (!body) return [];
   if (!providerCapabilities(profile).acceptsPromptArgv) return [];
   // OpenCode: the positional is the project dir, so the seed prompt is a flag.
-  // Mastra Code: `--prompt` / a positional forks headless (gated off above).
+  // Mastra Code: `--prompt` / a positional forks headless (gated off above);
+  // interactive first tasks use stdin-after-ready instead.
   if (isOpenCodeProfile(profile)) return ['--prompt', body];
   // Positional seed prompt (claude/cursor/codex/pi/grok): escape a dash-leading
   // body with `--` so the CLI treats it as the prompt, not an unknown flag.

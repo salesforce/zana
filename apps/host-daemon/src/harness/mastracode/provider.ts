@@ -3,7 +3,8 @@
  *
  * Thread already speaks Mastra Code over ACP (`mastracode --acp`). This family is
  * the interactive terminal: bare `mastracode` in a PTY. `--prompt` / a positional
- * prompt forks headless and exits, so the seed-prompt channel stays off.
+ * prompt forks headless and exits, so the seed-prompt argv channel stays off.
+ * CLI Agent / Team opening tasks ride stdin after the TUI is ready instead.
  * `--mode` / `--continue` / `--thinking-level` are headless-only; the TUI honors
  * `MASTRACODE_YOLO` and `MASTRACODE_MODEL_ID`. Rule 6: profile literals live
  * only here + the registration.
@@ -25,7 +26,7 @@ const MASTRACODE_OPENING_PROMPT_EVIDENCE = {
   versionRange: MASTRACODE_EVIDENCE_VERSION,
   scope: 'local' as const,
   probe: 'mastracode --help plus provider contract suite',
-  observed: 'TUI ignores --prompt; a positional/--prompt fork is headless and exits.',
+  observed: 'TUI ignores --prompt argv (headless fork). Interactive first task is typed stdin after ready.',
   reviewedAt: '2026-09-13'
 };
 
@@ -68,9 +69,9 @@ const MASTRACODE_ADAPTER: TrustedHarnessAdapter = {
       }
     },
     initialTaskDelivery: {
-      local: 'unsupported',
-      remote: 'unsupported',
-      readinessSignal: 'none',
+      local: 'stdin-after-ready',
+      remote: 'stdin-after-ready',
+      readinessSignal: 'provider-ready',
       acceptanceSignal: 'delivery-attempted'
     }
   },

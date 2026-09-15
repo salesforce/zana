@@ -13,6 +13,9 @@ export function splitModelLabelTag(label: string): ModelLabelParts {
   return { base: match[1]!, tag: match[2]! };
 }
 
+/** Compact letter-skipping (`sn5` → `Sonnet 5`) only for short queries. */
+const LETTER_SKIP_QUERY_MAX = 4;
+
 export function buildFuzzyRegex(query: string): RegExp {
   const pattern = query
     .split('')
@@ -21,14 +24,51 @@ export function buildFuzzyRegex(query: string): RegExp {
   return new RegExp(pattern, 'i');
 }
 
+function searchSegments(haystack: string): string[] {
+  return haystack.split(/[^a-z0-9]+/u).filter(Boolean);
+}
+
+/**
+ * Score a catalog row for a picker query. Letter-skipping (`o.*p.*e.*n.*a.*i`)
+ * is too loose on slash-separated ids: `openai` must not match
+ * `openrouter/rekaai/reka-flash-3`.
+ */
+export function modelQueryScore(haystack: string, query: string): number {
+  const q = query.trim().toLowerCase();
+  if (!q) return 1;
+  const hay = haystack.toLowerCase();
+  if (hay === q) return 6;
+  if (hay.startsWith(q)) return 5;
+  const segments = searchSegments(hay);
+  if (segments.some((segment) => segment === q)) return 4;
+  if (hay.includes(q)) return 3;
+  if (segments.some((segment) => segment.startsWith(q))) return 3;
+  const compactHay = hay.replace(/[^a-z0-9]+/gu, '');
+  const compactQ = q.replace(/[^a-z0-9]+/gu, '');
+  if (compactQ && compactHay.includes(compactQ)) return 2;
+  if (q.length <= LETTER_SKIP_QUERY_MAX && buildFuzzyRegex(q).test(hay)) return 1;
+  return 0;
+}
+
+export function matchesModelQuery(haystack: string, query: string): boolean {
+  return modelQueryScore(haystack, query) > 0;
+}
+
 export function fuzzyFilter<T>(
   options: readonly T[],
   normalizedQuery: string,
   getText: (option: T) => string
 ): readonly T[] {
   if (!normalizedQuery) return options;
-  const regex = buildFuzzyRegex(normalizedQuery);
-  return options.filter((option) => regex.test(getText(option)));
+  return options
+    .map((option, index) => ({
+      option,
+      index,
+      score: modelQueryScore(getText(option), normalizedQuery)
+    }))
+    .filter((row) => row.score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((row) => row.option);
 }
 
 export function modelSearchText(option: ModelPickerOption, providerId: string): string {

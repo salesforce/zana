@@ -3,6 +3,9 @@ import {
   buildFuzzyRegex,
   buildModelNavRows,
   fuzzyFilter,
+  matchesModelQuery,
+  modelQueryScore,
+  modelSearchText,
   pinSelectedMoreModels,
   splitModelLabelTag
 } from './model-picker-search.js';
@@ -13,13 +16,52 @@ describe('model picker search', () => {
     expect(splitModelLabelTag('Sonnet 5')).toEqual({ base: 'Sonnet 5', tag: null });
   });
 
-  it('fuzzy-matches model labels', () => {
+  it('fuzzy-matches compact model labels', () => {
     expect(buildFuzzyRegex('sn5').test('Sonnet 5')).toBe(true);
     expect(fuzzyFilter(
       [{ value: 'claude-sonnet-5', label: 'Sonnet 5' }, { value: 'claude-fable-5', label: 'Fable 5' }],
       'sn',
       (option) => option.label
     )).toEqual([{ value: 'claude-sonnet-5', label: 'Sonnet 5' }]);
+    expect(matchesModelQuery('Sonnet 5', 'sn5')).toBe(true);
+  });
+
+  it('does not letter-skip openai onto unrelated openrouter ids', () => {
+    const openai = {
+      value: 'openai/gpt-5',
+      label: 'openai/gpt-5',
+      routeProviderId: 'openai'
+    };
+    const viaOpenRouter = {
+      value: 'openrouter/openai/gpt-5',
+      label: 'openrouter/openai/gpt-5',
+      routeProviderId: 'openrouter'
+    };
+    const reka = {
+      value: 'openrouter/rekaai/reka-flash-3',
+      label: 'openrouter/rekaai/reka-flash-3',
+      routeProviderId: 'openrouter'
+    };
+    const relace = {
+      value: 'openrouter/relace/relace-apply-3',
+      label: 'openrouter/relace/relace-apply-3',
+      routeProviderId: 'openrouter'
+    };
+    const search = (option: typeof openai) => modelSearchText(option, 'pi');
+    expect(matchesModelQuery(search(reka), 'openai')).toBe(false);
+    expect(matchesModelQuery(search(relace), 'openai')).toBe(false);
+    expect(fuzzyFilter([reka, relace, viaOpenRouter, openai], 'openai', search)).toEqual([
+      openai,
+      viaOpenRouter
+    ]);
+    expect(modelQueryScore(search(openai), 'openai')).toBeGreaterThan(
+      modelQueryScore(search(viaOpenRouter), 'openai')
+    );
+  });
+
+  it('matches hyphen-stripped ids and provider segments', () => {
+    expect(matchesModelQuery('openai/gpt-5', 'gpt5')).toBe(true);
+    expect(matchesModelQuery('openrouter/anthropic/claude-sonnet-4.6', 'anthropic')).toBe(true);
   });
 
   it('pins a selected more-model into the primary list', () => {

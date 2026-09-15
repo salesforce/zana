@@ -75,6 +75,7 @@ export function ModelReasoningPicker({
   const moreToggleRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const sectionRef = useRef<HTMLDivElement>(null);
   const navId = useId();
   const canSwitchProviders = showHarnessTabs(onSelectedProviderChange, providerOptions.length);
   const selectedProvider = providerOptions.find((row) => row.value === selectedProviderId);
@@ -130,6 +131,10 @@ export function ModelReasoningPicker({
   useEffect(() => {
     if (isSearching) setShowMoreModels(false);
   }, [isSearching]);
+
+  useEffect(() => {
+    sectionRef.current?.scrollTo(0, 0);
+  }, [normalizedQuery]);
 
   useEffect(() => {
     if (!open || !triggerRef.current || !menuRef.current) return;
@@ -299,6 +304,9 @@ export function ModelReasoningPicker({
                 value={query}
                 placeholder="Search models"
                 aria-label="Search models"
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
                 onChange={(event) => {
                   setQuery(event.target.value);
                   setActiveIndex(-1);
@@ -307,12 +315,14 @@ export function ModelReasoningPicker({
               />
             </div>
           ) : null}
-          <div className="model-reasoning-picker-section">
+          <div ref={sectionRef} className="model-reasoning-picker-section">
             <div className="model-reasoning-picker-section-label">Model</div>
             {modelIsLoading ? (
               <ModelPickerLoadingRows />
             ) : navRows.length === 0 ? (
-              <div className="model-reasoning-picker-hint">{emptyModelsHint(selectedProviderId, modelLoadError)}</div>
+              <div className="model-reasoning-picker-hint">
+                {isSearching ? 'No matching models' : emptyModelsHint(selectedProviderId, modelLoadError)}
+              </div>
             ) : navRows.map((row, index) => {
               if (row.kind === 'more-toggle') {
                 return (

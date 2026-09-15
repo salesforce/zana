@@ -53,6 +53,7 @@ const createCalls: Array<{
   persona: unknown;
   remote?: unknown;
   remoteToolProxy?: boolean;
+  openingPrompt?: string;
 }> = [];
 
 vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
@@ -67,6 +68,7 @@ vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
       persona: unknown;
       remote?: unknown;
       remoteToolProxy?: boolean;
+      openingPrompt?: string;
     }) {
       createCalls.push({
         cwd: opts.cwd,
@@ -74,7 +76,8 @@ vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
         profile: opts.profile,
         persona: opts.persona,
         remote: opts.remote,
-        remoteToolProxy: opts.remoteToolProxy
+        remoteToolProxy: opts.remoteToolProxy,
+        openingPrompt: opts.openingPrompt
       });
       return { id: `s${createCalls.length}` };
     }
@@ -524,6 +527,34 @@ describe('createTerminalConfined — main-side denylist enforcement', () => {
       CONFIG.defaultHarness = prior;
       CONFIG.harnessOpenCodeEnabled = priorEnabled;
     }
+  });
+
+  it('delivers a Mastra Code opening task via stdin, not --prompt argv', () => {
+    const res = createTerminalConfined({
+      projectId: 'p1',
+      profile: 'mastracode',
+      prompt: 'analyse the repo',
+      cols: 80,
+      rows: 24
+    });
+    expect(res.ok).toBe(true);
+    expect(lastCreate().profile).toBe('mastracode');
+    expect(lastCreate().extraArgs ?? []).not.toContain('analyse the repo');
+    expect(lastCreate().extraArgs ?? []).not.toContain('--prompt');
+    expect(lastCreate().openingPrompt).toBe('analyse the repo');
+  });
+
+  it('does not stdin-inject a Mastra Code resume launch', () => {
+    const res = createTerminalConfined({
+      projectId: 'p1',
+      profile: 'mastracode-resume',
+      prompt: 'analyse the repo',
+      cols: 80,
+      rows: 24
+    });
+    expect(res.ok).toBe(true);
+    expect(lastCreate().profile).toBe('mastracode-resume');
+    expect(lastCreate().openingPrompt).toBeUndefined();
   });
 
   it('blocks a seeded launch when its configured global harness is disabled', () => {
