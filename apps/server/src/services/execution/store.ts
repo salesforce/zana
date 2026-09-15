@@ -12,6 +12,7 @@ import { EXECUTION_FAILURE_CODES, isDurableCoordination } from '@zana-ai/zcc-dom
 import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
+import { normalizeExecutionPlan } from '../launch/preflight.js';
 
 export type ExecutionState = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
 export type ExecutionWorkUnitState = 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
@@ -1517,56 +1518,17 @@ function sameLaunchDisplay(left: ExecutionLaunchDisplayV1, right: ExecutionLaunc
 }
 
 function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false): ExecutionWorkUnit[] {
-  if (!Array.isArray(inputs) || inputs.length < 1 || inputs.length > MAX_WORK_UNITS) throw new Error('invalid execution work unit count');
-  const ids = new Set<string>();
-  const units = inputs.map((input) => {
-    const unitId = string(input.id, 'work unit id');
-    if (ids.has(unitId)) throw new Error('duplicate work unit id');
-    ids.add(unitId);
-    const dependencies = Array.isArray(input.dependencies) && input.dependencies.length <= MAX_UNIT_LIST
-      ? input.dependencies.map((dependency) => string(dependency, 'work unit dependency')) : (() => { throw new Error('invalid work unit dependencies'); })();
-    const files = input.files?.map(normalizeFileScope);
-    const verification = input.verification?.map((step) => string(step, 'work unit verification'));
-    if (requireComplete && !input.readOnly && !files?.length) throw new Error('mutating work unit requires file scope');
-    if (requireComplete && !verification?.length) throw new Error('work unit requires verification');
-    return {
-      id: unitId, title: string(input.title, 'work unit title'), task: string(input.task, 'work unit task'), dependencies,
-      ...(input.preferredRole ? { preferredRole: string(input.preferredRole, 'work unit preferred role') } : {}),
-      ...(files ? { files } : {}),
-      ...(verification ? { verification } : {}),
-      ...(input.readOnly ? { readOnly: true } : {}),
-      state: dependencies.length ? 'PENDING' as const : 'READY' as const, attempt: 0, history: []
-    };
-  });
-  for (const unit of units) for (const dependency of unit.dependencies) if (!ids.has(dependency)) throw new Error('missing work unit dependency');
-  const visiting = new Set<string>(); const visited = new Set<string>();
-  const visit = (unitId: string) => {
-    if (visiting.has(unitId)) throw new Error('work unit dependency cycle');
-    if (visited.has(unitId)) return;
-    visiting.add(unitId);
-    for (const dependency of units.find((unit) => unit.id === unitId)!.dependencies) visit(dependency);
-    visiting.delete(unitId); visited.add(unitId);
-  };
-  for (const unit of units) visit(unit.id);
-  return units;
+  return normalizeExecutionPlan(inputs, requireComplete).map((unit) => ({
+    ...unit,
+    state: unit.dependencies.length ? 'PENDING' as const : 'READY' as const,
+    attempt: 0,
+    history: []
+  }));
 }
 
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
   const { state: _state, assignedSlotId: _assignedSlotId, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, history: _history, ...input } = unit;
   return input;
-}
-
-function normalizeFileScope(value: string): string {
-  const raw = string(value, 'work unit file scope').replace(/\\/g, '/');
-  if (raw.startsWith('/') || /^[A-Za-z]:\//.test(raw)) throw new Error('invalid work unit file scope');
-  const parts: string[] = [];
-  for (const part of raw.split('/')) {
-    if (!part || part === '.') continue;
-    if (part === '..') throw new Error('invalid work unit file scope');
-    parts.push(part);
-  }
-  if (!parts.length) throw new Error('invalid work unit file scope');
-  return parts.join('/');
 }
 
 function findUnit(record: ExecutionRecord, workUnitId: string): ExecutionWorkUnit {

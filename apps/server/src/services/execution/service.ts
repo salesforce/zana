@@ -9,6 +9,7 @@ import type { createExecutionSourceRegistry } from './source-registry.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
 import type { InboxInput } from '../inbox/inbox-store.js';
 import { ExecutionDeadlineWatchdog } from './deadline-watchdog.js';
+import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
 
 /** Wall-clock ceiling for a single bounded snapshot read. */
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -60,7 +61,8 @@ export interface ExecutionServiceDeps {
     launchRequestId: string,
     policy: NonNullable<TeamLaunchRequestInput['policy']>,
     slots: TeamLaunchAuthorizationInputSlot[],
-    coordinationMode?: ExecutionRequestV1['coordinationMode']
+    coordinationMode?: ExecutionRequestV1['coordinationMode'],
+    admissionDigest?: string
   ) => Promise<{ ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string }> | { ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string };
   launchTeam: (teamId: string, projectId: string, request: TeamLaunchRequestInput) => Promise<{ ok: boolean; code?: string; message?: string }>;
   getTeamLaunch: (callerPrincipalId: string, launchRequestId: string) => Promise<unknown>;
@@ -70,6 +72,7 @@ export interface ExecutionServiceDeps {
     message?: string;
     value?: { canceledSessionIds: string[]; pendingSessionIds: string[] };
   }>;
+  revokeTeamAuthorizations?: (authorizationIds: readonly string[]) => void | Promise<void>;
   replyToSession: (sessionId: string, text: string) => boolean;
   /**
    * Idle-gated variant of {@link replyToSession} used ONLY for engine-cascade
@@ -86,6 +89,7 @@ export interface ExecutionServiceDeps {
   logError?: (message: string, error: unknown) => void;
   inbox?: { append: (input: InboxInput) => Promise<unknown> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
+  admissionInput?: (projectId: string, request: ExecutionRequestV1) => Promise<TeamAdmissionInput> | TeamAdmissionInput;
   resumeGrants?: ReturnType<typeof createResumeGrantStore>;
   hasLivePredecessor?: (projectId: string, ownerPrincipalIds: readonly string[]) => boolean;
   clearResumeToken?: (projectId: string, executionId: string) => void | Promise<void>;
@@ -163,6 +167,68 @@ export const AUTO_FAIL_SUMMARY = 'All runnable work settled; execution failed au
 const TERMINAL_SUMMARY_MAX_CHARS = 64 * 1024;
 const TERMINAL_SUMMARY_ITEM_MAX_CHARS = 2_048;
 
+export class KeyedColdStartSemaphore {
+  private readonly active = new Map<string, number>();
+  private readonly waiters = new Map<string, Array<() => void>>();
+
+  constructor(private readonly permitsPerKey = 1) {
+    if (!Number.isInteger(permitsPerKey) || permitsPerKey < 1) throw new Error('invalid semaphore permit count');
+  }
+
+  async acquire(
+    key: string,
+    canceled: () => Promise<boolean> | boolean = () => false,
+    timeoutMs = 30_000
+  ): Promise<(() => void) | undefined> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    while (true) {
+      if (await canceled() || Date.now() >= deadline) {
+        this.wakeNext(key);
+        return undefined;
+      }
+      const active = this.active.get(key) ?? 0;
+      if (active < this.permitsPerKey) {
+        this.active.set(key, active + 1);
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          const nextActive = (this.active.get(key) ?? 1) - 1;
+          if (nextActive > 0) this.active.set(key, nextActive); else this.active.delete(key);
+          this.wakeNext(key);
+        };
+      }
+      const woke = await new Promise<boolean>((resolve) => {
+        const queue = this.waiters.get(key) ?? [];
+        let settled = false;
+        const wake = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(true);
+        };
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          const current = this.waiters.get(key);
+          const index = current?.indexOf(wake) ?? -1;
+          if (index >= 0) current!.splice(index, 1);
+          if (!current?.length) this.waiters.delete(key);
+          resolve(false);
+        }, Math.max(0, deadline - Date.now()));
+        queue.push(wake);
+        this.waiters.set(key, queue);
+      });
+      if (!woke) return undefined;
+    }
+  }
+
+  private wakeNext(key: string): void {
+    this.waiters.get(key)?.shift()?.();
+    if (!this.waiters.get(key)?.length) this.waiters.delete(key);
+  }
+}
+
 /** Pure, bounded terminal assembly from durable execution state and artifact metadata. */
 export function deterministicTerminalSummary(record: ExecutionRecord, artifacts: readonly ExecutionArtifactRecord[], events: readonly ExecutionEvent[] = []): string {
   const lines = [
@@ -227,12 +293,22 @@ export class ExecutionService {
     });
   }
 
+  async dryRun(projectId: string, request: ExecutionRequestV1): Promise<TeamAdmissionResultV1> {
+    const input = await this.resolveAdmissionInput(projectId, request);
+    return evaluateTeamAdmission(input);
+  }
+
   async start(callerPrincipalId: string, projectId: string, request: ExecutionRequestV1): Promise<
     { ok: true; value: ExecutionRecord & { resumeToken?: string; resumeTokenExpiresAt?: number } } | { ok: false; code: string; message: string }
   > {
     if (request.version !== 1 || (request.launchKind !== undefined && request.launchKind !== 'team')
       || !request.teamId?.trim() || !request.launchRequestId?.trim() || !request.slots?.length) {
       return { ok: false, code: 'INVALID', message: 'invalid execution request' };
+    }
+    const admission = await this.dryRun(projectId, request);
+    if (!admission.ready) {
+      const failed = admission.checks.find((check) => check.required && check.status !== 'PASS');
+      return { ok: false, code: 'ADMISSION_FAILED', message: failed?.message ?? 'Team admission failed' };
     }
     const jobTitle = deriveJobTitle(request);
     const summary = request.summary?.trim() || undefined;
@@ -310,7 +386,7 @@ export class ExecutionService {
       }
       const authorization = await this.deps.authorizeTeamLaunch(
         callerPrincipalId, request.teamId, projectId, record.teamLaunchRequestId,
-        request.policy ?? {}, request.slots, request.coordinationMode
+        request.policy ?? {}, request.slots, request.coordinationMode, admission.digest
       );
         if (!authorization.ok) {
           await this.transitionOrCurrent(record, 'BLOCKED', 'warning', authorization.message);
@@ -335,11 +411,21 @@ export class ExecutionService {
           initialTaskDigest: launchDigest(initialTask)
         }))
       });
+      const revalidatedAdmission = await this.dryRun(projectId, request);
+      if (!revalidatedAdmission.ready || revalidatedAdmission.digest !== admission.digest) {
+        const failed = revalidatedAdmission.checks.find((check) => check.required && check.status !== 'PASS');
+        const message = failed?.message ?? 'Team admission changed after authorization';
+        await this.transitionOrCurrent(record, 'BLOCKED', 'warning', message);
+        await this.deps.revokeTeamAuthorizations?.(authorization.value.slots.map((slot) => slot.authorizationId));
+        return { ok: false, code: 'STALE_PREFLIGHT', message };
+      }
       if (!await this.launchMayProceed(record)) {
+        await this.deps.revokeTeamAuthorizations?.(authorization.value.slots.map((slot) => slot.authorizationId));
         return { ok: false, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed before Team launch' };
       }
       const launched = await this.deps.launchTeam(request.teamId, projectId, {
         callerPrincipalId, launchRequestId: record.teamLaunchRequestId, slots: authorization.value.slots,
+        admissionDigest: authorization.value.admissionDigest,
         policy: request.policy, requirePreauthorization: true, executionId: record.id, executionJobTitle: record.jobTitle,
         ...(request.coordinationMode ? { coordinationMode: request.coordinationMode } : {}),
         ...(request.origin ? { origin: request.origin } : {}),
@@ -375,6 +461,18 @@ export class ExecutionService {
     } finally {
       this.endStarting(claim.record.id);
     }
+  }
+
+  private async resolveAdmissionInput(projectId: string, request: ExecutionRequestV1): Promise<TeamAdmissionInput> {
+    if (this.deps.admissionInput) return this.deps.admissionInput(projectId, request);
+    return {
+      workUnits: request.workUnits,
+      requireCompletePlan: isDurableCoordination(request.coordinationMode),
+      slotCount: request.slots.length,
+      maxSlots: Math.min(request.policy?.maxLaunches ?? 32, 32),
+      initialTasks: request.slots.map((slot) => slot.initialTask),
+      sourceBytes: request.sourceBundle?.sources.reduce((sum, source) => sum + source.byteSize, 0)
+    };
   }
 
   async status(callerPrincipalId: string, projectId: string, executionId: string) {
@@ -839,6 +937,18 @@ export class ExecutionService {
     }
     const request = retry.request;
     try {
+      const admission = await this.dryRun(projectId, {
+        ...request,
+        teamId: retry.teamId,
+        launchRequestId: retry.launchRequestId,
+        workUnits: retry.workUnits?.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, ...unit }) => unit),
+        coordinationMode: retry.coordinationMode
+      });
+      if (!admission.ready) {
+        const failed = admission.checks.find((check) => check.required && check.status !== 'PASS');
+        const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', failed?.message ?? 'Team admission failed');
+        return { ok: false as const, code: 'ADMISSION_FAILED', message: failed?.message ?? 'Team admission failed', value: blocked };
+      }
       if (request.workflow) {
         const preflight = this.deps.preflightWorkflow?.(retry.teamId, request.workflow);
         if (!preflight?.ok) {
@@ -848,7 +958,7 @@ export class ExecutionService {
       }
       const authorization = await this.deps.authorizeTeamLaunch(
         retry.callerPrincipalId, retry.teamId, projectId, retry.teamLaunchRequestId,
-        request.policy ?? {}, request.slots, retry.coordinationMode
+        request.policy ?? {}, request.slots, retry.coordinationMode, admission.digest
       );
       if (!authorization.ok || !authorization.value.context) {
         const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', authorization.ok ? 'Team authorization context unavailable' : authorization.message);
@@ -859,12 +969,27 @@ export class ExecutionService {
         version: 1, authorizationContextDigest: current.authorizationContextDigest!,
         slots: authorization.value.slots.map(({ slotId, personaId, initialTask }) => ({ slotId, personaId, initialTaskDigest: launchDigest(initialTask) }))
       });
+      const revalidatedAdmission = await this.dryRun(projectId, {
+        ...request,
+        teamId: retry.teamId,
+        launchRequestId: retry.launchRequestId,
+        workUnits: retry.workUnits?.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, ...unit }) => unit),
+        coordinationMode: retry.coordinationMode
+      });
+      if (!revalidatedAdmission.ready || revalidatedAdmission.digest !== admission.digest) {
+        const failed = revalidatedAdmission.checks.find((check) => check.required && check.status !== 'PASS');
+        const message = failed?.message ?? 'Team admission changed after authorization';
+        const blocked = await this.transitionOrCurrent(current, 'BLOCKED', 'warning', message);
+        await this.deps.revokeTeamAuthorizations?.(authorization.value.slots.map((slot) => slot.authorizationId));
+        return { ok: false as const, code: 'STALE_PREFLIGHT', message, value: blocked };
+      }
       if (!await this.launchMayProceed(current)) {
+        await this.deps.revokeTeamAuthorizations?.(authorization.value.slots.map((slot) => slot.authorizationId));
         return { ok: false as const, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed before Team retry launch', value: await this.deps.store.get(current.id) };
       }
       const launched = await this.deps.launchTeam(retry.teamId, projectId, {
         callerPrincipalId: retry.callerPrincipalId, launchRequestId: retry.teamLaunchRequestId,
-        slots: authorization.value.slots, policy: request.policy, requirePreauthorization: true,
+        slots: authorization.value.slots, policy: request.policy, requirePreauthorization: true, admissionDigest: authorization.value.admissionDigest,
         executionId: retry.id, executionJobTitle: retry.jobTitle,
         ...(retry.coordinationMode ? { coordinationMode: retry.coordinationMode } : {}),
         ...(retry.origin ? { origin: retry.origin } : {}),

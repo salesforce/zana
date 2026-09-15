@@ -3875,6 +3875,7 @@ export interface TeamLaunchAuthorizationResult {
   projectId: string;
   slots: Array<TeamLaunchTaskSlot & { personaId: string; authorizationId: string }>;
   context?: TeamLaunchAuthorizationContextV1;
+  admissionDigest?: string;
 }
 
 /** Main-issued audit snapshot. Historical only; never a reusable launch grant. */
@@ -3898,6 +3899,8 @@ export interface TeamLaunchRequestInput {
   executionId?: string;
   /** Main-only immutable execution display title for Team session cohorts. */
   executionJobTitle?: string;
+  /** Main-derived admission digest; launch revalidates it before spawning. */
+  admissionDigest?: string;
   /** Main-owned team coordination contract. Public renderer input never carries this field. */
   coordinationMode?: TeamCoordinationMode;
   /** Main-owned trigger identity propagated to execution-backed sessions. */
