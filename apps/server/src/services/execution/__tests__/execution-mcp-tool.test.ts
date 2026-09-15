@@ -676,7 +676,7 @@ describe('execution MCP tools', () => {
       expect(result, name).toMatchObject({ isError: true });
       expect(text(result), name).toContain('role is not authorized');
     }
-    expect(execution.failWork).toHaveBeenCalledWith(binding, 'unit-1', 'failed', 'TRANSIENT');
+    expect(execution.failWork).toHaveBeenCalledWith(binding, 'unit-1', 'failed', 'TRANSIENT', undefined, true);
   });
 
   it('maps unbound service failures and missing reads to explicit tool errors', async () => {

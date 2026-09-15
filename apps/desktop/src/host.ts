@@ -1120,6 +1120,8 @@ let conversationHistoryEvictTimer: NodeJS.Timeout | null = null;
  */
 const TMUX_REAP_GRACE_MS = 10_000;
 let teamLifecycleReconcileTimer: NodeJS.Timeout | null = null;
+const EXECUTION_CLAIM_RECONCILE_INTERVAL_MS = 30_000;
+let executionClaimReconcileTimer: NodeJS.Timeout | null = null;
 const savedStore: ISavedStore = createSavedStore();
 const libraryStore: ILibraryStore = new LibraryStore(() => store.listProjects());
 const scheduler = new SchedulerManager();
@@ -5060,6 +5062,8 @@ const squadExecutionService = new SquadExecutionService({
   }
   , resolveTeamModelSnapshots
   , routingEnforcementEnabled: () => store.getConfig().teamRoutingEnforcementEnabled === true
+  , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
+  , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
   , admissionInput: async (projectId, request) => {
     const project = store.listProjects().find((candidate) => candidate.id === projectId);
     const team = teams.list().find((candidate) => candidate.id === request.teamId);
@@ -7394,6 +7398,10 @@ async function bootstrapNormal() {
         ptys.listAll().filter((session) => session.status !== 'exited').map((session) => session.id)
       );
       await teamLifecycleIntegration.reconcileStartup([...recovered]);
+      await squadExecutionService.reconcileActive();
+      executionClaimReconcileTimer ??= setInterval(() => {
+        void squadExecutionService.reconcileActive().catch((err) => logMainError('execution.reconcileActive', err));
+      }, EXECUTION_CLAIM_RECONCILE_INTERVAL_MS);
       await squadExecutionService.pruneRetainedSources();
     })().catch((err) => logMainError('teamLifecycle.reconcileStartup', err));
   }, store.getConfig().tmuxScope === 'off' ? 0 : TMUX_REAP_GRACE_MS);
@@ -7724,6 +7732,10 @@ app.on('before-quit', (event) => {
   goals.stopAll();
   followups.stopWatching();
   squadExecutionService.dispose();
+  if (executionClaimReconcileTimer) {
+    clearInterval(executionClaimReconcileTimer);
+    executionClaimReconcileTimer = null;
+  }
   updater?.stop();
   tray?.stop();
   tray = null;

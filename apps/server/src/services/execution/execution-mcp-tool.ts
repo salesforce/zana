@@ -59,6 +59,9 @@ const executionStartSchema = z.strictObject({
   deadlineMs: z.number().int().min(1).max(24 * 60 * 60 * 1000).optional(),
   maxConcurrent: z.number().int().min(1).max(32).optional(),
   maxLaunches: z.number().int().min(1).max(32).optional(),
+  maxTurnsPerClaim: z.number().int().min(1).max(10_000).optional(),
+  maxClaimWallClockMs: z.number().int().min(1_000).max(24 * 60 * 60 * 1000).optional(),
+  usageBudget: z.strictObject({ maxTokens: z.number().int().min(1).optional(), maxUsd: z.number().positive().optional() }).optional(),
   workflow: workflowSchema.optional(),
   workUnits: z.array(workUnitSchema).min(1).max(100).optional()
 });
@@ -91,7 +94,18 @@ const executionMessageSchema = { ...executionControlSchema, slotId: z.string().m
 const executionCompleteSchema = { ...executionIdSchema, summary: z.string().min(1).max(64 * 1024) };
 const executionArtifactSchema = { ...executionIdSchema, name: z.string().min(1).max(512), mediaType: z.string().min(1).max(512), content: z.string().min(1).max(64 * 1024) };
 const executionPlanSchema = { ...executionIdSchema, workUnits: z.array(workUnitSchema).min(1).max(100) };
-const executionWorkSchema = { ...executionIdSchema, workUnitId: z.string().min(1).max(2048), assignedSlotId: z.string().min(1).max(2048).optional() };
+const claimFenceSchema = z.object({ claimId: z.string().min(1).max(2048), claimGeneration: z.number().int().min(1) }).partial().refine(
+  (value) => (value.claimId === undefined) === (value.claimGeneration === undefined),
+  { message: 'claimId and claimGeneration must be provided together' }
+).shape;
+const executionWorkSchema = { ...executionIdSchema, workUnitId: z.string().min(1).max(2048), assignedSlotId: z.string().min(1).max(2048).optional(), ...claimFenceSchema };
+const executionWorkHeartbeatSchema = {
+  ...executionIdSchema,
+  workUnitId: z.string().min(1).max(2048),
+  claimId: z.string().min(1).max(2048),
+  claimGeneration: z.number().int().min(1),
+  turnCount: z.number().int().min(0).max(10_000).optional()
+};
 const executionWorkAssignSchema = { ...executionIdSchema, workUnitId: z.string().min(1).max(2048), assignedSlotId: z.string().min(1).max(2048) };
 const executionWorkResultSchema = { ...executionWorkSchema, result: z.string().min(1).max(2048) };
 const executionWorkFailureSchema = {
@@ -321,25 +335,32 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (!authorized()) return denied('execution.work.assign'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.assign');
     return boundResult('execution.work.assign', await options.service.assignWork(bound, workUnitId, assignedSlotId));
   });
+  register('execution.work.heartbeat', { description: 'Worker renews its current main-minted work claim lease.', inputSchema: executionWorkHeartbeatSchema }, async ({ executionId, workUnitId, claimId, claimGeneration, turnCount }) => {
+    if (!authorized()) return denied('execution.work.heartbeat'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.heartbeat');
+    return boundResult('execution.work.heartbeat', await options.service.heartbeatWork(bound, workUnitId, claimId, claimGeneration, turnCount));
+  });
   register('execution.work.dispatch_ready', { description: 'Coordinator hands scheduling to the engine: auto-assign EVERY ready work unit to a free worker slot and notify each worker. Call once after the plan is structured (units have tasks + dependencies); the engine then re-dispatches newly-ready units automatically as work completes, so no per-unit assign is needed.', inputSchema: executionIdSchema }, async ({ executionId }) => {
     if (!authorized()) return denied('execution.work.dispatch_ready'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.dispatch_ready');
     return boundResult('execution.work.dispatch_ready', await options.service.dispatchReady(bound));
   });
-  register('execution.work.complete', { description: 'Complete one assigned work unit.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result }) => {
+  register('execution.work.complete', { description: 'Complete one assigned work unit.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.complete'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.complete');
-    return boundResult('execution.work.complete', await options.service.completeWork(bound, workUnitId, result));
+    return boundResult('execution.work.complete', await options.service.completeWork(bound, workUnitId, result, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
   });
-  register('execution.work.fail', { description: 'Fail one assigned work unit durably.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure, failureCode }) => {
+  register('execution.work.fail', { description: 'Fail one assigned work unit durably.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure, failureCode, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.fail'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.fail');
-    return boundResult('execution.work.fail', await options.service.failWork(bound, workUnitId, failure, failureCode));
+    const claim = claimId && claimGeneration ? { claimId, claimGeneration } : undefined;
+    return boundResult('execution.work.fail', await (claim
+      ? options.service.failWork(bound, workUnitId, failure, failureCode, claim, true)
+      : options.service.failWork(bound, workUnitId, failure, failureCode, undefined, true)));
   });
-  register('execution.work.block', { description: 'Block one assigned work unit with a durable question.', inputSchema: executionWorkBlockSchema }, async ({ executionId, workUnitId, blockerId, question, options: choices }) => {
+  register('execution.work.block', { description: 'Block one assigned work unit with a durable question.', inputSchema: executionWorkBlockSchema }, async ({ executionId, workUnitId, blockerId, question, options: choices, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.block'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.block');
-    return boundResult('execution.work.block', await options.service.blockWork(bound, workUnitId, { id: blockerId, question, options: choices }));
+    return boundResult('execution.work.block', await options.service.blockWork(bound, workUnitId, { id: blockerId, question, options: choices }, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
   });
-  register('execution.work.release', { description: 'Release one assigned work unit.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId }) => {
+  register('execution.work.release', { description: 'Release one assigned work unit.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.release'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.release');
-    return boundResult('execution.work.release', await options.service.releaseWork(bound, workUnitId));
+    return boundResult('execution.work.release', await options.service.releaseWork(bound, workUnitId, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
   });
   register('execution.work.retry', { description: 'Coordinator retries and optionally reassigns failed or blocked work.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
     if (!authorized()) return denied('execution.work.retry'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.retry');
@@ -374,14 +395,17 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     } catch (error) {
       return { isError: true, content: [{ type: 'text' as const, text: `execution.start failed: ${error instanceof Error ? error.message : String(error)}` }] };
     }
-    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, workflow, workUnits } = start;
+    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits } = start;
     const request: ExecutionRequestV1 = {
       version, launchKind, ...(launchDisplay === undefined ? {} : { launchDisplay }), teamId, launchRequestId, jobTitle, summary, slots,
       ...(workflow === undefined ? {} : { workflow }), ...(workUnits === undefined ? {} : { workUnits }), coordinationMode: 'job-team',
       policy: {
         ...(deadlineMs === undefined ? {} : { deadlineMs }),
         ...(maxConcurrent === undefined ? {} : { maxConcurrent }),
-        ...(maxLaunches === undefined ? {} : { maxLaunches })
+        ...(maxLaunches === undefined ? {} : { maxLaunches }),
+        ...(maxTurnsPerClaim === undefined ? {} : { maxTurnsPerClaim }),
+        ...(maxClaimWallClockMs === undefined ? {} : { maxClaimWallClockMs }),
+        ...(usageBudget === undefined ? {} : { usageBudget })
       }
     };
     const result = await options.service.start(options.sessionId!, options.projectId, request);
