@@ -145,8 +145,9 @@ export default function plugin(zcc: ZccPluginApi) {
     label: 'Tasks',
     async search(ctx) {
       const store = await load();
+      if (typeof ctx !== 'string' && (typeof ctx !== 'object' || ctx === null || typeof ctx.query !== 'string')) return [];
       const query = typeof ctx === 'string' ? ctx : ctx.query;
-      const needle = typeof query === 'string' ? query.trim().toLowerCase() : '';
+      const needle = query.trim().toLowerCase();
       return store.items
         .filter(
           (task) =>
