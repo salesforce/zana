@@ -278,6 +278,8 @@ describe('AgentSessionView', () => {
     expect(source).toContain('data-testid="split-pane-close"');
     expect(source).toContain('thread-detail-view--split-pane');
     expect(source).toContain('defaultOpen: !modal');
+    expect(source).toContain('modal,');
+    expect(source).toContain('getContainerWidthPx');
     expect(source).not.toContain('agent-session-show-panel');
     expect(source).toContain('<AgentDiffPanel');
     expect(source).toContain('<AgentDetailPanel');

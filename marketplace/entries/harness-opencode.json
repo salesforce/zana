@@ -1,0 +1,24 @@
+{
+  "id": "harness-opencode",
+  "displayName": "OpenCode CLI Agent",
+  "description": "CLI Agent TUI for the native opencode coding CLI.",
+  "overview": "Launch OpenCode as a CLI Agent in ZCC. The plugin owns the terminal session for the native `opencode` CLI.\n\n## What you get\n\n- A CLI Agent profile that opens OpenCode's own TUI inside ZCC.\n- The same spawn, stop, and routing controls as other CLI Agents.\n\n## How it works\n\nZCC starts `opencode` on an enrolled host through this plugin's PTY provider. Threads that pick this harness talk to that CLI, not to a separate ACP adapter.\n\n## Requirements\n\n- Install `opencode` on the host and keep it on `PATH`.\n- Sign in with the CLI, for example `opencode auth login`.\n",
+  "icon": {
+    "lucide": "./icons/opencode.svg"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/harness-opencode",
+      "ref": "HEAD"
+    }
+  }
+}

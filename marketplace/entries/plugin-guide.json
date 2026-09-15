@@ -1,0 +1,24 @@
+{
+  "id": "plugin-guide",
+  "displayName": "Plugin Guide",
+  "description": "Annotated map of every surface a plugin can own — Copy for agent, then live-reload with zcc plugin dev.",
+  "overview": "An in-app map of every surface a ZCC plugin can own. Use it while you author a plugin, then copy a prompt and live-reload with `zcc plugin dev`.\n\n## What you get\n\n- A Plugin Guide panel that groups host surfaces: sidebar, thread, composer, settings, and more.\n- Copy-for-agent actions that seed a Creator thread with the right surface names.\n- The same roster the public Plugin Guide website uses.\n\n## How it works\n\nThe guide reads the host's plugin surface list. It does not install plugins for you. After you change plugin code, `zcc plugin dev` reloads the running plugin.\n\n## Requirements\n\nInstall this plugin from Browse. Keep the Creator or a shell open in the plugin project if you want live reload.\n",
+  "icon": {
+    "lucide": "Puzzle"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/plugin-guide",
+      "ref": "HEAD"
+    }
+  }
+}

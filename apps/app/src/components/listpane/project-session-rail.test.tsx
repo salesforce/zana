@@ -259,7 +259,6 @@ describe('ProjectSessionRail', () => {
     expect(source).toContain('navigate(getAgentSessionRoutePath(session.id, project.id))');
     expect(source).toContain('openThreadMenu(e, thread, setThreadMenu)');
     expect(source).toContain('openAgentCardMenu(e, session)');
-    expect(source).toContain('ui.enterProjectFocus(card.projectId)');
     expect(source).toContain('data-testid="project-session-rail"');
     expect(source).toContain('>Project</span>');
     expect(source).toContain('isRemoteWorkspaceProject(project)');

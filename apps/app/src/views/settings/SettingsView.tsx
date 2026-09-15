@@ -291,6 +291,9 @@ export function SettingsView() {
       if (typeof patch.catchUpSummaryEnabled === 'boolean') {
         useData.getState().setCatchUpSummaryEnabled(patch.catchUpSummaryEnabled);
       }
+      if (typeof patch.classicSessionViewEnabled === 'boolean') {
+        useData.getState().setClassicSessionViewEnabled(patch.classicSessionViewEnabled);
+      }
       if (typeof patch.catchUpSummaryDelaySeconds === 'number') {
         useData.getState().setCatchUpSummaryDelaySeconds(patch.catchUpSummaryDelaySeconds);
       }

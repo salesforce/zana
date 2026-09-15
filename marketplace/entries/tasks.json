@@ -1,0 +1,24 @@
+{
+  "id": "tasks",
+  "displayName": "Tasks",
+  "description": "Plan and track work in a list or board: keys, statuses, priorities, and `zcc tasks`.",
+  "overview": "Turn a plan into tracked tasks, hand each task to an agent, and see the worker's progress on the task itself.\n\n## What you get\n\n- A **Tasks** panel with list and board views, filters, and a detail page for each task.\n- Projects with key prefixes such as `PROD-1`, nested folders, labels, priorities, due dates, subtasks, and file attachments.\n- Markdown comments with a **Notify last responding agent** switch. The comment goes to the worker thread and resumes it when idle.\n- A **Delegate** menu that starts a worker thread from a preset. A preset sets the provider, model, reasoning level, permission mode, and instructions.\n- Live thread cards on each task and a **Task** panel action inside a thread.\n\n## How it works\n\nLink a tracker project to a ZCC project. Delegation then creates a worker thread there, attaches it to the task, and moves the task to `in_progress`. The worker receives the description, subtasks, attachments, recent comments, and a report-back contract.\n\nType `@` in the composer and choose **Tasks** to send a task as context. Agents see a `::task{key=\"PROD-1\"}` card when they reference a task.\n\n## For agents\n\nThe `zcc tasks` CLI covers the full tracker: `create`, `list`, `show`, `update`, `comment`, `attachment`, `preset`, `delegate`, `attach`, `detach`, `threads`, `label`, `project`, and `folder`. Add `--json` for machine-readable output. The bundled `tasks` skill tells workers to read the task, comment at milestones, attach artifacts, and move finished work to `in_review`.\n\nPresets are user-defined. Create at least one before you delegate.\n",
+  "icon": {
+    "lucide": "ListTodo"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/tasks",
+      "ref": "HEAD"
+    }
+  }
+}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { product } from '../../../lib/product-client.js';
 import { createSecondaryPanelCommands } from './threadSecondaryPanelLogic.js';
 import {
+  applySecondaryPanelOpenWidth,
   hasStoredSecondaryPanel,
   persistSecondaryPanel,
   restoreSecondaryPanel,
@@ -29,10 +30,23 @@ function isThreadTabsPayload(payload: unknown): payload is {
 
 export function useSecondaryPanel(
   ownerId: string | undefined,
-  options?: { defaultOpen?: boolean; syncServer?: boolean }
+  options?: {
+    defaultOpen?: boolean;
+    syncServer?: boolean;
+    modal?: boolean;
+    getContainerWidthPx?: () => number;
+  }
 ) {
   const defaultOpen = options?.defaultOpen === true;
   const syncServer = options?.syncServer === true;
+  const layoutRef = useRef({
+    modal: options?.modal === true,
+    getContainerWidthPx: options?.getContainerWidthPx
+  });
+  layoutRef.current = {
+    modal: options?.modal === true,
+    getContainerWidthPx: options?.getContainerWidthPx
+  };
   const [state, setState] = useState<ThreadSecondaryPanelState>(() => (
     restoreSecondaryPanel(ownerId, { defaultOpen })
   ));
@@ -118,13 +132,22 @@ export function useSecondaryPanel(
   }, [ownerId, syncServer]);
 
   const update = useCallback((recipe: (current: ThreadSecondaryPanelState) => ThreadSecondaryPanelState) => {
-    setState((current) => recipe(current));
+    setState((current) => {
+      const next = recipe(current);
+      return applySecondaryPanelOpenWidth(current, next, {
+        containerWidthPx: layoutRef.current.getContainerWidthPx?.() ?? 0,
+        modal: layoutRef.current.modal
+      });
+    });
   }, []);
 
   const commands = useMemo(() => createSecondaryPanelCommands(update), [update]);
   return useMemo(() => ({ state, ...commands }), [commands, state]);
 }
 
-export function useThreadSecondaryPanel(threadId: string | undefined) {
-  return useSecondaryPanel(threadId, { syncServer: true });
+export function useThreadSecondaryPanel(
+  threadId: string | undefined,
+  options?: { modal?: boolean; getContainerWidthPx?: () => number }
+) {
+  return useSecondaryPanel(threadId, { syncServer: true, ...options });
 }

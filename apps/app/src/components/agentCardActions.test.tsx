@@ -30,11 +30,18 @@ import {
   AgentDeleteQuickAction,
   canCloseWithFollowup,
   cliAgentDeleteConfirm,
+  cliAgentMenuProjectId,
   cliAgentRemoveLabel,
   cliAgentRestartConfirm,
   cliAgentRestartLiveTitle,
   closeAgentWithFollowup
 } from './agentCardActions.js';
+
+describe('cliAgentMenuProjectId', () => {
+  it('uses the focused project when the shell is project-focused', () => {
+    expect(cliAgentMenuProjectId({ isProjectFocused: true, focusedProjectId: 'p1' })).toBe('p1');
+  });
+});
 
 describe('AgentDeleteQuickAction', () => {
   it('renders a bin control to delete a live CLI agent', () => {
@@ -99,6 +106,8 @@ describe('plugin agent card menu', () => {
     expect(source).toContain('closeIdleAgents(projectId, [session.id], true, { force: true })');
     expect(source).toContain('Open in split');
     expect(source).toContain('openAgentSessionInSplit');
+    expect(source).toContain('getAgentSessionRoutePath(card.session.id, menuProjectId)');
+    expect(source).toContain('cliAgentMenuProjectId');
     expect(source).toContain('cliAgentRemoveLabel(exited)');
     expect(source).toContain('cliAgentRestartLiveTitle()');
     expect(source).not.toContain('Kill and');

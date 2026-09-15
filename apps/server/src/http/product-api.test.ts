@@ -1522,6 +1522,86 @@ describe('product HTTP', () => {
   });
 });
 
+describe('product HTTP project clone hostId', () => {
+  it('omits hostId when cloning onto the primary host', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-clone-primary-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    writeFileSync(
+      join(dataDir, 'config.json'),
+      JSON.stringify({ version: 1, theme: 'dark', followUpsEnabled: true })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, {
+      name: 'laptop',
+      hostKeyHash: 'p'.repeat(64),
+      isPrimary: true
+    });
+    expect(host.isPrimary).toBe(true);
+    const clonedPath = mkdtempSync(join(tmpdir(), 'zcc-clone-primary-repo-'));
+    server.ctx.hostHub.connectedHostIds = () => [host.id];
+    server.ctx.hostHub.resolveHostId = () => host.id;
+    server.ctx.hostHub.callHostOnlineRpc = vi.fn(async () => ({
+      path: clonedPath,
+      gitRemoteUrl: 'https://github.com/example/demo.git'
+    }));
+
+    const response = await fetch(`${server.url}api/v1/projects/clone`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://github.com/example/demo.git' })
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json() as { project: { path: string; hostId?: string } };
+    expect(body.project.path).toBe(realpathSync(clonedPath));
+    expect(body.project.hostId).toBeUndefined();
+  });
+
+  it('persists hostId when cloning onto a non-primary host', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-clone-remote-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    writeFileSync(
+      join(dataDir, 'config.json'),
+      JSON.stringify({ version: 1, theme: 'dark', followUpsEnabled: true })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    upsertHost(server.ctx.db, {
+      name: 'laptop',
+      hostKeyHash: 'p'.repeat(64),
+      isPrimary: true
+    });
+    const remote = upsertHost(server.ctx.db, {
+      name: 'buildbox',
+      hostKeyHash: 'r'.repeat(64),
+      isPrimary: false
+    });
+    expect(remote.isPrimary).toBe(false);
+    const clonedPath = join(dataDir, 'remote-checkout', 'demo');
+    mkdirSync(clonedPath, { recursive: true });
+    server.ctx.hostHub.connectedHostIds = () => [remote.id];
+    server.ctx.hostHub.resolveHostId = (id?: string) => id ?? remote.id;
+    server.ctx.hostHub.callHostOnlineRpc = vi.fn(async () => ({
+      path: clonedPath,
+      gitRemoteUrl: 'https://github.com/example/demo.git'
+    }));
+
+    const response = await fetch(`${server.url}api/v1/projects/clone`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://github.com/example/demo.git', hostId: remote.id })
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json() as { project: { path: string; hostId?: string } };
+    expect(body.project.path).toBe(clonedPath);
+    expect(body.project.hostId).toBe(remote.id);
+  });
+});
+
 describe('product HTTP thread reasoning', () => {
   it('imports reasoningLevelSchema so create/send can parse the picker value', () => {
     const source = readFileSync(new URL('./product-api.ts', import.meta.url), 'utf8');
@@ -2192,6 +2272,78 @@ describe('product HTTP thread file preview', () => {
       threadId: 'sess-pty',
       projectId: 'proj-1',
       file: { source: 'workspace', path: 'README.md', lineNumber: null }
+    });
+  });
+});
+
+describe('product HTTP thread terminal open', () => {
+  it('fail-closes when the experiment is off and emits a terminal intent when on', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-term-open-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-term-open-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [
+          {
+            id: 'proj-1',
+            name: 'Alpha',
+            path: projectRoot,
+            createdAt: 1,
+            lastActiveAt: 1
+          }
+        ]
+      })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: projectRoot
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+
+    const off = await fetch(`${server.url}api/v1/threads/${thread.id}/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ terminal: { command: 'npm test' } })
+    });
+    expect(off.status).toBe(403);
+    await expect(off.json()).resolves.toMatchObject({ code: 'experiment-disabled' });
+
+    server.ctx.config.setConfig({ inAppAgentTerminalsEnabled: true });
+    const emitted: unknown[] = [];
+    const orig = server.ctx.hub.emit.bind(server.ctx.hub);
+    vi.spyOn(server.ctx.hub, 'emit').mockImplementation((type, payload) => {
+      if (type === 'threads:open') emitted.push(payload);
+      orig(type, payload);
+    });
+
+    const opened = await fetch(`${server.url}api/v1/threads/${thread.id}/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ terminal: { command: 'npm test', title: 'Tests' } })
+    });
+    expect(opened.status).toBe(200);
+    await expect(opened.json()).resolves.toMatchObject({
+      command: 'npm test',
+      title: 'Tests'
+    });
+    expect(emitted[0]).toMatchObject({
+      type: 'thread-open',
+      threadId: thread.id,
+      projectId: 'proj-1',
+      file: null,
+      terminal: { command: 'npm test', title: 'Tests' }
     });
   });
 });

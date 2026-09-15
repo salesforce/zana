@@ -78,6 +78,27 @@ Packages that live under repo `plugins/` today include `docs`, `memory`,
 `plugin-guide`, and `salesforce`; other official plugins may ship from the
 catalog without a tree copy.
 
+## Official marketplace
+
+First-party Browse listings are authored under repo-root
+[`marketplace/entries/`](../marketplace/entries/) (one JSON file per plugin).
+`node marketplace/scripts/build.mjs` writes the pointer feed the website serves
+at `/marketplace/v1/marketplace.json`. See
+[`marketplace/README.md`](../marketplace/README.md).
+
+## Internal marketplace (Salesforce)
+
+Salesforce-internal plugins are **not** seeded automatically. Add the private
+catalog on git.soma when you need it:
+
+```bash
+zcc marketplace add git:https://git.soma.salesforce.com/chatbots/zana-internal-marketplace.git
+zcc marketplace refresh
+zcc marketplace install <plugin-id>@internal
+```
+
+Requires VPN/SSO git access. Authoring and PR flow live in that repo's README.
+
 ## CLI
 
 ```

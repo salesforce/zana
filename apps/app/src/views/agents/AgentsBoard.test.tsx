@@ -59,8 +59,8 @@ describe('AgentsBoard', () => {
     expect(board).toContain('threadFleetItem');
     expect(board).toContain('fleetAgentCards(visibleFleet)');
     expect(board).toContain('item.kind === \'thread\'');
-    expect(board).toContain('openThreadModal(item.id)');
-    expect(board).toContain('getThreadRoutePath(item.id, threadProjectId)');
+    expect(board).toContain('inspectThread(item.id, item.projectId, navigate)');
+    expect(board).not.toContain('getThreadRoutePath');
     expect(board).toContain('threadIdFromPath');
     expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');
     expect(board).toContain('<AgentMonitor\n          cards={visibleFleet}');
@@ -68,8 +68,7 @@ describe('AgentsBoard', () => {
     expect(board).toContain('schedulesForAgentView');
     expect(board).toContain('openScheduleFromAgents');
     expect(board).toContain('item.kind === \'schedule\'');
-    expect(board).toContain('openAgentModal(item.card.session.id, item.projectId)');
-    expect(board).toContain('item.card.session.scheduled');
+    expect(board).toContain('inspectAgentSession(item.card.session.id, item.projectId, navigate)');
     expect(board).not.toContain('getAgentSessionRoutePath');
   });
 });

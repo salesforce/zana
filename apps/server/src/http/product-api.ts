@@ -73,6 +73,7 @@ import {
   updateConversationPluginMetadata
 } from '../services/threads/conversation-plugin-metadata.js';
 import { openThreadFilePreview, previewFileDepsFromContext } from '../services/threads/preview-file.js';
+import { openThreadTerminal, openThreadTerminalDepsFromContext } from '../services/threads/open-thread-terminal.js';
 import { listThreadProviders, bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
 import {
   buildThreadExecutionOptions,
@@ -108,7 +109,7 @@ import { mergeHealthIntoExtraInstalled, probeInstalledProviderHealth } from '../
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
 import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
-import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, pinConversationThread, reorderPinnedConversationThread, unpinConversationThread, updateConversationThreadTitle } from '@zana-ai/zcc-db';
+import { getConversationThread, getEnvironment, getHost, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, pinConversationThread, reorderPinnedConversationThread, unpinConversationThread, updateConversationThreadTitle } from '@zana-ai/zcc-db';
 import { handleHostsApi } from './hosts-api.js';
 import { handleDesktopBrowsersApi } from './desktop-browsers-api.js';
 import { handleCliAgentsApi } from './cli-agents-api.js';
@@ -1317,6 +1318,28 @@ export async function handleProductHttp(
           });
           return true;
         }
+        if (parsed.data.terminal) {
+          if (ctx.config.getConfig().inAppAgentTerminalsEnabled !== true) {
+            sendJson(response, 403, {
+              ok: false,
+              code: 'experiment-disabled',
+              message: 'In-app agent terminals are off. Enable “Keep agent terminals in ZCC” in Settings → Experimental features, then start a new session.'
+            });
+            return true;
+          }
+          const opened = openThreadTerminal(openThreadTerminalDepsFromContext(ctx), {
+            threadId: threadOpen.id,
+            projectId: parsed.data.projectId,
+            command: parsed.data.terminal.command,
+            title: parsed.data.terminal.title
+          });
+          sendJson(response, 200, {
+            delivered: opened.delivered,
+            command: opened.command,
+            title: opened.title
+          });
+          return true;
+        }
         const thread = getConversationThread(ctx.db, threadOpen.id);
         if (!thread) {
           sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
@@ -2509,7 +2532,14 @@ export async function handleProductHttp(
           },
           timeoutMs: 20 * 60 * 1000
         });
-        const project = await ctx.projects.add(cloned.path, { hostId });
+        // Absent hostId means primary (this machine). Match local folder add:
+        // only persist hostId for non-primary enrolled hosts.
+        const host = getHost(ctx.db, hostId);
+        const persistHostId = host && !host.isPrimary ? hostId : undefined;
+        const project = await ctx.projects.add(
+          cloned.path,
+          persistHostId ? { hostId: persistHostId } : undefined
+        );
         ctx.hub.emit('projects:changed', ctx.projects.list());
         sendJson(response, 201, { ok: true, project, path: cloned.path, gitRemoteUrl: cloned.gitRemoteUrl });
       } catch (error) {

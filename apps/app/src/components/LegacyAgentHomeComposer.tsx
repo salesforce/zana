@@ -1,5 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowUp, Folder, Loader2, Mic, Paperclip } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessModelTarget } from '@zana-ai/zcc-domain/harness-adapter';
 import type {
@@ -21,6 +22,7 @@ import {
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import { useData, usePersonas, useUi } from '../store.js';
+import { inspectAgentSession } from '../lib/inspect-session.js';
 import { useShallow } from 'zustand/react/shallow';
 import { posixQuote } from '../lib/quote.js';
 import { attachmentName } from '../lib/attachments.js';
@@ -121,6 +123,7 @@ export function LegacyAgentHomeComposer({
   onLaunched?: (session: TerminalSession, projectId: string) => void;
   onClose?: () => void;
 } & ComposerProjectSelectionProps) {
+  const navigate = useNavigate();
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
   const createTerminal = useData((s) => s.createTerminal);
@@ -647,7 +650,7 @@ export function LegacyAgentHomeComposer({
         onLaunched(session, project.id);
       } else {
         selectTab(project.id, session.id);
-        if (!onClose) useUi.getState().openAgentModal(session.id, project.id);
+        if (!onClose) inspectAgentSession(session.id, project.id, navigate);
       }
       onClose?.();
     } catch (err) {

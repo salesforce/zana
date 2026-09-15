@@ -1,6 +1,6 @@
 import '@/lib/monacoSetup';
-import { useEffect } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Bell, Star } from 'lucide-react';
 import { Sidebar } from './components/Sidebar.js';
 import { SidebarTriggerOverlay } from './components/SidebarTriggerOverlay.js';
@@ -77,6 +77,7 @@ import { useRouteState } from './hooks/useRouteState.js';
 import { HashNavigationScroll } from './components/HashNavigationScroll.js';
 import { isSplitWorkspacePath } from './lib/split-layout/splitThreadNavigation.js';
 import { product } from './lib/product-client.js';
+import { useCliAgentTerminalSignal } from './components/thread/secondary-panel/useThreadOpenTerminalSignal.js';
 import {
   AGENTS_ROUTE_PATH,
   APP_ROOT_ROUTE_PATH,
@@ -111,11 +112,18 @@ import {
   TOOLS_PLUGINS_ROUTE_PATH,
   TOOLS_ROUTE_PATH,
   TOOLS_SKILLS_ROUTE_PATH,
-  getProjectSettingsRoutePath
+  getAgentSessionRoutePath,
+  getProjectSettingsRoutePath,
+  getThreadRoutePath
 } from './lib/route-paths.js';
+import { inspectAgentSession } from './lib/inspect-session.js';
 
-function stayOnAgentsBoard(session: { id: string }, projectId: string) {
-  useUi.getState().openAgentModal(session.id, projectId);
+function stayOnAgentsBoard(
+  session: { id: string },
+  projectId: string,
+  navigate: (to: string) => void
+) {
+  inspectAgentSession(session.id, projectId, navigate);
 }
 
 function ExtensionsLandingRedirect() {
@@ -190,6 +198,9 @@ export function App() {
   const init = useData((s) => s.init);
   const route = useRouteState();
   const location = useLocation();
+  const navigate = useNavigate();
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
   const splitWorkspaceShowing = isSplitWorkspacePath(location.pathname);
   const nav = route.nav;
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
@@ -241,6 +252,7 @@ export function App() {
     useUi.getState().setNav('home');
   }, [nav, modules]);
   const shellChrome = useShellChromeState();
+  useCliAgentTerminalSignal();
 
   // Server-owned plugins publish a redacted app snapshot through the supervised
   // runtime. Their bundles load from the same-origin static host, not the legacy
@@ -502,10 +514,9 @@ export function App() {
       // the tray "focus session" click would otherwise focus nothing. Safe for
       // already-visible sessions too.
       void useData.getState().restoreTerminal(sessionId, projectId);
-      // Also pop the agent-inspector modal — a menu-bar "Open in project" click
-      // lands the user on the live terminal peek + status/actions right away,
-      // rather than just switching tabs behind the still-open popover.
-      ui.openAgentModal(sessionId, projectId);
+      // Open the live terminal: inspector overlay by default, or the session
+      // page when Classic session view is on.
+      inspectAgentSession(sessionId, projectId, navigateRef.current);
     });
     // Tray "Open Scheduler" / per-schedule "Show in Scheduler". With a task id
     // we jump to that schedule's scope and reveal the row; without one we land
@@ -747,7 +758,7 @@ export function App() {
       {launcherOpen && (nav !== 'projects' || !focusedProjectId || splitWorkspaceShowing) && (
         <AgentLauncher
           onClose={() => useUi.getState().setLauncherOpen(false)}
-          onLaunched={stayOnAgentsBoard}
+          onLaunched={(session, projectId) => stayOnAgentsBoard(session, projectId, navigate)}
         />
       )}
       <SidebarTriggerOverlay />
@@ -840,12 +851,19 @@ function ShortcutsHelpHost() {
 }
 
 function AgentModalHost() {
+  const classicSessionViewEnabled = useData((s) => s.classicSessionViewEnabled);
   const agentModal = useUi((s) => s.agentModal);
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
+  const navigate = useNavigate();
   const state = useAgentStatus((s) => (agentModal ? s.byId[agentModal.sessionId] : undefined));
   const close = () => useUi.getState().closeAgentModal();
-  if (!agentModal) return null;
+  useEffect(() => {
+    if (!classicSessionViewEnabled || !agentModal) return;
+    navigate(getAgentSessionRoutePath(agentModal.sessionId, agentModal.projectId));
+    useUi.getState().closeAgentModal();
+  }, [classicSessionViewEnabled, agentModal, navigate]);
+  if (classicSessionViewEnabled || !agentModal) return null;
   const session = (terminals[agentModal.projectId] ?? []).find(
     (t) => t.id === agentModal.sessionId
   );
@@ -867,8 +885,15 @@ function AgentModalHost() {
 }
 
 function ThreadModalHost() {
+  const classicSessionViewEnabled = useData((s) => s.classicSessionViewEnabled);
   const threadModal = useUi((s) => s.threadModal);
+  const navigate = useNavigate();
   const close = () => useUi.getState().closeThreadModal();
-  if (!threadModal) return null;
+  useEffect(() => {
+    if (!classicSessionViewEnabled || !threadModal) return;
+    navigate(getThreadRoutePath(threadModal.threadId));
+    useUi.getState().closeThreadModal();
+  }, [classicSessionViewEnabled, threadModal, navigate]);
+  if (classicSessionViewEnabled || !threadModal) return null;
   return <ThreadModal threadId={threadModal.threadId} onClose={close} />;
 }

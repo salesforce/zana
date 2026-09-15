@@ -16,11 +16,6 @@ import {
   REWRITE_LOCALHOST_LINKS_STORAGE_KEY
 } from '@/lib/localhost-link-rewrite-preference';
 import {
-  OPEN_LINKS_IN_APP_BROWSER_DEFAULT,
-  OPEN_LINKS_IN_APP_BROWSER_STORAGE_KEY
-} from '@/lib/in-app-browser-link-preference';
-import { hasDesktopBridge } from '@/lib/app-surface';
-import {
   canDisableComposerSurface,
   composerSurfacesFromConfig,
   composerSurfacesToConfigPatch,
@@ -49,10 +44,6 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
   const [rewriteLocalhost, setRewriteLocalhost] = useBooleanPreference(
     REWRITE_LOCALHOST_LINKS_STORAGE_KEY,
     REWRITE_LOCALHOST_LINKS_DEFAULT
-  );
-  const [openLinksInAppBrowser, setOpenLinksInAppBrowser] = useBooleanPreference(
-    OPEN_LINKS_IN_APP_BROWSER_STORAGE_KEY,
-    OPEN_LINKS_IN_APP_BROWSER_DEFAULT
   );
   const [commandsReloadBusy, setCommandsReloadBusy] = useState(false);
   const [commandsReloadNote, setCommandsReloadNote] = useState<string | null>(null);
@@ -156,14 +147,6 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
           checked={rewriteLocalhost}
           onChange={setRewriteLocalhost}
         />
-        {hasDesktopBridge() ? (
-          <CheckboxField
-            label="Open web links in the side-panel browser"
-            help="http(s) links in agents open in the in-app browser instead of your OS browser. Turn off to keep the previous external-open behavior."
-            checked={openLinksInAppBrowser}
-            onChange={setOpenLinksInAppBrowser}
-          />
-        ) : null}
         <CheckboxField
           label="Discover additional native agents"
           help="Let compatible coding harnesses discover project-specific native agents. Enables extra roles and Refresh roles where supported."

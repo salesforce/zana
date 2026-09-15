@@ -1,5 +1,6 @@
 import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Plus, X, ArrowLeft, AppWindow, Network } from 'lucide-react';
 import { useData, useUi, useAgentStatus, useIdleTriage, usePersonas } from '../../store.js';
 import type { Project, LaunchProfileId, Persona, TerminalSession } from '@zana-ai/zcc-domain/product';
@@ -9,6 +10,7 @@ import { ProjectDot } from './ProjectDot.js';
 import { profileIcon, personaIcon } from '../../lib/profileIcon.js';
 import { bucketSessions } from '../../lib/sessionBuckets.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
+import { getAgentSessionRoutePath } from '../../lib/route-paths.js';
 import { ListPaneResizer } from '../ListPaneResizer.js';
 import { SectionHeader } from './SectionHeader.js';
 import { AgentStatusDot } from './AgentStatusDot.js';
@@ -37,17 +39,14 @@ const FOCUS_NEW_PROFILES: { profile: LaunchProfileId; label: string }[] = [
  * `focusedProjectId` is set. Renderer-only — consumes Sprint-1 store + buckets.
  */
 export function ProjectFocusView({ project }: { project: Project }) {
+  const navigate = useNavigate();
   const exitProjectFocus = useUi((s) => s.exitProjectFocus);
-  const selectProject = useUi((s) => s.selectProject);
-  const selectTab = useUi((s) => s.selectTab);
-  const setProjectView = useUi((s) => s.setProjectView);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const selectedId = useUi((s) => s.selectedProjectId);
   const collapsedSections = useUi((s) => s.collapsedSections);
   const unread = useUi((s) => s.unread);
   const createTerminal = useData((s) => s.createTerminal);
   const closeTerminal = useData((s) => s.closeTerminal);
-  const restoreTerminal = useData((s) => s.restoreTerminal);
   const renameTerminal = useData((s) => s.renameTerminal);
   const {
     menu: agentMenu,
@@ -71,16 +70,6 @@ export function ProjectFocusView({ project }: { project: Project }) {
     e.preventDefault();
     e.stopPropagation();
     setAgentMenu({ card: sessionToCard(session), ...clampMenuAnchor(e) });
-  };
-
-  const pickAgent = (card: AgentCard) => {
-    selectProject(card.projectId);
-    if (card.session.headless && card.session.status !== 'exited') {
-      void restoreTerminal(card.session.id, card.projectId);
-    } else {
-      selectTab(card.projectId, card.session.id);
-    }
-    setProjectView(card.projectId, 'terminals');
   };
 
   // Inline rename of an agent row, mirroring the tab strip's double-click→edit.
@@ -137,8 +126,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
     void createTerminal(project.id, launchProfile, 80, 24, { personaId: persona?.id }).then(
       (session) => {
         if (session) {
-          selectProject(project.id);
-          selectTab(project.id, session.id);
+          navigate(getAgentSessionRoutePath(session.id, project.id));
         }
       }
     );
@@ -296,17 +284,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
                           } ${bad ? 'exited-bad' : ''} ${isUnread ? 'unread' : ''}`}
                           onClick={(e) => {
                             e.stopPropagation();
-                            // Surface the agent's live terminal: select it (or
-                            // restore it from background) AND switch the
-                            // workspace to Terminals mode, so a board/explorer
-                            // view doesn't keep covering it.
-                            selectProject(project.id);
-                            if (hidden) {
-                              void restoreTerminal(t.id, project.id);
-                            } else {
-                              selectTab(project.id, t.id);
-                            }
-                            setProjectView(project.id, 'terminals');
+                            navigate(getAgentSessionRoutePath(t.id, project.id));
                           }}
                           onContextMenu={(e) => openAgentCardMenu(e, t)}
                           aria-label={isUnread ? `${t.title} · unread output` : undefined}
@@ -399,7 +377,6 @@ export function ProjectFocusView({ project }: { project: Project }) {
           menu={agentMenu}
           setMenu={setAgentMenu}
           actions={agentActions}
-          onPick={pickAgent}
         />
       )}
       {agentRename && (

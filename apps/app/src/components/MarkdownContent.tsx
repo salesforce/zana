@@ -1,4 +1,4 @@
-import { Children, isValidElement, memo, useMemo, useState, type ReactNode } from 'react';
+import { Children, isValidElement, memo, useCallback, useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -7,6 +7,7 @@ import rehypeKatex from 'rehype-katex';
 import 'highlight.js/styles/github-dark.css';
 import 'katex/dist/katex.min.css';
 import { MermaidDiagram } from './MermaidDiagram.js';
+import { extractMermaid } from './markdown-mermaid.js';
 import { unwrapBareFence } from '../lib/markdown.js';
 import { parseFrontMatter, type ParsedFrontMatter } from '@zana-ai/zcc-extension-sdk/helpers';
 import { highlightForPath } from '../lib/highlightCode.js';
@@ -178,12 +179,39 @@ export const MarkdownContent = memo(function MarkdownContent({
     [body, projectId]
   );
   const lightboxItems = providedLightboxItems ?? collectedLightboxItems;
-  const remarkPlugins = [
-    remarkGfm,
-    remarkMath,
-    ...(breaks ? [remarkBreaks] : []),
-    ...(threadMentions ? [remarkThreadMentions] : [])
-  ];
+  const remarkPlugins = useMemo(
+    () => [
+      remarkGfm,
+      remarkMath,
+      ...(breaks ? [remarkBreaks] : []),
+      ...(threadMentions ? [remarkThreadMentions] : [])
+    ],
+    [breaks, threadMentions]
+  );
+  // Keep the mermaid `pre` renderer identity stable. An inline `components.pre`
+  // is a new component type every pass, which remounts MermaidDiagram and
+  // flashes "Rendering diagram…" while mermaid.render is cancelled.
+  const renderFencedPre = useCallback(
+    (props: { children?: ReactNode }) => {
+      const mermaid = extractMermaid(props.children);
+      if (mermaid !== null) {
+        return <MermaidDiagram code={mermaid} theme={mermaidTheme} exportable={exportable} />;
+      }
+      const highlighted = highlightFencedPre(props.children);
+      if (highlighted) {
+        return (
+          <pre>
+            <code
+              className={highlighted.className}
+              dangerouslySetInnerHTML={highlighted.html}
+            />
+          </pre>
+        );
+      }
+      return <pre {...props} />;
+    },
+    [exportable, mermaidTheme]
+  );
   return (
     <>
       <div className="inbox-md">
@@ -196,8 +224,8 @@ export const MarkdownContent = memo(function MarkdownContent({
           [rehypeKatex, { throwOnError: false, output: 'html' }]
         ]}
         components={{
-          // Open links in a new window — Electron treats that as the OS
-          // default browser. Avoid destructuring `node` (deprecated in
+          // Plain click opens the OS browser. Cmd/Ctrl-click opens the
+          // in-app side panel. Avoid destructuring `node` (deprecated in
           // react-markdown v10).
           a: (props) => {
             const mentionId = parseThreadMentionHref(
@@ -240,8 +268,8 @@ export const MarkdownContent = memo(function MarkdownContent({
                 target="_blank"
                 rel="noreferrer"
                 onClick={(event) => {
-                  if (!href || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                  if (handleHttpLinkClick(href)) {
+                  if (!href || event.shiftKey || event.altKey) return;
+                  if (handleHttpLinkClick(href, { event, ownerId: threadId })) {
                     event.preventDefault();
                   }
                 }}
@@ -259,23 +287,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           // non-mermaid fence falls through to the default <pre>. We hook
           // `pre` (not `code`) so the rendered SVG isn't nested inside a
           // monospace code block.
-          pre: (props) => {
-            const mermaid = extractMermaid(props.children);
-            if (mermaid !== null)
-              return <MermaidDiagram key={mermaid} code={mermaid} theme={mermaidTheme} exportable={exportable} />;
-            const highlighted = highlightFencedPre(props.children);
-            if (highlighted) {
-              return (
-                <pre>
-                  <code
-                    className={highlighted.className}
-                    dangerouslySetInnerHTML={highlighted.html}
-                  />
-                </pre>
-              );
-            }
-            return <pre {...props} />;
-          },
+          pre: renderFencedPre,
           code: (props) => {
             const className = typeof props.className === 'string' ? props.className : '';
             const fenced = /(^|\s)language-/.test(className) || /(^|\s)hljs(\s|$)/.test(className);
@@ -352,21 +364,6 @@ function inlineCodeText(children: ReactNode): string {
   if (typeof children === 'string' || typeof children === 'number') return String(children);
   if (Array.isArray(children)) return children.map(inlineCodeText).join('');
   return '';
-}
-
-/**
- * Given the children of a markdown `<pre>` (which react-markdown renders as a
- * single `<code className="language-…">` element), return the raw source if
- * it's a ```mermaid fence, otherwise null. Returning null lets the caller
- * fall back to the default code-block rendering.
- */
-function extractMermaid(children: ReactNode): string | null {
-  if (!isValidElement(children)) return null;
-  const props = children.props as { className?: string; children?: ReactNode };
-  const className = props.className ?? '';
-  if (!/(^|\s)language-mermaid(\s|$)/.test(className)) return null;
-  const source = props.children;
-  return typeof source === 'string' ? source.replace(/\n$/, '') : null;
 }
 
 function highlightFencedPre(children: ReactNode): {

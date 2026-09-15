@@ -634,6 +634,14 @@ const threadOpenFileLenientSchema = z.object({
  * secondary panel. Broadcast to every client; nothing is persisted. Strict
  * schema guards the server's outgoing boundary.
  */
+export const threadOpenTerminalSchema = z
+  .object({
+    command: z.string().max(10_000).nullable().optional(),
+    title: z.string().min(1).max(200).nullable().optional(),
+  })
+  .strict();
+export type ThreadOpenTerminal = z.infer<typeof threadOpenTerminalSchema>;
+
 export const threadOpenSignalSchema = z
   .object({
     type: z.literal("thread-open"),
@@ -641,6 +649,7 @@ export const threadOpenSignalSchema = z
     threadId: z.string().min(1),
     split: threadOpenSplitSchema,
     file: threadOpenFileSchema.nullable(),
+    terminal: threadOpenTerminalSchema.nullable().optional(),
   })
   .strict();
 export type ThreadOpenSignal = z.infer<typeof threadOpenSignalSchema>;
@@ -655,6 +664,7 @@ export const threadOpenSignalLenientSchema = z.object({
   threadId: z.string(),
   split: threadOpenSplitSchema,
   file: threadOpenFileLenientSchema.nullable(),
+  terminal: threadOpenTerminalSchema.nullable().optional(),
 });
 
 /** Request body for POST /threads/:id/open (threadId comes from the path). */
@@ -664,6 +674,7 @@ export const threadOpenRequestSchema = z
     // placement lets callers choose how the pane should open.
     split: threadOpenSplitSchema.optional(),
     file: threadOpenFileSchema.nullable().optional(),
+    terminal: threadOpenTerminalSchema.nullable().optional(),
     /**
      * Fallback project when `:id` is a live panel owner (PTY session id) rather
      * than a conversation thread. Ignored when the path id is a registered

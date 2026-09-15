@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   Bot,
   Calendar,
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { AgentState, ExecutionBoardProjection } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, usePersonas } from '../store.js';
+import { getAgentSessionRoutePath } from '../lib/route-paths.js';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { AGENT_MONITOR_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
@@ -89,18 +91,9 @@ function laneOf(item: FleetItem, sensitivity: IdleAttentionSensitivity): LaneKey
   return lane?.key ?? 'idle';
 }
 
-/** Same workspace jump the status-rail Open button and the card menu share. */
-function openAgentInProject(card: AgentCard): void {
-  const ui = useUi.getState();
-  const data = useData.getState();
-  ui.setNav('projects');
-  ui.enterProjectFocus(card.projectId);
-  if (card.session.headless && card.session.status !== 'exited') {
-    void data.restoreTerminal(card.session.id, card.projectId);
-  } else {
-    ui.selectTab(card.projectId, card.session.id);
-  }
-  ui.setProjectView(card.projectId, 'terminals');
+/** Open the first-class CLI-agent session page. */
+function openAgentSession(navigate: (to: string) => void, card: AgentCard): void {
+  navigate(getAgentSessionRoutePath(card.session.id, card.projectId));
 }
 
 export function AgentMonitor({ cards, executions = [], showProject = false, onInspectExecution }: AgentMonitorProps) {
@@ -254,7 +247,6 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
             menu={menu}
             setMenu={setMenu}
             actions={actions}
-            onPick={openAgentInProject}
           />,
           document.body
         )}
@@ -290,6 +282,7 @@ interface RowProps {
 }
 
 function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onContextMenu }: RowProps) {
+  const navigate = useNavigate();
   const personas = usePersonas((s) => s.personas);
   const terminals = useData((s) => s.terminals);
   if (item.kind === 'schedule') {
@@ -298,7 +291,7 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
         type="button"
         className={`agent-monitor-row is-schedule lane-${laneKey} ${active ? 'active' : ''}${item.task.enabled ? '' : ' exited'}`}
         data-kind="schedule"
-        onClick={() => openScheduleFromAgents(item.task, terminals)}
+        onClick={() => openScheduleFromAgents(item.task, terminals, navigate)}
         onContextMenu={onContextMenu}
         title={`${item.title} · ${item.projectName}`}
       >
@@ -478,6 +471,7 @@ function AgentMonitorSession({
   executions: readonly ExecutionBoardProjection[];
   onInspectExecution?: (projectId: string, executionId: string) => void;
 }) {
+  const navigate = useNavigate();
   const { actions } = useAgentCardActions();
   const { session: t } = card;
   const exited = t.status === 'exited';
@@ -489,7 +483,7 @@ function AgentMonitorSession({
       candidate.orchestratorSessionId === t.id
   );
   const project = useData((s) => s.projects.find((row) => row.id === card.projectId));
-  const openInWorkspace = () => openAgentInProject(card);
+  const openInWorkspace = () => openAgentSession(navigate, card);
   const canSummarize = isClaudeProfile(t.profile);
   const canFollowupClose = canCloseWithFollowup(t);
   const [summarizing, setSummarizing] = useState(false);
@@ -574,7 +568,7 @@ function AgentMonitorSession({
         type="button"
         className="agent-monitor-action"
         onClick={openInWorkspace}
-        title="Open this agent in the full project view"
+        title="Open this agent on its session page"
       >
         <ExternalLink size={13} /> Open
       </button>

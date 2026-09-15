@@ -1,0 +1,24 @@
+{
+  "id": "harness-codex",
+  "displayName": "Codex CLI Agent",
+  "description": "CLI Agent TUI for the native codex coding CLI.",
+  "overview": "Launch Codex as a CLI Agent in ZCC. The plugin owns the terminal session for the native `codex` CLI.\n\n## What you get\n\n- A CLI Agent profile that opens Codex's own TUI inside ZCC.\n- The same spawn, stop, and routing controls as other CLI Agents.\n\n## How it works\n\nZCC starts `codex` on an enrolled host through this plugin's PTY provider. Threads that pick this harness talk to that CLI, not to a separate ACP adapter.\n\n## Requirements\n\n- Install `codex` on the host and keep it on `PATH`.\n- Sign in with the CLI, for example `codex login`.\n",
+  "icon": {
+    "lucide": "./icons/codex.svg"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/harness-codex",
+      "ref": "HEAD"
+    }
+  }
+}

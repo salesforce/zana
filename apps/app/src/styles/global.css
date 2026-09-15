@@ -15815,12 +15815,17 @@ body.resizing-col .explorer-resizer::after {
   font-size: 12px;
   line-height: 1.55;
   overflow-x: auto;
+  /* Fenced mermaid fallback is a dark surface (`.inbox-md pre`); pin light
+     ink so it cannot inherit muted prose or the inline-code gold chip. */
+  color: #e6edf3;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .inbox-md-code code {
   background: transparent;
   padding: 0;
-  color: var(--text-primary);
+  color: #e6edf3;
 }
 
 .inbox-md hr {
@@ -15890,6 +15895,9 @@ body.resizing-col .explorer-resizer::after {
   line-height: 1.55;
   overflow-x: auto;
   overflow-y: hidden;
+  /* Always a dark surface (see above). Do not inherit `.inbox-md code`'s
+     gold chip color — unhighlighted mermaid source was washing out. */
+  color: #e6edf3;
 }
 
 .inbox-md pre code,
@@ -15898,6 +15906,7 @@ body.resizing-col .explorer-resizer::after {
   padding: 10px 12px;
   background: transparent;
   font-size: 12px;
+  color: #e6edf3;
 }
 
 /* Rendered mermaid diagrams. Centered, with the SVG scaled to fit the
@@ -16001,6 +16010,9 @@ body.resizing-col .explorer-resizer::after {
 .inbox-mermaid-source {
   text-align: left;
   margin: 0;
+  color: #e6edf3;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Download dropdown: the trigger button + an anchored menu popup. */

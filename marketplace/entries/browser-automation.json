@@ -1,0 +1,24 @@
+{
+  "id": "browser-automation",
+  "displayName": "Browser Automation",
+  "description": "Persistent browser scripts on desktop or enrolled hosts.",
+  "overview": "Run persistent browser scripts from a thread on the desktop app or an enrolled host.\n\n## What you get\n\n- Thread-owned desktop browser sessions (DevBrowser) and local headless sessions.\n- Capture, cookie import into the automation partition, and CDP access for the leased page.\n- The `zcc browser` command for the same lifecycle.\n\n## How it works\n\nZCC leases an in-app browser or a headless session bound to the thread. Personal signed-in profiles are not copied unless you opt in. Cookie values never appear in HTTP JSON.\n\n## Requirements\n\nDesktop BrowserView support for in-app sessions. Isolated product-server launches cannot drive the desktop browser.\n",
+  "icon": {
+    "lucide": "Globe"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/browser-automation",
+      "ref": "HEAD"
+    }
+  }
+}

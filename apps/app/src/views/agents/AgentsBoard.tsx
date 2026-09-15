@@ -16,7 +16,8 @@ import {
 } from '@/store';
 import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { getThreadRoutePath, threadIdFromPath } from '@/lib/route-paths';
+import { threadIdFromPath } from '@/lib/route-paths';
+import { inspectAgentSession, inspectThread } from '@/lib/inspect-session';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
 import { AgentViewToggle, ScheduledColumnToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
@@ -104,6 +105,7 @@ function toCard(
 }
 
 export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
+  const navigate = useNavigate();
   const isGlobal = scope.kind === 'global';
   const scopedProject = scope.kind === 'project' ? scope.project : undefined;
 
@@ -114,13 +116,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const triageById = useIdleTriage((s) => s.byId);
   const overseerById = useOverseerActivity((s) => s.byId);
   const subagentsById = useSubagents((s) => s.byId);
-  const enterProjectFocus = useUi((s) => s.enterProjectFocus);
-  const setNav = useUi((s) => s.setNav);
-  const selectTab = useUi((s) => s.selectTab);
-  const selectProject = useUi((s) => s.selectProject);
-  const setProjectView = useUi((s) => s.setProjectView);
   const selectedTabId = useUi((s) => s.selectedTabId);
-  const restoreTerminal = useData((s) => s.restoreTerminal);
   const closeIdleAgents = useData((s) => s.closeIdleAgents);
   const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
   const scheduledTasks = useScheduler((s) => s.tasks);
@@ -128,7 +124,6 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const boardView = useUi((s) => s.agentsBoardView);
   const threads = useThreads((s) => s.threads);
   useEnsureThreads();
-  const navigate = useNavigate();
   const location = useLocation();
   const [filter, setFilter] = useState('');
   const [closeIdleTarget, setCloseIdleTarget] = useState<AgentCard[] | null>(null);
@@ -272,18 +267,17 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const activeTabId = scopedProject ? selectedTabId[scopedProject.id] : undefined;
   const activeThreadId = threadIdFromPath(location.pathname);
   const activeId = activeThreadId ?? activeTabId;
-  const threadProjectId = isGlobal ? undefined : scopedProject?.id;
   // Keep the toolbar (and this toggle) mounted after the user hides Scheduled
   // so they can turn the column back on even if that was the only fleet.
   const showToolbar = fleet.length > 0 || executions.length > 0 || !includeScheduled;
 
   const inspect = (item: FleetItem) => {
     if (item.kind === 'thread') {
-      useUi.getState().openThreadModal(item.id);
+      inspectThread(item.id, item.projectId, navigate);
       return;
     }
     if (item.kind === 'schedule') {
-      openScheduleFromAgents(item.task, terminals);
+      openScheduleFromAgents(item.task, terminals, navigate);
       return;
     }
     const executionId = item.card.session.cohort?.executionId;
@@ -291,35 +285,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       setSelectedExecution({ projectId: item.projectId, executionId });
       return;
     }
-    useUi.getState().openAgentModal(item.card.session.id, item.projectId);
-  };
-
-  const pick = (item: FleetItem) => {
-    if (item.kind === 'thread') {
-      navigate(getThreadRoutePath(item.id, threadProjectId));
-      return;
-    }
-    if (item.kind === 'schedule') {
-      openScheduleFromAgents(item.task, terminals);
-      return;
-    }
-    if (item.card.session.scheduled) {
-      useUi.getState().openAgentModal(item.card.session.id, item.projectId);
-      return;
-    }
-    const c = item.card;
-    if (isGlobal) {
-      setNav('projects');
-      enterProjectFocus(c.projectId);
-    } else {
-      selectProject(c.projectId);
-    }
-    if (c.session.headless && c.session.status !== 'exited') {
-      void restoreTerminal(c.session.id, c.projectId);
-    } else {
-      selectTab(c.projectId, c.session.id);
-    }
-    setProjectView(c.projectId, 'terminals');
+    inspectAgentSession(item.card.session.id, item.projectId, navigate);
   };
 
   const confirmCloseIdle = (summarize: boolean) => {
@@ -490,7 +456,6 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           cards={visibleFleet}
           activeId={activeId}
           onInspect={inspect}
-          onPick={pick}
           showProject={isGlobal}
           executions={executions}
           hasMoreExecutions={hasMoreExecutions}

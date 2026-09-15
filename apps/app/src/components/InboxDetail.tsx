@@ -1,5 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BotMessageSquare, Code2, Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderOpen, MessageSquare, Send, Sparkles, Star, Trash2 } from 'lucide-react';
 import { inboxQuestions } from '@zana-ai/zcc-domain/product';
 import type { InboxQuestion, Suggestion } from '@zana-ai/zcc-domain/product';
@@ -20,6 +21,7 @@ import {
 } from '../store.js';
 import { DelayedStencilLines, StencilLines } from './ui/Skeleton.js';
 import { AgentLauncher } from './AgentLauncher.js';
+import { inspectAgentSession } from '../lib/inspect-session.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
 import { DocContent, MarkdownContent } from './MarkdownContent.js';
 import { renderReportHtml, type ReportDoc } from '../lib/renderReportHtml.js';
@@ -125,6 +127,7 @@ export function InboxDetail({ visible }: InboxDetailProps) {
 const EXPORT_TOTAL_BYTES_CAP = 32 * 1024 * 1024; // 32 MB of source markdown
 
 function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }) {
+  const navigate = useNavigate();
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
   const structuredQuestions = useData((s) => s.structuredQuestionsEnabled);
@@ -722,7 +725,7 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
         <AgentLauncher
           project={aliveProject}
           initialPrompt={buildSpawnPrompt(entry)}
-          onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}
+          onLaunched={(session, projectId) => inspectAgentSession(session.id, projectId, navigate)}
           onClose={() => setLauncherOpen(false)}
         />
       )}

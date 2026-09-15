@@ -115,4 +115,10 @@ describe('MarkdownContent thread extras', () => {
     expect(css).toContain('.inbox-md .inbox-md-file-chip');
     expect(css).toContain('cursor: pointer');
   });
+
+  it('passes Cmd/Ctrl-click on http(s) links through to handleHttpLinkClick', () => {
+    const source = readFileSync(new URL('./MarkdownContent.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('handleHttpLinkClick(href, { event, ownerId: threadId })');
+    expect(source).not.toContain('event.metaKey || event.ctrlKey || event.shiftKey || event.altKey');
+  });
 });

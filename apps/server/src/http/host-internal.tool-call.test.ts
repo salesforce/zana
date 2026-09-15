@@ -6,6 +6,7 @@ import { getConversationThread, getHost } from '@zana-ai/zcc-db';
 import { handleHostInternalHttp } from './host-internal.js';
 import type { ProductHttpContext } from './product-context.js';
 import { openThreadFilePreview } from '../services/threads/preview-file.js';
+import { openThreadTerminal } from '../services/threads/open-thread-terminal.js';
 
 vi.mock('@zana-ai/zcc-db', () => ({
   getConversationThread: vi.fn(),
@@ -19,6 +20,15 @@ vi.mock('../services/threads/preview-file.js', async (importOriginal) => {
     ...actual,
     previewFileDepsFromContext: () => ({ tagged: 'deps' }),
     openThreadFilePreview: vi.fn()
+  };
+});
+
+vi.mock('../services/threads/open-thread-terminal.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/threads/open-thread-terminal.js')>();
+  return {
+    ...actual,
+    openThreadTerminalDepsFromContext: () => ({ tagged: 'term-deps' }),
+    openThreadTerminal: vi.fn()
   };
 });
 
@@ -87,6 +97,7 @@ afterEach(() => {
   vi.mocked(getConversationThread).mockReset();
   vi.mocked(getHost).mockReset();
   vi.mocked(openThreadFilePreview).mockReset();
+  vi.mocked(openThreadTerminal).mockReset();
 });
 
 describe('host internal plugin tool-call', () => {
@@ -211,6 +222,50 @@ describe('host internal plugin tool-call', () => {
         threadId: thread.id,
         projectId: thread.projectId,
         path: 'src/a.ts'
+      })
+    );
+  });
+
+  it('opens a host run_in_terminal without a plugin service and ignores a forged threadId', async () => {
+    vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+    vi.mocked(getConversationThread).mockReturnValue(thread as never);
+    vi.mocked(openThreadTerminal).mockReturnValue({
+      delivered: 1,
+      threadId: thread.id,
+      projectId: thread.projectId,
+      command: 'npm test',
+      title: 'Tests'
+    });
+    const invokeAgentTool = vi.fn();
+    const captured = captureResponse();
+    const handled = await handleHostInternalHttp(
+      request({
+        sessionId: 'inst-1',
+        threadId: thread.id,
+        providerThreadId: 'prov-1',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        tool: 'run_in_terminal',
+        arguments: { command: 'npm test', title: 'Tests', threadId: 'other-thread' }
+      }),
+      captured.response,
+      {
+        config: { getConfig: () => ({ inAppAgentTerminalsEnabled: true }) },
+        db: {},
+        plugins: { invokeAgentTool }
+      } as unknown as ProductHttpContext
+    );
+    expect(handled).toBe(true);
+    expect(captured.status).toBe(200);
+    expect(captured.body).toMatchObject({ success: true });
+    expect(invokeAgentTool).not.toHaveBeenCalled();
+    expect(openThreadTerminal).toHaveBeenCalledWith(
+      { tagged: 'term-deps' },
+      expect.objectContaining({
+        threadId: thread.id,
+        projectId: thread.projectId,
+        command: 'npm test',
+        title: 'Tests'
       })
     );
   });

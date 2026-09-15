@@ -5,6 +5,8 @@ export const LEGACY_THREAD_STORAGE_PREFIX = 'zcc.thread.secondaryPanel.';
 export const SECONDARY_PANEL_DEFAULT_WIDTH_PX = 352;
 export const SECONDARY_PANEL_MIN_WIDTH_PX = 288;
 export const SECONDARY_PANEL_MAX_WIDTH_RATIO = 0.7;
+export const SECONDARY_PANEL_OPEN_WIDTH_RATIO = 0.5;
+export const SECONDARY_PANEL_MODAL_OPEN_WIDTH_RATIO = 0.33;
 
 export type PinnedSecondaryView = 'info' | 'diff' | 'plan';
 
@@ -147,6 +149,25 @@ export function clampWidth(widthPx: number, containerWidthPx = 1200): number {
     Math.floor(containerWidthPx * SECONDARY_PANEL_MAX_WIDTH_RATIO)
   );
   return Math.min(max, Math.max(SECONDARY_PANEL_MIN_WIDTH_PX, Math.round(widthPx)));
+}
+
+export function secondaryPanelOpenWidthPx(containerWidthPx: number, modal: boolean): number {
+  const ratio = modal ? SECONDARY_PANEL_MODAL_OPEN_WIDTH_RATIO : SECONDARY_PANEL_OPEN_WIDTH_RATIO;
+  return containerWidthPx * ratio;
+}
+
+export function applySecondaryPanelOpenWidth(
+  previous: ThreadSecondaryPanelState,
+  next: ThreadSecondaryPanelState,
+  layout: { containerWidthPx: number; modal: boolean }
+): ThreadSecondaryPanelState {
+  if (previous.isOpen || !next.isOpen) return next;
+  if (!(layout.containerWidthPx > 0)) return next;
+  return setSecondaryPanelWidth(
+    next,
+    secondaryPanelOpenWidthPx(layout.containerWidthPx, layout.modal),
+    layout.containerWidthPx
+  );
 }
 
 function readStoredPanelRaw(ownerId: string): string | null {

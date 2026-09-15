@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
 import type { AgentState, CliPlanFile, SessionStats, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { product } from '../lib/product-client.js';
@@ -132,7 +132,12 @@ export function AgentSessionView({
   modal?: boolean;
 }) {
   const pane = useOptionalPaneContext();
-  const panel = useSecondaryPanel(modal ? `${session.id}:modal` : session.id, { defaultOpen: !modal });
+  const viewRef = useRef<HTMLElement>(null);
+  const panel = useSecondaryPanel(modal ? `${session.id}:modal` : session.id, {
+    defaultOpen: !modal,
+    modal,
+    getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
+  });
   useInAppBrowserPanel(modal ? `${session.id}:modal` : session.id, panel);
   useDesktopBrowserReveal({
     threadId: session.id,
@@ -289,6 +294,7 @@ export function AgentSessionView({
 
   return (
     <section
+      ref={viewRef}
       className={viewClass}
       data-testid="agent-session-view"
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}

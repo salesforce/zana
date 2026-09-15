@@ -2136,6 +2136,14 @@ export interface AppConfig {
    */
   catchUpSummaryEnabled?: boolean;
   /**
+   * Skip the agent/thread inspector overlay (EXPERIMENTAL). When ON, opening a
+   * CLI agent or thread — from the Agents canvas, favorites, a launch peek, or
+   * the menu bar — navigates to the full session or thread page instead of a
+   * modal peek. Default OFF — a click still peeks without leaving the current
+   * surface.
+   */
+  classicSessionViewEnabled?: boolean;
+  /**
    * Idle / blocked dwell (seconds) before the catch-up-summary add-on fires its
    * micro-call. On the working/blocked → idle edge (or entering 'blocked'), the
    * service arms a timer of this length; it generates ONLY if the agent is still
@@ -2157,6 +2165,13 @@ export interface AppConfig {
    * every report stays inline (no demotion).
    */
   feedNoiseClassifierEnabled?: boolean;
+  /**
+   * Keep agent-opened shells inside ZCC (EXPERIMENTAL). When ON, new sessions
+   * receive a `run_in_terminal` host tool and skill so agents open a visible
+   * ZCC shell instead of Terminal.app / iTerm / Cursor. Off by default.
+   * Subsequent launches only.
+   */
+  inAppAgentTerminalsEnabled?: boolean;
   /**
    * Automatically open the thread secondary panel on the Plan pin when Plan
    * mode is active (native ACP Plan, `/plan`, or a durable plan artifact).
@@ -2940,7 +2955,9 @@ export interface CreateTerminalRequest {
    * Optional opening prompt. Spawn-arg harnesses append it as the trailing
    * `[prompt]` / `--prompt` argv so the session runs it on first turn. Harnesses
    * whose TUI cannot take a seed argv (stdin-after-ready) receive it as a typed
-   * submit after the process is ready. Ignored for `shell`.
+   * submit after the process is ready. For `shell`, this is the launch command
+   * (`$SHELL -lc <prompt>` in the confined cwd). Empty/absent ⇒ an idle login
+   * shell.
    */
   prompt?: string;
   /**

@@ -1,0 +1,24 @@
+{
+  "id": "salesforce",
+  "displayName": "Salesforce",
+  "description": "Org identity, doctor, Agentforce Playground and Preview, and API-native SOQL/Apex/LWC/Agentforce tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
+  "overview": "Salesforce DX inner loop for ZCC: org identity, SOQL, Apex, LWC, and Agentforce tools with fail-closed mutation confirms.\n\n## What you get\n\n- Org identity and doctor checks for the connected Salesforce org.\n- SOQL Explorer, Apex and LWC editors, and Agentforce playground and preview.\n- Agent tools that require an explicit confirm before any mutating API call.\n\n## How it works\n\nThe plugin talks to Salesforce APIs from this host. Reads can run unattended. Writes wait for your approval in the thread.\n\n## Requirements\n\nInstall with `zcc plugin install salesforce`, then authenticate the Salesforce CLI / DX org this project uses.\n",
+  "icon": {
+    "lucide": "Cloud"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/salesforce",
+      "ref": "HEAD"
+    }
+  }
+}

@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Code2, Download, Expand, FileImage, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { rasterizeSvgString, downloadBlob } from '../lib/mermaidExport.js';
 import { mermaidSvgLayout } from '../lib/mermaid-svg-layout.js';
 import {
+  loadMermaidSvg,
   mermaidSvgCacheKey,
-  readMermaidSvgCache,
-  writeMermaidSvgCache
+  readMermaidSvgCache
 } from '../lib/mermaid-svg-cache.js';
 import { Modal } from './Modal.js';
 
@@ -112,7 +112,7 @@ async function renderExportSvg(theme: MermaidTheme, id: string, code: string): P
  *   `data-mermaid-state` nodes — renders exactly as before, with no toolbar
  *   in the snapshot.
  */
-export function MermaidDiagram({
+export const MermaidDiagram = memo(function MermaidDiagram({
   code,
   theme,
   exportable = false
@@ -146,19 +146,20 @@ export function MermaidDiagram({
     // rebuilds this component with empty state.
     setError(false);
 
-    void (async () => {
-      try {
-        const id = `inbox-mermaid-${renderSeq++}`;
-        const rendered = await renderToSvg(resolvedTheme, id, code);
-        writeMermaidSvgCache(cacheKey, rendered);
+    void loadMermaidSvg(cacheKey, () => {
+      const id = `inbox-mermaid-${renderSeq++}`;
+      return renderToSvg(resolvedTheme, id, code);
+    }).then(
+      (rendered) => {
         if (!cancelled) {
           setSvg(rendered);
           setError(false);
         }
-      } catch {
+      },
+      () => {
         if (!cancelled) setError(true);
       }
-    })();
+    );
 
     return () => {
       cancelled = true;
@@ -172,7 +173,7 @@ export function MermaidDiagram({
   // mounted" and would snapshot the placeholder. See renderReportHtml.
   if (error && svg === null) {
     return (
-      <pre className="inbox-md-code" data-mermaid="1" data-mermaid-state="settled">
+      <pre className="inbox-md-code inbox-mermaid-source" data-mermaid="1" data-mermaid-state="settled">
         {code}
       </pre>
     );
@@ -218,9 +219,7 @@ export function MermaidDiagram({
       )}
     </div>
   );
-}
-
-/** Solid background for a rastered export, matched to the diagram's theme. */
+});
 function exportBackground(theme: MermaidTheme): string {
   return theme === 'default' ? '#ffffff' : '#0d1117';
 }

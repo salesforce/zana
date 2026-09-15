@@ -987,8 +987,14 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.catchUpSummaryEnabled === 'boolean') {
     normalized.catchUpSummaryEnabled = input.catchUpSummaryEnabled;
   }
+  if (typeof input.classicSessionViewEnabled === 'boolean') {
+    normalized.classicSessionViewEnabled = input.classicSessionViewEnabled;
+  }
   if (typeof input.feedNoiseClassifierEnabled === 'boolean') {
     normalized.feedNoiseClassifierEnabled = input.feedNoiseClassifierEnabled;
+  }
+  if (typeof input.inAppAgentTerminalsEnabled === 'boolean') {
+    normalized.inAppAgentTerminalsEnabled = input.inAppAgentTerminalsEnabled;
   }
   if (typeof input.autoOpenThreadPlanPanel === 'boolean') {
     normalized.autoOpenThreadPlanPanel = input.autoOpenThreadPlanPanel;

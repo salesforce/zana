@@ -43,6 +43,7 @@ import { registerInboxPushTool } from '../inbox/inbox-mcp-tool.js';
 import { registerInboxAskTool } from '../inbox/inbox-ask-mcp-tool.js';
 import { registerInboxSearchTool } from '../inbox/inbox-search-mcp-tool.js';
 import { registerPreviewFileTool } from '../threads/preview-file-mcp-tool.js';
+import { registerRunInTerminalTool } from '../threads/run-in-terminal-mcp-tool.js';
 import { registerRemoteExecTool, type RegisterRemoteExecOpts } from '@zana-ai/zcc-host-daemon/remote-exec-mcp-tool';
 import {
   registerRemoteFsTools,
@@ -498,6 +499,18 @@ export interface McpServerOptions {
     path: string;
     lineNumber: number | null;
   }) => Promise<{ delivered: number; path: string; source: 'workspace' | 'thread-storage' }>;
+  /**
+   * Open a visible ZCC shell for this session. Session-scoped only.
+   * Absent or `inAppAgentTerminalsEnabled: false` skips registration.
+   */
+  runInTerminal?: (input: {
+    threadId: string;
+    projectId: string;
+    command: string | null;
+    title: string | null;
+  }) => Promise<{ delivered: number; command: string | null; title: string | null }>;
+  /** Boolean or live getter so a Settings toggle applies to the next MCP request. */
+  inAppAgentTerminalsEnabled?: boolean | (() => boolean);
 }
 
 export interface McpServerHandle {
@@ -507,6 +520,12 @@ export interface McpServerHandle {
   port: number;
   /** Stop the listener; resolves once it's fully closed. */
   close(): Promise<void>;
+}
+
+function resolveInAppAgentTerminalsEnabled(
+  value: McpServerOptions['inAppAgentTerminalsEnabled']
+): boolean {
+  return typeof value === 'function' ? value() === true : value === true;
 }
 
 /**
@@ -568,6 +587,8 @@ function buildProjectMcpServer(opts: {
   followupAgentApi?: McpServerOptions['followupAgentApi'];
   scheduleAgentApi?: McpServerOptions['scheduleAgentApi'];
   previewFile?: McpServerOptions['previewFile'];
+  runInTerminal?: McpServerOptions['runInTerminal'];
+  inAppAgentTerminalsEnabled?: McpServerOptions['inAppAgentTerminalsEnabled'];
 }): McpServer {
   const mcp = new McpServer({ name: 'zcc-inbox', version: '0.1.0' });
   // Resolve scheduled-ness + loudness once at build time so inbox_push entries
@@ -632,6 +653,13 @@ function buildProjectMcpServer(opts: {
       projectId: opts.projectId,
       previewFile: opts.previewFile
     });
+    if (resolveInAppAgentTerminalsEnabled(opts.inAppAgentTerminalsEnabled)) {
+      registerRunInTerminalTool(mcp, {
+        threadId: opts.sessionId,
+        projectId: opts.projectId,
+        runInTerminal: opts.runInTerminal
+      });
+    }
   }
   // suggest_action: propose a runnable next action for the operator's launcher.
   // Available on both route shapes (a suggestion needs no live originating
@@ -1774,7 +1802,9 @@ async function handleRequest(
     goalAgentApi: opts.goalAgentApi,
     followupAgentApi: opts.followupAgentApi,
     scheduleAgentApi: opts.scheduleAgentApi,
-    previewFile: opts.previewFile
+    previewFile: opts.previewFile,
+    runInTerminal: opts.runInTerminal,
+    inAppAgentTerminalsEnabled: opts.inAppAgentTerminalsEnabled
   });
 
   // Ensure transport + mcp tear down once the response finishes, even on

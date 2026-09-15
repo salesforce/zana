@@ -26,6 +26,8 @@ describe('builtinSkillsRootPath', () => {
     expect(existsSync(join(root, 'zcc-inbox', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(root, 'zcc-preview', 'SKILL.md'))).toBe(true);
     expect(readFileSync(join(root, 'zcc-preview', 'SKILL.md'), 'utf8')).toMatch(/^---\nname: zcc-preview\n/);
+    expect(existsSync(join(root, 'zcc-terminal', 'SKILL.md'))).toBe(true);
+    expect(readFileSync(join(root, 'zcc-terminal', 'SKILL.md'), 'utf8')).toMatch(/^---\nname: zcc-terminal\n/);
     expect(existsSync(join(root, 'harness-authoring', 'SKILL.md'))).toBe(false);
   });
 });

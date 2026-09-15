@@ -447,6 +447,18 @@ describe('createTerminalConfined — main-side denylist enforcement', () => {
     expect(lastCreate().extraArgs ?? []).toEqual([]);
   });
 
+  it('honors a shell launch command as $SHELL -lc extraArgs', () => {
+    const res = createTerminalConfined({
+      projectId: 'p1',
+      profile: 'shell',
+      cols: 80,
+      rows: 24,
+      prompt: 'npm run dev'
+    });
+    expect(res.ok).toBe(true);
+    expect(lastCreate().extraArgs).toEqual(['-lc', 'npm run dev']);
+  });
+
   it('uses the Quick Agent workspace root when scratch isolation is not requested', () => {
     const quickAgentProject = { ...PROJECT, path: '/tmp/zcc-workspace', quickAgent: true };
     mkdirSync(quickAgentProject.path, { recursive: true });

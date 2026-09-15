@@ -261,7 +261,10 @@ export function buildSystemPromptGuidance(scheduled: boolean, coordinationMode?:
  *
  * Pure + exported for tests and the remote path.
  */
-export function inboxAllowedTools(scheduled: boolean): string[] {
+export function inboxAllowedTools(
+  scheduled: boolean,
+  opts?: { runInTerminal?: boolean }
+): string[] {
   const meshAllow = [
     'mcp__zcc-inbox__register_agent',
     'mcp__zcc-inbox__list_agents',
@@ -289,9 +292,10 @@ export function inboxAllowedTools(scheduled: boolean): string[] {
     'mcp__zcc-inbox__preview_file',
     'mcp__zcc-inbox__suggest_action'
   ];
+  const extras = opts?.runInTerminal === true ? ['mcp__zcc-inbox__run_in_terminal'] : [];
   return scheduled
-    ? [...core, 'mcp__zcc-inbox__schedule_report', ...meshAllow, ...agentDataAllow]
-    : [...core, ...meshAllow, ...agentDataAllow];
+    ? [...core, 'mcp__zcc-inbox__schedule_report', ...meshAllow, ...agentDataAllow, ...extras]
+    : [...core, ...meshAllow, ...agentDataAllow, ...extras];
 }
 
 /**

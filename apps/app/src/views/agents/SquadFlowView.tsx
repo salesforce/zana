@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ChevronRight, GitPullRequest, Hash, Workflow } from 'lucide-react';
 import type { ExecutionBoardProjection, SquadFlowGraph, SquadFlowNode } from '@zana-ai/zcc-domain/product';
 import {
   useData,
-  useUi,
   useAgentMesh,
   useAgentStatus,
   useSubagents,
   useSubagentChildren,
   agentViewTerminals
 } from '@/store';
+import { inspectAgentSession } from '@/lib/inspect-session';
 import { useCanvasPan } from '@/hooks/useCanvasPan';
 import { buildSquadFlow, isQuiescentSquad } from '@/lib/squadFlow';
 import { squadFlowBounds, type FlowPoint } from '@/lib/squadFlowBounds';
@@ -361,6 +362,7 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
   onInspectExecution?: (projectId: string, executionId: string) => void;
   pannable?: boolean;
 }) {
+  const navigate = useNavigate();
   const width = 1100;
   const now = graph.builtAt;
   const { placed, height: layoutHeight } = useMemo(() => layout(graph, width), [graph, width]);
@@ -470,10 +472,10 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
           onInspectExecution(graph.projectId, node.job.executionId);
           return;
         }
-        useUi.getState().openAgentModal(drag.sessionId, graph.projectId);
+        inspectAgentSession(drag.sessionId, graph.projectId, navigate);
       }
     },
-    [graph, onInspectExecution]
+    [graph, onInspectExecution, navigate]
   );
 
   return (
@@ -548,7 +550,7 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                 onPointerDown={(e) => handlePointerDown(e, node, x, y)}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
-                onDoubleClick={() => useUi.getState().openAgentModal(node.sessionId, graph.projectId)}
+                onDoubleClick={() => inspectAgentSession(node.sessionId, graph.projectId, navigate)}
                 title={`${node.handle ?? node.displayName ?? node.sessionId} (${node.job?.executionId ? 'Click to inspect job details, double-click to open terminal' : 'Click to open terminal'})`}
               >
                 <span className="squad-flow-node-main">

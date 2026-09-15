@@ -1,0 +1,24 @@
+{
+  "id": "side-chat",
+  "displayName": "Side chat",
+  "description": "Reply to messages in hidden side-chat forks rendered in a thread panel.",
+  "overview": "Ask a follow-up question about one message without adding noise to the main conversation. A side chat is a fork of the thread that opens in a panel beside it.\n\n## What you get\n\n- A **Reply in side chat** action on any message. Select part of the message first to reply to only that text.\n- A **Start side chat** panel action for a fork that starts from the current thread state.\n- A panel that shows the quoted message and a compact chat with its own composer.\n- A **Send to main thread** action on side-chat replies. It queues the reply as a message in the original thread.\n\n## How it works\n\nThe fork copies the conversation up to the chosen message and reuses the same workspace. The quoted text is given to the agent as context. Side chats stay hidden from the sidebar, so they do not clutter your thread list.\n\nOnce per hour, the plugin looks for side chats older than 24 hours. A side chat with no user message and no queued message is archived. A side chat you used is kept.\n\nThe plugin adds no agent tools or CLI commands.\n",
+  "icon": {
+    "lucide": "MessagesSquare"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/side-chat",
+      "ref": "HEAD"
+    }
+  }
+}

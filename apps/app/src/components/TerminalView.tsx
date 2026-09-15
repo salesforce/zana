@@ -13,7 +13,7 @@ import { scrapeUrls } from '../lib/urlScrape.js';
 import { shouldSuppressWheelArrows } from '../lib/terminalWheel.js';
 import { perfCount, perfTime } from '../lib/perfMark.js';
 import { resolveTerminalTheme } from '../lib/terminalThemes.js';
-import { openXtermHttpLink, xtermHttpLinkHandler } from '../lib/xterm-http-link.js';
+import { openXtermHttpLink } from '../lib/xterm-http-link.js';
 import { useData, useUi } from '../store.js';
 
 type Area = 'a' | 'b' | 'c' | 'd';
@@ -83,6 +83,8 @@ function TerminalViewImpl({ session, area }: Props) {
 
   useLayoutEffect(() => {
     if (!ref.current) return;
+    const activateHttpLink = (event: MouseEvent, uri: string) =>
+      openXtermHttpLink(event, uri, session.id);
     const term = new Terminal({
       cursorBlink: true,
       // Prefer Nerd Font / Powerline-capable families first so prompts
@@ -98,7 +100,7 @@ function TerminalViewImpl({ session, area }: Props) {
       allowProposedApi: true,
       // OSC 8 (gh, etc.): without this, xterm confirm()s then window.open()
       // with no URL and Electron denies about:blank — OK does nothing.
-      linkHandler: xtermHttpLinkHandler,
+      linkHandler: { activate: activateHttpLink },
       // Keep a deep scrollback: a long-running agent easily emits more than a
       // few thousand lines, and the old 5k cap silently dropped the oldest — so
       // peeking the agent in the modal (or scrolling back in the tab) lost early
@@ -110,7 +112,7 @@ function TerminalViewImpl({ session, area }: Props) {
     const fit = new FitAddon();
     const search = new SearchAddon();
     term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon(openXtermHttpLink));
+    term.loadAddon(new WebLinksAddon(activateHttpLink));
     term.loadAddon(search);
     term.open(ref.current);
     // Upgrade off the DOM renderer to WebGL now that the terminal has a DOM

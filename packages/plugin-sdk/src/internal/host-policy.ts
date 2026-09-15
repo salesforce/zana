@@ -64,12 +64,15 @@ export function pluginCliCollisionWarning(
  * Built-in dynamic tool names plugins may not shadow. Maintained by hand —
  * kept in sync with conversation SHARE tools in
  * apps/server/src/services/threads/host-session-tools.ts
- * (`HOST_SHARE_TOOL_NAMES`) plus `update_environment_directory`.
+ * (`HOST_SHARE_TOOL_NAMES`) plus `update_environment_directory` and the
+ * optional SHARE name `run_in_terminal` (packed only when the in-app
+ * agent terminals experiment is on).
  * Guarded by host-session-tools.policy.test.ts.
  */
 export const RESERVED_AGENT_TOOL_NAMES: readonly string[] = [
   "update_environment_directory",
   "preview_file",
+  "run_in_terminal",
   "inbox_push",
   "inbox_search",
   "suggest_action",

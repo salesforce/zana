@@ -911,8 +911,13 @@ describe('expandable row and chips', () => {
     expect(mermaid).toContain('mermaidSvgLayout');
     expect(mermaid).toContain('inbox-mermaid-frame');
     expect(mermaid).toContain('flowchart: { useMaxWidth: false }');
+    expect(mermaid).toContain('loadMermaidSvg');
     expect(mermaid).toContain('readMermaidSvgCache');
     expect(mermaid).not.toMatch(/setSvg\(null\)/);
+
+    const markdown = readFileSync(fileURLToPath(new URL('../MarkdownContent.tsx', import.meta.url)), 'utf8');
+    expect(markdown).toContain('renderFencedPre');
+    expect(markdown).toContain('useCallback');
 
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
     const mermaidRow = css.slice(
@@ -923,6 +928,12 @@ describe('expandable row and chips', () => {
     expect(mermaidRow).toContain('max-width: 100%;');
     expect(css).toContain('.inbox-mermaid-frame.is-sized svg');
     expect(css).toContain('position: absolute;');
+    const fencedPre = css.slice(
+      css.indexOf('.inbox-md pre {'),
+      css.indexOf('.inbox-md pre code,')
+    );
+    expect(fencedPre).toContain('color: #e6edf3;');
+    expect(css).toContain('.inbox-mermaid-source {\n  text-align: left;\n  margin: 0;\n  color: #e6edf3;');
   });
 
   it('keeps the transcript scrollbar invisible at rest and paints it only while scrolling', () => {

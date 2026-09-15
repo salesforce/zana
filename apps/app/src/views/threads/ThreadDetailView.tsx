@@ -56,6 +56,7 @@ import {
   dispatchThreadOpenFile,
   useThreadOpenFileSignal
 } from '../../components/thread/secondary-panel/useThreadOpenFileSignal.js';
+import { useThreadOpenTerminalSignal } from '../../components/thread/secondary-panel/useThreadOpenTerminalSignal.js';
 import { appendThreadRecentItem, tabInputFromRecentItem } from '../../components/thread/secondary-panel/threadRecentItems.js';
 import {
   activeClosableTab,
@@ -115,7 +116,11 @@ export function ThreadDetail({
   const pendingInteractions = useOpenPendingInteractions(threadId);
   const pane = useOptionalPaneContext();
   const hostedSecondary = pane?.secondaryPanelHost != null;
-  const panel = useThreadSecondaryPanel(threadId);
+  const viewRef = useRef<HTMLElement>(null);
+  const panel = useThreadSecondaryPanel(threadId, {
+    modal,
+    getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
+  });
   useInAppBrowserPanel(threadId, panel);
   useDesktopBrowserReveal({
     threadId,
@@ -173,6 +178,13 @@ export function ThreadDetail({
       }
       panel.addTab(tab);
     }
+  });
+  useThreadOpenTerminalSignal({
+    threadId,
+    environmentId,
+    projectId,
+    cwd,
+    panel
   });
 
   const displayRows = useMemo(() => {
@@ -630,6 +642,7 @@ export function ThreadDetail({
 
   return (
     <section
+      ref={viewRef}
       className={viewClass}
       data-testid="thread-detail"
       data-embedded={embedded ? 'true' : undefined}
@@ -761,6 +774,7 @@ export function ThreadDetail({
             />
             <div className="thread-composer-dock">
               <PromptContextBanner
+                threadId={threadId}
                 branchName={branchName}
                 isWorktree={isWorktree}
                 parentThreadId={parentThreadId}
