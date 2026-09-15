@@ -41,6 +41,13 @@ export interface ExecutionWorkUnitInput {
 export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   state: ExecutionWorkUnitState;
   assignedSlotId?: string;
+  /** Main-minted fence. Missing only on pre-Phase-04 persisted claims. */
+  claimGeneration?: number;
+  claimId?: string;
+  claimedBy?: { slotId: string; sessionId?: string; routeId?: string };
+  leaseExpiresAt?: number;
+  heartbeatAt?: number;
+  turnCount?: number;
   attempt: number;
   failureCode?: ExecutionFailureCode;
   failure?: string;
@@ -59,6 +66,8 @@ export interface ExecutionDispatchAssignment {
   title: string;
   task: string;
   files?: string[];
+  claimId?: string;
+  claimGeneration?: number;
 }
 
 export interface ExecutionBlocker {
@@ -150,7 +159,7 @@ export interface ExecutionRequestSnapshotV1 {
   launchKind?: ExecutionLaunchKind;
   launchDisplay?: ExecutionLaunchDisplayV1;
   slots: TeamLaunchAuthorizationInputSlot[];
-  policy?: TeamLaunchRequestInput['policy'];
+  policy?: ExecutionPolicyV1;
   workflow?: SquadBundleWorkflowMetadataV1;
   resolvedModels: ResolvedModelSnapshotV1[];
   sourceBundle?: {
@@ -158,6 +167,12 @@ export interface ExecutionRequestSnapshotV1 {
     sources: Array<Omit<ExecutionSourceSnapshot, 'extractedText'>>;
   };
   objective?: string;
+}
+
+export interface ExecutionPolicyV1 extends NonNullable<TeamLaunchRequestInput['policy']> {
+  maxTurnsPerClaim?: number;
+  maxClaimWallClockMs?: number;
+  usageBudget?: { maxTokens?: number; maxUsd?: number };
 }
 
 /** Durable, non-capability launch boundary for crash diagnosis and reconciliation. */
@@ -235,6 +250,23 @@ export interface ExecutionStoreOptions {
   maxEventsPerExecution?: number;
 }
 
+export interface ActiveClaimCursor {
+  updatedAt: number;
+  id: string;
+}
+
+export interface ActiveClaimPage {
+  records: ExecutionRecord[];
+  next?: ActiveClaimCursor;
+}
+
+export interface ReclaimExpiredClaimInput {
+  workUnitId: string;
+  claimId: string;
+  claimGeneration: number;
+  reason: string;
+}
+
 const MAX_RECORDS = 2_000;
 const MAX_EVENTS = 10_000;
 const MAX_EVENTS_PER_EXECUTION = 500;
@@ -251,6 +283,13 @@ const MAX_DELIVERY_TEXT_BYTES = 16 * 1024;
 const MAX_DELIVERY_ERROR_BYTES = 1024;
 export const MAX_DELIVERY_ATTEMPTS = 8;
 const DELIVERY_LEASE_MS = 60_000;
+export const WORK_CLAIM_LEASE_MS = 90_000;
+export const HEARTBEAT_PERSIST_REMAINING_MS = 30_000;
+
+function assertClaimFence(unit: ExecutionWorkUnit, claim?: { claimId: string; claimGeneration: number }): void {
+  if (!claim || !unit.claimId) return;
+  if (unit.claimId !== claim.claimId || unit.claimGeneration !== claim.claimGeneration) throw new Error('stale work claim');
+}
 const DELIVERED_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const storeQueue = createSerializedTransactionQueue();
 const terminalStates = new Set<ExecutionState>(['COMPLETED', 'STOPPED', 'FAILED']);
@@ -316,9 +355,25 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.routing === undefined || validRouting(unit.routing))
     && (unit.state === 'PENDING' || unit.state === 'READY' || unit.state === 'CLAIMED' || unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')
     && (unit.assignedSlotId === undefined || validString(unit.assignedSlotId)) && Number.isInteger(unit.attempt) && (unit.attempt ?? -1) >= 0
+    && (unit.claimGeneration === undefined || validNonNegativeInteger(unit.claimGeneration))
+    && (unit.claimId === undefined || validString(unit.claimId))
+    && (unit.claimedBy === undefined || !!unit.claimedBy && validString(unit.claimedBy.slotId)
+      && (unit.claimedBy.sessionId === undefined || validString(unit.claimedBy.sessionId))
+      && (unit.claimedBy.routeId === undefined || validString(unit.claimedBy.routeId)))
+    && (unit.leaseExpiresAt === undefined || typeof unit.leaseExpiresAt === 'number' && Number.isFinite(unit.leaseExpiresAt))
+    && (unit.heartbeatAt === undefined || typeof unit.heartbeatAt === 'number' && Number.isFinite(unit.heartbeatAt))
+    && (unit.turnCount === undefined || validNonNegativeInteger(unit.turnCount))
     && (unit.failureCode === undefined || failureCodes.has(unit.failureCode))
     && (unit.failure === undefined || validString(unit.failure)) && (unit.result === undefined || validString(unit.result))
     && Array.isArray(unit.history) && unit.history.length <= MAX_UNIT_LIST * 10;
+}
+
+function clearClaim(unit: ExecutionWorkUnit): void {
+  unit.claimId = undefined;
+  unit.claimedBy = undefined;
+  unit.leaseExpiresAt = undefined;
+  unit.heartbeatAt = undefined;
+  unit.turnCount = undefined;
 }
 
 function validExecutionBlocker(value: unknown): value is ExecutionBlocker {
@@ -419,7 +474,7 @@ function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshot
     && Array.isArray(request.resolvedModels) && request.resolvedModels.every(validModelSnapshot)
     && (request.objective === undefined || validString(request.objective))
     && (request.sourceBundle === undefined || validSourceBundle(request.sourceBundle))
-    && (request.policy === undefined || typeof request.policy === 'object')
+    && (request.policy === undefined || validExecutionPolicy(request.policy))
     && (request.workflow === undefined || typeof request.workflow === 'object');
 }
 
@@ -432,6 +487,17 @@ function validSourceBundle(value: unknown): boolean {
       && (source.extractedTextDigest === undefined || validDigest(source.extractedTextDigest))
       && typeof source.byteSize === 'number' && source.extractionStatus === 'READY'
       && Array.isArray(source.extractionWarnings) && source.extractionWarnings.every((warning) => typeof warning === 'string'));
+}
+
+function validExecutionPolicy(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const policy = value as { maxTurnsPerClaim?: unknown; maxClaimWallClockMs?: unknown; usageBudget?: { maxTokens?: unknown; maxUsd?: unknown } };
+  const positiveInteger = (input: unknown, max: number) => Number.isInteger(input) && (input as number) > 0 && (input as number) <= max;
+  return (policy.maxTurnsPerClaim === undefined || positiveInteger(policy.maxTurnsPerClaim, 10_000))
+    && (policy.maxClaimWallClockMs === undefined || positiveInteger(policy.maxClaimWallClockMs, 24 * 60 * 60 * 1_000))
+    && (policy.usageBudget === undefined || typeof policy.usageBudget === 'object'
+      && (policy.usageBudget.maxTokens === undefined || positiveInteger(policy.usageBudget.maxTokens, Number.MAX_SAFE_INTEGER))
+      && (policy.usageBudget.maxUsd === undefined || typeof policy.usageBudget.maxUsd === 'number' && Number.isFinite(policy.usageBudget.maxUsd) && policy.usageBudget.maxUsd > 0));
 }
 
 function validDigest(value: unknown): value is string {
@@ -960,8 +1026,14 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         assertAuthorizedSlot(record, slotId);
       }
       assertScopeAvailable(record, unit);
-      unit.state = 'CLAIMED';
-      unit.assignedSlotId = slotId;
+       unit.state = 'CLAIMED';
+       unit.assignedSlotId = slotId;
+       unit.claimGeneration = (unit.claimGeneration ?? 0) + 1;
+       unit.claimId = randomUUID();
+       unit.claimedBy = { slotId };
+       unit.leaseExpiresAt = timestamp + WORK_CLAIM_LEASE_MS;
+       unit.heartbeatAt = timestamp;
+       unit.turnCount = 0;
       unit.attempt += 1;
       unit.failureCode = undefined;
       unit.failure = undefined;
@@ -1099,14 +1171,20 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           if (index < 0 && unit.preferredRole) index = freeSlots.findIndex((slot) => slot.personaId === unit.preferredRole);
           if (index < 0) index = 0;
           const slot = freeSlots[index];
-          unit.state = 'CLAIMED';
-          unit.assignedSlotId = slot.slotId;
+           unit.state = 'CLAIMED';
+           unit.assignedSlotId = slot.slotId;
+           unit.claimGeneration = (unit.claimGeneration ?? 0) + 1;
+           unit.claimId = randomUUID();
+           unit.claimedBy = { slotId: slot.slotId };
+           unit.leaseExpiresAt = timestamp + WORK_CLAIM_LEASE_MS;
+           unit.heartbeatAt = timestamp;
+           unit.turnCount = 0;
           unit.attempt += 1;
           unit.failureCode = undefined;
           unit.failure = undefined;
           unit.history.push({ action: 'claimed', slotId: slot.slotId, attempt: unit.attempt, at: timestamp });
           freeSlots.splice(index, 1);
-          assignments.push({ workUnitId: unit.id, slotId: slot.slotId, title: unit.title, task: unit.task, ...(unit.files?.length ? { files: unit.files } : {}) });
+           assignments.push({ workUnitId: unit.id, slotId: slot.slotId, title: unit.title, task: unit.task, claimId: unit.claimId, claimGeneration: unit.claimGeneration, ...(unit.files?.length ? { files: unit.files } : {}) });
         }
         if (assignments.length || decisionsChanged) {
           record.coordinatorState = 'PARKED';
@@ -1131,7 +1209,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   async function failRouteFacts(executionId: string): Promise<ExecutionRecord> {
     return mutateRecord(executionId, undefined, (record, timestamp) => {
       for (const unit of record.workUnits ?? []) {
-        if (!unit.routing || (unit.state !== 'READY' && unit.state !== 'CLAIMED')) continue;
+        if (!unit.routing || unit.state !== 'READY') continue;
         unit.state = 'FAILED';
         unit.failureCode = 'ROUTE_FACTS_UNAVAILABLE';
         unit.failure = 'authorized worker route facts could not be refreshed';
@@ -1141,7 +1219,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, 'Work routing facts unavailable');
   }
 
-  async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string): Promise<ExecutionRecord> {
+  async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
@@ -1150,14 +1228,17 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       }
       if (unit.state === 'COMPLETED') return;
       if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
+      assertClaimFence(unit, claim);
       unit.state = 'COMPLETED';
+      const slotId = unit.assignedSlotId;
+      clearClaim(unit);
       unit.result = string(result, 'work unit result');
-      unit.history.push({ action: 'completed', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: unit.result });
+      unit.history.push({ action: 'completed', slotId, attempt: unit.attempt, at: timestamp, detail: unit.result });
       deriveReadiness(record);
     }, `Work unit completed: ${workUnitId}`);
   }
 
-  async function failWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN'): Promise<ExecutionRecord> {
+  async function failWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN', claim?: { claimId: string; claimGeneration: number }): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
@@ -1165,24 +1246,65 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         throw new Error('work unit has unresolved blockers');
       }
       if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
+      assertClaimFence(unit, claim);
       if (!failureCodes.has(failureCode)) throw new Error('invalid execution work unit failure code');
       unit.state = 'FAILED';
+      const slotId = unit.assignedSlotId;
+      clearClaim(unit);
       unit.failureCode = failureCode;
       unit.failure = string(failure, 'work unit failure');
-      unit.history.push({ action: 'failed', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: unit.failure });
+      unit.history.push({ action: 'failed', slotId, attempt: unit.attempt, at: timestamp, detail: unit.failure });
       deriveReadiness(record);
     }, `Work unit failed: ${workUnitId}`);
   }
 
-  async function releaseWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string): Promise<ExecutionRecord> {
+  async function releaseWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, claim?: { claimId: string; claimGeneration: number }): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
       if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
+      assertClaimFence(unit, claim);
       unit.state = 'READY';
       unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
+      clearClaim(unit);
       unit.assignedSlotId = undefined;
     }, `Work unit released: ${workUnitId}`);
+  }
+
+  async function heartbeatWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, claim: { claimId: string; claimGeneration: number; turnCount?: number }): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      assertActive(record);
+      const unit = findUnit(record, workUnitId);
+      assertUnitAuthority(unit, authority);
+      if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
+      if (unit.claimId !== claim.claimId || unit.claimGeneration !== claim.claimGeneration) throw new Error('stale work claim');
+      const timestamp = now();
+      let changed = false;
+      if (claim.turnCount !== undefined) {
+        if (!validNonNegativeInteger(claim.turnCount)) throw new Error('invalid work claim turn count');
+        const maxTurns = record.request.policy?.maxTurnsPerClaim;
+        if (maxTurns !== undefined && claim.turnCount > maxTurns) throw new Error('work claim turn limit exceeded');
+        const nextTurnCount = Math.max(unit.turnCount ?? 0, claim.turnCount);
+        changed ||= nextTurnCount !== unit.turnCount;
+        unit.turnCount = nextTurnCount;
+      }
+      if ((unit.leaseExpiresAt ?? 0) - timestamp <= HEARTBEAT_PERSIST_REMAINING_MS) {
+        unit.heartbeatAt = timestamp;
+        unit.leaseExpiresAt = timestamp + WORK_CLAIM_LEASE_MS;
+        changed = true;
+      }
+      if (changed) {
+        record.stateVersion += 1;
+        record.updatedAt = timestamp;
+        append(snapshot.state, record, record.state, 'info', `Work claim heartbeat: ${workUnitId}`, timestamp, { kind: 'command' });
+        persist(snapshot.state, snapshot.hash);
+      }
+      return clone(record);
+    });
   }
 
   /** Return assignments that were never delivered in one engine-owned transaction. */
@@ -1199,6 +1321,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         if (unit?.state !== 'CLAIMED' || unit.assignedSlotId !== assignment.slotId) continue;
         unit.state = 'READY';
         unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
+        clearClaim(unit);
         unit.assignedSlotId = undefined;
         released += 1;
       }
@@ -1206,6 +1329,35 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         record.stateVersion += 1;
         record.updatedAt = timestamp;
         append(snapshot.state, record, record.state, 'warning', `Released ${released} undelivered work assignment(s)`, timestamp, { kind: 'command' });
+        persist(snapshot.state, snapshot.hash);
+      }
+      return clone(record);
+    });
+  }
+
+  async function reclaimExpiredClaims(executionId: string, claims: readonly ReclaimExpiredClaimInput[]): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (terminalStates.has(record.state) || !claims.length) return clone(record);
+      const timestamp = now();
+      let reclaimed = 0;
+      for (const claim of claims.slice(0, MAX_WORK_UNITS)) {
+        const unit = record.workUnits?.find((candidate) => candidate.id === claim.workUnitId);
+        if (!unit || unit.state !== 'CLAIMED' || unit.claimId !== claim.claimId
+          || unit.claimGeneration !== claim.claimGeneration || (unit.leaseExpiresAt ?? Infinity) > timestamp) continue;
+        unit.state = 'READY';
+        unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(claim.reason, 'claim recovery reason') });
+        clearClaim(unit);
+        unit.assignedSlotId = undefined;
+        reclaimed += 1;
+      }
+      if (reclaimed) {
+        deriveReadiness(record);
+        record.stateVersion += 1;
+        record.updatedAt = timestamp;
+        append(snapshot.state, record, record.state, 'warning', `Reclaimed ${reclaimed} expired work claim(s)`, timestamp, { kind: 'command' });
         persist(snapshot.state, snapshot.hash);
       }
       return clone(record);
@@ -1258,14 +1410,16 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Work unit reassigned: ${workUnitId}`);
   }
 
-  async function blockWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, input: { id: string; question: string; options?: string[] }): Promise<ExecutionRecord> {
+  async function blockWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, input: { id: string; question: string; options?: string[] }, claim?: { claimId: string; claimGeneration: number }): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
       if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
+      assertClaimFence(unit, claim);
       if (record.blockers?.some((blocker) => blocker.id === input.id)) throw new Error('duplicate execution blocker id');
       unit.state = 'BLOCKED';
       unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(input.question, 'blocker question') });
+      clearClaim(unit);
       record.blockers ??= [];
       record.blockers.push({ id: string(input.id, 'blocker id'), workUnitId: unit.id, slotId: authority.slotId, question: string(input.question, 'blocker question'), ...(input.options ? { options: input.options.map((option) => string(option, 'blocker option')) } : {}), resolved: false, createdAt: timestamp });
       record.state = 'BLOCKED';
@@ -1588,6 +1742,19 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     return storeQueue.run(async () => clone(read().state.records.filter((record) => !terminalStates.has(record.state))));
   }
 
+  async function listActiveClaims(after?: ActiveClaimCursor, limit = 25): Promise<ActiveClaimPage> {
+    return storeQueue.run(async () => {
+      const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
+      const records = read().state.records
+        .filter((record) => !terminalStates.has(record.state) && record.workUnits?.some((unit) => unit.state === 'CLAIMED'))
+        .sort((left, right) => left.updatedAt - right.updatedAt || left.id.localeCompare(right.id))
+        .filter((record) => !after || record.updatedAt > after.updatedAt || record.updatedAt === after.updatedAt && record.id > after.id);
+      const page = records.slice(0, safeLimit);
+      const last = page.at(-1);
+      return { records: clone(page), ...(records.length > page.length && last ? { next: { updatedAt: last.updatedAt, id: last.id } } : {}) };
+    });
+  }
+
   async function retainedSourceContentRefs(): Promise<ReadonlySet<string>> {
     return storeQueue.run(async () => new Set(read().state.records
       .map((record) => record.request.sourceBundle?.contentRef)
@@ -1659,7 +1826,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, dismiss, get, getInProject, list, listInProject, listActive, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {
@@ -1735,7 +1902,7 @@ function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false
 }
 
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
-  const { state: _state, assignedSlotId: _assignedSlotId, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, history: _history, ...input } = unit;
+  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, turnCount: _turnCount, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, history: _history, ...input } = unit;
   return input;
 }
 

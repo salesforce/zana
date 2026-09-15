@@ -53,6 +53,42 @@ describe('execution store', () => {
     expect(completeReplay.workUnits?.[0]).toMatchObject({ state: 'COMPLETED', result: 'done' });
   }));
 
+  it('mints fenced leases and coalesces heartbeats until renewal is due', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const claim = record.workUnits![0];
+    expect(claim).toMatchObject({ claimGeneration: 1, claimedBy: { slotId: 'worker-1' }, heartbeatAt: now, turnCount: 0 });
+    const noWrite = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, turnCount: 0 });
+    expect(noWrite.stateVersion).toBe(record.stateVersion);
+    now += 60_000;
+    const renewed = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, turnCount: 1 });
+    expect(renewed.workUnits![0]).toMatchObject({ heartbeatAt: now, turnCount: 1, leaseExpiresAt: now + 90_000 });
+    await expect(store.heartbeatWork(renewed.id, renewed.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: 'stale', claimGeneration: 1 })).rejects.toThrow('stale work claim');
+  }));
+
+  it('pages claimed work and reclaims only matching expired claim fences', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const unit = record.workUnits![0];
+    expect((await store.listActiveClaims(undefined, 1)).records).toHaveLength(1);
+    now += 90_000;
+    const unchanged = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: 'wrong', claimGeneration: unit.claimGeneration!, reason: 'dead' }]);
+    expect(unchanged.workUnits![0].state).toBe('CLAIMED');
+    const reclaimed = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'dead' }]);
+    expect(reclaimed.workUnits![0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
+    expect(reclaimed.workUnits![0]).not.toHaveProperty('claimId');
+  }));
+
   it('propagates failed dependencies as skipped and restores them on retry', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     let record = (await store.claim(request())).record;

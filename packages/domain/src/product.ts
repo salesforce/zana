@@ -2276,6 +2276,10 @@ export interface AppConfig {
   teamJobLaunchEnabled?: boolean;
   /** Opt-in: route structured work only to cheapest qualified existing Team slot. */
   teamRoutingEnforcementEnabled?: boolean;
+  /** Observe expired execution claims and recovery classifications without mutation. */
+  executionClaimRecoveryObserveEnabled?: boolean;
+  /** Allow main-owned recovery to fence and reclaim proven-dead execution claims. */
+  executionClaimRecoveryEnforceEnabled?: boolean;
   /**
    * Show CLI Agent in the New Chat / New agent launch switcher. Default ON.
    * At least one of this and {@link composerShowModern} must stay on.

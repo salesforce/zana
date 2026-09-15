@@ -1037,6 +1037,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.teamRoutingEnforcementEnabled === 'boolean') {
     normalized.teamRoutingEnforcementEnabled = input.teamRoutingEnforcementEnabled;
   }
+  if (typeof input.executionClaimRecoveryObserveEnabled === 'boolean') {
+    normalized.executionClaimRecoveryObserveEnabled = input.executionClaimRecoveryObserveEnabled;
+  }
+  if (typeof input.executionClaimRecoveryEnforceEnabled === 'boolean') {
+    normalized.executionClaimRecoveryEnforceEnabled = input.executionClaimRecoveryEnforceEnabled;
+  }
   if (typeof input.composerShowCliAgent === 'boolean') {
     normalized.composerShowCliAgent = input.composerShowCliAgent;
   }

@@ -114,7 +114,9 @@ export function createConfigStore(
     composerShowCliAgent: true,
     composerShowModern: true,
     composerShowAutonomousTeam: true,
-    teamJobLaunchEnabled: true
+    teamJobLaunchEnabled: true,
+    executionClaimRecoveryObserveEnabled: true,
+    executionClaimRecoveryEnforceEnabled: false
   });
 
   const hydrate = (raw: Partial<AppConfig>): AppConfig =>

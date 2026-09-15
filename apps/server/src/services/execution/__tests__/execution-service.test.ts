@@ -152,6 +152,42 @@ describe('execution admission', () => {
   }));
 });
 
+describe('execution claim recovery', () => {
+  it('observes proven-dead expired claims before enforce and reclaims only when enabled', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const logError = vi.fn();
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] } })).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    now += 90_000;
+    const base = deps(filePath, { store, now: () => now, logError, getTeamLaunch: async () => ({ workers: [] }), claimRecoveryObserveEnabled: () => true });
+    const observe = new ExecutionService(base);
+    await observe.reconcileActive();
+    expect((await store.get(record.id))?.workUnits?.[0].state).toBe('CLAIMED');
+    expect(logError).toHaveBeenCalled();
+    const enforce = new ExecutionService({ ...base, claimRecoveryEnforceEnabled: () => true });
+    await enforce.reconcileActive();
+    expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
+  }));
+
+  it('does not reclaim expired work when main lifecycle shows worker live', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] } })).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    now += 90_000;
+    const service = new ExecutionService(deps(filePath, { store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true, getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', projectId: 'project-1', process: 'running' }] }) }));
+    await service.reconcileActive();
+    expect((await store.get(record.id))?.workUnits?.[0].state).toBe('CLAIMED');
+  }));
+});
+
 describe('KeyedColdStartSemaphore', () => {
   it('serializes same-key bursts while independent keys proceed', async () => {
     const semaphore = new KeyedColdStartSemaphore(1);
