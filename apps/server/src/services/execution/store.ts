@@ -276,6 +276,7 @@ export interface ExecutionStoreOptions {
   maxRecords?: number;
   maxEvents?: number;
   maxEventsPerExecution?: number;
+  maxUsageObservationsPerExecution?: number;
 }
 
 export interface ActiveClaimCursor {
@@ -718,9 +719,17 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   if (options.maxEvents !== undefined && (!Number.isInteger(options.maxEvents) || options.maxEvents < 1)) {
     throw new Error('invalid execution max events');
   }
+  if (options.maxUsageObservationsPerExecution !== undefined
+    && (!Number.isInteger(options.maxUsageObservationsPerExecution) || options.maxUsageObservationsPerExecution < 1)) {
+    throw new Error('invalid execution max usage observations per execution');
+  }
   const now = options.now ?? Date.now;
   const id = options.id ?? randomUUID;
   const maxRecords = Math.min(options.maxRecords ?? MAX_RECORDS, MAX_RECORDS);
+  const maxUsageObservationsPerExecution = Math.min(
+    options.maxUsageObservationsPerExecution ?? MAX_USAGE_OBSERVATIONS_PER_EXECUTION,
+    MAX_USAGE_OBSERVATIONS_PER_EXECUTION
+  );
   const maxEvents = Math.min(options.maxEvents ?? MAX_EVENTS, MAX_EVENTS);
   const maxEventsPerExecution = Math.min(options.maxEventsPerExecution ?? MAX_EVENTS_PER_EXECUTION, MAX_EVENTS_PER_EXECUTION);
   // Ensure the store directory exists once, at construction — not on every
@@ -773,10 +782,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       });
       for (const unit of record.workUnits ?? []) unit.history = unit.history.slice(-MAX_UNIT_LIST * 10);
       const observations = record.usageObservations ?? [];
-      if (observations.length > MAX_USAGE_OBSERVATIONS_PER_EXECUTION) {
-        const compacted = observations.slice(0, observations.length - MAX_USAGE_OBSERVATIONS_PER_EXECUTION);
+      if (observations.length > maxUsageObservationsPerExecution) {
+        const compacted = observations.slice(0, observations.length - maxUsageObservationsPerExecution);
         record.usageBaseline = usageRollup(compacted, record.usageBaseline);
-        record.usageObservations = observations.slice(-MAX_USAGE_OBSERVATIONS_PER_EXECUTION);
+        record.usageObservations = observations.slice(-maxUsageObservationsPerExecution);
       } else record.usageObservations = observations;
       if ((record.blockers?.length ?? 0) > MAX_WORK_UNITS) {
         const activeBlockers = record.blockers!.filter((blocker) => !blocker.resolved);

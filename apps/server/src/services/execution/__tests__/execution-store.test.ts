@@ -41,14 +41,15 @@ describe('execution store', () => {
   }));
 
   it('preserves compacted usage replay identity and rejects changed delayed payloads', async () => fixture(async (filePath) => {
-    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => 10 });
+    const observationCap = 3;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => 10, maxUsageObservationsPerExecution: observationCap });
     const record = (await store.claim(request())).record;
     const sample = (sequence: number) => ({
       observationId: `observation-${sequence}`, executionAttempt: 1, role: 'worker' as const, slotId: 'slot-1', sessionId: 'session-1',
       workAttempt: 0, claimGeneration: 0, adapterEpoch: 0, sampleKind: 'heartbeat' as const, sequence,
       provider: 'provider', model: 'model', routingIdentity: 'route', cumulative: { inputTokens: sequence }, completeness: 'complete' as const, observedAt: sequence
     });
-    for (let sequence = 1; sequence <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION + 1; sequence += 1) {
+    for (let sequence = 1; sequence <= observationCap + 1; sequence += 1) {
       await store.appendUsageObservation(record.id, sample(sequence));
     }
     const compacted = await store.get(record.id);
