@@ -935,8 +935,10 @@ describe('execution store', () => {
 
   it('persists resolved model snapshots with the execution attempt', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
-    const claim = await store.claim({ ...request(), resolvedModels: [{ slotId: 'slot-1', provider: 'provider', model: 'model', reasoning: 'high' }] });
-    expect(claim).toMatchObject({ record: { resolvedModels: [{ slotId: 'slot-1', provider: 'provider', model: 'model', reasoning: 'high' }] } });
+    const model = { slotId: 'slot-1', provider: 'provider', model: 'model', reasoning: 'high', level: 'high' as const, roleOwnedModel: true, capabilities: ['review'], modalities: ['text'], maxContextBytes: 1000, health: 'available' as const, observedAt: 10, maxAgeMs: 100 };
+    const claim = await store.claim({ ...request(), resolvedModels: [model] });
+    expect(claim).toMatchObject({ record: { resolvedModels: [model] } });
+    expect((await createExecutionStore({ filePath }).get(claim.record.id))?.resolvedModels).toEqual([model]);
   }));
 
   it('records one immutable host-issued authorization context', async () => fixture(async (filePath) => {
@@ -1124,5 +1126,46 @@ describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
     // still steers a persona-tie away from the just-completed slot.
     const { assignments } = await store.dispatchReady(record.id, { deprioritizeSlotId: 'slot-1' });
     expect(assignments).toMatchObject([{ workUnitId: 'a', slotId: 'slot-2' }]);
+  }));
+
+  it('records one idempotent shadow recommendation without changing legacy assignment', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], routing: { version: 1, requiredRole: 'worker', estimatedContextBytes: 100 } }
+    ]);
+    const first = await store.dispatchReady(record.id);
+    expect(first.assignments).toMatchObject([{ workUnitId: 'a', slotId: 'slot-1' }]);
+    expect(first.record.routingDecisions).toMatchObject([{ workUnitId: 'a', attempt: 1, policyVersion: 1 }]);
+    const second = await store.dispatchReady(record.id);
+    expect(second.record.routingDecisions).toHaveLength(1);
+  }));
+
+  it('enforcement selects only recommended qualified free slot and fails impossible work', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, [
+      { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+      { slotId: 'alpha', personaId: 'alpha', authorizationIdDigest: 'a-d' },
+      { slotId: 'beta', personaId: 'beta', authorizationIdDigest: 'b-d' }
+    ], [
+      { id: 'qualified', title: 'Qualified', task: 'do it', dependencies: [], files: ['a.txt'], routing: { version: 1, requiredRole: 'beta' } },
+      { id: 'impossible', title: 'Impossible', task: 'do it', dependencies: [], files: ['b.txt'], routing: { version: 1, requiredRole: 'missing' } }
+    ]);
+    const { assignments, record: updated } = await store.dispatchReady(record.id, { enforceRouting: true });
+    expect(assignments).toMatchObject([{ workUnitId: 'qualified', slotId: 'beta' }]);
+    expect(updated.workUnits?.find((unit) => unit.id === 'impossible')).toMatchObject({ state: 'FAILED', failureCode: 'NO_QUALIFIED_ROUTE' });
+  }));
+
+  it('enforcement recomputes free qualified slots after an earlier claim', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'a', dependencies: [], files: ['a.txt'], routing: { version: 1, requiredRole: 'worker' } },
+      { id: 'b', title: 'B', task: 'b', dependencies: [], files: ['b.txt'], routing: { version: 1, requiredRole: 'worker' } }
+    ]);
+    const { assignments, record: updated } = await store.dispatchReady(record.id, { enforceRouting: true });
+    expect(updated.routingDecisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workUnitId: 'a', recommendedSlotId: 'slot-1' }),
+      expect.objectContaining({ workUnitId: 'b', recommendedSlotId: 'slot-2' })
+    ]));
+    expect(new Set(assignments.map((assignment) => assignment.slotId))).toEqual(new Set(['slot-1', 'slot-2']));
   }));
 });

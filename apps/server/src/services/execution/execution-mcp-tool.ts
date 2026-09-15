@@ -36,7 +36,16 @@ const workflowSchema = z.strictObject({
 const workUnitSchema = z.object({
   id: z.string().min(1).max(2048), title: z.string().min(1).max(2048), task: z.string().min(1).max(2048),
   dependencies: z.array(z.string().min(1).max(2048)).max(100), preferredRole: z.string().min(1).max(2048).optional(),
-  files: z.array(z.string().min(1).max(2048)).max(100).optional(), verification: z.array(z.string().min(1).max(2048)).max(100).optional(), readOnly: z.boolean().optional()
+  files: z.array(z.string().min(1).max(2048)).max(100).optional(), verification: z.array(z.string().min(1).max(2048)).max(100).optional(), readOnly: z.boolean().optional(),
+  routing: z.strictObject({
+    version: z.literal(1), taskClass: z.string().min(1).max(2048).optional(),
+    minimumLevel: z.enum(['low', 'medium', 'high', 'extra-high']).optional(),
+    requiredCapabilities: z.array(z.string().min(1).max(2048)).max(100).optional(),
+    requiredModalities: z.array(z.string().min(1).max(2048)).max(100).optional(),
+    estimatedContextBytes: z.number().int().min(0).max(8 * 1024 * 1024).optional(),
+    requiredRole: z.string().min(1).max(2048).optional(), preferredRole: z.string().min(1).max(2048).optional(),
+    hardSlotId: z.string().min(1).max(2048).optional()
+  }).optional()
 });
 const executionStartSchema = z.strictObject({
   version: z.literal(1),

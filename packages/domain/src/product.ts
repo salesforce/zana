@@ -2274,6 +2274,8 @@ export interface AppConfig {
    * Default on; explicit false provides an operator opt-out.
    */
   teamJobLaunchEnabled?: boolean;
+  /** Opt-in: route structured work only to cheapest qualified existing Team slot. */
+  teamRoutingEnforcementEnabled?: boolean;
   /**
    * Show CLI Agent in the New Chat / New agent launch switcher. Default ON.
    * At least one of this and {@link composerShowModern} must stay on.
@@ -5417,7 +5419,9 @@ export const EXECUTION_FAILURE_CODES = [
   'RESOURCE_EXHAUSTED',
   'TRANSIENT',
   'SEMANTIC_CONFLICT',
-  'POLICY_ESCALATION'
+  'POLICY_ESCALATION',
+  'NO_QUALIFIED_ROUTE',
+  'ROUTE_FACTS_UNAVAILABLE'
 ] as const;
 export type ExecutionFailureCode = typeof EXECUTION_FAILURE_CODES[number];
 export const EXECUTION_FAILURE_DETAIL_MAX_CHARS = 2_048;

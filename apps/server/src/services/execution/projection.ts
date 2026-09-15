@@ -61,10 +61,10 @@ function baselineMetrics(
     workAttemptCount: (record.workUnits ?? []).reduce((total, unit) => total + unit.attempt, 0),
     blockerCount: record.blockers?.length ?? 0,
     resolvedBlockerCount: (record.blockers ?? []).filter((blocker) => blocker.resolved).length,
-    resolvedModels: (record.resolvedModels ?? []).slice(0, MAX_METRIC_RESOLVED_MODELS).map(({ slotId, provider, model }) => ({
+    resolvedModels: (record.resolvedModels ?? []).filter((model) => model.model !== undefined).slice(0, MAX_METRIC_RESOLVED_MODELS).map(({ slotId, provider, model }) => ({
       slotId: slotId.slice(0, MAX_METRIC_ID_CHARS),
       provider: provider.slice(0, MAX_METRIC_ID_CHARS),
-      model: model.slice(0, MAX_METRIC_ID_CHARS)
+      model: model!.slice(0, MAX_METRIC_ID_CHARS)
     }))
   };
 }

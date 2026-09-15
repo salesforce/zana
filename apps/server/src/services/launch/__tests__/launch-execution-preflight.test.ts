@@ -267,6 +267,17 @@ describe('Team admission', () => {
     expect(normalizeExecutionPlan([{ ...validPlan[0], runtimeState: 'READY' }], true)[0]).not.toHaveProperty('runtimeState');
   });
 
+  it('fails closed when a routed work unit has no qualified existing worker slot', () => {
+    const result = evaluateTeamAdmission({
+      workUnits: [{ ...validPlan[0], routing: { version: 1, requiredRole: 'reviewer' } }], requireCompletePlan: true,
+      slotCount: 2, maxSlots: 2, initialTasks: ['worker', 'orchestrator'],
+      slotRoutes: [{ slotId: 'slot-1', personaId: 'writer' }, { slotId: 'orchestrator:lead', personaId: 'reviewer' }]
+    });
+    expect(result).toMatchObject({ ready: false, checks: expect.arrayContaining([
+      expect.objectContaining({ code: 'ROUTE_ELIGIBILITY', status: 'FAIL', subject: 'build' })
+    ]) });
+  });
+
   it('collects canonical required inventory and preserves required entries beyond source bounds', async () => {
     const requiredModel = { id: 'model-required', provider: 'provider-required' };
     const inventory = await collectTeamAdmissionInventory({
