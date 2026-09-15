@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { resolveTerminalTheme } from '../../lib/terminalThemes.js';
+import { xtermHttpLinkHandler } from '../../lib/xterm-http-link.js';
 import { useData } from '../../store.js';
 
 /**
@@ -25,6 +26,7 @@ export function PairingTerminal() {
       fontFamily: 'JetBrains Mono, SF Mono, Menlo, Consolas, "Liberation Mono", monospace',
       fontSize: useData.getState().fontSize,
       theme: resolveTerminalTheme(useData.getState().terminalTheme, useData.getState().theme),
+      linkHandler: xtermHttpLinkHandler,
       scrollback: 4000
     });
     const fit = new FitAddon();

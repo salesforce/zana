@@ -13,6 +13,7 @@ import { scrapeUrls } from '../lib/urlScrape.js';
 import { shouldSuppressWheelArrows } from '../lib/terminalWheel.js';
 import { perfCount, perfTime } from '../lib/perfMark.js';
 import { resolveTerminalTheme } from '../lib/terminalThemes.js';
+import { openXtermHttpLink, xtermHttpLinkHandler } from '../lib/xterm-http-link.js';
 import { useData, useUi } from '../store.js';
 
 type Area = 'a' | 'b' | 'c' | 'd';
@@ -95,6 +96,9 @@ function TerminalViewImpl({ session, area }: Props) {
         useData.getState().theme
       ),
       allowProposedApi: true,
+      // OSC 8 (gh, etc.): without this, xterm confirm()s then window.open()
+      // with no URL and Electron denies about:blank — OK does nothing.
+      linkHandler: xtermHttpLinkHandler,
       // Keep a deep scrollback: a long-running agent easily emits more than a
       // few thousand lines, and the old 5k cap silently dropped the oldest — so
       // peeking the agent in the modal (or scrolling back in the tab) lost early
@@ -106,8 +110,7 @@ function TerminalViewImpl({ session, area }: Props) {
     const fit = new FitAddon();
     const search = new SearchAddon();
     term.loadAddon(fit);
-    // Links open in the system browser via shell.openExternal (window.open).
-    term.loadAddon(new WebLinksAddon((_event, uri) => window.open(uri, '_blank', 'noopener')));
+    term.loadAddon(new WebLinksAddon(openXtermHttpLink));
     term.loadAddon(search);
     term.open(ref.current);
     // Upgrade off the DOM renderer to WebGL now that the terminal has a DOM

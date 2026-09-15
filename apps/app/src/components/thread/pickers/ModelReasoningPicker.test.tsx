@@ -85,6 +85,13 @@ describe('ModelReasoningPicker', () => {
     expect(html).not.toContain('Select model');
   });
 
+  it('treats model-id search as substring matching, not letter-skipping', () => {
+    const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('spellCheck={false}');
+    expect(source).toContain("isSearching ? 'No matching models'");
+    expect(source).toContain('sectionRef.current?.scrollTo(0, 0)');
+  });
+
   it('closes the menu after a model is chosen, including Enter from search', () => {
     const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
     expect(source).toMatch(

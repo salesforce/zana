@@ -24,6 +24,15 @@ describe('MastracodeProvider', () => {
     expect(provider.baseArgsPinSession('mastracode')).toBe(false);
   });
 
+  it('delivers the CLI Agent opening task via stdin after the TUI is ready', () => {
+    expect(provider.adapter.descriptor.initialTaskDelivery).toEqual({
+      local: 'stdin-after-ready',
+      remote: 'stdin-after-ready',
+      readinessSignal: 'provider-ready',
+      acceptanceSignal: 'delivery-attempted'
+    });
+  });
+
   it('honors a configured mastracodeBinary and injects --model', () => {
     expect(provider.resolveLaunch('mastracode', { ...config, mastracodeBinary: '/opt/mastracode' }, false).command)
       .toBe('/opt/mastracode');

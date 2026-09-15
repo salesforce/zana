@@ -100,7 +100,12 @@ import { runStartupGate, type StartupState } from './startup-gate.js';
 import { DEFAULT_RENDERER_ZOOM_FACTOR } from './window/window-zoom.js';
 import { resolveLaunchSelection } from '@zana-ai/zcc-host-daemon/harness/launch-selection';
 import { resolveEffectiveHarnessDefault } from '@zana-ai/zcc-host-daemon/harness/effective-default';
-import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
+import { applyUnattendedScheduledLaunch, profilePostureOf } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
+import {
+  adapterBindsInitialTask,
+  initialTaskDeliveryState,
+  stdinOpeningPrompt
+} from '@zana-ai/zcc-host-daemon/harness/initial-task';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { listClaudeSessions } from '@zana-ai/zcc-server/services/projects/claude';
 import { listOpenCodeSessions } from '@zana-ai/zcc-server/services/projects/opencode-sessions';
@@ -3504,6 +3509,26 @@ export function createTerminalConfined(
       ?? store.getProjectSettings(req.projectId);
     const launchConfig = opts?.launchSnapshot?.config ?? store.getConfig();
     const useRemoteTools = usesCliRemoteToolProxy(project, req, launchConfig);
+    const extraPinsResume = safeExtraArgs.some(
+      (a) =>
+        a === '--resume' ||
+        a === '-r' ||
+        a === '--continue' ||
+        a === '-c' ||
+        a.startsWith('--resume=') ||
+        a.startsWith('--continue=')
+    );
+    const openingPrompt = stdinOpeningPrompt({
+      provider: providerFor(selection.profile),
+      profile: selection.profile,
+      prompt: req.prompt,
+      scope: project.remote && !useRemoteTools ? 'remote' : 'local',
+      resume:
+        profilePostureOf(selection.profile) === 'resume' ||
+        Boolean(req.resumeSessionId) ||
+        Boolean(opts?.resume) ||
+        extraPinsResume
+    });
     const resolvedMicroVmImage =
       req.microVmImage ?? effectivePersona?.microVmImage ?? projectMicroVmSettings.microVmImage;
     const session = ptys.create({
@@ -3517,6 +3542,7 @@ export function createTerminalConfined(
       config: launchConfig,
       projectSettings: projectMicroVmSettings,
       extraArgs,
+      openingPrompt,
       harnessRouting: req.harnessRouting,
       title: req.title,
       remote: useRemoteTools ? undefined : stampedProjectRemote(project, launchConfig.remoteDefaultPath),
@@ -4560,11 +4586,11 @@ export async function launchTeam(
   };
   const taskBindingFailure = (personaId: string): string | undefined => {
     if (!structured) return undefined;
-    const descriptor = providerFor(profileFor(personaId)).adapter.descriptor;
-    const transport = project.remote ? descriptor.initialTaskDelivery.remote : descriptor.initialTaskDelivery.local;
-    return transport === 'spawn-arg' && descriptor.initialTaskDelivery.acceptanceSignal === 'argv-bound'
+    const provider = providerFor(profileFor(personaId));
+    const scope = project.remote ? 'remote' : 'local';
+    return adapterBindsInitialTask(provider, scope)
       ? undefined
-      : `adapter "${descriptor.id}" cannot bind initial task at spawn`;
+      : `adapter "${provider.adapter.descriptor.id}" cannot bind initial task at spawn`;
   };
   if (structured && structured.slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024)) {
     return { ok: false, code: 'INVALID', message: 'invalid initial task' };
@@ -4735,7 +4761,10 @@ export async function launchTeam(
          const record = await teamLifecycle.addWorker(claim.record.id, {
            sessionId: identity.sessionId, authorizationId: identity.authorizationId, cohortId,
            slotId, personaId, projectId: targetProjectId, process: 'spawning', attention: 'active', task: 'unknown',
-           delivery: 'bound-at-spawn'
+           delivery: initialTaskDeliveryState(
+             providerFor(profileFor(personaId)),
+             project.remote ? 'remote' : 'local'
+           )
          });
          durableIdentity = identity;
          teamLifecycleIntegration.track(record);
