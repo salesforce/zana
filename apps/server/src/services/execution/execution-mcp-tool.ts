@@ -11,6 +11,7 @@ import { EXECUTION_HANDOFF_OPERATION, EXECUTION_RESUME_MONITOR_OPERATION, type c
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import { EXECUTION_FAILURE_CODES, EXECUTION_FAILURE_DETAIL_MAX_CHARS } from '@zana-ai/zcc-domain/product';
+import { MAX_EXECUTION_PLAN_BYTES, validOutputDeclaration } from './contracts.js';
 
 const slotSchema = z.strictObject({
   initialTask: z.string().min(1).refine(
@@ -33,7 +34,7 @@ const workflowSchema = z.strictObject({
   })).max(64),
   supportedRequestVersions: z.array(z.number().int().min(1).max(100)).min(1).max(8)
 });
-const workUnitSchema = z.object({
+const workUnitSchema = z.strictObject({
   id: z.string().min(1).max(2048), title: z.string().min(1).max(2048), task: z.string().min(1).max(2048),
   dependencies: z.array(z.string().min(1).max(2048)).max(100), preferredRole: z.string().min(1).max(2048).optional(),
   files: z.array(z.string().min(1).max(2048)).max(100).optional(), verification: z.array(z.string().min(1).max(2048)).max(100).optional(), readOnly: z.boolean().optional(),
@@ -45,7 +46,8 @@ const workUnitSchema = z.object({
     estimatedContextBytes: z.number().int().min(0).max(8 * 1024 * 1024).optional(),
     requiredRole: z.string().min(1).max(2048).optional(), preferredRole: z.string().min(1).max(2048).optional(),
     hardSlotId: z.string().min(1).max(2048).optional()
-  }).optional()
+  }).optional(),
+  output: z.unknown().refine(validOutputDeclaration, { message: 'invalid bounded output declaration' }).optional()
 });
 const executionStartSchema = z.strictObject({
   version: z.literal(1),
@@ -107,7 +109,7 @@ const executionWorkHeartbeatSchema = {
   turnCount: z.number().int().min(0).max(10_000).optional()
 };
 const executionWorkAssignSchema = { ...executionIdSchema, workUnitId: z.string().min(1).max(2048), assignedSlotId: z.string().min(1).max(2048) };
-const executionWorkResultSchema = { ...executionWorkSchema, result: z.string().min(1).max(2048) };
+const executionWorkResultSchema = { ...executionWorkSchema, result: z.string().min(1).max(2048), structuredResult: z.unknown().optional() };
 const executionWorkFailureSchema = {
   ...executionWorkSchema,
   failure: z.string().min(1).max(EXECUTION_FAILURE_DETAIL_MAX_CHARS),
@@ -174,7 +176,7 @@ type BoundSnapshotExecutionRecord = Pick<ExecutionRecord,
 
 function toMcpSafeExecution(record: ExecutionRecord): McpSafeExecutionRecord {
   const { deliveries: _deliveries, ...safe } = record;
-  return safe;
+  return sanitizeStructuredResults(safe) as McpSafeExecutionRecord;
 }
 
 function toBoundSnapshotExecution(record: ExecutionRecord): BoundSnapshotExecutionRecord {
@@ -183,10 +185,19 @@ function toBoundSnapshotExecution(record: ExecutionRecord): BoundSnapshotExecuti
     lastEventSequence, policyResult, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
     dismissedAt
   } = record;
-  return {
+  return sanitizeStructuredResults({
     id, projectId, teamId, launchKind, launchDisplay, jobTitle, summary, attempt, state, stateVersion,
     lastEventSequence, policyResult, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
     dismissedAt
+  }) as BoundSnapshotExecutionRecord;
+}
+
+function sanitizeStructuredResults(record: Omit<ExecutionRecord, 'deliveries'> | BoundSnapshotExecutionRecord): unknown {
+  const { usageObservations: _usageObservations, usageBaseline: _usageBaseline, authorizationContext: _authorizationContext, launchIntent: _launchIntent, ...publicRecord } = record as typeof record & Record<string, unknown>;
+  return {
+    ...publicRecord,
+    ...(record.workUnits ? { workUnits: record.workUnits.map(({ structuredResult: _structuredResult, ...unit }) => unit) } : {}),
+    ...('assembledResult' in record && record.assembledResult ? { assembledResult: record.assembledResult } : {})
   };
 }
 
@@ -290,7 +301,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   };
   const boundDenied = (name: string) => ({ isError: true as const, content: [{ type: 'text' as const, text: `${name} failed: session is not bound to this execution.` }] });
   const boundResult = (name: string, value: { ok: boolean; value?: unknown; message?: string }) => value.ok
-    ? { content: [{ type: 'text' as const, text: JSON.stringify(value.value) }] }
+    ? { content: [{ type: 'text' as const, text: JSON.stringify(value.value && typeof value.value === 'object' && 'id' in value.value ? toMcpSafeExecution(value.value as ExecutionRecord) : value.value) }] }
     : { isError: true, content: [{ type: 'text' as const, text: `${name} failed: ${value.message}` }] };
 
   // Shared registration wrapper: any handler that throws is logged with tool +
@@ -325,6 +336,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
 
   register('execution.plan.register', { description: 'Coordinator registers one bounded durable work DAG.', inputSchema: executionPlanSchema }, async ({ executionId, workUnits }) => {
     if (!authorized()) return denied('execution.plan.register'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.plan.register');
+    if (Buffer.byteLength(JSON.stringify(workUnits), 'utf8') > MAX_EXECUTION_PLAN_BYTES) return boundResult('execution.plan.register', { ok: false, message: `execution plan exceeds ${MAX_EXECUTION_PLAN_BYTES} bytes` });
     return boundResult('execution.plan.register', await options.service.registerPlan(bound, workUnits));
   });
   register('execution.work.claim', { description: 'Worker claims one ready work unit using its host-bound slot.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
@@ -343,9 +355,9 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (!authorized()) return denied('execution.work.dispatch_ready'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.dispatch_ready');
     return boundResult('execution.work.dispatch_ready', await options.service.dispatchReady(bound));
   });
-  register('execution.work.complete', { description: 'Complete one assigned work unit.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result, claimId, claimGeneration }) => {
+  register('execution.work.complete', { description: 'Complete one assigned work unit. Preserve required prose result and include structuredResult when plan declares bounded output schema.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result, structuredResult, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.complete'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.complete');
-    return boundResult('execution.work.complete', await options.service.completeWork(bound, workUnitId, result, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
+    return boundResult('execution.work.complete', await options.service.completeWork(bound, workUnitId, result, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true, structuredResult));
   });
   register('execution.work.fail', { description: 'Fail one assigned work unit durably.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure, failureCode, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.fail'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.fail');

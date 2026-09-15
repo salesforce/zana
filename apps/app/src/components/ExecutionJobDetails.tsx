@@ -181,10 +181,23 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
           setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${message}` }));
         });
       }}><summary>{artifact.name} · {artifact.mediaType} · {artifact.contentDigest}</summary><pre>{artifactContent[artifact.id] ?? 'Loading…'}</pre></details>)}
+      <h4>Usage</h4>
+      <p>Attribution: {execution.usage?.completeness ?? 'unavailable'} · Observations {execution.usage?.observationCount ?? 0} · Gaps {execution.usage?.gapCount ?? 0}</p>
+      {execution.usage?.byRole.map((usage) => <p key={usage.role}>{usage.role}: input {usage.inputTokens ?? 'unknown'} · output {usage.outputTokens ?? 'unknown'} · cache read {usage.cacheReadTokens ?? 'unknown'} · cache write {usage.cacheWriteTokens ?? 'unknown'} · provider cost {usage.providerCostUsd === undefined ? 'unknown' : `$${usage.providerCostUsd.toFixed(4)}`}</p>)}
+      <h4>Assembled result</h4>
+      {execution.assembledResult ? <div>
+        <p>{execution.assembledResult.outcome} · <code>{execution.assembledResult.digest}</code></p>
+        <p>{execution.assembledResult.summary}</p>
+        {execution.assembledResult.units.map((unit) => <details key={unit.id}><summary>{unit.title} · {unit.state}</summary>
+          {unit.result && <p>{unit.result}</p>}
+        </details>)}
+      </div> : <p>Not assembled.</p>}
+      <h4>Route fit</h4>
+      {execution.routeFitProposal ? <p>{execution.routeFitProposal.fit} · {execution.routeFitProposal.reason} · inactive proposal ({execution.routeFitProposal.evaluatorVersion})</p> : <p>Not evaluated.</p>}
       <h4>Final summary</h4><p>{execution.finalSummary ?? 'Not completed.'}</p>
       <div>
         {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Team run</button>}
-        {execution.state === 'BLOCKED' && !execution.currentBlocker && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Team run</button>}
+        {execution.state === 'BLOCKED' && !execution.currentBlocker && !execution.resourceBlock && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Team run</button>}
         {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover coordinator</button>}
       </div>
     </section>

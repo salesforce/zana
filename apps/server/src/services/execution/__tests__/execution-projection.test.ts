@@ -45,6 +45,42 @@ describe('projectExecutionProjection', () => {
       ],
       finalSummary: 'Full coordinator summary', eventCursor: 0, recoveryAttention: false
     });
+    expect(projectExecutionProjection([record()], [session])[0].usage).toEqual({ version: 1, completeness: 'unavailable', observationCount: 0, gapCount: 0, byRole: [] });
+  });
+
+  it('projects bounded usage, assembled result, and inactive fit proposal', () => {
+    const input = record();
+    input.usageObservations = [{
+      version: 1, observationId: 'o', executionAttempt: 2, role: 'worker', slotId: 'builder', sessionId: 's', workUnitId: 'build', workAttempt: 1,
+      claimGeneration: 1, adapterEpoch: 0, sampleKind: 'outcome', sequence: 1, provider: 'p', model: 'm', routingIdentity: 'r',
+      cumulative: { inputTokens: 4, outputTokens: 2 }, delta: { inputTokens: 4, outputTokens: 2 }, completeness: 'complete', observedAt: 2
+    }];
+    input.assembledResult = { version: 1, outcome: 'partial', summary: 'summary', units: [], failures: [], artifacts: [], verification: [], usage: { version: 1, completeness: 'complete', observationCount: 1, gapCount: 0, inputTokens: 4, outputTokens: 2, byRole: [{ role: 'worker', inputTokens: 4, outputTokens: 2 }] }, digest: `sha256:${'1'.repeat(64)}` };
+    input.routeFitProposal = { version: 1, evaluatorVersion: 'route-fit-v1', active: false, outcome: 'partial', fit: 'indeterminate', reason: 'unknown', evaluatedAt: 3, samples: 0, selected: [] };
+    expect(projectExecutionProjection([input], [])[0]).toMatchObject({
+      usage: { completeness: 'complete', inputTokens: 4, outputTokens: 2, byRole: [{ role: 'worker' }] },
+      assembledResult: { outcome: 'partial', summary: 'summary' }, routeFitProposal: { active: false, fit: 'indeterminate' }
+    });
+  });
+
+  it('projects bounded assembled detail without raw structured result', () => {
+    const input = record();
+    input.assembledResult = { version: 1, outcome: 'partial', summary: 'summary', units: [{ id: 'build', title: 'Build', state: 'COMPLETED', result: 'ok', structuredResult: { secret: 'x'.repeat(10_000) } }], failures: [], artifacts: [], verification: [], usage: { version: 1, completeness: 'unavailable', observationCount: 0, gapCount: 0, byRole: [] }, digest: `sha256:${'1'.repeat(64)}` };
+    const assembled = projectExecutionProjection([input], [])[0].assembledResult!;
+    expect(assembled.units[0]).not.toHaveProperty('structuredResult');
+    expect(JSON.stringify(assembled).length).toBeLessThan(10_000);
+  });
+
+  it('allowlists assembled projection fields instead of spreading durable extras', () => {
+    const input = record();
+    input.assembledResult = { version: 1, outcome: 'success', summary: 'summary', units: [], failures: [], artifacts: [], verification: [], usage: { version: 1, completeness: 'unavailable', observationCount: 0, gapCount: 0, byRole: [] }, digest: `sha256:${'1'.repeat(64)}`, rawInternal: 'secret' } as never;
+    expect(projectExecutionProjection([input], [])[0].assembledResult).not.toHaveProperty('rawInternal');
+  });
+
+  it('projects typed resource block for UI controls', () => {
+    const input = record();
+    input.resourceBlock = { version: 1, kind: 'usage-budget', reason: 'budget exhausted', blockedAt: 2 };
+    expect(projectExecutionProjection([input], [])[0].resourceBlock).toEqual(input.resourceBlock);
   });
 
   it('projects bounded failure details and source-backed baseline metrics', () => {
