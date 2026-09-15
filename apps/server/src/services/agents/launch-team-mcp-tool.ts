@@ -53,6 +53,7 @@ export const launchTeamInputSchema = {
       'Project to launch into (from list_projects). Defaults to your own project. The team is opened here regardless of the team’s own default project.'
     ),
   launchRequestId: z.string().min(1).max(MAX_TEAM_LAUNCH_REQUEST_ID_LENGTH),
+  admissionDigest: z.string().min(1).max(256).optional(),
   deadlineMs: z.number().int().min(1).max(MAX_TEAM_LAUNCH_DEADLINE_MS).optional(),
   maxConcurrent: z.number().int().min(1).max(32).optional(),
   maxLaunches: z.number().int().min(1).max(32).optional(),
@@ -108,8 +109,23 @@ export interface RegisterLaunchTeamToolOpts {
     projectId: string,
     launchRequestId: string,
     policy: { deadlineMs?: number; maxConcurrent?: number; maxLaunches?: number },
-    slots: TeamLaunchAuthorizationInputSlot[]
+    slots: TeamLaunchAuthorizationInputSlot[],
+    coordinationMode?: TeamLaunchRequestInput['coordinationMode'],
+    admissionDigest?: string
   ) => Result<TeamLaunchAuthorizationResult> | Promise<Result<TeamLaunchAuthorizationResult>>;
+  evaluateAdmission?: (input: {
+    projectId: string;
+    teamId: string;
+    slots: TeamLaunchAuthorizationInputSlot[];
+    policy: NonNullable<TeamLaunchRequestInput['policy']>;
+  }) => Promise<{ ready: boolean; digest: string; message?: string }>;
+  revokeTeamAuthorizations?: (input: {
+    callerPrincipalId: string;
+    projectId: string;
+    teamId: string;
+    launchRequestId: string;
+    slots: TeamLaunchRequestInput['slots'];
+  }) => void | Promise<void>;
   cancelTeamLaunch?: (
     callerPrincipalId: string,
     launchRequestId: string
@@ -138,7 +154,7 @@ export function registerLaunchTeamTool(
   server: McpServer,
   opts: RegisterLaunchTeamToolOpts
 ): void {
-  const { sessionId, projectId, launchTeam, authorizeTeamLaunch, cancelTeamLaunch, getTeamLaunch, reportTeamTask, validateRouteIdentity } = opts;
+  const { sessionId, projectId, launchTeam, authorizeTeamLaunch, cancelTeamLaunch, getTeamLaunch, reportTeamTask, validateRouteIdentity, evaluateAdmission, revokeTeamAuthorizations } = opts;
 
   // validateRouteIdentity may hit an async probe (HTTP /live fallback). A
   // rejecting probe must DENY, not throw out of the tool handler — treat any
@@ -163,14 +179,23 @@ export function registerLaunchTeamTool(
       if (typeof target === 'string' && target && target !== projectId) {
         return { isError: true, content: [{ type: 'text' as const, text: 'authorize_team_launch failed: cross-project launches are not allowed.' }] };
       }
-      const result = await authorizeTeamLaunch(
-        sessionId, teamId, projectId,
-        launchRequestId, {
-          ...(deadlineMs === undefined ? {} : { deadlineMs }),
-          ...(maxConcurrent === undefined ? {} : { maxConcurrent }),
-          ...(maxLaunches === undefined ? {} : { maxLaunches })
-        }, slots
-      );
+      const policy = {
+        ...(deadlineMs === undefined ? {} : { deadlineMs }),
+        ...(maxConcurrent === undefined ? {} : { maxConcurrent }),
+        ...(maxLaunches === undefined ? {} : { maxLaunches })
+      };
+      let admission: Awaited<ReturnType<NonNullable<typeof evaluateAdmission>>> | undefined;
+      try {
+        admission = await evaluateAdmission?.({ projectId, teamId, slots, policy });
+      } catch {
+        return { isError: true, content: [{ type: 'text' as const, text: 'authorize_team_launch failed: Team admission could not be evaluated.' }] };
+      }
+      if (admission && !admission.ready) {
+        return { isError: true, content: [{ type: 'text' as const, text: `authorize_team_launch failed: ${admission.message ?? 'Team admission failed'}` }] };
+      }
+      const result = admission
+        ? await authorizeTeamLaunch(sessionId, teamId, projectId, launchRequestId, policy, slots, undefined, admission.digest)
+        : await authorizeTeamLaunch(sessionId, teamId, projectId, launchRequestId, policy, slots);
       return result.ok
         ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
         : { isError: true, content: [{ type: 'text' as const, text: `authorize_team_launch failed: ${result.message}` }] };
@@ -180,7 +205,7 @@ export function registerLaunchTeamTool(
   server.registerTool(
     'launch_team',
     { description: LAUNCH_TEAM_DESCRIPTION, inputSchema: launchTeamInputSchema },
-    async ({ teamId, projectId: target, launchRequestId, deadlineMs, maxConcurrent, maxLaunches, slots }) => {
+    async ({ teamId, projectId: target, launchRequestId, admissionDigest, deadlineMs, maxConcurrent, maxLaunches, slots }) => {
       if (!sessionId) {
         return {
           isError: true,
@@ -217,11 +242,39 @@ export function registerLaunchTeamTool(
           ...(maxConcurrent === undefined ? {} : { maxConcurrent }),
           ...(maxLaunches === undefined ? {} : { maxLaunches })
         },
-        requirePreauthorization: true
+        requirePreauthorization: true,
+        admissionDigest
       };
+      const revokeAuthorizedSlots = () => revokeTeamAuthorizations?.({
+        callerPrincipalId: sessionId, projectId, teamId, launchRequestId, slots
+      });
+      if (evaluateAdmission && !admissionDigest) {
+        await revokeAuthorizedSlots();
+        return { isError: true, content: [{ type: 'text' as const, text: 'launch_team failed: admissionDigest from authorize_team_launch is required.' }] };
+      }
+      if (evaluateAdmission) {
+        let currentAdmission: Awaited<ReturnType<typeof evaluateAdmission>>;
+        try {
+          currentAdmission = await evaluateAdmission({ projectId, teamId, slots, policy: request.policy });
+        } catch {
+          await revokeAuthorizedSlots();
+          return { isError: true, content: [{ type: 'text' as const, text: 'launch_team failed: Team admission could not be revalidated.' }] };
+        }
+        if (!currentAdmission.ready || currentAdmission.digest !== admissionDigest) {
+          await revokeAuthorizedSlots();
+          return { isError: true, content: [{ type: 'text' as const, text: `launch_team failed: ${currentAdmission.message ?? 'Team admission changed after authorization'}` }] };
+        }
+      }
       const resolvedProjectId = projectId;
-      const res = await launchTeam(teamId, resolvedProjectId, request);
+      let res: Awaited<ReturnType<typeof launchTeam>>;
+      try {
+        res = await launchTeam(teamId, resolvedProjectId, request);
+      } catch {
+        await revokeAuthorizedSlots();
+        return { isError: true, content: [{ type: 'text' as const, text: 'launch_team failed: Team launch could not be completed.' }] };
+      }
       if (!res.ok) {
+        await revokeAuthorizedSlots();
         return {
           isError: true,
           content: [{ type: 'text' as const, text: `launch_team failed: ${res.message}` }]

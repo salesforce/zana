@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ExecutionService, type ExecutionRequestV1, SquadExecutionService, deriveJobTitle, dependencyResultsSection, deterministicTerminalSummary, MAX_DEP_RESULT_CHARS, AUTO_FAIL_SUMMARY } from '../service.js';
+import { ExecutionService, KeyedColdStartSemaphore, type ExecutionRequestV1, SquadExecutionService, deriveJobTitle, dependencyResultsSection, deterministicTerminalSummary, MAX_DEP_RESULT_CHARS, AUTO_FAIL_SUMMARY } from '../service.js';
 import { createExecutionStore, type ExecutionRecord } from '../store.js';
 import { createExecutionArtifactStore } from '../artifact-store.js';
 import { createResumeGrantStore } from '../resume-grant-store.js';
@@ -57,6 +57,179 @@ describe('dependencyResultsSection', () => {
     expect(dependencyResultsSection(rec(units), 'b')).toBe(''); // dep 'a' not completed → no result
     expect(dependencyResultsSection(rec(units), 'a')).toBe(''); // no dependencies at all
     expect(dependencyResultsSection(rec(units), 'ghost')).toBe(''); // unknown unit
+  });
+});
+
+describe('execution admission', () => {
+  it('shares exact dry-run result with real admission and prevents invalid DAG spawn', async () => fixture(async (filePath) => {
+    const launchTeam = vi.fn(async () => ({ ok: true }));
+    const service = new ExecutionService(deps(filePath, { launchTeam }));
+    const invalid = {
+      ...request,
+      coordinationMode: 'job-team' as const,
+      workUnits: [
+        { id: 'a', title: 'A', task: 'A', dependencies: ['b'], files: ['a'], verification: ['test'] },
+        { id: 'b', title: 'B', task: 'B', dependencies: ['a'], files: ['b'], verification: ['test'] }
+      ]
+    };
+    const preview = await service.dryRun('project-1', invalid);
+    const started = await service.start('owner', 'project-1', invalid);
+    expect(preview.ready).toBe(false);
+    expect(preview.checks).toContainEqual(expect.objectContaining({ code: 'DAG_VALID', status: 'FAIL' }));
+    expect(started).toEqual({ ok: false, code: 'ADMISSION_FAILED', message: 'work unit dependency cycle' });
+    expect(launchTeam).not.toHaveBeenCalled();
+  }));
+
+  it('fails closed on stale required provider health before authorization', async () => fixture(async (filePath) => {
+    const authorizeTeamLaunch = vi.fn();
+    const service = new ExecutionService(deps(filePath, {
+      authorizeTeamLaunch,
+      admissionInput: () => ({
+        slotCount: 1, maxSlots: 1, initialTasks: ['work'], requiredProviders: ['provider'], now: 10,
+        inventory: { version: 1, observedAt: 0, maxAgeMs: 1, skills: [], mcpServers: [], models: [], providers: [{ id: 'provider', status: 'available' }] }
+      })
+    }));
+    await expect(service.start('owner', 'project-1', request)).resolves.toEqual({
+      ok: false, code: 'ADMISSION_FAILED', message: 'provider health is unknown'
+    });
+    expect(authorizeTeamLaunch).not.toHaveBeenCalled();
+  }));
+
+  it('revalidates admission digest after authorization and before spawn', async () => fixture(async (filePath) => {
+    let generation = 0;
+    const launchTeam = vi.fn();
+    const revokeTeamAuthorizations = vi.fn();
+    const service = new ExecutionService(deps(filePath, {
+      launchTeam,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: {
+        teamId: 'team-1', projectId: 'project-1', slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTask: 'Run tests', authorizationId: 'auth-1' }],
+        context: { version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [] }
+      } }),
+      admissionInput: () => ({ slotCount: 1, maxSlots: 1, initialTasks: [`work-${generation++}`] })
+      , revokeTeamAuthorizations
+    }));
+    await expect(service.start('owner', 'project-1', request)).resolves.toEqual({
+      ok: false, code: 'STALE_PREFLIGHT', message: 'Team admission changed after authorization'
+    });
+    expect(launchTeam).not.toHaveBeenCalled();
+    expect(revokeTeamAuthorizations).toHaveBeenCalledWith(['auth-1']);
+  }));
+
+  it('returns a stable fail-closed result when admission input rejects', async () => fixture(async (filePath) => {
+    const authorizeTeamLaunch = vi.fn();
+    const logError = vi.fn();
+    const service = new ExecutionService(deps(filePath, {
+      authorizeTeamLaunch, logError,
+      admissionInput: async () => { throw new Error('provider credentials leaked detail'); }
+    }));
+    await expect(service.start('owner', 'project-1', request)).resolves.toEqual({
+      ok: false, code: 'ADMISSION_FAILED', message: 'Team admission could not be evaluated'
+    });
+    expect(authorizeTeamLaunch).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('project-1:request-1'), expect.any(Error));
+  }));
+
+  it('revokes authorization when admission revalidation rejects', async () => fixture(async (filePath) => {
+    let calls = 0;
+    const revokeTeamAuthorizations = vi.fn();
+    const launchTeam = vi.fn();
+    const service = new ExecutionService(deps(filePath, {
+      launchTeam, revokeTeamAuthorizations,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: {
+        teamId: 'team-1', projectId: 'project-1', slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTask: 'Run tests', authorizationId: 'auth-1' }],
+        context: { version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [] }
+      } }),
+      admissionInput: async () => {
+        if (++calls > 1) throw new Error('inventory failed');
+        return { slotCount: 1, maxSlots: 1, initialTasks: ['work'] };
+      }
+    }));
+    await expect(service.start('owner', 'project-1', request)).resolves.toEqual({
+      ok: false, code: 'STALE_PREFLIGHT', message: 'Team admission could not be revalidated'
+    });
+    expect(revokeTeamAuthorizations).toHaveBeenCalledWith(['auth-1']);
+    expect(launchTeam).not.toHaveBeenCalled();
+  }));
+});
+
+describe('KeyedColdStartSemaphore', () => {
+  it('serializes same-key bursts while independent keys proceed', async () => {
+    const semaphore = new KeyedColdStartSemaphore(1);
+    const first = await semaphore.acquire('provider:account');
+    const same = semaphore.acquire('provider:account');
+    const other = await semaphore.acquire('other:account');
+    expect(other).toBeTypeOf('function');
+    let sameAcquired = false;
+    void same.then((release) => { sameAcquired = !!release; release?.(); });
+    await Promise.resolve();
+    expect(sameAcquired).toBe(false);
+    first?.();
+    await same;
+    expect(sameAcquired).toBe(true);
+    other?.();
+  });
+
+  it('drops a canceled waiter after wake and leaves permit reusable', async () => {
+    const semaphore = new KeyedColdStartSemaphore(1);
+    const first = await semaphore.acquire('provider:account');
+    let canceled = false;
+    const waiting = semaphore.acquire('provider:account', () => canceled);
+    await Promise.resolve();
+    canceled = true;
+    first?.();
+    await expect(waiting).resolves.toBeUndefined();
+    const next = await semaphore.acquire('provider:account');
+    expect(next).toBeTypeOf('function');
+    next?.();
+  });
+
+  it('wakes a live waiter behind a canceled waiter', async () => {
+    const semaphore = new KeyedColdStartSemaphore(1);
+    const first = await semaphore.acquire('provider:account');
+    let canceled = false;
+    const canceledWaiter = semaphore.acquire('provider:account', () => canceled);
+    const liveWaiter = semaphore.acquire('provider:account');
+    await Promise.resolve();
+    canceled = true;
+    first?.();
+    await expect(canceledWaiter).resolves.toBeUndefined();
+    const release = await liveWaiter;
+    expect(release).toBeTypeOf('function');
+    release?.();
+  });
+
+  it('wakes a live waiter behind a canceled predicate that throws', async () => {
+    const semaphore = new KeyedColdStartSemaphore(1);
+    const first = await semaphore.acquire('provider:account');
+    let checks = 0;
+    const throwingWaiter = semaphore.acquire('provider:account', () => {
+      if (++checks > 1) throw new Error('cancel probe failed');
+      return false;
+    });
+    const liveWaiter = semaphore.acquire('provider:account');
+    await Promise.resolve();
+    first?.();
+    await expect(throwingWaiter).rejects.toThrow('cancel probe failed');
+    const release = await liveWaiter;
+    expect(release).toBeTypeOf('function');
+    release?.();
+  });
+
+  it('times out queued acquisition without leaking the permit', async () => {
+    vi.useFakeTimers();
+    try {
+      const semaphore = new KeyedColdStartSemaphore(1);
+      const first = await semaphore.acquire('provider:account');
+      const waiting = semaphore.acquire('provider:account', () => false, 10);
+      await vi.advanceTimersByTimeAsync(10);
+      await expect(waiting).resolves.toBeUndefined();
+      first?.();
+      const next = await semaphore.acquire('provider:account');
+      expect(next).toBeTypeOf('function');
+      next?.();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -936,7 +1109,7 @@ describe('SquadExecutionService', () => {
     const service = new SquadExecutionService(deps(filePath, { authorizeTeamLaunch, launchTeam }));
     const result = await service.start('session-1', 'project-1', { ...request, jobTitle: 'Caller title' });
     expect(result).toMatchObject({ ok: true, value: { id: 'execution-1', jobTitle: 'Caller title', state: 'RUNNING', authorizationContext: { principalId: 'team:team-1:session-1:request-1' }, authorizationContextDigest: expect.any(String), launchIntent: { slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTaskDigest: expect.any(String) }] } } });
-    expect(authorizeTeamLaunch).toHaveBeenCalledWith('session-1', 'team-1', 'project-1', 'request-1', {}, request.slots, request.coordinationMode);
+    expect(authorizeTeamLaunch).toHaveBeenCalledWith('session-1', 'team-1', 'project-1', 'request-1', {}, request.slots, request.coordinationMode, expect.stringMatching(/^launch-v1:/));
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ requirePreauthorization: true }));
   }));
 
@@ -972,7 +1145,7 @@ describe('SquadExecutionService', () => {
     const blocked = await service.status('session-1', 'project-1', 'execution-1');
     if (!blocked) throw new Error('missing blocked execution');
     await expect(service.retry('session-1', 'project-1', 'execution-1', blocked.stateVersion)).resolves.toMatchObject({ ok: true, value: { id: 'execution-1', attempt: 2, state: 'RUNNING', teamLaunchRequestId: 'execution-1:attempt:2' } });
-    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots, undefined);
+    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots, undefined, expect.stringMatching(/^launch-v1:/));
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ launchRequestId: 'execution-1:attempt:2', executionId: 'execution-1', executionJobTitle: 'Build release' }));
   }));
 
@@ -995,7 +1168,7 @@ describe('SquadExecutionService', () => {
     const blocked = await store.get('execution-1');
     if (!blocked) throw new Error('missing execution');
     await expect(service.retry('session-2', 'project-1', 'execution-1', blocked.stateVersion)).resolves.toMatchObject({ ok: true });
-    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots, undefined);
+    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots, undefined, expect.stringMatching(/^launch-v1:/));
   }));
 
   it('reruns workflow profile preflight before retry', async () => fixture(async (filePath) => {

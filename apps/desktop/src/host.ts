@@ -63,7 +63,7 @@ import { projectIdentityDigest, revalidateLaunchCommit as revalidateCommonLaunch
 import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/authorization';
 import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/services/launch/coordinator';
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
-import { finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
+import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
@@ -72,7 +72,8 @@ import { createTeamLifecycleIntegration, createTeamLifecycleStore } from '@zana-
 import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
-import { SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
+import { KeyedColdStartSemaphore, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
+import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { IdleGatedInjector } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
 import { createExecutionSourceRegistry, ExecutionSourceError, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
@@ -100,7 +101,7 @@ import { DEFAULT_RENDERER_ZOOM_FACTOR } from './window/window-zoom.js';
 import { resolveLaunchSelection } from '@zana-ai/zcc-host-daemon/harness/launch-selection';
 import { resolveEffectiveHarnessDefault } from '@zana-ai/zcc-host-daemon/harness/effective-default';
 import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
-import { resolveExecutionState } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
+import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { listClaudeSessions } from '@zana-ai/zcc-server/services/projects/claude';
 import { listOpenCodeSessions } from '@zana-ai/zcc-server/services/projects/opencode-sessions';
 import { ConversationHistoryService } from '@zana-ai/zcc-host-daemon/conversation-history';
@@ -169,7 +170,7 @@ import { createAgentMessageLog, type IAgentMessageLog } from '@zana-ai/zcc-serve
 import { killLocalTmuxSession, listLocalTmuxSessionIds, reapOrphanTmuxSessions, verifyTmux } from '@zana-ai/zcc-host-daemon/tmux';
 import { exportInboxPdf } from './native/inbox-pdf.js';
 import { createSavedStore, type ISavedStore } from '@zana-ai/zcc-server';
-import { ABOUT_CREDITS, REPORT_BUG_URL, type SavedRecord, type SavedRecordInput } from '@zana-ai/zcc-domain/product';
+import { ABOUT_CREDITS, REPORT_BUG_URL, isDurableCoordination, type SavedRecord, type SavedRecordInput } from '@zana-ai/zcc-domain/product';
 import type { ExecutionBoardProjection, ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { isRestfulAgentState } from '@zana-ai/zcc-domain/product';
 import type { TeamJobLaunchInput, TeamJobLaunchResult } from '@zana-ai/zcc-domain/product';
@@ -3806,7 +3807,12 @@ async function launchAuthorizedTerminal(
       // window (an exact retry gets IN_PROGRESS, not a premature completed
       // replay). The pre-spawn deadline gate in launchTeam already refuses a
       // launch whose deadline elapsed, so readiness no longer races a timeout.
-      return ptys.waitForReady(result.value.id);
+      try {
+        return await ptys.waitForReady(result.value.id, 30_000);
+      } catch (error) {
+        await terminateSession(result.value.id);
+        throw error;
+      }
     },
     onCommitted: ({ authorizationId, sessionId }) => onCommitted?.({ authorizationId, sessionId }),
     beforeSpawn: spawnLifecycle ? () => spawnLifecycle.maySpawn() : undefined,
@@ -4295,6 +4301,17 @@ export function cascadeCloseTeamOnOrchestratorExit(deps: {
 }
 
 const TEAM_AUTHORIZATION_TTL_MS = 2 * 60_000;
+const teamColdStarts = new KeyedColdStartSemaphore(1);
+
+function resolvedTeamProfile(project: Project, personaSnapshot: readonly Persona[], persona: Persona): LaunchProfileId {
+  if (persona.baseProfile) return persona.baseProfile;
+  const selected = resolveLaunchSelection({
+    config: store.getConfig(), project, personas: personaSnapshot,
+    requestedProfile: 'claude', requestedSource: 'seeded-default',
+    requestedPersonaId: persona.id, persona
+  });
+  return selected.ok ? selected.profile : 'claude';
+}
 
 export function authorizeTeamLaunch(
   callerPrincipalId: string,
@@ -4303,7 +4320,8 @@ export function authorizeTeamLaunch(
   launchRequestId: string,
   policy: { deadlineMs?: number; maxConcurrent?: number; maxLaunches?: number },
   slots: TeamLaunchAuthorizationInputSlot[],
-  coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode
+  coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode,
+  admissionDigest?: string
 ): Result<TeamLaunchAuthorizationResult> {
   launchAuthorization.pruneExpired();
   for (const [principalId, principal] of launchPrincipals) {
@@ -4363,13 +4381,7 @@ export function authorizeTeamLaunch(
   const deadlineAt = policy.deadlineMs === undefined ? undefined : authorizedAt + policy.deadlineMs;
   const authorized: TeamLaunchAuthorizationResult['slots'] = [];
   const profileFor = (persona: Persona): LaunchProfileId => {
-    if (persona.baseProfile) return persona.baseProfile;
-    const selection = resolveLaunchSelection({
-      config: store.getConfig(), project, personas: personaSnapshot,
-      requestedProfile: 'claude', requestedSource: 'seeded-default',
-      requestedPersonaId: persona.id, persona
-    });
-    return selection.ok ? selection.profile : 'claude';
+    return resolvedTeamProfile(project, personaSnapshot, persona);
   };
   for (const expected of expectedSlots) {
     if (!known.has(expected.personaId)) {
@@ -4385,6 +4397,7 @@ export function authorizeTeamLaunch(
       scope: launchExecutionScope(project, {}, store.getConfig()),
       storeRevision: launchDigest({ team, personas: personaSnapshot }),
       projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt
+      , admissionDigest
     };
     const decision = launchAuthorization.authorize({
       principal: principalRef, projectId: project.id,
@@ -4403,6 +4416,7 @@ export function authorizeTeamLaunch(
       teamId: team.id,
       projectId: project.id,
       slots: authorized,
+      admissionDigest,
       context: {
         version: 1,
         principalId: principalRef.id,
@@ -4542,17 +4556,7 @@ export async function launchTeam(
   // profile; neutral Personas follow Project -> Global -> compatibility routing.
   const profileFor = (personaId: string): LaunchProfileId => {
     const persona = personaSnapshot.find((candidate) => candidate.id === personaId);
-    if (persona?.baseProfile) return persona.baseProfile;
-    const selected = resolveLaunchSelection({
-      config: currentConfig,
-      project,
-      personas: personaSnapshot,
-      requestedProfile: 'claude',
-      requestedSource: 'seeded-default',
-      requestedPersonaId: personaId,
-      persona
-    });
-    return selected.ok ? selected.profile : 'claude';
+    return persona ? resolvedTeamProfile(project, personaSnapshot, persona) : 'claude';
   };
   const taskBindingFailure = (personaId: string): string | undefined => {
     if (!structured) return undefined;
@@ -4586,7 +4590,8 @@ export async function launchTeam(
         slotId: slot.slotId,
         initialTask: slot.initialTask,
         authorizationBinding: authorizationBindings[index]?.authorizationBinding
-      }))
+      })),
+    admissionDigest: structured?.admissionDigest
   });
   const existingRequest = await teamLifecycle.findRequest(callerPrincipalId, launchRequestId);
   if (existingRequest?.payloadDigest !== undefined && existingRequest.payloadDigest !== payloadDigest) {
@@ -4632,6 +4637,7 @@ export async function launchTeam(
         || binding.initialTaskDigest !== launchDigest(requested.initialTask)
         || binding.storeRevision !== currentStoreRevision
         || binding.projectIdentityDigest !== currentProjectIdentity
+        || binding.admissionDigest !== structured.admissionDigest
         || binding.evidenceDigest !== undefined
         || binding.consentReservation !== undefined) {
         revokeRequestAuthorizations();
@@ -4710,6 +4716,16 @@ export async function launchTeam(
       authorizationId = authorized.authorization.id;
     }
     let durableIdentity: { authorizationId: string; sessionId: string } | undefined;
+    const provider = providerFor(profileFor(personaId));
+    const accountIdentity = provider.authKey(profileFor(personaId)) ?? 'ambient';
+    const releaseColdStart = await teamColdStarts.acquire(`${provider.id}:${accountIdentity}`, async () => {
+      const current = await teamLifecycle.get(claim.record.id);
+      return current?.state !== 'active' || current.outcome.status !== 'in-progress';
+    });
+    if (!releaseColdStart) {
+      if (authorizationId) launchAuthorization.revoke(authorizationId);
+      return { ok: false, code: 'CANCEL_PENDING', message: 'team launch canceled before cold start' };
+    }
     const result = await launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
@@ -4737,7 +4753,7 @@ export async function launchTeam(
           maySpawn: () => teamLifecycle.workerMaySpawn(claim.record.id, slotId),
           claimRunning: () => teamLifecycle.claimWorkerRunning(claim.record.id, slotId)
         }
-    );
+    ).finally(releaseColdStart);
     if (durableIdentity) {
       try {
         if (result.ok) {
@@ -4952,6 +4968,9 @@ const squadExecutionService = new SquadExecutionService({
     return result.ok ? result.value : undefined;
   },
   cancelTeamLaunch: async (callerPrincipalId, launchRequestId) => cancelTeamLaunch(callerPrincipalId, launchRequestId),
+  revokeTeamAuthorizations: (authorizationIds) => {
+    for (const id of authorizationIds) launchAuthorization.revoke(id);
+  },
   replyToSession: (sessionId, text) => ptys.reply(sessionId, text),
   deliverToWorker: (sessionId, text) => workerInjector.deliver(sessionId, text),
   resumeGrants: executionResumeGrants,
@@ -4964,6 +4983,84 @@ const squadExecutionService = new SquadExecutionService({
   preflightWorkflow: (teamId, workflow) => {
     const team = teams.list().find((candidate) => candidate.id === teamId);
     return team ? preflightWorkflowProfile(workflow, team, personas.list()) : { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile Team is unavailable' };
+  }
+  , admissionInput: async (projectId, request) => {
+    const project = store.listProjects().find((candidate) => candidate.id === projectId);
+    const team = teams.list().find((candidate) => candidate.id === request.teamId);
+    const config = store.getConfig();
+    const projectSettings = project ? await getAuthoritativeProjectSettings(projectId) : undefined;
+    const personaSnapshot = personas.list();
+    const personaIds = [...new Set([...(team?.slots.map((slot) => slot.personaId) ?? []), ...(team?.orchestratorPersonaId ? [team.orchestratorPersonaId] : [])])].sort();
+    const slotPersonas = personaIds.map((id) => personaSnapshot.find((persona) => persona.id === id)).filter((persona): persona is Persona => !!persona);
+    const profileForAdmission = (persona: Persona): LaunchProfileId => {
+      if (!project) return 'claude';
+      return resolvedTeamProfile(project, personaSnapshot, persona);
+    };
+    const profiles = slotPersonas.map(profileForAdmission);
+    const providers = new Map<string, ReturnType<typeof providerFor>>(profiles.map((profile) => {
+      const provider = providerFor(profile);
+      return [provider.adapter.descriptor.id, provider] as const;
+    }));
+    const requiredProviders = [...providers.keys()].sort();
+    const requiredModels = slotPersonas.flatMap((persona) => {
+      const profile = profileForAdmission(persona);
+      const provider = providerFor(profile);
+      const resolutionInput = { config, persona, projectSettings, profile, extraArgs: [], scope: project ? launchExecutionScope(project, {}, config) : 'local' as const };
+      const model = resolveModelTarget(provider, resolutionInput);
+      const role = resolveRoleTarget(provider, resolutionInput);
+      return model.targetId && !(role.targetId && provider.nativeRolePinsModel)
+        ? [{ id: model.targetId, provider: provider.adapter.descriptor.id }]
+        : [];
+    }).sort((a, b) => `${a.provider}\0${a.id}`.localeCompare(`${b.provider}\0${b.id}`));
+    const requiredMcpServers = [...new Set(slotPersonas.flatMap((persona) => persona.mcpServers ?? []))].sort();
+    const inventory = await collectTeamAdmissionInventory({ requiredMcpServers, requiredModels, requiredProviders }, {
+      listSkills: () => project ? listSkills({ projectPath: project.path, projectId }) : Promise.resolve([]),
+      listMcpServers: () => project ? listMcpServers(project.path) : Promise.resolve([]),
+      providerHealth: async (ids) => {
+        const verify = await verifyHarnesses(config);
+        return ids.map((id) => {
+          const provider = providers.get(id);
+          if (provider?.adapter.descriptor.id === 'shell') return { id, status: 'available' as const };
+          const found = verify.find((item) => item.family === id);
+          return { id, status: !found ? 'unknown' as const : found.enabled && found.installed ? 'available' as const : 'unavailable' as const };
+        });
+      },
+      modelHealth: async (models) => {
+        const requiredProviderIds = new Set(models.map((model) => model.provider));
+        const liveByProvider = new Map(await Promise.all([...providers]
+          .filter(([id]) => requiredProviderIds.has(id))
+          .map(async ([id, provider]) => {
+            try {
+              return [id, project && provider.discoverModelTargets
+                ? await provider.discoverModelTargets({ cwd: project.path, config })
+                : undefined] as const;
+            } catch (error) {
+              logMainError(`Team admission models inventory failed for ${id}`, error);
+              return [id, undefined] as const;
+            }
+          }))) as Map<string, readonly string[] | undefined>;
+        return models.map(({ id, provider: providerId }) => {
+          const owner = providers.get(providerId);
+          if (!owner) return { id, provider: providerId, status: 'unknown' as const };
+          if (owner.discoverModelTargets) {
+            const live = liveByProvider.get(providerId);
+            return { id, provider: providerId, status: live === undefined ? 'unknown' as const : live.includes(id) ? 'available' as const : 'unavailable' as const };
+          }
+          const listed = owner.adapter.descriptor.targets?.models.some((model) => model.id === id) ?? false;
+          return { id, provider: providerId, status: listed || owner.acceptsUnlistedModelTargets ? 'available' as const : 'unavailable' as const };
+        });
+      },
+      onError: (source, error) => logMainError(`Team admission ${source} inventory failed`, error)
+    });
+    return {
+      workUnits: request.workUnits,
+      requireCompletePlan: isDurableCoordination(request.coordinationMode),
+      slotCount: request.slots.length,
+      maxSlots: Math.min(request.policy?.maxLaunches ?? 32, 32),
+      initialTasks: request.slots.map((slot) => slot.initialTask),
+      sourceBytes: request.sourceBundle?.sources.reduce((sum, source) => sum + source.byteSize, 0),
+      requiredMcpServers, requiredModels, requiredProviders, inventory
+    };
   }
   , now: Date.now
 });
@@ -6943,6 +7040,24 @@ async function bootstrapNormal() {
     // `closeIdlePeersEnabled` pattern. main authorizes the whole launch.
     launchTeam: store.getConfig().teamLaunchEnabled ? launchTeam : undefined,
     authorizeTeamLaunch: store.getConfig().teamLaunchEnabled ? authorizeTeamLaunch : undefined,
+    evaluateTeamAdmission: store.getConfig().teamLaunchEnabled ? async ({ projectId, teamId, slots, policy }) => {
+      const result = await squadExecutionService.dryRun(projectId, {
+        version: 1, teamId, launchRequestId: `admission:${randomUUID()}`, slots,
+        policy, coordinationMode: 'interactive-team'
+      });
+      const failed = result.checks.find((check) => check.required && check.status !== 'PASS');
+      return { ready: result.ready, digest: result.digest, ...(failed ? { message: failed.message } : {}) };
+    } : undefined,
+    revokeTeamAuthorizations: ({ callerPrincipalId, projectId, teamId, launchRequestId, slots }) => {
+      const principalId = `team:${teamId}:${callerPrincipalId}:${launchRequestId}`;
+      for (const slot of slots) {
+        const authorization = launchAuthorization.get(slot.authorizationId!);
+        if (authorization?.principal.id !== principalId || authorization.projectId !== projectId) continue;
+        if (authorization.binding.teamId !== teamId || authorization.binding.slotId !== slot.slotId) continue;
+        if (authorization.binding.initialTaskDigest !== launchDigest(slot.initialTask)) continue;
+        launchAuthorization.revoke(authorization.id);
+      }
+    },
     cancelTeamLaunch: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? cancelTeamLaunch : undefined,
     getTeamLaunch: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? getTeamLaunch : undefined,
     reportTeamTask: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? reportTeamTask : undefined,

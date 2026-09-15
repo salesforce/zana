@@ -143,6 +143,8 @@ describe('PtyManager — async createSession environment', () => {
 
   it('flips to running, stamps the pid, and drains buffered input on attach', async () => {
     const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+    const updatedBefore = ptys.listenerCount('sessionUpdated');
+    const exitBefore = ptys.listenerCount('exit');
     const ready = ptys.waitForReady(s.id);
     // Input arrives WHILE the VM is still booting — must be buffered, in order.
     ptys.write(s.id, 'echo hi');
@@ -152,6 +154,8 @@ describe('PtyManager — async createSession environment', () => {
     pending!.resolve(exec);
     await flush();
     await expect(ready).resolves.toMatchObject({ id: s.id, status: 'running', pid: 7777 });
+    expect(ptys.listenerCount('sessionUpdated')).toBe(updatedBefore);
+    expect(ptys.listenerCount('exit')).toBe(exitBefore);
     await flush();
 
     const live = ptys.getSession(s.id);
@@ -182,6 +186,8 @@ describe('PtyManager — async createSession environment', () => {
 
   it('FAILS CLOSED on boot failure — finalizes with a non-zero exit, no local fallback', async () => {
     const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+    const updatedBefore = ptys.listenerCount('sessionUpdated');
+    const exitBefore = ptys.listenerCount('exit');
     const ready = expect(ptys.waitForReady(s.id)).rejects.toThrow('no hypervisor');
     const exits: Array<[string, number]> = [];
     ptys.on('exit', (id: string, code: number) => exits.push([id, code]));
@@ -189,12 +195,33 @@ describe('PtyManager — async createSession environment', () => {
     pending!.reject(new Error('no hypervisor'));
     await flush();
     await ready;
+    expect(ptys.listenerCount('sessionUpdated')).toBe(updatedBefore);
+    expect(ptys.listenerCount('exit')).toBe(exitBefore + 1);
     await flush();
 
     // Session is gone (finalized), never downgraded to a running local spawn.
     expect(ptys.getSession(s.id)).toBeNull();
     expect(exits).toContainEqual([s.id, 1]);
     expect(ptySpawns.length).toBe(0);
+  });
+
+  it('times out readiness and removes temporary listeners', async () => {
+    vi.useFakeTimers();
+    try {
+      const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
+      const updatedBefore = ptys.listenerCount('sessionUpdated');
+      const exitBefore = ptys.listenerCount('exit');
+      const ready = ptys.waitForReady(s.id, 10);
+      const rejected = expect(ready).rejects.toThrow('terminal execution handle was not ready within 10ms');
+      expect(ptys.listenerCount('sessionUpdated')).toBe(updatedBefore + 1);
+      expect(ptys.listenerCount('exit')).toBe(exitBefore + 1);
+      await vi.advanceTimersByTimeAsync(10);
+      await rejected;
+      expect(ptys.listenerCount('sessionUpdated')).toBe(updatedBefore);
+      expect(ptys.listenerCount('exit')).toBe(exitBefore);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('tears the guest down if the session is closed mid-boot', async () => {
