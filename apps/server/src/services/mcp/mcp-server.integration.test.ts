@@ -268,59 +268,19 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(entries[0].sessionId).toBeUndefined();
   });
 
-  it('1c. inbox_ask: session-scoped structured question persists prompt + host-lettered options', async () => {
+  it('1c. inbox_ask is not registered on session or project-only routes', async () => {
     const store = createMemoryInboxStore();
     const h = await boot(store, [makeProject('proj-1', 'My Project')]);
 
-    const client = await connectClient(h.url, 'proj-1/sess-A');
-    clients.push(client);
+    const sessionClient = await connectClient(h.url, 'proj-1/sess-A');
+    clients.push(sessionClient);
+    const sessionTools = await sessionClient.listTools();
+    expect(sessionTools.tools.some((t) => t.name === 'inbox_ask')).toBe(false);
 
-    // Schema exposes the question form, never projectId/sessionId/option-ids.
-    const tools = await client.listTools();
-    const ask = tools.tools.find((t) => t.name === 'inbox_ask');
-    expect(ask, 'inbox_ask tool is registered on the session route').toBeTruthy();
-    const props = (ask!.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
-    expect(Object.keys(props).sort()).toEqual([
-      'allowOther',
-      'intent',
-      'multiSelect',
-      'options',
-      'preamble',
-      'question',
-      'questions',
-      'subject'
-    ]);
-
-    const res = await client.callTool({
-      name: 'inbox_ask',
-      arguments: {
-        question: 'Which approach?',
-        options: ['Rewrite', 'Patch in place'],
-        allowOther: true
-      }
-    });
-    expect((res as { isError?: boolean }).isError).toBeFalsy();
-
-    const { entries } = await store.read();
-    expect(entries).toHaveLength(1);
-    // Prompt lives in comments; options carry host-assigned A/B letters.
-    expect(entries[0].comments).toBe('Which approach?');
-    expect(entries[0].sessionId).toBe('sess-A');
-    expect(entries[0].question?.options).toEqual([
-      { id: 'A', label: 'Rewrite' },
-      { id: 'B', label: 'Patch in place' }
-    ]);
-    expect(entries[0].question?.allowOther).toBe(true);
-  });
-
-  it('1d. inbox_ask is NOT registered on the legacy project-only route (no session to answer to)', async () => {
-    const store = createMemoryInboxStore();
-    const h = await boot(store, [makeProject('proj-1', 'My Project')]);
-
-    const client = await connectClient(h.url, 'proj-1');
-    clients.push(client);
-    const tools = await client.listTools();
-    expect(tools.tools.some((t) => t.name === 'inbox_ask')).toBe(false);
+    const projectClient = await connectClient(h.url, 'proj-1');
+    clients.push(projectClient);
+    const projectTools = await projectClient.listTools();
+    expect(projectTools.tools.some((t) => t.name === 'inbox_ask')).toBe(false);
   });
 
   it('2. safe: the agent cannot forge projectId/sessionId — only the URL counts', async () => {

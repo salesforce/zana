@@ -376,8 +376,9 @@ export interface InboxQuestionOption {
  * The write-half of the loop is the same one that backs the free-text ReplyBox:
  * when the user hits Continue, the chosen option label(s) (or the Other text)
  * are injected into the originating session's pty via `terminals.reply`, so an
- * agent that asked via `inbox_ask` and blocked for input gets the answer as if
- * it were typed at its prompt. Only present when an agent used `inbox_ask`.
+ * agent that asked via `inbox_push` with options and blocked for input gets the
+ * answer as if it were typed at its prompt. Present when an agent attached a
+ * structured question.
  */
 export interface InboxQuestion {
   /**
@@ -407,9 +408,9 @@ export interface InboxQuestion {
    * merely offering an optional/soft follow-up ("want me to open a PR?"). Only a
    * blocking question earns a spot in the pinned "NEEDS YOUR ANSWER" band — a
    * non-blocking one still renders inline and stays answerable, it just doesn't
-   * demand attention. Host-defaulted at the tool layer: `inbox_ask` (a genuine
-   * "I'm stuck, pick A/B") defaults true; `inbox_push` with options (a report
-   * plus a soft follow-up) defaults false. Either tool may set it explicitly.
+   * demand attention. Host-defaulted at the tool layer: `inbox_push` with
+   * options (a report plus a soft follow-up) defaults false. The tool may set
+   * `blocking: true` explicitly when the agent cannot proceed without the answer.
    */
   blocking?: boolean;
 }
@@ -598,17 +599,17 @@ export interface InboxEntry {
    */
   occurrences?: number;
   /**
-   * Structured multiple-choice question form — set only when an agent used the
-   * `inbox_ask` tool with a SINGLE question. Renders the Cursor-style options +
-   * Skip/Continue in the detail pane; the chosen answer is injected back into
-   * {@link sessionId}'s pty (same channel as the free-text ReplyBox). The
-   * question text lives in {@link comments}; this holds only the answer options.
-   * Mutually exclusive with {@link questions}. See {@link InboxQuestion}.
+   * Structured multiple-choice question form — set only when an agent used
+   * `inbox_push` with a SINGLE question (`options`). Renders the Cursor-style
+   * options + Skip/Continue in the detail pane; the chosen answer is injected
+   * back into {@link sessionId}'s pty (same channel as the free-text ReplyBox).
+   * The question text lives in {@link comments}; this holds only the answer
+   * options. Mutually exclusive with {@link questions}. See {@link InboxQuestion}.
    */
   question?: InboxQuestion;
   /**
    * Multiple structured questions asked together in ONE inbox entry — set when
-   * an agent used `inbox_ask` with a `questions` array. Each carries its own
+   * an agent used `inbox_push` with a `questions` array. Each carries its own
    * `prompt` heading + options; the detail pane stacks them in one card and
    * Continue is enabled only once every question is answered. The combined
    * answers are injected back into {@link sessionId}'s pty as one reply (one
@@ -622,7 +623,7 @@ export interface InboxEntry {
    * MAIN-process `ctx.inbox.push` (Phase B, brokered path). `extensionId` is the
    * AUTHENTICATED module id bound to the child's port — never a payload value
    * (Rule 1), mirroring `PersonaTeamRegistry`'s `source: { extensionId }` stamp.
-   * Absent for agent (`inbox_push`/`inbox_ask` MCP tools) and renderer-panel
+   * Absent for agent (`inbox_push` MCP tool) and renderer-panel
    * (`window.cc.modules.pushInbox`) origins — the panel path's `moduleId` is only
    * a best-effort CLAIM, never authenticated, so it is deliberately left
    * unstamped rather than recorded as if verified.
@@ -1312,6 +1313,20 @@ export interface TerminalSession {
    * succeeds, and for non-opencode tabs.
    */
   openCodeSessionId?: string;
+  /**
+   * Generic native conversation id for harnesses that mint or detect a
+   * provider-owned session UUID (Pi, Cursor, Grok). Restore projections read
+   * this instead of overloading {@link claudeSessionId}. Absent until mint or
+   * restore-ledger hydration stamps it.
+   */
+  nativeConversationId?: string;
+  /**
+   * Ledger-backed exited card hydrated after reboot (or renderer reload) from
+   * restore-capabilities.json. Skips the 60s finished linger so the user can
+   * explicitly Resume. Absent on live sessions and on linger tombstones that
+   * still sit in RAM from this process.
+   */
+  remembered?: boolean;
   /**
    * Set once the user manually renames the tab. Suppresses the OSC-title
    * auto-rename (Claude's generated task summary) so an explicit name is never
@@ -2051,7 +2066,7 @@ export interface AppConfig {
    */
   idleTriageEnabled?: boolean;
   /**
-   * Suppress a BLOCKING inbox question (from `inbox_ask`, or an `inbox_push`
+   * Suppress a BLOCKING inbox question (from an `inbox_push`
    * question marked `blocking`) WHILE its originating agent is still `working`,
    * flushing it to the inbox the moment the agent goes idle/blocked — or after a
    * ~10-min safety deadline so a never-idling agent can't bury a real blocker.
@@ -2194,8 +2209,8 @@ export interface AppConfig {
   /**
    * Render structured questions (lettered options + Skip/Continue) instead of
    * plain markdown + a free-text reply box, wherever an inbox entry or follow-up
-   * carries answer options (EXPERIMENTAL). Backs the `inbox_ask` question form,
-   * the optional `inbox_push` options, and the follow-up option picker. Default
+   * carries answer options (EXPERIMENTAL). Backs the optional `inbox_push`
+   * options, AskUserQuestion mapping, and the follow-up option picker. Default
    * ON — off falls back to plain markdown + free-text reply everywhere (the
    * options are still shown in the comments text, just not as an interactive
    * form). A UX affordance only; it never changes what an agent receives.
@@ -2453,7 +2468,7 @@ export interface AppConfig {
    * Opt-in: forward the zcc-inbox MCP server to REMOTE (SSH) agents over the
    * existing reverse tunnel. When on, a remote claude spawn that wires the
    * hook-callback reverse tunnel ALSO gets the zcc-inbox MCP surface (inbox_push
-   * / inbox_ask / inbox_search, agent mesh, follow-ups, library) via an inline
+   * / inbox_search, agent mesh, follow-ups, library) via an inline
    * `--mcp-config` pointed at the loopback `ssh -R` port, plus the matching
    * `--allowedTools` and inbox-usage guidance — reaching the SAME local MCP
    * server a local agent uses. Default OFF: without it, a remote agent stays

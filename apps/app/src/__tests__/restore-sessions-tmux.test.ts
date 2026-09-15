@@ -2,13 +2,17 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 
 const listTmuxRestoreCandidates = vi.fn();
+const listRememberedSessions = vi.fn();
 const restore = vi.fn();
+const close = vi.fn();
 
 vi.mock('../lib/product-client.js', () => ({
   product: {
     terminals: {
       listTmuxRestoreCandidates: (...args: unknown[]) => listTmuxRestoreCandidates(...args),
-      restore: (...args: unknown[]) => restore(...args)
+      listRememberedSessions: (...args: unknown[]) => listRememberedSessions(...args),
+      restore: (...args: unknown[]) => restore(...args),
+      close: (...args: unknown[]) => close(...args)
     },
     threads: { list: vi.fn().mockResolvedValue([]) },
     git: { status: vi.fn().mockRejectedValue(new Error('no git')) }
@@ -47,8 +51,12 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.resetModules();
   listTmuxRestoreCandidates.mockReset();
+  listRememberedSessions.mockReset();
   restore.mockReset();
+  close.mockReset();
   listTmuxRestoreCandidates.mockResolvedValue([]);
+  listRememberedSessions.mockResolvedValue([]);
+  close.mockResolvedValue(true);
 });
 
 describe('useData.restoreSessions tmux reattach', () => {
@@ -85,6 +93,7 @@ describe('useData.restoreSessions tmux reattach', () => {
 
     expect(restore).toHaveBeenCalledWith({ capabilityId: 'cap-1' });
     expect(restore.mock.calls[0][0].legacyRequest).toBeUndefined();
+    expect(listRememberedSessions).not.toHaveBeenCalled();
     expect(useData.getState().terminals['project-1'].map((row) => row.id)).toEqual(['tmux-1']);
     expect(localStorage.getItem('zcc.openSessions')).toContain('Hello');
   });
@@ -117,5 +126,104 @@ describe('useData.restoreSessions tmux reattach', () => {
     await useData.getState().restoreSessions(new Set(['project-1']));
 
     expect(restore).not.toHaveBeenCalled();
+  });
+});
+
+describe('useData.hydrateRememberedSessions', () => {
+  it('merges ledger tombstones without calling restore()', async () => {
+    listRememberedSessions.mockResolvedValue([
+      session('dead-1', { status: 'exited', remembered: true, restoreCapabilityId: 'cap-9', profile: 'pi' })
+    ]);
+    const useData = await loadStore();
+    useData.setState({
+      projects: [{ id: 'project-1', name: 'P', path: '/tmp/p', createdAt: 1, lastActiveAt: 1 }],
+      terminals: {}
+    });
+
+    await useData.getState().hydrateRememberedSessions();
+
+    expect(restore).not.toHaveBeenCalled();
+    expect(useData.getState().terminals['project-1'].map((row) => row.id)).toEqual(['dead-1']);
+    expect(useData.getState().terminals['project-1'][0].remembered).toBe(true);
+  });
+
+  it('does not duplicate a live session with the same id', async () => {
+    listRememberedSessions.mockResolvedValue([
+      session('already-live', { status: 'exited', remembered: true, restoreCapabilityId: 'cap-9' })
+    ]);
+    const useData = await loadStore();
+    useData.setState({
+      projects: [{ id: 'project-1', name: 'P', path: '/tmp/p', createdAt: 1, lastActiveAt: 1 }],
+      terminals: { 'project-1': [session('already-live')] }
+    });
+
+    await useData.getState().hydrateRememberedSessions();
+
+    expect(useData.getState().terminals['project-1']).toHaveLength(1);
+    expect(useData.getState().terminals['project-1'][0].status).toBe('running');
+  });
+
+  it('skips a project whose hydration failed', async () => {
+    listRememberedSessions.mockResolvedValue([
+      session('dead-1', { status: 'exited', remembered: true, restoreCapabilityId: 'cap-9' })
+    ]);
+    const useData = await loadStore();
+    useData.setState({
+      projects: [{ id: 'project-1', name: 'P', path: '/tmp/p', createdAt: 1, lastActiveAt: 1 }],
+      terminals: {}
+    });
+
+    await useData.getState().hydrateRememberedSessions(new Set(['project-1']));
+
+    expect(useData.getState().terminals['project-1']).toBeUndefined();
+  });
+});
+
+describe('useData.restartTerminal ledger resume', () => {
+  it('resumes an exited remembered card via terminals.restore without closing first', async () => {
+    restore.mockResolvedValue({
+      ok: true,
+      value: session('live-again', { status: 'running', restoreCapabilityId: 'cap-new' })
+    });
+    const useData = await loadStore();
+    useData.setState({
+      projects: [{ id: 'project-1', name: 'P', path: '/tmp/p', createdAt: 1, lastActiveAt: 1 }],
+      terminals: {
+        'project-1': [
+          session('dead-1', {
+            status: 'exited',
+            remembered: true,
+            restoreCapabilityId: 'cap-9',
+            profile: 'pi'
+          })
+        ]
+      }
+    });
+
+    const created = await useData.getState().restartTerminal('dead-1', 'project-1');
+
+    expect(restore).toHaveBeenCalledWith({ capabilityId: 'cap-9' });
+    expect(close).not.toHaveBeenCalled();
+    expect(created?.id).toBe('live-again');
+    expect(useData.getState().terminals['project-1'].map((row) => row.id)).toEqual(['live-again']);
+  });
+
+  it('leaves the remembered card in place when restore fails', async () => {
+    restore.mockResolvedValue({ ok: false, code: 'DENIED', message: 'restore capability unavailable' });
+    const useData = await loadStore();
+    useData.setState({
+      projects: [{ id: 'project-1', name: 'P', path: '/tmp/p', createdAt: 1, lastActiveAt: 1 }],
+      terminals: {
+        'project-1': [
+          session('dead-1', { status: 'exited', remembered: true, restoreCapabilityId: 'cap-9' })
+        ]
+      }
+    });
+
+    const created = await useData.getState().restartTerminal('dead-1', 'project-1');
+
+    expect(created).toBeNull();
+    expect(close).not.toHaveBeenCalled();
+    expect(useData.getState().terminals['project-1'][0].id).toBe('dead-1');
   });
 });

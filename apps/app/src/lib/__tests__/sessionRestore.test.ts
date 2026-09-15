@@ -155,6 +155,21 @@ describe('resolveRestartProfile', () => {
     expect(resolved.extraArgs ?? []).not.toContain('ses_abc123');
   });
 
+  it('resumes pi/cursor/grok via resumeSessionId without collapsing to --continue', () => {
+    expect(resolveRestartProfile('pi', undefined, undefined, undefined, undefined, 'pi-id')).toMatchObject({
+      profile: 'pi',
+      resumeSessionId: 'pi-id'
+    });
+    expect(resolveRestartProfile('cursor', undefined, undefined, undefined, undefined, 'cur-id')).toMatchObject({
+      profile: 'cursor',
+      resumeSessionId: 'cur-id'
+    });
+    expect(resolveRestartProfile('grok', undefined, undefined, undefined, undefined, 'grok-id')).toMatchObject({
+      profile: 'grok',
+      resumeSessionId: 'grok-id'
+    });
+  });
+
   it('falls back to opencode-resume with no id (→ --continue) when none was captured', () => {
     const resolved = resolveRestartProfile('opencode', undefined, undefined, undefined, undefined);
     expect(resolved).toMatchObject({ profile: 'opencode-resume' });

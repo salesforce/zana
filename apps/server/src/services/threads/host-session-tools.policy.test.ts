@@ -45,7 +45,8 @@ describe('host session tool policy', () => {
     expect(HOST_SHARE_TOOL_NAMES).toContain('schedule_list');
     expect(HOST_SHARE_TOOL_NAMES).toContain('list_projects');
     expect(HOST_SHARE_TOOL_NAMES).toContain('create_local_extension');
-    expect(HOST_ADAPT_TOOL_NAMES).toContain('inbox_ask');
+    expect(HOST_ADAPT_TOOL_NAMES).not.toContain('inbox_ask');
+    expect(HOST_ADAPT_TOOL_NAMES).toContain('followup_create');
     expect(HOST_PTY_ONLY_TOOL_NAMES).toContain('schedule_report');
     expect(HOST_PTY_ONLY_TOOL_NAMES).toContain('register_agent');
   });

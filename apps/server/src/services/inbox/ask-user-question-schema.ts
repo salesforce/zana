@@ -4,11 +4,11 @@
  * lettered picker) already renders.
  *
  * This is the seam that lets the EXPERIMENTAL `askUserQuestionUiEnabled` feature
- * REUSE the inbox_ask loop instead of building a second question UI. The
+ * REUSE the inbox question loop instead of building a second question UI. The
  * question-forwarding PreToolUse hook (see `buildClaudeHookSettings`) POSTs the raw
  * tool-call JSON to `/hook/question/:projectId/:sessionId`; the handler pulls
  * out `tool_input` and hands it here, then appends the result to the inbox
- * exactly like inbox_ask does (`inboxStore.append({ sessionId, questions })`).
+ * exactly like a structured `inbox_push` (`inboxStore.append({ sessionId, questions })`).
  *
  * `AskUserQuestion`'s payload shape differs from the inbox schema, so we
  * translate:

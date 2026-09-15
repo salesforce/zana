@@ -58,8 +58,14 @@ describe('harness registrations', () => {
     expect(registrationFor('codex')?.nativeConversationResume?.('codex-native')).toEqual({
       profile: 'codex-resume', resumeSessionId: 'codex-native'
     });
-    expect(registrationFor('opencode')?.nativeConversationResume?.('opencode-native')).toEqual({
-      profile: 'opencode-resume', resumeSessionId: 'opencode-native'
+    expect(registrationFor('pi')?.nativeConversationResume?.('pi-native')).toEqual({
+      profile: 'pi', resumeSessionId: 'pi-native'
+    });
+    expect(registrationFor('grok')?.nativeConversationResume?.('grok-native')).toEqual({
+      profile: 'grok', resumeSessionId: 'grok-native'
+    });
+    expect(registrationFor('cursor')?.nativeConversationResume?.('cursor-native')).toEqual({
+      profile: 'cursor', resumeSessionId: 'cursor-native'
     });
   });
 
@@ -84,6 +90,72 @@ describe('harness registrations', () => {
     });
     expect(registrationFor('opencode')?.nativeSessionPatch?.('opencode-native')).toEqual({
       kind: 'opencode', openCodeSessionId: 'opencode-native'
+    });
+    expect(registrationFor('pi')?.restoreProjection?.({
+      session: { profile: 'pi', nativeConversationId: 'pi-native' },
+      extraArgs: ['--continue', '--model', 'opus']
+    })).toEqual({
+      profile: 'pi',
+      extraArgs: ['--model', 'opus'],
+      resumeSessionId: 'pi-native'
+    });
+    expect(registrationFor('grok')?.restoreProjection?.({
+      session: { profile: 'grok', nativeConversationId: 'grok-native' }
+    })).toEqual({
+      profile: 'grok',
+      extraArgs: undefined,
+      resumeSessionId: 'grok-native'
+    });
+    expect(registrationFor('cursor')?.restoreProjection?.({
+      session: { profile: 'cursor', nativeConversationId: 'cursor-native' }
+    })).toEqual({
+      profile: 'cursor',
+      extraArgs: undefined,
+      resumeSessionId: 'cursor-native'
+    });
+    expect(registrationFor('mastracode')?.restoreProjection?.({
+      session: { profile: 'mastracode' },
+      extraArgs: ['--continue']
+    })).toEqual({
+      profile: 'mastracode-resume',
+      extraArgs: undefined
+    });
+    expect(registrationFor('pi')?.nativeSessionMint?.spawnArgs('mint-id')).toEqual([
+      '--session-id', 'mint-id'
+    ]);
+    expect(registrationFor('grok')?.nativeSessionMint?.spawnArgs('mint-id')).toEqual([
+      '--session-id', 'mint-id'
+    ]);
+    expect(registrationFor('pi')?.nativeSessionPatch?.('pi-native')).toEqual({
+      kind: 'native', nativeConversationId: 'pi-native'
+    });
+    expect(registrationFor('grok')?.nativeSessionPatch?.('grok-native')).toEqual({
+      kind: 'native', nativeConversationId: 'grok-native'
+    });
+    expect(registrationFor('cursor')?.nativeSessionPatch?.('cursor-native')).toEqual({
+      kind: 'native', nativeConversationId: 'cursor-native'
+    });
+    expect(registrationFor('mastracode')?.nativeSessionMint).toBeUndefined();
+    expect(registrationFor('mastracode')?.nativeSessionPatch).toBeUndefined();
+    expect(registrationFor('pi')?.restoreProjection?.({
+      session: { profile: 'pi' },
+      extraArgs: ['--continue']
+    })).toEqual({
+      profile: 'pi-resume',
+      extraArgs: undefined
+    });
+    expect(registrationFor('grok')?.restoreProjection?.({
+      session: { profile: 'grok' }
+    })).toEqual({
+      profile: 'grok-resume',
+      extraArgs: undefined
+    });
+    expect(registrationFor('cursor')?.restoreProjection?.({
+      session: { profile: 'cursor' },
+      extraArgs: ['--continue']
+    })).toEqual({
+      profile: 'cursor-resume',
+      extraArgs: undefined
     });
   });
 

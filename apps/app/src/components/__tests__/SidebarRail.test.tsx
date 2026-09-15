@@ -172,5 +172,6 @@ describe('SidebarRail', () => {
     expect(source).toContain('onSplitPointerDown');
     expect(source).toContain('event.metaKey || event.ctrlKey');
     expect(source).toContain('openInSplit()');
+    expect(source).toContain('if (consumeClick())');
   });
 });

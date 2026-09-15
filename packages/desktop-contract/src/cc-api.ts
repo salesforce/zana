@@ -737,6 +737,8 @@ export interface CcApi {
   terminals: {
     verifyTmux(): Promise<TmuxVerifyResult>;
     listTmuxRestoreCandidates(): Promise<TmuxRestoreCandidate[]>;
+    /** Ledger-backed exited CLI cards (no spawn). Desktop-only. */
+    listRememberedSessions(): Promise<TerminalSession[]>;
     list(projectId: string): Promise<TerminalSession[]>;
     create(req: CreateTerminalRequest): Promise<Result<TerminalSession>>;
     /** Recreate a persisted tab from a main-owned capability. Legacy recipes require native confirmation. */

@@ -1,3 +1,4 @@
+import { suppressPostDragClick } from '../suppress-post-drag-click.js';
 import { pickZone, zoneBox, type SplitZone, type ZoneDecision } from './zones.js';
 
 /** Marks a pane's root element so the drag layer can hit-test it. */
@@ -113,7 +114,7 @@ export function beginSplitDrag(config: SplitDragConfig): void {
     const wasEngaged = engaged;
     const dropTarget = engaged ? target : null;
     teardown();
-    if (wasEngaged) swallowNextClick();
+    if (wasEngaged) suppressPostDragClick();
     if (dropTarget) config.onDrop(dropTarget);
     if (wasEngaged) config.onEnd?.({ dropped: dropTarget !== null });
   }
@@ -122,7 +123,7 @@ export function beginSplitDrag(config: SplitDragConfig): void {
     const wasEngaged = engaged;
     teardown();
     if (wasEngaged) {
-      swallowNextClick();
+      suppressPostDragClick();
       config.onEnd?.({ dropped: false });
     }
   }
@@ -130,16 +131,6 @@ export function beginSplitDrag(config: SplitDragConfig): void {
   window.addEventListener('pointermove', handleMove);
   window.addEventListener('pointerup', handleUp);
   window.addEventListener('pointercancel', handleCancel);
-}
-
-function swallowNextClick(): void {
-  const swallow = (event: MouseEvent): void => {
-    event.stopPropagation();
-    event.preventDefault();
-    window.removeEventListener('click', swallow, true);
-  };
-  window.addEventListener('click', swallow, true);
-  window.setTimeout(() => window.removeEventListener('click', swallow, true), 300);
 }
 
 function paneElementAt(clientX: number, clientY: number): HTMLElement | null {

@@ -1,13 +1,11 @@
 /**
- * Shared structured-question schema + builder for the inbox tools.
- *
- * Both `inbox_ask` (session-scoped, blocks for the answer) and `inbox_push`
- * (project- or session-scoped status channel) can attach a structured
- * multiple-choice form to an entry: lettered options, an optional free-text
- * "Other…" row, and single- or multi-select. The RENDER + ANSWER-INJECTION are
- * identical (both feed the same {@link InboxQuestion}/`questions` fields the
- * detail pane's QuestionBlock reads), so the Zod shape and the host-side letter
- * assignment live here rather than being copied into each tool.
+ * Shared structured-question schema + builder for inbox_push (and AskUserQuestion
+ * mapping). An inbox_push can attach a structured multiple-choice form to an
+ * entry: lettered options, an optional free-text "Other…" row, and single- or
+ * multi-select. The RENDER + ANSWER-INJECTION live on the same
+ * {@link InboxQuestion}/`questions` fields the detail pane's QuestionBlock
+ * reads, so the Zod shape and the host-side letter assignment live here rather
+ * than being copied into each caller.
  *
  * The host — never the agent — assigns the stable A/B/C letters, so the ordering
  * the user sees is deterministic and an agent can't collide two options on one
@@ -62,8 +60,7 @@ export const questionItemSchema = z
  * The raw-shape fields a tool folds into its own input schema to accept an
  * optional structured question — single-question mode (`question` + `options`)
  * or multi-question mode (`questions[]`). Spread this into the tool's schema
- * object. For `inbox_ask` these are required (the whole point is to ask); for
- * `inbox_push` they're an optional add-on to a status message.
+ * object. For `inbox_push` they're an optional add-on to a status message.
  */
 export const structuredQuestionInputShape = {
   options: z
@@ -89,7 +86,7 @@ export const structuredQuestionInputShape = {
     .describe(
       'Single-question mode: when true, you are BLOCKED on this answer (pinned in ' +
         '"Needs your answer"). When false, it is a soft/optional follow-up. Omit to use ' +
-        'the tool default (`inbox_ask` blocks, `inbox_push` does not).'
+        'the tool default (`inbox_push` does not block).'
     ),
   questions: z
     .array(questionItemSchema)
@@ -130,10 +127,9 @@ function label(opts: string[]): InboxQuestionOption[] {
  * (matches the {@link InboxEntry.questions} precedence).
  *
  * `defaultBlocking` is the tool's stance on whether an unspecified question
- * blocks the agent: `inbox_ask` passes true (the whole point is to block for an
- * answer), `inbox_push` passes false (an optional follow-up on a status push).
- * A per-question `blocking` in the payload always wins over this default. Only
- * the resolved `true` is persisted (false ⇒ omitted, matching the schema's
+ * blocks the agent: `inbox_push` passes false (an optional follow-up on a status
+ * push). A per-question `blocking` in the payload always wins over this default.
+ * Only the resolved `true` is persisted (false ⇒ omitted, matching the schema's
  * "absent ⇒ non-blocking" convention).
  */
 export function buildInboxQuestion(

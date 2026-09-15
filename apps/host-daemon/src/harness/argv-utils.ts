@@ -91,3 +91,28 @@ export function mergeAllowedTools(argv: string[], extras: string[]): string[] {
 export function mergeDisallowedTools(argv: string[], extras: string[]): string[] {
   return mergeToolsFlag(argv, '--disallowedTools', extras);
 }
+
+const SESSION_RESUME_VALUE = new Set(['--resume', '-r', '--session-id', '--session']);
+const SESSION_RESUME_BOOL = new Set(['--continue', '-c']);
+
+/**
+ * Drop resume/continue/session-id flags from extraArgs so a restore projection
+ * can attach its own exact-id dialect without doubling `--continue` or a stale
+ * `--resume`. Pure.
+ */
+export function stripSessionResumeFlags(extraArgs?: readonly string[]): string[] | undefined {
+  if (!extraArgs || extraArgs.length === 0) return extraArgs as string[] | undefined;
+  const out: string[] = [];
+  for (let i = 0; i < extraArgs.length; i += 1) {
+    const arg = extraArgs[i];
+    if (SESSION_RESUME_BOOL.has(arg) || /^(?:--continue|--resume|--session-id|--session)=/.test(arg)) {
+      continue;
+    }
+    if (SESSION_RESUME_VALUE.has(arg)) {
+      if (i + 1 < extraArgs.length && !extraArgs[i + 1].startsWith('-')) i += 1;
+      continue;
+    }
+    out.push(arg);
+  }
+  return out.length ? out : undefined;
+}

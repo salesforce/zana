@@ -58,6 +58,7 @@ export const IPC = {
     list: 'terminals:list',
     verifyTmux: 'terminals:verifyTmux',
     listTmuxRestoreCandidates: 'terminals:listTmuxRestoreCandidates',
+    listRememberedSessions: 'terminals:listRememberedSessions',
     create: 'terminals:create',
     restore: 'terminals:restore',
     /** Re-attach a remote tab whose local `ssh` proxy died during machine sleep.

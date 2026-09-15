@@ -5,11 +5,11 @@ There are two separate ways to use another computer with Zana:
 - **Enrolled machines** run a host daemon. The other box outbound-connects to
   this app. Add a folder on that machine from **Settings → Machines** (or the
   host picker when adding a local project). Threads then execute there.
-- **SSH remotes** are a project folder on a host from `~/.ssh/config`. Threads run
-  on a host daemon installed on that box (**Add remote** or composer
-  **Install**). Composer Send waits until the daemon is bound and online.
-  The env chip shows `user@host · path · Online`. This machine's host daemon
-  must be connected (it owns `~/.ssh` for the install).
+- **SSH remotes** are a project folder on a host from `~/.ssh/config`. **Add
+  remote** registers the project only. Install the host daemon from composer
+  **Install** (or Settings → Machines). Composer Send waits until the daemon
+  is bound and online. The env chip shows `user@host · path · Online`. This
+  machine's host daemon must be connected (it owns `~/.ssh` for the install).
 
 Copy-paste join remains for boxes you cannot SSH to from this machine.
 
@@ -128,10 +128,10 @@ Settings, or the repo `public-app-url` file), not loopback. This machine's
 host daemon must be connected — it owns `~/.ssh` and performs the SSH. If SSH
 cannot run, copy the Settings → Add machine join command.
 
-**Add remote project** registers the SSH project and installs a host daemon
-over SSH. Composer **Install** stays available until a daemon is bound. Send
-is blocked until that daemon is online. If SSH cannot complete the install,
-retry from the composer or copy the reverse-tunnel command.
+**Add remote project** registers the SSH project only. Composer **Install**
+enrolls a host daemon over SSH and stays available until a daemon is bound.
+Send is blocked until that daemon is online. If SSH cannot complete the
+install, retry from the composer or copy the reverse-tunnel command.
 
 ---
 

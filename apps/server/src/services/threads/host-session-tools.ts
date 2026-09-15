@@ -97,7 +97,6 @@ export const HOST_SHARE_TOOL_NAMES = [
 export const HOST_OPTIONAL_SHARE_TOOL_NAMES = [HOST_RUN_IN_TERMINAL_TOOL_NAME] as const;
 
 export const HOST_ADAPT_TOOL_NAMES = [
-  'inbox_ask',
   'followup_create',
   'followup_list',
   'followup_resolve',

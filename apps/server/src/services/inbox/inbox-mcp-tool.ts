@@ -40,8 +40,8 @@ export const INBOX_PUSH_DESCRIPTION = [
   '(an optional "Other…" row via `allowOther`, checkboxes via `multiSelect`) under',
   "the message, and — when this push is on a live session — the user's pick comes",
   'back to you HERE as if typed. For several questions at once, pass `questions`',
-  'instead. Leave them off for a plain status update. (When you specifically need',
-  'to BLOCK and wait for a decision, prefer `inbox_ask`.)',
+  'instead. Leave them off for a plain status update. Set `blocking: true` when',
+  'you cannot proceed without the answer.',
   '',
   'Set `report: true` when this push is a finished DELIVERABLE the user will want',
   'to find again — a completed analysis, an RCA, an audit, a design writeup (the',
@@ -117,8 +117,8 @@ export const inboxPushInputSchema = {
         'surface fast. Default false — leave off for routine status updates and questions.'
     ),
   // Optional structured-question add-on. When present, `comments` becomes the
-  // question prompt and these render as a lettered answer form (see inbox_ask
-  // for the same shape). Omit for a plain status push.
+  // question prompt and these render as a lettered answer form. Omit for a
+  // plain status push.
   ...structuredQuestionInputShape
 };
 

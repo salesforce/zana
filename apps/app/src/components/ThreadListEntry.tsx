@@ -35,17 +35,17 @@ export function ThreadListEntry({
   const workingPhrase = useThreadWorkingPhrase(working);
   const tone = threadStatusTone(displayStatus, waitingOnUser);
   const statusLabel = threadStatusLabel(displayStatus, waitingOnUser, null, workingPhrase);
-  const resolvedProjectId = projectId ?? thread.projectId;
+  const routeProjectId = projectId ?? null;
   const listIndicator = resolveThreadListIndicator(threadListIndicatorState(thread));
   const listIndicatorLabel = getThreadListIndicatorLabel(listIndicator);
-  const { onPointerDown, openInSplit } = useThreadRowSplitDrag({
-    projectId: resolvedProjectId,
+  const { onPointerDown, openInSplit, consumeClick } = useThreadRowSplitDrag({
+    projectId: routeProjectId,
     threadId: thread.id,
     title: thread.title ?? 'Untitled agent'
   });
   const splitIndicator = usePaneContentSplitIndicator({
     kind: 'thread',
-    projectId: resolvedProjectId,
+    projectId: routeProjectId,
     threadId: thread.id
   });
   return (
@@ -57,6 +57,7 @@ export function ThreadListEntry({
       data-status={thread.status}
       onPointerDown={onPointerDown}
       onClick={(e) => {
+        if (consumeClick()) return;
         if (e.metaKey || e.ctrlKey) {
           e.preventDefault();
           openInSplit();

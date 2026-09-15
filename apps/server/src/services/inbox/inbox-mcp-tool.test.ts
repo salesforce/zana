@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { registerInboxPushTool, type RegisterInboxPushOpts } from './inbox-mcp-tool.js';
 import { createMemoryInboxStore, type IInboxStore } from '@zana-ai/zcc-server';
 
-/** Minimal fake McpServer capturing the handler (mirrors inbox-ask-mcp-tool.test.ts). */
+/** Minimal fake McpServer capturing the registered handler. */
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
   isError?: boolean;
   content: Array<{ type: string; text?: string }>;

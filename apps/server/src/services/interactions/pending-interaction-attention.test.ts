@@ -40,7 +40,7 @@ describe('pending interaction inbox copies', () => {
     expect(isPendingInteractionInboxCopy({})).toBe(false);
   });
 
-  it('prunes leftover pending-interaction clones and leaves inbox_ask questions', async () => {
+  it('prunes leftover pending-interaction clones and leaves structured inbox questions', async () => {
     const deleted: string[] = [];
     const inbox = inboxStub({
       entries: [

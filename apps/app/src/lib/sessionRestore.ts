@@ -38,7 +38,7 @@ import { isClaudeProfile, isCodexProfile, isOpenCodeProfile } from '@zana-ai/zcc
  * Re-attach the peeled suffix and return; undefined when nothing survives. Pure.
  */
 const BOOLEAN_RESUME = new Set(['--continue', '-c']);
-const VALUE_RESUME = new Set(['--resume', '-r', '--session-id']);
+const VALUE_RESUME = new Set(['--resume', '-r', '--session-id', '--session']);
 export function stripOpeningPrompt(extraArgs: string[] | undefined): string[] | undefined {
   if (!extraArgs || extraArgs.length === 0) return extraArgs;
   const withoutOpenCodePrompt: string[] = [];
@@ -58,7 +58,7 @@ export function stripOpeningPrompt(extraArgs: string[] | undefined): string[] | 
     const n = head.length;
     if (n === 0) break;
     const last = head[n - 1];
-    if (BOOLEAN_RESUME.has(last) || /^(?:--continue|--resume|--session-id)=/.test(last)) {
+    if (BOOLEAN_RESUME.has(last) || /^(?:--continue|--resume|--session-id|--session)=/.test(last)) {
       suffix.unshift(head.pop() as string);
       continue;
     }
@@ -142,13 +142,24 @@ export function resolveRestartProfile(
   cleanArgs: string[] | undefined,
   claudeSessionId: string | undefined,
   codexSessionId: string | undefined,
-  openCodeSessionId: string | undefined
+  openCodeSessionId: string | undefined,
+  nativeConversationId?: string
 ): { profile: LaunchProfileId; extraArgs: string[] | undefined; resumeSessionId: string | undefined } {
   const isCodex = isCodexProfile(profile);
   const isOpenCode = isOpenCodeProfile(profile);
+  if (isCodex || isOpenCode) {
+    return {
+      profile: isCodex ? 'codex-resume' : 'opencode-resume',
+      extraArgs: cleanArgs,
+      resumeSessionId: isCodex ? codexSessionId : openCodeSessionId
+    };
+  }
+  if (nativeConversationId) {
+    return { profile, extraArgs: stripOpeningPrompt(cleanArgs), resumeSessionId: nativeConversationId };
+  }
   return {
-    profile: isCodex ? 'codex-resume' : isOpenCode ? 'opencode-resume' : profile,
-    extraArgs: isCodex || isOpenCode ? cleanArgs : withResumeArgs(profile, cleanArgs, claudeSessionId),
-    resumeSessionId: isCodex ? codexSessionId : isOpenCode ? openCodeSessionId : undefined
+    profile,
+    extraArgs: withResumeArgs(profile, cleanArgs, claudeSessionId),
+    resumeSessionId: undefined
   };
 }

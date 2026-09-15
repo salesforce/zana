@@ -386,5 +386,8 @@ describe('Sidebar structure and compact accessibility', () => {
     const source = readFileSync(new URL('../sidebar/useThreadRowSplitDrag.ts', import.meta.url), 'utf8');
     expect(source).toContain("const MAIN_CONTENT_SELECTOR = '.split-workspace'");
     expect(source).not.toContain('main.shell-main');
+    expect(source).toContain('consumeClick: () => boolean');
+    expect(source).toContain('suppressClickRef.current = true');
+    expect(source).toContain('onEnd: () => {');
   });
 });

@@ -27,11 +27,7 @@ function view(overrides: Partial<Parameters<typeof AddRemoteProjectDialogView>[0
       user=""
       remotePath=""
       proxyJump=""
-      created={false}
       busy={false}
-      installing={false}
-      installLogs={[]}
-      pairingCommand={null}
       canSubmit={true}
       onFilterChange={vi.fn()}
       onRefresh={vi.fn()}
@@ -48,42 +44,28 @@ function view(overrides: Partial<Parameters<typeof AddRemoteProjectDialogView>[0
 }
 
 describe('AddRemoteProjectDialogView', () => {
-  it('lists SSH hosts and always installs the host daemon', () => {
+  it('lists SSH hosts and registers without installing a host daemon', () => {
     const html = renderToStaticMarkup(view());
     expect(html).toContain('Add remote project');
     expect(html).toContain('limited-pony');
     expect(html).toContain('educational-roadrunner');
     expect(html).toContain('kit-kat');
-    expect(html).toContain('Add and install');
+    expect(html).toContain('>Add<');
+    expect(html).not.toContain('Add and install');
     expect(html).toContain('Threads run on a host daemon');
-    expect(html).not.toContain('data-testid="remote-install-host"');
-    expect(html).not.toContain('Continue without daemon');
+    expect(html).toContain('Install the host daemon later from the composer');
+    expect(html).not.toContain('SSHs from this computer');
+    expect(html).not.toContain('data-testid="remote-install-log"');
+    expect(html).not.toContain('data-testid="remote-pairing-command"');
   });
 
-  it('shows install progress and locks the form', () => {
+  it('locks the form while adding', () => {
     const html = renderToStaticMarkup(view({
       busy: true,
-      installing: true,
-      canSubmit: false,
-      installLogs: ['Installing host daemon over SSH…']
+      canSubmit: false
     }));
-    expect(html).toContain('Installing…');
-    expect(html).toContain('data-testid="remote-install-log"');
-    expect(html).toContain('Installing host daemon over SSH…');
     expect(html).toContain('disabled=""');
-  });
-
-  it('offers retry and a copy-paste command when install fails after the project exists', () => {
-    const html = renderToStaticMarkup(view({
-      created: true,
-      error: 'Set a public app URL first',
-      pairingCommand: 'curl -fL https://box.example/install.sh | sh',
-      canSubmit: true
-    }));
-    expect(html).toContain('Retry install');
-    expect(html).toContain('>Cancel<');
-    expect(html).not.toContain('Continue without daemon');
-    expect(html).toContain('data-testid="remote-pairing-command"');
-    expect(html).toContain('curl -fL https://box.example/install.sh | sh');
+    expect(html).toContain('>Add<');
+    expect(html).not.toContain('Installing…');
   });
 });

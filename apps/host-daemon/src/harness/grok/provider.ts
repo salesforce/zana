@@ -107,8 +107,17 @@ export class GrokProvider extends BaseLaunchProvider {
     return {};
   }
 
-  resolveLaunch(profile: LaunchProfileId, config: AppConfig, _autoModeActive: boolean): ResolvedLaunch {
+  resolveLaunch(
+    profile: LaunchProfileId,
+    config: AppConfig,
+    _autoModeActive: boolean,
+    resumeSessionId?: string
+  ): ResolvedLaunch {
     const command = grokBinary(config);
+    if (resumeSessionId) {
+      const rest = profile === 'grok-yolo' ? ['--always-approve'] : [];
+      return { command, args: ['--resume', resumeSessionId, ...rest] };
+    }
     if (profile === 'grok-resume') {
       return { command, args: ['--continue'] };
     }

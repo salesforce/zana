@@ -40,7 +40,6 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import { resolveDoc } from '../projects/fs.js';
 import { registerInboxPushTool } from '../inbox/inbox-mcp-tool.js';
-import { registerInboxAskTool } from '../inbox/inbox-ask-mcp-tool.js';
 import { registerInboxSearchTool } from '../inbox/inbox-search-mcp-tool.js';
 import { registerPreviewFileTool } from '../threads/preview-file-mcp-tool.js';
 import { registerRunInTerminalTool } from '../threads/run-in-terminal-mcp-tool.js';
@@ -625,21 +624,6 @@ function buildProjectMcpServer(opts: {
     notify: scheduledLevel ?? undefined,
     heldQuestions: opts.heldQuestions
   });
-  // inbox_ask: the interactive sibling of inbox_push (structured multiple-choice
-  // question + Skip/Continue). Session-scoped ONLY — the chosen answer is injected
-  // back into THIS session's pty, so without a session there's nowhere to deliver.
-  if (opts.sessionId) {
-    registerInboxAskTool(mcp, {
-      projectId: opts.projectId,
-      projectLabel: opts.projectLabel,
-      sessionId: opts.sessionId,
-      isExecutionBound: !!opts.resolveExecutionCohortBinding?.(opts.sessionId, opts.projectId),
-      scheduled: scheduledLevel !== null,
-      notify: scheduledLevel ?? undefined,
-      inboxStore: opts.inboxStore,
-      heldQuestions: opts.heldQuestions
-    });
-  }
   // inbox_search: the READ counterpart to inbox_push. Available on both route
   // shapes (it reads, no originating session needed). projectId from the route is
   // the default, confined scope; the agent can widen to all projects explicitly.

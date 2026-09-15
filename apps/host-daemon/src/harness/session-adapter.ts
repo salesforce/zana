@@ -24,15 +24,17 @@ export interface HarnessTranscriptAdapter extends HarnessSessionAdapter<Transcri
 /** Only these main-owned fields can be populated by a harness resolver. */
 export type NativeSessionPatch =
   | { readonly kind: 'codex'; readonly codexSessionId: string }
-  | { readonly kind: 'opencode'; readonly openCodeSessionId: string };
+  | { readonly kind: 'opencode'; readonly openCodeSessionId: string }
+  | { readonly kind: 'native'; readonly nativeConversationId: string };
 
 /** Convert an allowed native patch to persisted TerminalSession fields only. */
 export function nativeSessionFields(patch: NativeSessionPatch | undefined): {
   codexSessionId?: string;
   openCodeSessionId?: string;
+  nativeConversationId?: string;
 } {
   if (!patch) return {};
-  return patch.kind === 'codex'
-    ? { codexSessionId: patch.codexSessionId }
-    : { openCodeSessionId: patch.openCodeSessionId };
+  if (patch.kind === 'codex') return { codexSessionId: patch.codexSessionId };
+  if (patch.kind === 'opencode') return { openCodeSessionId: patch.openCodeSessionId };
+  return { nativeConversationId: patch.nativeConversationId };
 }

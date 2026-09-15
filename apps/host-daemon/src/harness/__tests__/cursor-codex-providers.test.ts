@@ -49,6 +49,13 @@ describe('CursorProvider', () => {
     expect(p.resolveLaunch('cursor', CONFIG, false)).toEqual({ command: 'cursor-agent', args: [] });
   });
 
+  it('resolveLaunch: resumeSessionId uses --resume <uuid>', () => {
+    expect(p.resolveLaunch('cursor', CONFIG, false, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')).toEqual({
+      command: 'cursor-agent',
+      args: ['--resume', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee']
+    });
+  });
+
   it('resolveLaunch: cursor-resume prepends --resume', () => {
     expect(p.resolveLaunch('cursor-resume', CONFIG, false)).toEqual({
       command: 'cursor-agent',

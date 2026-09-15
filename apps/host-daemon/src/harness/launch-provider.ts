@@ -125,6 +125,12 @@ export interface RemoteCommandInput {
    */
   resume?: boolean;
   /**
+   * Provider-native EXACT-session resume target — passed through to
+   * {@link LaunchProvider.resolveLaunch} on the remote path so Pi/Grok/Cursor
+   * `--session` / `--resume <uuid>` stay in lockstep with local create().
+   */
+  resumeSessionId?: string;
+  /**
    * The reverse-tunnel loopback URL of the zcc-inbox MCP server, as the remote
    * agent sees it: `http://127.0.0.1:<remotePort>/mcp/<projectId>/<sessionId>`
    * (the `ssh -R` forward back to our local MCP/hook HTTP server). Set by

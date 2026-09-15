@@ -93,6 +93,7 @@ import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-st
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
 import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { extraArgsPinSession } from '@zana-ai/zcc-spawn-plan';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import { createExecutionConsentManagement } from '@zana-ai/zcc-host-daemon/harness/execution-consent-management';
 import { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
@@ -937,6 +938,33 @@ function restorePrincipal(capability: { id: string; request: CreateTerminalReque
     : { kind: 'automation', id: `restore:${capability.id}` };
 }
 
+async function withPreparedNativeSession(
+  req: CreateTerminalRequest,
+  cwd: string,
+  config: AppConfig
+): Promise<CreateTerminalRequest> {
+  // Resume profiles already pin the conversation (`--continue` / `--resume` with
+  // no id). Minting a fresh Cursor chat here would replace that blunt restore.
+  if (
+    req.resumeSessionId ||
+    extraArgsPinSession(req.extraArgs) ||
+    providerFor(req.profile).baseArgsPinSession(req.profile)
+  ) {
+    return req;
+  }
+  try {
+    const prepared = await registrationFor(req.profile)?.prepareNativeSession?.({
+      config,
+      cwd,
+      profile: req.profile
+    });
+    if (!prepared?.id) return req;
+    return { ...req, resumeSessionId: prepared.id };
+  } catch {
+    return req;
+  }
+}
+
 const launchAuthorizationBySession = new Map<string, string>();
 const launchPrincipals = new Map<string, LaunchPrincipal>();
 const launchAuthorization = new LaunchAuthorizationService({
@@ -1312,7 +1340,7 @@ const idleTriage = new IdleTriageService({
  * itself before it ever stops. It spends NO tokens — pure gating + a deferred
  * append. `observe` is wired to the agent-status edge and `remove` to pty exit
  * (Rule 3), mirroring {@link IdleTriageService}. The gate is passed into the MCP
- * inbox tools (`inbox_ask` / `inbox_push`) so they can park a question at push
+ * inbox tools (`inbox_push`) so they can park a question at push
  * time; `getAgentState` reads the live tracker (never renderer-supplied, Rule 1).
  */
 const heldQuestions = new HeldQuestionService({
@@ -3832,7 +3860,12 @@ async function launchAuthorizedTerminal(
       selection.personaId ? resolvedPersonas.find((candidate) => candidate.id === selection.personaId) : undefined
     ),
     spawn: async (authorizedPlan) => {
-      const result = createTerminalConfined(authorizedPlan.request, {
+      const request = await withPreparedNativeSession(
+        authorizedPlan.request,
+        authorizedPlan.resolved.effectiveLaunch.cwd,
+        authorizedPlan.resolved.config
+      );
+      const result = createTerminalConfined(request, {
         ...spawnOpts,
         preallocatedSessionId: authorizedPlan.sessionId,
         launchSnapshot: {
@@ -4088,8 +4121,13 @@ async function launchBackgroundTerminal(
     },
     spawn: async (authorizedPlan) => {
       const spawnLaunch = materializeEffectiveLaunch(authorizedPlan.resolved.effectiveLaunch);
+      const request = await withPreparedNativeSession(
+        authorizedPlan.request,
+        spawnLaunch.cwd,
+        authorizedPlan.resolved.config
+      );
       const session = createTerminalFromAuthorizedPlan({
-        ...authorizedPlan.request,
+        ...request,
         projectSettings: authorizedPlan.resolved.projectSettings,
         cwd: spawnLaunch.cwd,
         preallocatedSessionId: authorizedPlan.sessionId
@@ -6981,11 +7019,11 @@ async function bootstrapNormal() {
     },
     // Question callback (EXPERIMENTAL, opt-in). A session's `AskUserQuestion`
     // PreToolUse hook forwarded the tool-call JSON; render it in the app's own
-    // Questions UI by REUSING the inbox_ask loop: parse → map to InboxQuestion[]
+    // Questions UI by REUSING the inbox question loop: parse → map to InboxQuestion[]
     // → append to the inbox for this session, so the existing
     // `inbox:onAppended` push → QuestionBlock render fires. The answer flows
     // back through the SAME replyToInboxEntry → terminals:reply → ptys.reply
-    // path inbox_ask uses (the guaranteed terminal fallback stays live), so
+    // path inbox_push questions use (the guaranteed terminal fallback stays live), so
     // there is NO new answer-injection code here. Fail-open: any miss just
     // leaves the in-terminal question as-is.
     onQuestionHook: (projectId: string, sessionId: string, rawBody: string) => {
@@ -7006,7 +7044,7 @@ async function bootstrapNormal() {
       const questions = mapAskUserQuestion(toolInput);
       if (questions.length === 0) return; // garbage / empty payload
       // A question always wants the user's eyes — bump a background run to loud
-      // rather than dropping it into a collapsed group (mirrors inbox_ask).
+      // rather than dropping it into a collapsed group (mirrors a blocking inbox_push).
       const scheduled = session.scheduled;
       const projectLabel = store.listProjects().find((p) => p.id === projectId)?.name;
       void inboxStore

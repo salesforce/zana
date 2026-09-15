@@ -1576,7 +1576,7 @@ interface DataState {
    *  toggle. Default off; when off the "Suggestions" nav entry is absent. */
   suggestionsEnabled: boolean;
   /** Mirror of AppConfig.structuredQuestionsEnabled — gates the interactive
-   *  lettered-option question form (inbox_ask / inbox_push options / follow-up
+   *  lettered-option question form (inbox_push options / follow-up
    *  picker) vs. plain markdown + free-text reply. Hydrated on init, kept live by
    *  the Settings toggle. Default ON. */
   structuredQuestionsEnabled: boolean;
@@ -1689,6 +1689,8 @@ interface DataState {
    * not a localStorage tab snapshot.
    */
   restoreSessions: (skipProjectIds?: Set<string>) => Promise<void>;
+  /** Paint ledger-backed exited CLI cards. Does not spawn. */
+  hydrateRememberedSessions: (skipProjectIds?: Set<string>) => Promise<void>;
   loadProjects: () => Promise<void>;
   loadClaudeSessions: (projectId: string) => Promise<void>;
   addProject: () => Promise<Project | null>;
@@ -1939,10 +1941,19 @@ export function agentViewTerminals(
  * Live sessions for a project's inline rail expansion (global Workspaces tree
  * and the focused-project session rail). Scheduler jobs stay off this tree —
  * they belong on the Agents board / list when that setting is on, and in the
- * Scheduler panel. Exited/dismissed agents drop out automatically.
+ * Scheduler panel. Linger (non-remembered) exits drop out; ledger-backed
+ * remembered cards nest after live ones, capped like idle threads.
  */
+export const RAIL_REMEMBERED_AGENT_LIMIT = 8;
+
 export function projectRailTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
-  return listedTerminals(list).filter((t) => t.status !== 'exited');
+  const listed = listedTerminals(list);
+  const live = listed.filter((t) => t.status !== 'exited');
+  const remembered = listed
+    .filter((t) => t.status === 'exited' && t.remembered)
+    .sort((a, b) => (b.finishedAt ?? b.createdAt) - (a.finishedAt ?? a.createdAt))
+    .slice(0, RAIL_REMEMBERED_AGENT_LIMIT);
+  return [...live, ...remembered];
 }
 
 /**
@@ -2416,6 +2427,7 @@ export const useData = create<DataState>((set, get) => ({
       // its own live ptys above (display only).
       if (!isScopedWindow() && hasDesktopBridge()) {
         await get().restoreSessions(hydrationFailed);
+        await get().hydrateRememberedSessions(hydrationFailed);
       }
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to initialize app state'));
@@ -3276,6 +3288,43 @@ export const useData = create<DataState>((set, get) => ({
     }
   },
 
+  async hydrateRememberedSessions(skipProjectIds) {
+    const { projects, terminals } = get();
+    const knownProjects = new Set(projects.map((project) => project.id));
+    let remembered: TerminalSession[] = [];
+    try {
+      remembered = await product.terminals.listRememberedSessions();
+    } catch {
+      return;
+    }
+    if (remembered.length === 0) return;
+    const byProject = new Map<string, TerminalSession[]>();
+    for (const session of remembered) {
+      if (!knownProjects.has(session.projectId)) continue;
+      if (skipProjectIds?.has(session.projectId)) continue;
+      const existing = terminals[session.projectId] ?? [];
+      if (existing.some((row) => row.id === session.id || row.restoreCapabilityId === session.restoreCapabilityId)) {
+        continue;
+      }
+      const list = byProject.get(session.projectId) ?? [];
+      list.push(session);
+      byProject.set(session.projectId, list);
+    }
+    if (byProject.size === 0) return;
+    set((state) => {
+      const next = { ...state.terminals };
+      for (const [projectId, sessions] of byProject) {
+        const list = next[projectId] ?? [];
+        const extras = sessions.filter(
+          (session) =>
+            !list.some((row) => row.id === session.id || row.restoreCapabilityId === session.restoreCapabilityId)
+        );
+        if (extras.length) next[projectId] = [...list, ...extras];
+      }
+      return { terminals: next };
+    });
+  },
+
   async closeTerminal(sessionId, projectId) {
     const list = get().terminals[projectId] || [];
     const closing = list.find((t) => t.id === sessionId);
@@ -3618,6 +3667,34 @@ export const useData = create<DataState>((set, get) => ({
     const idx = list.findIndex((t) => t.id === sessionId);
     if (idx === -1) return null;
     const src = list[idx];
+    if (src.status === 'exited' && src.restoreCapabilityId) {
+      let created: TerminalSession | null;
+      try {
+        const result = await product.terminals.restore({ capabilityId: src.restoreCapabilityId });
+        if (!result.ok) {
+          pushErrorToast(result.message);
+          return null;
+        }
+        created = result.value;
+      } catch (err) {
+        pushErrorToast(errorMessage(err, 'Failed to resume session'));
+        return null;
+      }
+      if (!created) {
+        pushErrorToast('Failed to resume session');
+        return null;
+      }
+      set((s) => {
+        const cur = s.terminals[projectId] || [];
+        const without = cur.filter((t) => t.id !== sessionId && t.id !== created!.id);
+        const target = Math.min(idx, without.length);
+        const restored = { ...created!, pinned: src.pinned };
+        const next = without.slice(0, target).concat(restored, without.slice(target));
+        return { terminals: { ...s.terminals, [projectId]: next } };
+      });
+      useUi.getState().selectTab(projectId, created.id);
+      return created;
+    }
     // Snapshot what we need before kill/reset — once we close the pty the
     // session may be removed from the live map and we lose pinned/title.
     // Also carries codex/opencode's detected session ids so a restart resumes
@@ -3631,7 +3708,8 @@ export const useData = create<DataState>((set, get) => ({
       cwd: src.cwd,
       claudeSessionId: src.claudeSessionId,
       codexSessionId: src.codexSessionId,
-      openCodeSessionId: src.openCodeSessionId
+      openCodeSessionId: src.openCodeSessionId,
+      nativeConversationId: src.nativeConversationId
     };
     try {
       if (!await product.terminals.close(sessionId)) {
@@ -3662,7 +3740,8 @@ export const useData = create<DataState>((set, get) => ({
       snapshot.extraArgs,
       snapshot.claudeSessionId,
       snapshot.codexSessionId,
-      snapshot.openCodeSessionId
+      snapshot.openCodeSessionId,
+      snapshot.nativeConversationId
     );
     const created = await get().createTerminal(projectId, resolved.profile, 80, 24, {
       extraArgs: resolved.extraArgs,

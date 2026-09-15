@@ -48,8 +48,13 @@ describe('project-row workspace actions', () => {
     const rows = readFileSync(new URL('./project-session-rail-rows.tsx', import.meta.url), 'utf8');
     expect(source).toContain('getAgentSessionRoutePath(t.id, scopedProjectId)');
     expect(source).not.toContain('openAgentModal');
+    expect(source).toContain('routeProjectId={scopedProjectId}');
+    expect(source).toContain('projectId={p.id}');
+    expect(source).not.toContain('projectId={scopedProjectId ?? p.id}');
     expect(rows).toContain('usePaneContentSplitDrag');
     expect(rows).toContain("kind: 'agent-session'");
+    expect(rows).toContain('projectId: routeProjectId');
+    expect(rows).toContain('if (consumeClick()) return;');
   });
 
   it('shows Default Project for the scratch folder without renaming the tag', () => {
@@ -251,6 +256,14 @@ describe('workspace move up/down', () => {
     expect(source).toContain("if (e.key === 'Escape') setMenu(null);");
     expect(source).not.toContain('const close = () => setMenu(null);');
   });
+
+  it('keeps Default Project pinned first and out of reorder', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('pinDefaultProjectFirst(pinFavoriteProjectsFirst(sorted))');
+    expect(source).toContain('renamingId !== p.id && !isScratchWorkspaceProject(p)');
+    expect(source).toContain('pinnedFirst || prevPinned || menuIndex <= 0');
+    expect(source).toContain('pinnedFirst || menuIndex === -1');
+  });
 });
 
 describe('nested live threads', () => {
@@ -261,9 +274,11 @@ describe('nested live threads', () => {
     expect(source).toContain('threadIsLiveForRail');
     expect(source).toContain('ProjectAgentRailRow');
     expect(source).toContain('ProjectThreadRailRow');
+    expect(source).toContain('routeProjectId={scopedProjectId}');
     expect(rows).toContain('data-testid="project-thread-row"');
     expect(source).toContain('navigate(getThreadRoutePath(thread.id, scopedProjectId))');
     expect(rows).toContain('onPointerDown={(e) => {');
+    expect(rows).toContain('if (consumeClick()) return;');
     expect(source).toContain('active={activeThreadId === thread.id}');
     expect(rows).toContain("active ? ' active' : ''");
     expect(source).toContain('useRouteState()');
@@ -272,7 +287,7 @@ describe('nested live threads', () => {
     expect(source).toContain('projectRailTerminals(terminals[p.id]).length > 0');
     expect(source).toContain('isProjectRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p))');
     expect(rows).toContain('!session.scheduled && <AgentDeleteQuickAction');
-    expect(source).toContain('pinFavoriteProjectsFirst(sorted)');
+    expect(source).toContain('pinDefaultProjectFirst(pinFavoriteProjectsFirst(sorted))');
     expect(source).not.toContain('p.id === selectedId && projectHasNestableSessions(p)');
     expect(rows).toContain('<ProviderIcon providerId={thread.providerId}');
     expect(rows).toContain('threadRailStatus');

@@ -314,7 +314,7 @@ function ModalPendingQuestion({ session }: { session: TerminalSession }) {
   const questions = inboxQuestions(pending);
   if (questions.length === 0) return null;
 
-  // The actual question text. In single-question `inbox_ask` mode the question
+  // The actual question text. In single-question mode the question
   // lives in `comments` (the `question` field holds only the lettered options);
   // in multi-question mode `comments` is the shared preamble and each question
   // renders its own prompt inside the card. We pass it as the QuestionBlock's

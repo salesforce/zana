@@ -39,7 +39,7 @@ import { AddGitProjectDialog } from '../AddGitProjectDialog.js';
 import { AddLocalProjectDialog } from '../AddLocalProjectDialog.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
-import { isProjectRailExpanded, pinFavoriteProjectsFirst } from './project-rail.js';
+import { isProjectRailExpanded, pinDefaultProjectFirst, pinFavoriteProjectsFirst } from './project-rail.js';
 import { ProjectAgentRailRow, ProjectThreadRailRow } from './project-session-rail-rows.js';
 import { projectNavigationSessions } from '../../lib/teamRunOrganization.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
@@ -53,7 +53,7 @@ import { copyText } from '../../lib/copy-text.js';
 import { getAgentSessionRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { railThreadsForProject, threadIsLiveForRail } from '../fleet-item.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../lib/suppress-post-drag-click.js';
-import { composerProjectLabel, isRemoteWorkspaceProject } from '../composer-project-default.js';
+import { composerProjectLabel, isRemoteWorkspaceProject, isScratchWorkspaceProject } from '../composer-project-default.js';
 import { ProjectDot } from './ProjectDot.js';
 import { resolveIcon } from '../../lib/resolveIcon.js';
 import { listCreateProjectActions, listProjectMenuActions, subscribePluginSlots } from '../../plugins/plugin-slots.js';
@@ -381,7 +381,7 @@ export function ProjectsList({
             ? b.createdAt - a.createdAt
             : b.lastActiveAt - a.lastActiveAt
         );
-    return pinFavoriteProjectsFirst(sorted);
+    return pinDefaultProjectFirst(pinFavoriteProjectsFirst(sorted));
   }, [inSidebar, projects, sidebarProjectSort]);
 
   // A project is "active" when it has at least one live interactive session
@@ -440,6 +440,10 @@ export function ProjectsList({
   };
   const reorderWithinGroup = (group: RailGroup, fromId: string, toId: string) => {
     if (!canReorder || fromId === toId) return;
+    const locked = group.projects.some(
+      (project) => (project.id === fromId || project.id === toId) && isScratchWorkspaceProject(project)
+    );
+    if (locked) return;
     if (inSidebar && sidebarProjectSort !== 'manual') setSidebarSort('manual');
     const orderedIds = sortedProjects.map((project) => project.id);
     const nextIds = reorderProjectIds(
@@ -595,7 +599,7 @@ export function ProjectsList({
   };
 
   const renderProject = (group: RailGroup, p: Project) => {
-    const sortable = canReorder && renamingId !== p.id;
+    const sortable = canReorder && renamingId !== p.id && !isScratchWorkspaceProject(p);
     const labelClass = sortable ? 'project-label project-label--sortable' : 'project-label';
     const liveList = projectNavigationSessions(
       projectRailTerminals(terminals[p.id]),
@@ -763,7 +767,8 @@ export function ProjectsList({
                     key={thread.id}
                     thread={thread}
                     active={activeThreadId === thread.id}
-                    projectId={scopedProjectId ?? p.id}
+                    projectId={p.id}
+                    routeProjectId={scopedProjectId}
                     onOpen={() => {
                       if (consumeProjectClick()) return;
                       navigate(getThreadRoutePath(thread.id, scopedProjectId));
@@ -782,7 +787,8 @@ export function ProjectsList({
                       navigate(getAgentSessionRoutePath(t.id, scopedProjectId));
                     }}
                     onContextMenu={(e) => openAgentCardMenu(e, t, p)}
-                    projectId={scopedProjectId ?? p.id}
+                    projectId={p.id}
+                    routeProjectId={scopedProjectId}
                     projectRemote={Boolean(p.remote)}
                   />
                 ))}
@@ -1115,6 +1121,10 @@ export function ProjectsList({
           ? railGroups.find((group) => group.projects.some((project) => project.id === p.id))
           : undefined;
         const menuIndex = p && menuGroup ? menuGroup.projects.findIndex((project) => project.id === p.id) : -1;
+        const pinnedFirst = Boolean(p && isScratchWorkspaceProject(p));
+        const prevPinned = Boolean(
+          menuGroup && menuIndex > 0 && isScratchWorkspaceProject(menuGroup.projects[menuIndex - 1])
+        );
         return (
         <div
           ref={menuRef}
@@ -1132,7 +1142,7 @@ export function ProjectsList({
             <>
               <button
                 className="project-menu-item"
-                disabled={!canReorder || !menuGroup || menuIndex <= 0}
+                disabled={!canReorder || !menuGroup || pinnedFirst || prevPinned || menuIndex <= 0}
                 onClick={() => {
                   if (menuGroup) moveProject(menuGroup, p.id, -1);
                   setMenu(null);
@@ -1143,7 +1153,7 @@ export function ProjectsList({
               </button>
               <button
                 className="project-menu-item"
-                disabled={!canReorder || !menuGroup || menuIndex === -1 || menuIndex >= menuGroup.projects.length - 1}
+                disabled={!canReorder || !menuGroup || pinnedFirst || menuIndex === -1 || menuIndex >= menuGroup.projects.length - 1}
                 onClick={() => {
                   if (menuGroup) moveProject(menuGroup, p.id, 1);
                   setMenu(null);

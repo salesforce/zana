@@ -4686,43 +4686,6 @@ body.resizing-col {
   opacity: 0.5;
 }
 
-.remote-install-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text);
-  cursor: pointer;
-  user-select: none;
-}
-
-.remote-install-toggle input {
-  margin: 0;
-  cursor: pointer;
-}
-
-.remote-install-toggle:has(input:disabled) {
-  cursor: default;
-  opacity: 0.7;
-}
-
-.remote-install-hint {
-  margin: 0;
-}
-
-.remote-install-log {
-  margin: 0;
-  max-height: 120px;
-  overflow: auto;
-  padding: 8px;
-  border: 1px solid var(--border, #30363d);
-  border-radius: 4px;
-  font-size: 11px;
-  font-family: 'JetBrains Mono', 'SF Mono', monospace;
-  white-space: pre-wrap;
-  color: var(--text-muted);
-}
-
 .project-git {
   display: inline-flex;
   align-items: center;
@@ -13163,8 +13126,8 @@ body.resizing-col .explorer-resizer::after {
 }
 
 /* Pending-question flag — a purple "?" glyph leading the preview on any row
-   carrying an unanswered inbox_ask, so a message that needs the user's answer
-   is easy to spot while scanning the list. */
+   carrying an unanswered structured question, so a message that needs the user's
+   answer is easy to spot while scanning the list. */
 .inbox-row-question-icon {
   flex-shrink: 0;
   color: var(--accent-purple, #a371f7);
@@ -15477,7 +15440,7 @@ body.resizing-col .explorer-resizer::after {
   text-decoration: underline;
 }
 
-/* Structured question form (inbox_ask) — the Cursor-style "Questions" panel:
+/* Structured question form — the Cursor-style "Questions" panel:
    lettered option rows, an optional Other row, and Skip / Continue. Sits under
    the "Open in session" button, shown only when the originating session is
    alive. The question prompt itself renders above in the entry's Comments.

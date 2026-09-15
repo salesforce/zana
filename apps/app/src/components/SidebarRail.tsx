@@ -261,7 +261,7 @@ function SplitEnabledNavRow({
   consumeNavClick: () => boolean;
 } & Omit<HTMLAttributes<HTMLAnchorElement>, 'onClick' | 'children' | 'title'>) {
   const splitContent = item.splitContent;
-  const { onPointerDown: onSplitPointerDown, openInSplit } = usePaneContentSplitDrag({
+  const { onPointerDown: onSplitPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
     content: splitContent ?? { kind: 'home' },
     title: item.label
   });
@@ -287,6 +287,10 @@ function SplitEnabledNavRow({
       onSplitPointerDown={splitContent ? onSplitPointerDown : undefined}
       onClick={(event) => {
         if (consumeNavClick()) {
+          event.preventDefault();
+          return;
+        }
+        if (consumeClick()) {
           event.preventDefault();
           return;
         }

@@ -180,7 +180,7 @@ export function AgentsSettingsView({
         )}
         <CheckboxField
           label="Quiet questions while working"
-          help="Hold a blocking agent question (inbox_ask, or an inbox_push question marked blocking) while its agent is still working, and surface it the moment the agent goes idle — so a busy fleet doesn’t fill your inbox with half-relevant questions it often resolves itself first. A plain status report or a soft/optional question always appears immediately. Spends no tokens; can only ever delay a question, never drop one. On by default."
+          help="Hold a blocking agent question (an inbox_push question marked blocking) while its agent is still working, and surface it the moment the agent goes idle — so a busy fleet doesn’t fill your inbox with half-relevant questions it often resolves itself first. A plain status report or a soft/optional question always appears immediately. Spends no tokens; can only ever delay a question, never drop one. On by default."
           checked={config.heldQuestionsEnabled ?? true}
           onChange={(v) => onUpdate({ heldQuestionsEnabled: v })}
         />

@@ -384,6 +384,7 @@ function httpProduct(): Pick<
     terminals: {
       verifyTmux: async () => ({ installed: false, installHint: 'tmux requires the desktop app' }),
       listTmuxRestoreCandidates: async () => [],
+      listRememberedSessions: async () => [],
       list: async () => {
         const body = await apiJson<{ sessions: TerminalSession[] }>('/terminals');
         return body.sessions;

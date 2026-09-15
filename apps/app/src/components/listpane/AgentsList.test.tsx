@@ -83,6 +83,9 @@ describe('AgentsListPane', () => {
     expect(source).toContain('onLaunched');
     expect(source).toContain('getAgentSessionRoutePath(session.id, scopedProjectId)');
     expect(source).toContain('getAgentSessionRoutePath(t.id, scopedProjectId)');
+    expect(source).toContain('projectId: scopedProjectId');
+    expect(source).not.toContain('scopedProjectId ?? row.projectId');
+    expect(source).toContain('if (consumeClick()) return;');
     expect(source).toContain('agents-row-needs-you');
   });
 });

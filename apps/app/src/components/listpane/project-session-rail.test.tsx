@@ -84,8 +84,8 @@ vi.mock('../threadCardActions.js', () => ({
 }));
 vi.mock('../PromptModal.js', () => ({ PromptModal: () => null }));
 vi.mock('../sidebar/useThreadRowSplitDrag.js', () => ({
-  usePaneContentSplitDrag: () => ({ onPointerDown: undefined, openInSplit: vi.fn() }),
-  useThreadRowSplitDrag: () => ({ onPointerDown: undefined, openInSplit: vi.fn() })
+  usePaneContentSplitDrag: () => ({ onPointerDown: undefined, openInSplit: vi.fn(), consumeClick: () => false }),
+  useThreadRowSplitDrag: () => ({ onPointerDown: undefined, openInSplit: vi.fn(), consumeClick: () => false })
 }));
 vi.mock('../sidebar/paneContentSplitIndicator.js', () => ({
   usePaneContentSplitIndicator: () => ({ isOpenInSplit: false, miniMap: null })
@@ -257,6 +257,7 @@ describe('ProjectSessionRail', () => {
     expect(source).toContain('projectRailTerminals');
     expect(source).toContain('navigate(getThreadRoutePath(thread.id, project.id))');
     expect(source).toContain('navigate(getAgentSessionRoutePath(session.id, project.id))');
+    expect(source).toContain('routeProjectId={project.id}');
     expect(source).toContain('openThreadMenu(e, thread, setThreadMenu)');
     expect(source).toContain('openAgentCardMenu(e, session)');
     expect(source).toContain('data-testid="project-session-rail"');

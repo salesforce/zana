@@ -178,6 +178,7 @@ export function ProjectSessionRail({
                 thread={thread}
                 active={activeThreadId === thread.id}
                 projectId={project.id}
+                routeProjectId={project.id}
                 onOpen={() => {
                   navigate(getThreadRoutePath(thread.id, project.id));
                 }}
@@ -195,6 +196,7 @@ export function ProjectSessionRail({
                 }}
                 onContextMenu={(e) => openAgentCardMenu(e, session)}
                 projectId={project.id}
+                routeProjectId={project.id}
                 projectRemote={Boolean(project.remote)}
               />
             ))}

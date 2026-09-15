@@ -20,6 +20,17 @@ describe('GrokProvider', () => {
     expect(provider.baseArgsPinSession('grok')).toBe(false);
   });
 
+  it('resolveLaunch: resumeSessionId uses --resume and does not re-pass --session-id', () => {
+    expect(provider.resolveLaunch('grok', config, false, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')).toEqual({
+      command: 'grok',
+      args: ['--resume', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee']
+    });
+    expect(provider.resolveLaunch('grok-yolo', config, false, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')).toEqual({
+      command: 'grok',
+      args: ['--resume', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', '--always-approve']
+    });
+  });
+
   it('honors a configured grokBinary and injects --model', () => {
     expect(provider.resolveLaunch('grok', { ...config, grokBinary: '/opt/grok' }, false).command)
       .toBe('/opt/grok');

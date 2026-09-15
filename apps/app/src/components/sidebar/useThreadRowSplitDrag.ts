@@ -41,6 +41,7 @@ export function usePaneContentSplitDrag({
 }): {
   onPointerDown: ((event: ReactPointerEvent<HTMLElement>) => void) | undefined;
   openInSplit: () => void;
+  consumeClick: () => boolean;
 } {
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -48,6 +49,12 @@ export function usePaneContentSplitDrag({
   const contentKey = paneContentRoute(content);
   const contentRef = useRef(content);
   contentRef.current = content;
+  const suppressClickRef = useRef(false);
+  const consumeClick = useCallback(() => {
+    if (!suppressClickRef.current) return false;
+    suppressClickRef.current = false;
+    return true;
+  }, []);
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -118,6 +125,9 @@ export function usePaneContentSplitDrag({
           if (next !== layout) useSplitWorkspace.getState().setLayout(next);
           const route = focusedPaneRoute(next);
           if (route) navigate(route);
+        },
+        onEnd: () => {
+          suppressClickRef.current = true;
         }
       });
     },
@@ -134,9 +144,9 @@ export function usePaneContentSplitDrag({
   }, [contentKey, isCompact, navigate, pathname]);
 
   if (isCompact) {
-    return { onPointerDown: undefined, openInSplit };
+    return { onPointerDown: undefined, openInSplit, consumeClick };
   }
-  return { onPointerDown, openInSplit };
+  return { onPointerDown, openInSplit, consumeClick };
 }
 
 export function useThreadRowSplitDrag({
@@ -150,6 +160,7 @@ export function useThreadRowSplitDrag({
 }): {
   onPointerDown: ((event: ReactPointerEvent<HTMLElement>) => void) | undefined;
   openInSplit: () => void;
+  consumeClick: () => boolean;
 } {
   return usePaneContentSplitDrag({
     content: { kind: 'thread', projectId, threadId },

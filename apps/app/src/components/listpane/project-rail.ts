@@ -1,4 +1,5 @@
 import type { Project } from '@zana-ai/zcc-domain/product';
+import { isScratchWorkspaceProject } from '../composer-project-default.js';
 
 /** Keep the incoming relative order, but lift starred projects to the top. */
 export function pinFavoriteProjectsFirst(projects: readonly Project[]): Project[] {
@@ -9,6 +10,17 @@ export function pinFavoriteProjectsFirst(projects: readonly Project[]): Project[
     else rest.push(project);
   }
   return [...favorites, ...rest];
+}
+
+/** Default Project stays the first row, ahead of stars and any chosen sort. */
+export function pinDefaultProjectFirst(projects: readonly Project[]): Project[] {
+  const defaults: Project[] = [];
+  const rest: Project[] = [];
+  for (const project of projects) {
+    if (isScratchWorkspaceProject(project)) defaults.push(project);
+    else rest.push(project);
+  }
+  return [...defaults, ...rest];
 }
 
 /**

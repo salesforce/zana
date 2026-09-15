@@ -35,7 +35,8 @@ import {
   buildWorktreeGuidance,
   buildSystemPromptGuidance,
   applyHeapCeiling,
-  extractPinnedSessionId
+  extractPinnedSessionId,
+  extraArgsPinSession
 } from '@zana-ai/zcc-spawn-plan';
 export { applyHeapCeiling, extractPinnedSessionId };
 import { nativeSessionFields } from './harness/session-adapter.js';
@@ -1196,7 +1197,6 @@ export class PtyManager extends EventEmitter {
         : opts.scheduled
           ? [
               'mcp__zcc-inbox__inbox_push',
-              'mcp__zcc-inbox__inbox_ask',
               'mcp__zcc-inbox__inbox_search',
               'mcp__zcc-inbox__schedule_list',
               'mcp__zcc-inbox__preview_file',
@@ -1210,7 +1210,6 @@ export class PtyManager extends EventEmitter {
             ]
           : [
               'mcp__zcc-inbox__inbox_push',
-              'mcp__zcc-inbox__inbox_ask',
               'mcp__zcc-inbox__inbox_search',
               'mcp__zcc-inbox__schedule_list',
               'mcp__zcc-inbox__preview_file',
@@ -1233,17 +1232,8 @@ export class PtyManager extends EventEmitter {
     const cleanedExtra = preCleanedExtra;
     const callerPinsSession =
       provider.baseArgsPinSession(effectiveProfile) ||
-      cleanedExtra.some(
-        (a) =>
-          a === '--resume' ||
-          a === '-r' ||
-          a === '--continue' ||
-          a === '-c' ||
-          a === '--session-id' ||
-          a.startsWith('--resume=') ||
-          a.startsWith('--continue=') ||
-          a.startsWith('--session-id=')
-      );
+      extraArgsPinSession(cleanedExtra) ||
+      Boolean(opts.resumeSessionId);
     // When WE mint the id, remember it so restore can `--resume` this exact
     // conversation. When the CALLER pins one (restore re-launches carry
     // `--resume <uuid>`), surface that same uuid as the session's
@@ -1253,6 +1243,18 @@ export class PtyManager extends EventEmitter {
       caps.acceptsSessionId && !callerPinsSession ? randomUUID() : undefined;
     const claudeSessionId = minted ?? extractPinnedSessionId(cleanedExtra);
     const sessionIdArgs = minted ? ['--session-id', minted] : [];
+    const nativeMint = !callerPinsSession
+      ? registrationFor(effectiveProfile)?.nativeSessionMint
+      : undefined;
+    const mintedNativeId = nativeMint ? randomUUID() : undefined;
+    const nativeMintArgs = mintedNativeId && nativeMint
+      ? [...nativeMint.spawnArgs(mintedNativeId)]
+      : [];
+    const nativeConversationId =
+      mintedNativeId
+      ?? (registrationFor(effectiveProfile)?.nativeSessionPatch
+        ? (opts.resumeSessionId ?? extractPinnedSessionId(cleanedExtra))
+        : undefined);
     // Invariant: an empty / whitespace-only opening prompt must NEVER reach
     // argv as a positional. `claude ''` is a stray empty first-turn that the
     // CLI may misinterpret; callers (LaunchPanel, GUS, scheduler) mostly guard
@@ -1349,6 +1351,7 @@ export class PtyManager extends EventEmitter {
           ...args,
           ...(!suppressModelForRole && !modelTarget.structuredSelected ? (modelTarget.contribution.args ?? []) : []),
           ...sessionIdArgs,
+          ...nativeMintArgs,
           ...claudeMcpArgs,
            ...(providerIntegration.mcpArgs ?? []),
            ...(providerIntegration.guidanceArgs ?? []),
@@ -1586,9 +1589,11 @@ export class PtyManager extends EventEmitter {
       claudeSessionId,
       cliPlanIntent,
       ...nativeSessionFields(
-        opts.resumeSessionId
-          ? registrationFor(opts.profile)?.nativeSessionPatch?.(opts.resumeSessionId)
-          : undefined
+        nativeConversationId
+          ? registrationFor(opts.profile)?.nativeSessionPatch?.(nativeConversationId)
+          : opts.resumeSessionId
+            ? registrationFor(opts.profile)?.nativeSessionPatch?.(opts.resumeSessionId)
+            : undefined
       ),
       headless: opts.headless || undefined,
       scheduled: opts.scheduled || undefined,
@@ -1917,6 +1922,12 @@ export class PtyManager extends EventEmitter {
     projectSettings?: ProjectSettings;
     harnessRouting?: HarnessModelRoutingV1;
     extraArgs?: string[];
+    /**
+     * Provider-native EXACT-session resume target. Threaded into remote
+     * `resolveLaunch` so Pi/Grok/Cursor `--session` / `--resume <uuid>` match
+     * the local create() path.
+     */
+    resumeSessionId?: string;
     title?: string;
     remote: ProjectRemote;
     persona?: Persona;
@@ -2126,12 +2137,25 @@ export class PtyManager extends EventEmitter {
         }
       }
     }
-    // Mint + inject a stable `--session-id` (remote twin of the local path) so a
-    // remote claude conversation is resumable via `--resume <id>`. `randomUUID`
-    // is passed as a thunk — the provider calls it only when it decides to own
-    // the id (interactive claude family, no caller-pinned resume). The recovered
-    // id is stamped onto the session below, closing the parity gap that left
-    // remote `claudeSessionId` permanently undefined.
+    // Mint a harness-owned native conversation id (Pi/Grok `--session-id`) so
+    // remote restore can reopen THAT conversation. Skip when the caller already
+    // pins one (resume profiles / extraArgs / resumeSessionId).
+    const remotePinsSession =
+      remoteProvider.baseArgsPinSession(remoteEffectiveProfile) ||
+      extraArgsPinSession(remoteExtra) ||
+      Boolean(opts.resumeSessionId);
+    const remoteNativeMint = !remotePinsSession
+      ? remoteRegistration.nativeSessionMint
+      : undefined;
+    const remoteMintedNativeId = remoteNativeMint ? randomUUID() : undefined;
+    const remoteExtraWithMint = remoteMintedNativeId && remoteNativeMint
+      ? [...remoteNativeMint.spawnArgs(remoteMintedNativeId), ...remoteExtra]
+      : remoteExtra;
+    const remoteNativeConversationId =
+      remoteMintedNativeId
+      ?? (remoteRegistration.nativeSessionPatch
+        ? (opts.resumeSessionId ?? extractPinnedSessionId(remoteExtraWithMint))
+        : undefined);
     const remoteLifecycle = registrationFor(remoteEffectiveProfile)?.renderLifecycle?.({
       profile: remoteEffectiveProfile,
       caps: remoteProvider.capabilities(remoteEffectiveProfile),
@@ -2144,7 +2168,7 @@ export class PtyManager extends EventEmitter {
         persona: remotePersona,
         projectSettings: opts.projectSettings,
         harnessRouting: remoteHarnessRouting,
-        extraArgs: cleanExtraArgs(opts.extraArgs)
+        extraArgs: remoteExtraWithMint
       }),
       callbacks: remoteHookUrls ? {
         stop: remoteHookUrls.stop,
@@ -2156,6 +2180,8 @@ export class PtyManager extends EventEmitter {
     });
     const { cmd: builtCmd, claudeSessionId: remoteClaudeSessionId } = renderRemoteCommand(remoteEffectiveProfile, {
       ...opts,
+      extraArgs: remoteExtraWithMint,
+      resumeSessionId: opts.resumeSessionId,
       profile: remoteEffectiveProfile,
       persona: remotePersona,
       harnessRouting: remoteHarnessRouting,
@@ -2257,6 +2283,11 @@ export class PtyManager extends EventEmitter {
       extraArgs: opts.extraArgs,
       metadata,
       claudeSessionId: remoteClaudeSessionId,
+      ...nativeSessionFields(
+        remoteNativeConversationId
+          ? remoteRegistration.nativeSessionPatch?.(remoteNativeConversationId)
+          : undefined
+      ),
       headless: opts.headless || undefined,
       scheduled: opts.scheduled || undefined,
       inboxLevel: opts.scheduled ? opts.inboxLevel : undefined,

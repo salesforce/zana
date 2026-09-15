@@ -719,9 +719,8 @@ function AgentWorkerRow({
   const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
   const label = t.cohort?.slotLabel || t.title;
   const isJob = !!t.cohort?.executionId;
-  const paneProjectId = scopedProjectId ?? row.projectId;
-  const { onPointerDown, openInSplit } = usePaneContentSplitDrag({
-    content: { kind: 'agent-session', projectId: paneProjectId, sessionId: t.id },
+  const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
+    content: { kind: 'agent-session', projectId: scopedProjectId, sessionId: t.id },
     title: t.title
   });
   return (
@@ -731,6 +730,7 @@ function AgentWorkerRow({
       data-kind="agent"
       onPointerDown={onPointerDown}
       onClick={(e) => {
+        if (consumeClick()) return;
         if (isJob) {
           e.preventDefault();
           onOpenJob(row);
@@ -785,14 +785,13 @@ function AgentSideListRow({
   const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
   const isOrch = t.cohort?.role === 'orchestrator';
   const isJob = !!t.cohort?.executionId;
-  const paneProjectId = scopedProjectId ?? row.projectId;
-  const { onPointerDown, openInSplit } = usePaneContentSplitDrag({
-    content: { kind: 'agent-session', projectId: paneProjectId, sessionId: t.id },
+  const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
+    content: { kind: 'agent-session', projectId: scopedProjectId, sessionId: t.id },
     title: t.title
   });
   const indicator = usePaneContentSplitIndicator({
     kind: 'agent-session',
-    projectId: paneProjectId,
+    projectId: scopedProjectId,
     sessionId: t.id
   });
   const button = (
@@ -804,6 +803,7 @@ function AgentSideListRow({
       data-kind="agent"
       onPointerDown={onPointerDown}
       onClick={(e) => {
+        if (consumeClick()) return;
         if (isJob) {
           e.preventDefault();
           onOpenJob(row);

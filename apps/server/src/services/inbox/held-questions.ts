@@ -2,7 +2,7 @@
  * Held-questions service — suppress an agent's inbox question WHILE it's working,
  * flush it the moment the agent stops (idle/blocked) or a safety deadline passes.
  *
- * The problem it solves: an agent that fires `inbox_ask` / `inbox_push{options}`
+ * The problem it solves: an agent that fires `inbox_push{options}`
  * mid-run lands a question in the inbox immediately, even though the user can't
  * usefully act on it until the agent is actually waiting. A busy fleet turns the
  * inbox into a wall of half-relevant questions (many of which the agent resolves
@@ -35,7 +35,7 @@ export const HELD_QUESTION_MAX_HOLD_MS = 10 * 60 * 1000;
 
 /**
  * The narrow gate the inbox tools depend on — just {@link HeldQuestionService.maybeHold}.
- * Injected into `registerInboxPushTool` / `registerInboxAskTool` so the tools
+ * Injected into `registerInboxPushTool` so the tool
  * can park a question without importing the whole service (and so tests can pass
  * a stub). Absent ⇒ the feature is off and every question appends immediately.
  */

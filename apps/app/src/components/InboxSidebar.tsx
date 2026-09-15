@@ -508,8 +508,9 @@ export function InboxSidebar({
                     <span className={`inbox-project-name ${project ? '' : 'tombstoned'}`}>
                       {name}
                     </span>
-                    {/* Pending-question flag — surfaces an unanswered inbox_ask on
-                        the header so it's noticeable even while the group is folded. */}
+                    {/* Pending-question flag — surfaces an unanswered structured
+                        question on the header so it's noticeable even while the
+                        group is folded. */}
                     {pendingQuestions > 0 && (
                       <span
                         className="inbox-project-question"
@@ -825,7 +826,7 @@ function InboxRow({
   unread: boolean;
   /** Flagged "Keep" — shows a star and is protected from Clear inbox. */
   kept?: boolean;
-  /** Carries an unanswered `inbox_ask` question — flagged so it's easy to spot. */
+  /** Carries an unanswered structured question — flagged so it's easy to spot. */
   pendingQuestion?: boolean;
   onClick: () => void;
   /** Right-click → open the row context menu at the cursor. */
