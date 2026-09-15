@@ -12,6 +12,8 @@ import type {
 } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { ExecutionConsentCeremonyInput } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
 import type { WorkUnitRoutingV1 } from '../execution/routing-policy.js';
+import type { WorkOutputDeclarationV1 } from '../execution/contracts.js';
+import { validOutputDeclaration } from '../execution/contracts.js';
 import { evaluateSlotEligibility, type SlotRouteSnapshotV1 } from '../execution/routing-policy.js';
 
 export type AdmissionCheckStatus = 'PASS' | 'FAIL' | 'SKIPPED' | 'UNKNOWN';
@@ -65,6 +67,7 @@ export interface AdmissionWorkUnitInput {
   verification?: string[];
   readOnly?: boolean;
   routing?: WorkUnitRoutingV1;
+  output?: WorkOutputDeclarationV1;
 }
 
 export interface TeamAdmissionInput {
@@ -255,6 +258,7 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
     const verification = input.verification?.map((step: string) => boundedString(step, 'work unit verification'));
     if (requireComplete && !input.readOnly && !files?.length) throw new PlanValidationError('file', 'mutating work unit requires file scope');
     if (requireComplete && !verification?.length) throw new PlanValidationError('dag', 'work unit requires verification');
+    if (input.output !== undefined && !validOutputDeclaration(input.output)) throw new PlanValidationError('dag', 'invalid bounded output declaration');
     return {
       id,
       title: boundedString(input.title, 'work unit title'),
@@ -264,7 +268,8 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
       ...(files ? { files } : {}),
       ...(verification ? { verification } : {}),
       ...(input.readOnly ? { readOnly: true } : {}),
-      ...(input.routing ? { routing: normalizeRouting(input.routing) } : {})
+      ...(input.routing ? { routing: normalizeRouting(input.routing) } : {}),
+      ...(input.output ? { output: JSON.parse(JSON.stringify(input.output)) as WorkOutputDeclarationV1 } : {})
     };
   });
   for (const unit of units) for (const dependency of unit.dependencies) if (!ids.has(dependency)) throw new PlanValidationError('dag', 'missing work unit dependency');

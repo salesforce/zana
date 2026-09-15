@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS } from '../store.js';
+import { usageRollup } from '../contracts.js';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../../launch/team-lifecycle-store.js';
 
 async function fixture(run: (filePath: string) => Promise<void>): Promise<void> {
@@ -19,6 +20,102 @@ function request() {
 }
 
 describe('execution store', () => {
+  it('persists immutable usage deltas with exact replay, tuple conflict, and regression epochs', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => 10 });
+    const record = (await store.claim(request())).record;
+    const base = {
+      observationId: 'observation-1', executionAttempt: 1, role: 'worker' as const, slotId: 'slot-1', sessionId: 'session-1',
+      workUnitId: 'unit', workAttempt: 1, claimGeneration: 1, adapterEpoch: 0, sampleKind: 'heartbeat' as const, sequence: 1,
+      provider: 'provider', model: 'model', routingIdentity: 'route', cumulative: { inputTokens: 10 }, completeness: 'complete' as const, observedAt: 10
+    };
+    const first = await store.appendUsageObservation(record.id, base);
+    expect(first).toMatchObject({ outcome: 'accepted', observation: { delta: { inputTokens: 10 }, adapterEpoch: 0 } });
+    expect(first.record.stateVersion).toBe(record.stateVersion);
+    await expect(store.appendUsageObservation(record.id, base)).resolves.toMatchObject({ outcome: 'replay' });
+    await expect(store.appendUsageObservation(record.id, { ...base, cumulative: { inputTokens: 11 } })).rejects.toThrow('usage observation conflict');
+    await expect(store.appendUsageObservation(record.id, { ...base, observationId: 'tuple-conflict' })).rejects.toThrow('usage observation tuple conflict');
+    const second = await store.appendUsageObservation(record.id, { ...base, observationId: 'observation-2', sequence: 2, cumulative: { inputTokens: 15 } });
+    expect(second.observation.delta).toEqual({ inputTokens: 5 });
+    const reset = await store.appendUsageObservation(record.id, { ...base, observationId: 'observation-3', sequence: 3, cumulative: { inputTokens: 2 } });
+    expect(reset.observation).toMatchObject({ adapterEpoch: 1, gap: 'regression', delta: { inputTokens: 2 } });
+  }));
+
+  it('preserves compacted usage replay identity and rejects changed delayed payloads', async () => fixture(async (filePath) => {
+    const observationCap = 3;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => 10, maxUsageObservationsPerExecution: observationCap });
+    const record = (await store.claim(request())).record;
+    const sample = (sequence: number) => ({
+      observationId: `observation-${sequence}`, executionAttempt: 1, role: 'worker' as const, slotId: 'slot-1', sessionId: 'session-1',
+      workAttempt: 0, claimGeneration: 0, adapterEpoch: 0, sampleKind: 'heartbeat' as const, sequence,
+      provider: 'provider', model: 'model', routingIdentity: 'route', cumulative: { inputTokens: sequence }, completeness: 'complete' as const, observedAt: sequence
+    });
+    for (let sequence = 1; sequence <= observationCap + 1; sequence += 1) {
+      await store.appendUsageObservation(record.id, sample(sequence));
+    }
+    const compacted = await store.get(record.id);
+    expect(compacted?.usageBaseline?.cursors?.[0]).toMatchObject({ sequence: 1, observationId: 'observation-1' });
+    await expect(store.appendUsageObservation(record.id, sample(1))).resolves.toMatchObject({ outcome: 'replay' });
+    await expect(store.appendUsageObservation(record.id, { ...sample(1), cumulative: { inputTokens: 999 } })).rejects.toThrow('usage observation conflict');
+    expect((await store.get(record.id))?.usageBaseline?.gapCount).toBe(0);
+  }));
+
+  it('coalesces typed wake keys while preserving bounded FIFO acknowledgement', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    const wake = { cause: 'TYPED_OUTPUT_REPAIR' as const, message: 'repair', workUnitId: 'unit', stateOrClaimGeneration: '1' };
+    const first = await store.queueCoordinatorWake(record.id, wake);
+    const duplicate = await store.queueCoordinatorWake(record.id, wake);
+    expect(duplicate.stateVersion).toBe(first.stateVersion);
+    expect(duplicate.coordinatorWakes).toHaveLength(1);
+    expect(duplicate.coordinatorWakes?.[0]).toMatchObject({ version: 1, cause: 'TYPED_OUTPUT_REPAIR', workUnitId: 'unit' });
+  }));
+
+  it('keeps typed completion claim active for two unique repairs then fails and fences it', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{
+      id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true,
+      output: { version: 1, schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false } }
+    }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const claim = { claimId: record.workUnits![0].claimId!, claimGeneration: record.workUnits![0].claimGeneration! };
+    const first = await store.recordOutputRepair(record.id, record.stateVersion, 'unit', claim, `sha256:${'1'.repeat(64)}`);
+    expect(first).toMatchObject({ outcome: 'accepted', record: { workUnits: [{ state: 'CLAIMED' }] } });
+    await expect(store.recordOutputRepair(record.id, first.record.stateVersion, 'unit', claim, `sha256:${'1'.repeat(64)}`)).resolves.toMatchObject({ outcome: 'replay' });
+    const second = await store.recordOutputRepair(record.id, first.record.stateVersion, 'unit', claim, `sha256:${'2'.repeat(64)}`);
+    const exhausted = await store.recordOutputRepair(record.id, second.record.stateVersion, 'unit', claim, `sha256:${'3'.repeat(64)}`);
+    expect(exhausted).toMatchObject({ outcome: 'exhausted', record: { workUnits: [{ state: 'FAILED', failureCode: 'VALIDATION_FAILED' }] } });
+    await expect(store.recordOutputRepair(record.id, exhausted.record.stateVersion, 'unit', claim, `sha256:${'4'.repeat(64)}`)).rejects.toThrow('work unit is not claimed');
+  }));
+
+  it('persists assembled terminal result separately and one evaluator-version proposal', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => 50 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true, verification: ['test'] }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'done');
+    record = await store.completeExecution(record.id, record.stateVersion, 'legacy summary', [{ name: 'report', mediaType: 'text/plain', contentDigest: `sha256:${'1'.repeat(64)}` } as never]);
+    expect(record).toMatchObject({ finalSummary: 'legacy summary', assembledResult: { outcome: 'success', summary: 'legacy summary', units: [{ id: 'unit', result: 'done' }] } });
+    const evaluated = await store.setRouteFitProposal(record.id);
+    expect(evaluated.routeFitProposal).toMatchObject({ evaluatorVersion: 'route-fit-v1', active: false, fit: 'indeterminate' });
+    await expect(store.setRouteFitProposal(record.id, { ...evaluated.routeFitProposal!, fit: 'appropriate' })).resolves.toEqual(evaluated);
+  }));
+
+  it('rejects malformed assembled-result members on durable load', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.completeExecution(record.id, record.stateVersion, 'done');
+    const durable = JSON.parse(await readFile(filePath, 'utf8'));
+    durable.records[0].assembledResult.units = [{ id: 7, title: 'bad', state: 'COMPLETED' }];
+    await writeFile(filePath, JSON.stringify(durable));
+    await expect(createExecutionStore({ filePath }).get(record.id)).rejects.toThrow('corrupt execution store');
+  }));
   it('queues coordinator wakes as a bounded FIFO and acknowledges by stable id', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const record = (await store.claim(request())).record;
@@ -360,6 +457,28 @@ describe('execution store', () => {
     const retried = await store.retryWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'retry');
     expect(retried.workUnits?.find((unit) => unit.id === 'retry')).toMatchObject({ state: 'READY' });
     expect(retried.blockers?.find((blocker) => blocker.id === 'blocker-retry')).toMatchObject({ resolved: true });
+  }));
+
+  it('blocks new admission after resource exhaustion but accepts already fenced outcome', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [
+      { id: 'claimed', title: 'Claimed', task: 'Finish', dependencies: [], readOnly: true },
+      { id: 'ready', title: 'Ready', task: 'Wait', dependencies: [], readOnly: true },
+      { id: 'failed', title: 'Failed', task: 'Retry', dependencies: [], readOnly: true }
+    ]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'claimed');
+    const claim = { claimId: record.workUnits![0].claimId!, claimGeneration: record.workUnits![0].claimGeneration! };
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-2' }, 'failed');
+    record = await store.failWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-2' }, 'failed', 'failed');
+    record = await store.blockForResource(record.id, 'budget exhausted', 'usage-budget');
+    await expect(store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-2' }, 'ready')).rejects.toThrow('budget exhausted');
+    await expect(store.retryWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'failed')).rejects.toThrow('budget exhausted');
+    expect((await store.dispatchReady(record.id)).assignments).toEqual([]);
+    const completed = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'claimed', 'done', claim, true);
+    expect(completed.workUnits).toContainEqual(expect.objectContaining({ id: 'claimed', state: 'COMPLETED' }));
   }));
 
   it('fails active delivery when blocker resolves through alternate response path', async () => fixture(async (filePath) => {
@@ -975,6 +1094,49 @@ describe('execution store', () => {
     const claim = await store.claim({ ...request(), resolvedModels: [model] });
     expect(claim).toMatchObject({ record: { resolvedModels: [model] } });
     expect((await createExecutionStore({ filePath }).get(claim.record.id))?.resolvedModels).toEqual([model]);
+  }));
+
+  it('compacts usage observations into a durable monotonic baseline beyond cap', async () => fixture(async (filePath) => {
+    const observationCap = 3;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', maxUsageObservationsPerExecution: observationCap });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    for (let sequence = 1; sequence <= observationCap + 2; sequence += 1) {
+      await store.appendUsageObservation(claimed.record.id, {
+        observationId: `o-${sequence}`, executionAttempt: 1, role: 'worker', slotId: 'slot-1', sessionId: 'worker', workAttempt: 0,
+        claimGeneration: 0, adapterEpoch: 0, sampleKind: 'heartbeat', sequence, provider: 'p', routingIdentity: 'r',
+        cumulative: { inputTokens: sequence, providerCostUsd: sequence / 100 }, completeness: 'complete', observedAt: sequence
+      });
+    }
+    const record = await store.get(claimed.record.id);
+    expect(record?.usageObservations).toHaveLength(observationCap);
+    expect(record?.usageBaseline).toMatchObject({ inputTokens: 2, providerCostUsd: 0.02, observationCount: 2 });
+    expect(usageRollup(record!.usageObservations!, record!.usageBaseline)).toMatchObject({ inputTokens: observationCap + 2, observationCount: observationCap + 2 });
+  }));
+
+  it('preserves last cumulative cursor when a compacted usage identity returns', async () => fixture(async (filePath) => {
+    const observationCap = 3;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', maxUsageObservationsPerExecution: observationCap });
+    const claimed = await store.claim(request());
+    await store.appendUsageObservation(claimed.record.id, {
+      observationId: 'returning-1', executionAttempt: 1, role: 'worker', slotId: 'slot-1', sessionId: 'returning', workAttempt: 0,
+      claimGeneration: 0, adapterEpoch: 0, sampleKind: 'heartbeat', sequence: 1, provider: 'p', routingIdentity: 'returning-route',
+      cumulative: { inputTokens: 10 }, completeness: 'complete', observedAt: 1
+    });
+    for (let sequence = 1; sequence <= observationCap; sequence += 1) {
+      await store.appendUsageObservation(claimed.record.id, {
+        observationId: `other-${sequence}`, executionAttempt: 1, role: 'worker', slotId: 'slot-2', sessionId: 'other', workAttempt: 0,
+        claimGeneration: 0, adapterEpoch: 0, sampleKind: 'heartbeat', sequence, provider: 'p', routingIdentity: 'other-route',
+        cumulative: { inputTokens: sequence }, completeness: 'complete', observedAt: sequence + 1
+      });
+    }
+    const returned = await store.appendUsageObservation(claimed.record.id, {
+      observationId: 'returning-2', executionAttempt: 1, role: 'worker', slotId: 'slot-1', sessionId: 'returning', workAttempt: 0,
+      claimGeneration: 0, adapterEpoch: 0, sampleKind: 'heartbeat', sequence: 2, provider: 'p', routingIdentity: 'returning-route',
+      cumulative: { inputTokens: 15 }, completeness: 'complete', observedAt: 2_000
+    });
+    expect(returned.observation.delta).toEqual({ inputTokens: 5 });
+    expect(usageRollup(returned.record.usageObservations!, returned.record.usageBaseline).inputTokens).toBe(18);
   }));
 
   it('records one immutable host-issued authorization context', async () => fixture(async (filePath) => {

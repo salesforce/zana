@@ -1040,6 +1040,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.executionClaimRecoveryObserveEnabled === 'boolean') {
     normalized.executionClaimRecoveryObserveEnabled = input.executionClaimRecoveryObserveEnabled;
   }
+  if (typeof input.executionRouteFitObserveEnabled === 'boolean') {
+    normalized.executionRouteFitObserveEnabled = input.executionRouteFitObserveEnabled;
+  }
   if (typeof input.executionClaimRecoveryEnforceEnabled === 'boolean') {
     normalized.executionClaimRecoveryEnforceEnabled = input.executionClaimRecoveryEnforceEnabled;
   }

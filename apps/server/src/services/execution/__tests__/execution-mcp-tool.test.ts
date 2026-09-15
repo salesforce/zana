@@ -182,6 +182,13 @@ describe('execution MCP tools', () => {
     ]));
   });
 
+  it('declares work units strict so unknown plan keys are rejected', () => {
+    const { server, definitions } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: service() as never, validateRouteIdentity: () => true });
+    const schema = (definitions.get('execution.plan.register') as { inputSchema: { workUnits: { element: { safeParse(value: unknown): { success: boolean } } } } }).inputSchema.workUnits.element;
+    expect(schema.safeParse({ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], unknownPlanKey: true }).success).toBe(false);
+  });
+
   it('rejects aggregate preplanned work larger than the bounded start budget', async () => {
     const execution = service();
     const { server, tools } = fakeServer();
@@ -310,6 +317,21 @@ describe('execution MCP tools', () => {
     const result = await tools.get('execution.work.dispatch_ready')!({ executionId: 'execution-1' });
     expect(result.isError).toBeFalsy();
     expect(execution.dispatchReady).toHaveBeenCalledWith(binding);
+  });
+
+  it('sanitizes structured and internal usage evidence from bound record responses', async () => {
+    const execution = service();
+    execution.completeWork.mockResolvedValueOnce({ ok: true, value: {
+      id: 'execution-1', state: 'RUNNING', deliveries: [], usageObservations: [{ cumulative: { inputTokens: 9 } }], usageBaseline: { inputTokens: 5 },
+      workUnits: [{ id: 'unit-1', structuredResult: { raw: 'secret' } }]
+    } } as never);
+    const binding = { executionId: 'execution-1', projectId: 'project-1', slotId: 'slot-1', role: 'worker' as const };
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'worker', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, resolveCohortBinding: () => binding });
+    const payload = JSON.parse(text(await tools.get('execution.work.complete')!({ executionId: 'execution-1', workUnitId: 'unit-1', result: 'done' })));
+    expect(payload.workUnits[0]).not.toHaveProperty('structuredResult');
+    expect(payload).not.toHaveProperty('usageObservations');
+    expect(payload).not.toHaveProperty('usageBaseline');
   });
 
   it('describes claim as worker-only despite shared Job Team preapproval', () => {
