@@ -1,6 +1,6 @@
 import { isDurableCoordination, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SquadBundleWorkflowMetadataV1, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, WORK_CLAIM_LEASE_MS, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -22,6 +22,7 @@ const ROUTE_FACTS_TIMEOUT_MS = 15_000;
 const ROUTE_FACTS_CIRCUIT_RESET_MS = 30_000;
 const ACTIVE_CLAIM_PAGE_SIZE = 50;
 const PROVEN_DEAD_CLAIM_REASON = 'Claim lease expired and assigned Team worker is proven dead';
+const DEAD_WORKER_PROCESSES = new Set(['exited', 'spawn-failed', 'canceled']);
 
 export interface ExecutionCohortBinding extends ExecutionCohortAuthority {
   executionId: string;
@@ -570,21 +571,22 @@ export class ExecutionService {
     try {
       const page = await this.deps.store.listActiveClaims(this.activeClaimCursor, ACTIVE_CLAIM_PAGE_SIZE);
       this.activeClaimCursor = page.next;
-      for (const record of page.records) {
-        let lifecycle: ExtractedLifecycle | undefined;
-        try { lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)); }
-        catch (error) { this.deps.logError?.(`Execution claim recovery lifecycle read failed for ${record.id}`, error); continue; }
+      const lifecycles = await Promise.all(page.records.map(async (record) => {
+        try { return [record, extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId))] as const; }
+        catch (error) { this.deps.logError?.(`Execution claim recovery lifecycle read failed for ${record.id}`, error); return [record, undefined] as const; }
+      }));
+      for (const [record, lifecycle] of lifecycles) {
         if (!lifecycle?.workers) continue;
         const now = (this.deps.now ?? Date.now)();
         const claims = (record.workUnits ?? []).flatMap((unit) => {
-      if (unit.state !== 'CLAIMED' || !unit.claimId || unit.claimGeneration === undefined
-            || unit.leaseExpiresAt === undefined || unit.leaseExpiresAt > now || !unit.assignedSlotId) return [];
+          if (unit.state !== 'CLAIMED' || !unit.claimId || unit.claimGeneration === undefined || !unit.assignedSlotId) return [];
           const maxWallClock = record.request.policy?.maxClaimWallClockMs;
-          if (maxWallClock !== undefined && now - (unit.heartbeatAt ?? unit.leaseExpiresAt - 90_000) >= maxWallClock) {
+          if (maxWallClock !== undefined && unit.claimedAt !== undefined && now - unit.claimedAt >= maxWallClock) {
             return [{ workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, reason: 'Work claim exceeded main-observable wall-clock limit' }];
           }
+          if (unit.leaseExpiresAt === undefined || unit.leaseExpiresAt > now) return [];
           const worker = lifecycle!.workers!.find((candidate) => candidate.slotId === unit.assignedSlotId && candidate.projectId === record.projectId);
-          if (worker && worker.process !== 'exited' && worker.process !== 'spawn-failed' && worker.process !== 'canceled') return [];
+          if (worker && !DEAD_WORKER_PROCESSES.has(worker.process ?? '')) return [];
           return [{ workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, reason: PROVEN_DEAD_CLAIM_REASON }];
         });
         if (!claims.length) continue;
@@ -751,11 +753,11 @@ export class ExecutionService {
     }
   }
 
-  async completeWork(binding: ExecutionCohortBinding, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }) {
+  async completeWork(binding: ExecutionCohortBinding, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false) {
     if (binding.role !== 'worker') return deniedBound('only assigned worker can complete work');
     const outcome = await this.mutateBound(binding, (record) => claim
-      ? this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result, claim)
-      : this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result));
+      ? this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result, claim, requireClaim)
+      : this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result, undefined, requireClaim));
     // Deprioritize the just-completed slot: it's still mid-turn winding down, and
     // idle peers should take the next unit before it. It stays eligible (falls
     // back to it when it's the only free worker), and the idle-gated push keeps a
@@ -959,11 +961,11 @@ export class ExecutionService {
     }
   }
 
-  async failWork(binding: ExecutionCohortBinding, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN', claim?: { claimId: string; claimGeneration: number }) {
+  async failWork(binding: ExecutionCohortBinding, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN', claim?: { claimId: string; claimGeneration: number }, requireClaim = false) {
     if (binding.role !== 'worker') return deniedBound('only assigned worker can fail work');
     const outcome = await this.mutateBound(binding, (record) => claim
-      ? this.deps.store.failWork(record.id, record.stateVersion, binding, workUnitId, failure, failureCode, claim)
-      : this.deps.store.failWork(record.id, record.stateVersion, binding, workUnitId, failure, failureCode));
+      ? this.deps.store.failWork(record.id, record.stateVersion, binding, workUnitId, failure, failureCode, claim, requireClaim)
+      : this.deps.store.failWork(record.id, record.stateVersion, binding, workUnitId, failure, failureCode, undefined, requireClaim));
     if (outcome.ok) {
       await this.cascadeDispatch(outcome.value.id, binding.slotId);
       if (failureCode === 'SEMANTIC_CONFLICT' || failureCode === 'POLICY_ESCALATION') {
@@ -975,11 +977,11 @@ export class ExecutionService {
     return outcome;
   }
 
-  async blockWork(binding: ExecutionCohortBinding, workUnitId: string, blocker: { id: string; question: string; options?: string[] }, claim?: { claimId: string; claimGeneration: number }) {
+  async blockWork(binding: ExecutionCohortBinding, workUnitId: string, blocker: { id: string; question: string; options?: string[] }, claim?: { claimId: string; claimGeneration: number }, requireClaim = false) {
     if (binding.role !== 'worker') return deniedBound('only assigned worker can block work');
     const result = await this.mutateBound(binding, (record) => claim
-      ? this.deps.store.blockWork(record.id, record.stateVersion, binding, workUnitId, blocker, claim)
-      : this.deps.store.blockWork(record.id, record.stateVersion, binding, workUnitId, blocker));
+      ? this.deps.store.blockWork(record.id, record.stateVersion, binding, workUnitId, blocker, claim, requireClaim)
+      : this.deps.store.blockWork(record.id, record.stateVersion, binding, workUnitId, blocker, undefined, requireClaim));
     if (result.ok) {
       const record = result.value;
       await this.wakeCoordinator(record, `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`);
@@ -998,11 +1000,11 @@ export class ExecutionService {
     return result;
   }
 
-  async releaseWork(binding: ExecutionCohortBinding, workUnitId: string, claim?: { claimId: string; claimGeneration: number }) {
+  async releaseWork(binding: ExecutionCohortBinding, workUnitId: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false) {
     if (binding.role !== 'worker') return deniedBound('only assigned worker can release work');
     const outcome = await this.mutateBound(binding, (record) => claim
-      ? this.deps.store.releaseWork(record.id, record.stateVersion, binding, workUnitId, claim)
-      : this.deps.store.releaseWork(record.id, record.stateVersion, binding, workUnitId));
+      ? this.deps.store.releaseWork(record.id, record.stateVersion, binding, workUnitId, claim, requireClaim)
+      : this.deps.store.releaseWork(record.id, record.stateVersion, binding, workUnitId, undefined, requireClaim));
     if (outcome.ok) await this.cascadeDispatch(outcome.value.id, binding.slotId); // released unit → READY → re-dispatch (prefer an idle peer over the just-released slot)
     return outcome;
   }

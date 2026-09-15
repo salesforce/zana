@@ -45,6 +45,7 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   claimGeneration?: number;
   claimId?: string;
   claimedBy?: { slotId: string; sessionId?: string; routeId?: string };
+  claimedAt?: number;
   leaseExpiresAt?: number;
   heartbeatAt?: number;
   turnCount?: number;
@@ -286,9 +287,9 @@ const DELIVERY_LEASE_MS = 60_000;
 export const WORK_CLAIM_LEASE_MS = 90_000;
 export const HEARTBEAT_PERSIST_REMAINING_MS = 30_000;
 
-function assertClaimFence(unit: ExecutionWorkUnit, claim?: { claimId: string; claimGeneration: number }): void {
-  if (!claim || !unit.claimId) return;
-  if (unit.claimId !== claim.claimId || unit.claimGeneration !== claim.claimGeneration) throw new Error('stale work claim');
+function assertClaimFence(unit: ExecutionWorkUnit, claim?: { claimId: string; claimGeneration: number }, required = false): void {
+  if (!unit.claimId || !required && !claim) return;
+  if (!claim || unit.claimId !== claim.claimId || unit.claimGeneration !== claim.claimGeneration) throw new Error('stale work claim');
 }
 const DELIVERED_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const storeQueue = createSerializedTransactionQueue();
@@ -360,6 +361,7 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.claimedBy === undefined || !!unit.claimedBy && validString(unit.claimedBy.slotId)
       && (unit.claimedBy.sessionId === undefined || validString(unit.claimedBy.sessionId))
       && (unit.claimedBy.routeId === undefined || validString(unit.claimedBy.routeId)))
+    && (unit.claimedAt === undefined || typeof unit.claimedAt === 'number' && Number.isFinite(unit.claimedAt))
     && (unit.leaseExpiresAt === undefined || typeof unit.leaseExpiresAt === 'number' && Number.isFinite(unit.leaseExpiresAt))
     && (unit.heartbeatAt === undefined || typeof unit.heartbeatAt === 'number' && Number.isFinite(unit.heartbeatAt))
     && (unit.turnCount === undefined || validNonNegativeInteger(unit.turnCount))
@@ -371,6 +373,7 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
 function clearClaim(unit: ExecutionWorkUnit): void {
   unit.claimId = undefined;
   unit.claimedBy = undefined;
+  unit.claimedAt = undefined;
   unit.leaseExpiresAt = undefined;
   unit.heartbeatAt = undefined;
   unit.turnCount = undefined;
@@ -491,11 +494,11 @@ function validSourceBundle(value: unknown): boolean {
 
 function validExecutionPolicy(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
-  const policy = value as { maxTurnsPerClaim?: unknown; maxClaimWallClockMs?: unknown; usageBudget?: { maxTokens?: unknown; maxUsd?: unknown } };
+  const policy = value as { maxTurnsPerClaim?: unknown; maxClaimWallClockMs?: unknown; usageBudget?: { maxTokens?: unknown; maxUsd?: unknown } | null };
   const positiveInteger = (input: unknown, max: number) => Number.isInteger(input) && (input as number) > 0 && (input as number) <= max;
   return (policy.maxTurnsPerClaim === undefined || positiveInteger(policy.maxTurnsPerClaim, 10_000))
     && (policy.maxClaimWallClockMs === undefined || positiveInteger(policy.maxClaimWallClockMs, 24 * 60 * 60 * 1_000))
-    && (policy.usageBudget === undefined || typeof policy.usageBudget === 'object'
+    && (policy.usageBudget === undefined || policy.usageBudget !== null && typeof policy.usageBudget === 'object'
       && (policy.usageBudget.maxTokens === undefined || positiveInteger(policy.usageBudget.maxTokens, Number.MAX_SAFE_INTEGER))
       && (policy.usageBudget.maxUsd === undefined || typeof policy.usageBudget.maxUsd === 'number' && Number.isFinite(policy.usageBudget.maxUsd) && policy.usageBudget.maxUsd > 0));
 }
@@ -1031,6 +1034,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
        unit.claimGeneration = (unit.claimGeneration ?? 0) + 1;
        unit.claimId = randomUUID();
        unit.claimedBy = { slotId };
+       unit.claimedAt = timestamp;
        unit.leaseExpiresAt = timestamp + WORK_CLAIM_LEASE_MS;
        unit.heartbeatAt = timestamp;
        unit.turnCount = 0;
@@ -1176,6 +1180,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
            unit.claimGeneration = (unit.claimGeneration ?? 0) + 1;
            unit.claimId = randomUUID();
            unit.claimedBy = { slotId: slot.slotId };
+           unit.claimedAt = timestamp;
            unit.leaseExpiresAt = timestamp + WORK_CLAIM_LEASE_MS;
            unit.heartbeatAt = timestamp;
            unit.turnCount = 0;
@@ -1219,7 +1224,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, 'Work routing facts unavailable');
   }
 
-  async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }): Promise<ExecutionRecord> {
+  async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
@@ -1228,7 +1233,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       }
       if (unit.state === 'COMPLETED') return;
       if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
-      assertClaimFence(unit, claim);
+      assertClaimFence(unit, claim, requireClaim);
       unit.state = 'COMPLETED';
       const slotId = unit.assignedSlotId;
       clearClaim(unit);
@@ -1238,7 +1243,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Work unit completed: ${workUnitId}`);
   }
 
-  async function failWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN', claim?: { claimId: string; claimGeneration: number }): Promise<ExecutionRecord> {
+  async function failWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN', claim?: { claimId: string; claimGeneration: number }, requireClaim = false): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
@@ -1246,7 +1251,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         throw new Error('work unit has unresolved blockers');
       }
       if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
-      assertClaimFence(unit, claim);
+      assertClaimFence(unit, claim, requireClaim);
       if (!failureCodes.has(failureCode)) throw new Error('invalid execution work unit failure code');
       unit.state = 'FAILED';
       const slotId = unit.assignedSlotId;
@@ -1258,12 +1263,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Work unit failed: ${workUnitId}`);
   }
 
-  async function releaseWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, claim?: { claimId: string; claimGeneration: number }): Promise<ExecutionRecord> {
+  async function releaseWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
       if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
-      assertClaimFence(unit, claim);
+      assertClaimFence(unit, claim, requireClaim);
       unit.state = 'READY';
       unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
       clearClaim(unit);
@@ -1410,12 +1415,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Work unit reassigned: ${workUnitId}`);
   }
 
-  async function blockWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, input: { id: string; question: string; options?: string[] }, claim?: { claimId: string; claimGeneration: number }): Promise<ExecutionRecord> {
+  async function blockWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, input: { id: string; question: string; options?: string[] }, claim?: { claimId: string; claimGeneration: number }, requireClaim = false): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
       if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
-      assertClaimFence(unit, claim);
+      assertClaimFence(unit, claim, requireClaim);
       if (record.blockers?.some((blocker) => blocker.id === input.id)) throw new Error('duplicate execution blocker id');
       unit.state = 'BLOCKED';
       unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(input.question, 'blocker question') });
@@ -1902,7 +1907,7 @@ function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false
 }
 
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
-  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, turnCount: _turnCount, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, history: _history, ...input } = unit;
+  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, turnCount: _turnCount, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, history: _history, ...input } = unit;
   return input;
 }
 
