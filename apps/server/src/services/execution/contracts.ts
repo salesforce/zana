@@ -171,7 +171,7 @@ function validSchema(value: unknown, depth: number): value is StructuredOutputSc
     && (schema.additionalProperties === undefined || schema.additionalProperties === false);
 }
 
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+export function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   return Object.keys(value).every((key) => allowed.includes(key));
 }
 
@@ -317,10 +317,11 @@ export function evaluateRouteFit(record: ExecutionRecord, evaluatedAt: number): 
     const model = record.resolvedModels.find((candidate) => candidate.slotId === unit.assignedSlotId);
     return { workUnitId: unit.id, ...(unit.assignedSlotId ? { slotId: unit.assignedSlotId } : {}), ...(model?.provider ? { provider: model.provider } : {}), ...(model?.model ? { model: model.model } : {}) };
   });
-  const outcome = record.assembledResult?.outcome ?? ((record.workUnits ?? []).every((unit) => unit.state === 'COMPLETED') ? 'success' : 'failure');
+  const hasWork = (record.workUnits?.length ?? 0) > 0;
+  const outcome = record.assembledResult?.outcome ?? (hasWork && record.workUnits!.every((unit) => unit.state === 'COMPLETED') ? 'success' : 'failure');
   let fit: RouteFitProposalV1['fit'] = 'indeterminate';
-  let reason = 'Complete usage and at least two immutable routing samples are required.';
-  if (usage.completeness === 'complete' && decisions.length >= 2 && selected.every((item) => item.slotId && item.provider)) {
+  let reason = hasWork ? 'Complete usage and at least two immutable routing samples are required.' : 'No work units were available to evaluate.';
+  if (hasWork && usage.completeness === 'complete' && decisions.length >= 2 && selected.every((item) => item.slotId && item.provider)) {
     const illegal = decisions.some((decision) => decision.candidates.find((candidate) => candidate.slotId === decision.recommendedSlotId)?.status === 'FAIL');
     const routeFailures = (record.workUnits ?? []).some((unit) => unit.failureCode === 'NO_QUALIFIED_ROUTE' || unit.failureCode === 'ROUTE_FACTS_UNAVAILABLE');
     const ranks = ['low', 'medium', 'high', 'extra-high'] as const;

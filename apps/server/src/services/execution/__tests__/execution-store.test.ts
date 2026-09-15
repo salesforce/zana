@@ -20,7 +20,7 @@ function request() {
 }
 
 describe('execution store', () => {
-  it('persists immutable usage deltas with exact replay, tuple conflict, and regression epochs', async () => fixture(async (filePath) => {
+  it('persists immutable usage deltas with exact replay and explicit reset epochs', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => 10 });
     const record = (await store.claim(request())).record;
     const base = {
@@ -33,11 +33,27 @@ describe('execution store', () => {
     expect(first.record.stateVersion).toBe(record.stateVersion);
     await expect(store.appendUsageObservation(record.id, base)).resolves.toMatchObject({ outcome: 'replay' });
     await expect(store.appendUsageObservation(record.id, { ...base, cumulative: { inputTokens: 11 } })).rejects.toThrow('usage observation conflict');
-    await expect(store.appendUsageObservation(record.id, { ...base, observationId: 'tuple-conflict' })).rejects.toThrow('usage observation tuple conflict');
+    await expect(store.appendUsageObservation(record.id, { ...base, observationId: 'tuple-conflict' })).rejects.toThrow('usage observation sequence conflict');
     const second = await store.appendUsageObservation(record.id, { ...base, observationId: 'observation-2', sequence: 2, cumulative: { inputTokens: 15 } });
     expect(second.observation.delta).toEqual({ inputTokens: 5 });
-    const reset = await store.appendUsageObservation(record.id, { ...base, observationId: 'observation-3', sequence: 3, cumulative: { inputTokens: 2 } });
+    await expect(store.appendUsageObservation(record.id, { ...base, observationId: 'delayed-regression', sequence: 3, cumulative: { inputTokens: 2 } })).rejects.toThrow('usage counter regression without newer adapter epoch');
+    const reset = await store.appendUsageObservation(record.id, { ...base, observationId: 'observation-3', adapterEpoch: 1, sequence: 1, cumulative: { inputTokens: 2 } });
     expect(reset.observation).toMatchObject({ adapterEpoch: 1, gap: 'regression', delta: { inputTokens: 2 } });
+    await expect(store.appendUsageObservation(record.id, { ...base, observationId: 'stale', sequence: 1, cumulative: { inputTokens: 10 } })).rejects.toThrow('usage observation epoch conflict');
+  }));
+
+  it('rejects changed delayed sequences instead of creating reset epochs', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    const sample = (observationId: string, sequence: number, inputTokens: number) => ({
+      observationId, executionAttempt: 1, role: 'worker' as const, slotId: 'slot-1', sessionId: 'session-1', workAttempt: 0,
+      claimGeneration: 0, adapterEpoch: 0, sampleKind: 'heartbeat' as const, sequence, provider: 'p', routingIdentity: 'r',
+      cumulative: { inputTokens }, completeness: 'complete' as const, observedAt: sequence
+    });
+    await store.appendUsageObservation(record.id, sample('one', 1, 10));
+    await store.appendUsageObservation(record.id, sample('two', 2, 20));
+    await expect(store.appendUsageObservation(record.id, sample('delayed', 1, 5))).rejects.toThrow('usage observation sequence conflict');
+    await expect(store.appendUsageObservation(record.id, sample('two', 2, 20))).resolves.toMatchObject({ outcome: 'replay' });
   }));
 
   it('preserves compacted usage replay identity and rejects changed delayed payloads', async () => fixture(async (filePath) => {
@@ -115,6 +131,14 @@ describe('execution store', () => {
     durable.records[0].assembledResult.units = [{ id: 7, title: 'bad', state: 'COMPLETED' }];
     await writeFile(filePath, JSON.stringify(durable));
     await expect(createExecutionStore({ filePath }).get(record.id)).rejects.toThrow('corrupt execution store');
+  }));
+  it('rejects malformed route-fit members and proposed routing keys', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STOPPED', 'info', 'stop');
+    const base = { version: 1 as const, evaluatorVersion: 'custom-v2', active: false as const, outcome: 'failure' as const, fit: 'indeterminate' as const, reason: 'none', evaluatedAt: 1, samples: 0 };
+    await expect(store.setRouteFitProposal(record.id, { ...base, selected: [{ workUnitId: 7 }] } as never)).rejects.toThrow('invalid route fit proposal');
+    await expect(store.setRouteFitProposal(record.id, { ...base, selected: [], proposedRouting: { minimumLevel: 'high', secret: true } } as never)).rejects.toThrow('invalid route fit proposal');
   }));
   it('queues coordinator wakes as a bounded FIFO and acknowledges by stable id', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });

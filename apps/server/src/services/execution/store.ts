@@ -17,6 +17,7 @@ import { evaluateSlotEligibility, type WorkUnitRoutingV1 } from './routing-polic
 import { MODEL_PRICING_CATALOG_ID, MODEL_PRICING_CATALOG_VERSION } from './model-pricing-catalog.js';
 import {
   assembleExecutionResult,
+  hasOnlyKeys,
   MAX_EXECUTION_PLAN_BYTES,
   evaluateRouteFit,
   usageCursorIdentity,
@@ -582,18 +583,22 @@ function validAssembledResult(value: unknown): value is ExecutionAssembledResult
     && validUsageRollup(result.usage);
 }
 
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
-}
-
 function validRouteFitProposal(value: unknown): value is RouteFitProposalV1 {
   if (!value || typeof value !== 'object') return false;
   const proposal = value as Partial<RouteFitProposalV1>;
-  return proposal.version === 1 && proposal.active === false && validString(proposal.evaluatorVersion)
+  return hasOnlyKeys(proposal as Record<string, unknown>, ['version', 'evaluatorVersion', 'active', 'outcome', 'fit', 'reason', 'evaluatedAt', 'samples', 'selected', 'proposedRouting'])
+    && proposal.version === 1 && proposal.active === false && validString(proposal.evaluatorVersion)
     && ['success', 'partial', 'failure'].includes(proposal.outcome ?? '')
     && ['underpowered', 'appropriate', 'overpowered', 'indeterminate'].includes(proposal.fit ?? '')
     && validString(proposal.reason) && typeof proposal.evaluatedAt === 'number' && validNonNegativeInteger(proposal.samples)
-    && Array.isArray(proposal.selected) && proposal.selected.length <= MAX_WORK_UNITS;
+    && Array.isArray(proposal.selected) && proposal.selected.length <= MAX_WORK_UNITS
+    && proposal.selected.every((selected) => !!selected && typeof selected === 'object'
+      && hasOnlyKeys(selected as Record<string, unknown>, ['workUnitId', 'slotId', 'provider', 'model'])
+      && validString(selected.workUnitId) && (selected.slotId === undefined || validString(selected.slotId))
+      && (selected.provider === undefined || validString(selected.provider)) && (selected.model === undefined || validString(selected.model)))
+    && (proposal.proposedRouting === undefined || !!proposal.proposedRouting && typeof proposal.proposedRouting === 'object'
+      && hasOnlyKeys(proposal.proposedRouting as Record<string, unknown>, ['minimumLevel'])
+      && (proposal.proposedRouting.minimumLevel === undefined || ['low', 'medium', 'high', 'extra-high'].includes(proposal.proposedRouting.minimumLevel)));
 }
 
 function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshotV1 {
@@ -1863,7 +1868,11 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  async function appendUsageObservation(executionId: string, input: Omit<ExecutionUsageObservationV1, 'version' | 'delta'>): Promise<{ outcome: 'accepted' | 'replay'; record: ExecutionRecord; observation: ExecutionUsageObservationV1 }> {
+  async function appendUsageObservation(
+    executionId: string,
+    input: Omit<ExecutionUsageObservationV1, 'version' | 'delta'>,
+    control: { telemetryGapGraceSamples?: number } = {}
+  ): Promise<{ outcome: 'accepted' | 'replay'; record: ExecutionRecord; observation: ExecutionUsageObservationV1; action: 'none' | 'usage-budget' | 'telemetry-unavailable' }> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
@@ -1874,46 +1883,61 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (sameId) {
         const replay = { ...sameId, ...input, version: 1 as const, adapterEpoch: sameId.adapterEpoch, delta: sameId.delta, ...(sameId.gap ? { gap: sameId.gap } : {}) };
         if (JSON.stringify(sameId) !== JSON.stringify(replay)) throw new Error('usage observation conflict');
-        return { outcome: 'replay' as const, record: clone(record), observation: clone(sameId) };
+        return { outcome: 'replay' as const, record: clone(record), observation: clone(sameId), action: 'none' as const };
       }
       const compactedById = record.usageBaseline?.replays?.find((item) => item.observationId === input.observationId);
       if (compactedById) {
         if (compactedById.fingerprint !== fingerprint) throw new Error('usage observation conflict');
-        return { outcome: 'replay' as const, record: clone(record), observation: { ...clone(input), version: 1, delta: {}, replayFingerprint: fingerprint } };
+        return { outcome: 'replay' as const, record: clone(record), observation: { ...clone(input), version: 1, delta: {}, replayFingerprint: fingerprint }, action: 'none' as const };
       }
       if (input.executionAttempt !== record.attempt) throw new Error('usage observation execution attempt mismatch');
+      // Delta against whole adapter session, not current claim. A new claim on a
+      // reused worker session must not count lifetime cumulative tokens again.
+      const group = observations.filter((item) => usageCursorIdentity(item) === usageCursorIdentity(input));
+      const cursor = record.usageBaseline?.cursors?.find((item) => usageCursorIdentity(item) === usageCursorIdentity(input));
+      const previous = [...group, ...(cursor ? [cursor] : [])].reduce<typeof cursor>((latest, item) => !latest
+        || item.adapterEpoch > latest.adapterEpoch || item.adapterEpoch === latest.adapterEpoch && item.sequence > latest.sequence ? item : latest, undefined);
+      if (previous && input.adapterEpoch < previous.adapterEpoch) throw new Error('usage observation epoch conflict');
+      if (previous && input.adapterEpoch === previous.adapterEpoch && input.sequence <= previous.sequence) throw new Error('usage observation sequence conflict');
       const identity = usageIdentity(input);
       const tuple = observations.find((item) => usageIdentity(item) === identity);
       if (tuple) throw new Error('usage observation tuple conflict');
       const compactedTuple = record.usageBaseline?.replays?.find((item) => item.identity === usageIdentityDigest(input));
       if (compactedTuple) throw new Error('usage observation tuple conflict');
-      // Delta against whole adapter session, not current claim. A new claim on a
-      // reused worker session must not count lifetime cumulative tokens again.
-      const group = observations.filter((item) => item.sessionId === input.sessionId
-        && item.provider === input.provider && item.model === input.model && item.routingIdentity === input.routingIdentity)
-        .sort((left, right) => left.adapterEpoch - right.adapterEpoch || left.sequence - right.sequence);
-      const cursor = record.usageBaseline?.cursors?.find((item) => usageCursorIdentity(item) === usageCursorIdentity(input));
-      const previous = group.at(-1) ?? cursor;
-      let adapterEpoch = input.adapterEpoch;
-      let gap = input.gap;
       const regressed = previous && usageCounterRegression(previous.cumulative, input.cumulative);
-      if (regressed && adapterEpoch <= previous.adapterEpoch) {
-        adapterEpoch = previous.adapterEpoch + 1;
-        gap = 'regression';
-      }
-      const baseline = previous && previous.adapterEpoch === adapterEpoch && !gap ? previous.cumulative : {};
+      if (regressed && input.adapterEpoch <= previous.adapterEpoch) throw new Error('usage counter regression without newer adapter epoch');
+      const gap = regressed ? 'regression' as const : input.gap;
+      const baseline = previous && previous.adapterEpoch === input.adapterEpoch && !gap ? previous.cumulative : {};
       const delta = usageCounterDelta(baseline, input.cumulative);
-      const observation: ExecutionUsageObservationV1 = { ...clone(input), version: 1, adapterEpoch, delta, replayFingerprint: fingerprint, ...(gap ? { gap } : {}) };
+      const observation: ExecutionUsageObservationV1 = { ...clone(input), version: 1, delta, replayFingerprint: fingerprint, ...(gap ? { gap } : {}) };
       if (!validUsageObservation(observation)) throw new Error('invalid usage observation');
       observations.push(observation);
       record.telemetryGapCount = observation.completeness === 'unavailable' || observation.gap === 'missing'
         ? (record.telemetryGapCount ?? 0) + 1
         : 0;
+      const usage = usageRollup(record.usageObservations, record.usageBaseline);
+      const budget = record.request.policy?.usageBudget;
+      const tokens = usage.inputTokens === undefined && usage.outputTokens === undefined && usage.cacheReadTokens === undefined && usage.cacheWriteTokens === undefined
+        ? undefined : (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+      const budgetReason = budget?.maxTokens !== undefined && tokens !== undefined && tokens >= budget.maxTokens
+        ? `RESOURCE_EXHAUSTED: execution token budget exhausted (${tokens}/${budget.maxTokens}). Existing in-flight provider calls may still finish.`
+        : budget?.maxUsd !== undefined && usage.providerCostUsd !== undefined && usage.providerCostUsd >= budget.maxUsd
+          ? `RESOURCE_EXHAUSTED: execution provider cost budget exhausted (${usage.providerCostUsd}/${budget.maxUsd}). Existing in-flight provider calls may still finish.` : undefined;
+      const gapBlocked = !!budget && control.telemetryGapGraceSamples !== undefined && (record.telemetryGapCount ?? 0) >= control.telemetryGapGraceSamples;
+      const action = budgetReason ? 'usage-budget' as const : gapBlocked ? 'telemetry-unavailable' as const : 'none' as const;
+      if (action !== 'none' && !terminalStates.has(record.state) && !(record.state === 'BLOCKED' && record.resourceBlock)) {
+        const fromState = record.state;
+        record.state = 'BLOCKED';
+        record.resourceBlock = { version: 1, kind: action, reason: budgetReason ?? 'Usage telemetry unavailable; execution requires attention', blockedAt: now() };
+        record.stateVersion += 1;
+        record.updatedAt = now();
+        append(snapshot.state, record, record.state, 'warning', record.resourceBlock.reason, record.updatedAt, { kind: 'transition', fromState, toState: 'BLOCKED' });
+      }
       // Usage is observational evidence, not execution control state. Advancing
       // stateVersion here races claim-fenced worker outcomes with transcript
       // samples taken immediately after delivery.
       persist(snapshot.state, snapshot.hash);
-      return { outcome: 'accepted' as const, record: clone(record), observation: clone(observation) };
+      return { outcome: 'accepted' as const, record: clone(record), observation: clone(observation), action };
     });
   }
 

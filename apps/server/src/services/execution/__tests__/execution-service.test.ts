@@ -240,6 +240,22 @@ describe('execution usage and typed completion', () => {
     expect(await store.get('execution-1')).toMatchObject({ state: 'BLOCKED', telemetryGapCount: 3, usageObservations: [{ completeness: 'partial' }, { completeness: 'partial' }, { completeness: 'partial' }], resourceBlock: { kind: 'telemetry-unavailable' } });
   }));
 
+  it('logs lifecycle and stats failures with bounded execution context', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const logError = vi.fn();
+    const service = new ExecutionService(deps(filePath, {
+      store, logError,
+      getTeamLaunch: async () => { throw new Error('lifecycle failed'); },
+      readSessionStats: async () => { throw new Error('stats failed'); }
+    }));
+    await service.start('owner', 'project-1', request);
+    await service.observeSessionUsage('execution-1', 'worker', 'terminal');
+    expect(logError.mock.calls.map(([message]) => message)).toEqual([
+      'execution usage lifecycle failed (execution=execution-1, session=worker, sample=terminal)',
+      'execution usage stats failed (execution=execution-1, session=worker, sample=terminal)'
+    ]);
+  }));
+
   it('replays unchanged heartbeat exactly and captures USD for at-budget admission', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const readSessionStats = vi.fn(async () => ({ tokens: { input: 4, output: 1, cacheRead: 0, cacheWrite: 0 }, costUsd: 2, files: [], queue: [] }));
@@ -270,6 +286,48 @@ describe('execution usage and typed completion', () => {
     await service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
     await service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
     expect((await store.get('execution-1'))?.usageObservations).toHaveLength(1);
+  }));
+
+  it('uses stats model consistently after compaction without recounting session totals', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', maxUsageObservationsPerExecution: 1 });
+    const service = new ExecutionService(deps(filePath, {
+      store, readSessionStats: async () => ({ model: 'actual-model', tokens: { input: 15, output: 0, cacheRead: 0, cacheWrite: 0 }, files: [], queue: [] }),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', request);
+    await store.replaceResolvedModels('execution-1', [{ slotId: 'slot-1', provider: 'provider', model: 'configured-model' } as never]);
+    await store.appendUsageObservation('execution-1', {
+      observationId: 'old', executionAttempt: 1, role: 'worker', slotId: 'slot-1', sessionId: 'worker', workAttempt: 0, claimGeneration: 0,
+      adapterEpoch: 0, sampleKind: 'heartbeat', sequence: 1, provider: 'provider', model: 'actual-model', routingIdentity: 'slot-1:provider:actual-model', cumulative: { inputTokens: 10 }, completeness: 'complete', observedAt: 1
+    });
+    await store.appendUsageObservation('execution-1', {
+      observationId: 'other', executionAttempt: 1, role: 'worker', slotId: 'other', sessionId: 'other', workAttempt: 0, claimGeneration: 0,
+      adapterEpoch: 0, sampleKind: 'heartbeat', sequence: 1, provider: 'provider', routingIdentity: 'other:provider:unknown', cumulative: { inputTokens: 1 }, completeness: 'complete', observedAt: 2
+    });
+    await service.observeSessionUsage('execution-1', 'worker', 'outcome');
+    const record = (await store.get('execution-1'))!;
+    expect(record.usageObservations?.find((item) => item.sessionId === 'worker')).toMatchObject({ model: 'actual-model', routingIdentity: 'slot-1:provider:actual-model', sequence: 2, delta: { inputTokens: 5 } });
+  }));
+
+  it('atomically blocks when concurrent samples cross token budget and telemetry gap thresholds', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    await new ExecutionService(deps(filePath, { store })).start('owner', 'project-1', { ...request, policy: { usageBudget: { maxTokens: 10 } } });
+    const sample = (id: string, sessionId: string, sequence: number, tokens?: number) => ({
+      observationId: id, executionAttempt: 1, role: 'worker' as const, slotId: sessionId, sessionId, workAttempt: 0, claimGeneration: 0,
+      adapterEpoch: 0, sampleKind: 'heartbeat' as const, sequence, provider: 'p', routingIdentity: sessionId,
+      cumulative: tokens === undefined ? {} : { inputTokens: tokens }, completeness: tokens === undefined ? 'partial' as const : 'complete' as const,
+      observedAt: sequence, ...(tokens === undefined ? { gap: 'missing' as const } : {})
+    });
+    await Promise.all([
+      store.appendUsageObservation('execution-1', sample('a', 'a', 1, 6), { telemetryGapGraceSamples: 3 }),
+      store.appendUsageObservation('execution-1', sample('b', 'b', 1, 4), { telemetryGapGraceSamples: 3 })
+    ]);
+    expect(await store.get('execution-1')).toMatchObject({ state: 'BLOCKED', resourceBlock: { kind: 'usage-budget' } });
+
+    const gaps = createExecutionStore({ filePath: `${filePath}.gaps`, id: () => 'execution-2' });
+    await new ExecutionService(deps(`${filePath}.gaps`, { store: gaps })).start('owner', 'project-1', { ...request, launchRequestId: 'gaps', policy: { usageBudget: { maxTokens: 100 } } });
+    await Promise.all(['a', 'b', 'c'].map((id) => gaps.appendUsageObservation('execution-2', sample(id, id, 1), { telemetryGapGraceSamples: 3 })));
+    expect(await gaps.get('execution-2')).toMatchObject({ state: 'BLOCKED', telemetryGapCount: 3, resourceBlock: { kind: 'telemetry-unavailable' } });
   }));
 
   it('admits new work below USD budget', async () => fixture(async (filePath) => {

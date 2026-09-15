@@ -27,6 +27,44 @@ const PROVEN_DEAD_CLAIM_REASON = 'Claim lease expired and assigned Team worker i
 const DEAD_WORKER_PROCESSES = new Set(['exited', 'spawn-failed', 'canceled']);
 const TELEMETRY_GAP_GRACE_SAMPLES = 3;
 
+function sessionUsageCounters(stats: SessionStats | null): ExecutionUsageObservationV1['cumulative'] {
+  return stats?.tokens || stats?.costUsd !== undefined ? {
+    ...(stats?.tokens ? {
+      inputTokens: stats.tokens.input, outputTokens: stats.tokens.output,
+      cacheReadTokens: stats.tokens.cacheRead, cacheWriteTokens: stats.tokens.cacheWrite
+    } : {}),
+    ...(stats?.costUsd === undefined ? {} : { providerCostUsd: stats.costUsd })
+  } : {};
+}
+
+function usageCompleteness(stats: SessionStats | null, budget?: { maxTokens?: number; maxUsd?: number }) {
+  const requiresCost = budget?.maxUsd !== undefined;
+  const requiresTokens = budget?.maxTokens !== undefined;
+  return requiresTokens && !stats?.tokens || requiresCost && stats?.costUsd === undefined ? 'partial' as const
+    : !stats?.tokens && stats?.costUsd === undefined ? 'unavailable' as const : 'complete' as const;
+}
+
+function latestUsageObservation(record: ExecutionRecord, identity: string): ExecutionUsageObservationV1 | undefined {
+  let latest: ExecutionUsageObservationV1 | undefined;
+  for (const observation of record.usageObservations ?? []) {
+    if (usageCursorIdentity(observation) !== identity) continue;
+    if (!latest || observation.adapterEpoch > latest.adapterEpoch
+      || observation.adapterEpoch === latest.adapterEpoch && observation.sequence > latest.sequence) latest = observation;
+  }
+  return latest;
+}
+
+function matchingUsageObservation(
+  record: ExecutionRecord,
+  matches: (observation: ExecutionUsageObservationV1) => boolean
+): ExecutionUsageObservationV1 | undefined {
+  const observations = record.usageObservations ?? [];
+  for (let index = observations.length - 1; index >= 0; index -= 1) {
+    if (matches(observations[index])) return observations[index];
+  }
+  return undefined;
+}
+
 export interface ExecutionCohortBinding extends ExecutionCohortAuthority {
   executionId: string;
   projectId: string;
@@ -736,51 +774,38 @@ export class ExecutionService {
     const record = await this.deps.store.get(executionId);
     if (!record || isResumeGrantTerminal(record.state)) return;
     let lifecycle: ExtractedLifecycle | undefined;
-    try { lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)); } catch { /* missing lifecycle becomes unavailable sample */ }
+    try { lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)); } catch (error) {
+      this.deps.logError?.(`execution usage lifecycle failed (execution=${executionId}, session=${sessionId}, sample=${sampleKind})`, error);
+    }
     const worker = lifecycle?.workers?.find((candidate) => candidate.sessionId === sessionId);
     const role = lifecycle?.orchestratorSessionId === sessionId ? 'orchestrator' as const : 'worker' as const;
     const slotId = role === 'orchestrator' ? 'orchestrator' : worker?.slotId ?? 'main:unmapped';
     const unit = role === 'worker' ? record.workUnits?.find((candidate) => candidate.assignedSlotId === slotId && candidate.state === 'CLAIMED') : undefined;
-    const model = record.resolvedModels.find((candidate) => candidate.slotId === slotId);
-    const sessionObservations = (record.usageObservations ?? []).filter((item) => item.sessionId === sessionId).sort((left, right) => left.sequence - right.sequence);
-    const cursorKey = usageCursorIdentity({ sessionId, provider: model?.provider ?? 'unknown', model: model?.model, routingIdentity: `${slotId}:${model?.provider ?? 'unknown'}:${model?.model ?? 'unknown'}` });
-    const previous = sessionObservations.at(-1) ?? record.usageBaseline?.cursors?.find((cursor) => usageCursorIdentity(cursor) === cursorKey);
+    const resolved = record.resolvedModels.find((candidate) => candidate.slotId === slotId);
     let stats: SessionStats | null = null;
-    try { stats = await this.deps.readSessionStats(sessionId, { fresh: sampleKind === 'terminal' }); } catch { /* unavailable */ }
-    const cumulative = stats?.tokens || stats?.costUsd !== undefined ? {
-      ...(stats?.tokens ? {
-      inputTokens: stats.tokens.input,
-      outputTokens: stats.tokens.output,
-      cacheReadTokens: stats.tokens.cacheRead,
-      cacheWriteTokens: stats.tokens.cacheWrite
-      } : {}),
-      ...(stats?.costUsd === undefined ? {} : { providerCostUsd: stats.costUsd })
-    } : {};
-    const requiresCost = record.request.policy?.usageBudget?.maxUsd !== undefined;
-    const requiresTokens = record.request.policy?.usageBudget?.maxTokens !== undefined;
-    const completeness = requiresTokens && !stats?.tokens || requiresCost && stats?.costUsd === undefined ? 'partial' as const
-      : !stats?.tokens && stats?.costUsd === undefined ? 'unavailable' as const : 'complete' as const;
-    const duplicate = completeness !== 'complete' ? undefined : [...sessionObservations].reverse().find((item) => item.sampleKind === sampleKind
-      && item.workUnitId === unit?.id && item.workAttempt === (unit?.attempt ?? 0) && item.claimGeneration === (unit?.claimGeneration ?? 0)
-      && JSON.stringify(item.cumulative) === JSON.stringify(cumulative) && item.completeness === completeness);
+    try { stats = await this.deps.readSessionStats(sessionId, { fresh: sampleKind === 'terminal' }); } catch (error) {
+      this.deps.logError?.(`execution usage stats failed (execution=${executionId}, session=${sessionId}, sample=${sampleKind})`, error);
+    }
+    const provider = resolved?.provider ?? 'unknown';
+    const model = stats?.model ?? resolved?.model;
+    const routingIdentity = `${slotId}:${provider}:${model ?? 'unknown'}`;
+    const cursorKey = usageCursorIdentity({ sessionId, provider, model, routingIdentity });
+    const retainedPrevious = latestUsageObservation(record, cursorKey);
+    const previous = retainedPrevious ?? record.usageBaseline?.cursors?.find((cursor) => usageCursorIdentity(cursor) === cursorKey);
+    const cumulative = sessionUsageCounters(stats);
+    const completeness = usageCompleteness(stats, record.request.policy?.usageBudget);
+    const duplicate = completeness !== 'complete' || !retainedPrevious ? undefined : matchingUsageObservation(record, (item) => usageCursorIdentity(item) === cursorKey && item.sampleKind === sampleKind
+       && item.workUnitId === unit?.id && item.workAttempt === (unit?.attempt ?? 0) && item.claimGeneration === (unit?.claimGeneration ?? 0)
+       && JSON.stringify(item.cumulative) === JSON.stringify(cumulative) && item.completeness === completeness);
     const sequence = duplicate?.sequence ?? (previous?.sequence ?? 0) + 1;
     const observation: Omit<ExecutionUsageObservationV1, 'version' | 'delta'> = {
       observationId: duplicate?.observationId ?? `${executionId}:usage:${sessionId}:${sequence}`, executionAttempt: record.attempt, role, slotId, sessionId,
       ...(unit ? { workUnitId: unit.id } : {}), workAttempt: unit?.attempt ?? 0, claimGeneration: unit?.claimGeneration ?? 0,
-      adapterEpoch: previous?.adapterEpoch ?? 0, sampleKind, sequence, provider: model?.provider ?? 'unknown',
-      ...(stats?.model ?? model?.model ? { model: stats?.model ?? model?.model } : {}),
-      routingIdentity: `${slotId}:${model?.provider ?? 'unknown'}:${model?.model ?? 'unknown'}`, cumulative, completeness,
+      adapterEpoch: previous?.adapterEpoch ?? 0, sampleKind, sequence, provider,
+      ...(model ? { model } : {}), routingIdentity, cumulative, completeness,
       observedAt: duplicate?.observedAt ?? (this.deps.now ?? Date.now)(), ...(completeness !== 'complete' ? { gap: 'missing' as const } : {})
     };
-    const appended = await this.deps.store.appendUsageObservation(record.id, observation);
-    const budget = this.checkUsageBudget(appended.record);
-    if (budget) {
-      await this.deps.store.blockForResource(record.id, `RESOURCE_EXHAUSTED: ${budget}. Existing in-flight provider calls may still finish.`, 'usage-budget');
-      return;
-    }
-    if (appended.record.request.policy?.usageBudget && (appended.record.telemetryGapCount ?? 0) >= TELEMETRY_GAP_GRACE_SAMPLES) {
-      await this.deps.store.blockForResource(record.id);
-    }
+    await this.deps.store.appendUsageObservation(record.id, observation, { telemetryGapGraceSamples: TELEMETRY_GAP_GRACE_SAMPLES });
   }
 
   /**

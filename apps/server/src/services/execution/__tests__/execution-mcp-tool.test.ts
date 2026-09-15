@@ -749,6 +749,24 @@ describe('execution MCP tools', () => {
     expect(text(result)).not.toContain('secret');
   });
 
+  it('allowlists assembled result units so nested structured output never reaches MCP', async () => {
+    const execution = service();
+    execution.status.mockResolvedValue({
+      id: 'execution-1', state: 'COMPLETED', deliveries: [], workUnits: [],
+      assembledResult: {
+        version: 1, outcome: 'success', summary: 'done',
+        units: [{ id: 'unit-1', title: 'Unit', state: 'COMPLETED', result: 'safe', structuredResult: { token: 'nested-secret' }, injected: 'also-secret' }],
+        failures: [], artifacts: [], verification: [], usage: { version: 1, completeness: 'complete', observationCount: 0, gapCount: 0, byRole: [] }, digest: `sha256:${'1'.repeat(64)}`
+      }
+    } as never);
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
+    const payload = JSON.parse(text(await tools.get('execution.status')!({ executionId: 'execution-1' })));
+    expect(payload.assembledResult.units).toEqual([{ id: 'unit-1', title: 'Unit', state: 'COMPLETED', result: 'safe' }]);
+    expect(JSON.stringify(payload)).not.toContain('nested-secret');
+    expect(JSON.stringify(payload)).not.toContain('also-secret');
+  });
+
   it('returns artifact metadata only from list tool', async () => {
     const execution = service();
     const { server, tools } = fakeServer();

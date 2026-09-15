@@ -106,6 +106,23 @@ function blockerProjection(record: ExecutionRecord): Pick<ExecutionBoardProjecti
   };
 }
 
+export function assembledResultProjection(record: ExecutionRecord): ExecutionBoardProjection['assembledResult'] {
+  if (!record.assembledResult) return undefined;
+  return {
+    version: record.assembledResult.version, outcome: record.assembledResult.outcome, summary: record.assembledResult.summary,
+    units: record.assembledResult.units.map(({ id, title, state, result, failureCode }) => ({
+      id, title, state,
+      ...(result === undefined ? {} : { result: resultPreview(result) }),
+      ...(failureCode === undefined ? {} : { failureCode })
+    })),
+    failures: record.assembledResult.failures.map(({ workUnitId, code }) => ({ workUnitId, code })),
+    artifacts: record.assembledResult.artifacts.map(({ name, mediaType, contentDigest }) => ({ name, mediaType, contentDigest })),
+    ...(record.assembledResult.policy ? { policy: { status: record.assembledResult.policy.status, summary: record.assembledResult.policy.summary } } : {}),
+    verification: record.assembledResult.verification.map(({ workUnitId, checks }) => ({ workUnitId, checks: [...checks] })),
+    usage: publicUsage(record.assembledResult.usage), digest: record.assembledResult.digest
+  };
+}
+
 /** Build bounded project-local board data from durable records and live tabs. */
 export function projectExecutionProjection(
   records: readonly ExecutionRecord[],
@@ -137,17 +154,7 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     ? record.updatedAt - record.createdAt
     : undefined;
   const usage = publicUsage(usageRollup(record.usageObservations ?? [], record.usageBaseline));
-  const assembledResult = record.assembledResult ? {
-    version: record.assembledResult.version, outcome: record.assembledResult.outcome, summary: record.assembledResult.summary,
-    units: record.assembledResult.units.map((unit) => {
-      const { structuredResult: _legacyStructuredResult, ...safe } = unit as typeof unit & { structuredResult?: unknown };
-      return { ...safe, ...(safe.result ? { result: resultPreview(safe.result) } : {}) };
-    }), failures: record.assembledResult.failures.map(({ workUnitId, code }) => ({ workUnitId, code })),
-    artifacts: record.assembledResult.artifacts.map(({ name, mediaType, contentDigest }) => ({ name, mediaType, contentDigest })),
-    ...(record.assembledResult.policy ? { policy: { status: record.assembledResult.policy.status, summary: record.assembledResult.policy.summary } } : {}),
-    verification: record.assembledResult.verification.map(({ workUnitId, checks }) => ({ workUnitId, checks: [...checks] })),
-    usage: publicUsage(record.assembledResult.usage), digest: record.assembledResult.digest
-  } : undefined;
+  const assembledResult = assembledResultProjection(record);
   return {
     executionId: record.id,
     projectId: record.projectId,

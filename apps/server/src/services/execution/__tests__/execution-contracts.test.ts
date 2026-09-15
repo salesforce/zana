@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assembleExecutionResult, evaluateRouteFit, usageRollup, validateStructuredResult, validOutputDeclaration } from '../contracts.js';
+import { assembleExecutionResult, evaluateRouteFit, hasOnlyKeys, usageRollup, validateStructuredResult, validOutputDeclaration } from '../contracts.js';
 import type { ExecutionRecord, ExecutionUsageObservationV1 } from '../store.js';
 
 function observation(over: Partial<ExecutionUsageObservationV1> = {}): ExecutionUsageObservationV1 {
@@ -76,7 +76,12 @@ describe('execution phase 5 contracts', () => {
 
   it('keeps route fit indeterminate with unknown usage or too few samples', () => {
     const record = { resolvedModels: [], workUnits: [], usageObservations: [], routingDecisions: [] } as unknown as ExecutionRecord;
-    expect(evaluateRouteFit(record, 1)).toMatchObject({ active: false, fit: 'indeterminate', samples: 0 });
+    expect(evaluateRouteFit(record, 1)).toMatchObject({ active: false, outcome: 'failure', fit: 'indeterminate', reason: 'No work units were available to evaluate.', samples: 0 });
+  });
+
+  it('exports strict key allowlisting for durable contract validators', () => {
+    expect(hasOnlyKeys({ version: 1, value: true }, ['version', 'value'])).toBe(true);
+    expect(hasOnlyKeys({ version: 1, secret: true }, ['version'])).toBe(false);
   });
 
   it('classifies illegal routes underpowered and large legal tier gaps overpowered', () => {

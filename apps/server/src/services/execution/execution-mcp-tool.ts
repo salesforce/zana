@@ -12,6 +12,7 @@ import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import { EXECUTION_FAILURE_CODES, EXECUTION_FAILURE_DETAIL_MAX_CHARS } from '@zana-ai/zcc-domain/product';
 import { MAX_EXECUTION_PLAN_BYTES, validOutputDeclaration } from './contracts.js';
+import { assembledResultProjection } from './projection.js';
 
 const slotSchema = z.strictObject({
   initialTask: z.string().min(1).refine(
@@ -197,7 +198,7 @@ function sanitizeStructuredResults(record: Omit<ExecutionRecord, 'deliveries'> |
   return {
     ...publicRecord,
     ...(record.workUnits ? { workUnits: record.workUnits.map(({ structuredResult: _structuredResult, ...unit }) => unit) } : {}),
-    ...('assembledResult' in record && record.assembledResult ? { assembledResult: record.assembledResult } : {})
+    ...('assembledResult' in record && record.assembledResult ? { assembledResult: assembledResultProjection(record as ExecutionRecord) } : {})
   };
 }
 

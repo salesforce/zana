@@ -34,6 +34,7 @@ import { refreshRemoteStartPathHosts, stampedProjectRemote } from './remote-work
 import { resolveIconPath } from './resolve-icon-path.js';
 import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
 import { createTeamProductOps } from './team-product-ops.js';
+import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
@@ -1222,14 +1223,14 @@ function transcriptRefForSession(session: TerminalSession) {
   };
 }
 
-function retainExitedSessionStats(session: TerminalSession, pending?: Promise<SessionStats | null>): void {
+function retainExitedSessionStats(session: TerminalSession, pending?: Promise<SessionStats | null>, cached?: SessionStats | null, previousPending?: Promise<SessionStats | null>): void {
   const entry: { projectId: string; stats: SessionStats | null; pending?: Promise<SessionStats | null> } = {
     projectId: session.projectId,
     stats: null
   };
-  entry.pending = (pending ?? transcriptSource.readStats(transcriptRefForSession(session))).then((stats) => {
-    entry.stats = stats;
-    return stats;
+  entry.pending = (pending ?? transcriptSource.readStats(transcriptRefForSession(session))).then(async (stats) => {
+    entry.stats = await finalSessionStats(stats, cached, previousPending);
+    return entry.stats;
   }).catch(() => null);
   exitedSessionStats.set(session.id, entry);
   while (exitedSessionStats.size > EXITED_SESSION_STATS_MAX) {
@@ -5646,9 +5647,10 @@ function wireBridgeListeners() {
       }
     })();
     if (exitedSession) {
+      const cachedEntry = liveSessionStats.get(sessionId);
       const finalRead = readLiveSessionStats(exitedSession, { fresh: true });
       liveSessionStats.delete(sessionId);
-      retainExitedSessionStats(exitedSession, finalRead);
+      retainExitedSessionStats(exitedSession, finalRead, cachedEntry?.value, cachedEntry?.pending);
       refreshRestoreCapability(exitedSession);
     }
     agentStatus.remove(sessionId);
