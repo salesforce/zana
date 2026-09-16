@@ -11,6 +11,7 @@ import type { AgentState } from '@zana-ai/zcc-domain/product';
 import {
   OutputActivityMonitor,
   DEFAULT_IDLE_AFTER_MS,
+  chunkHasVisibleActivity,
   type OutputActivityDeps
 } from './output-activity.js';
 
@@ -109,6 +110,28 @@ describe('OutputActivityMonitor', () => {
     ctx.monitor.observe('s1', '');
     expect(ctx.reports).toEqual([]);
     expect(ctx.clock.pending()).toBe(0);
+  });
+
+  it('ignores OSC title and CSI-only frames so idle chrome cannot pin working', () => {
+    ctx.monitor.observe('s1', '\x1b]2;✳ Agentforce Code\x07');
+    ctx.monitor.observe('s1', '\x1b[?2004h\x1b[0m\x1b[2K');
+    expect(ctx.reports).toEqual([]);
+    expect(ctx.clock.pending()).toBe(0);
+    ctx.monitor.observe('s1', '\x1b[32mcompiled\x1b[0m\n');
+    expect(ctx.reports).toEqual([['s1', 'working']]);
+    ctx.monitor.observe('s1', '\x1b]2;✳ compiled\x07');
+    ctx.clock.advance(DEFAULT_IDLE_AFTER_MS);
+    expect(ctx.reports).toEqual([
+      ['s1', 'working'],
+      ['s1', 'idle']
+    ]);
+  });
+
+  it('treats visible braille spinner text as activity', () => {
+    expect(chunkHasVisibleActivity('⠹ Working…\n')).toBe(true);
+    expect(chunkHasVisibleActivity('\x1b]2;✳ idle\x07')).toBe(false);
+    ctx.monitor.observe('s1', '⠹ Working…\n');
+    expect(ctx.reports).toEqual([['s1', 'working']]);
   });
 
   it('reads idleAfterMs live from the injected getter', () => {

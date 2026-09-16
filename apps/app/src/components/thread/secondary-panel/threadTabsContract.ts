@@ -26,7 +26,7 @@ export function closableTabsToContract(tabs: readonly ClosableSecondaryTab[]): T
 }
 
 export function closableTabToContract(tab: ClosableSecondaryTab): ThreadTab | null {
-  if (tab.kind === 'explorer') return null;
+  if (tab.kind === 'explorer' || tab.kind === 'inbox') return null;
   if (tab.kind === 'file-preview') {
     if (!tab.path) return null;
     return {

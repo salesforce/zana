@@ -58,6 +58,7 @@ export function TerminalSettingsView({
       <Section anchorId="terminal-appearance" title="Appearance">
         <Field
           label="Terminal theme"
+          layout="row"
           help="Color palette for the terminal, independent of the app theme. ‘Auto’ follows the app’s light/dark mode. Applies live to open terminals."
         >
           <PopoverPicklist
@@ -68,7 +69,7 @@ export function TerminalSettingsView({
             options={TERMINAL_THEME_OPTIONS.map((option) => ({ value: option.id, label: option.label }))}
           />
         </Field>
-        <Field label="Terminal font size" help="Range 10–20. Affects new tabs.">
+        <Field label="Terminal font size" help="Range 10–20. Affects new tabs." layout="row">
           <input
             type="number"
             min={10}
@@ -112,6 +113,7 @@ export function TerminalSettingsView({
       >
         <Field
           label="tmux session persistence"
+          layout="row"
           help="Back sessions with tmux so they survive an app restart or a dropped SSH connection. A durability feature, not a speed-up — it does not make terminals faster. Needs tmux installed; ignored on Windows or when tmux is absent. Off: never wrap. Remote only: wrap SSH sessions only — the strongest use case (surviving a dropped link) — and skip the extra tmux server for local runs that don't need it. All sessions: wrap local and remote (the default)."
         >
           <PopoverPicklist

@@ -4,7 +4,7 @@ import { AfcodeProvider } from './provider.js';
 
 const implementation = new AfcodeProvider();
 export const afcodeHarness: HarnessRegistration = {
-  id: 'afcode', label: 'afcode',
+  id: 'afcode', label: 'Agentforce Code',
   profiles: [
     { id: 'afcode', posture: 'default' },
     { id: 'afcode-resume', posture: 'resume' },

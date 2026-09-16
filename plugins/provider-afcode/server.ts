@@ -1,15 +1,17 @@
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk';
 
+const ICON = './icons/afcode.svg';
+
 /** The host owns launch authorization; this plugin supplies the ACP dialect. */
 export default function plugin(zcc: ZccPluginApi) {
   zcc.settings.define({
     executable: {
-      type: 'string', label: 'afcode executable', default: 'afcode',
+      type: 'string', label: 'Agentforce Code executable', default: 'afcode',
       description: 'Command or absolute path to an ACP-enabled afcode binary. CLI Agents use the binary setting in Agents settings.'
     }
   });
   zcc.agents.experimental_registerProvider({
-    id: 'acp-afcode', displayName: 'afcode', icon: 'Terminal',
+    id: 'acp-afcode', displayName: 'Agentforce Code', icon: ICON,
     visibility: 'always',
     capabilities: {
       supportsServiceTier: false, supportsNativeUserQuestion: false,
@@ -23,17 +25,17 @@ export default function plugin(zcc: ZccPluginApi) {
       const value = settings.executable;
       const command = typeof value === 'string' && value.trim() ? value.trim() : 'afcode';
       return {
-        acpLaunchSpec: { displayName: 'afcode', command, args: ['acp'], env: {} },
+        acpLaunchSpec: { displayName: 'Agentforce Code', command, args: ['acp'], env: {} },
         acpDialect: 'generic'
       };
     }
   });
   zcc.agents.experimental_registerPtyHarness({
-    id: 'afcode', displayName: 'afcode', icon: 'Terminal',
+    id: 'afcode', displayName: 'Agentforce Code', icon: ICON,
     profiles: [
-      { id: 'afcode', label: 'afcode' },
-      { id: 'afcode-resume', label: 'afcode (resume picker)' },
-      { id: 'afcode-yolo', label: 'afcode (unrestricted)' }
+      { id: 'afcode', label: 'Agentforce Code' },
+      { id: 'afcode-resume', label: 'Agentforce Code (resume picker)' },
+      { id: 'afcode-yolo', label: 'Agentforce Code (unrestricted)' }
     ],
     enableConfigKey: 'harnessAfcodeEnabled'
   });

@@ -55,6 +55,7 @@ describe('ThreadNewTabPage', () => {
     expect(html).toContain('Start terminal');
     expect(html).not.toContain('data-testid="thread-new-tab-browser"');
     expect(html).not.toContain('data-testid="thread-new-tab-explorer"');
+    expect(html).not.toContain('data-testid="thread-new-tab-inbox"');
     expect(html).toContain('data-testid="thread-new-tab-plugin-tasks-board"');
     expect(html).toContain('data-testid="thread-new-tab-plugin-tasks-compose"');
     expect(html).not.toContain('data-testid="thread-new-tab-plugin-tasks-live"');
@@ -72,6 +73,8 @@ describe('ThreadNewTabPage', () => {
     );
     expect(withProject).toContain('data-testid="thread-new-tab-explorer"');
     expect(withProject).toContain('Open Explorer');
+    expect(withProject).toContain('data-testid="thread-new-tab-inbox"');
+    expect(withProject).toContain('Open Inbox');
   });
 
   it('lists matching files and an empty search state', () => {
@@ -119,6 +122,7 @@ describe('ThreadNewTabPage', () => {
     );
     expect(desktop).toContain('data-testid="thread-new-tab-browser"');
     expect(desktop).toContain('data-testid="thread-new-tab-explorer"');
+    expect(desktop).toContain('data-testid="thread-new-tab-inbox"');
     expect(desktop).toContain('Tasks');
     const withRecents = renderToStaticMarkup(
       <ThreadNewTabView
@@ -136,6 +140,7 @@ describe('ThreadNewTabPage', () => {
         onOpenPlugin={() => undefined}
         allowSidecarTerminal={false}
         allowExplorer={false}
+        allowInbox={false}
       />
     );
     expect(withRecents).toContain('data-testid="thread-new-tab-recents"');
@@ -153,11 +158,13 @@ describe('ThreadNewTabPage', () => {
         onOpenPlugin={() => undefined}
         allowSidecarTerminal={false}
         allowExplorer={false}
+        allowInbox={false}
       />
     );
     expect(noSidecar).not.toContain('data-testid="thread-new-tab-terminal"');
     expect(noSidecar).not.toContain('Start terminal');
     expect(noSidecar).not.toContain('data-testid="thread-new-tab-explorer"');
+    expect(noSidecar).not.toContain('data-testid="thread-new-tab-inbox"');
   });
 
   it('lists only agent-session-scoped plugin actions on the CLI-agent inspector', () => {

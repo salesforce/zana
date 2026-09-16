@@ -23,7 +23,8 @@ import {
   uniqueTabSuffix,
   activePinnedView,
   applySecondaryPanelOpenWidth,
-  secondaryPanelOpenWidthPx
+  secondaryPanelOpenWidthPx,
+  secondaryPanelShowsInspectorFooter
 } from './threadSecondaryPanelState.js';
 
 describe('thread secondary panel state', () => {
@@ -67,6 +68,9 @@ describe('thread secondary panel state', () => {
     expect(next.activeId).toBe(INFO_PIN_ID);
     expect(activePinnedView(next)).toBe('info');
     expect(activePinnedView(selectPinnedView(next, 'diff'))).toBe('diff');
+    expect(secondaryPanelShowsInspectorFooter(next)).toBe(true);
+    expect(secondaryPanelShowsInspectorFooter(selectPinnedView(next, 'diff'))).toBe(false);
+    expect(secondaryPanelShowsInspectorFooter(selectPinnedView(next, 'plan'))).toBe(false);
     const withTab = addClosableTab(next, { kind: 'browser', title: 'Browser', url: 'https://example.com' });
     expect(activePinnedView(withTab)).toBeNull();
     expect(toggleSecondaryPanelMaximized(emptySecondaryPanelState())).toMatchObject({
@@ -111,6 +115,18 @@ describe('thread secondary panel state', () => {
     });
     expect(parsed.activeId).toBe('explorer:1');
     expect(parsed.tabs[0]?.kind).toBe('explorer');
+  });
+
+  it('restores a persisted Inbox tab', () => {
+    const parsed = parseSecondaryPanelState({
+      version: 1,
+      isOpen: true,
+      widthPx: 360,
+      activeId: 'inbox:1',
+      tabs: [{ id: 'inbox:1', kind: 'inbox', title: 'Inbox' }]
+    });
+    expect(parsed.activeId).toBe('inbox:1');
+    expect(parsed.tabs[0]?.kind).toBe('inbox');
   });
 
   it('replaces an active New Tab when opening a file preview', () => {
@@ -265,6 +281,8 @@ describe('thread secondary panel state', () => {
     expect(addClosableTab(emptyBrowser, { kind: 'browser', title: 'Browser', url: '' }).tabs).toHaveLength(2);
     const explorer = addClosableTab(emptySecondaryPanelState(), { kind: 'explorer', title: 'Explorer' });
     expect(addClosableTab(explorer, { kind: 'explorer', title: 'Explorer' }).tabs).toHaveLength(1);
+    const inbox = addClosableTab(emptySecondaryPanelState(), { kind: 'inbox', title: 'Inbox' });
+    expect(addClosableTab(inbox, { kind: 'inbox', title: 'Inbox' }).tabs).toHaveLength(1);
   });
 
   it('leaves inactive tabs in place when closing another tab', () => {

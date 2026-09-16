@@ -3,9 +3,11 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   type PointerEvent as ReactPointerEvent,
   type SetStateAction
 } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { HomeView } from '../home/HomeView.js';
 import { InboxView } from '../inbox/InboxView.js';
@@ -25,7 +27,6 @@ import {
   SPLIT_PANE_DATA_ATTR
 } from '../../lib/split-drag/index.js';
 import {
-  clampSplitPairFraction,
   computePaneRects,
   countPanes,
   findPane,
@@ -57,6 +58,7 @@ import {
   type PaneSecondaryPanelRegistry
 } from './PaneContext.js';
 import { PluginPanelPaneView } from './PluginPanelPaneView.js';
+import { SplitDivider } from './SplitDivider.js';
 import { SplitPaneBar } from './SplitPaneBar.js';
 import { paneUsesHostBar } from './split-pane-bar-title.js';
 import { ProjectModePane } from '../project/ProjectModePane.js';
@@ -86,6 +88,8 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
   const maximizedPaneId = useSplitWorkspace((s) => s.maximizedPaneId);
   const setMaximizedPaneIdAtom = useSplitWorkspace((s) => s.setMaximizedPaneId);
   const routeKey = paneContentRoute(routeContent);
+  const cancelDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelDrag.current?.(), [scopeKey, isCompact]);
 
   // Activate before reconcile so a project route never writes into the global tree.
   if (storedScopeKey !== scopeKey) {
@@ -115,6 +119,19 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
   const isSplitActive = !isCompact && panes.length > 1;
   const focusedPaneId = effectiveLayout.focusedPaneId;
   const paneCount = countPanes(effectiveLayout.root);
+  // Portal hosts outlive tree slots. Reparenting a slot must not remount editors,
+  // reset unsent composers, or discard plugin-local state.
+  const hostCache = useRef(new Map<string, HTMLDivElement>());
+  const hosts = new Map<string, HTMLDivElement>();
+  const paneKeys = new Map<string, string>();
+  for (const pane of panes) {
+    const key = `${scopeKey}:${paneContentKey(pane)}`;
+    const host = hostCache.current.get(key) ?? document.createElement('div');
+    host.className = 'split-pane-host';
+    hosts.set(pane.paneId, host);
+    paneKeys.set(pane.paneId, key);
+  }
+  hostCache.current = new Map(panes.map((pane) => [paneKeys.get(pane.paneId)!, hosts.get(pane.paneId)!]));
   const maximizedPane =
     maximizedPaneId !== null ? findPane(effectiveLayout.root, maximizedPaneId) : null;
   const maximizedPaneMissing = maximizedPaneId !== null && maximizedPane === null;
@@ -242,6 +259,8 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
 
   const beginPaneDrag = useCallback<BeginPaneDrag>(
     (paneId, event, label) => {
+      if (event.button !== 0) return;
+      const startScope = useSplitWorkspace.getState().scopeKey;
       const startLayout = useSplitWorkspace.getState().layout ?? effectiveLayout;
       if (countPanes(startLayout.root) < 2) return;
       const restoreMaximizeAfterDrag = useSplitWorkspace.getState().maximizedPaneId === paneId;
@@ -251,7 +270,8 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
           : null;
       const startX = event.clientX;
       const startY = event.clientY;
-      beginSplitDrag({
+      cancelDrag.current = beginSplitDrag({
+        pointerId: event.pointerId,
         ghostLabel: label,
         sourceEl,
         shouldEngage: (x, y) => Math.hypot(x - startX, y - startY) > PANE_DRAG_ENGAGE_DISTANCE_PX,
@@ -259,12 +279,13 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
         onEnd: restoreMaximizeAfterDrag
           ? () => {
               const current = useSplitWorkspace.getState().layout;
-              if (current !== null && findPane(current.root, current.focusedPaneId) !== null) {
+              if (useSplitWorkspace.getState().scopeKey === startScope && current !== null && findPane(current.root, current.focusedPaneId) !== null) {
                 setMaximizedPaneId(current.focusedPaneId);
               }
             }
           : undefined,
-        decide: (targetPaneId, zone) => decidePaneDrop({ zone, isSelf: targetPaneId === paneId }),
+        decide: (targetPaneId, zone) => useSplitWorkspace.getState().scopeKey === startScope
+          ? decidePaneDrop({ zone, isSelf: targetPaneId === paneId }) : null,
         onDrop: (target) => {
           const current = useSplitWorkspace.getState().layout ?? startLayout;
           const next =
@@ -291,47 +312,31 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
     toggleMaximizePane
   });
 
-  if (isCompact || panes.length <= 1) {
-    const firstPane = panes[0];
-    const paneId = firstPane?.paneId ?? 'pane-1';
-    return (
-      <div className="split-workspace" data-testid="split-workspace" data-split="false">
-        {/* Hit-test target for sidebar / rail drag. Without this attribute the
-            drop layer cannot see the live view (the shell landmark is display:contents). */}
-        <div className="split-pane" data-split-pane-id={paneId} data-focused="true">
-          <WorkspacePaneContent
-            content={firstPane?.content ?? routeContent}
-            paneId={paneId}
-            isFocused
-            isSplitPane={false}
-            secondaryPanelRegistry={null}
-            onRequestClose={null}
-            isMaximized={false}
-            onToggleMaximize={null}
-            isBoundedPane={false}
-            navigateInPane={navigateInPane}
-          />
-        </div>
-      </div>
-    );
-  }
-
+  const treeProps: SplitTreeProps = {
+    node: effectiveLayout.root,
+    path: EMPTY_PATH,
+    dimsInactiveSplits,
+    focusedPaneId: effectiveMaximizedPaneId ?? focusedPaneId,
+    maximizedPaneId: isSplitActive ? effectiveMaximizedPaneId : null,
+    onFocusPane: focusPane,
+    onClosePane: closePane,
+    onToggleMaximizePane: toggleMaximizePane,
+    onMovePaneToSide: movePaneToSide,
+    onResize: resize,
+    onNavigateInPane: navigateInPane,
+    onBeginPaneDrag: beginPaneDrag,
+    paneHosts: hosts
+  };
   return (
-    <div className="split-workspace" data-testid="split-workspace" data-split="true">
-      <SplitTree
-        node={effectiveLayout.root}
-        path={EMPTY_PATH}
-        dimsInactiveSplits={dimsInactiveSplits}
-        focusedPaneId={effectiveMaximizedPaneId ?? effectiveLayout.focusedPaneId}
-        maximizedPaneId={effectiveMaximizedPaneId}
-        onFocusPane={focusPane}
-        onClosePane={closePane}
-        onToggleMaximizePane={toggleMaximizePane}
-        onMovePaneToSide={movePaneToSide}
-        onResize={resize}
-        onNavigateInPane={navigateInPane}
-        onBeginPaneDrag={beginPaneDrag}
-      />
+    <div className="split-workspace" data-testid="split-workspace" data-split={isSplitActive ? 'true' : 'false'}>
+      {isSplitActive ? <SplitTree key={scopeKey} {...treeProps} /> : panes.map((pane) => (
+        <PaneSlot key={pane.paneId} host={hosts.get(pane.paneId)!} hidden={pane.paneId !== focusedPaneId} />
+      ))}
+      {panes.map((pane) => createPortal(
+        <SplitPane {...treeProps} node={pane} isSplitPane={isSplitActive} />,
+        hosts.get(pane.paneId)!,
+        paneKeys.get(pane.paneId)
+      ))}
     </div>
   );
 }
@@ -394,6 +399,7 @@ function useSplitPaneShortcuts({
 }
 
 interface SplitTreeProps {
+  paneHosts: ReadonlyMap<string, HTMLDivElement>;
   node: LayoutNode;
   path: SplitPath;
   dimsInactiveSplits: boolean;
@@ -408,57 +414,71 @@ interface SplitTreeProps {
   onBeginPaneDrag: BeginPaneDrag;
 }
 
-function SplitTree(props: SplitTreeProps) {
-  const { node, path, focusedPaneId } = props;
-  if (node.type === 'pane') {
-    const isFocused = node.paneId === focusedPaneId;
-    const isMaximized = node.paneId === props.maximizedPaneId;
-    const isHiddenByMaximize = props.maximizedPaneId !== null && !isMaximized;
-    return (
-      <div
-        onPointerDown={() => props.onFocusPane(node.paneId)}
-        className={[
-          'split-pane',
-          isFocused ? 'is-focused' : '',
-          isMaximized ? 'is-maximized' : '',
-          isHiddenByMaximize ? 'is-hidden' : ''
-        ]
-          .filter(Boolean)
-          .join(' ')}
-        data-split-pane-id={node.paneId}
-        data-focused={isFocused ? 'true' : 'false'}
-        data-maximized={isMaximized ? 'true' : undefined}
-        aria-hidden={isHiddenByMaximize || undefined}
-      >
-        {paneUsesHostBar(node.content) ? (
-          <SplitPaneBar
-            content={node.content}
-            isMaximized={isMaximized}
-            onClose={() => props.onClosePane(node.paneId)}
-            onToggleMaximize={() => props.onToggleMaximizePane(node.paneId)}
-            onBeginDrag={(event, label) => props.onBeginPaneDrag(node.paneId, event, label)}
-          />
-        ) : null}
-        <WorkspacePaneContent
+function PaneSlot({ host, hidden = false }: { host: HTMLDivElement; hidden?: boolean }) {
+  const attach = useCallback((slot: HTMLDivElement | null) => {
+    if (slot && host.parentElement !== slot) slot.replaceChildren(host);
+  }, [host]);
+  return <div className="split-pane-slot" hidden={hidden} ref={attach} />;
+}
+
+function SplitPane(props: SplitTreeProps & { node: PaneNode; isSplitPane: boolean }) {
+  const { node, focusedPaneId, isSplitPane } = props;
+  const isFocused = node.paneId === focusedPaneId;
+  const isMaximized = isSplitPane && node.paneId === props.maximizedPaneId;
+  const isHiddenByMaximize = isSplitPane && props.maximizedPaneId !== null && !isMaximized;
+  return (
+    <div
+      onPointerDown={() => props.onFocusPane(node.paneId)}
+      onFocus={() => props.onFocusPane(node.paneId)}
+      className={[
+        'split-pane',
+        isFocused ? 'is-focused' : '',
+        isMaximized ? 'is-maximized' : '',
+        isHiddenByMaximize ? 'is-hidden' : ''
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      data-split-pane-id={node.paneId}
+      data-focused={isFocused ? 'true' : 'false'}
+      data-maximized={isMaximized ? 'true' : undefined}
+      aria-hidden={isHiddenByMaximize || undefined}
+    >
+      {isSplitPane && paneUsesHostBar(node.content) ? (
+        <SplitPaneBar
           content={node.content}
-          paneId={node.paneId}
-          isFocused={isFocused}
-          isSplitPane
-          secondaryPanelRegistry={null}
-          onRequestClose={() => props.onClosePane(node.paneId)}
           isMaximized={isMaximized}
-          onToggleMaximize={() => props.onToggleMaximizePane(node.paneId)}
+          onClose={() => props.onClosePane(node.paneId)}
           onMoveToSide={(side) => props.onMovePaneToSide(node.paneId, side)}
-          isBoundedPane
-          navigateInPane={props.onNavigateInPane}
-          onBeginPaneDrag={props.onBeginPaneDrag}
+          onToggleMaximize={() => props.onToggleMaximizePane(node.paneId)}
+          onBeginDrag={(event, label) => props.onBeginPaneDrag(node.paneId, event, label)}
         />
-        <div
-          aria-hidden
-          className={`split-pane-scrim${isFocused || !props.dimsInactiveSplits ? '' : ' is-dimmed'}`}
-        />
-      </div>
-    );
+      ) : null}
+      <WorkspacePaneContent
+        content={node.content}
+        paneId={node.paneId}
+        isFocused={isFocused}
+        isSplitPane={isSplitPane}
+        secondaryPanelRegistry={null}
+        onRequestClose={isSplitPane ? () => props.onClosePane(node.paneId) : null}
+        isMaximized={isMaximized}
+        onToggleMaximize={isSplitPane ? () => props.onToggleMaximizePane(node.paneId) : null}
+        onMoveToSide={isSplitPane ? (side) => props.onMovePaneToSide(node.paneId, side) : undefined}
+        isBoundedPane={isSplitPane}
+        navigateInPane={props.onNavigateInPane}
+        onBeginPaneDrag={isSplitPane ? props.onBeginPaneDrag : undefined}
+      />
+      {isSplitPane && <div
+        aria-hidden
+        className={`split-pane-scrim${isFocused || !props.dimsInactiveSplits ? '' : ' is-dimmed'}`}
+      />}
+    </div>
+  );
+}
+
+function SplitTree(props: SplitTreeProps) {
+  const { node, path } = props;
+  if (node.type === 'pane') {
+    return <PaneSlot host={props.paneHosts.get(node.paneId)!} />;
   }
 
   return (
@@ -467,7 +487,9 @@ function SplitTree(props: SplitTreeProps) {
         <Fragment key={paneKey(child)}>
           {index > 0 ? (
             <SplitDivider
+              key={JSON.stringify([path, paneKey(node.children[index - 1]!), paneKey(child)])}
               dir={node.dir}
+              fraction={(node.sizes[index - 1] ?? 1) / ((node.sizes[index - 1] ?? 1) + (node.sizes[index] ?? 1))}
               hidden={props.maximizedPaneId !== null}
               onResize={(fraction) => props.onResize(path, index - 1, fraction)}
             />
@@ -625,93 +647,25 @@ function EmptySplitPane() {
     <section className="split-pane-empty-well" data-testid="split-pane-empty">
       <div className="split-pane-empty">
         <p className="split-pane-empty-copy">Drop a view here</p>
+        <p className="split-pane-empty-hint">Or choose a view from the sidebar.</p>
       </div>
     </section>
   );
 }
 
-function SplitDivider({
-  dir,
-  hidden,
-  onResize
-}: {
-  dir: 'row' | 'col';
-  hidden: boolean;
-  onResize: (fraction: number) => void;
-}) {
-  const horizontal = dir === 'row';
-  const handlePointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      const hitTarget = event.currentTarget;
-      const divider = hitTarget.parentElement;
-      if (!(divider instanceof HTMLDivElement)) return;
-      const previous = divider.previousElementSibling;
-      const next = divider.nextElementSibling;
-      if (!(previous instanceof HTMLElement) || !(next instanceof HTMLElement)) return;
-      const previousRect = previous.getBoundingClientRect();
-      const nextRect = next.getBoundingClientRect();
-      const start = horizontal ? previousRect.left : previousRect.top;
-      const end = horizontal ? nextRect.right : nextRect.bottom;
-      const span = end - start;
-      if (span <= 0) return;
-      hitTarget.setPointerCapture(event.pointerId);
-      divider.dataset.dragging = 'true';
-      const previousGrow = Number.parseFloat(window.getComputedStyle(previous).flexGrow);
-      const nextGrow = Number.parseFloat(window.getComputedStyle(next).flexGrow);
-      const pairTotal =
-        Number.isFinite(previousGrow) && Number.isFinite(nextGrow) && previousGrow + nextGrow > 0
-          ? previousGrow + nextGrow
-          : 1;
-      const previousFlex = previous.style.flex;
-      const nextFlex = next.style.flex;
-      let pendingFraction: number | null = null;
-      let finished = false;
-      const onMove = (moveEvent: PointerEvent) => {
-        const pointer = horizontal ? moveEvent.clientX : moveEvent.clientY;
-        const fraction = clampSplitPairFraction((pointer - start) / span);
-        pendingFraction = fraction;
-        previous.style.flex = `${pairTotal * fraction} 1 0px`;
-        next.style.flex = `${pairTotal * (1 - fraction)} 1 0px`;
-      };
-      const finish = (commit: boolean) => {
-        if (finished) return;
-        finished = true;
-        delete divider.dataset.dragging;
-        hitTarget.removeEventListener('pointermove', onMove);
-        hitTarget.removeEventListener('pointerup', onUp);
-        hitTarget.removeEventListener('pointercancel', onCancel);
-        if (commit && pendingFraction !== null) {
-          onResize(pendingFraction);
-          return;
-        }
-        previous.style.flex = previousFlex;
-        next.style.flex = nextFlex;
-      };
-      const onUp = () => finish(true);
-      const onCancel = () => finish(false);
-      hitTarget.addEventListener('pointermove', onMove);
-      hitTarget.addEventListener('pointerup', onUp);
-      hitTarget.addEventListener('pointercancel', onCancel);
-    },
-    [horizontal, onResize]
-  );
-
-  return (
-    <div
-      role="separator"
-      aria-orientation={horizontal ? 'vertical' : 'horizontal'}
-      className={`split-divider split-divider--${dir}${hidden ? ' is-hidden' : ''}`}
-    >
-      <div
-        aria-hidden
-        className="split-divider-hit"
-        onPointerDown={handlePointerDown}
-      />
-    </div>
-  );
-}
-
 function paneKey(node: LayoutNode): string {
   return node.type === 'pane' ? node.paneId : listPanes(node).map((pane) => pane.paneId).join('-');
+}
+
+
+/** Routable identity, independent of location in the split tree. */
+function paneContentKey(pane: PaneNode): string {
+  const content = pane.content;
+  switch (content.kind) {
+    case 'empty': return JSON.stringify(['empty', pane.paneId]);
+    case 'plugin-panel': return JSON.stringify(['plugin-panel', content.pluginId, content.panelPath]);
+    case 'agent-session': return JSON.stringify(['agent-session', content.sessionId]);
+    case 'schedule': return JSON.stringify(['schedule', content.scheduleId]);
+    default: return paneContentRoute(content);
+  }
 }

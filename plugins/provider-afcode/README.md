@@ -1,15 +1,15 @@
-# afcode for ZCC
+# Agentforce Code for ZCC
 
-Adds Agentforce Code to ACP threads. The matching ZCC native harness adds afcode to CLI Agents.
+Adds Agentforce Code to ACP threads. The matching ZCC native harness adds it to CLI Agents.
 
 Requires ZCC built with the afcode harness and an **ACP-enabled** afcode build. An older release can support the terminal CLI while lacking the `acp` command.
 
 ## Local setup
 
 1. From the ZCC checkout, build and install the plugin: `pnpm --filter @zcc-ext/provider-afcode build`, then `zcc plugin install ./plugins/provider-afcode`.
-2. In the plugin settings, set **afcode executable** to your binary or virtual-environment entry point. The default is `afcode` on PATH.
+2. In the plugin settings, set **Agentforce Code executable** to your binary or virtual-environment entry point. The default is `afcode` on PATH.
 3. In Settings → Agents, set the **afcode binary** to the same executable and enable the harness. Check its installation status.
-4. Select **afcode** when creating a thread or CLI Agent.
+4. Select **Agentforce Code** when creating a thread or CLI Agent.
 
 For a source checkout, use the absolute path to `afcode/.venv/bin/afcode`. A virtual environment does not need to be activated when both settings point to its entry point.
 
@@ -24,6 +24,8 @@ Threads launch `afcode acp`. Model and mode controls come from its ACP handshake
 CLI Agents launch `afcode --local` so active work remains in the PTY process. Initial instructions wait for its terminal input-ready sequence; startup banners alone are insufficient while MCP discovery and terminal negotiation are running. Model selection stays in afcode's native configuration or `/model` command because the interactive CLI has no `--model` argument. The unrestricted profile explicitly adds `--auto-approve`.
 
 The resume profile opens `afcode --local --resume`, which presents the native picker. A supplied native session reference is passed directly to `--resume`. Without an exact reference ZCC never chooses the globally newest conversation automatically.
+
+Working/idle for CLI Agents uses the output-activity heuristic, ignoring OSC titles and other control-only TUI frames so an idle prompt that redraws its chrome does not stay **Working**. ACP threads go idle only when `session/prompt` returns a `stopReason` — streamed `session/update` chunks are not enough.
 
 Disabling the plugin removes the ACP provider. The native CLI Agent is controlled separately by the standard harness enable switch. Remote CLI launch is unsupported in this version.
 

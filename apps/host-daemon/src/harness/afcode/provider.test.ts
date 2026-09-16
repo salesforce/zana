@@ -18,7 +18,7 @@ describe('afcode native launcher', () => {
     expect(provider.title(profile)).toBe(['afcode', ...args].join(' '));
     expect(parseProfile(profile)).toBe(profile);
     expect(harnessFamilyOf(profile)).toBe('afcode');
-    expect(profileLabel(profile)).toContain('afcode');
+    expect(profileLabel(profile)).toContain('Agentforce Code');
     expect(providerCapabilities(profile)).toMatchObject({ isAgent: true, acceptsPromptArgv: false, injectsClaudeMcpConfig: false, supportsHooks: false });
     expect(provider.baseArgsPinSession(profile)).toBe(profile === 'afcode-resume');
   });

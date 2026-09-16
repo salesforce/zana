@@ -17,10 +17,10 @@
     "@zana-ai/zcc-plugin-sdk": "workspace:*"
   },
   "zcc": {
-    "name": "afcode",
+    "name": "Agentforce Code",
     "description": "Agentforce Code via ACP, with a native CLI Agent launcher. Requires an ACP-enabled afcode installation.",
     "branding": {
-      "icon": "Terminal"
+      "icon": "./icons/afcode.svg"
     },
     "server": "./server.mjs",
     "host": "./host.ts",

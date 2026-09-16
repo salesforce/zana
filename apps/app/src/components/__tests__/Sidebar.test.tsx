@@ -132,7 +132,7 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(markup).toContain('aria-orientation="vertical"');
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).toContain('aria-label="Report a bug"');
-    expect(markup).not.toContain('>Settings<');
+    expect(markup).toContain('>Settings<');
     expect(markup).not.toContain('aria-label="Open Agents dashboard"');
     expect(markup).not.toContain('data-testid="sidebar-agents-heading"');
     expect(markup).not.toContain('data-testid="sidebar-agents-toggle"');

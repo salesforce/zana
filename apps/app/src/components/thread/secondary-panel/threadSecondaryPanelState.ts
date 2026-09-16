@@ -17,6 +17,7 @@ export type ClosableSecondaryTabKind =
   | 'browser'
   | 'terminal'
   | 'explorer'
+  | 'inbox'
   | 'plugin';
 
 export interface ClosableSecondaryTab {
@@ -96,6 +97,7 @@ function isTabKind(value: unknown): value is ClosableSecondaryTabKind {
     || value === 'browser'
     || value === 'terminal'
     || value === 'explorer'
+    || value === 'inbox'
     || value === 'plugin'
   );
 }
@@ -311,7 +313,7 @@ function matchExistingTab(
 ): ClosableSecondaryTab | undefined {
   return tabs.find((tab) => {
     if (tab.kind !== input.kind) return false;
-    if (input.kind === 'explorer') return true;
+    if (input.kind === 'explorer' || input.kind === 'inbox') return true;
     if (input.kind === 'file-preview' || input.kind === 'storage-preview') return tab.path === input.path;
     if (input.kind === 'terminal') return tab.sessionId === input.sessionId;
     if (input.kind === 'plugin') {
@@ -399,6 +401,11 @@ export function activePinnedView(state: ThreadSecondaryPanelState): PinnedSecond
   if (state.activeId === DIFF_PIN_ID) return 'diff';
   if (state.activeId === PLAN_PIN_ID) return 'plan';
   return null;
+}
+
+/** Inspector lifecycle actions (Delete / summarize) belong on Info, not Diff. */
+export function secondaryPanelShowsInspectorFooter(state: ThreadSecondaryPanelState): boolean {
+  return activePinnedView(state) === 'info';
 }
 
 export function activeClosableTab(state: ThreadSecondaryPanelState): ClosableSecondaryTab | null {

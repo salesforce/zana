@@ -1035,13 +1035,21 @@ export function ProjectsList({
           );
         })}
       </div>
-      {projects.length > 0 && (
+      {projects.length > 0 && !scopedProjectId && !sidebarProjectsCollapsed && (
         <div className={inSidebar ? 'sidebar-projects-filter list-filter' : 'list-filter'}>
-          <Search size={12} className="list-filter-icon" />
+          <Search size={14} className="list-filter-icon" aria-hidden="true" />
           <input
             placeholder="Filter projects"
+            aria-label="Filter projects"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && filter) {
+                event.preventDefault();
+                event.stopPropagation();
+                setFilter('');
+              }
+            }}
           />
           {filter && (
             <button
@@ -1083,7 +1091,7 @@ export function ProjectsList({
           </div>
         ) : visibleProjects.length === 0 ? (
           filter.trim() ? (
-            <div className="list-empty">No projects match &ldquo;{filter}&rdquo;.</div>
+            <div className="list-empty" role="status">No projects match &ldquo;{filter}&rdquo;.</div>
           ) : (
             <div className="list-empty">
               No projects with running agents.

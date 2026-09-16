@@ -107,6 +107,7 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
         />
         <Field
           label="Default launch mode"
+          layout="row"
           help="New Chat and New agent open on this surface. Switching the segmented control also updates this default."
         >
           <PopoverPicklist
@@ -119,6 +120,7 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
         </Field>
         <Field
           label="Send mode"
+          layout="row"
           help="Auto starts a new turn. Steer uses Enter to interrupt a running turn (Cmd/Ctrl+Enter queues). Queue holds the next message until the current turn finishes. Default is Auto."
         >
           <PopoverPicklist

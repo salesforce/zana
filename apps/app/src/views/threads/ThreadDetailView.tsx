@@ -46,6 +46,7 @@ import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserT
 import { ThreadTerminalTab } from '../../components/thread/secondary-panel/ThreadTerminalTab.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from '../../components/thread/secondary-panel/ThreadExplorerTab.js';
+import { ThreadInboxTab } from '../../components/thread/secondary-panel/ThreadInboxTab.js';
 import { PluginThreadHeaderActions } from '../../plugins/PluginThreadHeaderActions.js';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { copyText } from '../../components/thread/secondary-panel/threadSecondaryPanelLogic.js';
@@ -492,6 +493,7 @@ export function ThreadDetail({
         }}
         onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: '' })}
         onOpenExplorer={() => panel.addTab({ kind: 'explorer', title: 'Explorer' })}
+        onOpenInbox={() => panel.addTab({ kind: 'inbox', title: 'Inbox' })}
         onStartTerminal={() => { void startPanelTerminal(); }}
         onOpenPlugin={(moduleId, title, options) => {
           appendThreadRecentItem(threadId, { kind: 'plugin', moduleId, actionId: options?.actionId, title });
@@ -535,6 +537,8 @@ export function ThreadDetail({
     panelBody = <ThreadTerminalTab sessionId={closable.sessionId} projectId={projectId} />;
   } else if (closable?.kind === 'explorer') {
     panelBody = <ThreadExplorerTab projectId={projectId} />;
+  } else if (closable?.kind === 'inbox') {
+    panelBody = <ThreadInboxTab projectId={projectId} />;
   } else if (closable?.kind === 'plugin' && closable.moduleId) {
     panelBody = (
       <ThreadPluginTab

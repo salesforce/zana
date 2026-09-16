@@ -5,7 +5,7 @@ import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js
 
 const AFCODE_ADAPTER: TrustedHarnessAdapter = {
   descriptor: {
-    id: 'afcode', label: 'afcode', agentDefaultEligible: true, terminalEligible: false,
+    id: 'afcode', label: 'Agentforce Code', agentDefaultEligible: true, terminalEligible: false,
     defaultProfileId: 'afcode',
     profiles: [
       { id: 'afcode', posture: 'default' },
@@ -34,6 +34,8 @@ const AFCODE_ADAPTER: TrustedHarnessAdapter = {
     execution: [{ names: ['--auto-approve'], arity: 0 }],
     terminatesAtDoubleDash: true
   },
+  // Claude-like TUI: OSC titles still classify via AgentStatusTracker, and
+  // output-activity ignores control-only idle frames so the session can settle.
   status: { mode: 'output-activity' }, evidence: []
 };
 

@@ -42,6 +42,7 @@ import { ProjectTab } from '@/views/settings/ProjectSettingsView';
 import { PersonasPanel } from '@/views/settings/PersonasView';
 import { SquadsPanel } from '@/views/settings/SquadsView';
 import { UsagePanel } from '@/views/settings/UsageView';
+import './settings.css';
 
 /**
  * Settings sections. The section *picker* now lives in the list pane (column 2,
@@ -77,7 +78,7 @@ export const SETTINGS_SECTIONS: Array<{
   /** Section can be scoped to a single project (shows the Global/Project toggle). */
   projectScoped?: boolean;
 }> = [
-  { id: 'global', label: 'Global', icon: Settings2, desc: 'App-wide defaults', group: 'config' },
+  { id: 'global', label: 'Preferences', icon: Settings2, desc: 'Appearance, tools, and diagnostics.', group: 'config' },
   { id: 'composer', label: 'Composer', icon: PenLine, desc: 'Launch surfaces, send mode, and prompt box', group: 'config' },
   { id: 'keyboard', label: 'Shortcuts', icon: Keyboard, desc: 'Remap chords and view all shortcuts', group: 'config' },
   { id: 'inbox', label: 'Inbox', icon: Inbox, desc: 'Guidance, tool trust, and PDF export', group: 'config' },
@@ -246,7 +247,7 @@ export function SettingsView() {
 
   if (!config) {
     return (
-      <div className="settings-panel" aria-label="Settings" aria-busy="true">
+      <div className="settings-panel settings-panel--preferences" aria-label="Settings" aria-busy="true">
         <div className="settings-inner">
           <DelayedStencilList label="Loading settings" className="settings-empty" />
         </div>
@@ -368,11 +369,10 @@ export function SettingsView() {
   const allowGlobalScope = tab !== 'project';
 
   return (
-    <div className="settings-panel">
+    <div className="settings-panel settings-panel--preferences">
       <div className={`settings-inner${WIDE_TABS.has(tab) ? ' settings-inner--wide' : ''}`}>
         <header className="settings-header">
           <div className="settings-header-title">
-            {meta?.icon ? <meta.icon size={18} /> : null}
             <h1>{tab === 'project' ? 'Project settings' : meta?.label ?? 'Settings'}</h1>
             {meta?.desc && tab !== 'project' && (
               <span className="settings-header-desc">{meta.desc}</span>

@@ -419,7 +419,14 @@ export function resizeSplit(
     if (!Number.isInteger(childIndex) || childIndex < 0 || childIndex + 1 >= split.children.length) {
       return null;
     }
-    const sizes = normalizeSizes(split.sizes, split.children.length);
+    // Valid persisted sizes may be below MIN_SIZE after a pair resize. Applying
+    // the global normalizer here changes siblings outside the dragged pair.
+    const total = split.sizes.reduce((sum, size) => sum + size, 0);
+    const sizes = split.sizes.length === split.children.length &&
+      split.sizes.every((size) => Number.isFinite(size) && size > 0) &&
+      Number.isFinite(total) && total > 0
+      ? split.sizes.map((size) => Math.abs(total - 1) <= SIZE_EPSILON ? size : size / total)
+      : equalSizes(split.children.length);
     const first = sizes[childIndex];
     const second = sizes[childIndex + 1];
     if (first === undefined || second === undefined) {

@@ -59,10 +59,25 @@ describe('suppressPostDragClick', () => {
     cleanup();
     cleanup();
     expect(removeEventListener).toHaveBeenCalledWith('click', onClick, true);
-    expect(removeEventListener).toHaveBeenCalledTimes(1);
+    expect(removeEventListener).toHaveBeenCalledTimes(3);
     const event = clickEvent();
     onClick(event);
     expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it.each(['pointerdown', 'keydown'])('allows a new %s gesture immediately after a cancelled drag', (type) => {
+    vi.useFakeTimers();
+    const { addEventListener, removeEventListener } = stubDocument();
+    suppressPostDragClick();
+    const onClick = addEventListener.mock.calls.find(([name]) => name === 'click')![1];
+    const startGesture = addEventListener.mock.calls.find(([name]) => name === type)![1];
+    startGesture();
+    const event = clickEvent();
+    onClick(event);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(removeEventListener).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+    expect(removeEventListener).toHaveBeenCalledWith('keydown', expect.any(Function), true);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('is a no-op when document is unavailable', () => {

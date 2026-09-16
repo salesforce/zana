@@ -19,7 +19,7 @@ const catalog = [
   { id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' },
   { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' },
   { id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' },
-  { id: 'acp-afcode', displayName: 'afcode', pluginId: 'provider-afcode' }
+  { id: 'acp-afcode', displayName: 'Agentforce Code', pluginId: 'provider-afcode' }
 ];
 
 type OptionsBody = Awaited<ReturnType<ThreadExecutionOptionsFetcher>>;

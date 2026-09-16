@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { FileText, FolderTree, Globe, Puzzle, Search, Terminal } from 'lucide-react';
+import { FileText, FolderTree, Globe, Inbox, Puzzle, Search, Terminal } from 'lucide-react';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 import { product } from '../../../lib/product-client.js';
 import { hasDesktopBridge } from '../../../lib/app-surface.js';
@@ -37,11 +37,13 @@ export function ThreadNewTabView({
   onOpenFile,
   onOpenBrowser,
   onOpenExplorer,
+  onOpenInbox,
   onStartTerminal,
   onOpenPlugin,
   onOpenRecent,
   allowSidecarTerminal = true,
-  allowExplorer = true
+  allowExplorer = true,
+  allowInbox = true
 }: {
   query: string;
   onQueryChange: (query: string) => void;
@@ -52,11 +54,13 @@ export function ThreadNewTabView({
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
   onOpenExplorer?: () => void;
+  onOpenInbox?: () => void;
   onStartTerminal?: () => void;
   onOpenPlugin: (moduleId: string, title: string, options?: OpenPluginOptions) => void;
   onOpenRecent?: (item: ThreadRecentItem) => void;
   allowSidecarTerminal?: boolean;
   allowExplorer?: boolean;
+  allowInbox?: boolean;
 }) {
   const now = Date.now();
   const visibleRecents = recents.slice(0, THREAD_RECENT_ITEMS_VISIBLE_LIMIT);
@@ -116,6 +120,11 @@ export function ThreadNewTabView({
                 <FolderTree size={14} /> Open Explorer
               </button>
             ) : null}
+            {allowInbox ? (
+              <button type="button" data-testid="thread-new-tab-inbox" onClick={onOpenInbox}>
+                <Inbox size={14} /> Open Inbox
+              </button>
+            ) : null}
             {allowSidecarTerminal ? (
               <button type="button" data-testid="thread-new-tab-terminal" onClick={onStartTerminal}>
                 <Terminal size={14} /> Start terminal
@@ -150,6 +159,7 @@ export function ThreadNewTabPage({
   onOpenFile,
   onOpenBrowser,
   onOpenExplorer,
+  onOpenInbox,
   onStartTerminal,
   onOpenPlugin,
   onOpenRecent,
@@ -162,6 +172,7 @@ export function ThreadNewTabPage({
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
   onOpenExplorer?: () => void;
+  onOpenInbox?: () => void;
   onStartTerminal?: () => void;
   onOpenPlugin: (moduleId: string, title: string, options?: OpenPluginOptions) => void;
   onOpenRecent?: (item: ThreadRecentItem) => void;
@@ -250,11 +261,13 @@ export function ThreadNewTabPage({
       onOpenFile={onOpenFile}
       onOpenBrowser={onOpenBrowser}
       onOpenExplorer={onOpenExplorer}
+      onOpenInbox={onOpenInbox}
       onStartTerminal={onStartTerminal}
       onOpenPlugin={handleOpenPlugin}
       onOpenRecent={onOpenRecent}
       allowSidecarTerminal={allowSidecarTerminal}
       allowExplorer={Boolean(projectId)}
+      allowInbox={Boolean(projectId)}
     />
   );
 }

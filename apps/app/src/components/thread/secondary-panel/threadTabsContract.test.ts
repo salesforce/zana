@@ -62,6 +62,11 @@ describe('thread tabs contract mapping', () => {
       kind: 'explorer',
       title: 'Files'
     })).toBeNull();
+    expect(closableTabToContract({
+      id: 'inbox:1',
+      kind: 'inbox',
+      title: 'Inbox'
+    })).toBeNull();
     expect(contractTabToClosable({ id: 'info', kind: 'thread-info' })).toBeNull();
   });
 

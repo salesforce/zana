@@ -6,19 +6,20 @@ var __filename = __fileURLToPath(import.meta.url);
 var __dirname = __pathDirname(__filename);
 
 // server.ts
+var ICON = "./icons/afcode.svg";
 function plugin(zcc) {
   zcc.settings.define({
     executable: {
       type: "string",
-      label: "afcode executable",
+      label: "Agentforce Code executable",
       default: "afcode",
       description: "Command or absolute path to an ACP-enabled afcode binary. CLI Agents use the binary setting in Agents settings."
     }
   });
   zcc.agents.experimental_registerProvider({
     id: "acp-afcode",
-    displayName: "afcode",
-    icon: "Terminal",
+    displayName: "Agentforce Code",
+    icon: ICON,
     visibility: "always",
     capabilities: {
       supportsServiceTier: false,
@@ -36,19 +37,19 @@ function plugin(zcc) {
       const value = settings.executable;
       const command = typeof value === "string" && value.trim() ? value.trim() : "afcode";
       return {
-        acpLaunchSpec: { displayName: "afcode", command, args: ["acp"], env: {} },
+        acpLaunchSpec: { displayName: "Agentforce Code", command, args: ["acp"], env: {} },
         acpDialect: "generic"
       };
     }
   });
   zcc.agents.experimental_registerPtyHarness({
     id: "afcode",
-    displayName: "afcode",
-    icon: "Terminal",
+    displayName: "Agentforce Code",
+    icon: ICON,
     profiles: [
-      { id: "afcode", label: "afcode" },
-      { id: "afcode-resume", label: "afcode (resume picker)" },
-      { id: "afcode-yolo", label: "afcode (unrestricted)" }
+      { id: "afcode", label: "Agentforce Code" },
+      { id: "afcode-resume", label: "Agentforce Code (resume picker)" },
+      { id: "afcode-yolo", label: "Agentforce Code (unrestricted)" }
     ],
     enableConfigKey: "harnessAfcodeEnabled"
   });

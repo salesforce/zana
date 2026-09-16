@@ -1,11 +1,14 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../home/HomeView.js', () => ({ HomeView: () => <div data-testid="home-view" /> }));
+const viewport = vi.hoisted(() => ({ compact: false }));
+vi.mock('../../hooks/useIsCompactViewport.js', () => ({ useIsCompactViewport: () => viewport.compact }));
+
+vi.mock('../home/HomeView.js', () => ({ HomeView: () => <div data-testid="home-view"><input aria-label="Draft" defaultValue="" /></div> }));
 vi.mock('../inbox/InboxView.js', () => ({ InboxView: () => <div data-testid="inbox-view" /> }));
 vi.mock('../agents/AgentsView.js', () => ({ AgentsView: () => <div data-testid="agents-view" /> }));
 vi.mock('../agents/AgentSessionPage.js', () => ({
@@ -63,13 +66,14 @@ vi.mock('../project/ProjectModePane.js', () => ({
 }));
 
 import { getProjectModeRoutePath } from '../../lib/route-paths.js';
-import { splitPane } from '../../lib/split-layout/ops.js';
+import { splitPane, movePane, swapPanes, removePane } from '../../lib/split-layout/ops.js';
 import { GLOBAL_SPLIT_SCOPE_KEY, projectSplitScopeKey } from '../../lib/split-layout/scope.js';
-import { createSinglePaneLayout } from '../../lib/split-layout/splitThreadNavigation.js';
+import { createSinglePaneLayout, paneContentForPathname } from '../../lib/split-layout/splitThreadNavigation.js';
 import { useSplitWorkspace } from '../../lib/split-layout/store.js';
 import { SplitThreadArea } from './SplitThreadArea.js';
 
 function resetSplitWorkspace(): void {
+  viewport.compact = false;
   useSplitWorkspace.setState({
     layout: null,
     maximizedPaneId: null,
@@ -324,5 +328,160 @@ describe('SplitThreadArea host bar', () => {
     fireEvent.click(closeButtons[closeButtons.length - 1]!);
     expect(useSplitWorkspace.getState().layout).not.toBeNull();
     expect(screen.queryByTestId('split-pane-empty')).toBeNull();
+  });
+});
+
+
+function RoutedArea() {
+  const { pathname } = useLocation();
+  return <SplitThreadArea routeContent={paneContentForPathname(pathname) ?? { kind: 'home' }} />;
+}
+function renderPair(side: 'right' | 'bottom' = 'right') {
+  const layout = splitPane(createSinglePaneLayout({ kind: 'agents' }), 'pane-1', side, { kind: 'home' });
+  useSplitWorkspace.setState({ layout, maximizedPaneId: null });
+  return render(<MemoryRouter><RoutedArea /></MemoryRouter>);
+}
+
+describe('split shell interaction', () => {
+  afterEach(() => { cleanup(); resetSplitWorkspace(); });
+
+  it('renders the focused pane on compact screens and preserves the desktop tree', () => {
+    viewport.compact = true;
+    renderPair();
+    expect(screen.getByTestId('home-view')).toBeTruthy();
+    expect(screen.getByTestId('agents-view').closest('[hidden]')).not.toBeNull();
+    expect(useSplitWorkspace.getState().layout?.root.type).toBe('split');
+    expect(screen.getByTestId('split-workspace').querySelector('.split-pane-slot:not([hidden]) [data-split-pane-id]')?.getAttribute('data-split-pane-id')).toBe('pane-2');
+  });
+
+  it('tracks keyboard focus and supports focus, cycle, maximize and close shortcuts', () => {
+    renderPair();
+    const agentPane = screen.getByTestId('agents-view').closest('[data-split-pane-id]')!;
+    fireEvent.focus(agentPane.querySelector('button')!);
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+    fireEvent.keyDown(window, { key: '2', code: 'Digit2', metaKey: true });
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-2');
+    fireEvent.keyDown(window, { key: '[', metaKey: true, altKey: true });
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+    fireEvent.keyDown(window, { key: ']', metaKey: true, altKey: true });
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-2');
+    fireEvent.keyDown(window, { key: 'M', metaKey: true, shiftKey: true });
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBe('pane-2');
+    expect(screen.getByTestId('agents-view').closest('[aria-hidden]')?.getAttribute('aria-hidden')).toBe('true');
+    fireEvent.keyDown(window, { key: '1', code: 'Digit1', ctrlKey: true });
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBe('pane-1');
+    fireEvent.keyDown(window, { key: 'M', metaKey: true, shiftKey: true });
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBeNull();
+    fireEvent.keyDown(window, { key: '8', code: 'Digit8', metaKey: true });
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-1');
+    fireEvent.keyDown(window, { key: 'w', metaKey: true, altKey: true });
+    expect(screen.queryByTestId('agents-view')).toBeNull();
+    expect(screen.getByTestId('split-workspace').getAttribute('data-split')).toBe('false');
+  });
+
+  it.each(['left', 'right', 'above', 'below'])('moves a pane %s without dragging', (side) => {
+    renderPair();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Move pane', exact: true })[1]!);
+    fireEvent.click(screen.getByRole('option', { name: `Move pane ${side}` }));
+    const root = useSplitWorkspace.getState().layout?.root;
+    expect(root?.type === 'split' && root.dir).toBe(side === 'left' || side === 'right' ? 'row' : 'col');
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-2');
+  });
+
+  it('resizes, maximizes and restores through the visible controls', () => {
+    renderPair();
+    fireEvent.keyDown(screen.getByRole('separator'), { key: 'ArrowRight' });
+    expect(useSplitWorkspace.getState().layout?.root).toMatchObject({ sizes: [0.52, 0.48] });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Maximize pane' })[0]!);
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBe('pane-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Restore pane' }));
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBeNull();
+  });
+
+  it('clears a missing maximized pane and closes an unfocused pane', () => {
+    renderPair();
+    act(() => useSplitWorkspace.setState({ maximizedPaneId: 'missing' }));
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close pane' })[0]!);
+    expect(screen.queryByTestId('agents-view')).toBeNull();
+    expect(screen.getByTestId('home-view')).toBeTruthy();
+  });
+});
+
+describe('pane dragging', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => { cleanup(); resetSplitWorkspace(); vi.runAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  function dragPair(zone: 'center' | 'right', maximize = false) {
+    renderPair();
+    if (maximize) fireEvent.click(screen.getAllByRole('button', { name: 'Maximize pane' })[1]!);
+    const source = screen.getByTestId('home-view').closest<HTMLElement>('[data-split-pane-id]')!;
+    const target = screen.getByTestId('agents-view').closest<HTMLElement>('[data-split-pane-id]')!;
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(200, 100, 500, 400));
+    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: () => [target] });
+    fireEvent.pointerDown(source.querySelector('.split-pane-bar-title')!, { button: 0, pointerId: 1, clientX: 50, clientY: 200 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 54, clientY: 200 });
+    expect(document.querySelector('.split-drag-overlay')).toBeNull();
+    const x = zone === 'right' ? 675 : 450;
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: x, clientY: 300 });
+    return { x, source, target };
+  }
+
+  it.each(['center', 'right'] as const)('commits a pane drop at %s', (zone) => {
+    const { x } = dragPair(zone);
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: x, clientY: 300 });
+    const layout = useSplitWorkspace.getState().layout!;
+    expect(layout.focusedPaneId).toBe(zone === 'center' ? 'pane-1' : 'pane-2');
+    expect(document.querySelector('.split-drag-overlay')).toBeNull();
+  });
+
+  it('temporarily reveals siblings of a maximized pane and restores on cancellation', () => {
+    dragPair('center', true);
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBe('pane-2');
+  });
+});
+
+
+describe('pane editing state', () => {
+  afterEach(() => { cleanup(); resetSplitWorkspace(); });
+  it('keeps the same editor through split, nesting, swap, compact mode and sibling close', () => {
+    const ui = <MemoryRouter><RoutedArea /></MemoryRouter>;
+    const view = render(ui);
+    const input = screen.getByRole('textbox', { name: 'Draft' });
+    fireEvent.change(input, { target: { value: 'Unsaved work' } });
+    const expectDraft = () => {
+      expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(input);
+      expect((input as HTMLInputElement).value).toBe('Unsaved work');
+    };
+    act(() => useSplitWorkspace.getState().updateLayout((layout) => splitPane(layout!, 'pane-1', 'right', { kind: 'agents' })));
+    expectDraft();
+    act(() => useSplitWorkspace.getState().updateLayout((layout) => movePane(layout!, 'pane-1', 'pane-2', 'bottom')));
+    expectDraft();
+    act(() => useSplitWorkspace.getState().updateLayout((layout) => swapPanes(layout!, 'pane-1', 'pane-2')));
+    expectDraft();
+    viewport.compact = true;
+    view.rerender(<MemoryRouter><RoutedArea /></MemoryRouter>);
+    expectDraft();
+    viewport.compact = false;
+    view.rerender(<MemoryRouter><RoutedArea /></MemoryRouter>);
+    expectDraft();
+    const layout = useSplitWorkspace.getState().layout!;
+    const other = layout.focusedPaneId === 'pane-1' ? 'pane-2' : 'pane-1';
+    act(() => useSplitWorkspace.getState().updateLayout((layout) => removePane(layout!, other)));
+    expectDraft();
+  });
+});
+
+
+describe('pane slot ownership', () => {
+  afterEach(() => { cleanup(); resetSplitWorkspace(); });
+  it('replaces the old host when navigation reuses a slot', () => {
+    const { rerender, container } = render(<MemoryRouter><SplitThreadArea routeContent={{ kind: 'home' }} /></MemoryRouter>);
+    rerender(<MemoryRouter><SplitThreadArea routeContent={{ kind: 'inbox' }} /></MemoryRouter>);
+    rerender(<MemoryRouter><SplitThreadArea routeContent={{ kind: 'home' }} /></MemoryRouter>);
+    expect(container.querySelectorAll('.split-pane-slot > .split-pane-host')).toHaveLength(1);
+    expect(container.querySelectorAll('.split-pane')).toHaveLength(1);
   });
 });

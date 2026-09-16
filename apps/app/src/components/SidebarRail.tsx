@@ -31,6 +31,7 @@ import { usePaneContentSplitDrag } from './sidebar/useThreadRowSplitDrag.js';
 import { usePaneContentSplitIndicator } from './sidebar/paneContentSplitIndicator.js';
 import { SplitPaneMiniMap } from './sidebar/SplitPaneMiniMap.js';
 import type { PaneContent } from '../lib/split-layout/types.js';
+import './sidebar/sidebar-appearance.css';
 
 export interface SidebarRailRow {
   kind: 'row';
@@ -197,12 +198,13 @@ export function SidebarRail({
         {utilityStart}
         <Link
           to={routeMemory.settingsRoutePath}
-          className={`sidebar-utility-button ${nav === 'settings' ? 'active' : ''}`}
+          className={`sidebar-utility-button sidebar-utility-button--settings ${nav === 'settings' ? 'active' : ''}`}
           aria-label="Settings"
           aria-current={nav === 'settings' ? 'page' : undefined}
           title="Settings"
         >
-          <Settings size={18} />
+          <Settings size={16} strokeWidth={1.7} aria-hidden="true" />
+          {!collapsed && <span>Settings</span>}
         </Link>
         <button
           type="button"

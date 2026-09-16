@@ -1,4 +1,4 @@
-import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useIsCompactViewport } from '../../hooks/useIsCompactViewport.js';
 import {
@@ -26,6 +26,7 @@ import {
   paneContentForPathname,
   paneContentRoute
 } from '../../lib/split-layout/splitThreadNavigation.js';
+import { POST_DRAG_CLICK_SUPPRESS_MS } from '../../lib/suppress-post-drag-click.js';
 import { useSplitWorkspace } from '../../lib/split-layout/store.js';
 
 const SIDEBAR_SELECTOR = '.sidebar, .project-scoped-nav, [data-sidebar="sidebar"]';
@@ -50,15 +51,24 @@ export function usePaneContentSplitDrag({
   const contentRef = useRef(content);
   contentRef.current = content;
   const suppressClickRef = useRef(false);
+  const suppressClickUntil = useRef(0);
+  const cancelDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelDrag.current?.(), [pathname, isCompact]);
   const consumeClick = useCallback(() => {
     if (!suppressClickRef.current) return false;
     suppressClickRef.current = false;
-    return true;
+    return Date.now() < suppressClickUntil.current;
   }, []);
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
       if (event.button !== 0) return;
+      const interactiveChild = event.target instanceof Element
+        ? event.target.closest('button, input, textarea, select, [role="button"]')
+        : null;
+      if (interactiveChild && interactiveChild !== event.currentTarget) return;
+      suppressClickRef.current = false;
+      const startScope = useSplitWorkspace.getState().scopeKey;
       const rowEl = event.currentTarget;
       const sidebarEl = rowEl.closest(SIDEBAR_SELECTOR);
       const sidebarRightEdge = (sidebarEl ?? rowEl).getBoundingClientRect().right;
@@ -68,7 +78,8 @@ export function usePaneContentSplitDrag({
       const fallback = singlePaneFallback(startLayout);
       const paneContent = contentRef.current;
 
-      beginSplitDrag({
+      cancelDrag.current = beginSplitDrag({
+        pointerId: event.pointerId,
         ghostLabel: title,
         sourceEl: rowEl,
         fallback,
@@ -82,6 +93,7 @@ export function usePaneContentSplitDrag({
             sidebarRightEdge
           }),
         decide: (paneId, zone) => {
+          if (useSplitWorkspace.getState().scopeKey !== startScope) return null;
           const layout = useSplitWorkspace.getState().layout ?? startLayout;
           if (layout === null) {
             return decideThreadDrop({ zone, threadAlreadyOpen: false, atMaxPanes: false });
@@ -96,6 +108,7 @@ export function usePaneContentSplitDrag({
           });
         },
         onDrop: (target) => {
+          if (useSplitWorkspace.getState().scopeKey !== startScope) return;
           const stored = useSplitWorkspace.getState().layout ?? startLayout;
           const keep = stored === null ? paneContentForPathname(pathname) : null;
           const layout = stored ?? (keep === null ? null : createSinglePaneLayout(keep));
@@ -128,6 +141,7 @@ export function usePaneContentSplitDrag({
         },
         onEnd: () => {
           suppressClickRef.current = true;
+          suppressClickUntil.current = Date.now() + POST_DRAG_CLICK_SUPPRESS_MS;
         }
       });
     },

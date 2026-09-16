@@ -77,7 +77,7 @@ const EXPECTED_ICONS: Record<string, string> = {
   'posthog-analytics': 'LineChart',
   'pr-monitor': 'GitPullRequest',
   'provider-acp': './icons/cursor.svg',
-  'provider-afcode': 'Terminal',
+  'provider-afcode': './icons/afcode.svg',
   'provider-claude-code': './icons/claude-code.svg',
   'provider-codex': './icons/codex.svg',
   'provider-pi': './icons/pi.svg',

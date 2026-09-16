@@ -11,7 +11,6 @@ interface ExplorerTreeHeaderProps {
   onCreateFile: () => void;
   onCreateFolder: () => void;
   onRefresh: () => void;
-  children?: React.ReactNode;
 }
 
 export function ExplorerTreeHeader({
@@ -22,16 +21,13 @@ export function ExplorerTreeHeader({
   onTreeModeToggle,
   onCreateFile,
   onCreateFolder,
-  onRefresh,
-  children
+  onRefresh
 }: ExplorerTreeHeaderProps) {
   return (
     <div className="explorer-tree-header">
-      {children ?? (
-        <span className="explorer-tree-title" title={project.path}>
-          {project.name}
-        </span>
-      )}
+      <span className="explorer-tree-title" title={project.path}>
+        {project.name}
+      </span>
       {/* The git changes/diff toggle is local-only (no local git for a
           remote project). Create affordances work over ssh too. */}
       {!isRemote && (

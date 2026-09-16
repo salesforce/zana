@@ -77,6 +77,28 @@ describe('ThreadSecondaryPanel chrome', () => {
     expect(html).toContain('Delete');
   });
 
+  it('hides inspector actions while Diff is showing', () => {
+    const html = renderToStaticMarkup(
+      <ThreadSecondaryPanel
+        state={selectPinnedView(emptySecondaryPanelState(), 'diff')}
+        showDiffPin
+        footer={<button type="button">Delete</button>}
+        onSelectInfo={noop}
+        onSelectDiff={noop}
+        onNewTab={noop}
+        onCloseTab={noop}
+        onActivateTab={noop}
+        onToggleMaximized={noop}
+        onHide={noop}
+        onResize={noop}
+      >
+        <div>diff</div>
+      </ThreadSecondaryPanel>
+    );
+    expect(html).not.toContain('data-testid="thread-secondary-footer"');
+    expect(html).not.toContain('Delete');
+  });
+
   it('renders closable New Tab pills', () => {
     const html = renderToStaticMarkup(
       <ThreadSecondaryPanel

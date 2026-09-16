@@ -735,6 +735,7 @@ describe('expandable row and chips', () => {
     expect(source).not.toContain('shouldAutoOpenThreadPlanPanel');
     expect(source).toContain('showPlanPin');
     expect(source).toContain('<ThreadExplorerTab');
+    expect(source).toContain('<ThreadInboxTab');
     expect(source).toContain('thread-secondary-show');
     expect(source).toContain('<ThreadDetailHeading');
     expect(source).toContain('<ThreadDetailSearch');

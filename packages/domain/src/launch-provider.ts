@@ -98,11 +98,11 @@ export function profileLabel(p: LaunchProfileId): string {
     case 'mastracode-yolo':
       return 'Mastra Code YOLO';
     case 'afcode':
-      return 'afcode';
+      return 'Agentforce Code';
     case 'afcode-resume':
-      return 'afcode Resume';
+      return 'Agentforce Code Resume';
     case 'afcode-yolo':
-      return 'afcode Unrestricted';
+      return 'Agentforce Code Unrestricted';
     case 'shell':
       return 'Shell';
     default:

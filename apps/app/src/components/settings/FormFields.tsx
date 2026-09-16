@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
 export function Section({
@@ -19,14 +19,16 @@ export function Section({
   flush?: boolean;
   children: React.ReactNode;
 }) {
+  const headingId = useId();
   return (
     <section
       className={`settings-section${flush ? ' settings-section--flush' : ''}`}
       id={anchorId ? `settings-anchor-${anchorId}` : undefined}
+      aria-labelledby={headingId}
     >
-      <h3>{title}</h3>
+      <h3 id={headingId}>{title}</h3>
       {help && <p className="settings-help settings-section-help">{help}</p>}
-      {children}
+      {flush ? children : <div className="settings-section-body">{children}</div>}
     </section>
   );
 }
@@ -35,16 +37,19 @@ export function Field({
   label,
   help,
   mono,
+  layout = 'stack',
   children
 }: {
   label: string;
   help?: React.ReactNode;
   /** Render the value in the code font — for paths, binaries, versions. */
   mono?: boolean;
+  /** Compact preferences pair a short control with its label and description. */
+  layout?: 'stack' | 'row';
   children: React.ReactNode;
 }) {
   return (
-    <div className={`settings-field${mono ? ' settings-field--mono' : ''}`}>
+    <div className={`settings-field${mono ? ' settings-field--mono' : ''}${layout === 'row' ? ' settings-field--row' : ''}`}>
       <label>
         <span className="settings-label">{label}</span>
         {children}
@@ -63,12 +68,14 @@ export function ToggleSwitch({
   checked,
   onChange,
   label,
-  disabled
+  disabled,
+  describedBy
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
   disabled?: boolean;
+  describedBy?: string;
 }) {
   return (
     <button
@@ -76,6 +83,7 @@ export function ToggleSwitch({
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      aria-describedby={describedBy}
       disabled={disabled}
       className={`opener-switch${checked ? ' opener-switch--on' : ''}`}
       onClick={() => onChange(!checked)}
@@ -99,18 +107,22 @@ export function CheckboxField({
   onChange: (v: boolean) => void;
   disabled?: boolean;
 }) {
+  const helpId = useId();
   return (
     <div className="settings-field settings-field--toggle">
       <div className="settings-toggle-row">
-        <span className="settings-label">{label}</span>
+        <div className="settings-toggle-copy">
+          <span className="settings-label">{label}</span>
+          {help && <p id={helpId} className="settings-help">{help}</p>}
+        </div>
         <ToggleSwitch
           checked={checked}
           onChange={onChange}
           label={label}
           disabled={disabled}
+          describedBy={help ? helpId : undefined}
         />
       </div>
-      {help && <p className="settings-help">{help}</p>}
     </div>
   );
 }

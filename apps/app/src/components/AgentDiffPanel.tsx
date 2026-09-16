@@ -1,5 +1,5 @@
 import { product } from '../lib/product-client.js';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -11,7 +11,9 @@ import {
   ArrowDown,
   Folder,
   FolderOpen,
-  FileCode2
+  FileCode2,
+  List,
+  FolderTree
 } from 'lucide-react';
 import type { GitFileCode, GitShowResult, FsReadResult } from '@zana-ai/zcc-domain/product';
 import { DiffViewer } from './DiffViewer.js';
@@ -78,6 +80,28 @@ interface Props {
 interface ChangedFile {
   path: string;
   code: GitFileCode;
+}
+
+export type AgentDiffFileListMode = 'tree' | 'list';
+
+export function nextAgentDiffFileListMode(mode: AgentDiffFileListMode): AgentDiffFileListMode {
+  return mode === 'tree' ? 'list' : 'tree';
+}
+
+export function agentDiffFileListModeLabel(mode: AgentDiffFileListMode): string {
+  return mode === 'tree' ? 'View as list' : 'View as tree';
+}
+
+export function agentDiffFileName(path: string): string {
+  return path.split('/').pop() || path;
+}
+
+export function agentDiffParentDir(path: string): string {
+  return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+}
+
+export function agentDiffUsesInlinePreview(mode: AgentDiffFileListMode): boolean {
+  return mode === 'list';
 }
 
 type DiffCache = { loading: boolean; head: GitShowResult | null; work: FsReadResult | null };
@@ -152,11 +176,78 @@ function flattenTree(root: TreeDir, collapsed: Record<string, true>): TreeRow[] 
   return rows;
 }
 
+function ChangedFileRow({
+  file,
+  depth,
+  selected,
+  itemRole,
+  onSelect
+}: {
+  file: ChangedFile;
+  depth: number;
+  selected: boolean;
+  itemRole: 'treeitem' | 'option';
+  onSelect: (path: string) => void;
+}) {
+  const code = file.code === '?' ? 'U' : file.code;
+  return (
+    <button
+      type="button"
+      className={`agent-diff-tree-row agent-diff-tree-row--file${selected ? ' is-selected' : ''}${itemRole === 'option' ? ' is-flat' : ''}`}
+      style={{ paddingLeft: `${8 + depth * 14}px` }}
+      onClick={() => onSelect(file.path)}
+      title={file.path}
+      role={itemRole}
+      aria-selected={selected}
+    >
+      <span className={`agent-diff-code code-${code}`}>{code}</span>
+      <span className="agent-diff-tree-file-icon" aria-hidden="true">
+        <FileCode2 size={12} />
+      </span>
+      <span className="agent-diff-tree-file">{agentDiffFileName(file.path)}</span>
+      <span className="agent-diff-tree-path">{agentDiffParentDir(file.path) || 'root'}</span>
+    </button>
+  );
+}
+
+function DiffPreviewBody({
+  file,
+  diff
+}: {
+  file: ChangedFile | null;
+  diff: DiffCache | undefined;
+}) {
+  if (!file) {
+    return <div className="agent-diff-empty-inline">Select a changed file to preview its diff.</div>;
+  }
+  if (!diff || diff.loading) {
+    return <StencilLines label="Loading diff" widths={['100%', '93%', '87%']} />;
+  }
+  if (diff.head?.binary || diff.work?.binary) {
+    return (
+      <div className="agent-diff-empty-inline">
+        {CODE_LABEL[file.code]} — binary file, no text diff.
+      </div>
+    );
+  }
+  return (
+    <DiffViewer
+      key={file.path}
+      path={file.path}
+      language={languageFromPath(file.path)}
+      original={diff.head?.notInHead ? '' : diff.head?.content ?? ''}
+      modified={diff.work?.content ?? ''}
+      compact
+    />
+  );
+}
+
 export function AgentDiffPanel({ cwd, isRemote, exited, scope }: Props) {
   const [files, setFiles] = useState<ChangedFile[] | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
+  const [listMode, setListMode] = useState<AgentDiffFileListMode>('tree');
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [collapsedDirs, setCollapsedDirs] = useState<Record<string, true>>({});
   const [fileDiffs, setFileDiffs] = useState<Record<string, DiffCache>>({});
@@ -277,10 +368,21 @@ export function AgentDiffPanel({ cwd, isRemote, exited, scope }: Props) {
   }, [files, query]);
   const treeRoot = useMemo(() => buildTree(filteredFiles), [filteredFiles]);
   const treeRows = useMemo(() => flattenTree(treeRoot, collapsedDirs), [treeRoot, collapsedDirs]);
-  const fileRows = useMemo(
+  const treeFileRows = useMemo(
     () => treeRows.filter((row): row is Extract<TreeRow, { kind: 'file' }> => row.kind === 'file'),
     [treeRows]
   );
+  const listFileRows = useMemo(
+    () =>
+      filteredFiles.map((file) => ({
+        kind: 'file' as const,
+        key: `file:${file.path}`,
+        depth: 0,
+        file
+      })),
+    [filteredFiles]
+  );
+  const fileRows = listMode === 'list' ? listFileRows : treeFileRows;
 
   useEffect(() => {
     if (!filteredFiles.length) {
@@ -357,7 +459,7 @@ export function AgentDiffPanel({ cwd, isRemote, exited, scope }: Props) {
   }
 
   return (
-    <div className="agent-diff agent-diff-tree-layout">
+    <div className={`agent-diff agent-diff-tree-layout${listMode === 'list' ? ' is-list' : ''}`}>
       <div className="agent-diff-list-head">
         <span className="agent-diff-branch" title="Current branch">
           <GitBranch size={12} />
@@ -387,118 +489,136 @@ export function AgentDiffPanel({ cwd, isRemote, exited, scope }: Props) {
             />
           </label>
           <div className="agent-diff-tree-actions">
-            <button type="button" className="agent-diff-tree-btn" onClick={expandAllDirs}>
-              Expand
-            </button>
-            <button type="button" className="agent-diff-tree-btn" onClick={collapseAllDirs}>
-              Collapse
-            </button>
-          </div>
-        </div>
-        <div className="agent-diff-tree-list" role="tree" aria-label="Changed files">
-          {treeRows.length === 0 ? (
-            <div className="agent-diff-empty-inline">No matching files.</div>
-          ) : (
-            treeRows.map((row) => {
-              if (row.kind === 'dir') {
-                const isCollapsed = !!collapsedDirs[row.path];
-                return (
-                  <button
-                    key={row.key}
-                    type="button"
-                    className="agent-diff-tree-row agent-diff-tree-row--dir"
-                    style={{ paddingLeft: `${8 + row.depth * 14}px` }}
-                    onClick={() => toggleDir(row.path)}
-                    aria-expanded={!isCollapsed}
-                    role="treeitem"
-                  >
-                    <span className="agent-diff-acc-toggle">
-                      {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-                    </span>
-                    <span className="agent-diff-tree-dir-icon" aria-hidden="true">
-                      {isCollapsed ? <Folder size={12} /> : <FolderOpen size={12} />}
-                    </span>
-                    <span className="agent-diff-tree-dir">{row.name}</span>
-                    <span className="agent-diff-tree-count">{row.count}</span>
-                  </button>
-                );
-              }
-              const file = row.file;
-              const code = file.code === '?' ? 'U' : file.code;
-              const name = file.path.split('/').pop() || file.path;
-              const dir =
-                file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/')) : '';
-              const isSelected = selectedPath === file.path;
-              return (
-                <button
-                  key={row.key}
-                  type="button"
-                  className={`agent-diff-tree-row agent-diff-tree-row--file ${isSelected ? 'is-selected' : ''}`}
-                  style={{ paddingLeft: `${8 + row.depth * 14}px` }}
-                  onClick={() => setSelectedPath(file.path)}
-                  title={file.path}
-                  role="treeitem"
-                  aria-selected={isSelected}
-                >
-                  <span className={`agent-diff-code code-${code}`}>{code}</span>
-                  <span className="agent-diff-tree-file-icon" aria-hidden="true">
-                    <FileCode2 size={12} />
-                  </span>
-                  <span className="agent-diff-tree-file">{name}</span>
-                  <span className="agent-diff-tree-path">{dir || 'root'}</span>
+            {listMode === 'tree' ? (
+              <>
+                <button type="button" className="agent-diff-tree-btn" onClick={expandAllDirs}>
+                  Expand
                 </button>
-              );
-            })
-          )}
-        </div>
-      </div>
-      <div className="agent-diff-preview">
-        <div className="agent-diff-preview-head">
-          <span className="agent-diff-preview-title">
-            {selectedFile ? selectedFile.path : 'Select a file'}
-          </span>
-          <div className="agent-diff-preview-nav">
+                <button type="button" className="agent-diff-tree-btn" onClick={collapseAllDirs}>
+                  Collapse
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               className="agent-diff-tree-btn"
-              onClick={() => setSelectionByOffset(-1)}
-              disabled={!canPrev}
-              aria-label="Previous file"
+              data-testid="agent-diff-list-mode"
+              onClick={() => setListMode((mode) => nextAgentDiffFileListMode(mode))}
+              title={agentDiffFileListModeLabel(listMode)}
+              aria-label={agentDiffFileListModeLabel(listMode)}
             >
-              <ArrowUp size={12} />
-            </button>
-            <button
-              type="button"
-              className="agent-diff-tree-btn"
-              onClick={() => setSelectionByOffset(1)}
-              disabled={!canNext}
-              aria-label="Next file"
-            >
-              <ArrowDown size={12} />
+              {listMode === 'tree' ? <List size={12} /> : <FolderTree size={12} />}
+              {agentDiffFileListModeLabel(listMode)}
             </button>
           </div>
         </div>
-        <div className="agent-diff-preview-body">
-          {!selectedFile ? (
-            <div className="agent-diff-empty-inline">Select a changed file to preview its diff.</div>
-          ) : !selectedDiff || selectedDiff.loading ? (
-            <StencilLines label="Loading diff" widths={['100%', '93%', '87%']} />
-          ) : selectedDiff.head?.binary || selectedDiff.work?.binary ? (
-            <div className="agent-diff-empty-inline">
-              {CODE_LABEL[selectedFile.code]} — binary file, no text diff.
-            </div>
-          ) : (
-            <DiffViewer
-              key={selectedFile.path}
-              path={selectedFile.path}
-              language={languageFromPath(selectedFile.path)}
-              original={selectedDiff.head?.notInHead ? '' : selectedDiff.head?.content ?? ''}
-              modified={selectedDiff.work?.content ?? ''}
-              compact
-            />
-          )}
+        <div
+          className={`agent-diff-tree-list${listMode === 'list' ? ' is-flat' : ''}`}
+          role={listMode === 'list' ? 'listbox' : 'tree'}
+          aria-label="Changed files"
+        >
+          {listMode === 'list'
+            ? (filteredFiles.length === 0 ? (
+              <div className="agent-diff-empty-inline">No matching files.</div>
+            ) : (
+              listFileRows.map((row) => {
+                const selected = selectedPath === row.file.path;
+                return (
+                  <Fragment key={row.key}>
+                    <ChangedFileRow
+                      file={row.file}
+                      depth={0}
+                      selected={selected}
+                      itemRole="option"
+                      onSelect={setSelectedPath}
+                    />
+                    {selected ? (
+                      <div
+                        className="agent-diff-inline-preview"
+                        data-testid="agent-diff-inline-preview"
+                        role="region"
+                        aria-label={`Diff for ${agentDiffFileName(row.file.path)}`}
+                      >
+                        <DiffPreviewBody file={row.file} diff={fileDiffs[row.file.path]} />
+                      </div>
+                    ) : null}
+                  </Fragment>
+                );
+              })
+            ))
+            : (treeRows.length === 0 ? (
+              <div className="agent-diff-empty-inline">No matching files.</div>
+            ) : (
+              treeRows.map((row) => {
+                if (row.kind === 'dir') {
+                  const isCollapsed = !!collapsedDirs[row.path];
+                  return (
+                    <button
+                      key={row.key}
+                      type="button"
+                      className="agent-diff-tree-row agent-diff-tree-row--dir"
+                      style={{ paddingLeft: `${8 + row.depth * 14}px` }}
+                      onClick={() => toggleDir(row.path)}
+                      aria-expanded={!isCollapsed}
+                      role="treeitem"
+                    >
+                      <span className="agent-diff-acc-toggle">
+                        {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                      </span>
+                      <span className="agent-diff-tree-dir-icon" aria-hidden="true">
+                        {isCollapsed ? <Folder size={12} /> : <FolderOpen size={12} />}
+                      </span>
+                      <span className="agent-diff-tree-dir">{row.name}</span>
+                      <span className="agent-diff-tree-count">{row.count}</span>
+                    </button>
+                  );
+                }
+                return (
+                  <ChangedFileRow
+                    key={row.key}
+                    file={row.file}
+                    depth={row.depth}
+                    selected={selectedPath === row.file.path}
+                    itemRole="treeitem"
+                    onSelect={setSelectedPath}
+                  />
+                );
+              })
+            ))}
         </div>
       </div>
+      {listMode === 'tree' ? (
+        <div className="agent-diff-preview" data-testid="agent-diff-preview">
+          <div className="agent-diff-preview-head">
+            <span className="agent-diff-preview-title">
+              {selectedFile ? selectedFile.path : 'Select a file'}
+            </span>
+            <div className="agent-diff-preview-nav">
+              <button
+                type="button"
+                className="agent-diff-tree-btn"
+                onClick={() => setSelectionByOffset(-1)}
+                disabled={!canPrev}
+                aria-label="Previous file"
+              >
+                <ArrowUp size={12} />
+              </button>
+              <button
+                type="button"
+                className="agent-diff-tree-btn"
+                onClick={() => setSelectionByOffset(1)}
+                disabled={!canNext}
+                aria-label="Next file"
+              >
+                <ArrowDown size={12} />
+              </button>
+            </div>
+          </div>
+          <div className="agent-diff-preview-body">
+            <DiffPreviewBody file={selectedFile} diff={selectedDiff} />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

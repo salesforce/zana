@@ -21,7 +21,7 @@ export function GlobalView({
   return (
     <>
       <Section anchorId="appearance" title="Appearance">
-        <Field label="Theme">
+        <Field label="Theme" help="Choose how Zana looks on this device." layout="row">
           <PopoverPicklist
             value={config.theme}
             ariaLabel="Theme"
