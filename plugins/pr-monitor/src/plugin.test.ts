@@ -62,6 +62,31 @@ describe('createPrMonitorPlugin', () => {
     await harness.dispose();
   });
 
+  it('returns sync acceptance immediately and exposes shared completion state', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pollAll = vi.fn(async () => {
+      await gate;
+      return { ok: true, prs: [], deltas: [] };
+    });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'pr-monitor' });
+    await createPrMonitorPlugin(zcc, { startBackground: false, dataDir: isolatedDataDir(), pollAll });
+
+    const first = await harness.callRpc('pollAll');
+    const joined = await harness.callRpc('pollAll');
+    expect(first).toMatchObject({ id: 1, state: 'running' });
+    expect(joined).toMatchObject({ id: 1, state: 'running' });
+    expect(pollAll).toHaveBeenCalledTimes(1);
+
+    release();
+    await vi.waitFor(async () => {
+      expect(await harness.callRpc('syncStatus')).toMatchObject({ id: 1, state: 'succeeded', prs: [] });
+    });
+    await harness.dispose();
+  });
+
   it('skips gh when auto-sync is off and still arms the timer', async () => {
     vi.useFakeTimers();
     const exec = vi.fn(async () => ({ code: 1, stdout: '', stderr: 'offline' }));
@@ -140,6 +165,7 @@ describe('createPrMonitorPlugin', () => {
       {
         event: PRS_CHANGED_CHANNEL,
         payload: {
+          prs: [],
           deltas: [
             { url: pr.url, oldStatus: 'yellow', newStatus: 'green', pr },
             { url: pr.url, oldStatus: 'green', newStatus: 'failed', pr: { ...pr, title: 'boom' } }

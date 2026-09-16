@@ -47,6 +47,7 @@ import {
 } from '../../lib/types.js';
 import { computeNotifyDelivery } from '../../lib/notify.js';
 import { statusLabel } from './formatHelpers.js';
+import { SYNC_STATUS_POLL_INTERVAL_MS } from '../../lib/sync-coordinator.js';
 
 const MS_PER_MINUTE = 60_000;
 
@@ -83,7 +84,7 @@ function safeMarkdownUrl(url: string): string {
 }
 
 interface PollResult {
-  ok: boolean;
+  state?: 'idle' | 'queued' | 'running' | 'succeeded' | 'failed';
   prs?: MonitoredPr[];
   deltas?: PrStatusDelta[];
   error?: string;
@@ -174,8 +175,16 @@ export default function PrMonitorBackground({ host }: { host: ModuleHost }) {
         // on-demand Sync control (R-LIST-002) drives pollAll directly, bypassing
         // this loop.
         if (settings.autoSyncEnabled === false) return;
-        const res = await host.call<PollResult>('pollAll');
-        if (res?.ok && Array.isArray(res.prs)) {
+        const initial = await host.call<PollResult>('pollAll');
+        // Server background owns polling. This legacy renderer component only
+        // consumes completed job state when embedded by older hosts.
+        let res = initial;
+        while ((res.state === 'running' || res.state === 'queued') && aliveRef.current) {
+          await new Promise((resolve) => setTimeout(resolve, SYNC_STATUS_POLL_INTERVAL_MS));
+          res = await host.call<PollResult>('syncStatus', { id: (res as PollResult & { id?: number }).id });
+        }
+        // Older plugin hosts return completed poll payloads directly.
+        if ((res?.state === undefined || res.state === 'succeeded') && Array.isArray(res.prs)) {
           host.cache.set(MONITORED_PRS_CACHE_KEY, res.prs);
           host.cache.set(MONITORED_COUNT_CACHE_KEY, res.prs.length);
           host.cache.refreshBadge?.();

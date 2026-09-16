@@ -8,6 +8,7 @@ import { computeNotifyDelivery } from './notify.js';
 import { setupPrMonitor } from './pr-main.js';
 import { PRS_CHANGED_CHANNEL } from './realtime.js';
 import { invokeRpc } from './rpc.js';
+import { SyncCoordinator, type SyncJobState } from './sync-coordinator.js';
 import {
   DEFAULT_PR_MONITOR_SETTINGS,
   SETTINGS_STORAGE_KEY,
@@ -62,9 +63,11 @@ export async function createPrMonitorPlugin(zcc: ZccPluginApi, deps: PrMonitorPl
     }
   };
   const methods = setupPrMonitor(ctx);
+  const runPollAll = deps.pollAll ?? methods.pollAll;
 
   for (const [name, handler] of Object.entries(methods)) {
     if (typeof handler !== 'function') continue;
+    if (name === 'pollAll' || name === 'syncRepos') continue;
     zcc.rpc.method(name, (args) => invokeRpc(handler as (...fnArgs: never[]) => unknown, args));
   }
 
@@ -117,6 +120,31 @@ export async function createPrMonitorPlugin(zcc: ZccPluginApi, deps: PrMonitorPl
     return deltas.filter((delta) => isInterestingDelta(delta) && computeNotifyDelivery(delta.pr, settings).inApp);
   }
 
+  const coordinator = new SyncCoordinator(
+    (scope, repos) => scope === 'repos' ? methods.syncRepos({ repos: repos ?? [] }) : runPollAll(),
+    async (result) => {
+      if (result.state !== 'succeeded') return;
+      await deliverInbox(result.deltas);
+      zcc.realtime.publish(PRS_CHANGED_CHANNEL, {
+        prs: result.prs ?? [], deltas: result.deltas ?? [], inAppDeltas: await inAppNotifications(result.deltas)
+      });
+    },
+    (message) => zcc.log.warn(message)
+  );
+  const startSync = (repos?: string[]): SyncJobState => coordinator.start(
+    Array.isArray(repos) && repos.length > 0 ? 'repos' : 'all', repos
+  );
+
+  // RPC calls have a short host deadline. Start work here, return state now, and
+  // let callers read their job instead of holding the request open for gh.
+  zcc.rpc.method('pollAll', async () => startSync());
+  zcc.rpc.method('syncRepos', async (args) => {
+    const input = invokeRpc(((params: { repos?: unknown }) => params) as never, args) as { repos?: unknown };
+    const repos = Array.isArray(input?.repos) ? input.repos.map((repo) => String(repo ?? '').trim()).filter(Boolean) : [];
+    return startSync(repos);
+  });
+  zcc.rpc.method('syncStatus', async (args) => coordinator.status((args as { id?: unknown })?.id));
+
   if (deps.startBackground === false) return;
 
   zcc.background.service('poll', () => {
@@ -127,14 +155,7 @@ export async function createPrMonitorPlugin(zcc: ZccPluginApi, deps: PrMonitorPl
       const settings = await readSettings(zcc);
       if (settings.autoSyncEnabled !== false) {
         try {
-          const result = (await (deps.pollAll ?? methods.pollAll)()) as PollAllResult;
-          if (result.ok) {
-            await deliverInbox(result.deltas);
-            zcc.realtime.publish(PRS_CHANGED_CHANNEL, {
-              deltas: result.deltas ?? [],
-              inAppDeltas: await inAppNotifications(result.deltas)
-            });
-          }
+          startSync();
         } catch (err) {
           zcc.log.warn(`poll failed: ${err instanceof Error ? err.message : String(err)}`);
         }

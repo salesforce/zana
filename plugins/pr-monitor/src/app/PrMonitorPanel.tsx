@@ -36,6 +36,11 @@ import { SettingsView } from './SettingsView.js';
 import { deriveSyncClue } from './syncClue.js';
 import { deliverNotifications } from './PrMonitorBackground.js';
 import { isListViewMode } from './pr-board.js';
+import {
+  SYNC_STATUS_MAX_WAIT_MS,
+  SYNC_STATUS_POLL_INTERVAL_MS,
+  type SyncJobState,
+} from '../../lib/sync-coordinator.js';
 
 type SubTab = 'prs' | 'settings';
 
@@ -79,6 +84,12 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
   // mount so the clue paints before the first poll completes.
   const [syncHealth, setSyncHealth] = useState<SyncHealth>(() => ({ ...EMPTY_SYNC_HEALTH }));
   const syncBtnRef = useRef<HTMLButtonElement>(null);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
   // `host.listProjects()` is a non-reactive store SNAPSHOT — at mount the
   // projects store may still be loading, so a single inline read can capture a
   // partial (or empty) list. We hold the list in state and re-read it on the
@@ -211,10 +222,18 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
       setError(null);
       try {
         const scoped = Array.isArray(repos) && repos.length > 0;
-        const res = scoped
-          ? await host.call<{ ok: boolean; prs?: MonitoredPr[]; deltas?: PrStatusDelta[]; error?: string }>('syncRepos', { repos })
-          : await host.call<{ ok: boolean; prs?: MonitoredPr[]; deltas?: PrStatusDelta[]; health?: SyncHealth; error?: string }>('pollAll');
-        if (res?.ok && Array.isArray(res.prs)) {
+        const initial = scoped
+          ? await host.call<SyncJobState>('syncRepos', { repos })
+          : await host.call<SyncJobState>('pollAll');
+        let res = initial;
+        const deadline = Date.now() + SYNC_STATUS_MAX_WAIT_MS;
+        while ((res.state === 'running' || res.state === 'queued') && aliveRef.current && Date.now() < deadline) {
+          await new Promise((resolve) => window.setTimeout(resolve, SYNC_STATUS_POLL_INTERVAL_MS));
+          res = await host.call<SyncJobState>('syncStatus', { id: res.id });
+        }
+        // Older hosts return completed poll payloads directly.
+        const ok = res.state === undefined || res.state === 'succeeded';
+        if (ok && Array.isArray(res.prs)) {
           setPrs(res.prs);
           host.cache.set(MONITORED_PRS_CACHE_KEY, res.prs);
           // Keep the nav-badge inputs in lockstep with a manual Sync. Without
@@ -235,6 +254,8 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
             };
             await deliverNotifications(host, res.deltas, notificationSettings);
           }
+        } else if (!aliveRef.current || Date.now() >= deadline) {
+          setError('Sync is still running. Check back shortly.');
         } else if (res?.error) {
           setError(res.error);
         }
