@@ -1090,6 +1090,9 @@ export function createPluginApi(
       publish: (event, payload) => {
         assertLive();
         for (const listener of realtimeListeners) listener(event, payload);
+        // Realtime payloads cross only from trusted plugin server code to the
+        // renderer; renderer listeners receive no authority from this signal.
+        options?.productContext?.hub.emit('plugin-signal', { pluginId, channel: event, payload: payload ?? null });
       }
     },
     background: {

@@ -2,9 +2,11 @@ import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { computeNavBadge } from './badge.js';
 import type { PrMonitorContext } from './context.js';
 import { createGhExec } from './gh-exec.js';
-import { inboxDeliveriesForDeltas } from './inbox-delivery.js';
+import { inboxDeliveriesForDeltas, isInterestingDelta } from './inbox-delivery.js';
 import { defaultPrMonitorDataDir, migrateLegacyKv } from './migrate.js';
+import { computeNotifyDelivery } from './notify.js';
 import { setupPrMonitor } from './pr-main.js';
+import { PRS_CHANGED_CHANNEL } from './realtime.js';
 import { invokeRpc } from './rpc.js';
 import {
   DEFAULT_PR_MONITOR_SETTINGS,
@@ -109,6 +111,12 @@ export async function createPrMonitorPlugin(zcc: ZccPluginApi, deps: PrMonitorPl
     }
   }
 
+  async function inAppNotifications(deltas: PrStatusDelta[] | undefined): Promise<PrStatusDelta[]> {
+    if (!deltas?.length) return [];
+    const settings = await readSettings(zcc);
+    return deltas.filter((delta) => isInterestingDelta(delta) && computeNotifyDelivery(delta.pr, settings).inApp);
+  }
+
   if (deps.startBackground === false) return;
 
   zcc.background.service('poll', () => {
@@ -120,7 +128,13 @@ export async function createPrMonitorPlugin(zcc: ZccPluginApi, deps: PrMonitorPl
       if (settings.autoSyncEnabled !== false) {
         try {
           const result = (await (deps.pollAll ?? methods.pollAll)()) as PollAllResult;
-          if (result.ok) await deliverInbox(result.deltas);
+          if (result.ok) {
+            await deliverInbox(result.deltas);
+            zcc.realtime.publish(PRS_CHANGED_CHANNEL, {
+              deltas: result.deltas ?? [],
+              inAppDeltas: await inAppNotifications(result.deltas)
+            });
+          }
         } catch (err) {
           zcc.log.warn(`poll failed: ${err instanceof Error ? err.message : String(err)}`);
         }

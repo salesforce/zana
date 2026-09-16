@@ -78,4 +78,36 @@ describe('pr-monitor app slots', () => {
     });
     unmount();
   });
+
+  it('refreshes badge and delivers in-app toast from server poll signal without a timer', async () => {
+    let onRealtime: ((payload: unknown) => void) | undefined;
+    const callRpc = vi.fn(async (_pluginId: string, method: string) => {
+      if (method === 'badge') return { count: callRpc.mock.calls.filter(([, name]) => name === 'badge').length };
+      return {};
+    });
+    const toast = vi.fn();
+    vi.stubGlobal('__ZCC_PLUGIN_HOST__', { callRpc });
+    vi.stubGlobal('__ZCC_PLUGIN_RUNTIME__', {
+      useRealtime: (_channel: string, handler: (payload: unknown) => void) => {
+        onRealtime = handler;
+      },
+      toast
+    });
+    const set = collectTestPluginApp(app, 'pr-monitor');
+    const Badge = set.navPanels[0]?.experimental_sidebarAccessory;
+    const { container, unmount } = render(<Badge />);
+    await waitFor(() => expect(container.querySelector('.nav-badge')?.textContent).toBe('1'));
+    onRealtime?.({
+      inAppDeltas: [{
+        url: 'https://github.com/acme/app/pull/1', oldStatus: 'yellow', newStatus: 'green', pr: {
+          url: 'https://github.com/acme/app/pull/1', repo: 'acme/app', number: 1, title: 'Fix', status: 'green',
+          addedAt: 1, lastChecked: 1, lastStatusChange: 1, baseRefName: 'main', mergeable: 'MERGEABLE',
+          mergeStateStatus: 'CLEAN', checks: []
+        }
+      }]
+    });
+    await waitFor(() => expect(container.querySelector('.nav-badge')?.textContent).toBe('2'));
+    expect(toast).toHaveBeenCalledWith('acme/app#1: Merge blocked -> All checks passing', 'info');
+    unmount();
+  });
 });

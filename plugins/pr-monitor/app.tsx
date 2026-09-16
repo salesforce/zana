@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { callPluginRpc, definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { callPluginRpc, definePluginApp, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import PrMonitorPanel from './src/app/PrMonitorPanel.js';
 import { createPluginPanelHost, setBadgeRefresh } from './src/app/adapter.js';
+import { PRS_CHANGED_CHANNEL } from './lib/realtime.js';
+import type { PrStatusDelta } from './lib/types.js';
+import { statusLabel } from './src/app/formatHelpers.js';
 import styles from './src/app/styles.css';
 import kanbanCss from '@zana-ai/zcc-ui/kanban.css';
 
@@ -36,31 +39,41 @@ function Panel() {
 
 function NavBadge() {
   const [count, setCount] = useState<number | null>(null);
+  const refreshBadge = useCallback(async () => {
+    try {
+      const result = (await callPluginRpc(PLUGIN_ID, 'badge')) as { count?: number | null };
+      const next = typeof result?.count === 'number' && result.count > 0 ? result.count : null;
+      setCount(next);
+    } catch (err) {
+      // Keep zero/error hidden, but expose RPC failures for support diagnosis.
+      console.warn('[pr-monitor] badge refresh failed', err);
+      setCount(null);
+    }
+  }, []);
   useEffect(() => {
     let alive = true;
-    const tick = async () => {
-      try {
-        const result = (await callPluginRpc(PLUGIN_ID, 'badge')) as { count?: number | null };
-        if (!alive) return;
-        const next = typeof result?.count === 'number' && result.count > 0 ? result.count : null;
-        setCount(next);
-      } catch {
-        if (alive) setCount(null);
-      }
-    };
-    void tick();
+    void refreshBadge();
     setBadgeRefresh(() => {
-      void tick();
+      if (alive) void refreshBadge();
     });
-    const id = window.setInterval(() => {
-      void tick();
-    }, 30_000);
     return () => {
       alive = false;
-      window.clearInterval(id);
       setBadgeRefresh(undefined);
     };
-  }, []);
+  }, [refreshBadge]);
+  useRealtime(PRS_CHANGED_CHANNEL, (payload) => {
+    void (async () => {
+      const deltas = Array.isArray((payload as { inAppDeltas?: unknown })?.inAppDeltas)
+        ? ((payload as { inAppDeltas: PrStatusDelta[] }).inAppDeltas)
+        : [];
+      void refreshBadge();
+      if (deltas.length === 0) return;
+      for (const delta of deltas) {
+        const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: { toast?: (message: string, kind?: 'info' | 'error') => void } }).__ZCC_PLUGIN_RUNTIME__;
+        runtime?.toast?.(`${delta.pr.repo}#${delta.pr.number}: ${statusLabel(delta.oldStatus)} -> ${statusLabel(delta.newStatus)}`, 'info');
+      }
+    })().catch((err) => console.warn('[pr-monitor] notification delivery failed', err));
+  });
   if (count == null) return null;
   return <span className="nav-badge">{count}</span>;
 }

@@ -35,6 +35,7 @@ const h = vi.hoisted(() => {
       icon: string;
       generation: number;
       component: () => null;
+      experimental_sidebarAccessory?: () => JSX.Element;
       placement?: 'sidebar' | 'extensions' | 'unlisted';
     }>
   };
@@ -157,6 +158,29 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(agentsChunk).toContain('class="nav-running-dot"');
 
     h.agentCounts = { active: 0, blocked: 0 };
+  });
+
+  it('mounts plugin sidebar accessories in the global rail', () => {
+    h.state.sidebarCollapsed = false;
+    h.navPanels = [{
+      pluginId: 'pr-monitor',
+      path: 'main',
+      id: 'main',
+      title: 'PR Monitor',
+      icon: 'GitPullRequest',
+      generation: 1,
+      component: () => null,
+      experimental_sidebarAccessory: () => <span className="nav-badge">1</span>
+    }];
+
+    const markup = renderSidebar();
+    const start = markup.indexOf('data-testid="nav-pr-monitor/main"');
+    const row = markup.slice(start, markup.indexOf('</a>', start));
+    expect(row).toContain('>PR Monitor<');
+    expect(row).toContain('class="nav-badge"');
+    expect(row).toContain('>1<');
+
+    h.navPanels = [];
   });
 
   it('badges Agents with a running count when the fleet is live', () => {

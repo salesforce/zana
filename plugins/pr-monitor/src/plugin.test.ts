@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { createPrMonitorPlugin } from '../lib/plugin.js';
+import { PRS_CHANGED_CHANNEL } from '../lib/realtime.js';
 import { packRpcArgs, invokeRpc } from '../lib/rpc.js';
 import { DEFAULT_PR_MONITOR_SETTINGS } from '../lib/types.js';
 
@@ -135,6 +136,21 @@ describe('createPrMonitorPlugin', () => {
     });
     await vi.advanceTimersByTimeAsync(0);
     expect(pushed).toEqual(['p1']);
+    expect(harness.published).toEqual([
+      {
+        event: PRS_CHANGED_CHANNEL,
+        payload: {
+          deltas: [
+            { url: pr.url, oldStatus: 'yellow', newStatus: 'green', pr },
+            { url: pr.url, oldStatus: 'green', newStatus: 'failed', pr: { ...pr, title: 'boom' } }
+          ],
+          inAppDeltas: [
+            { url: pr.url, oldStatus: 'yellow', newStatus: 'green', pr },
+            { url: pr.url, oldStatus: 'green', newStatus: 'failed', pr: { ...pr, title: 'boom' } }
+          ]
+        }
+      }
+    ]);
     await harness.dispose();
     vi.useRealTimers();
   });
@@ -162,6 +178,17 @@ describe('createPrMonitorPlugin', () => {
     expect(pollAll).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(pollAll).toHaveBeenCalledTimes(2);
+    await harness.dispose();
+    vi.useRealTimers();
+  });
+
+  it('does not publish a PR change signal when polling fails or auto-sync is off', async () => {
+    vi.useFakeTimers();
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'pr-monitor' });
+    await zcc.storage.kv.set('settings', { ...DEFAULT_PR_MONITOR_SETTINGS, autoSyncEnabled: false });
+    await createPrMonitorPlugin(zcc, { startBackground: true, dataDir: isolatedDataDir(), pollAll: async () => ({ ok: false }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.published).toEqual([]);
     await harness.dispose();
     vi.useRealTimers();
   });

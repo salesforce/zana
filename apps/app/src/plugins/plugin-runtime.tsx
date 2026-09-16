@@ -1,4 +1,4 @@
-import { lazy, Suspense, useContext, useEffect, useMemo, useState, type ComponentType } from 'react';
+import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
   PluginComposerApi,
@@ -22,6 +22,7 @@ import { hrefForPluginNavPanel, hrefForPluginProjectTab } from './plugin-nav-hre
 import { ComposerViewContext, getActiveComposerApi, getActiveComposerView, setPluginLaunchPatch } from './plugin-composer-api.js';
 import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
 import { openPluginThreadPanel } from './plugin-thread-panel.js';
+import { subscribeProductEvent } from '../lib/product-ws.js';
 
 const ThreadDetailLazy = lazy(async () => {
   const mod = await import('../views/threads/ThreadDetailView.js');
@@ -69,6 +70,30 @@ function useSettingsImpl(): PluginSettingsState {
     };
   }, [pluginId]);
   return { values, isLoading };
+}
+
+function useRealtimeImpl(channel: string, handler: (payload: unknown) => void): void {
+  const { pluginId } = usePluginRuntimeContext();
+  const handlerRef = useRef(handler);
+  useEffect(() => {
+    handlerRef.current = handler;
+  }, [handler]);
+  useEffect(
+    () =>
+      subscribeProductEvent<{ pluginId?: unknown; channel?: unknown; payload?: unknown }>('plugin-signal', (signal) => {
+        if (signal?.pluginId !== pluginId || signal.channel !== channel) return;
+        handlerRef.current(signal.payload);
+      }),
+    [channel, pluginId]
+  );
+}
+
+function useRealtimeConnectionStateImpl() {
+  return useSyncExternalStore(
+    () => () => undefined,
+    () => 'connected' as const,
+    () => 'connected' as const
+  );
 }
 
 function useZccContextImpl() {
@@ -174,8 +199,8 @@ export function installPluginRuntime(): void {
   const runtime: PluginSdkApp = {
     definePluginApp: (setup) => ({ __zccPluginApp: true, setup }),
     useRpc: useRpcImpl,
-    useRealtime: () => undefined,
-    useRealtimeConnectionState: () => 'connected',
+    useRealtime: useRealtimeImpl,
+    useRealtimeConnectionState: useRealtimeConnectionStateImpl,
     useSettings: useSettingsImpl,
     useZccContext: useZccContextImpl,
     useZccNavigate: useZccNavigateImpl,

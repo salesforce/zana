@@ -36,6 +36,7 @@ import {
   type SidebarRailItem
 } from './SidebarRail.js';
 import { listNavPanels, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import { PluginSlotBoundary } from '../plugins/PluginSlotBoundary.js';
 import type { PaneContent } from '../lib/split-layout/types.js';
 
 interface NavEntry {
@@ -209,6 +210,7 @@ export function Sidebar() {
     ...pluginPanels.map((panel): SidebarRailItem => {
       const path = panel.path ?? panel.id;
       const Icon = resolveIcon(panel.icon);
+      const Accessory = panel.experimental_sidebarAccessory;
       const id = `${panel.pluginId}/${path}`;
       const active = nav === panel.pluginId && (pluginPanelPath === path || pluginPanelPath === null);
       return {
@@ -220,6 +222,11 @@ export function Sidebar() {
         testId: `nav-${id}`,
         active,
         title: collapsed ? panel.title : undefined,
+        badge: Accessory ? (
+          <PluginSlotBoundary pluginId={panel.pluginId} generation={panel.generation}>
+            <Accessory />
+          </PluginSlotBoundary>
+        ) : undefined,
         splitContent: {
           kind: 'plugin-panel',
           pluginId: panel.pluginId,
