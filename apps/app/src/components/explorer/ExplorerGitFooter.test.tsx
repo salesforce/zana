@@ -89,7 +89,7 @@ describe('ExplorerGitFooter', () => {
 describe('Explorer git footer wiring', () => {
   it('hosts the worktree menu in the footer only and never checks out in place', () => {
     const source = readFileSync(
-      join(process.cwd(), 'src/views/project/ExplorerView.tsx'),
+      join(process.cwd(), 'apps/app/src/views/project/ExplorerView.tsx'),
       'utf8'
     );
     expect(source).toContain('ExplorerGitFooter');
@@ -97,7 +97,7 @@ describe('Explorer git footer wiring', () => {
     expect(source).toContain('placement="above"');
     expect(source).not.toContain('WorktreeSwitcher');
     expect(source).not.toContain('git.checkout');
-    const css = readFileSync(join(process.cwd(), 'src/styles/global.css'), 'utf8');
+    const css = readFileSync(join(process.cwd(), 'apps/app/src/styles/global.css'), 'utf8');
     expect(css).toContain('.explorer-git-footer');
     expect(css).toContain('.explorer-worktree-menu.is-above');
     expect(css).not.toContain('.explorer-worktree-btn');

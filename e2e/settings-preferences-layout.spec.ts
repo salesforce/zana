@@ -69,12 +69,27 @@ test('Settings presents grouped preferences and keeps search, persistence, and r
 });
 
 test('Inbox keeps readable titles, report markers, and keyboard selection in both themes', async ({ home }, testInfo) => {
+  const projectDir = join(home, 'ui-demo');
+  mkdirSync(projectDir, { recursive: true });
+  mkdirSync(join(home, '.zcc'), { recursive: true });
+  writeFileSync(join(home, '.zcc', 'projects.json'), JSON.stringify({
+    version: 1,
+    projects: [{
+      id: 'ui-demo',
+      name: 'Design',
+      path: projectDir,
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+      tag: 'design'
+    }]
+  }));
   const dir = join(home, '.zcc', 'inbox');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'entries.jsonl'), ['Design review ready', 'Accessibility checks complete'].map((subject, index) => JSON.stringify({
     id: `ui-review-${index}`,
     ts: Date.now() - index * 60_000,
     projectId: 'ui-demo',
+    sessionId: 'dead-session-ui',
     subject,
     comments: 'The updated settings are ready to review, including light and dark themes.',
     report: true
@@ -91,11 +106,17 @@ test('Inbox keeps readable titles, report markers, and keyboard selection in bot
     expect(await row.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('solid');
     await row.press('Enter');
     await expect(row).toHaveClass(/active/);
-    await expect(win.locator('.inbox-detail')).toContainText('The updated settings are ready to review');
+    const detail = win.locator('.inbox-detail');
+    await expect(detail).toContainText('The updated settings are ready to review');
+    await expect(detail.locator('.inbox-detail-title')).toHaveText('Design review ready');
+    await expect(detail.locator('.inbox-status-pill')).toHaveText('Ended');
+    await expect(detail.getByRole('button', { name: 'Reopen', exact: true })).toBeVisible();
+    await expect(detail.getByRole('button', { name: 'Leave a reply' })).toBeVisible();
     for (const theme of ['light', 'dark'] as const) {
       await win.evaluate((value) => window.cc.config.set({ theme: value }), theme);
       await expect(win.locator('html')).toHaveAttribute('data-theme', theme);
       expect(await row.locator('.inbox-row-title').evaluate((el) => getComputedStyle(el).fontSize)).toBe('13px');
+      expect(await detail.locator('.inbox-detail-title').evaluate((el) => getComputedStyle(el).fontSize)).toBe('22px');
       expect(await row.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       await win.screenshot({ path: testInfo.outputPath(`inbox-${theme}.png`), animations: 'disabled' });
     }
