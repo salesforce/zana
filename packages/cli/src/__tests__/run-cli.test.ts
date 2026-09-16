@@ -85,6 +85,27 @@ beforeAll(() => {
     }, null, 2)
   );
 
+  writeFileSync(
+    join(fixtureDir, 'schedules', 'schedule2.json'),
+    JSON.stringify({
+      id: 'sched-002',
+      name: 'Weekday Standup',
+      enabled: true,
+      projectId: 'proj-002',
+      profile: 'claude',
+      schedule: { cron: '0 9 * * 1-5' },
+      overlap: 'skip',
+      history: { retain: 10 },
+      status: {
+        runCount: 5,
+        runs: [],
+        lastRunResult: 'success'
+      },
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z'
+    }, null, 2)
+  );
+
   // personas/my-persona.json
   writeFileSync(
     join(fixtureDir, 'personas', 'my-persona.json'),
@@ -226,7 +247,7 @@ describe('cc CLI', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain('schedules/bad.json');
     const schedules = JSON.parse(result.stdout);
-    expect(schedules).toHaveLength(1);
+    expect(schedules).toHaveLength(2);
     expect(schedules[0].id).toBe('sched-001');
     expect(schedules[0].name).toBe('Daily Review');
   });
@@ -236,7 +257,10 @@ describe('cc CLI', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('ID');
     expect(result.stdout).toContain('NAME');
+    expect(result.stdout).toContain('CADENCE');
     expect(result.stdout).toContain('Daily Review');
+    expect(result.stdout).toContain('24h');
+    expect(result.stdout).toContain('0 9 * * 1-5');
     expect(result.stdout).toContain('success');
   });
 
