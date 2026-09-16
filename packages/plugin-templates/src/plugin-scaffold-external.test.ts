@@ -121,7 +121,9 @@ describe('external plugin scaffold tests', () => {
     });
     await installPackedSdk(pluginDir, tarball);
     linkExternalDependencies(pluginDir);
-  }, 180_000);
+  // Full suite runs package packing beside Electron/build work. Keep setup
+  // bounded, but allow its known isolated 77s path room under shared load.
+  }, 300_000);
 
   afterAll(async () => {
     await rm(packRoot, { recursive: true, force: true });
