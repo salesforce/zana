@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { callPluginRpc, definePluginApp, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import PrMonitorPanel from './src/app/PrMonitorPanel.js';
 import { createPluginPanelHost, setBadgeRefresh } from './src/app/adapter.js';
@@ -10,6 +10,12 @@ import kanbanCss from '@zana-ai/zcc-ui/kanban.css';
 
 const PLUGIN_ID = 'pr-monitor';
 const STYLE_TAG_ID = 'prm-plugin-styles';
+
+type PluginRuntime = { toast?: (message: string, kind?: 'info' | 'error') => void };
+
+function pluginRuntime(): PluginRuntime | undefined {
+  return (globalThis as { __ZCC_PLUGIN_RUNTIME__?: PluginRuntime }).__ZCC_PLUGIN_RUNTIME__;
+}
 
 export function injectStyles(): void {
   if (typeof document === 'undefined') return;
@@ -39,25 +45,31 @@ function Panel() {
 
 function NavBadge() {
   const [count, setCount] = useState<number | null>(null);
+  const aliveRef = useRef(true);
+  const refreshIdRef = useRef(0);
   const refreshBadge = useCallback(async () => {
+    const refreshId = ++refreshIdRef.current;
     try {
       const result = (await callPluginRpc(PLUGIN_ID, 'badge')) as { count?: number | null };
+      if (!aliveRef.current || refreshId !== refreshIdRef.current) return;
       const next = typeof result?.count === 'number' && result.count > 0 ? result.count : null;
       setCount(next);
     } catch (err) {
+      if (!aliveRef.current || refreshId !== refreshIdRef.current) return;
       // Keep zero/error hidden, but expose RPC failures for support diagnosis.
       console.warn('[pr-monitor] badge refresh failed', err);
       setCount(null);
     }
   }, []);
   useEffect(() => {
-    let alive = true;
+    aliveRef.current = true;
     void refreshBadge();
     setBadgeRefresh(() => {
-      if (alive) void refreshBadge();
+      if (aliveRef.current) void refreshBadge();
     });
     return () => {
-      alive = false;
+      aliveRef.current = false;
+      refreshIdRef.current++;
       setBadgeRefresh(undefined);
     };
   }, [refreshBadge]);
@@ -68,8 +80,8 @@ function NavBadge() {
         : [];
       void refreshBadge();
       if (deltas.length === 0) return;
+      const runtime = pluginRuntime();
       for (const delta of deltas) {
-        const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: { toast?: (message: string, kind?: 'info' | 'error') => void } }).__ZCC_PLUGIN_RUNTIME__;
         runtime?.toast?.(`${delta.pr.repo}#${delta.pr.number}: ${statusLabel(delta.oldStatus)} -> ${statusLabel(delta.newStatus)}`, 'info');
       }
     })().catch((err) => console.warn('[pr-monitor] notification delivery failed', err));
