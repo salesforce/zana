@@ -56,7 +56,10 @@ const PROFILE_LABEL: Record<LaunchProfileId, string> = {
   'grok-yolo': 'grok --always-approve',
   mastracode: 'mastracode',
   'mastracode-resume': 'mastracode --continue',
-  'mastracode-yolo': 'mastracode (yolo)'
+  'mastracode-yolo': 'mastracode (yolo)',
+  afcode: 'afcode --local',
+  'afcode-resume': 'afcode --local --resume',
+  'afcode-yolo': 'afcode --local --auto-approve'
 };
 
 /** Status → pill label / class suffix. Reuses the scheduler pill palette. */

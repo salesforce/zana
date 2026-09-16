@@ -32,6 +32,9 @@ export const VALID_PROFILES = [
   'mastracode',
   'mastracode-resume',
   'mastracode-yolo',
+  'afcode',
+  'afcode-resume',
+  'afcode-yolo',
   'shell'
 ] as const satisfies readonly LaunchProfileId[];
 
@@ -94,6 +97,12 @@ export function profileLabel(p: LaunchProfileId): string {
       return 'Mastra Code Resume';
     case 'mastracode-yolo':
       return 'Mastra Code YOLO';
+    case 'afcode':
+      return 'afcode';
+    case 'afcode-resume':
+      return 'afcode Resume';
+    case 'afcode-yolo':
+      return 'afcode Unrestricted';
     case 'shell':
       return 'Shell';
     default:
@@ -134,6 +143,11 @@ export function isGrokProfile(p: LaunchProfileId): boolean {
   return p === 'grok' || p === 'grok-resume' || p === 'grok-yolo';
 }
 
+/** True for Agentforce Code's local CLI profiles. */
+export function isAfcodeProfile(p: LaunchProfileId): boolean {
+  return p === 'afcode' || p === 'afcode-resume' || p === 'afcode-yolo';
+}
+
 /** True for the Mastra Code-family profiles (`mastracode` CLI TUI). */
 export function isMastracodeProfile(p: LaunchProfileId): boolean {
   return p === 'mastracode' || p === 'mastracode-resume' || p === 'mastracode-yolo';
@@ -152,7 +166,8 @@ export function isAgentProfile(p: LaunchProfileId): boolean {
     isPiProfile(p) ||
     isOpenCodeProfile(p) ||
     isGrokProfile(p) ||
-    isMastracodeProfile(p)
+    isMastracodeProfile(p) ||
+    isAfcodeProfile(p)
   );
 }
 
@@ -170,6 +185,7 @@ export function harnessFamilyOf(p: LaunchProfileId): HarnessFamily | null {
   if (isOpenCodeProfile(p)) return 'opencode';
   if (isGrokProfile(p)) return 'grok';
   if (isMastracodeProfile(p)) return 'mastracode';
+  if (isAfcodeProfile(p)) return 'afcode';
   return null;
 }
 
@@ -483,6 +499,10 @@ export function providerCapabilities(profile: LaunchProfileId): ProviderCapabili
       emitsOscStatus: false,
       canAutoCloseOnFinish: false
     };
+  }
+
+  if (isAfcodeProfile(profile)) {
+    return { ...LEAST_CAPABLE, isAgent: true };
   }
 
   if (profile === 'shell') {

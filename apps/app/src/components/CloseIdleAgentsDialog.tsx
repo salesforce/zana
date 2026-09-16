@@ -24,6 +24,11 @@ interface Props {
    *    closes anything.
    */
   action?: 'summarize' | 'close';
+  /**
+   * Lane Close all terminates every listed agent, including Working / Needs you.
+   * Idle-toolbar Close leaves busy agents running (the default).
+   */
+  force?: boolean;
   onClose: () => void;
   /**
    * Confirm. For `close`: terminate the agents, folding a summary + follow-ups
@@ -49,6 +54,7 @@ export function CloseIdleAgentsDialog({
   agents,
   projectName,
   action = 'close',
+  force = false,
   onClose,
   onConfirm
 }: Props) {
@@ -117,6 +123,10 @@ export function CloseIdleAgentsDialog({
               <>
                 These idle agents in {scope} will be summarised to your inbox and{' '}
                 <strong>left running</strong>.
+              </>
+            ) : force ? (
+              <>
+                These agents in {scope} will be <strong>terminated</strong>.
               </>
             ) : (
               <>

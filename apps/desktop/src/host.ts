@@ -69,7 +69,7 @@ import { parsePortablePlan } from '@zana-ai/zcc-server/services/execution/portab
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
-import { createRestoreCapabilityStore } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
+import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
@@ -275,7 +275,7 @@ import { TranscriptSource } from '@zana-ai/zcc-server/services/misc/transcript-s
 import type { HarnessAuthKey, HarnessAuthStatusInfo } from '@zana-ai/zcc-domain/product';
 import { getHarnessAuthStatus, setHarnessAuth } from '@zana-ai/zcc-host-daemon/harness-auth';
 import { microVmPlatformSupported } from '@zana-ai/zcc-host-daemon/harness/microvm-environment';
-import { installedHarnessVersion } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
+import { installedHarnessVersion, memoizeInstalledVersion } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { verifyEditors } from '@zana-ai/zcc-server/services/projects/editor-verify';
 import { PersonaStore, resolvePersonaLaunch } from '@zana-ai/zcc-server/services/agents/persona-store';
 import { TeamStore } from '@zana-ai/zcc-server/services/agents/team-store';
@@ -938,11 +938,11 @@ function restorePrincipal(capability: { id: string; request: CreateTerminalReque
     : { kind: 'automation', id: `restore:${capability.id}` };
 }
 
-async function withPreparedNativeSession(
-  req: CreateTerminalRequest,
+async function withPreparedNativeSession<T extends { profile: LaunchProfileId; resumeSessionId?: string; extraArgs?: string[] }>(
+  req: T,
   cwd: string,
   config: AppConfig
-): Promise<CreateTerminalRequest> {
+): Promise<T> {
   // Resume profiles already pin the conversation (`--continue` / `--resume` with
   // no id). Minting a fresh Cursor chat here would replace that blunt restore.
   if (
@@ -3747,6 +3747,9 @@ async function launchAuthorizedTerminal(
     persona: frameworkPersona
   });
   if (!selection.ok) return { ok: false, code: selection.code, message: selection.message };
+  const installedVersion = memoizeInstalledVersion(
+    (adapterId) => installedHarnessVersion(config, adapterId)
+  );
   const executionAuthorization = await preflightTerminalExecution({
     config,
     profile: selection.profile,
@@ -3765,7 +3768,7 @@ async function launchAuthorizedTerminal(
   }, {
     consentStore: executionConsentStore,
     consentService: executionConsentService,
-    installedVersion: (adapterId) => installedHarnessVersion(config, adapterId)
+    installedVersion
   });
   if (executionAuthorization.decision === 'blocked') {
     return { ok: false, code: 'DENIED', message: `Structured execution unavailable: ${executionAuthorization.reason}` };
@@ -3964,7 +3967,7 @@ async function launchAuthorizedTerminal(
       legacyPersonaFacetCompatibility
     }, {
       consentStore: executionConsentStore,
-      installedVersion: (adapterId) => installedHarnessVersion(currentConfig, adapterId)
+      installedVersion
     });
     if (currentExecution.decision === 'blocked') return { ok: false, reason: currentExecution.reason };
     const currentBinding = {
@@ -4035,6 +4038,9 @@ async function launchBackgroundTerminal(
       })
     })
   });
+  const installedVersion = memoizeInstalledVersion(
+    (adapterId) => installedHarnessVersion(opts.config, adapterId)
+  );
   const executionAuthorization = await preflightTerminalExecution({
     config: opts.config,
     profile: opts.profile,
@@ -4049,7 +4055,7 @@ async function launchBackgroundTerminal(
     idempotencyKey: plan.idempotencyKey
   }, {
     consentStore: executionConsentStore,
-    installedVersion: (adapterId) => installedHarnessVersion(opts.config, adapterId)
+    installedVersion
   });
   if (executionAuthorization.decision === 'blocked') {
     throw new LaunchSpawnError('DENIED', `Structured execution unavailable: ${executionAuthorization.reason}`);
@@ -4104,7 +4110,7 @@ async function launchBackgroundTerminal(
         idempotencyKey: authorizedPlan.idempotencyKey
       }, {
         consentStore: executionConsentStore,
-        installedVersion: (adapterId) => installedHarnessVersion(currentConfig, adapterId)
+        installedVersion
       });
       if (currentExecution.decision === 'blocked') return { ok: false as const, reason: currentExecution.reason };
       return launchDigest({
@@ -4128,8 +4134,8 @@ async function launchBackgroundTerminal(
       );
       const session = createTerminalFromAuthorizedPlan({
         ...request,
-        projectSettings: authorizedPlan.resolved.projectSettings,
         cwd: spawnLaunch.cwd,
+        projectSettings: authorizedPlan.resolved.projectSettings,
         preallocatedSessionId: authorizedPlan.sessionId
       });
       return ptys.waitForReady(session.id);

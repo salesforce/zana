@@ -148,4 +148,13 @@ describe('AgentBoard thread cards', () => {
     expect(kanbanCss).toContain('.zcc-kanban.is-panning');
     expect(kanbanCss).toMatch(/\.zcc-kanban \{[^}]*overflow:\s*auto;/);
   });
+
+  it('opens a lane Close all menu from the column context menu', () => {
+    const source = readFileSync(new URL('../AgentBoard.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('closeableLaneAgents(lane.cards)');
+    expect(source).toContain('onCloseLaneAgents');
+    expect(source).toContain("? `Close all (${laneMenu.agents.length})`");
+    expect(source).toContain('onContextMenu={(e: MouseEvent<HTMLElement>) => {');
+    expect(source).toContain('createPortal(');
+  });
 });

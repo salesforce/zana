@@ -6,7 +6,7 @@ interface FakeProc {
   dataCbs: Array<(d: string) => void>;
   exitCb?: (e: { exitCode: number }) => void;
   write: (data: string) => void;
-  onData: (cb: (d: string) => void) => void;
+  onData: (cb: (d: string) => void) => { dispose(): void };
   onExit: (cb: (e: { exitCode: number }) => void) => void;
   resize: () => void;
   kill: () => void;
@@ -25,6 +25,10 @@ vi.mock('node-pty', () => ({
       },
       onData(cb: (d: string) => void) {
         this.dataCbs.push(cb);
+        return { dispose: () => {
+          const i = this.dataCbs.indexOf(cb);
+          if (i >= 0) this.dataCbs.splice(i, 1);
+        } };
       },
       onExit(cb: (e: { exitCode: number }) => void) {
         this.exitCb = cb;
@@ -108,6 +112,80 @@ describe('PtyManager stdin-after-ready opening prompt', () => {
       mgr.close(session.id);
       vi.runAllTimers();
       expect(proc.writes).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for afcode input readiness across chunks, after a slow startup', () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = new PtyManager();
+      mgr.create({ projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
+        config: CONFIG, openingPrompt: 'analyse the repo' });
+      const proc = spawned[0];
+      const emit = (data: string) => [...proc.dataCbs].forEach((cb) => cb(data));
+      const readinessCallback = proc.dataCbs.at(-1)!;
+      emit('AGENTFORCE CODE\nConnecting MCP servers...\n');
+      vi.advanceTimersByTime(5000);
+      expect(proc.writes).toEqual([]);
+      emit('x'.repeat(40000) + '\x1b[?20');
+      emit('04h> ');
+      // Some execution backends cannot unsubscribe an already-queued chunk.
+      readinessCallback('\x1b[?2004h');
+      vi.advanceTimersByTime(550);
+      expect(proc.writes).toEqual(['analyse the repo', '\r']);
+      expect(proc.dataCbs).toHaveLength(1);
+      emit('\x1b[?2004h');
+      vi.advanceTimersByTime(60_000);
+      expect(proc.writes).toEqual(['analyse the repo', '\r']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not retain a readiness listener for an empty opening task', () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = new PtyManager();
+      mgr.create({ projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
+        config: CONFIG, openingPrompt: '  ' });
+      expect(spawned[0].dataCbs).toHaveLength(1);
+      vi.advanceTimersByTime(60_000);
+      expect(spawned[0].writes).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports a readiness timeout and never injects a late task', () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = new PtyManager();
+      const data = vi.fn();
+      mgr.on('data', data);
+      mgr.create({ projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
+        config: CONFIG, openingPrompt: 'analyse the repo' });
+      vi.advanceTimersByTime(60_000);
+      expect(data).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('Initial task was not sent'));
+      for (const cb of spawned[0].dataCbs) cb('\x1b[?2004h');
+      vi.advanceTimersByTime(1000);
+      expect(spawned[0].writes).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels the readiness subscription when afcode closes before its prompt', () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = new PtyManager();
+      const session = mgr.create({ projectId: 'p1', profile: 'afcode', cwd: '/tmp', cols: 80, rows: 24,
+        config: CONFIG, openingPrompt: 'analyse the repo' });
+      mgr.close(session.id);
+      for (const cb of spawned[0].dataCbs) cb('\x1b[?2004h');
+      vi.runAllTimers();
+      expect(spawned[0].writes).toEqual([]);
     } finally {
       vi.useRealTimers();
     }

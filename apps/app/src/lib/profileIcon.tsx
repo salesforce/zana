@@ -67,6 +67,12 @@ export function profileIcon(profile: LaunchProfileId, size = 11) {
       return <History size={size} />;
     case 'mastracode-yolo':
       return <Zap size={size} />;
+    case 'afcode':
+      return <Code2 size={size} />;
+    case 'afcode-resume':
+      return <History size={size} />;
+    case 'afcode-yolo':
+      return <Zap size={size} />;
     case 'shell':
       return <Play size={size} />;
   }

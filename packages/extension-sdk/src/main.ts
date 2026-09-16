@@ -562,7 +562,10 @@ export type SdkLaunchProfileId =
   | 'grok-yolo'
   | 'mastracode'
   | 'mastracode-resume'
-  | 'mastracode-yolo';
+  | 'mastracode-yolo'
+  | 'afcode'
+  | 'afcode-resume'
+  | 'afcode-yolo';
 
 /** Provenance stamp — see core's `PersonaSource`. The host stamps `{ extensionId }`. */
 export type PersonaSource =

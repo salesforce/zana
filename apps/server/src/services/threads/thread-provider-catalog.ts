@@ -82,6 +82,7 @@ export function canonicalThreadProviderId(providerId: string): string {
   if (providerId === 'mastracode' || providerId === 'mastracode-resume' || providerId === 'mastracode-yolo') {
     return 'acp-mastracode';
   }
+  if (providerId === 'afcode' || providerId === 'afcode-resume' || providerId === 'afcode-yolo') return 'acp-afcode';
   return providerId;
 }
 
@@ -90,6 +91,7 @@ export function permissionModeForLaunchProfile(providerId: string): 'accept-edit
     || providerId === 'opencode-yolo'
     || providerId === 'grok-yolo'
     || providerId === 'mastracode-yolo'
+    || providerId === 'afcode-yolo'
     ? 'full'
     : 'accept-edits';
 }

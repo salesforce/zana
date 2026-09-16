@@ -13,6 +13,7 @@ export type CatalogModelPickerRow = {
   model: string;
   displayName: string;
   routeProviderId?: string;
+  isDefault?: boolean;
 };
 
 /** Same mapping Thread and CLI Agent feed `ModelReasoningPicker`. */

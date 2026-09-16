@@ -223,6 +223,326 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 }
 `;
 
+exports[`golden argv — local create() matrix > afcode · persona · interactive 1`] = `
+{
+  "args": [
+    "--local",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode · persona · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode · persona+projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--local",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode · persona+projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode · plain · interactive 1`] = `
+{
+  "args": [
+    "--local",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode · plain · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode · projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--local",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode · projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-resume · persona · interactive 1`] = `
+{
+  "args": [
+    "--local",
+    "--resume",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-resume · persona · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--resume",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-resume · persona+projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--local",
+    "--resume",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-resume · persona+projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--resume",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-resume · plain · interactive 1`] = `
+{
+  "args": [
+    "--local",
+    "--resume",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-resume · plain · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--resume",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-resume · projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--local",
+    "--resume",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-resume · projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--resume",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-yolo · persona · interactive 1`] = `
+{
+  "args": [
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-yolo · persona · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-yolo · persona+projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-yolo · persona+projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-yolo · plain · interactive 1`] = `
+{
+  "args": [
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-yolo · plain · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-yolo · projectSettings · interactive 1`] = `
+{
+  "args": [
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "afcode",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
+exports[`golden argv — local create() matrix > afcode-yolo · projectSettings · scheduled 1`] = `
+{
+  "args": [
+    "afcode",
+    "--local",
+    "--auto-approve",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
+  "sessionEnv": {
+    "ZCC_SESSION_ID": "<UUID>",
+  },
+}
+`;
+
 exports[`golden argv — local create() matrix > claude · persona · interactive 1`] = `
 {
   "args": [

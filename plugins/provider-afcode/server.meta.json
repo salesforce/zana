@@ -1,0 +1,11 @@
+{
+  "sdkMajor": 1,
+  "sdkVersion": "0.1.0",
+  "artifactFormatVersion": 1,
+  "pluginId": "provider-afcode",
+  "pluginVersion": "0.1.0",
+  "builtWith": {
+    "zccVersion": "2.1.2",
+    "pluginSdkVersion": "0.1.0"
+  }
+}

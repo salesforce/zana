@@ -784,3 +784,23 @@ describe('normalizeConfig — executionPlanStartupGraceMs', () => {
     expect(normalizeConfig({}).executionPlanStartupGraceMs).toBeUndefined();
   });
 });
+
+describe('afcode configuration', () => {
+  it('normalizes executable overrides and enablement', () => {
+    expect(normalizeConfig({ afcodeBinary: '  /tmp/bin with spaces/afcode  ', harnessAfcodeEnabled: false }))
+      .toMatchObject({ afcodeBinary: '/tmp/bin with spaces/afcode', harnessAfcodeEnabled: false });
+    expect(normalizeConfig({ afcodeBinary: '   ' }).afcodeBinary).toBeUndefined();
+    expect(normalizeConfig({ afcodeBinary: 42 as never, harnessAfcodeEnabled: 'false' as never }))
+      .not.toHaveProperty('afcodeBinary');
+  });
+  it('round trips native settings through canonical storage', () => {
+    store.setConfig({ afcodeBinary: '/tmp/afcode', harnessAfcodeEnabled: false });
+    expect(store.getConfig()).toMatchObject({
+      afcodeBinary: '/tmp/afcode', harnessAfcodeEnabled: false,
+      harnesses: { byId: { afcode: { binary: '/tmp/afcode', enabled: false } } }
+    });
+    store.setConfig({ afcodeBinary: '', harnessAfcodeEnabled: true });
+    expect(store.getConfig().afcodeBinary).toBeUndefined();
+    expect(store.getConfig().harnesses?.byId?.afcode?.enabled).toBe(true);
+  });
+});

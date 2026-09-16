@@ -28,7 +28,7 @@ const openCodeExecutionEvidence = (
 });
 
 const exactExecutionEvidence = (
-  adapterId: 'claude' | 'cursor' | 'codex' | 'grok' | 'mastracode',
+  adapterId: 'claude' | 'cursor' | 'codex' | 'grok' | 'mastracode' | 'afcode',
   state: ExecutionState,
   cliVersion: string,
   scopes: readonly ('local' | 'remote')[],
@@ -116,6 +116,14 @@ const APPROVED_EXECUTION_EVIDENCE: Readonly<Record<string, ExecutionEvidenceFixt
     ['local', 'remote'],
     exactObserved('Grok native TUI prompts before tool execution')
   ),
+  ...Object.fromEntries((['interactive', 'accept-edits'] as const).map((state) => [
+    `afcode.execution.${state}`,
+    {
+      ...exactExecutionEvidence('afcode', state, '2.3.0', ['local'], exactObserved('afcode local REPL retains native tool confirmations')),
+      probe: 'afcode --help; native CLI approval and launch-boundary tests',
+      reviewedAt: '2026-09-16'
+    }
+  ])),
   'mastracode.execution.interactive': exactExecutionEvidence(
     'mastracode',
     'interactive',

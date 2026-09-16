@@ -127,6 +127,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const location = useLocation();
   const [filter, setFilter] = useState('');
   const [closeIdleTarget, setCloseIdleTarget] = useState<AgentCard[] | null>(null);
+  const [closeIdleForce, setCloseIdleForce] = useState(false);
   const [busyAction, setBusyAction] = useState<null | 'close'>(null);
   // Durable Job Team executions surfaced on the board. In project scope they're
   // scoped to one project (with `before`-paginated Load more); in global scope
@@ -204,7 +205,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const cards = useMemo<AgentCard[]>(() => {
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
     if (scopedProject) {
-      return agentViewTerminals(terminals[scopedProject.id], includeScheduled, byId)
+      return agentViewTerminals(terminals[scopedProject.id], includeScheduled)
         .filter((s) => s.profile !== 'shell')
         .map((s) =>
           toCard(s, scopedProject, byId, sinceById, triageById, overseerById, subagentsById)
@@ -214,7 +215,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     for (const [projectId, list] of Object.entries(terminals)) {
       const project = byProjectId.get(projectId);
       if (!project) continue;
-      for (const s of agentViewTerminals(list, includeScheduled, byId)) {
+      for (const s of agentViewTerminals(list, includeScheduled)) {
         if (s.profile === 'shell') continue;
         out.push(toCard(s, project, byId, sinceById, triageById, overseerById, subagentsById));
       }
@@ -291,11 +292,13 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const confirmCloseIdle = (summarize: boolean) => {
     if (!closeIdleTarget) return;
     const byProject = groupSessionIdsByProject(closeIdleTarget);
+    const force = closeIdleForce;
     setCloseIdleTarget(null);
+    setCloseIdleForce(false);
     setBusyAction('close');
     void (async () => {
       for (const [projectId, ids] of byProject) {
-        await closeIdleAgents(projectId, ids, summarize);
+        await closeIdleAgents(projectId, ids, summarize, force ? { force: true } : undefined);
       }
     })().finally(() => setBusyAction(null));
   };
@@ -310,7 +313,10 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
             <button
               type="button"
               className="btn agents-board-close-idle"
-              onClick={() => setCloseIdleTarget(reclaimableAgents)}
+              onClick={() => {
+                setCloseIdleForce(false);
+                setCloseIdleTarget(reclaimableAgents);
+              }}
               disabled={busyAction !== null}
               aria-label={
                 busyAction === 'close'
@@ -395,13 +401,14 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       {boardView === 'board' && (
         <CohortBar
           cards={visibleCards}
-          onCloseIdle={(co: LiveCohort) =>
+          onCloseIdle={(co: LiveCohort) => {
+            setCloseIdleForce(false);
             setCloseIdleTarget(
               co.cards.filter(
                 (c) => isReclaimableIdle(c) && !favoriteIds[favoriteKey(c.session)]
               )
-            )
-          }
+            );
+          }}
         />
       )}
 
@@ -464,6 +471,10 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
             setExecutions((current) => current.filter((execution) => execution.executionId !== executionId));
             setSelectedExecution((current) => (current?.executionId === executionId ? null : current));
           }}
+          onCloseLaneAgents={(cards) => {
+            setCloseIdleForce(true);
+            setCloseIdleTarget(cards);
+          }}
         />
       )}
       </div>
@@ -473,7 +484,11 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           agents={closeIdleTarget}
           projectName={scopedProject?.name}
           action="close"
-          onClose={() => setCloseIdleTarget(null)}
+          force={closeIdleForce}
+          onClose={() => {
+            setCloseIdleTarget(null);
+            setCloseIdleForce(false);
+          }}
           onConfirm={confirmCloseIdle}
         />
       )}

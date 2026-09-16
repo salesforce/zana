@@ -3,7 +3,7 @@
  * Read-only: never spawns. Tmux survivors stay on the reattach path.
  */
 
-import type { LaunchProfileId, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { LaunchProfileId, TerminalSession, CreateTerminalRequest } from '@zana-ai/zcc-domain/product';
 import { extractPinnedSessionId } from '@zana-ai/zcc-spawn-plan';
 import type { RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { nativeSessionFields } from './harness/session-adapter.js';
@@ -19,11 +19,12 @@ export function isRememberedCapability(
   capability: RestoreCapability,
   ctx: RememberedFilterContext
 ): boolean {
-  const request = capability.request;
+  const request = capability.request as CreateTerminalRequest;
   if (!request?.projectId || !ctx.knownProjectIds.has(request.projectId)) return false;
   if (request.scheduled) return false;
   if (request.headless && request.cohort?.role !== 'worker') return false;
-  if (request.profile === 'shell') return false;
+  const profile = capability.sessionProfile ?? request.profile;
+  if (profile === 'shell') return false;
   const sessionId = capability.sessionId;
   if (sessionId && ctx.livePtyIds.has(sessionId)) return false;
   if (sessionId && ctx.liveTmuxIds.has(sessionId)) return false;
@@ -31,7 +32,7 @@ export function isRememberedCapability(
 }
 
 export function tombstoneFromCapability(capability: RestoreCapability): TerminalSession {
-  const request = capability.request;
+  const request = capability.request as CreateTerminalRequest;
   const profile = (capability.sessionProfile ?? request.profile) as LaunchProfileId;
   const nativeId =
     request.resumeSessionId ?? extractPinnedSessionId(request.extraArgs ?? []);

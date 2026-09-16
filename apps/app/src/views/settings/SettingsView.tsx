@@ -330,6 +330,9 @@ export function SettingsView() {
       if (typeof patch.harnessMastracodeEnabled === 'boolean') {
         useData.getState().setHarnessMastracodeEnabled(patch.harnessMastracodeEnabled);
       }
+      if (typeof patch.harnessAfcodeEnabled === 'boolean') {
+        useData.getState().setHarnessAfcodeEnabled(patch.harnessAfcodeEnabled);
+      }
       if (typeof patch.nativeAgentDiscoveryEnabled === 'boolean') {
         useData.setState({ nativeAgentDiscoveryEnabled: patch.nativeAgentDiscoveryEnabled });
       }

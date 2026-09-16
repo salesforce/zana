@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, MouseEvent, ReactNode } from 'react';
 import { ChevronRight, PanelLeftClose } from 'lucide-react';
 import { useCanvasPan } from './use-canvas-pan.js';
 import './kanban.css';
@@ -33,6 +33,8 @@ export interface KanbanColumnProps {
   badge?: ReactNode;
   collapsed?: boolean;
   onToggleCollapse?: (columnId: string) => void;
+  /** Column-level context menu (header or empty space). Cards should stopPropagation. */
+  onContextMenu?: (event: MouseEvent<HTMLElement>) => void;
 }
 
 function kanbanVars(columnWidth?: number): CSSProperties {
@@ -78,7 +80,8 @@ export function KanbanColumn({
   icon,
   badge,
   collapsed = false,
-  onToggleCollapse
+  onToggleCollapse,
+  onContextMenu
 }: KanbanColumnProps) {
   const collapseLabel = collapsed ? `Expand ${label}` : `Collapse ${label}`;
   return (
@@ -89,6 +92,7 @@ export function KanbanColumn({
       data-kanban-column={columnId}
       data-board-column={columnId}
       data-collapsed={collapsed ? 'true' : 'false'}
+      onContextMenu={onContextMenu}
     >
       <header className="zcc-kanban-col-header">
         {icon ? (

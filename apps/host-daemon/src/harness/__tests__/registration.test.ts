@@ -47,7 +47,11 @@ describe('harness registrations', () => {
     for (const registration of HARNESS_REGISTRATIONS) {
       const profile = registration.defaultProfileId ?? registration.profiles[0].id;
       const input = { profile, config, remote };
-      expect(renderRemoteCommand(profile, input)).toEqual(registration.renderRemoteCommand(input));
+      if (registration.supportedScopes.includes('remote')) {
+        expect(renderRemoteCommand(profile, input)).toEqual(registration.renderRemoteCommand(input));
+      } else {
+        expect(() => renderRemoteCommand(profile, input)).toThrow('local projects only');
+      }
     }
   });
 

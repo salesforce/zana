@@ -11,6 +11,7 @@ import {
   cliAgentFamilyIdsFromCatalog,
   cliAgentModelOptions,
   cliAgentMoreModelOptions,
+  cliAgentProfileSource,
   cliComposerModeChip,
   cliLaunchExecutionState,
   cliLaunchFromPermissionMode,
@@ -18,6 +19,7 @@ import {
   CLI_WORK_MODES,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
+  preferredThreadProviderId,
   readCliExtraArgs,
   resolveCliAgentFamily,
   resolveCliAgentSpawnProfile,
@@ -52,7 +54,8 @@ describe('PROFILE_BY_FAMILY', () => {
       pi: 'pi',
       opencode: 'opencode',
       grok: 'grok',
-      mastracode: 'mastracode'
+      mastracode: 'mastracode',
+      afcode: 'afcode'
     });
   });
 });
@@ -66,6 +69,7 @@ describe('thread provider id mapping', () => {
     expect(threadProviderIdForFamily('pi')).toBe('pi');
     expect(threadProviderIdForFamily('grok')).toBe('acp-grok');
     expect(threadProviderIdForFamily('mastracode')).toBe('acp-mastracode');
+    expect(threadProviderIdForFamily('afcode')).toBe('acp-afcode');
     expect(threadProviderIdForFamily('shell')).toBeNull();
     expect(familyForThreadProviderId('claude-code')).toBe('claude');
     expect(familyForThreadProviderId('acp-cursor')).toBe('cursor');
@@ -73,6 +77,7 @@ describe('thread provider id mapping', () => {
     expect(familyForThreadProviderId('codex')).toBe('codex');
     expect(familyForThreadProviderId('acp-grok')).toBe('grok');
     expect(familyForThreadProviderId('acp-mastracode')).toBe('mastracode');
+    expect(familyForThreadProviderId('acp-afcode')).toBe('afcode');
     expect(familyForThreadProviderId('unknown')).toBeNull();
   });
 });
@@ -134,6 +139,40 @@ describe('resolveCliAgentFamily', () => {
       effectiveDefaultFamilyId: 'claude'
     })).toBe('pi');
   });
+
+  it('keeps an explicit picker family even when the catalog omitted it', () => {
+    expect(resolveCliAgentFamily({
+      currentFamilyId: 'afcode',
+      availableFamilyIds: ['claude', 'codex'],
+      rememberedFamilyId: 'claude',
+      effectiveDefaultFamilyId: 'claude',
+      stickyFamilyId: 'afcode'
+    })).toBe('afcode');
+  });
+});
+
+describe('preferredThreadProviderId', () => {
+  it('maps a project exact-profile pin onto the thread provider id', () => {
+    expect(preferredThreadProviderId({
+      launchDefault: {
+        schemaVersion: 1,
+        kind: 'exact-profile',
+        adapterId: 'codex',
+        profileId: 'codex-yolo',
+        source: 'settings'
+      },
+      defaultHarness: 'claude'
+    })).toBe('codex');
+  });
+
+  it('uses Settings defaultHarness when the project defers to global', () => {
+    expect(preferredThreadProviderId({
+      launchDefault: { schemaVersion: 1, kind: 'use-global', source: 'settings' },
+      defaultHarness: 'opencode'
+    })).toBe('acp-opencode');
+    expect(preferredThreadProviderId({ defaultHarness: 'afcode' })).toBe('acp-afcode');
+    expect(preferredThreadProviderId({})).toBeNull();
+  });
 });
 
 describe('resolveCliAgentSpawnProfile', () => {
@@ -183,6 +222,35 @@ describe('resolveCliAgentSpawnProfile', () => {
       automaticProfile: null,
       familyId: 'unknown'
     })).toBeUndefined();
+  });
+
+  it('ignores an automatic profile from a different family', () => {
+    expect(resolveCliAgentSpawnProfile({
+      provenance: 'automatic',
+      automaticProfile: 'claude-yolo',
+      harnessDefaultProfileId: 'afcode',
+      familyId: 'afcode'
+    })).toBe('afcode');
+  });
+});
+
+describe('cliAgentProfileSource', () => {
+  it('preserves a remembered harness when no project default was resolved', () => {
+    expect(cliAgentProfileSource('automatic', null)).toBe('explicit');
+  });
+
+  it('lets main re-resolve an automatic project default', () => {
+    expect(cliAgentProfileSource('automatic', 'codex-yolo')).toBe('seeded-default');
+  });
+
+  it('keeps a user pick explicit even with an older automatic profile', () => {
+    expect(cliAgentProfileSource('explicit', 'codex-yolo')).toBe('explicit');
+    expect(cliAgentProfileSource('explicit', null)).toBe('explicit');
+  });
+
+  it('does not let main re-resolve when the automatic profile is for another family', () => {
+    expect(cliAgentProfileSource('automatic', 'claude-yolo', 'afcode')).toBe('explicit');
+    expect(cliAgentProfileSource('automatic', 'afcode-yolo', 'afcode')).toBe('seeded-default');
   });
 });
 
@@ -842,4 +910,16 @@ describe('cliLaunchExecutionState', () => {
     });
     expect(merged.harnessRouting?.byAdapter.claude).not.toHaveProperty('roleTargetId');
   });
+});
+
+
+it('keeps an ACP-only model catalogue out of a native-only CLI', () => {
+  expect(cliAgentModelOptions({
+    adapterModels: [], catalogModels: [{ model: 'acp-model', displayName: 'ACP model' }],
+    preferCatalog: true, catalogReady: true, modelSelection: 'native-only'
+  })).toEqual([{ model: '', displayName: 'Native configuration' }]);
+  expect(cliAgentMoreModelOptions({
+    adapterModelCount: 0, catalogMoreModels: [{ model: 'acp-model', displayName: 'ACP model' }],
+    preferCatalog: true, modelSelection: 'native-only'
+  })).toEqual([]);
 });

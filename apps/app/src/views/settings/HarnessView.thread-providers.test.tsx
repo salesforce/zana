@@ -18,7 +18,8 @@ const catalog = [
   { id: 'codex', displayName: 'Codex', pluginId: 'provider-codex' },
   { id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' },
   { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' },
-  { id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' }
+  { id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' },
+  { id: 'acp-afcode', displayName: 'afcode', pluginId: 'provider-afcode' }
 ];
 
 type OptionsBody = Awaited<ReturnType<ThreadExecutionOptionsFetcher>>;
@@ -61,6 +62,7 @@ describe('ThreadProviderCatalog', () => {
     expect(html).toContain('dedicated app-server Modern provider.');
     expect(html).toContain('Pi coding-agent CLI');
     expect(html).toContain('OpenCode via the Agent Client Protocol');
+    expect(html).toContain('Agentforce Code via the Agent Client Protocol');
     expect(html).toContain('Not loaded');
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('>Load<');

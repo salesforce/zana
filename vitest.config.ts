@@ -28,6 +28,11 @@ export default defineConfig({
     // so a git-spawning test can never operate on the OUTER repo under the
     // pre-push hook (see vitest.setup.ts for the full rationale).
     setupFiles: [resolve(__dirname, './vitest.setup.ts')],
+    environmentOptions: {
+      jsdom: {
+        localStorage: true,
+      },
+    },
     // e2e/ holds Playwright `*.spec.ts` that launch a real Electron app — they
     // are NOT vitest unit tests and must not be collected by `npm test`.
     // .worktrees/** and .claude/worktrees/** are git worktrees for other

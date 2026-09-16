@@ -92,6 +92,9 @@ describe('ThreadModal', () => {
     expect(app).toContain('<ThreadModal threadId={threadModal.threadId} onClose={close} />');
     expect(app).toContain('if (classicSessionViewEnabled || !threadModal) return null');
     expect(app).toContain('if (classicSessionViewEnabled || !agentModal) return null');
+    expect(app).toContain('inspectRouteProjectId(agentModal.projectId)');
+    expect(app).toContain('inspectRouteProjectId(null)');
+    expect(app).not.toContain('getAgentSessionRoutePath(agentModal.sessionId, agentModal.projectId)');
     expect(store).toContain('openThreadModal: (threadId) => set({ threadModal: { threadId }, agentModal: null })');
     expect(store).toContain('set({ agentModal: { sessionId, projectId }, threadModal: null })');
   });

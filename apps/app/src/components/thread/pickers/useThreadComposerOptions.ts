@@ -63,6 +63,7 @@ export function useThreadComposerOptions(input: {
   initialModel?: string | null;
   initialReasoningLevel?: string | null;
   initialAcpMode?: string | null;
+  preferredProviderId?: string | null;
   hostId?: string;
   /** True while the host roster is still hydrating — do not treat missing hostId as a machine change. */
   hostPending?: boolean;
@@ -108,13 +109,11 @@ export function useThreadComposerOptions(input: {
     const restored = restoreProviderSelection(value);
     setModelState(restored.model);
     setReasoningLevelState(restored.reasoningLevel);
-    if (restored.model) {
-      rememberComposerSelection({
-        providerId: value,
-        model: restored.model,
-        reasoningLevel: restored.reasoningLevel
-      });
-    }
+    rememberComposerSelection({
+      providerId: value,
+      model: restored.model,
+      reasoningLevel: restored.reasoningLevel
+    });
   }, [model, providerId, reasoningLevel]);
 
   const refreshAcpModeOptions = useCallback(() => {
@@ -203,20 +202,22 @@ export function useThreadComposerOptions(input: {
   useEffect(() => {
     if (input.threadId || input.lockedProviderId) return;
     if (catalog.providers.length === 0) return;
-    const next = snapNewThreadProviderId(catalog.providers.map((row) => row.id), providerId);
+    const next = snapNewThreadProviderId(
+      catalog.providers.map((row) => row.id),
+      providerId,
+      input.preferredProviderId
+    );
     if (!next) return;
     setProviderIdState(next);
     const restored = restoreProviderSelection(next);
     setModelState(restored.model);
     setReasoningLevelState(restored.reasoningLevel);
-    if (restored.model) {
-      rememberComposerSelection({
-        providerId: next,
-        model: restored.model,
-        reasoningLevel: restored.reasoningLevel
-      });
-    }
-  }, [input.threadId, input.lockedProviderId, catalog.providers, providerId]);
+    rememberComposerSelection({
+      providerId: next,
+      model: restored.model,
+      reasoningLevel: restored.reasoningLevel
+    });
+  }, [input.threadId, input.lockedProviderId, input.preferredProviderId, catalog.providers, providerId]);
 
   const activeModel = useMemo(
     () => {

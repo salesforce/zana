@@ -2,6 +2,7 @@ import {
   APP_ROOT_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   TOOLS_PLUGINS_ROUTE_PATH,
+  getAgentsRoutePath,
   getLocationRoutePath,
   isExtensionsRoutePath,
   isProjectRoutePath,
@@ -29,8 +30,18 @@ export const INITIAL_STORED_ROUTE_MEMORY: StoredRouteMemory = {
   lastSettingsRoutePath: SETTINGS_ROUTE_PATH,
   lastToolsRoutePath: TOOLS_PLUGINS_ROUTE_PATH,
   lastCoreAppRoutePath: APP_ROOT_ROUTE_PATH,
-  lastNonProjectAppRoutePath: APP_ROOT_ROUTE_PATH
+  lastNonProjectAppRoutePath: getAgentsRoutePath()
 };
+
+/**
+ * Project-rail Back must leave `/projects/:id`. Empty or project dests fall
+ * back to Agents — the cross-project home — never the current project URL.
+ */
+export function resolveProjectBackPath(to?: string | null): string {
+  const dest = to && to.length > 0 ? to : getAgentsRoutePath();
+  const pathname = dest.split(/[?#]/, 1)[0] ?? dest;
+  return isProjectRoutePath(pathname) ? getAgentsRoutePath() : dest;
+}
 
 export type ShellRouteKind = 'app' | 'settings' | 'extensions';
 
@@ -77,6 +88,8 @@ export function visibleRouteMemory(
       kind === 'extensions' || kind === 'settings'
         ? stored.lastCoreAppRoutePath
         : current,
-    projectBackRoutePath: onProject ? stored.lastNonProjectAppRoutePath : current
+    projectBackRoutePath: onProject
+      ? resolveProjectBackPath(stored.lastNonProjectAppRoutePath)
+      : current
   };
 }

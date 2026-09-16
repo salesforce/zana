@@ -61,14 +61,17 @@ export type LaunchProfileId =
   | 'grok-yolo'
   | 'mastracode'
   | 'mastracode-resume'
-  | 'mastracode-yolo';
+  | 'mastracode-yolo'
+  | 'afcode'
+  | 'afcode-resume'
+  | 'afcode-yolo';
 
 /**
  * A verifiable code-harness FAMILY — the coarse grouping the Settings → Code
  * Harness category and the launcher's profile gate reason about (one family can
  * back several `LaunchProfileId`s, e.g. `claude`/`claude-resume`/`claude-yolo`).
  */
-export type HarnessFamily = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok' | 'mastracode';
+export type HarnessFamily = 'claude' | 'cursor' | 'codex' | 'pi' | 'opencode' | 'grok' | 'mastracode' | 'afcode';
 
 /** Why a launch profile was supplied. Only an explicit choice may override a persona pin. */
 export type LaunchProfileSource = 'explicit' | 'seeded-default';
@@ -1708,6 +1711,8 @@ export interface AppConfig {
    * interactive TUI.
    */
   mastracodeBinary?: string;
+  /** Command or absolute path for native afcode CLI Agents. */
+  afcodeBinary?: string;
   /**
    * Hide the Cursor harness from agent-launch UIs. Absent/undefined ⇒ auto-on
    * when the CLI is installed. `false` is an explicit hide.
@@ -1738,6 +1743,7 @@ export interface AppConfig {
    * auto-on when the CLI is installed. `false` is an explicit hide.
    */
   harnessMastracodeEnabled?: boolean;
+  harnessAfcodeEnabled?: boolean;
   /**
    * Allow compatible harnesses to discover project-specific native agents.
    * Default OFF: only built-in semantic roles remain available in composers.
@@ -2112,13 +2118,13 @@ export interface AppConfig {
    */
   agentListNeedsYouFromTriage?: boolean;
   /**
-   * Include waiting scheduler-spawned sessions (`session.scheduled`) on the
-   * Agents board, list, and flow. Default ON: waiting jobs sit in a **Scheduled**
-   * lane; working / exited ones use the normal Working / Done lanes. Turn off
-   * to hide that column (and armed schedule cards). A scheduled run that is
-   * working or blocked still appears in Working. Scheduled runs never appear
-   * under a project in the sidebar. Does not change the tab strip or focus
-   * buckets.
+   * Include scheduler-spawned sessions (`session.scheduled`) on the Agents
+   * board, list, and flow. Default ON: waiting jobs sit in a **Scheduled**
+   * lane; working / blocked / exited ones use the normal Working / Done lanes.
+   * Turn off to hide every scheduled session from Agent View (including a run
+   * that is currently working or blocked) plus armed schedule cards. Scheduled
+   * runs never appear under a project in the sidebar. Does not change the tab
+   * strip or focus buckets.
    */
   includeScheduledAgentsInAgentView?: boolean;
   /**
@@ -3025,6 +3031,18 @@ export interface CreateTerminalRequest {
    * has `remote` (Rule 1). Never send host / credentials from the renderer.
    */
   remoteToolProxy?: boolean;
+  /**
+   * Marks this spawn as a scheduled run. When set (and the profile is
+   * claude-family), `buildSystemPromptGuidance(true)` adds the schedule-report
+   * block so the agent knows to file a run report via `schedule_report`. Off
+   * for user-opened tabs so they aren't nagged to report.
+   *
+   * Scheduled fires are unattended: default-posture profiles remap onto the
+   * adapter's unrestricted (yolo) sibling, AskUserQuestion is denied, and
+   * inherited interactive/plan/accept-edits execution is replaced with
+   * autonomous so the run cannot stall on a permission prompt.
+   */
+  scheduled?: boolean;
 }
 
 export interface FsEntry {

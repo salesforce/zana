@@ -40,7 +40,8 @@ const enabledByConfig: Readonly<Record<HarnessFamily, keyof AppConfig | null>> =
   pi: 'harnessPiEnabled',
   opencode: 'harnessOpenCodeEnabled',
   grok: 'harnessGrokEnabled',
-  mastracode: 'harnessMastracodeEnabled'
+  mastracode: 'harnessMastracodeEnabled',
+  afcode: 'harnessAfcodeEnabled'
 };
 
 function isEnabled(config: AppConfig, adapterId: HarnessFamily): boolean {

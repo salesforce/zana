@@ -76,6 +76,7 @@ import {
   readCliExtraArgs,
   resolveCliAgentFamily,
   resolveCliAgentSpawnProfile,
+  cliAgentProfileSource,
   resolveCliLaunchProfile,
   stageRemoteComposerAttachments,
   threadProviderIdForFamily,
@@ -84,7 +85,8 @@ import {
   writeCliExtraArgs
 } from './legacy-agent-home.js';
 import {
-  pickOfferedComposerModel,
+  defaultOfferedComposerModel,
+  preferredComposerModel,
   rememberComposerSelection,
   rememberedProviderId,
   rememberedSelectionFor
@@ -136,6 +138,7 @@ export function LegacyAgentHomeComposer({
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
   const harnessGrokEnabled = useData((s) => s.harnessGrokEnabled);
   const harnessMastracodeEnabled = useData((s) => s.harnessMastracodeEnabled);
+  const harnessAfcodeEnabled = useData((s) => s.harnessAfcodeEnabled);
   const nativeAgentDiscoveryEnabled = useData((s) => s.nativeAgentDiscoveryEnabled);
   const cliRemoteHostCatalogEnabled = useData((s) => s.cliRemoteHostCatalogEnabled);
   const selectTab = useUi((s) => s.selectTab);
@@ -154,16 +157,17 @@ export function LegacyAgentHomeComposer({
   };
   const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
   const [familyId, setFamilyId] = useState<HarnessFamily | ''>(
-    () => familyForThreadProviderId(rememberedProviderId() ?? 'claude-code') ?? 'claude'
+    () => familyForThreadProviderId(rememberedProviderId() ?? '') ?? ''
   );
   const [automaticProfile, setAutomaticProfile] = useState<LaunchProfileId | null>(null);
   const [selectionState, setSelectionState] = useState<'loading' | 'resolved' | 'unavailable'>('loading');
   const [resolvedProjectId, setResolvedProjectId] = useState<string | null>(null);
   const [selectionMessage, setSelectionMessage] = useState<string | null>(null);
   const [selectionProvenance, setSelectionProvenance] = useState<'automatic' | 'explicit'>('automatic');
-  const [modelId, setModelId] = useState(
-    () => rememberedSelectionFor(rememberedProviderId() ?? 'claude-code')?.model ?? ''
-  );
+  const [modelId, setModelId] = useState(() => {
+    const providerId = rememberedProviderId();
+    return providerId ? rememberedSelectionFor(providerId)?.model ?? '' : '';
+  });
   // OpenCode native-role selection (`--agent <role>`). Roles come from the SAME
   // ACP session-mode list the Modern composer uses (`catalogEntry.acpMode`), so
   // both surfaces show an identical, plain-named list. Non-opencode harnesses
@@ -192,8 +196,10 @@ export function LegacyAgentHomeComposer({
   const harnesses = useMemo(() => availableAgentHarnesses(descriptors), [descriptors]);
   const harnessesRef = useRef(harnesses);
   const familyIdRef = useRef(familyId);
+  const selectionProvenanceRef = useRef(selectionProvenance);
   harnessesRef.current = harnesses;
   familyIdRef.current = familyId;
+  selectionProvenanceRef.current = selectionProvenance;
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
   const hosts = useHosts();
   const executionHostId = defaultHostId(hosts, project);
@@ -204,9 +210,6 @@ export function LegacyAgentHomeComposer({
     setExtraArgs(readCliExtraArgs(familyId));
     setWorkMode('agent');
   }, [familyId]);
-  const cliRuntimeProfile = automaticProfile
-    ?? selectedHarness?.defaultProfileId
-    ?? (familyId ? PROFILE_BY_FAMILY[familyId] : 'claude');
   const catalog = useSyncExternalStore(
     subscribeThreadModelCatalog,
     getThreadModelCatalog,
@@ -232,14 +235,18 @@ export function LegacyAgentHomeComposer({
   // catalog is fetched is `catalogHostId` below, not this flag.
   const preferHostModels = true;
   const catalogHostId = project?.hostId ?? executionHostId;
+  const nativeModelSelection = selectedHarness?.modelSelection === 'native-only';
+  const catalogReady = Boolean(catalogEntry);
   const models = cliAgentModelOptions({
+    modelSelection: selectedHarness?.modelSelection,
     adapterModels: selectedHarness?.targets?.models ?? EMPTY_MODELS,
     catalogModels: catalogEntry?.models
       ?? (selectedProviderId ? fallbackModelsForProvider(selectedProviderId) : []),
     preferCatalog: preferHostModels,
-    catalogReady: Boolean(catalogEntry) || Boolean(selectedProviderId)
+    catalogReady
   });
   const moreModelOptions = cliAgentMoreModelOptions({
+    modelSelection: selectedHarness?.modelSelection,
     adapterModelCount: selectedHarness?.targets?.models?.length ?? 0,
     catalogMoreModels: catalogEntry?.selectedOnlyModels
       ?? (selectedProviderId ? fallbackMoreModelsForProvider(selectedProviderId) : []),
@@ -249,18 +256,19 @@ export function LegacyAgentHomeComposer({
   // provider is in flight AND we have no catalog entry yet — never while the
   // harness-default effect is still resolving (`selectionState === 'loading'`).
   const catalogModelsLoading = Boolean(
-    selectedProviderId
+    !nativeModelSelection && selectedProviderId
     && !catalogEntry
     && catalog.inflight.has(selectedProviderId)
   );
   const offeredModelIds = useMemo(() => {
     const ids = models.map((model) => model.model);
+    if (nativeModelSelection) return ids;
     if (!preferHostModels && (selectedHarness?.targets?.models?.length ?? 0) > 0) return ids;
     for (const row of catalogEntry?.selectedOnlyModels ?? []) {
       if (!ids.includes(row.model)) ids.push(row.model);
     }
     return ids;
-  }, [catalogEntry?.selectedOnlyModels, models, preferHostModels, selectedHarness?.targets?.models]);
+  }, [catalogEntry?.selectedOnlyModels, models, preferHostModels, selectedHarness?.targets?.models, nativeModelSelection]);
   // OpenCode native roles = the ACP session-mode list (identical to Modern).
   const roleOptions = familyId === 'opencode'
     ? visibleAcpModeOptions(catalogEntry?.acpMode?.options ?? [], nativeAgentDiscoveryEnabled)
@@ -355,7 +363,7 @@ export function LegacyAgentHomeComposer({
       if (generation !== descriptorGeneration.current) return;
       setDescriptors([]);
     });
-  }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, harnessGrokEnabled, harnessMastracodeEnabled]);
+  }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, harnessGrokEnabled, harnessMastracodeEnabled, harnessAfcodeEnabled]);
 
   useEffect(() => {
     if (pinnedProject) {
@@ -392,22 +400,47 @@ export function LegacyAgentHomeComposer({
   }, [project?.id, project?.quickAgent, project?.remote, worktreeIsolationDefault]);
 
   // Resolve a concrete model like the Modern composer instead of resting on
-  // "Select model": keep a still-valid pick, otherwise adopt the remembered or
-  // default model for the provider. Clears only when no models are offered.
-  // Do not wait for harness-default `selectionState` — that gate was flashing
-  // the picker skeletons on every CLI remount.
+  const fallbackModel = defaultOfferedComposerModel(
+    models.filter((row) => row.model.trim()),
+    moreModelOptions
+  )?.model ?? '';
+
+  // Same hydration as Modern: keep remembered/current while the live catalog is
+  // missing (do not wait on inflight — first paint has not started the fetch).
+  // Persist last-used only after a live/fallback reconcile, never a loading snap.
   useEffect(() => {
-    if (catalogModelsLoading) return;
-    const next = pickOfferedComposerModel({
+    if (nativeModelSelection) {
+      if (modelId) setModelId('');
+      if (selectedProviderId && rememberedProviderId() !== selectedProviderId) {
+        rememberComposerSelection({ providerId: selectedProviderId, model: '' });
+      }
+      return;
+    }
+    if (familyId === 'opencode' && roleTargetId) return;
+    const loading = Boolean(selectedProviderId && !catalogEntry);
+    const next = preferredComposerModel({
       rememberedModel: selectedProviderId ? rememberedSelectionFor(selectedProviderId)?.model : undefined,
       currentModel: modelId,
-      offeredModels: offeredModelIds
+      persistRemembered: true,
+      offeredModels: offeredModelIds,
+      fallbackModel,
+      loading
     });
     if (next !== modelId) setModelId(next);
-    if (next && selectedProviderId) {
+    if (next && selectedProviderId && !loading
+      && rememberedSelectionFor(selectedProviderId)?.model !== next) {
       rememberComposerSelection({ providerId: selectedProviderId, model: next });
     }
-  }, [catalogModelsLoading, modelId, offeredModelIds, selectedProviderId]);
+  }, [
+    catalogEntry,
+    fallbackModel,
+    familyId,
+    modelId,
+    nativeModelSelection,
+    offeredModelIds,
+    roleTargetId,
+    selectedProviderId
+  ]);
 
   // Default the harness like the Modern composer: keep the current pick, else
   // the last-used (remembered) family, else the project's effective default —
@@ -420,32 +453,38 @@ export function LegacyAgentHomeComposer({
       : harnesses.map((row) => row.id);
     const rememberedFamily = familyForThreadProviderId(rememberedProviderId() ?? '');
     const currentFamilyId = familyIdRef.current;
+    const stickyFamilyId = selectionProvenanceRef.current === 'explicit' ? currentFamilyId : '';
+    // An explicit picker click must not be replaced by remembered Claude or a
+    // project default, even when the live catalog omitted that family.
+    if (stickyFamilyId) {
+      setSelectionState('resolved');
+      setResolvedProjectId(projectId);
+      setSelectionMessage(null);
+      return;
+    }
     const kept = resolveCliAgentFamily({
       currentFamilyId,
       availableFamilyIds,
       rememberedFamilyId: rememberedFamily,
-      effectiveDefaultFamilyId: null
+      effectiveDefaultFamilyId: null,
+      stickyFamilyId
     });
-    if (kept && (availableFamilyIds.length === 0 || availableFamilyIds.includes(kept))) {
+    // A currently available family is sticky. Do not mark it explicit or the
+    // next descriptor load will strip an automatic yolo profile. Remembered
+    // last-used still wins over project default because it is `current`/`kept`.
+    if (kept && availableFamilyIds.includes(kept)) {
       if (kept !== currentFamilyId) {
         setFamilyId(kept as HarnessFamily);
         if (kept === rememberedFamily) {
-          setAutomaticProfile(null);
           const providerId = threadProviderIdForFamily(kept);
           const restored = providerId ? rememberedSelectionFor(providerId)?.model ?? '' : '';
           if (restored) setModelId(restored);
         }
       }
-      // Early-resolve never waited on effectiveDefault, so this is a sticky /
-      // remembered pick — same as re-selecting Codex in the picker. Leaving
-      // provenance 'automatic' with automaticProfile null made Send a no-op.
-      setSelectionProvenance('explicit');
-      if (availableFamilyIds.length > 0) {
-        setSelectionState('resolved');
-        setResolvedProjectId(projectId);
-        setSelectionMessage(null);
-        return;
-      }
+      setSelectionState('resolved');
+      setResolvedProjectId(projectId);
+      setSelectionMessage(null);
+      return;
     }
 
     if (!currentFamilyId && !kept) setSelectionState('loading');
@@ -456,11 +495,13 @@ export function LegacyAgentHomeComposer({
         : harnessesRef.current.map((row) => row.id);
       const currentFamily = familyIdRef.current;
       const remembered = familyForThreadProviderId(rememberedProviderId() ?? '');
+      const stickyFamily = selectionProvenanceRef.current === 'explicit' ? currentFamily : '';
       const nextFamily = resolveCliAgentFamily({
         currentFamilyId: currentFamily,
         availableFamilyIds: liveIds,
         rememberedFamilyId: remembered,
-        effectiveDefaultFamilyId: result.ok ? result.family : null
+        effectiveDefaultFamilyId: result.ok ? result.family : null,
+        stickyFamilyId: stickyFamily
       });
       if (!nextFamily) {
         setSelectionState('unavailable');
@@ -479,7 +520,7 @@ export function LegacyAgentHomeComposer({
           setSelectionProvenance('automatic');
           setAutomaticProfile(result.ok ? result.profile : null);
         }
-      } else if (result.ok && nextFamily === result.family) {
+      } else if (result.ok && nextFamily === result.family && nextFamily !== remembered) {
         setAutomaticProfile((current) => current ?? result.profile);
       }
       setSelectionState('resolved');
@@ -509,6 +550,7 @@ export function LegacyAgentHomeComposer({
     harnessOpenCodeEnabled,
     harnessGrokEnabled,
     harnessMastracodeEnabled,
+    harnessAfcodeEnabled,
     cliRemoteHostCatalogEnabled,
     catalog.providers
   ]);
@@ -519,6 +561,9 @@ export function LegacyAgentHomeComposer({
     harnessDefaultProfileId: selectedHarness?.defaultProfileId,
     familyId
   });
+  const cliRuntimeProfile = spawnProfile
+    ?? selectedHarness?.defaultProfileId
+    ?? (familyId ? PROFILE_BY_FAMILY[familyId] : 'claude');
   const canLaunch = Boolean(
     project
     && familyId
@@ -636,7 +681,7 @@ export function LegacyAgentHomeComposer({
         extraArgs: merged.extraArgs,
         harnessRouting: merged.harnessRouting,
         personaId: personaId || undefined,
-        profileSource: selectionProvenance === 'automatic' ? 'seeded-default' : 'explicit',
+        profileSource: cliAgentProfileSource(selectionProvenance, automaticProfile, familyId),
         // Quick Agent stays isolateScratch under the scratch project — never a
         // managed Environment. CLI Agent New worktree / reuse / personal rides
         // `workspace` so terminals.create can provision, then spawn a PTY.
@@ -755,9 +800,7 @@ export function LegacyAgentHomeComposer({
                 <ModelReasoningPicker
                   providerOptions={harnessProviderOptions}
                   selectedProviderId={
-                    (familyId && threadProviderIdForFamily(familyId))
-                    || harnessProviderOptions[0]?.value
-                    || ''
+                    (familyId && threadProviderIdForFamily(familyId)) || ''
                   }
                   onSelectedProviderChange={(nextProviderId) => {
                     const nextFamilyId = familyForThreadProviderId(nextProviderId);
@@ -767,9 +810,7 @@ export function LegacyAgentHomeComposer({
                     setAutomaticProfile(null);
                     const restored = rememberedSelectionFor(nextProviderId)?.model ?? '';
                     setModelId(restored);
-                    if (restored) {
-                      rememberComposerSelection({ providerId: nextProviderId, model: restored });
-                    }
+                    rememberComposerSelection({ providerId: nextProviderId, model: restored });
                     setRoleTargetId(undefined);
                     setWorkMode('agent');
                     setSelectionProvenance('explicit');
@@ -781,8 +822,15 @@ export function LegacyAgentHomeComposer({
                   modelOptions={availableModelsToPickerOptions(models)}
                   moreModelOptions={availableModelsToPickerOptions(moreModelOptions)}
                   modelIsLoading={catalogModelsLoading}
+                  modelLockedLabel={
+                    familyId === 'opencode'
+                    && roleTargetId
+                    && roleOptions.some((role) => role.value === roleTargetId)
+                      ? 'Pinned by native role'
+                      : undefined
+                  }
                   modelLoadError={
-                    preferHostModels || (selectedHarness?.targets?.models?.length ?? 0) === 0
+                    !nativeModelSelection && (preferHostModels || (selectedHarness?.targets?.models?.length ?? 0) === 0)
                       ? catalogEntry?.modelLoadError ?? null
                       : null
                   }

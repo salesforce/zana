@@ -70,6 +70,19 @@ describe('AgentsBoard', () => {
     expect(board).toContain('item.kind === \'schedule\'');
     expect(board).toContain('inspectAgentSession(item.card.session.id, item.projectId, navigate)');
     expect(board).not.toContain('getAgentSessionRoutePath');
+    expect(board).not.toContain('enterProjectFocus');
+  });
+
+  it('confirms lane Close all with force and keeps toolbar Close unforced', () => {
+    expect(board).toContain('onCloseLaneAgents={(cards) => {');
+    expect(board).toContain('setCloseIdleForce(true)');
+    expect(board).toContain('setCloseIdleForce(false)');
+    expect(board).toContain('closeIdleAgents(projectId, ids, summarize, force ? { force: true } : undefined)');
+    expect(board).toContain('force={closeIdleForce}');
+    expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');
+    expect(closeIdle).toContain(') : force ? (');
+    expect(closeIdle).toContain('These agents in {scope} will be <strong>terminated</strong>.');
+    expect(closeIdle).toContain('Working and\n                blocked agents are left running.');
   });
 });
 

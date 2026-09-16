@@ -50,6 +50,8 @@ export interface ModelReasoningPickerProps {
   moreModelOptions?: readonly ModelPickerOption[];
   modelIsLoading?: boolean;
   modelLoadError?: string | null;
+  /** Hide the model list (OpenCode native role pins its own model). */
+  modelLockedLabel?: string;
   onModelChange: (value: string) => void;
   disabled?: boolean;
 }
@@ -63,6 +65,7 @@ export function ModelReasoningPicker({
   moreModelOptions = [],
   modelIsLoading = false,
   modelLoadError = null,
+  modelLockedLabel,
   onModelChange,
   disabled
 }: ModelReasoningPickerProps) {
@@ -87,12 +90,14 @@ export function ModelReasoningPicker({
   const hasNoModels = displayed.modelOptions.length + displayed.moreModelOptions.length === 0;
   const triggerModelLabel = modelIsLoading
     ? 'Loading models...'
-    : stripModelBrandPrefix(
-      selectedModel?.label
-        ?? (modelValue
-          || (hasNoModels ? emptyModelsHint(selectedProviderId, modelLoadError) : 'Select model')),
-      selectedProviderId
-    );
+    : modelLockedLabel
+      ? modelLockedLabel
+      : stripModelBrandPrefix(
+        selectedModel?.label
+          ?? (modelValue
+            || (hasNoModels ? emptyModelsHint(selectedProviderId, modelLoadError) : 'Select model')),
+        selectedProviderId
+      );
   const { base: triggerModelBase, tag: triggerModelTag } = splitModelLabelTag(triggerModelLabel);
   const triggerTitle = `${selectedProvider?.label ?? selectedProviderId}: ${triggerModelLabel}`;
 
@@ -114,7 +119,8 @@ export function ModelReasoningPicker({
     }),
     [filteredModels, filteredMore, isSearching]
   );
-  const showSearch = !modelIsLoading
+  const showSearch = !modelLockedLabel
+    && !modelIsLoading
     && displayed.modelOptions.length + displayed.moreModelOptions.length > MODEL_SEARCH_MIN_OPTIONS;
   const showMorePanel = open && showMoreModels && !isSearching && filteredMore.length > 0;
 
@@ -139,7 +145,11 @@ export function ModelReasoningPicker({
   useEffect(() => {
     if (!open || !triggerRef.current || !menuRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    const position = placePopoverMenu(rect, { width: window.innerWidth, height: window.innerHeight }, MENU_MIN_WIDTH);
+    // Give the 28px harness buttons room; longer rosters wrap inside the cap.
+    const preferredWidth = canSwitchProviders
+      ? Math.max(MENU_MIN_WIDTH, Math.min(320, providerOptions.length * 30 + 16))
+      : MENU_MIN_WIDTH;
+    const position = placePopoverMenu(rect, { width: window.innerWidth, height: window.innerHeight }, preferredWidth);
     const menu = menuRef.current;
     menu.style.left = `${position.left}px`;
     menu.style.width = `${Math.max(position.width, MENU_MIN_WIDTH)}px`;
@@ -151,7 +161,7 @@ export function ModelReasoningPicker({
       menu.style.top = `${position.top}px`;
       menu.style.bottom = 'auto';
     }
-  }, [open, navRows.length, canSwitchProviders]);
+  }, [open, navRows.length, canSwitchProviders, providerOptions.length]);
 
   useEffect(() => {
     if (!showMorePanel || !menuRef.current || !moreMenuRef.current) return;
@@ -317,7 +327,11 @@ export function ModelReasoningPicker({
           ) : null}
           <div ref={sectionRef} className="model-reasoning-picker-section">
             <div className="model-reasoning-picker-section-label">Model</div>
-            {modelIsLoading ? (
+            {modelLockedLabel ? (
+              <div className="model-reasoning-picker-hint" data-testid="model-reasoning-locked">
+                {modelLockedLabel}
+              </div>
+            ) : modelIsLoading ? (
               <ModelPickerLoadingRows />
             ) : navRows.length === 0 ? (
               <div className="model-reasoning-picker-hint">

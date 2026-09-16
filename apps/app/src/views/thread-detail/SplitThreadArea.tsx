@@ -107,8 +107,10 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeKey, scopeKey, updateLayout]);
 
-  const effectiveLayout: SplitLayout =
-    layout ?? reconcileLayoutForContent(null, routeContent);
+  // Reconcile on this render so `/sessions/:id` replaces a stored Agents board
+  // immediately. The effect below persists the same layout; do not write the
+  // store here.
+  const effectiveLayout: SplitLayout = reconcileLayoutForContent(layout, routeContent);
   const panes = listPanes(effectiveLayout.root);
   const isSplitActive = !isCompact && panes.length > 1;
   const focusedPaneId = effectiveLayout.focusedPaneId;

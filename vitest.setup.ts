@@ -16,3 +16,16 @@
 for (const key of Object.keys(process.env)) {
   if (key.startsWith('GIT_')) delete process.env[key];
 }
+
+// Polyfill localStorage for jsdom and happy-dom test environments that don't provide it
+if (!globalThis.localStorage) {
+  const storage = new Map<string, string>();
+  globalThis.localStorage = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+    clear: () => storage.clear(),
+    key: (index: number) => Array.from(storage.keys())[index] ?? null,
+    length: 0,
+  } as Storage;
+}

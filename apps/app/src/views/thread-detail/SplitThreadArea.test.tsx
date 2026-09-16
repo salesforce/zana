@@ -98,6 +98,22 @@ describe('SplitThreadArea agent-session', () => {
     expect(screen.getByTestId('agent-session-page').getAttribute('data-session')).toBe('s1');
   });
 
+  it('replaces a stored Agents board with the session page on first paint', () => {
+    useSplitWorkspace.setState({
+      layout: createSinglePaneLayout({ kind: 'agents' }),
+      maximizedPaneId: null
+    });
+    render(
+      <MemoryRouter>
+        <SplitThreadArea
+          routeContent={{ kind: 'agent-session', projectId: null, sessionId: 's1' }}
+        />
+      </MemoryRouter>
+    );
+    expect(screen.getByTestId('agent-session-page').getAttribute('data-session')).toBe('s1');
+    expect(screen.queryByTestId('agents-view')).toBeNull();
+  });
+
   it('reuses a project-scoped session pane for the global session URL', () => {
     useSplitWorkspace.setState({
       layout: createSinglePaneLayout({ kind: 'agent-session', projectId: 'p1', sessionId: 's1' }),

@@ -1,15 +1,20 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import { HARNESS_REGISTRATIONS } from '../registry.js';
 import {
   harnessEnabledFromProbe,
   harnessPackageVersion,
+  installedHarnessVersion,
+  memoizeInstalledVersion,
   normalizeHarnessVersion,
   resolveHarnessCommand,
   resolveProbedHarnessVersion,
   UNVERSIONED_HARNESS,
   verifiableHarnessVersion,
+  verifyHarnesses,
   versionFloorDecision
 } from '../harness-verify.js';
 
@@ -261,5 +266,113 @@ describe('mastracode version probe', () => {
       ok: false,
       reason: 'CLI version below reviewed floor (installed version could not be determined)'
     });
+  });
+});
+
+const VERIFIED_FAMILIES = HARNESS_REGISTRATIONS
+  .filter((registration) => registration.verification !== undefined)
+  .map((registration) => registration.id);
+
+function probeLogLines(logPath: string): string[] {
+  try {
+    return readFileSync(logPath, 'utf8').split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+describe('installedHarnessVersion probes one family', () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function probeHarnesses(): { config: AppConfig; logPath: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-harness-probe-'));
+    tmpDirs.push(dir);
+    const logPath = join(dir, 'probes.log');
+    const binaries: Record<string, string> = {};
+    for (const family of VERIFIED_FAMILIES) {
+      const binary = join(dir, family);
+      writeFileSync(binary, `#!/bin/sh\nprintf '%s\\n' '${family}' >> '${logPath}'\necho '9.9.9'\n`);
+      chmodSync(binary, 0o755);
+      binaries[family] = binary;
+    }
+    return {
+      logPath,
+      config: {
+        version: 1,
+        theme: 'dark',
+        shell: '/bin/sh',
+        claudeBinary: binaries.claude,
+        cursorBinary: binaries.cursor,
+        codexBinary: binaries.codex,
+        piBinary: binaries.pi,
+        opencodeBinary: binaries.opencode,
+        grokBinary: binaries.grok,
+        mastracodeBinary: binaries.mastracode,
+        afcodeBinary: binaries.afcode,
+        fontSize: 13,
+        lastProjectId: null
+      } as AppConfig
+    };
+  }
+
+  it('does not exec other families when looking up one adapter', async () => {
+    const { config, logPath } = probeHarnesses();
+    await expect(installedHarnessVersion(config, 'claude')).resolves.toBe('9.9.9');
+    expect(probeLogLines(logPath)).toEqual(['claude']);
+  });
+
+  it('returns undefined when the selected binary is missing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-harness-missing-'));
+    tmpDirs.push(dir);
+    const config = {
+      version: 1,
+      theme: 'dark',
+      shell: '/bin/sh',
+      claudeBinary: join(dir, 'zcc-missing-harness-cli-not-installed'),
+      fontSize: 13,
+      lastProjectId: null
+    } as AppConfig;
+    await expect(installedHarnessVersion(config, 'claude')).resolves.toBeUndefined();
+    await expect(installedHarnessVersion(config, 'shell')).resolves.toBeUndefined();
+  });
+
+  it('still probes the full roster for Settings verifyHarnesses', async () => {
+    const { config, logPath } = probeHarnesses();
+    const rows = await verifyHarnesses(config);
+    expect(rows.map((row) => row.family).sort()).toEqual([...VERIFIED_FAMILIES].sort());
+    expect(rows.every((row) => row.installed && row.version === '9.9.9')).toBe(true);
+    expect(probeLogLines(logPath).sort()).toEqual([...VERIFIED_FAMILIES].sort());
+  });
+});
+
+describe('memoizeInstalledVersion', () => {
+  it('reuses one lookup per adapter including concurrent callers', async () => {
+    let claude = 0;
+    let cursor = 0;
+    const lookup = async (adapterId: string) => {
+      if (adapterId === 'claude') {
+        claude += 1;
+        return '1.0.0';
+      }
+      cursor += 1;
+      return '2.0.0';
+    };
+    const installedVersion = memoizeInstalledVersion(lookup);
+    const [first, second, other] = await Promise.all([
+      installedVersion('claude'),
+      installedVersion('claude'),
+      installedVersion('cursor')
+    ]);
+    expect(first).toBe('1.0.0');
+    expect(second).toBe('1.0.0');
+    expect(other).toBe('2.0.0');
+    expect(claude).toBe(1);
+    expect(cursor).toBe(1);
+    await expect(installedVersion('claude')).resolves.toBe('1.0.0');
+    expect(claude).toBe(1);
   });
 });

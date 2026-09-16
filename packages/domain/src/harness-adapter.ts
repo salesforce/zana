@@ -186,6 +186,8 @@ export interface HarnessAdapterDescriptor {
   availability: HarnessAvailability;
   capabilities: Readonly<Record<HarnessPersonaFacet, Readonly<Record<HarnessScope, HarnessFacetSupport>>>>;
   targets?: HarnessTargetCatalog;
+  /** Some native CLIs cannot accept a model override even when their ACP sibling can. */
+  modelSelection?: 'native-only';
   settingsContributionIds: readonly string[];
   /** Deliberate config matrix. Launch capabilities do not imply file support. */
   configFiles: readonly HarnessConfigFileDescriptor[];

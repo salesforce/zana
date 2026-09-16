@@ -266,17 +266,4 @@ describe('isRecentlyFinished — finished-list auto-dismiss', () => {
   it('treats an exited session with no finishedAt stamp as recent (never hides prematurely)', () => {
     expect(isRecentlyFinished(session({ status: 'exited' }), NOW)).toBe(true);
   });
-
-  it('keeps a remembered exited card visible past the linger window', () => {
-    expect(
-      isRecentlyFinished(
-        session({
-          status: 'exited',
-          remembered: true,
-          finishedAt: NOW - FINISHED_LINGER_MS - 1
-        }),
-        NOW
-      )
-    ).toBe(true);
-  });
 });

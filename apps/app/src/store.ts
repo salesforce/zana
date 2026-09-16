@@ -70,6 +70,7 @@ import {
   getSchedulerRoutePath,
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
+import { resolveProjectBackPath } from './lib/route-memory.js';
 import {
   EMPTY_HOST_INSTALL_DRAWER,
   reduceHostInstallAppend,
@@ -554,8 +555,8 @@ interface UiState {
   /** Drill the project list column into `id`'s focused session view. Keeps
    *  selection in sync (calls selectProject) and persists the focus. */
   enterProjectFocus: (id: string) => void;
-  /** Leave focus mode and return the column to the full project list. */
-  exitProjectFocus: () => void;
+  /** Leave focus mode and navigate off `/projects/:id` (Agents unless `to`). */
+  exitProjectFocus: (to?: string) => void;
   selectTab: (projectId: string, tabId: string | undefined) => void;
   setPaletteOpen: (open: boolean) => void;
   setQuickOpenOpen: (open: boolean) => void;
@@ -809,6 +810,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled !== false,
     harnessGrokEnabled: config.harnessGrokEnabled !== false,
     harnessMastracodeEnabled: config.harnessMastracodeEnabled !== false,
+    harnessAfcodeEnabled: config.harnessAfcodeEnabled !== false,
     nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
     teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false,
@@ -1144,8 +1146,10 @@ export const useUi = create<UiState>((set, get) => ({
     get().setProjectView(id, 'agents');
     product.config.set({ focusedProjectId: id }).catch(() => {});
   },
-  exitProjectFocus: () => {
-    set({ focusedProjectId: null });
+  exitProjectFocus: (to) => {
+    // URL is the focus source of truth (`route.focusedProjectId ?? store`).
+    // Clearing the store alone leaves `/projects/:id` and the project rail.
+    applyDestination(set, resolveProjectBackPath(to), { focusedProjectId: null });
     product.config.set({ focusedProjectId: null }).catch(() => {});
   },
   selectTab: (projectId, tabId) => {
@@ -1527,8 +1531,9 @@ interface DataState {
   teamDefaultCoordinationMode: NonNullable<AppConfig['teamDefaultCoordinationMode']>;
   /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, waiting
    *  scheduler jobs appear in the Agents board Scheduled column (plus finished
-   *  runs in Done). Working/blocked scheduled runs stay in Working even when
-   *  off. Backs the board-toolbar toggle and the Settings checkbox. Default on. */
+   *  runs in Done) and working/blocked scheduled runs stay in Working. When
+   *  off, every scheduled session is hidden from Agent View. Backs the
+   *  board-toolbar Calendar toggle and the Settings checkbox. Default on. */
   includeScheduledAgentsInAgentView: boolean;
   /** Mirror of AppConfig.voiceInputEnabled — gates the mic button in the prompt
    *  composer. Hydrated on init, kept live by the Settings toggle. Default off. */
@@ -1593,6 +1598,7 @@ interface DataState {
   harnessGrokEnabled: boolean;
   /** Mirror of AppConfig.harnessMastracodeEnabled — explicit hide for Mastra Code. */
   harnessMastracodeEnabled: boolean;
+  harnessAfcodeEnabled: boolean;
   /** Mirror of AppConfig.nativeAgentDiscoveryEnabled. */
   nativeAgentDiscoveryEnabled: boolean;
   /** Last code-harness verification snapshot (Settings → Code Harness). Empty
@@ -1661,6 +1667,7 @@ interface DataState {
   setHarnessOpenCodeEnabled: (on: boolean) => void;
   setHarnessGrokEnabled: (on: boolean) => void;
   setHarnessMastracodeEnabled: (on: boolean) => void;
+  setHarnessAfcodeEnabled: (on: boolean) => void;
   setMicroVmEnabled: (on: boolean) => void;
   setWorktreeIsolationDefault: (on: boolean) => void;
   setIdleAttentionSensitivity: (level: 'high' | 'medium' | 'low') => void;
@@ -1689,8 +1696,6 @@ interface DataState {
    * not a localStorage tab snapshot.
    */
   restoreSessions: (skipProjectIds?: Set<string>) => Promise<void>;
-  /** Paint ledger-backed exited CLI cards. Does not spawn. */
-  hydrateRememberedSessions: (skipProjectIds?: Set<string>) => Promise<void>;
   loadProjects: () => Promise<void>;
   loadClaudeSessions: (projectId: string) => Promise<void>;
   addProject: () => Promise<Project | null>;
@@ -1907,53 +1912,31 @@ export function listedTerminals(list: TerminalSession[] | undefined): TerminalSe
 }
 
 /**
- * A scheduled job that is actively working or blocked — it belongs in Working,
- * not the Scheduled column. Waiting (`idle`/`unknown`) and exited scheduled
- * jobs are not active.
- */
-function isActiveScheduledRun(
-  session: Pick<TerminalSession, 'scheduled' | 'status'>,
-  state: AgentState | undefined
-): boolean {
-  if (!session.scheduled || session.status === 'exited') return false;
-  return state === 'working' || state === 'blocked';
-}
-
-/**
  * Sessions for the Agents board / list / flow. When `includeScheduled` is on,
  * every scheduler-spawned job is kept (waiting ones sit in the Scheduled
- * column). When off, waiting and exited scheduled jobs are dropped, but a
- * scheduled run that is working or blocked stays visible in Working. The
- * Projects sidebar (global + per-project) never lists scheduled jobs — that
- * tree uses {@link projectRailTerminals} / {@link listedTerminals}.
+ * column; working/blocked ones stay in Working). When off, every scheduled
+ * session is dropped — including a run that is currently working or blocked.
+ * The Projects sidebar (global + per-project) never lists scheduled jobs —
+ * that tree uses {@link projectRailTerminals} / {@link listedTerminals}.
  */
 export function agentViewTerminals(
   list: TerminalSession[] | undefined,
-  includeScheduled: boolean,
-  stateById: Readonly<Record<string, AgentState>> = {}
+  includeScheduled: boolean
 ): TerminalSession[] {
   const sessions = list ?? [];
   if (includeScheduled) return sessions;
-  return sessions.filter((t) => !t.scheduled || isActiveScheduledRun(t, stateById[t.id]));
+  return sessions.filter((t) => !t.scheduled);
 }
 
 /**
  * Live sessions for a project's inline rail expansion (global Workspaces tree
  * and the focused-project session rail). Scheduler jobs stay off this tree —
  * they belong on the Agents board / list when that setting is on, and in the
- * Scheduler panel. Linger (non-remembered) exits drop out; ledger-backed
- * remembered cards nest after live ones, capped like idle threads.
+ * Scheduler panel. Exited CLI agents are dumped — they are not conversations
+ * with history the way idle threads are.
  */
-export const RAIL_REMEMBERED_AGENT_LIMIT = 8;
-
 export function projectRailTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
-  const listed = listedTerminals(list);
-  const live = listed.filter((t) => t.status !== 'exited');
-  const remembered = listed
-    .filter((t) => t.status === 'exited' && t.remembered)
-    .sort((a, b) => (b.finishedAt ?? b.createdAt) - (a.finishedAt ?? a.createdAt))
-    .slice(0, RAIL_REMEMBERED_AGENT_LIMIT);
-  return [...live, ...remembered];
+  return listedTerminals(list).filter((t) => t.status !== 'exited');
 }
 
 /**
@@ -2047,6 +2030,7 @@ export const useData = create<DataState>((set, get) => ({
   harnessOpenCodeEnabled: false,
   harnessGrokEnabled: false,
   harnessMastracodeEnabled: false,
+  harnessAfcodeEnabled: false,
   nativeAgentDiscoveryEnabled: false,
   harnessStatus: [],
   editorStatus: [],
@@ -2152,6 +2136,11 @@ export const useData = create<DataState>((set, get) => ({
 
   setHarnessMastracodeEnabled(on) {
     set({ harnessMastracodeEnabled: on });
+    void prefetchThreadModelCatalog().catch(() => undefined);
+  },
+
+  setHarnessAfcodeEnabled(on) {
+    set({ harnessAfcodeEnabled: on });
     void prefetchThreadModelCatalog().catch(() => undefined);
   },
 
@@ -2427,7 +2416,6 @@ export const useData = create<DataState>((set, get) => ({
       // its own live ptys above (display only).
       if (!isScopedWindow() && hasDesktopBridge()) {
         await get().restoreSessions(hydrationFailed);
-        await get().hydrateRememberedSessions(hydrationFailed);
       }
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to initialize app state'));
@@ -3286,43 +3274,6 @@ export const useData = create<DataState>((set, get) => ({
         });
       }
     }
-  },
-
-  async hydrateRememberedSessions(skipProjectIds) {
-    const { projects, terminals } = get();
-    const knownProjects = new Set(projects.map((project) => project.id));
-    let remembered: TerminalSession[] = [];
-    try {
-      remembered = await product.terminals.listRememberedSessions();
-    } catch {
-      return;
-    }
-    if (remembered.length === 0) return;
-    const byProject = new Map<string, TerminalSession[]>();
-    for (const session of remembered) {
-      if (!knownProjects.has(session.projectId)) continue;
-      if (skipProjectIds?.has(session.projectId)) continue;
-      const existing = terminals[session.projectId] ?? [];
-      if (existing.some((row) => row.id === session.id || row.restoreCapabilityId === session.restoreCapabilityId)) {
-        continue;
-      }
-      const list = byProject.get(session.projectId) ?? [];
-      list.push(session);
-      byProject.set(session.projectId, list);
-    }
-    if (byProject.size === 0) return;
-    set((state) => {
-      const next = { ...state.terminals };
-      for (const [projectId, sessions] of byProject) {
-        const list = next[projectId] ?? [];
-        const extras = sessions.filter(
-          (session) =>
-            !list.some((row) => row.id === session.id || row.restoreCapabilityId === session.restoreCapabilityId)
-        );
-        if (extras.length) next[projectId] = [...list, ...extras];
-      }
-      return { terminals: next };
-    });
   },
 
   async closeTerminal(sessionId, projectId) {

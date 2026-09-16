@@ -34,7 +34,8 @@ describe('AgentMonitor thread selection', () => {
     expect(source).toContain('createPortal(');
     expect(source).toContain('document.body');
     expect(source).toContain('openAgentSession');
-    expect(source).toContain('getAgentSessionRoutePath(card.session.id, card.projectId)');
+    expect(source).toContain('inspectRouteProjectId(card.projectId)');
+    expect(source).not.toContain('getAgentSessionRoutePath(card.session.id, card.projectId)');
   });
 
   it('offers Close with follow-up in the session footer next to Summarize', () => {

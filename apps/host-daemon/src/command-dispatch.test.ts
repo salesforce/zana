@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -775,6 +775,30 @@ describe('host command dispatch', () => {
       permissionEscalation: 'ask'
     }]);
     expect(runtime.threads.has(threadId)).toBe(true);
+  });
+
+  it.each([false, true])('applies current execution options before lazy resume (override=%s)', async (override) => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-resume-options-'));
+    const resumed: unknown[] = [];
+    const runtime = createCommandRuntime({ resumeWork: async (input) => { resumed.push(input); } });
+    const stored = {
+      model: 'stored-model', reasoningLevel: 'low' as const, acpMode: 'agent',
+      providerOptions: { retained: true, executable: 'old' }
+    };
+    const current = {
+      model: 'selected-model', reasoningLevel: 'high' as const, acpMode: 'plan',
+      claudeCodePermissionMode: 'plan' as const, providerOptions: { executable: 'new' }
+    };
+    try {
+      await dispatchHostCommand(runtime, {
+        type: 'turn.submit', threadId: randomUUID(), environmentId: randomUUID(), input: prompt('continue'),
+        resume: { projectId: 'project', providerId: 'provider', providerThreadId: 'native-id', cwd: project, ...stored },
+        ...(override ? current : {})
+      });
+      expect(resumed).toEqual([expect.objectContaining(override
+        ? { ...current, providerOptions: { retained: true, executable: 'new' } }
+        : stored)]);
+    } finally { rmSync(project, { recursive: true, force: true }); }
   });
 
   it('forwards plugin dynamicTools from thread.start and thread.resume', async () => {

@@ -212,6 +212,9 @@ export interface LaunchProvider {
   /** Trusted capability/contribution metadata. It never changes emitted argv by itself. */
   readonly adapter: TrustedHarnessAdapter;
 
+  /** Terminal sequence emitted when stdin can accept an opening task. */
+  readonly stdinReadyMarker?: string;
+
   /**
    * Provider-native rendering of host-minted MCP, guidance, hooks, and auth.
    * The host owns endpoint construction, credentials, and final merge order.

@@ -451,4 +451,16 @@ describe('target-resolution main authorization', () => {
       scope: 'local'
     }).contribution.args).toEqual(['--agent', 'custom-agent']);
   });
+
+  it('ignores inherited model targets on native-only adapters', () => {
+    const afcode = providerFor('afcode');
+    const routing = { schemaVersion: 1 as const, byAdapter: { afcode: { modelTargetId: 'should-not-apply' } } };
+    expect(resolveModelTarget(afcode, {
+      config: { ...config(), harnessRouting: routing },
+      profile: 'afcode',
+      extraArgs: [],
+      projectSettings: { harnessRouting: routing },
+      scope: 'local'
+    })).toMatchObject({ source: 'native-default', structuredSelected: false, contribution: {} });
+  });
 });

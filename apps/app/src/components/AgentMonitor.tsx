@@ -16,6 +16,7 @@ import {
 import type { AgentState, ExecutionBoardProjection } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, usePersonas } from '../store.js';
 import { getAgentSessionRoutePath } from '../lib/route-paths.js';
+import { inspectRouteProjectId } from '../lib/inspect-session.js';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { AGENT_MONITOR_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
@@ -91,9 +92,9 @@ function laneOf(item: FleetItem, sensitivity: IdleAttentionSensitivity): LaneKey
   return lane?.key ?? 'idle';
 }
 
-/** Open the first-class CLI-agent session page. */
+/** Open the first-class CLI-agent session page without leaving Agents for a project. */
 function openAgentSession(navigate: (to: string) => void, card: AgentCard): void {
-  navigate(getAgentSessionRoutePath(card.session.id, card.projectId));
+  navigate(getAgentSessionRoutePath(card.session.id, inspectRouteProjectId(card.projectId)));
 }
 
 export function AgentMonitor({ cards, executions = [], showProject = false, onInspectExecution }: AgentMonitorProps) {

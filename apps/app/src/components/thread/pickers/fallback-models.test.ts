@@ -67,6 +67,7 @@ describe('fallback thread catalogs', () => {
     expect(fallbackModelsForProvider('acp-opencode')).toEqual([]);
     expect(fallbackModelsForProvider('acp-grok')).toEqual([]);
     expect(fallbackModelsForProvider('acp-mastracode')).toEqual([]);
+    expect(fallbackModelsForProvider('acp-afcode')).toEqual([]);
     expect(fallbackProviderOption('acp-opencode').displayName).toBe('OpenCode');
     expect(fallbackProviderOption('acp-grok').displayName).toBe('Grok Build');
     expect(fallbackProviderOption('acp-grok').permissionModes).toEqual(['accept-edits', 'full']);
@@ -132,6 +133,8 @@ describe('fallback thread catalogs', () => {
     expect(snapNewThreadProviderId(live, 'claude-code')).toBeNull();
     expect(snapNewThreadProviderId(live, 'acp-cursor')).toBe('claude-code');
     expect(snapNewThreadProviderId(live, 'gone-plugin')).toBe('claude-code');
+    expect(snapNewThreadProviderId(['pi', 'codex', 'claude-code'], 'gone-plugin', 'codex')).toBe('codex');
+    expect(snapNewThreadProviderId(['pi', 'claude-code'], 'gone-plugin', 'codex')).toBe('pi');
     expect(snapNewThreadProviderId([], 'acp-cursor')).toBeNull();
   });
 });

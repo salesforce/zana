@@ -4,6 +4,7 @@ import {
   isIdleAgent,
   isBackgroundAgent,
   isReclaimableIdle,
+  closeableLaneAgents,
   cardNeedsAttention,
   LANES,
   visibleAgentLanes,
@@ -14,6 +15,7 @@ import {
   formatCountdown,
   type AgentCard
 } from '../components/AgentBoard.js';
+import { agentFleetItem, type FleetItem } from '../components/fleet-item.js';
 
 /**
  * The Idle lane collects every at-rest live agent. Close-idle is narrower:
@@ -477,5 +479,51 @@ describe('formatCountdown', () => {
     expect(formatCountdown(42_000)).toBe('42s');
     expect(formatCountdown(90_000)).toBe('1m 30s');
     expect(formatCountdown(3_660_000)).toBe('1h 1m');
+  });
+});
+
+describe('closeableLaneAgents', () => {
+  it('keeps live and exited CLI agents and skips threads, schedules, and synthetic hosts', () => {
+    const live = card({
+      state: 'working',
+      session: { id: 'live', status: 'running', profile: 'claude' } as unknown as TerminalSession
+    });
+    const exited = card({
+      state: 'done',
+      session: { id: 'done', status: 'exited', profile: 'claude' } as unknown as TerminalSession
+    });
+    const host = card({
+      state: 'working',
+      isSyntheticExecutionHost: true,
+      session: { id: 'host', status: 'running', profile: 'claude' } as unknown as TerminalSession
+    });
+    const thread = {
+      kind: 'thread',
+      id: 'thr',
+      state: 'working',
+      title: 'Thread',
+      projectId: 'p1',
+      projectName: 'P1',
+      thread: { id: 'thr' }
+    } as FleetItem;
+    const schedule = {
+      kind: 'schedule',
+      id: 'sched',
+      state: 'idle',
+      title: 'Nightly',
+      projectId: 'p1',
+      projectName: 'P1',
+      task: { id: 'sched' }
+    } as FleetItem;
+
+    expect(
+      closeableLaneAgents([
+        agentFleetItem(live),
+        thread,
+        agentFleetItem(exited),
+        schedule,
+        agentFleetItem(host)
+      ]).map((c) => c.session.id)
+    ).toEqual(['live', 'done']);
   });
 });

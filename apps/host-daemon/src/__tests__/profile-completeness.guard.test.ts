@@ -37,6 +37,7 @@ import {
   isOpenCodeProfile,
   isGrokProfile,
   isMastracodeProfile,
+  isAfcodeProfile,
   isAgentProfile,
   providerCapabilities
 } from '@zana-ai/zcc-domain/launch-provider';
@@ -74,7 +75,8 @@ describe('profile-completeness — the enumeration agrees everywhere', () => {
         isPiProfile(p),
         isOpenCodeProfile(p),
         isGrokProfile(p),
-        isMastracodeProfile(p)
+        isMastracodeProfile(p),
+        isAfcodeProfile(p)
       ].filter(Boolean).length;
       expect(inFamilies, `${p} must be in exactly one family predicate`).toBe(1);
       expect(isAgentProfile(p), `${p} must be an agent profile`).toBe(true);

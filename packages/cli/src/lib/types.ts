@@ -29,7 +29,10 @@ export type LaunchProfileId =
   | 'grok-yolo'
   | 'mastracode'
   | 'mastracode-resume'
-  | 'mastracode-yolo';
+  | 'mastracode-yolo'
+  | 'afcode'
+  | 'afcode-resume'
+  | 'afcode-yolo';
 
 export interface Project {
   id: string;

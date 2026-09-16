@@ -47,6 +47,7 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('fallbackMoreModelsForProvider');
     expect(source).toContain('composerProvidersFromCatalog');
     expect(source).toContain('snapNewThreadProviderId');
+    expect(source).toContain('input.preferredProviderId');
     expect(source).toContain('rosterReady');
     expect(source).toContain('registeredProviderIds');
     expect(source).toContain('input.threadId || input.lockedProviderId');
@@ -62,6 +63,7 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('defaultOfferedComposerModel');
     expect(source).toContain('persistRemembered: persistSelection');
     expect(source).toContain('rememberComposerSelection({ providerId, model: nextModel, reasoningLevel })');
+    expect(source).not.toContain('if (restored.model)');
   });
 
   it('gates Native role on advertised modes, adopts the session default via the pure selector, and exposes refresh', () => {

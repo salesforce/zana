@@ -11,8 +11,8 @@ describe('launch restore does not use an open-sessions snapshot', () => {
     expect(source).not.toContain('writeSnapshot');
     expect(source).not.toContain('snapshotTabs');
     expect(source).toContain('listTmuxRestoreCandidates');
-    expect(source).toContain('listRememberedSessions');
-    expect(source).toContain('hydrateRememberedSessions');
+    expect(source).not.toContain('listRememberedSessions');
+    expect(source).not.toContain('hydrateRememberedSessions');
     expect(source).not.toContain('hydrateHostThreads');
   });
 

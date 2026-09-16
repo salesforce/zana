@@ -136,6 +136,13 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
 /** Bundled but store-only until `zcc plugin install <name>`. */
 export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
   {
+    name: 'provider-afcode',
+    pluginId: 'provider-afcode',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
     name: 'tasks',
     pluginId: 'tasks',
     autoInstall: false,

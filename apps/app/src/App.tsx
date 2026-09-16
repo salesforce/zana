@@ -116,7 +116,7 @@ import {
   getProjectSettingsRoutePath,
   getThreadRoutePath
 } from './lib/route-paths.js';
-import { inspectAgentSession } from './lib/inspect-session.js';
+import { inspectAgentSession, inspectRouteProjectId } from './lib/inspect-session.js';
 
 function stayOnAgentsBoard(
   session: { id: string },
@@ -860,7 +860,12 @@ function AgentModalHost() {
   const close = () => useUi.getState().closeAgentModal();
   useEffect(() => {
     if (!classicSessionViewEnabled || !agentModal) return;
-    navigate(getAgentSessionRoutePath(agentModal.sessionId, agentModal.projectId));
+    navigate(
+      getAgentSessionRoutePath(
+        agentModal.sessionId,
+        inspectRouteProjectId(agentModal.projectId)
+      )
+    );
     useUi.getState().closeAgentModal();
   }, [classicSessionViewEnabled, agentModal, navigate]);
   if (classicSessionViewEnabled || !agentModal) return null;
@@ -891,7 +896,7 @@ function ThreadModalHost() {
   const close = () => useUi.getState().closeThreadModal();
   useEffect(() => {
     if (!classicSessionViewEnabled || !threadModal) return;
-    navigate(getThreadRoutePath(threadModal.threadId));
+    navigate(getThreadRoutePath(threadModal.threadId, inspectRouteProjectId(null)));
     useUi.getState().closeThreadModal();
   }, [classicSessionViewEnabled, threadModal, navigate]);
   if (classicSessionViewEnabled || !threadModal) return null;

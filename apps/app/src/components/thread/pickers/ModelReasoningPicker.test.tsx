@@ -85,6 +85,24 @@ describe('ModelReasoningPicker', () => {
     expect(html).not.toContain('Select model');
   });
 
+  it('replaces the model list with a locked hint when a native role pins the model', () => {
+    const html = renderToStaticMarkup(
+      <ModelReasoningPicker
+        providerOptions={[{ value: 'acp-opencode', label: 'OpenCode' }]}
+        selectedProviderId="acp-opencode"
+        onSelectedProviderChange={() => undefined}
+        modelValue="openai/gpt-5"
+        modelOptions={[{ value: 'openai/gpt-5', label: 'GPT-5' }]}
+        modelLockedLabel="Pinned by native role"
+        onModelChange={() => undefined}
+      />
+    );
+    expect(html).toContain('Pinned by native role');
+    expect(html).not.toContain('GPT-5');
+    const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('data-testid="model-reasoning-locked"');
+  });
+
   it('treats model-id search as substring matching, not letter-skipping', () => {
     const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
     expect(source).toContain('spellCheck={false}');

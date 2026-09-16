@@ -59,6 +59,17 @@ describe('composer selection preference', () => {
     expect(rememberedSelectionFor('codex')?.model).toBe('gpt-5.5');
   });
 
+  it('records the last-used provider even when that harness has no model', () => {
+    rememberComposerSelection({
+      providerId: 'claude-code',
+      model: 'claude-sonnet-5'
+    });
+    rememberComposerSelection({ providerId: 'acp-afcode', model: '' });
+    expect(rememberedProviderId()).toBe('acp-afcode');
+    expect(rememberedSelectionFor('claude-code')?.model).toBe('claude-sonnet-5');
+    expect(rememberedSelectionFor('acp-afcode')).toBeUndefined();
+  });
+
   it('ignores blank ids and corrupt storage', () => {
     rememberComposerSelection({ providerId: ' ', model: 'claude-sonnet-5' });
     expect(readComposerSelectionPreference()).toEqual({ byProvider: {} });
@@ -93,15 +104,15 @@ describe('preferredComposerModel', () => {
     })).toBe('claude-sonnet-5');
   });
 
-  it('uses the remembered model while the catalog is still loading', () => {
+  it('uses the remembered model while fallbacks load, even when Fable is first', () => {
     expect(preferredComposerModel({
-      rememberedModel: 'claude-sonnet-5',
-      currentModel: 'claude-opus-5[1m]',
+      rememberedModel: 'claude-opus-5[1m]',
+      currentModel: '',
       persistRemembered: true,
-      offeredModels: [],
-      fallbackModel: 'claude-opus-5[1m]',
+      offeredModels: ['claude-fable-5', 'claude-opus-5[1m]', 'claude-sonnet-5'],
+      fallbackModel: 'claude-sonnet-5',
       loading: true
-    })).toBe('claude-sonnet-5');
+    })).toBe('claude-opus-5[1m]');
   });
 
   it('does not apply the cache on an existing thread', () => {

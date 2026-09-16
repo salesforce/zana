@@ -6952,6 +6952,7 @@ body.resizing-col {
   font-weight: 500;
   text-align: left;
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 .settings-app-back:hover,
@@ -13487,6 +13488,7 @@ body.resizing-col .explorer-resizer::after {
 .agents-view-toggle-btn {
   display: grid;
   place-items: center;
+  position: relative;
   width: 26px;
   height: 24px;
   border: none;
@@ -13494,6 +13496,24 @@ body.resizing-col .explorer-resizer::after {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
+}
+
+/* Compact running-count pip on the Calendar toggle — same gold pulse as the
+   sidebar Scheduler badge, sized to the 26×24 control so a hidden working
+   scheduled job is still obvious. */
+.agents-scheduled-toggle-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 12px;
+  margin-left: 0;
+  padding: 0 3px;
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 12px;
+  border-radius: 7px;
+  box-shadow: 0 0 0 1.5px var(--bg-base);
+  pointer-events: none;
 }
 
 .agents-view-toggle-btn:hover {
@@ -32479,6 +32499,7 @@ textarea.ui-command-composer-input {
 
 .model-reasoning-picker-tabs {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   padding: 4px 8px 0;
@@ -32489,6 +32510,7 @@ textarea.ui-command-composer-input {
 
 .model-reasoning-picker-tab {
   display: inline-flex;
+  flex: 0 0 28px;
   align-items: center;
   justify-content: center;
   position: relative;

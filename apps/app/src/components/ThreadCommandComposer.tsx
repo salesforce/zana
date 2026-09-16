@@ -48,6 +48,7 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { fallbackProviderOption, isOfferedModernProvider } from './thread/pickers/fallback-models.js';
 import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOptions.js';
+import { preferredThreadProviderId } from './legacy-agent-home.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
@@ -133,6 +134,7 @@ export function ThreadCommandComposer({
   const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
   const ensureScratchRef = useRef(false);
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
+  const defaultHarness = useData((s) => s.defaultHarness);
   const hosts = useHosts();
   const threads = useThreads((s) => s.threads);
   const currentThread = threadId ? threads.find((row) => row.id === threadId) : undefined;
@@ -144,6 +146,12 @@ export function ThreadCommandComposer({
     initialModel,
     initialReasoningLevel,
     initialAcpMode: executionModeRequested ?? initialAcpMode,
+    preferredProviderId: threadId || lockedProviderId
+      ? undefined
+      : preferredThreadProviderId({
+          launchDefault: selectedProject?.launchDefault,
+          defaultHarness
+        }),
     hostId: catalogHostId,
     hostPending: !catalogHostId && hosts.length === 0
   });

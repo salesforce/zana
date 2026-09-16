@@ -66,6 +66,7 @@ function ensureNodePtySpawnHelperExecutable(): void {
 const DIAGNOSTIC_CAPTURE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** Wait after first TUI output before typing a stdin-after-ready opening task. */
 const STDIN_OPENING_PROMPT_AFTER_READY_MS = 500;
+const STDIN_OPENING_PROMPT_DEADLINE_MS = 60_000;
 
 function sweepStaleDiagnosticCaptures(dir: string): void {
   try {
@@ -328,6 +329,7 @@ export class PtyManager extends EventEmitter {
   private backlogs = new Map<string, string>();
   /** Async execution failures are available to the creator until readiness settles. */
   private startupFailures = new Map<string, string>();
+  private stdinOpeningPromptCleanup = new Map<string, () => void>();
   /** Opt-in diagnostic files retained past exit; never populated in normal runs. */
   private diagnosticFiles = new Map<string, string>();
 
@@ -1718,7 +1720,7 @@ export class PtyManager extends EventEmitter {
       proc.onData(writePrompt);
     }
     if (opts.openingPrompt && !opts.scheduled && !opts.resume) {
-      this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc);
+      this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc, providerFor(session.profile).stdinReadyMarker);
     }
     proc.onExit((event) => {
       const { exitCode } = event;
@@ -1816,6 +1818,7 @@ export class PtyManager extends EventEmitter {
    * gone, so the onExit callback and {@link reapDeadSessions} can't double-fire.
    */
   private finalizeExit(sessionId: string, exitCode: number, signal?: number): void {
+    this.stdinOpeningPromptCleanup.get(sessionId)?.();
     this.flushData(sessionId);
     const live = this.live.get(sessionId);
     // Diagnose an opaque non-zero exit from the retained output tail BEFORE the
@@ -2329,7 +2332,7 @@ export class PtyManager extends EventEmitter {
       : undefined;
     this.bindRemoteProc(session, proc, reattach);
     if (opts.openingPrompt && !opts.scheduled && !opts.resume) {
-      this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc);
+      this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc, providerFor(session.profile).stdinReadyMarker);
     }
     this.emit('sessionUpdated', session);
 
@@ -2498,27 +2501,49 @@ export class PtyManager extends EventEmitter {
   }
 
   /**
-   * Type an opening task into a TUI that cannot take seed argv. Waits for first
-   * output (banner / prompt paint) then uses {@link reply} so the submit CR is
-   * a discrete keypress rather than a paste burst.
+   * Type an opening task after the provider's input-ready marker, or first
+   * output for providers without one. Retain only enough tail to match a marker
+   * split across chunks; release the listener and deadline on every exit path.
    */
   private scheduleStdinOpeningPrompt(
     sessionId: string,
     prompt: string,
-    proc: pty.IPty | ExecutionSession
+    proc: pty.IPty | ExecutionSession,
+    readyMarker?: string
   ): void {
     const body = prompt.trim();
     if (!body) return;
     let armed = false;
-    const arm = () => {
-      if (armed) return;
+    let tail = '';
+    let subscription: { dispose(): void } | void;
+    const cleanup = () => {
       armed = true;
-      setTimeout(() => {
-        if (!this.live.get(sessionId)) return;
+      clearTimeout(timer);
+      subscription?.dispose();
+      this.stdinOpeningPromptCleanup.delete(sessionId);
+    };
+    let timer = setTimeout(() => {
+      cleanup();
+      if (this.live.get(sessionId)?.proc !== proc) return;
+      this.emit('data', sessionId, '\r\nInitial task was not sent: the agent input did not become ready. Send the task once its prompt appears.\r\n');
+    }, STDIN_OPENING_PROMPT_DEADLINE_MS);
+    this.stdinOpeningPromptCleanup.set(sessionId, cleanup);
+    subscription = proc.onData((data) => {
+      if (armed) return;
+      if (readyMarker) {
+        const candidate = tail + data;
+        tail = candidate.slice(-readyMarker.length);
+        if (!candidate.includes(readyMarker)) return;
+      }
+      armed = true;
+      subscription?.dispose();
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        cleanup();
+        if (this.live.get(sessionId)?.proc !== proc) return;
         this.reply(sessionId, body);
       }, STDIN_OPENING_PROMPT_AFTER_READY_MS);
-    };
-    proc.onData(arm);
+    });
   }
 
   write(id: string, data: string) {
@@ -2656,6 +2681,7 @@ export class PtyManager extends EventEmitter {
   }
 
   close(id: string) {
+    this.stdinOpeningPromptCleanup.get(id)?.();
     const l = this.live.get(id);
     if (!l) return;
     // A user/host close must win over a pending remote reconnect: disarm the
@@ -2681,6 +2707,7 @@ export class PtyManager extends EventEmitter {
    * because `proc.kill()` delivers a signal. Returns false if already gone.
    */
   closeExpected(id: string): boolean {
+    this.stdinOpeningPromptCleanup.get(id)?.();
     const l = this.live.get(id);
     if (!l) return false;
     this.expectedClose.add(id);

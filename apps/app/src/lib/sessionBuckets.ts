@@ -17,7 +17,6 @@ export const FINISHED_LINGER_MS = 60_000;
  */
 export function isRecentlyFinished(session: TerminalSession, now: number): boolean {
   if (session.status !== 'exited') return false;
-  if (session.remembered) return true;
   if (typeof session.finishedAt !== 'number') return true;
   return now - session.finishedAt <= FINISHED_LINGER_MS;
 }

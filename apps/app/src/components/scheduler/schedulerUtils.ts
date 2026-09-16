@@ -51,7 +51,10 @@ export const PROFILE_LABEL: Record<LaunchProfileId, string> = {
   'grok-yolo': 'grok --always-approve',
   mastracode: 'mastracode',
   'mastracode-resume': 'mastracode --continue',
-  'mastracode-yolo': 'mastracode (yolo)'
+  'mastracode-yolo': 'mastracode (yolo)',
+  afcode: 'afcode --local',
+  'afcode-resume': 'afcode --local --resume',
+  'afcode-yolo': 'afcode --local --auto-approve'
 };
 
 /** Whitelist of lucide icon names we honor in template metadata. Anything
