@@ -276,6 +276,68 @@ describe('execution usage and typed completion', () => {
     expect(record.resourceBlock).toMatchObject({ kind: 'usage-budget' });
   }));
 
+  it('serializes concurrent usage capture for one session', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let releaseFirst!: () => void;
+    const firstStats = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let statsCalls = 0;
+    const service = new ExecutionService(deps(filePath, {
+      store,
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker', projectId: 'project-1' }] }),
+      readSessionStats: async () => {
+        statsCalls += 1;
+        if (statsCalls === 1) await firstStats;
+        return { tokens: { input: statsCalls, output: 0, cacheRead: 0, cacheWrite: 0 }, files: [], queue: [] };
+      }
+    }));
+    await service.start('owner', 'project-1', request);
+
+    const heartbeat = service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    await vi.waitFor(() => expect(statsCalls).toBe(1));
+    const outcome = service.observeSessionUsage('execution-1', 'worker', 'outcome');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst();
+
+    await expect(Promise.all([heartbeat, outcome])).resolves.toEqual([undefined, undefined]);
+    const observations = (await store.get('execution-1'))?.usageObservations ?? [];
+    expect(observations.map(({ sequence, sampleKind }) => ({ sequence, sampleKind }))).toEqual([
+      { sequence: 1, sampleKind: 'heartbeat' },
+      { sequence: 2, sampleKind: 'outcome' }
+    ]);
+    expect(new Set(observations.map((observation) => observation.observationId)).size).toBe(2);
+  }));
+
+  it('coalesces queued sample kinds while keeping different sessions concurrent', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let releaseWorker!: () => void;
+    const workerStats = new Promise<void>((resolve) => { releaseWorker = resolve; });
+    const calls: string[] = [];
+    const service = new ExecutionService(deps(filePath, {
+      store,
+      getTeamLaunch: async () => ({ workers: [
+        { slotId: 'slot-1', sessionId: 'worker', projectId: 'project-1' },
+        { slotId: 'slot-2', sessionId: 'peer', projectId: 'project-1' }
+      ] }),
+      readSessionStats: async (sessionId) => {
+        calls.push(sessionId);
+        if (sessionId === 'worker') await workerStats;
+        return { tokens: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 }, files: [], queue: [] };
+      }
+    }));
+    await service.start('owner', 'project-1', request);
+
+    const first = service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    await vi.waitFor(() => expect(calls).toEqual(['worker']));
+    const duplicate = service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    const outcome = service.observeSessionUsage('execution-1', 'worker', 'outcome');
+    const duplicateOutcome = service.observeSessionUsage('execution-1', 'worker', 'outcome');
+    await expect(service.observeSessionUsage('execution-1', 'peer', 'heartbeat')).resolves.toBeUndefined();
+    expect(calls).toEqual(['worker', 'peer']);
+    releaseWorker();
+    await expect(Promise.all([first, duplicate, outcome, duplicateOutcome])).resolves.toEqual([undefined, undefined, undefined, undefined]);
+    expect(calls).toEqual(['worker', 'peer', 'worker']);
+  }));
+
   it('replays unchanged cost-only samples without requiring token counters', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new ExecutionService(deps(filePath, {

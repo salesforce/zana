@@ -342,6 +342,8 @@ export function dependencyResultsSection(record: ExecutionRecord, workUnitId: st
 export class ExecutionService {
   private readonly starting = new Map<string, number>();
   private readonly bindingTails = new Map<string, Promise<void>>();
+  private readonly usageTails = new Map<string, Promise<void>>();
+  private readonly usageFlights = new Map<string, Promise<void>>();
   private readonly pendingBindingOwners = new Map<string, string>();
   private readonly mintFlights = new Map<string, Promise<ReturnType<ExecutionService['mintResumeGrantOnce']> extends Promise<infer T> ? T : never>>();
   private readonly autoFinalizeTimers = new Map<string, NodeJS.Timeout>();
@@ -770,6 +772,19 @@ export class ExecutionService {
 
   /** Capture one immutable main-owned transcript usage sample. */
   async observeSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind): Promise<void> {
+    const key = `${executionId}\0${sessionId}`;
+    const flightKey = `${key}\0${sampleKind}`;
+    const existing = this.usageFlights.get(flightKey);
+    if (existing) return existing;
+    const flight = this.serializeUsage(key, () => this.captureSessionUsage(executionId, sessionId, sampleKind));
+    this.usageFlights.set(flightKey, flight);
+    void flight.finally(() => {
+      if (this.usageFlights.get(flightKey) === flight) this.usageFlights.delete(flightKey);
+    }).catch(() => undefined);
+    return flight;
+  }
+
+  private async captureSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind): Promise<void> {
     if (!this.deps.readSessionStats) return;
     const record = await this.deps.store.get(executionId);
     if (!record || isResumeGrantTerminal(record.state)) return;
@@ -2024,6 +2039,21 @@ export class ExecutionService {
     } finally {
       release();
       if (this.bindingTails.get(executionId) === tail) this.bindingTails.delete(executionId);
+    }
+  }
+
+  private async serializeUsage<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.usageTails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => current);
+    this.usageTails.set(key, tail);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.usageTails.get(key) === tail) this.usageTails.delete(key);
     }
   }
 
