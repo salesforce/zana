@@ -36,7 +36,11 @@ import { SettingsView } from './SettingsView.js';
 import { deriveSyncClue } from './syncClue.js';
 import { deliverNotifications } from './PrMonitorBackground.js';
 import { isListViewMode } from './pr-board.js';
-import type { SyncJobState } from '../../lib/sync-coordinator.js';
+import {
+  SYNC_STATUS_MAX_WAIT_MS,
+  SYNC_STATUS_POLL_INTERVAL_MS,
+  type SyncJobState,
+} from '../../lib/sync-coordinator.js';
 
 type SubTab = 'prs' | 'settings';
 
@@ -80,6 +84,12 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
   // mount so the clue paints before the first poll completes.
   const [syncHealth, setSyncHealth] = useState<SyncHealth>(() => ({ ...EMPTY_SYNC_HEALTH }));
   const syncBtnRef = useRef<HTMLButtonElement>(null);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
   // `host.listProjects()` is a non-reactive store SNAPSHOT — at mount the
   // projects store may still be loading, so a single inline read can capture a
   // partial (or empty) list. We hold the list in state and re-read it on the
@@ -216,9 +226,10 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
           ? await host.call<SyncJobState>('syncRepos', { repos })
           : await host.call<SyncJobState>('pollAll');
         let res = initial;
-        while (res.state === 'running') {
-          await new Promise((resolve) => window.setTimeout(resolve, 250));
-          res = await host.call<SyncJobState>('syncStatus');
+        const deadline = Date.now() + SYNC_STATUS_MAX_WAIT_MS;
+        while ((res.state === 'running' || res.state === 'queued') && aliveRef.current && Date.now() < deadline) {
+          await new Promise((resolve) => window.setTimeout(resolve, SYNC_STATUS_POLL_INTERVAL_MS));
+          res = await host.call<SyncJobState>('syncStatus', { id: res.id });
         }
         // Older hosts return completed poll payloads directly.
         const ok = res.state === undefined || res.state === 'succeeded';
@@ -243,6 +254,8 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
             };
             await deliverNotifications(host, res.deltas, notificationSettings);
           }
+        } else if (!aliveRef.current || Date.now() >= deadline) {
+          setError('Sync is still running. Check back shortly.');
         } else if (res?.error) {
           setError(res.error);
         }

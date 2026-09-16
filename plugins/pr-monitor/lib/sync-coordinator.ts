@@ -1,8 +1,11 @@
 import type { MonitoredPr, PrStatusDelta, SyncHealth } from './types.js';
 
+export const SYNC_STATUS_POLL_INTERVAL_MS = 250;
+export const SYNC_STATUS_MAX_WAIT_MS = 5 * 60_000;
+
 export type SyncJobState = {
   id: number;
-  state: 'idle' | 'running' | 'succeeded' | 'failed';
+  state: 'idle' | 'queued' | 'running' | 'succeeded' | 'failed';
   scope: 'all' | 'repos';
   repos?: string[];
   startedAt?: number;
@@ -13,59 +16,72 @@ export type SyncJobState = {
   health?: SyncHealth;
 };
 
-type SyncResult = Omit<SyncJobState, 'id' | 'state' | 'scope' | 'repos' | 'startedAt' | 'finishedAt'> & { ok: boolean };
+export type SyncResult = Omit<SyncJobState, 'id' | 'state' | 'scope' | 'repos' | 'startedAt' | 'finishedAt'> & { ok: boolean };
+type SyncRunner = (scope: SyncJobState['scope'], repos?: string[]) => Promise<SyncResult>;
 
-/** One durable owner prevents background and renderer RPCs from overlapping. */
+/** One durable owner serializes syncs and runs completion effects exactly once. */
 export class SyncCoordinator {
-  private job: SyncJobState = { id: 0, state: 'idle', scope: 'all' };
-  private running: Promise<SyncJobState> | undefined;
+  private nextId = 0;
+  private current: SyncJobState = { id: 0, state: 'idle', scope: 'all' };
+  private queued: SyncJobState | undefined;
+  private jobs = new Map<number, SyncJobState>([[0, this.current]]);
 
-  start(
-    scope: 'all' | 'repos',
-    repos: string[] | undefined,
-    run: () => Promise<SyncResult>
-  ): SyncJobState {
-    if (this.running) return this.snapshot();
-    const id = this.job.id + 1;
-    this.job = { id, state: 'running', scope, repos, startedAt: Date.now() };
-    this.running = run()
-      .then((result) => {
-        this.job = {
-          ...this.job,
-          state: result.ok ? 'succeeded' : 'failed',
-          finishedAt: Date.now(),
-          error: result.error,
-          prs: result.prs,
-          deltas: result.deltas,
-          health: result.health,
-        };
-        return this.snapshot();
-      })
-      .catch((error) => {
-        this.job = {
-          ...this.job,
-          state: 'failed',
-          finishedAt: Date.now(),
-          error: error instanceof Error ? error.message : String(error),
-        };
-        return this.snapshot();
-      })
-      .finally(() => {
-        this.running = undefined;
-      });
-    return this.snapshot();
+  constructor(
+    private readonly run: SyncRunner,
+    private readonly onFinished: (job: SyncJobState) => Promise<void>,
+    private readonly log: (message: string) => void
+  ) {}
+
+  start(scope: 'all' | 'repos', repos?: string[]): SyncJobState {
+    const normalized = scope === 'repos' ? Array.from(new Set(repos ?? [])).sort() : undefined;
+    if (this.current.state === 'running' && this.covers(this.current, scope, normalized)) return this.snapshot(this.current);
+    if (this.queued) {
+      this.merge(this.queued, scope, normalized);
+      return this.snapshot(this.queued);
+    }
+    const job: SyncJobState = { id: ++this.nextId, state: this.current.state === 'running' ? 'queued' : 'running', scope, repos: normalized };
+    this.jobs.set(job.id, job);
+    if (job.state === 'queued') this.queued = job;
+    else void this.execute(job);
+    return this.snapshot(job);
   }
 
-  async wait(): Promise<SyncJobState> {
-    return this.running ? this.running : this.snapshot();
+  status(id?: unknown): SyncJobState {
+    return this.snapshot(typeof id === 'number' ? this.jobs.get(id) ?? this.current : this.current);
   }
 
-  snapshot(): SyncJobState {
-    return {
-      ...this.job,
-      repos: this.job.repos ? [...this.job.repos] : undefined,
-      prs: this.job.prs ? [...this.job.prs] : undefined,
-      deltas: this.job.deltas ? [...this.job.deltas] : undefined,
-    };
+  private covers(job: SyncJobState, scope: SyncJobState['scope'], repos?: string[]): boolean {
+    return job.scope === 'all' || (scope === 'repos' && (repos ?? []).every((repo) => job.repos?.includes(repo)));
+  }
+
+  private merge(job: SyncJobState, scope: SyncJobState['scope'], repos?: string[]): void {
+    if (scope === 'all') { job.scope = 'all'; job.repos = undefined; return; }
+    if (job.scope === 'repos') job.repos = Array.from(new Set([...(job.repos ?? []), ...(repos ?? [])])).sort();
+  }
+
+  private async execute(job: SyncJobState): Promise<void> {
+    this.current = job;
+    job.startedAt = Date.now();
+    try {
+      const result = await this.run(job.scope, job.repos);
+      Object.assign(job, result, { state: result.ok ? 'succeeded' : 'failed', finishedAt: Date.now() });
+    } catch (error) {
+      job.state = 'failed';
+      job.finishedAt = Date.now();
+      job.error = error instanceof Error ? error.message : String(error);
+      this.log(`sync job ${job.id} (${job.scope}) failed: ${job.error}`);
+    }
+    try { await this.onFinished(this.snapshot(job)); }
+    catch (error) { this.log(`sync job ${job.id} completion failed: ${error instanceof Error ? error.message : String(error)}`); }
+    if (this.queued) {
+      const next = this.queued;
+      this.queued = undefined;
+      next.state = 'running';
+      void this.execute(next);
+    }
+  }
+
+  private snapshot(job: SyncJobState): SyncJobState {
+    return { ...job, repos: job.repos ? [...job.repos] : undefined, prs: job.prs ? [...job.prs] : undefined, deltas: job.deltas ? [...job.deltas] : undefined };
   }
 }
