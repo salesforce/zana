@@ -36,6 +36,7 @@ import { SettingsView } from './SettingsView.js';
 import { deriveSyncClue } from './syncClue.js';
 import { deliverNotifications } from './PrMonitorBackground.js';
 import { isListViewMode } from './pr-board.js';
+import type { SyncJobState } from '../../lib/sync-coordinator.js';
 
 type SubTab = 'prs' | 'settings';
 
@@ -211,10 +212,17 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
       setError(null);
       try {
         const scoped = Array.isArray(repos) && repos.length > 0;
-        const res = scoped
-          ? await host.call<{ ok: boolean; prs?: MonitoredPr[]; deltas?: PrStatusDelta[]; error?: string }>('syncRepos', { repos })
-          : await host.call<{ ok: boolean; prs?: MonitoredPr[]; deltas?: PrStatusDelta[]; health?: SyncHealth; error?: string }>('pollAll');
-        if (res?.ok && Array.isArray(res.prs)) {
+        const initial = scoped
+          ? await host.call<SyncJobState>('syncRepos', { repos })
+          : await host.call<SyncJobState>('pollAll');
+        let res = initial;
+        while (res.state === 'running') {
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+          res = await host.call<SyncJobState>('syncStatus');
+        }
+        // Older hosts return completed poll payloads directly.
+        const ok = res.state === undefined || res.state === 'succeeded';
+        if (ok && Array.isArray(res.prs)) {
           setPrs(res.prs);
           host.cache.set(MONITORED_PRS_CACHE_KEY, res.prs);
           // Keep the nav-badge inputs in lockstep with a manual Sync. Without

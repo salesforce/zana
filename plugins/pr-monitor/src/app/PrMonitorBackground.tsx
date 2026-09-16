@@ -83,7 +83,7 @@ function safeMarkdownUrl(url: string): string {
 }
 
 interface PollResult {
-  ok: boolean;
+  state?: 'idle' | 'running' | 'succeeded' | 'failed';
   prs?: MonitoredPr[];
   deltas?: PrStatusDelta[];
   error?: string;
@@ -174,8 +174,16 @@ export default function PrMonitorBackground({ host }: { host: ModuleHost }) {
         // on-demand Sync control (R-LIST-002) drives pollAll directly, bypassing
         // this loop.
         if (settings.autoSyncEnabled === false) return;
-        const res = await host.call<PollResult>('pollAll');
-        if (res?.ok && Array.isArray(res.prs)) {
+        const initial = await host.call<PollResult>('pollAll');
+        // Server background owns polling. This legacy renderer component only
+        // consumes completed job state when embedded by older hosts.
+        let res = initial;
+        while (res.state === 'running' && aliveRef.current) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          res = await host.call<PollResult>('syncStatus');
+        }
+        // Older plugin hosts return completed poll payloads directly.
+        if ((res?.state === undefined || res.state === 'succeeded') && Array.isArray(res.prs)) {
           host.cache.set(MONITORED_PRS_CACHE_KEY, res.prs);
           host.cache.set(MONITORED_COUNT_CACHE_KEY, res.prs.length);
           host.cache.refreshBadge?.();

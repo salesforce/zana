@@ -40,6 +40,9 @@
   --shell-trigger-size: 28px;
   --shell-trigger-left: 12px;
   --shell-leading-reserve: 112px;
+  /* Persistent shell affordances can sit over a full-width module panel. Keep
+     extension controls clear of their 28px hit target plus an 8px gap. */
+  --shell-trailing-reserve: 36px;
 }
 
 :root[data-theme='light'] {
@@ -10880,6 +10883,7 @@ button.statusbar-item {
   overflow: auto;
   display: flex;
   flex-direction: column;
+  padding-right: var(--shell-trailing-reserve);
   /* Extensions mount into the host document, which disables selection for app
      chrome. Their panels are reading surfaces, so make their text copyable. */
   user-select: text;

@@ -8,6 +8,7 @@ import { computeNotifyDelivery } from './notify.js';
 import { setupPrMonitor } from './pr-main.js';
 import { PRS_CHANGED_CHANNEL } from './realtime.js';
 import { invokeRpc } from './rpc.js';
+import { SyncCoordinator, type SyncJobState } from './sync-coordinator.js';
 import {
   DEFAULT_PR_MONITOR_SETTINGS,
   SETTINGS_STORAGE_KEY,
@@ -62,11 +63,35 @@ export async function createPrMonitorPlugin(zcc: ZccPluginApi, deps: PrMonitorPl
     }
   };
   const methods = setupPrMonitor(ctx);
+  const coordinator = new SyncCoordinator();
+  const runPollAll = deps.pollAll ?? methods.pollAll;
+
+  const startSync = (repos?: string[]): SyncJobState => {
+    const scoped = Array.isArray(repos) && repos.length > 0;
+    return coordinator.start(scoped ? 'repos' : 'all', scoped ? repos : undefined, () =>
+      scoped
+        ? methods.syncRepos({ repos })
+        : runPollAll()
+    );
+  };
 
   for (const [name, handler] of Object.entries(methods)) {
     if (typeof handler !== 'function') continue;
+    if (name === 'pollAll' || name === 'syncRepos') continue;
     zcc.rpc.method(name, (args) => invokeRpc(handler as (...fnArgs: never[]) => unknown, args));
   }
+
+  // RPC calls have a short host deadline. Start work here, return state now, and
+  // let callers read the shared job instead of holding the request open for gh.
+  zcc.rpc.method('pollAll', async () => startSync());
+  zcc.rpc.method('syncRepos', async (args) => {
+    const input = invokeRpc(((params: { repos?: unknown }) => params) as never, args) as { repos?: unknown };
+    const repos = Array.isArray(input?.repos)
+      ? input.repos.map((repo) => String(repo ?? '').trim()).filter(Boolean)
+      : [];
+    return startSync(repos);
+  });
+  zcc.rpc.method('syncStatus', async () => coordinator.snapshot());
 
   zcc.rpc.method('storageGet', async (key) => {
     if (typeof key !== 'string' || !key.trim()) return undefined;
@@ -127,10 +152,12 @@ export async function createPrMonitorPlugin(zcc: ZccPluginApi, deps: PrMonitorPl
       const settings = await readSettings(zcc);
       if (settings.autoSyncEnabled !== false) {
         try {
-          const result = (await (deps.pollAll ?? methods.pollAll)()) as PollAllResult;
-          if (result.ok) {
+          const initial = startSync();
+          const result = initial.state === 'running' ? await coordinator.wait() : initial;
+          if (result.state === 'succeeded') {
             await deliverInbox(result.deltas);
             zcc.realtime.publish(PRS_CHANGED_CHANNEL, {
+              prs: result.prs ?? [],
               deltas: result.deltas ?? [],
               inAppDeltas: await inAppNotifications(result.deltas)
             });

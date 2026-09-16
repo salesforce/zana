@@ -3,7 +3,8 @@ import { callPluginRpc, definePluginApp, useRealtime } from '@zana-ai/zcc-plugin
 import PrMonitorPanel from './src/app/PrMonitorPanel.js';
 import { createPluginPanelHost, setBadgeRefresh } from './src/app/adapter.js';
 import { PRS_CHANGED_CHANNEL } from './lib/realtime.js';
-import type { PrStatusDelta } from './lib/types.js';
+import type { MonitoredPr, PrStatusDelta } from './lib/types.js';
+import { MONITORED_COUNT_CACHE_KEY, MONITORED_PRS_CACHE_KEY } from './lib/types.js';
 import { statusLabel } from './src/app/formatHelpers.js';
 import styles from './src/app/styles.css';
 import kanbanCss from '@zana-ai/zcc-ui/kanban.css';
@@ -36,6 +37,13 @@ const panelRootStyle: CSSProperties = { height: '100%', minHeight: 0, display: '
 
 function Panel() {
   const host = useMemo(() => createPluginPanelHost(PLUGIN_ID), []);
+  useRealtime(PRS_CHANGED_CHANNEL, (payload) => {
+    const prs = (payload as { prs?: unknown })?.prs;
+    if (!Array.isArray(prs)) return;
+    host.cache.set(MONITORED_PRS_CACHE_KEY, prs as MonitoredPr[]);
+    host.cache.set(MONITORED_COUNT_CACHE_KEY, prs.length);
+    host.cache.refreshBadge?.();
+  });
   return (
     <div style={panelRootStyle}>
       <PrMonitorPanel host={host} />
