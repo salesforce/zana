@@ -34,6 +34,7 @@ import { refreshRemoteStartPathHosts, stampedProjectRemote } from './remote-work
 import { resolveIconPath } from './resolve-icon-path.js';
 import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
 import { createTeamProductOps } from './team-product-ops.js';
+import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
@@ -1208,7 +1209,7 @@ const exitedSessionStats = new Map<string, { projectId: string; stats: SessionSt
 const LIVE_SESSION_STATS_TTL_MS = 4_000;
 const LIVE_SESSION_STATS_NEGATIVE_TTL_MS = 1_000;
 const LIVE_SESSION_STATS_MAX = 200;
-const liveSessionStats = new Map<string, { value?: SessionStats | null; expiresAt?: number; pending?: Promise<SessionStats | null> }>();
+const liveSessionStats = new Map<string, { value?: SessionStats | null; expiresAt?: number; pending?: Promise<SessionStats | null>; generation?: number }>();
 
 function transcriptRefForSession(session: TerminalSession) {
   return {
@@ -1222,14 +1223,14 @@ function transcriptRefForSession(session: TerminalSession) {
   };
 }
 
-function retainExitedSessionStats(session: TerminalSession, pending?: Promise<SessionStats | null>): void {
+function retainExitedSessionStats(session: TerminalSession, pending?: Promise<SessionStats | null>, cached?: SessionStats | null, previousPending?: Promise<SessionStats | null>): void {
   const entry: { projectId: string; stats: SessionStats | null; pending?: Promise<SessionStats | null> } = {
     projectId: session.projectId,
     stats: null
   };
-  entry.pending = (pending ?? transcriptSource.readStats(transcriptRefForSession(session))).then((stats) => {
-    entry.stats = stats;
-    return stats;
+  entry.pending = (pending ?? transcriptSource.readStats(transcriptRefForSession(session))).then(async (stats) => {
+    entry.stats = await finalSessionStats(stats, cached, previousPending);
+    return entry.stats;
   }).catch(() => null);
   exitedSessionStats.set(session.id, entry);
   while (exitedSessionStats.size > EXITED_SESSION_STATS_MAX) {
@@ -1237,22 +1238,28 @@ function retainExitedSessionStats(session: TerminalSession, pending?: Promise<Se
   }
 }
 
-async function readLiveSessionStats(session: TerminalSession): Promise<SessionStats | null> {
+async function readLiveSessionStats(session: TerminalSession, options: { fresh?: boolean } = {}): Promise<SessionStats | null> {
   const cached = liveSessionStats.get(session.id);
-  if (cached?.pending) return cached.pending;
-  if (cached?.value !== undefined && cached.expiresAt && cached.expiresAt > Date.now()) return cached.value;
+  if (!options.fresh && cached?.pending) return cached.pending;
+  if (!options.fresh && cached?.value !== undefined && cached.expiresAt && cached.expiresAt > Date.now()) return cached.value;
 
   const entry = cached ?? {};
+  const generation = (entry.generation ?? 0) + 1;
+  entry.generation = generation;
   const read = (): Promise<SessionStats | null> => transcriptSource.readStats(transcriptRefForSession(session));
   entry.pending = read().then((stats) => {
-    entry.pending = undefined;
-    entry.value = stats;
-    entry.expiresAt = Date.now() + (stats ? LIVE_SESSION_STATS_TTL_MS : LIVE_SESSION_STATS_NEGATIVE_TTL_MS);
+    if (entry.generation === generation) {
+      entry.pending = undefined;
+      entry.value = stats;
+      entry.expiresAt = Date.now() + (stats ? LIVE_SESSION_STATS_TTL_MS : LIVE_SESSION_STATS_NEGATIVE_TTL_MS);
+    }
     return stats;
   }, () => {
-    entry.pending = undefined;
-    entry.value = null;
-    entry.expiresAt = Date.now() + LIVE_SESSION_STATS_NEGATIVE_TTL_MS;
+    if (entry.generation === generation) {
+      entry.pending = undefined;
+      entry.value = null;
+      entry.expiresAt = Date.now() + LIVE_SESSION_STATS_NEGATIVE_TTL_MS;
+    }
     return null;
   });
   liveSessionStats.set(session.id, entry);
@@ -5064,6 +5071,13 @@ const squadExecutionService = new SquadExecutionService({
   , routingEnforcementEnabled: () => store.getConfig().teamRoutingEnforcementEnabled === true
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
+  , routeFitObserveEnabled: () => store.getConfig().executionRouteFitObserveEnabled === true
+  , readSessionStats: async (sessionId, options) => {
+    const session = ptys.getSession(sessionId);
+    if (session) return readLiveSessionStats(session, options);
+    const retained = exitedSessionStats.get(sessionId);
+    return retained?.pending ? retained.pending : retained?.stats ?? null;
+  }
   , admissionInput: async (projectId, request) => {
     const project = store.listProjects().find((candidate) => candidate.id === projectId);
     const team = teams.list().find((candidate) => candidate.id === request.teamId);
@@ -5607,31 +5621,36 @@ function wireBridgeListeners() {
     const authorizationId = launchAuthorizationBySession.get(sessionId);
     launchAuthorizationBySession.delete(sessionId);
     if (authorizationId) launchAuthorization.complete(authorizationId);
-    // Forward the PTY exit detail so a Team slot's FAILED reconcile records the
-    // actual cause (exit code + provider explanation) rather than a generic line.
-    void teamLifecycleIntegration.onSessionExit(sessionId, {
-      exitCode: typeof code === 'number' ? code : undefined,
-      signal: typeof signal === 'number' ? signal : undefined,
-      reason: typeof reason === 'string' && reason.length > 0 ? reason : undefined
-    }).catch((error) =>
-      logMainError(`team lifecycle exit ${sessionId}`, error)
-    );
     if (ledgerEntryId) {
       void launchLedger.transition(ledgerEntryId, 'exited').catch((error) =>
         logMainError(`launch ledger exit ${sessionId}`, error)
       );
     }
     const exitedSession = ptys.getSession(sessionId);
-    if (exitedSession?.cohort?.executionId && exitedSession.cohort.role === 'orchestrator') {
-      void squadExecutionService.handleCoordinatorExit(exitedSession.projectId, exitedSession.cohort.executionId, sessionId).catch((error) =>
-        logMainError(`execution coordinator exit ${sessionId}`, error)
-      );
-    }
+    // Capture final counters before lifecycle reconciliation can make execution
+    // terminal. Then forward exit detail so FAILED settlement includes provider cause.
+    void (async () => {
+      if (exitedSession?.cohort?.executionId) {
+        await squadExecutionService.observeSessionUsage(exitedSession.cohort.executionId, sessionId, 'terminal').catch((error) =>
+          logMainError(`execution usage terminal ${sessionId}`, error)
+        );
+      }
+      await teamLifecycleIntegration.onSessionExit(sessionId, {
+        exitCode: typeof code === 'number' ? code : undefined,
+        signal: typeof signal === 'number' ? signal : undefined,
+        reason: typeof reason === 'string' && reason.length > 0 ? reason : undefined
+      }).catch((error) => logMainError(`team lifecycle exit ${sessionId}`, error));
+      if (exitedSession?.cohort?.executionId && exitedSession.cohort.role === 'orchestrator') {
+        await squadExecutionService.handleCoordinatorExit(exitedSession.projectId, exitedSession.cohort.executionId, sessionId).catch((error) =>
+          logMainError(`execution coordinator exit ${sessionId}`, error)
+        );
+      }
+    })();
     if (exitedSession) {
-      const finalRead = readLiveSessionStats(exitedSession);
-      const liveStats = liveSessionStats.get(sessionId);
+      const cachedEntry = liveSessionStats.get(sessionId);
+      const finalRead = readLiveSessionStats(exitedSession, { fresh: true });
       liveSessionStats.delete(sessionId);
-      retainExitedSessionStats(exitedSession, liveStats?.pending ?? finalRead);
+      retainExitedSessionStats(exitedSession, finalRead, cachedEntry?.value, cachedEntry?.pending);
       refreshRestoreCapability(exitedSession);
     }
     agentStatus.remove(sessionId);
@@ -5774,6 +5793,11 @@ function wireBridgeListeners() {
       );
     }
     if (session) void transcriptSource.observe(transcriptRefForSession(session));
+    if (session?.cohort?.executionId && (state === 'idle' || state === 'blocked')) {
+      void squadExecutionService.observeSessionUsage(session.cohort.executionId, sessionId, 'heartbeat').catch((error) =>
+        logMainError(`execution usage heartbeat ${sessionId}`, error)
+      );
+    }
     void teamLifecycleIntegration.onAgentStatus(sessionId, state).catch((error) =>
       logMainError(`team lifecycle status ${sessionId}`, error)
     );

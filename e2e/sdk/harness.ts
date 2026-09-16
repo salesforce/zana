@@ -424,11 +424,11 @@ async function orchestrator() {
   await hold();
 }
 
-async function handleNavigationLabel() {
+async function handleNavigationLabel(outcomeFence) {
   const blockerId = 'blk-navigation-label';
   const r = await tryMcp('execution.work.block', {
     executionId: EXECUTION_ID, workUnitId: 'navigation-label', blockerId: blockerId,
-    question: 'Which label should result.txt use?', options: ['About', 'About Atlas']
+    question: 'Which label should result.txt use?', options: ['About', 'About Atlas'], ...outcomeFence
   });
   log('block', r.ok ? 'ok' : r.error);
   // Blocking ends this turn: go idle so the host's delivery drain sees a RESTFUL
@@ -479,24 +479,27 @@ async function handleNavigationLabel() {
 async function doUnit(unitId) {
   log('assigned', unitId);
   try {
+    const fence = (assignText[unitId] || '').match(/Claim fence: claimId=([^;\n]+); claimGeneration=(\d+)/);
+    if (!fence) throw new Error('assignment missing claim fence');
+    const outcomeFence = { claimId: fence[1], claimGeneration: Number(fence[2]) };
     if (unitId === 'fail-root') {
-      await mcp('execution.work.fail', { executionId: EXECUTION_ID, workUnitId: unitId, failureCode: 'VALIDATION_FAILED', failure: 'Deterministic E2E validation failure' });
+      await mcp('execution.work.fail', { executionId: EXECUTION_ID, workUnitId: unitId, failureCode: 'VALIDATION_FAILED', failure: 'Deterministic E2E validation failure', ...outcomeFence });
     } else if (unitId === 'independent') {
       fs.writeFileSync(path.join(CWD, 'independent.txt'), 'independent completed\n');
-      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'independent completed' });
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'independent completed', ...outcomeFence });
     } else if (unitId === 'dependent') {
       throw new Error('dependent work was dispatched after its dependency failed');
     } else if (unitId === 'home') {
       fs.writeFileSync(path.join(CWD, 'home.txt'), 'HOME: ready\n');
-      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'home', result: 'HOME: ready' });
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'home', result: 'HOME: ready', ...outcomeFence });
     } else if (unitId === 'about') {
       fs.writeFileSync(path.join(CWD, 'about.txt'), 'ABOUT: ready\n');
-      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'about', result: 'ABOUT: ready' });
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'about', result: 'ABOUT: ready', ...outcomeFence });
     } else if (unitId === 'navigation-label') {
-      const chosenLabel = await handleNavigationLabel();
+      const chosenLabel = await handleNavigationLabel(outcomeFence);
       // Complete with the chosen label as the unit result. The engine inherits
       // this into the 'assemble' worker's assignment text — NO side file.
-      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'navigation-label', result: chosenLabel });
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'navigation-label', result: chosenLabel, ...outcomeFence });
     } else if (unitId === 'assemble') {
       // Inherit the chosen label from the engine-injected 'Upstream results'
       // section of THIS unit's assignment push (dependencyResultsSection). If the
@@ -509,7 +512,7 @@ async function doUnit(unitId) {
       const home = fs.readFileSync(path.join(CWD, 'home.txt'), 'utf8').trim();
       const about = fs.readFileSync(path.join(CWD, 'about.txt'), 'utf8').trim();
       fs.writeFileSync(path.join(CWD, 'result.txt'), home + '\n' + about + '\nLABEL: ' + chosenLabel + '\n');
-      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'assemble', result: 'assembled' });
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'assemble', result: 'assembled', ...outcomeFence });
     } else {
       log('unknown unit', unitId);
       return;

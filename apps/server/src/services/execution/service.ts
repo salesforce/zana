@@ -1,4 +1,5 @@
-import { isDurableCoordination, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SquadBundleWorkflowMetadataV1, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
+import { isDurableCoordination, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
+import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
 import { EXECUTION_RETENTION_MS, WORK_CLAIM_LEASE_MS, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
@@ -12,6 +13,7 @@ import { ExecutionDeadlineWatchdog } from './deadline-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
 import { evaluateSlotEligibility } from './routing-policy.js';
 import { transitionCircuit, type CircuitState } from './retry-policy.js';
+import { usageCursorIdentity, usageRollup, validateStructuredJson, validateStructuredResult, type ExecutionUsageObservationV1, type UsageSampleKind } from './contracts.js';
 
 /** Wall-clock ceiling for a single bounded snapshot read. */
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -23,6 +25,45 @@ const ROUTE_FACTS_CIRCUIT_RESET_MS = 30_000;
 const ACTIVE_CLAIM_PAGE_SIZE = 50;
 const PROVEN_DEAD_CLAIM_REASON = 'Claim lease expired and assigned Team worker is proven dead';
 const DEAD_WORKER_PROCESSES = new Set(['exited', 'spawn-failed', 'canceled']);
+const TELEMETRY_GAP_GRACE_SAMPLES = 3;
+
+function sessionUsageCounters(stats: SessionStats | null): ExecutionUsageObservationV1['cumulative'] {
+  return stats?.tokens || stats?.costUsd !== undefined ? {
+    ...(stats?.tokens ? {
+      inputTokens: stats.tokens.input, outputTokens: stats.tokens.output,
+      cacheReadTokens: stats.tokens.cacheRead, cacheWriteTokens: stats.tokens.cacheWrite
+    } : {}),
+    ...(stats?.costUsd === undefined ? {} : { providerCostUsd: stats.costUsd })
+  } : {};
+}
+
+function usageCompleteness(stats: SessionStats | null, budget?: { maxTokens?: number; maxUsd?: number }) {
+  const requiresCost = budget?.maxUsd !== undefined;
+  const requiresTokens = budget?.maxTokens !== undefined;
+  return requiresTokens && !stats?.tokens || requiresCost && stats?.costUsd === undefined ? 'partial' as const
+    : !stats?.tokens && stats?.costUsd === undefined ? 'unavailable' as const : 'complete' as const;
+}
+
+function latestUsageObservation(record: ExecutionRecord, identity: string): ExecutionUsageObservationV1 | undefined {
+  let latest: ExecutionUsageObservationV1 | undefined;
+  for (const observation of record.usageObservations ?? []) {
+    if (usageCursorIdentity(observation) !== identity) continue;
+    if (!latest || observation.adapterEpoch > latest.adapterEpoch
+      || observation.adapterEpoch === latest.adapterEpoch && observation.sequence > latest.sequence) latest = observation;
+  }
+  return latest;
+}
+
+function matchingUsageObservation(
+  record: ExecutionRecord,
+  matches: (observation: ExecutionUsageObservationV1) => boolean
+): ExecutionUsageObservationV1 | undefined {
+  const observations = record.usageObservations ?? [];
+  for (let index = observations.length - 1; index >= 0; index -= 1) {
+    if (matches(observations[index])) return observations[index];
+  }
+  return undefined;
+}
 
 export interface ExecutionCohortBinding extends ExecutionCohortAuthority {
   executionId: string;
@@ -102,6 +143,9 @@ export interface ExecutionServiceDeps {
   routingEnforcementEnabled?: () => boolean;
   claimRecoveryObserveEnabled?: () => boolean;
   claimRecoveryEnforceEnabled?: () => boolean;
+  routeFitObserveEnabled?: () => boolean;
+  /** Main-owned TranscriptSource bridge. Renderer and agents cannot submit usage. */
+  readSessionStats?: (sessionId: string, options?: { fresh?: boolean }) => Promise<SessionStats | null>;
   resumeGrants?: ReturnType<typeof createResumeGrantStore>;
   hasLivePredecessor?: (projectId: string, ownerPrincipalIds: readonly string[]) => boolean;
   clearResumeToken?: (projectId: string, executionId: string) => void | Promise<void>;
@@ -298,6 +342,8 @@ export function dependencyResultsSection(record: ExecutionRecord, workUnitId: st
 export class ExecutionService {
   private readonly starting = new Map<string, number>();
   private readonly bindingTails = new Map<string, Promise<void>>();
+  private readonly usageTails = new Map<string, Promise<void>>();
+  private readonly usageFlights = new Map<string, Promise<void>>();
   private readonly pendingBindingOwners = new Map<string, string>();
   private readonly mintFlights = new Map<string, Promise<ReturnType<ExecutionService['mintResumeGrantOnce']> extends Promise<infer T> ? T : never>>();
   private readonly autoFinalizeTimers = new Map<string, NodeJS.Timeout>();
@@ -707,17 +753,74 @@ export class ExecutionService {
 
   async claimWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string) {
     if (binding.role !== 'worker') return deniedBound('coordinator must use execution.work.assign');
+    const budget = await this.budgetAdmission(binding.executionId);
+    if (!budget.ok) return budget;
     return this.mutateBound(binding, (record) => this.deps.store.claimWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId));
   }
 
   async assignWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId: string) {
     if (binding.role !== 'orchestrator') return deniedBound('only coordinator can assign work');
+    const budget = await this.budgetAdmission(binding.executionId);
+    if (!budget.ok) return budget;
     return this.mutateBound(binding, (record) => this.deps.store.claimWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId));
   }
 
   async heartbeatWork(binding: ExecutionCohortBinding, workUnitId: string, claimId: string, claimGeneration: number, turnCount?: number) {
     if (binding.role !== 'worker') return deniedBound('only assigned worker can heartbeat work');
     return this.mutateBound(binding, (record) => this.deps.store.heartbeatWork(record.id, record.stateVersion, binding, workUnitId, { claimId, claimGeneration, turnCount }));
+  }
+
+  /** Capture one immutable main-owned transcript usage sample. */
+  async observeSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind): Promise<void> {
+    const key = `${executionId}\0${sessionId}`;
+    const flightKey = `${key}\0${sampleKind}`;
+    const existing = this.usageFlights.get(flightKey);
+    if (existing) return existing;
+    const flight = this.serializeUsage(key, () => this.captureSessionUsage(executionId, sessionId, sampleKind));
+    this.usageFlights.set(flightKey, flight);
+    void flight.finally(() => {
+      if (this.usageFlights.get(flightKey) === flight) this.usageFlights.delete(flightKey);
+    }).catch(() => undefined);
+    return flight;
+  }
+
+  private async captureSessionUsage(executionId: string, sessionId: string, sampleKind: UsageSampleKind): Promise<void> {
+    if (!this.deps.readSessionStats) return;
+    const record = await this.deps.store.get(executionId);
+    if (!record || isResumeGrantTerminal(record.state)) return;
+    let lifecycle: ExtractedLifecycle | undefined;
+    try { lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)); } catch (error) {
+      this.deps.logError?.(`execution usage lifecycle failed (execution=${executionId}, session=${sessionId}, sample=${sampleKind})`, error);
+    }
+    const worker = lifecycle?.workers?.find((candidate) => candidate.sessionId === sessionId);
+    const role = lifecycle?.orchestratorSessionId === sessionId ? 'orchestrator' as const : 'worker' as const;
+    const slotId = role === 'orchestrator' ? 'orchestrator' : worker?.slotId ?? 'main:unmapped';
+    const unit = role === 'worker' ? record.workUnits?.find((candidate) => candidate.assignedSlotId === slotId && candidate.state === 'CLAIMED') : undefined;
+    const resolved = record.resolvedModels.find((candidate) => candidate.slotId === slotId);
+    let stats: SessionStats | null = null;
+    try { stats = await this.deps.readSessionStats(sessionId, { fresh: sampleKind === 'terminal' }); } catch (error) {
+      this.deps.logError?.(`execution usage stats failed (execution=${executionId}, session=${sessionId}, sample=${sampleKind})`, error);
+    }
+    const provider = resolved?.provider ?? 'unknown';
+    const model = stats?.model ?? resolved?.model;
+    const routingIdentity = `${slotId}:${provider}:${model ?? 'unknown'}`;
+    const cursorKey = usageCursorIdentity({ sessionId, provider, model, routingIdentity });
+    const retainedPrevious = latestUsageObservation(record, cursorKey);
+    const previous = retainedPrevious ?? record.usageBaseline?.cursors?.find((cursor) => usageCursorIdentity(cursor) === cursorKey);
+    const cumulative = sessionUsageCounters(stats);
+    const completeness = usageCompleteness(stats, record.request.policy?.usageBudget);
+    const duplicate = completeness !== 'complete' || !retainedPrevious ? undefined : matchingUsageObservation(record, (item) => usageCursorIdentity(item) === cursorKey && item.sampleKind === sampleKind
+       && item.workUnitId === unit?.id && item.workAttempt === (unit?.attempt ?? 0) && item.claimGeneration === (unit?.claimGeneration ?? 0)
+       && JSON.stringify(item.cumulative) === JSON.stringify(cumulative) && item.completeness === completeness);
+    const sequence = duplicate?.sequence ?? (previous?.sequence ?? 0) + 1;
+    const observation: Omit<ExecutionUsageObservationV1, 'version' | 'delta'> = {
+      observationId: duplicate?.observationId ?? `${executionId}:usage:${sessionId}:${sequence}`, executionAttempt: record.attempt, role, slotId, sessionId,
+      ...(unit ? { workUnitId: unit.id } : {}), workAttempt: unit?.attempt ?? 0, claimGeneration: unit?.claimGeneration ?? 0,
+      adapterEpoch: previous?.adapterEpoch ?? 0, sampleKind, sequence, provider,
+      ...(model ? { model } : {}), routingIdentity, cumulative, completeness,
+      observedAt: duplicate?.observedAt ?? (this.deps.now ?? Date.now)(), ...(completeness !== 'complete' ? { gap: 'missing' as const } : {})
+    };
+    await this.deps.store.appendUsageObservation(record.id, observation, { telemetryGapGraceSamples: TELEMETRY_GAP_GRACE_SAMPLES });
   }
 
   /**
@@ -732,6 +835,9 @@ export class ExecutionService {
     const record = await this.getBound(binding);
     if (!record) return deniedBound('execution not found for bound cohort');
     if (isResumeGrantTerminal(record.state)) return terminalBound(record);
+    if (record.resourceBlock) return { ok: false as const, code: 'RESOURCE_EXHAUSTED', message: record.resourceBlock.reason };
+    const budget = this.checkUsageBudget(record);
+    if (budget) return { ok: false as const, code: 'RESOURCE_EXHAUSTED', message: budget };
     // Defensive plan-readiness gate (generic-tool invariant): NEVER trust that a
     // producer registered a plan before dispatching. With no work units the store
     // dispatch is a SILENT no-op (store.ts) — a caller that skipped
@@ -753,11 +859,42 @@ export class ExecutionService {
     }
   }
 
-  async completeWork(binding: ExecutionCohortBinding, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false) {
+  async completeWork(binding: ExecutionCohortBinding, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false, structuredResult?: unknown) {
     if (binding.role !== 'worker') return deniedBound('only assigned worker can complete work');
+    if (binding.principalId) {
+      try { await this.observeSessionUsage(binding.executionId, binding.principalId, 'outcome'); } catch (error) {
+        this.deps.logError?.(`execution usage capture failed for ${binding.executionId}`, error);
+      }
+    }
+    const before = await this.getBound(binding);
+    const unit = before?.workUnits?.find((candidate) => candidate.id === workUnitId);
+    if (structuredResult !== undefined && unit && !unit.output) return invalidBound(new Error('structuredResult requires a work output declaration'));
+    if (unit?.output) {
+      const bounded = validateStructuredJson(structuredResult);
+      const validation = structuredResult === undefined
+        ? { ok: false as const, reason: 'structuredResult is required by work output declaration' }
+        : !bounded.ok ? bounded : validateStructuredResult(unit.output, bounded.value);
+      if (!validation.ok) {
+        if (!claim) return invalidBound(new Error('claim fence required for structured output repair'));
+        const canonicalPayload = bounded.ok ? bounded.canonical : `<invalid:${validation.reason}>`;
+        const digest = `sha256:${createHash('sha256').update(`${validation.reason}\0${canonicalPayload}`).digest('hex')}`;
+        try {
+          const repair = await this.deps.store.recordOutputRepair(before!.id, before!.stateVersion, workUnitId, claim, digest);
+          if (repair.outcome === 'accepted' && binding.principalId) {
+            try { (this.deps.deliverToWorker ?? this.deps.replyToSession)(binding.principalId, `TYPED_OUTPUT_REPAIR: work unit ${workUnitId}: ${validation.reason}`); } catch {}
+          }
+          if (repair.outcome === 'exhausted') {
+            await this.cascadeDispatch(repair.record.id, binding.slotId);
+            await this.maybeAutoFinalize(repair.record.id);
+            return { ok: false as const, code: 'VALIDATION_FAILED', message: 'structured output repair limit exhausted', value: repair.record };
+          }
+          return { ok: false as const, code: 'TYPED_OUTPUT_REPAIR', message: validation.reason, value: repair.record };
+        } catch (error) { return invalidBound(error); }
+      }
+    }
     const outcome = await this.mutateBound(binding, (record) => claim
-      ? this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result, claim, requireClaim)
-      : this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result, undefined, requireClaim));
+      ? this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result, claim, requireClaim, structuredResult)
+      : this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result, undefined, requireClaim, structuredResult));
     // Deprioritize the just-completed slot: it's still mid-turn winding down, and
     // idle peers should take the next unit before it. It stays eligible (falls
     // back to it when it's the only free worker), and the idle-gated push keeps a
@@ -795,12 +932,12 @@ export class ExecutionService {
           if (units.every((unit) => unit.state === 'COMPLETED')) {
              const evidence = await this.terminalEvidence(record);
              const summary = deterministicTerminalSummary({ ...record, state: 'COMPLETED' }, evidence.artifacts, evidence.events);
-             terminal = await this.deps.store.completeExecution(record.id, record.stateVersion, summary);
+             terminal = await this.deps.store.completeExecution(record.id, record.stateVersion, summary, evidence.artifacts, this.deps.routeFitObserveEnabled?.() === true);
           } else if (units.some((unit) => unit.state === 'FAILED')
             && units.every((unit) => unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')) {
              const evidence = await this.terminalEvidence(record);
              terminal = await this.deps.store.failExecution(record.id, record.stateVersion,
-               deterministicTerminalSummary({ ...record, state: 'FAILED' }, evidence.artifacts, evidence.events));
+               deterministicTerminalSummary({ ...record, state: 'FAILED' }, evidence.artifacts, evidence.events), evidence.artifacts, this.deps.routeFitObserveEnabled?.() === true);
           } else {
             return;
           }
@@ -838,7 +975,7 @@ export class ExecutionService {
       this.deps.artifacts.list(record.id, record.projectId),
       this.deps.store.eventsInProject(record.projectId, record.id, Math.max(0, (record.lastEventSequence ?? 0) - 100), 100)
     ]);
-    return { artifacts: artifacts.slice(0, 100), events: eventPage.events };
+    return { artifacts: artifacts.filter((artifact) => artifact.attempt === record.attempt).slice(0, 100), events: eventPage.events };
   }
 
   /**
@@ -852,6 +989,7 @@ export class ExecutionService {
     try {
       const existing = await this.deps.store.get(executionId);
       if (!existing) return;
+      if (existing.resourceBlock || this.checkUsageBudget(existing)) return;
       const routed = await this.refreshRouteFacts(existing);
       const { record, assignments } = await this.deps.store.dispatchReady(routed.id, {
         ...(deprioritizeSlotId ? { deprioritizeSlotId } : {}), enforceRouting: this.deps.routingEnforcementEnabled?.() === true
@@ -859,6 +997,24 @@ export class ExecutionService {
       await this.pushAssignments(record, assignments);
       if (this.deps.routingEnforcementEnabled?.() === true) await this.maybeAutoFinalize(record.id);
     } catch { /* best-effort */ }
+  }
+
+  private async budgetAdmission(executionId: string) {
+    const record = await this.deps.store.get(executionId);
+    if (!record) return deniedBound('execution not found for bound cohort');
+    const message = record.resourceBlock?.reason ?? this.checkUsageBudget(record);
+    return message ? { ok: false as const, code: 'RESOURCE_EXHAUSTED', message } : { ok: true as const, value: record };
+  }
+
+  private checkUsageBudget(record: ExecutionRecord): string | undefined {
+    const budget = record.request.policy?.usageBudget;
+    if (!budget) return;
+    const usage = usageRollup(record.usageObservations ?? [], record.usageBaseline);
+    const tokens = usage.inputTokens === undefined && usage.outputTokens === undefined && usage.cacheReadTokens === undefined && usage.cacheWriteTokens === undefined
+      ? undefined
+      : (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+    if (budget.maxTokens !== undefined && tokens !== undefined && tokens >= budget.maxTokens) return `execution token budget exhausted (${tokens}/${budget.maxTokens})`;
+    if (budget.maxUsd !== undefined && usage.providerCostUsd !== undefined && usage.providerCostUsd >= budget.maxUsd) return `execution provider cost budget exhausted (${usage.providerCostUsd}/${budget.maxUsd})`;
   }
 
   private async refreshRouteFacts(record: ExecutionRecord): Promise<ExecutionRecord> {
@@ -949,7 +1105,7 @@ export class ExecutionService {
       try {
         const record = await this.deps.store.releaseUndelivered(executionId, assignments);
         if (record.coordinatorState === 'PARKED') {
-          await this.wakeCoordinator(record, `HUMAN_BLOCKER: ${assignments.length} work assignment(s) could not be delivered; retry dispatch or recover workers.`);
+        await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: ${assignments.length} work assignment(s) could not be delivered; retry dispatch or recover workers.`, stateOrClaimGeneration: record.state });
         }
         return;
       } catch (error) {
@@ -969,7 +1125,7 @@ export class ExecutionService {
     if (outcome.ok) {
       await this.cascadeDispatch(outcome.value.id, binding.slotId);
       if (failureCode === 'SEMANTIC_CONFLICT' || failureCode === 'POLICY_ESCALATION') {
-        await this.wakeCoordinator(outcome.value, `${failureCode}: work unit ${workUnitId} requires coordinator resolution.`);
+        await this.wakeCoordinator(outcome.value, { cause: failureCode, message: `${failureCode}: work unit ${workUnitId} requires coordinator resolution.`, workUnitId, stateOrClaimGeneration: String(claim?.claimGeneration ?? outcome.value.state) });
       } else {
         await this.maybeAutoFinalize(outcome.value.id);
       }
@@ -984,7 +1140,7 @@ export class ExecutionService {
       : this.deps.store.blockWork(record.id, record.stateVersion, binding, workUnitId, blocker, undefined, requireClaim));
     if (result.ok) {
       const record = result.value;
-      await this.wakeCoordinator(record, `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`);
+      await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration: String(claim?.claimGeneration ?? record.state) });
       const questionData = blocker.options ? buildInboxQuestion({ options: blocker.options }, true) : {};
       void this.deps.inbox?.append({
         projectId: binding.projectId,
@@ -1010,6 +1166,8 @@ export class ExecutionService {
   }
 
   async retryWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string) {
+    const admission = await this.budgetAdmission(binding.executionId);
+    if (!admission.ok) return admission;
     const outcome = await this.mutateBound(binding, (record) => this.deps.store.retryWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId));
     if (outcome.ok) await this.cascadeDispatch(outcome.value.id);
     return outcome;
@@ -1085,7 +1243,10 @@ export class ExecutionService {
 
   async completeByCoordinatorBinding(binding: ExecutionCohortBinding, correlationExecutionId: string | undefined, summary: string) {
     if (binding.role !== 'orchestrator' || correlationExecutionId && correlationExecutionId !== binding.executionId) return deniedBound('execution not found for bound coordinator');
-    const result = await this.mutateBound(binding, (record) => this.deps.store.completeExecution(record.id, record.stateVersion, summary));
+    if (binding.principalId) await this.observeSessionUsage(binding.executionId, binding.principalId, 'terminal').catch((error) => this.deps.logError?.(`execution usage capture failed for ${binding.executionId}`, error));
+    const current = await this.getBound(binding);
+    const evidence = current ? await this.terminalEvidence(current) : { artifacts: [], events: [] };
+    const result = await this.mutateBound(binding, (record) => this.deps.store.completeExecution(record.id, record.stateVersion, summary, evidence.artifacts, this.deps.routeFitObserveEnabled?.() === true));
     if (result.ok) {
       await this.cleanupTerminal(result.value);
       await this.deps.cancelTeamLaunch(result.value.callerPrincipalId, result.value.teamLaunchRequestId);
@@ -1253,7 +1414,7 @@ export class ExecutionService {
     try {
       const updated = await this.deps.store.setPolicyResult(record.id, record.stateVersion, result);
       if (result.status === 'BLOCKED' || result.status === 'FAILED') {
-        await this.wakeCoordinator(updated, `POLICY_ESCALATION: optional policy is ${result.status}.`);
+        await this.wakeCoordinator(updated, { cause: 'POLICY_ESCALATION', message: `POLICY_ESCALATION: optional policy is ${result.status}.`, stateOrClaimGeneration: updated.state });
       }
       return { ok: true as const, value: updated };
     } catch (error) {
@@ -1261,11 +1422,11 @@ export class ExecutionService {
     }
   }
 
-  private async wakeCoordinator(record: ExecutionRecord, message: string): Promise<void> {
+  private async wakeCoordinator(record: ExecutionRecord, wake: string | Parameters<ExecutionServiceDeps['store']['queueCoordinatorWake']>[1]): Promise<void> {
     const logError = this.deps.logError ?? ((context: string, error: unknown) => console.error(context, error));
     let current: ExecutionRecord;
     try {
-      current = await this.deps.store.queueCoordinatorWake(record.id, message);
+      current = await this.deps.store.queueCoordinatorWake(record.id, wake);
     } catch (error) {
       logError(`execution coordinator wake persistence failed for ${record.id}`, error);
       return;
@@ -1400,7 +1561,10 @@ export class ExecutionService {
       return { ok: false as const, code: 'DENIED', message: 'only the Team coordinator can complete this execution' };
     }
     try {
-      const completed = await this.deps.store.completeExecution(record.id, record.stateVersion, summary.trim());
+      await this.observeSessionUsage(record.id, callerPrincipalId, 'terminal').catch((error) => this.deps.logError?.(`execution usage capture failed for ${record.id}`, error));
+      const current = (await this.deps.store.get(record.id)) ?? record;
+      const evidence = await this.terminalEvidence(current);
+      const completed = await this.deps.store.completeExecution(current.id, current.stateVersion, summary.trim(), evidence.artifacts, this.deps.routeFitObserveEnabled?.() === true);
       await this.cleanupTerminal(completed);
       await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
       return { ok: true as const, value: completed };
@@ -1462,11 +1626,20 @@ export class ExecutionService {
   }
 
   private async mutateBound(binding: ExecutionCohortBinding, operation: (record: ExecutionRecord) => Promise<ExecutionRecord>) {
-    const record = await this.getBound(binding);
-    if (!record) return deniedBound('execution not found for bound cohort');
-    if (isResumeGrantTerminal(record.state)) return terminalBound(record);
-    try { return { ok: true as const, value: await operation(record) }; }
-    catch (error) { return error instanceof Error && /another slot|only coordinator/.test(error.message) ? deniedBound(error.message) : invalidBound(error); }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const record = await this.getBound(binding);
+      if (!record) return deniedBound('execution not found for bound cohort');
+      if (isResumeGrantTerminal(record.state)) return terminalBound(record);
+      try { return { ok: true as const, value: await operation(record) }; }
+      catch (error) {
+        // Bound workers do not choose expectedStateVersion; main reads it for
+        // them. Parallel exact claim-fenced outcomes may read same version, so
+        // refresh once. Store claimId+generation checks still reject stale work.
+        if (attempt === 0 && error instanceof Error && error.message === 'stale execution state') continue;
+        return error instanceof Error && /another slot|only coordinator/.test(error.message) ? deniedBound(error.message) : invalidBound(error);
+      }
+    }
+    return invalidBound(new Error('stale execution state'));
   }
 
   private async mutateOwnedWork(
@@ -1866,6 +2039,21 @@ export class ExecutionService {
     } finally {
       release();
       if (this.bindingTails.get(executionId) === tail) this.bindingTails.delete(executionId);
+    }
+  }
+
+  private async serializeUsage<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.usageTails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => current);
+    this.usageTails.set(key, tail);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.usageTails.get(key) === tail) this.usageTails.delete(key);
     }
   }
 

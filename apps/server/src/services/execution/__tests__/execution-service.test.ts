@@ -188,6 +188,269 @@ describe('execution claim recovery', () => {
   }));
 });
 
+describe('execution usage and typed completion', () => {
+  it('retries parallel exact claim-fenced outcomes once after main-owned CAS collision', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new ExecutionService(deps(filePath, { store }));
+    await service.start('owner', 'project-1', request);
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [
+      { id: 'a', title: 'A', task: 'A', dependencies: [], readOnly: true },
+      { id: 'b', title: 'B', task: 'B', dependencies: [], readOnly: true }
+    ]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'a');
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-2' }, 'b');
+    const [a, b] = record.workUnits!;
+    const outcomes = await Promise.all([
+      service.completeWork({ executionId: record.id, projectId: record.projectId, role: 'worker', slotId: 'slot-1' }, 'a', 'done', { claimId: a.claimId!, claimGeneration: a.claimGeneration! }, true),
+      service.completeWork({ executionId: record.id, projectId: record.projectId, role: 'worker', slotId: 'slot-2' }, 'b', 'done', { claimId: b.claimId!, claimGeneration: b.claimGeneration! }, true)
+    ]);
+    expect(outcomes).toEqual([expect.objectContaining({ ok: true }), expect.objectContaining({ ok: true })]);
+  }));
+  it('blocks new claims at token budget and never treats unknown usage as zero spend', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new ExecutionService(deps(filePath, { store }));
+    await service.start('owner', 'project-1', { ...request, policy: { usageBudget: { maxTokens: 10 } } });
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    const worker = { executionId: record.id, projectId: record.projectId, role: 'worker' as const, slotId: 'slot-1' };
+    await store.appendUsageObservation(record.id, {
+      observationId: 'o', executionAttempt: 1, role: 'worker', slotId: 'slot-1', sessionId: 's', workAttempt: 0, claimGeneration: 0,
+      adapterEpoch: 0, sampleKind: 'heartbeat', sequence: 1, provider: 'p', routingIdentity: 'r', cumulative: { inputTokens: 10 }, completeness: 'complete', observedAt: 1
+    });
+    await expect(service.claimWork(worker, 'unit')).resolves.toMatchObject({ ok: false, code: 'RESOURCE_EXHAUSTED' });
+
+    const unknownStore = createExecutionStore({ filePath: `${filePath}.unknown`, id: () => 'execution-2' });
+    const unknownService = new ExecutionService(deps(`${filePath}.unknown`, { store: unknownStore }));
+    await unknownService.start('owner', 'project-1', { ...request, launchRequestId: 'unknown', policy: { usageBudget: { maxTokens: 10 } } });
+    let unknown = (await unknownStore.get('execution-2'))!;
+    unknown = await unknownStore.registerPlan(unknown.id, unknown.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    await expect(unknownService.claimWork({ ...worker, executionId: unknown.id }, 'unit')).resolves.toMatchObject({ ok: true });
+  }));
+
+  it('captures main-owned deltas and blocks after persistent telemetry gap grace', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const readSessionStats = vi.fn(async () => null);
+    const service = new ExecutionService(deps(filePath, {
+      store, readSessionStats,
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'lead', workers: [{ slotId: 'slot-1', sessionId: 'worker', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, policy: { usageBudget: { maxTokens: 100 } } });
+    for (let index = 0; index < 3; index += 1) await service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    expect(await store.get('execution-1')).toMatchObject({ state: 'BLOCKED', telemetryGapCount: 3, usageObservations: [{ completeness: 'partial' }, { completeness: 'partial' }, { completeness: 'partial' }], resourceBlock: { kind: 'telemetry-unavailable' } });
+  }));
+
+  it('logs lifecycle and stats failures with bounded execution context', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const logError = vi.fn();
+    const service = new ExecutionService(deps(filePath, {
+      store, logError,
+      getTeamLaunch: async () => { throw new Error('lifecycle failed'); },
+      readSessionStats: async () => { throw new Error('stats failed'); }
+    }));
+    await service.start('owner', 'project-1', request);
+    await service.observeSessionUsage('execution-1', 'worker', 'terminal');
+    expect(logError.mock.calls.map(([message]) => message)).toEqual([
+      'execution usage lifecycle failed (execution=execution-1, session=worker, sample=terminal)',
+      'execution usage stats failed (execution=execution-1, session=worker, sample=terminal)'
+    ]);
+  }));
+
+  it('replays unchanged heartbeat exactly and captures USD for at-budget admission', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const readSessionStats = vi.fn(async () => ({ tokens: { input: 4, output: 1, cacheRead: 0, cacheWrite: 0 }, costUsd: 2, files: [], queue: [] }));
+    let now = 10;
+    const service = new ExecutionService(deps(filePath, {
+      store, readSessionStats, now: () => now++,
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, policy: { usageBudget: { maxUsd: 2 } } });
+    await service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    await service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    await service.observeSessionUsage('execution-1', 'worker', 'outcome');
+    await service.observeSessionUsage('execution-1', 'worker', 'outcome');
+    const record = (await store.get('execution-1'))!;
+    expect(record.usageObservations).toHaveLength(2);
+    expect(record.usageObservations?.[0]).toMatchObject({ cumulative: { providerCostUsd: 2 }, completeness: 'complete' });
+    expect(record.state).toBe('BLOCKED');
+    expect(record.resourceBlock).toMatchObject({ kind: 'usage-budget' });
+  }));
+
+  it('serializes concurrent usage capture for one session', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let releaseFirst!: () => void;
+    const firstStats = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let statsCalls = 0;
+    const service = new ExecutionService(deps(filePath, {
+      store,
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker', projectId: 'project-1' }] }),
+      readSessionStats: async () => {
+        statsCalls += 1;
+        if (statsCalls === 1) await firstStats;
+        return { tokens: { input: statsCalls, output: 0, cacheRead: 0, cacheWrite: 0 }, files: [], queue: [] };
+      }
+    }));
+    await service.start('owner', 'project-1', request);
+
+    const heartbeat = service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    await vi.waitFor(() => expect(statsCalls).toBe(1));
+    const outcome = service.observeSessionUsage('execution-1', 'worker', 'outcome');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst();
+
+    await expect(Promise.all([heartbeat, outcome])).resolves.toEqual([undefined, undefined]);
+    const observations = (await store.get('execution-1'))?.usageObservations ?? [];
+    expect(observations.map(({ sequence, sampleKind }) => ({ sequence, sampleKind }))).toEqual([
+      { sequence: 1, sampleKind: 'heartbeat' },
+      { sequence: 2, sampleKind: 'outcome' }
+    ]);
+    expect(new Set(observations.map((observation) => observation.observationId)).size).toBe(2);
+  }));
+
+  it('coalesces queued sample kinds while keeping different sessions concurrent', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let releaseWorker!: () => void;
+    const workerStats = new Promise<void>((resolve) => { releaseWorker = resolve; });
+    const calls: string[] = [];
+    const service = new ExecutionService(deps(filePath, {
+      store,
+      getTeamLaunch: async () => ({ workers: [
+        { slotId: 'slot-1', sessionId: 'worker', projectId: 'project-1' },
+        { slotId: 'slot-2', sessionId: 'peer', projectId: 'project-1' }
+      ] }),
+      readSessionStats: async (sessionId) => {
+        calls.push(sessionId);
+        if (sessionId === 'worker') await workerStats;
+        return { tokens: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 }, files: [], queue: [] };
+      }
+    }));
+    await service.start('owner', 'project-1', request);
+
+    const first = service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    await vi.waitFor(() => expect(calls).toEqual(['worker']));
+    const duplicate = service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    const outcome = service.observeSessionUsage('execution-1', 'worker', 'outcome');
+    const duplicateOutcome = service.observeSessionUsage('execution-1', 'worker', 'outcome');
+    await expect(service.observeSessionUsage('execution-1', 'peer', 'heartbeat')).resolves.toBeUndefined();
+    expect(calls).toEqual(['worker', 'peer']);
+    releaseWorker();
+    await expect(Promise.all([first, duplicate, outcome, duplicateOutcome])).resolves.toEqual([undefined, undefined, undefined, undefined]);
+    expect(calls).toEqual(['worker', 'peer', 'worker']);
+  }));
+
+  it('replays unchanged cost-only samples without requiring token counters', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new ExecutionService(deps(filePath, {
+      store, readSessionStats: async () => ({ costUsd: 1.25, files: [], queue: [] }),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, policy: { usageBudget: { maxUsd: 10 } } });
+    await service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    await service.observeSessionUsage('execution-1', 'worker', 'heartbeat');
+    expect((await store.get('execution-1'))?.usageObservations).toHaveLength(1);
+  }));
+
+  it('uses stats model consistently after compaction without recounting session totals', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', maxUsageObservationsPerExecution: 1 });
+    const service = new ExecutionService(deps(filePath, {
+      store, readSessionStats: async () => ({ model: 'actual-model', tokens: { input: 15, output: 0, cacheRead: 0, cacheWrite: 0 }, files: [], queue: [] }),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', request);
+    await store.replaceResolvedModels('execution-1', [{ slotId: 'slot-1', provider: 'provider', model: 'configured-model' } as never]);
+    await store.appendUsageObservation('execution-1', {
+      observationId: 'old', executionAttempt: 1, role: 'worker', slotId: 'slot-1', sessionId: 'worker', workAttempt: 0, claimGeneration: 0,
+      adapterEpoch: 0, sampleKind: 'heartbeat', sequence: 1, provider: 'provider', model: 'actual-model', routingIdentity: 'slot-1:provider:actual-model', cumulative: { inputTokens: 10 }, completeness: 'complete', observedAt: 1
+    });
+    await store.appendUsageObservation('execution-1', {
+      observationId: 'other', executionAttempt: 1, role: 'worker', slotId: 'other', sessionId: 'other', workAttempt: 0, claimGeneration: 0,
+      adapterEpoch: 0, sampleKind: 'heartbeat', sequence: 1, provider: 'provider', routingIdentity: 'other:provider:unknown', cumulative: { inputTokens: 1 }, completeness: 'complete', observedAt: 2
+    });
+    await service.observeSessionUsage('execution-1', 'worker', 'outcome');
+    const record = (await store.get('execution-1'))!;
+    expect(record.usageObservations?.find((item) => item.sessionId === 'worker')).toMatchObject({ model: 'actual-model', routingIdentity: 'slot-1:provider:actual-model', sequence: 2, delta: { inputTokens: 5 } });
+  }));
+
+  it('atomically blocks when concurrent samples cross token budget and telemetry gap thresholds', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    await new ExecutionService(deps(filePath, { store })).start('owner', 'project-1', { ...request, policy: { usageBudget: { maxTokens: 10 } } });
+    const sample = (id: string, sessionId: string, sequence: number, tokens?: number) => ({
+      observationId: id, executionAttempt: 1, role: 'worker' as const, slotId: sessionId, sessionId, workAttempt: 0, claimGeneration: 0,
+      adapterEpoch: 0, sampleKind: 'heartbeat' as const, sequence, provider: 'p', routingIdentity: sessionId,
+      cumulative: tokens === undefined ? {} : { inputTokens: tokens }, completeness: tokens === undefined ? 'partial' as const : 'complete' as const,
+      observedAt: sequence, ...(tokens === undefined ? { gap: 'missing' as const } : {})
+    });
+    await Promise.all([
+      store.appendUsageObservation('execution-1', sample('a', 'a', 1, 6), { telemetryGapGraceSamples: 3 }),
+      store.appendUsageObservation('execution-1', sample('b', 'b', 1, 4), { telemetryGapGraceSamples: 3 })
+    ]);
+    expect(await store.get('execution-1')).toMatchObject({ state: 'BLOCKED', resourceBlock: { kind: 'usage-budget' } });
+
+    const gaps = createExecutionStore({ filePath: `${filePath}.gaps`, id: () => 'execution-2' });
+    await new ExecutionService(deps(`${filePath}.gaps`, { store: gaps })).start('owner', 'project-1', { ...request, launchRequestId: 'gaps', policy: { usageBudget: { maxTokens: 100 } } });
+    await Promise.all(['a', 'b', 'c'].map((id) => gaps.appendUsageObservation('execution-2', sample(id, id, 1), { telemetryGapGraceSamples: 3 })));
+    expect(await gaps.get('execution-2')).toMatchObject({ state: 'BLOCKED', telemetryGapCount: 3, resourceBlock: { kind: 'telemetry-unavailable' } });
+  }));
+
+  it('admits new work below USD budget', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new ExecutionService(deps(filePath, { store }));
+    await service.start('owner', 'project-1', { ...request, policy: { usageBudget: { maxUsd: 2 } } });
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    await store.appendUsageObservation(record.id, {
+      observationId: 'usd', executionAttempt: 1, role: 'worker', slotId: 'slot-1', sessionId: 'worker', workAttempt: 0, claimGeneration: 0,
+      adapterEpoch: 0, sampleKind: 'heartbeat', sequence: 1, provider: 'p', routingIdentity: 'r', cumulative: { providerCostUsd: 1.99 }, completeness: 'complete', observedAt: 1
+    });
+    await expect(service.claimWork({ executionId: record.id, projectId: record.projectId, role: 'worker', slotId: 'slot-1' }, 'unit')).resolves.toMatchObject({ ok: true });
+  }));
+
+  it('does not let telemetry persistence failure reject valid work completion', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new ExecutionService(deps(filePath, { store, readSessionStats: async () => ({ tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }, files: [], queue: [] }), getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker', projectId: 'project-1' }] }) }));
+    await service.start('owner', 'project-1', request);
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    const unit = record.workUnits![0];
+    vi.spyOn(store, 'appendUsageObservation').mockRejectedValueOnce(new Error('disk full'));
+    await expect(service.completeWork({ executionId: record.id, projectId: record.projectId, role: 'worker', slotId: 'slot-1', principalId: 'worker' }, 'unit', 'done', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true)).resolves.toMatchObject({ ok: true });
+  }));
+
+  it('requests bounded typed repairs without closing claim then completes valid structured output', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const replies: string[] = [];
+    const service = new ExecutionService(deps(filePath, { store, replyToSession: (_id, text) => { replies.push(text); return true; }, getTeamLaunch: async () => ({ orchestratorSessionId: 'lead' }) }));
+    await service.start('owner', 'project-1', request);
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true, output: { version: 1, schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false } } }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    const unit = record.workUnits![0];
+    const binding = { executionId: record.id, projectId: record.projectId, role: 'worker' as const, slotId: 'slot-1', principalId: 'worker-1' };
+    const claim = { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! };
+    await expect(service.completeWork(binding, 'unit', 'required prose', claim, true, { ok: 'yes' })).resolves.toMatchObject({ ok: false, code: 'TYPED_OUTPUT_REPAIR', value: { workUnits: [{ state: 'CLAIMED' }] } });
+    record = (await store.get(record.id))!;
+    await expect(service.completeWork(binding, 'unit', 'required prose', claim, true, { ok: true })).resolves.toMatchObject({ ok: true, value: { workUnits: [{ state: 'COMPLETED', result: 'required prose', structuredResult: { ok: true } }] } });
+    expect(replies).toContainEqual(expect.stringContaining('TYPED_OUTPUT_REPAIR:'));
+  }));
+
+  it('counts distinct invalid payloads with same reason but coalesces exact duplicate', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new ExecutionService(deps(filePath, { store, replyToSession: () => true }));
+    await service.start('owner', 'project-1', request);
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], output: { version: 1, schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false } } }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    const unit = record.workUnits![0];
+    const binding = { executionId: record.id, projectId: record.projectId, role: 'worker' as const, slotId: 'slot-1', principalId: 'worker-1' };
+    const claim = { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! };
+    await service.completeWork(binding, 'unit', 'x', claim, true, { ok: 'one' });
+    await service.completeWork(binding, 'unit', 'x', claim, true, { ok: 'one' });
+    await service.completeWork(binding, 'unit', 'x', claim, true, { ok: 'two' });
+    expect((await store.get(record.id))?.workUnits?.[0].repairDigests).toHaveLength(2);
+  }));
+});
+
 describe('KeyedColdStartSemaphore', () => {
   it('serializes same-key bursts while independent keys proceed', async () => {
     const semaphore = new KeyedColdStartSemaphore(1);
@@ -873,6 +1136,31 @@ describe('SquadExecutionService', () => {
     await expect(service.completeByCoordinator('worker-1', 'project-1', 'execution-1', 'done')).resolves.toMatchObject({ ok: false, code: 'DENIED' });
     await expect(service.completeByCoordinator('coordinator', 'project-1', 'execution-1', 'done')).resolves.toMatchObject({ ok: true, value: { state: 'COMPLETED' } });
     expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1');
+  }));
+
+  it('loads bounded artifacts for unbound coordinator completion', async () => fixture(async (filePath) => {
+    const artifacts = { list: vi.fn(async () => [{ id: 'artifact-1', executionId: 'execution-1', attempt: 1, projectId: 'project-1', name: 'report.md', mediaType: 'text/markdown', contentDigest: `sha256:${'1'.repeat(64)}`, content: 'secret', createdAt: 1 }]) };
+    const service = new SquadExecutionService(deps(filePath, { artifacts: artifacts as never, getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator' }) }));
+    await service.start('session-1', 'project-1', request);
+    const result = await service.completeByCoordinator('coordinator', 'project-1', 'execution-1', 'done');
+    expect(result).toMatchObject({ ok: true, value: { assembledResult: { artifacts: [{ name: 'report.md' }] } } });
+    expect(artifacts.list).toHaveBeenCalledWith('execution-1', 'project-1');
+  }));
+
+  it('assembles only artifacts from current execution retry attempt', async () => fixture(async (filePath) => {
+    const artifacts = { list: vi.fn(async () => [
+      { id: 'stale', executionId: 'execution-1', attempt: 1, projectId: 'project-1', name: 'stale.md', mediaType: 'text/markdown', contentDigest: `sha256:${'1'.repeat(64)}`, content: 'old', createdAt: 1 },
+      { id: 'current', executionId: 'execution-1', attempt: 2, projectId: 'project-1', name: 'current.md', mediaType: 'text/markdown', contentDigest: `sha256:${'2'.repeat(64)}`, content: 'new', createdAt: 2 }
+    ]) };
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store, artifacts: artifacts as never, getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator' }) }));
+    let record = (await store.claim({ callerPrincipalId: 'session-1', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Retry', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'work' }], resolvedModels: [] } })).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'starting');
+    record = await store.transition(record.id, record.stateVersion, 'BLOCKED', 'warning', 'retry');
+    record = await store.beginRetry(record.id, record.stateVersion);
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'running');
+    const result = await service.completeByCoordinator('coordinator', 'project-1', record.id, 'done');
+    expect(result).toMatchObject({ ok: true, value: { attempt: 2, assembledResult: { artifacts: [{ name: 'current.md' }] } } });
   }));
 
   it('allows a bound monitor to complete after its coordinator exits', async () => fixture(async (filePath) => {

@@ -2278,6 +2278,8 @@ export interface AppConfig {
   teamRoutingEnforcementEnabled?: boolean;
   /** Observe expired execution claims and recovery classifications without mutation. */
   executionClaimRecoveryObserveEnabled?: boolean;
+  /** Observe-only post-terminal routing-fit evaluator. Never changes routing. */
+  executionRouteFitObserveEnabled?: boolean;
   /** Allow main-owned recovery to fence and reclaim proven-dead execution claims. */
   executionClaimRecoveryEnforceEnabled?: boolean;
   /**
@@ -5489,6 +5491,50 @@ export interface ExecutionBoardProjection {
     rosterSlotIds: string[];
   };
   baselineMetrics?: ExecutionBaselineMetricsV1;
+  usage?: {
+    version: 1;
+    completeness: 'complete' | 'partial' | 'unavailable';
+    observationCount: number;
+    gapCount: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    providerCostUsd?: number;
+    byRole: Array<{
+      role: 'worker' | 'orchestrator';
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      providerCostUsd?: number;
+    }>;
+  };
+  resourceBlock?: { version: 1; kind: 'usage-budget' | 'telemetry-unavailable'; reason: string; blockedAt: number };
+  assembledResult?: {
+    version: 1;
+    outcome: 'success' | 'partial' | 'failure';
+    summary: string;
+    units: Array<{ id: string; title: string; state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED'; result?: string; failureCode?: string }>;
+    failures: Array<{ workUnitId: string; code: string }>;
+    artifacts: Array<{ name: string; mediaType: string; contentDigest: string }>;
+    policy?: { status: string; summary: string };
+    verification: Array<{ workUnitId: string; checks: string[] }>;
+    usage: NonNullable<ExecutionBoardProjection['usage']>;
+    digest: string;
+  };
+  routeFitProposal?: {
+    version: 1;
+    evaluatorVersion: string;
+    active: false;
+    outcome: 'success' | 'partial' | 'failure';
+    fit: 'underpowered' | 'appropriate' | 'overpowered' | 'indeterminate';
+    reason: string;
+    evaluatedAt: number;
+    samples: number;
+    selected: Array<{ workUnitId: string; slotId?: string; provider?: string; model?: string }>;
+    proposedRouting?: { minimumLevel?: 'low' | 'medium' | 'high' | 'extra-high' };
+  };
   currentBlocker?: {
     id: string;
     workUnitId: string;

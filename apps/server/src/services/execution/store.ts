@@ -15,6 +15,25 @@ import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
 import { normalizeExecutionPlan } from '../launch/preflight.js';
 import { evaluateSlotEligibility, type WorkUnitRoutingV1 } from './routing-policy.js';
 import { MODEL_PRICING_CATALOG_ID, MODEL_PRICING_CATALOG_VERSION } from './model-pricing-catalog.js';
+import {
+  assembleExecutionResult,
+  hasOnlyKeys,
+  MAX_EXECUTION_PLAN_BYTES,
+  evaluateRouteFit,
+  usageCursorIdentity,
+  usageRollup,
+  usageIdentity,
+  usageIdentityDigest,
+  usageObservationFingerprint,
+  validOutputDeclaration,
+  type CoordinatorWakeCause,
+  type CoordinatorWakeV1,
+  type ExecutionAssembledResultV1,
+  type ExecutionUsageObservationV1,
+  type ExecutionUsageBaselineV1,
+  type RouteFitProposalV1,
+  type WorkOutputDeclarationV1
+} from './contracts.js';
 
 export type ExecutionState = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
 export type ExecutionWorkUnitState = 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
@@ -36,6 +55,7 @@ export interface ExecutionWorkUnitInput {
   verification?: string[];
   readOnly?: boolean;
   routing?: WorkUnitRoutingV1;
+  output?: WorkOutputDeclarationV1;
 }
 
 export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
@@ -53,6 +73,8 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   failureCode?: ExecutionFailureCode;
   failure?: string;
   result?: string;
+  structuredResult?: unknown;
+  repairDigests?: string[];
   history: Array<{ action: 'claimed' | 'released' | 'retried' | 'blocked' | 'failed' | 'completed'; slotId?: string; attempt: number; at: number; detail?: string }>;
 }
 
@@ -139,9 +161,15 @@ export interface ExecutionRecord {
   blockers?: ExecutionBlocker[];
   deliveries?: ExecutionDeliveryRecord[];
   finalSummary?: string;
+  assembledResult?: ExecutionAssembledResultV1;
+  usageObservations?: ExecutionUsageObservationV1[];
+  usageBaseline?: ExecutionUsageBaselineV1;
+  resourceBlock?: { version: 1; kind: 'usage-budget' | 'telemetry-unavailable'; reason: string; blockedAt: number };
+  routeFitProposal?: RouteFitProposalV1;
+  telemetryGapCount?: number;
   /** Coordinator intentionally stopped taking routine turns after initial dispatch. */
   coordinatorState?: 'ACTIVE' | 'PARKED';
-  coordinatorWakes?: Array<{ id: string; message: string; createdAt: number }>;
+  coordinatorWakes?: CoordinatorWakeV1[];
   coordinatorWakeSequence?: number;
   coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
   origin?: import('@zana-ai/zcc-domain/product').LaunchOrigin;
@@ -249,6 +277,7 @@ export interface ExecutionStoreOptions {
   maxRecords?: number;
   maxEvents?: number;
   maxEventsPerExecution?: number;
+  maxUsageObservationsPerExecution?: number;
 }
 
 export interface ActiveClaimCursor {
@@ -279,6 +308,7 @@ const MAX_WORK_UNITS = 100;
 const MAX_UNIT_LIST = 100;
 const MAX_DELIVERIES_PER_EXECUTION = 128;
 const MAX_COORDINATOR_WAKES = 100;
+export const MAX_USAGE_OBSERVATIONS_PER_EXECUTION = 1_000;
 export const MAX_ROUTING_DECISIONS_PER_EXECUTION = 256;
 const MAX_DELIVERY_TEXT_BYTES = 16 * 1024;
 const MAX_DELIVERY_ERROR_BYTES = 1024;
@@ -335,8 +365,14 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.blockers === undefined || Array.isArray(record.blockers) && record.blockers.length <= MAX_WORK_UNITS && record.blockers.every(validExecutionBlocker))
     && (record.deliveries === undefined || Array.isArray(record.deliveries) && record.deliveries.length <= MAX_DELIVERIES_PER_EXECUTION && record.deliveries.every(validExecutionDelivery))
     && (record.finalSummary === undefined || typeof record.finalSummary === 'string' && record.finalSummary.length > 0 && record.finalSummary.length <= MAX_FINAL_SUMMARY)
+    && (record.assembledResult === undefined || validAssembledResult(record.assembledResult))
+    && (record.usageObservations === undefined || Array.isArray(record.usageObservations) && record.usageObservations.length <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION && record.usageObservations.every(validUsageObservation))
+    && (record.usageBaseline === undefined || validUsageRollup(record.usageBaseline))
+    && (record.resourceBlock === undefined || validResourceBlock(record.resourceBlock))
+    && (record.routeFitProposal === undefined || validRouteFitProposal(record.routeFitProposal))
+    && (record.telemetryGapCount === undefined || validNonNegativeInteger(record.telemetryGapCount))
     && (record.coordinatorState === undefined || record.coordinatorState === 'ACTIVE' || record.coordinatorState === 'PARKED')
-    && (record.coordinatorWakes === undefined || Array.isArray(record.coordinatorWakes) && record.coordinatorWakes.length <= MAX_COORDINATOR_WAKES && record.coordinatorWakes.every((wake) => validString(wake.id) && validString(wake.message) && typeof wake.createdAt === 'number'))
+    && (record.coordinatorWakes === undefined || Array.isArray(record.coordinatorWakes) && record.coordinatorWakes.length <= MAX_COORDINATOR_WAKES && record.coordinatorWakes.every(validCoordinatorWake))
     && (record.coordinatorWakeSequence === undefined || Number.isInteger(record.coordinatorWakeSequence) && record.coordinatorWakeSequence >= 0)
     && (record.coordinationMode === undefined || record.coordinationMode === 'interactive-team' || record.coordinationMode === 'autonomous-team' || record.coordinationMode === 'job-team' || record.coordinationMode === 'structured' || record.coordinationMode === 'freeform')
     && (record.origin === undefined || record.origin === 'explicit' || record.origin === 'scheduled' || record.origin === 'goal')
@@ -354,6 +390,7 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.verification === undefined || Array.isArray(unit.verification) && unit.verification.length <= MAX_UNIT_LIST && unit.verification.every(validString))
     && (unit.readOnly === undefined || typeof unit.readOnly === 'boolean')
     && (unit.routing === undefined || validRouting(unit.routing))
+    && (unit.output === undefined || validOutputDeclaration(unit.output))
     && (unit.state === 'PENDING' || unit.state === 'READY' || unit.state === 'CLAIMED' || unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED')
     && (unit.assignedSlotId === undefined || validString(unit.assignedSlotId)) && Number.isInteger(unit.attempt) && (unit.attempt ?? -1) >= 0
     && (unit.claimGeneration === undefined || validNonNegativeInteger(unit.claimGeneration))
@@ -367,6 +404,8 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.turnCount === undefined || validNonNegativeInteger(unit.turnCount))
     && (unit.failureCode === undefined || failureCodes.has(unit.failureCode))
     && (unit.failure === undefined || validString(unit.failure)) && (unit.result === undefined || validString(unit.result))
+    && (unit.structuredResult === undefined || validStructuredJson(unit.structuredResult))
+    && (unit.repairDigests === undefined || Array.isArray(unit.repairDigests) && unit.repairDigests.length <= 2 && unit.repairDigests.every(validDigest))
     && Array.isArray(unit.history) && unit.history.length <= MAX_UNIT_LIST * 10;
 }
 
@@ -464,6 +503,102 @@ function validRoutingDecision(value: unknown): value is RoutingDecisionV1 {
       !!candidate && validString(candidate.slotId) && (candidate.status === 'PASS' || candidate.status === 'FAIL' || candidate.status === 'UNKNOWN')
       && Array.isArray(candidate.reasons) && candidate.reasons.length <= 16 && candidate.reasons.every((reason) => validString(reason))
       && (candidate.estimatedInputUsd === undefined || typeof candidate.estimatedInputUsd === 'number' && Number.isFinite(candidate.estimatedInputUsd) && candidate.estimatedInputUsd >= 0));
+}
+
+function validUsageCounters(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const counters = value as Record<string, unknown>;
+  return ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'providerCostUsd'].every((key) =>
+    counters[key] === undefined || typeof counters[key] === 'number' && Number.isFinite(counters[key]) && (counters[key] as number) >= 0);
+}
+
+function validUsageObservation(value: unknown): value is ExecutionUsageObservationV1 {
+  if (!value || typeof value !== 'object') return false;
+  const observation = value as Partial<ExecutionUsageObservationV1>;
+  return observation.version === 1 && validString(observation.observationId) && validNonNegativeInteger(observation.executionAttempt)
+    && (observation.role === 'worker' || observation.role === 'orchestrator') && validString(observation.slotId) && validString(observation.sessionId)
+    && (observation.workUnitId === undefined || validString(observation.workUnitId)) && validNonNegativeInteger(observation.workAttempt)
+    && validNonNegativeInteger(observation.claimGeneration) && validNonNegativeInteger(observation.adapterEpoch)
+    && ['delivery', 'heartbeat', 'outcome', 'reclaim', 'terminal'].includes(observation.sampleKind ?? '')
+    && validNonNegativeInteger(observation.sequence) && validString(observation.provider)
+    && (observation.model === undefined || validString(observation.model)) && validString(observation.routingIdentity)
+    && validUsageCounters(observation.cumulative) && validUsageCounters(observation.delta)
+    && (observation.completeness === 'complete' || observation.completeness === 'partial' || observation.completeness === 'unavailable')
+    && typeof observation.observedAt === 'number' && Number.isFinite(observation.observedAt)
+    && (observation.gap === undefined || observation.gap === 'reset' || observation.gap === 'regression' || observation.gap === 'missing')
+    && (observation.replayFingerprint === undefined || validDigest(observation.replayFingerprint));
+}
+
+function validUsageRollup(value: unknown): value is ExecutionUsageBaselineV1 {
+  if (!value || typeof value !== 'object') return false;
+  const rollup = value as Partial<ExecutionUsageBaselineV1>;
+  return rollup.version === 1 && validUsageCounters(rollup)
+    && (rollup.completeness === 'complete' || rollup.completeness === 'partial' || rollup.completeness === 'unavailable')
+    && validNonNegativeInteger(rollup.observationCount) && validNonNegativeInteger(rollup.gapCount)
+    && Array.isArray(rollup.byRole) && rollup.byRole.length <= 2 && rollup.byRole.every((role) => !!role && (role.role === 'worker' || role.role === 'orchestrator') && validUsageCounters(role))
+    && (rollup.cursors === undefined || Array.isArray(rollup.cursors) && rollup.cursors.length <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION && rollup.cursors.every((cursor) => !!cursor && validString(cursor.sessionId) && validString(cursor.provider)
+      && (cursor.model === undefined || validString(cursor.model)) && validString(cursor.routingIdentity) && validNonNegativeInteger(cursor.adapterEpoch)
+      && validNonNegativeInteger(cursor.sequence) && validUsageCounters(cursor.cumulative)
+      && (cursor.observationId === undefined || validString(cursor.observationId))
+      && (cursor.replayFingerprint === undefined || validDigest(cursor.replayFingerprint))))
+    && (rollup.replays === undefined || Array.isArray(rollup.replays) && rollup.replays.length <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION
+      && rollup.replays.every((replay) => !!replay && validString(replay.observationId) && validDigest(replay.identity)
+        && validNonNegativeInteger(replay.sequence) && validDigest(replay.fingerprint)));
+}
+
+function validResourceBlock(value: unknown): value is NonNullable<ExecutionRecord['resourceBlock']> {
+  if (!value || typeof value !== 'object') return false;
+  const block = value as NonNullable<ExecutionRecord['resourceBlock']>;
+  return block.version === 1 && (block.kind === 'usage-budget' || block.kind === 'telemetry-unavailable')
+    && validString(block.reason) && typeof block.blockedAt === 'number' && Number.isFinite(block.blockedAt);
+}
+
+function validCoordinatorWake(value: unknown): value is CoordinatorWakeV1 {
+  if (!value || typeof value !== 'object') return false;
+  const wake = value as Partial<CoordinatorWakeV1>;
+  return wake.version === 1 && validString(wake.id) && validString(wake.key)
+    && ['HUMAN_BLOCKER', 'SEMANTIC_CONFLICT', 'POLICY_ESCALATION', 'TYPED_OUTPUT_REPAIR', 'TERMINAL_SYNTHESIS'].includes(wake.cause ?? '')
+    && validString(wake.message) && (wake.workUnitId === undefined || validString(wake.workUnitId))
+    && validString(wake.stateOrClaimGeneration) && typeof wake.createdAt === 'number' && Number.isFinite(wake.createdAt);
+}
+
+function validStructuredJson(value: unknown): boolean {
+  try { return Buffer.byteLength(JSON.stringify(value), 'utf8') <= 64 * 1024; } catch { return false; }
+}
+
+function validAssembledResult(value: unknown): value is ExecutionAssembledResultV1 {
+  if (!value || typeof value !== 'object') return false;
+  const result = value as Partial<ExecutionAssembledResultV1>;
+  return hasOnlyKeys(result as Record<string, unknown>, ['version', 'outcome', 'summary', 'units', 'failures', 'artifacts', 'policy', 'verification', 'usage', 'digest'])
+    && result.version === 1 && (result.outcome === 'success' || result.outcome === 'partial' || result.outcome === 'failure')
+    && typeof result.summary === 'string' && result.summary.length <= MAX_FINAL_SUMMARY && validDigest(result.digest)
+    && Array.isArray(result.units) && result.units.length <= MAX_WORK_UNITS && result.units.every((unit) => !!unit && hasOnlyKeys(unit as unknown as Record<string, unknown>, ['id', 'title', 'state', 'result', 'failureCode']) && validString(unit.id) && validString(unit.title)
+      && ['PENDING', 'READY', 'CLAIMED', 'BLOCKED', 'COMPLETED', 'FAILED', 'SKIPPED'].includes(unit.state)
+      && (unit.result === undefined || typeof unit.result === 'string' && unit.result.length <= MAX_STRING)
+      && (unit.failureCode === undefined || validString(unit.failureCode)))
+    && Array.isArray(result.failures) && result.failures.length <= MAX_WORK_UNITS && result.failures.every((failure) => !!failure && hasOnlyKeys(failure as Record<string, unknown>, ['workUnitId', 'code']) && validString(failure.workUnitId) && validString(failure.code))
+    && Array.isArray(result.artifacts) && result.artifacts.length <= 100 && result.artifacts.every((artifact) => !!artifact && hasOnlyKeys(artifact as Record<string, unknown>, ['name', 'mediaType', 'contentDigest']) && validString(artifact.name) && validString(artifact.mediaType) && validDigest(artifact.contentDigest))
+    && (result.policy === undefined || !!result.policy && hasOnlyKeys(result.policy as Record<string, unknown>, ['status', 'summary']) && validString(result.policy.status) && validString(result.policy.summary))
+    && Array.isArray(result.verification) && result.verification.length <= MAX_WORK_UNITS && result.verification.every((item) => !!item && hasOnlyKeys(item as Record<string, unknown>, ['workUnitId', 'checks']) && validString(item.workUnitId) && validStringList(item.checks))
+    && validUsageRollup(result.usage);
+}
+
+function validRouteFitProposal(value: unknown): value is RouteFitProposalV1 {
+  if (!value || typeof value !== 'object') return false;
+  const proposal = value as Partial<RouteFitProposalV1>;
+  return hasOnlyKeys(proposal as Record<string, unknown>, ['version', 'evaluatorVersion', 'active', 'outcome', 'fit', 'reason', 'evaluatedAt', 'samples', 'selected', 'proposedRouting'])
+    && proposal.version === 1 && proposal.active === false && validString(proposal.evaluatorVersion)
+    && ['success', 'partial', 'failure'].includes(proposal.outcome ?? '')
+    && ['underpowered', 'appropriate', 'overpowered', 'indeterminate'].includes(proposal.fit ?? '')
+    && validString(proposal.reason) && typeof proposal.evaluatedAt === 'number' && validNonNegativeInteger(proposal.samples)
+    && Array.isArray(proposal.selected) && proposal.selected.length <= MAX_WORK_UNITS
+    && proposal.selected.every((selected) => !!selected && typeof selected === 'object'
+      && hasOnlyKeys(selected as Record<string, unknown>, ['workUnitId', 'slotId', 'provider', 'model'])
+      && validString(selected.workUnitId) && (selected.slotId === undefined || validString(selected.slotId))
+      && (selected.provider === undefined || validString(selected.provider)) && (selected.model === undefined || validString(selected.model)))
+    && (proposal.proposedRouting === undefined || !!proposal.proposedRouting && typeof proposal.proposedRouting === 'object'
+      && hasOnlyKeys(proposal.proposedRouting as Record<string, unknown>, ['minimumLevel'])
+      && (proposal.proposedRouting.minimumLevel === undefined || ['low', 'medium', 'high', 'extra-high'].includes(proposal.proposedRouting.minimumLevel)));
 }
 
 function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshotV1 {
@@ -589,9 +724,17 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   if (options.maxEvents !== undefined && (!Number.isInteger(options.maxEvents) || options.maxEvents < 1)) {
     throw new Error('invalid execution max events');
   }
+  if (options.maxUsageObservationsPerExecution !== undefined
+    && (!Number.isInteger(options.maxUsageObservationsPerExecution) || options.maxUsageObservationsPerExecution < 1)) {
+    throw new Error('invalid execution max usage observations per execution');
+  }
   const now = options.now ?? Date.now;
   const id = options.id ?? randomUUID;
   const maxRecords = Math.min(options.maxRecords ?? MAX_RECORDS, MAX_RECORDS);
+  const maxUsageObservationsPerExecution = Math.min(
+    options.maxUsageObservationsPerExecution ?? MAX_USAGE_OBSERVATIONS_PER_EXECUTION,
+    MAX_USAGE_OBSERVATIONS_PER_EXECUTION
+  );
   const maxEvents = Math.min(options.maxEvents ?? MAX_EVENTS, MAX_EVENTS);
   const maxEventsPerExecution = Math.min(options.maxEventsPerExecution ?? MAX_EVENTS_PER_EXECUTION, MAX_EVENTS_PER_EXECUTION);
   // Ensure the store directory exists once, at construction — not on every
@@ -608,11 +751,16 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           if (!record || typeof record !== 'object') continue;
           if (!Array.isArray(record.deliveries)) record.deliveries = [];
           const legacyWake = (record as ExecutionRecord & { coordinatorWake?: { message: string; createdAt: number } }).coordinatorWake;
-          if (!Array.isArray(record.coordinatorWakes)) record.coordinatorWakes = legacyWake ? [{ id: `${record.id}:wake:1`, ...legacyWake }] : [];
+          if (!Array.isArray(record.coordinatorWakes)) record.coordinatorWakes = legacyWake ? [{ version: 1, id: `${record.id}:wake:1`, key: `HUMAN_BLOCKER\0\0${record.state}`, cause: 'HUMAN_BLOCKER', stateOrClaimGeneration: record.state, ...legacyWake }] : [];
+          record.coordinatorWakes = (record.coordinatorWakes as Array<CoordinatorWakeV1 | { id: string; message: string; createdAt: number }>).map((wake, index) => 'version' in wake ? wake : ({
+            version: 1, id: wake.id, key: `HUMAN_BLOCKER\0\0legacy-${index}`, cause: 'HUMAN_BLOCKER', message: wake.message,
+            stateOrClaimGeneration: `legacy-${index}`, createdAt: wake.createdAt
+          }));
           record.coordinatorWakeSequence ??= record.coordinatorWakes.length;
           delete (record as ExecutionRecord & { coordinatorWake?: unknown }).coordinatorWake;
           for (const delivery of record.deliveries) delivery.manualRetryCount ??= 0;
           record.recoveryGeneration ??= 0;
+          record.usageObservations ??= [];
           const legacyRequest = record.request as ExecutionRequestSnapshotV1 & { goal?: string };
           if (legacyRequest.objective === undefined && legacyRequest.goal !== undefined) legacyRequest.objective = legacyRequest.goal;
           delete legacyRequest.goal;
@@ -638,6 +786,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         return true;
       });
       for (const unit of record.workUnits ?? []) unit.history = unit.history.slice(-MAX_UNIT_LIST * 10);
+      const observations = record.usageObservations ?? [];
+      if (observations.length > maxUsageObservationsPerExecution) {
+        const compacted = observations.slice(0, observations.length - maxUsageObservationsPerExecution);
+        record.usageBaseline = usageRollup(compacted, record.usageBaseline);
+        record.usageObservations = observations.slice(-maxUsageObservationsPerExecution);
+      } else record.usageObservations = observations;
       if ((record.blockers?.length ?? 0) > MAX_WORK_UNITS) {
         const activeBlockers = record.blockers!.filter((blocker) => !blocker.resolved);
         const resolved = record.blockers!.filter((blocker) => blocker.resolved).slice(-(MAX_WORK_UNITS - activeBlockers.length));
@@ -983,6 +1137,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   }
 
   async function registerPlan(executionId: string, expectedStateVersion: number, units: ExecutionWorkUnitInput[]): Promise<ExecutionRecord> {
+    if (Buffer.byteLength(JSON.stringify(units), 'utf8') > MAX_EXECUTION_PLAN_BYTES) throw new Error(`execution plan exceeds ${MAX_EXECUTION_PLAN_BYTES} bytes`);
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
@@ -1022,6 +1177,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       // claims and completed work are replays, not evidence of a broken DAG.
       if (unit.state === 'COMPLETED') return;
       if (unit.state === 'CLAIMED' && unit.assignedSlotId === slotId) return;
+      if (record.resourceBlock) throw new Error(record.resourceBlock.reason);
       if (unit.state !== 'READY') throw new Error('work unit is not ready');
       if (unit.assignedSlotId && unit.assignedSlotId !== slotId) throw new Error('work unit is assigned to another slot');
       if (authority.role === 'orchestrator') {
@@ -1065,7 +1221,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (!record) throw new Error('execution not found');
       const assignments: ExecutionDispatchAssignment[] = [];
       const slots = record.authorizationContext?.slots;
-      if (!terminalStates.has(record.state) && record.workUnits?.length && slots?.length) {
+      if (!terminalStates.has(record.state) && !record.resourceBlock && record.workUnits?.length && slots?.length) {
         const workerSlots = slots.filter((slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:'));
         const busy = new Set((record.workUnits ?? []).filter((unit) => unit.state === 'CLAIMED' && unit.assignedSlotId).map((unit) => unit.assignedSlotId!));
         const freeSlots = workerSlots.filter((slot) => !busy.has(slot.slotId));
@@ -1224,10 +1380,11 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, 'Work routing facts unavailable');
   }
 
-  async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false): Promise<ExecutionRecord> {
+  async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false, structuredResult?: unknown): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
+      if (structuredResult !== undefined && !unit.output) throw new Error('structuredResult requires a work output declaration');
       if (record.blockers?.some((blocker) => !blocker.resolved && blocker.workUnitId === workUnitId)) {
         throw new Error('work unit has unresolved blockers');
       }
@@ -1238,6 +1395,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const slotId = unit.assignedSlotId;
       clearClaim(unit);
       unit.result = string(result, 'work unit result');
+      if (structuredResult !== undefined) unit.structuredResult = clone(structuredResult);
       unit.history.push({ action: 'completed', slotId, attempt: unit.attempt, at: timestamp, detail: unit.result });
       deriveReadiness(record);
     }, `Work unit completed: ${workUnitId}`);
@@ -1372,6 +1530,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   async function retryWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, assignedSlotId?: string): Promise<ExecutionRecord> {
     if (authority.role !== 'orchestrator') throw new Error('only coordinator can retry work');
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
+      if (record.resourceBlock) throw new Error(record.resourceBlock.reason);
       const unit = findUnit(record, workUnitId);
       if (unit.state !== 'FAILED' && unit.state !== 'BLOCKED') throw new Error('work unit retry is not allowed');
       // Never pre-empt an in-flight human answer. A PENDING/LEASED delivery for
@@ -1627,19 +1786,21 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Execution blocker response delivery retried: ${blockerId}`);
   }
 
-  async function completeExecution(executionId: string, expectedStateVersion: number, finalSummary: string): Promise<ExecutionRecord> {
+  async function completeExecution(executionId: string, expectedStateVersion: number, finalSummary: string, artifacts: readonly import('./artifact-store.js').ExecutionArtifactRecord[] = [], includeRouteFit = false): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record) => {
       if (isDurableCoordination(record.coordinationMode) && !record.workUnits?.length) throw new Error('execution plan is required');
       if (record.workUnits?.some((unit) => unit.state !== 'COMPLETED')) throw new Error('required work units are incomplete');
       if (record.blockers?.some((blocker) => !blocker.resolved)) throw new Error('execution has unresolved blockers');
-      if (record.state !== 'RUNNING' && record.state !== 'STARTING') throw new Error(`invalid execution transition ${record.state} -> COMPLETED`);
+      if (record.state !== 'RUNNING' && record.state !== 'STARTING' && !(record.state === 'BLOCKED' && record.resourceBlock)) throw new Error(`invalid execution transition ${record.state} -> COMPLETED`);
       if (typeof finalSummary !== 'string' || !finalSummary.trim() || finalSummary.length > MAX_FINAL_SUMMARY) throw new Error('invalid execution final summary');
       record.finalSummary = finalSummary;
       record.state = 'COMPLETED';
+      record.assembledResult = assembleExecutionResult(record, artifacts, finalSummary);
+      if (includeRouteFit) record.routeFitProposal = evaluateRouteFit(record, now());
     }, 'Coordinator completed execution');
   }
 
-  async function failExecution(executionId: string, expectedStateVersion: number, finalSummary: string): Promise<ExecutionRecord> {
+  async function failExecution(executionId: string, expectedStateVersion: number, finalSummary: string, artifacts: readonly import('./artifact-store.js').ExecutionArtifactRecord[] = [], includeRouteFit = false): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
@@ -1651,6 +1812,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const fromState = record.state;
       record.state = 'FAILED';
       record.finalSummary = finalSummary;
+      record.assembledResult = assembleExecutionResult(record, artifacts, finalSummary);
+      if (includeRouteFit) record.routeFitProposal = evaluateRouteFit(record, now());
       record.stateVersion += 1;
       record.updatedAt = now();
       append(snapshot.state, record, record.state, 'error', 'All runnable work settled; execution failed automatically by the engine.', record.updatedAt, { kind: 'transition', fromState, toState: 'FAILED' });
@@ -1659,18 +1822,27 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  async function queueCoordinatorWake(executionId: string, message: string): Promise<ExecutionRecord> {
+  async function queueCoordinatorWake(executionId: string, input: string | { cause: CoordinatorWakeCause; message: string; workUnitId?: string; stateOrClaimGeneration: string }): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record) throw new Error('execution not found');
       if (terminalStates.has(record.state)) return clone(record);
-      const boundedMessage = string(message, 'coordinator wake');
+      const normalized = typeof input === 'string'
+        ? { cause: 'HUMAN_BLOCKER' as const, message: input, stateOrClaimGeneration: `${record.state}:${input}` }
+        : input;
+      const boundedMessage = string(normalized.message, 'coordinator wake');
+      const key = `${normalized.cause}\0${normalized.workUnitId ?? ''}\0${normalized.stateOrClaimGeneration}`;
+      if (record.coordinatorWakes?.some((wake) => wake.key === key)) return clone(record);
       record.coordinatorState = 'ACTIVE';
       record.coordinatorWakeSequence = (record.coordinatorWakeSequence ?? 0) + 1;
       record.coordinatorWakes ??= [];
       if (record.coordinatorWakes.length >= MAX_COORDINATOR_WAKES) throw new Error('coordinator wake queue is full');
-      const wake = { id: `${record.id}:wake:${record.coordinatorWakeSequence}`, message: boundedMessage, createdAt: now() };
+      const wake: CoordinatorWakeV1 = {
+        version: 1, id: `${record.id}:wake:${record.coordinatorWakeSequence}`, key, cause: normalized.cause,
+        message: boundedMessage, ...(normalized.workUnitId ? { workUnitId: string(normalized.workUnitId, 'wake work unit id') } : {}),
+        stateOrClaimGeneration: string(normalized.stateOrClaimGeneration, 'wake state'), createdAt: now()
+      };
       record.coordinatorWakes.push(wake);
       record.stateVersion += 1;
       record.updatedAt = wake.createdAt;
@@ -1691,6 +1863,145 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       record.stateVersion += 1;
       record.updatedAt = now();
       append(snapshot.state, record, record.state, 'info', 'Coordinator wake delivered', record.updatedAt, { kind: 'command' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  async function appendUsageObservation(
+    executionId: string,
+    input: Omit<ExecutionUsageObservationV1, 'version' | 'delta'>,
+    control: { telemetryGapGraceSamples?: number } = {}
+  ): Promise<{ outcome: 'accepted' | 'replay'; record: ExecutionRecord; observation: ExecutionUsageObservationV1; action: 'none' | 'usage-budget' | 'telemetry-unavailable' }> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const observations = record.usageObservations ??= [];
+      const fingerprint = usageObservationFingerprint(input);
+      const sameId = observations.find((item) => item.observationId === input.observationId);
+      if (sameId) {
+        const replay = { ...sameId, ...input, version: 1 as const, adapterEpoch: sameId.adapterEpoch, delta: sameId.delta, ...(sameId.gap ? { gap: sameId.gap } : {}) };
+        if (JSON.stringify(sameId) !== JSON.stringify(replay)) throw new Error('usage observation conflict');
+        return { outcome: 'replay' as const, record: clone(record), observation: clone(sameId), action: 'none' as const };
+      }
+      const compactedById = record.usageBaseline?.replays?.find((item) => item.observationId === input.observationId);
+      if (compactedById) {
+        if (compactedById.fingerprint !== fingerprint) throw new Error('usage observation conflict');
+        return { outcome: 'replay' as const, record: clone(record), observation: { ...clone(input), version: 1, delta: {}, replayFingerprint: fingerprint }, action: 'none' as const };
+      }
+      if (input.executionAttempt !== record.attempt) throw new Error('usage observation execution attempt mismatch');
+      // Delta against whole adapter session, not current claim. A new claim on a
+      // reused worker session must not count lifetime cumulative tokens again.
+      const group = observations.filter((item) => usageCursorIdentity(item) === usageCursorIdentity(input));
+      const cursor = record.usageBaseline?.cursors?.find((item) => usageCursorIdentity(item) === usageCursorIdentity(input));
+      const previous = [...group, ...(cursor ? [cursor] : [])].reduce<typeof cursor>((latest, item) => !latest
+        || item.adapterEpoch > latest.adapterEpoch || item.adapterEpoch === latest.adapterEpoch && item.sequence > latest.sequence ? item : latest, undefined);
+      if (previous && input.adapterEpoch < previous.adapterEpoch) throw new Error('usage observation epoch conflict');
+      if (previous && input.adapterEpoch === previous.adapterEpoch && input.sequence <= previous.sequence) throw new Error('usage observation sequence conflict');
+      const identity = usageIdentity(input);
+      const tuple = observations.find((item) => usageIdentity(item) === identity);
+      if (tuple) throw new Error('usage observation tuple conflict');
+      const compactedTuple = record.usageBaseline?.replays?.find((item) => item.identity === usageIdentityDigest(input));
+      if (compactedTuple) throw new Error('usage observation tuple conflict');
+      const regressed = previous && usageCounterRegression(previous.cumulative, input.cumulative);
+      if (regressed && input.adapterEpoch <= previous.adapterEpoch) throw new Error('usage counter regression without newer adapter epoch');
+      const gap = regressed ? 'regression' as const : input.gap;
+      const baseline = previous && previous.adapterEpoch === input.adapterEpoch && !gap ? previous.cumulative : {};
+      const delta = usageCounterDelta(baseline, input.cumulative);
+      const observation: ExecutionUsageObservationV1 = { ...clone(input), version: 1, delta, replayFingerprint: fingerprint, ...(gap ? { gap } : {}) };
+      if (!validUsageObservation(observation)) throw new Error('invalid usage observation');
+      observations.push(observation);
+      record.telemetryGapCount = observation.completeness === 'unavailable' || observation.gap === 'missing'
+        ? (record.telemetryGapCount ?? 0) + 1
+        : 0;
+      const usage = usageRollup(record.usageObservations, record.usageBaseline);
+      const budget = record.request.policy?.usageBudget;
+      const tokens = usage.inputTokens === undefined && usage.outputTokens === undefined && usage.cacheReadTokens === undefined && usage.cacheWriteTokens === undefined
+        ? undefined : (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+      const budgetReason = budget?.maxTokens !== undefined && tokens !== undefined && tokens >= budget.maxTokens
+        ? `RESOURCE_EXHAUSTED: execution token budget exhausted (${tokens}/${budget.maxTokens}). Existing in-flight provider calls may still finish.`
+        : budget?.maxUsd !== undefined && usage.providerCostUsd !== undefined && usage.providerCostUsd >= budget.maxUsd
+          ? `RESOURCE_EXHAUSTED: execution provider cost budget exhausted (${usage.providerCostUsd}/${budget.maxUsd}). Existing in-flight provider calls may still finish.` : undefined;
+      const gapBlocked = !!budget && control.telemetryGapGraceSamples !== undefined && (record.telemetryGapCount ?? 0) >= control.telemetryGapGraceSamples;
+      const action = budgetReason ? 'usage-budget' as const : gapBlocked ? 'telemetry-unavailable' as const : 'none' as const;
+      if (action !== 'none' && !terminalStates.has(record.state) && !(record.state === 'BLOCKED' && record.resourceBlock)) {
+        const fromState = record.state;
+        record.state = 'BLOCKED';
+        record.resourceBlock = { version: 1, kind: action, reason: budgetReason ?? 'Usage telemetry unavailable; execution requires attention', blockedAt: now() };
+        record.stateVersion += 1;
+        record.updatedAt = now();
+        append(snapshot.state, record, record.state, 'warning', record.resourceBlock.reason, record.updatedAt, { kind: 'transition', fromState, toState: 'BLOCKED' });
+      }
+      // Usage is observational evidence, not execution control state. Advancing
+      // stateVersion here races claim-fenced worker outcomes with transcript
+      // samples taken immediately after delivery.
+      persist(snapshot.state, snapshot.hash);
+      return { outcome: 'accepted' as const, record: clone(record), observation: clone(observation), action };
+    });
+  }
+
+  async function blockForResource(executionId: string, reason = 'Usage telemetry unavailable; execution requires attention', kind: NonNullable<ExecutionRecord['resourceBlock']>['kind'] = 'telemetry-unavailable'): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (terminalStates.has(record.state)) return clone(record);
+      if (record.state === 'BLOCKED' && record.resourceBlock) return clone(record);
+      const fromState = record.state;
+      record.state = 'BLOCKED';
+      record.resourceBlock = { version: 1, kind, reason: string(reason, 'resource block reason'), blockedAt: now() };
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'warning', record.resourceBlock.reason, record.updatedAt, { kind: 'transition', fromState, toState: 'BLOCKED' });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  async function recordOutputRepair(executionId: string, expectedStateVersion: number, workUnitId: string, claim: { claimId: string; claimGeneration: number }, digest: string): Promise<{ outcome: 'accepted' | 'replay' | 'exhausted'; record: ExecutionRecord }> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      const unit = findUnit(record, workUnitId);
+      if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
+      assertClaimFence(unit, claim, true);
+      const boundedDigest = string(digest, 'repair digest');
+      if (unit.repairDigests?.includes(boundedDigest)) return { outcome: 'replay', record: clone(record) };
+      unit.repairDigests ??= [];
+      if (unit.repairDigests.length >= 2) {
+        unit.state = 'FAILED';
+        unit.failureCode = 'VALIDATION_FAILED';
+        unit.failure = 'structured output remained invalid after two unique repair requests';
+        unit.history.push({ action: 'failed', slotId: unit.assignedSlotId, attempt: unit.attempt, at: now(), detail: unit.failure });
+        clearClaim(unit);
+        deriveReadiness(record);
+        record.stateVersion += 1;
+        record.updatedAt = now();
+        persist(snapshot.state, snapshot.hash);
+        return { outcome: 'exhausted', record: clone(record) };
+      }
+      unit.repairDigests.push(boundedDigest);
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'warning', `Structured output repair requested: ${workUnitId}`, record.updatedAt, { kind: 'command' });
+      persist(snapshot.state, snapshot.hash);
+      return { outcome: 'accepted', record: clone(record) };
+    });
+  }
+
+  async function setRouteFitProposal(executionId: string, proposal?: RouteFitProposalV1): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (!terminalStates.has(record.state)) throw new Error('route fit requires terminal execution');
+      const next = proposal ?? evaluateRouteFit(record, now());
+      if (!validRouteFitProposal(next)) throw new Error('invalid route fit proposal');
+      if (record.routeFitProposal?.evaluatorVersion === next.evaluatorVersion) return clone(record);
+      record.routeFitProposal = clone(next);
       persist(snapshot.state, snapshot.hash);
       return clone(record);
     });
@@ -1831,7 +2142,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {
@@ -1907,8 +2218,21 @@ function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false
 }
 
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
-  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, turnCount: _turnCount, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, history: _history, ...input } = unit;
+  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, turnCount: _turnCount, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, repairDigests: _repairDigests, history: _history, ...input } = unit;
   return input;
+}
+
+function usageCounterRegression(previous: ExecutionUsageObservationV1['cumulative'], next: ExecutionUsageObservationV1['cumulative']): boolean {
+  return (['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'providerCostUsd'] as const)
+    .some((key) => previous[key] !== undefined && next[key] !== undefined && next[key]! < previous[key]!);
+}
+
+function usageCounterDelta(previous: ExecutionUsageObservationV1['cumulative'], next: ExecutionUsageObservationV1['cumulative']): ExecutionUsageObservationV1['delta'] {
+  const delta: ExecutionUsageObservationV1['delta'] = {};
+  for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'providerCostUsd'] as const) {
+    if (next[key] !== undefined) delta[key] = Math.max(0, next[key]! - (previous[key] ?? 0));
+  }
+  return delta;
 }
 
 function findUnit(record: ExecutionRecord, workUnitId: string): ExecutionWorkUnit {

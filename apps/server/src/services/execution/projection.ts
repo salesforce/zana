@@ -1,5 +1,6 @@
 import type { ExecutionBoardProjection, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { MAX_DELIVERY_ATTEMPTS, type ExecutionRecord } from './store.js';
+import { usageRollup } from './contracts.js';
 
 /**
  * Surface a delivery error as a human-readable message, never a stack trace:
@@ -24,6 +25,11 @@ const MAX_METRIC_ID_CHARS = 256;
 const MAX_METRIC_RESOLVED_MODELS = 100;
 function resultPreview(raw: string): string {
   return raw.slice(0, MAX_UNIT_RESULT_CHARS);
+}
+
+function publicUsage<T extends NonNullable<ExecutionBoardProjection['usage']>>(usage: T): Omit<T, 'cursors'> {
+  const { cursors: _cursors, ...safe } = usage as T & { cursors?: unknown };
+  return safe;
 }
 
 type WorkProjection = NonNullable<ExecutionBoardProjection['work']>;
@@ -100,6 +106,23 @@ function blockerProjection(record: ExecutionRecord): Pick<ExecutionBoardProjecti
   };
 }
 
+export function assembledResultProjection(record: ExecutionRecord): ExecutionBoardProjection['assembledResult'] {
+  if (!record.assembledResult) return undefined;
+  return {
+    version: record.assembledResult.version, outcome: record.assembledResult.outcome, summary: record.assembledResult.summary,
+    units: record.assembledResult.units.map(({ id, title, state, result, failureCode }) => ({
+      id, title, state,
+      ...(result === undefined ? {} : { result: resultPreview(result) }),
+      ...(failureCode === undefined ? {} : { failureCode })
+    })),
+    failures: record.assembledResult.failures.map(({ workUnitId, code }) => ({ workUnitId, code })),
+    artifacts: record.assembledResult.artifacts.map(({ name, mediaType, contentDigest }) => ({ name, mediaType, contentDigest })),
+    ...(record.assembledResult.policy ? { policy: { status: record.assembledResult.policy.status, summary: record.assembledResult.policy.summary } } : {}),
+    verification: record.assembledResult.verification.map(({ workUnitId, checks }) => ({ workUnitId, checks: [...checks] })),
+    usage: publicUsage(record.assembledResult.usage), digest: record.assembledResult.digest
+  };
+}
+
 /** Build bounded project-local board data from durable records and live tabs. */
 export function projectExecutionProjection(
   records: readonly ExecutionRecord[],
@@ -130,6 +153,8 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
   const terminalDuration = terminal && Number.isFinite(record.createdAt) && Number.isFinite(record.updatedAt) && record.updatedAt >= record.createdAt
     ? record.updatedAt - record.createdAt
     : undefined;
+  const usage = publicUsage(usageRollup(record.usageObservations ?? [], record.usageBaseline));
+  const assembledResult = assembledResultProjection(record);
   return {
     executionId: record.id,
     projectId: record.projectId,
@@ -152,8 +177,12 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     })),
     work,
     baselineMetrics: baselineMetrics(record, work.counts, terminalDuration),
+    usage,
     ...blockerProjection(record),
     ...(record.finalSummary ? { finalSummary: record.finalSummary } : {}),
+    ...(assembledResult ? { assembledResult } : {}),
+    ...(record.resourceBlock ? { resourceBlock: record.resourceBlock } : {}),
+    ...(record.routeFitProposal ? { routeFitProposal: record.routeFitProposal } : {}),
     eventCursor: record.lastEventSequence ?? 0,
     ...(orchestratorSessionId ? { orchestratorSessionId } : {}),
     coordinator: terminal ? { status: 'complete' } : record.coordinatorState === 'PARKED' && orchestratorSessionId
