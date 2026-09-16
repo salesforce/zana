@@ -77,6 +77,7 @@ async function installPackedSdk(targetDir: string, tarball: string): Promise<voi
       '--no-save',
       '--no-audit',
       '--no-fund',
+      '--offline',
       tarball
     ],
     { cwd: targetDir }
