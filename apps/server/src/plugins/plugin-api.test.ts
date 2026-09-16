@@ -97,6 +97,22 @@ describe('plugin requestInput validation', () => {
   });
 });
 
+describe('plugin realtime', () => {
+  it('broadcasts a namespaced signal through product hub', async () => {
+    const emit = vi.fn();
+    const handle = createPluginApi('pr-monitor', '/tmp', {
+      productContext: { hub: { emit } } as never
+    });
+    handle.api.realtime.publish('prs-changed', { count: 2 });
+    expect(emit).toHaveBeenCalledWith('plugin-signal', {
+      pluginId: 'pr-monitor',
+      channel: 'prs-changed',
+      payload: { count: 2 }
+    });
+    await handle.dispose();
+  });
+});
+
 describe('plugin storage and settings', () => {
   it('persists kv across api instances', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-kv-'));

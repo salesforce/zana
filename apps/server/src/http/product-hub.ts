@@ -29,7 +29,8 @@ export type ProductEventType =
   | 'relay:changed'
   | 'terminals:data'
   | 'terminals:exit'
-  | 'terminals:updated';
+  | 'terminals:updated'
+  | 'plugin-signal';
 
 export interface ProductEvent {
   type: ProductEventType;

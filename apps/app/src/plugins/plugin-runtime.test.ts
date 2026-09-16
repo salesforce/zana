@@ -12,3 +12,13 @@ describe('ThreadChat host wiring', () => {
     expect(source).toMatch(/useMemo\(\s*\(\) => \(\{[\s\S]*callPluginRpc\(pluginId/);
   });
 });
+
+describe('plugin realtime host wiring', () => {
+  it('filters signals by plugin and channel, keeps latest handler, and cleans up', () => {
+    const source = readFileSync(fileURLToPath(new URL('./plugin-runtime.tsx', import.meta.url)), 'utf8');
+    expect(source).toContain("subscribeProductEvent<{ pluginId?: unknown; channel?: unknown; payload?: unknown }>('plugin-signal'");
+    expect(source).toContain('signal?.pluginId !== pluginId || signal.channel !== channel');
+    expect(source).toContain('handlerRef.current = handler');
+    expect(source).toContain('[channel, pluginId]');
+  });
+});
