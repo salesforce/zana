@@ -73,6 +73,7 @@ async function installPackedSdk(targetDir: string, tarball: string): Promise<voi
       '--include=dev',
       '--ignore-scripts',
       '--legacy-peer-deps',
+      '--omit=dev',
       '--no-package-lock',
       '--no-save',
       '--no-audit',

@@ -841,7 +841,7 @@ async function scheduleList(dataDir: string, json: boolean): Promise<CliResult> 
         id: s.id.slice(0, 8),
         name: s.name,
         enabled: s.enabled ? 'yes' : 'no',
-        every: s.schedule.every,
+        cadence: s.schedule.every ?? ('cron' in s.schedule ? s.schedule.cron : undefined) ?? '-',
         project: project?.name || s.projectId.slice(0, 8),
         lastResult: s.status.lastRunResult || '-'
       };
@@ -851,15 +851,15 @@ async function scheduleList(dataDir: string, json: boolean): Promise<CliResult> 
       id: Math.max(2, ...rows.map(r => r.id.length)),
       name: Math.max(4, ...rows.map(r => r.name.length)),
       enabled: 7,
-      every: Math.max(5, ...rows.map(r => r.every.length)),
+      cadence: Math.max(7, ...rows.map(r => r.cadence.length)),
       project: Math.max(7, ...rows.map(r => r.project.length)),
       lastResult: Math.max(6, ...rows.map(r => r.lastResult.length))
     };
 
-    const header = `${'ID'.padEnd(colWidths.id)}  ${'NAME'.padEnd(colWidths.name)}  ${'ENABLED'.padEnd(colWidths.enabled)}  ${'EVERY'.padEnd(colWidths.every)}  ${'PROJECT'.padEnd(colWidths.project)}  LAST-RUN\n`;
-    const separator = `${'-'.repeat(colWidths.id)}  ${'-'.repeat(colWidths.name)}  ${'-'.repeat(colWidths.enabled)}  ${'-'.repeat(colWidths.every)}  ${'-'.repeat(colWidths.project)}  --------\n`;
+    const header = `${'ID'.padEnd(colWidths.id)}  ${'NAME'.padEnd(colWidths.name)}  ${'ENABLED'.padEnd(colWidths.enabled)}  ${'CADENCE'.padEnd(colWidths.cadence)}  ${'PROJECT'.padEnd(colWidths.project)}  LAST-RUN\n`;
+    const separator = `${'-'.repeat(colWidths.id)}  ${'-'.repeat(colWidths.name)}  ${'-'.repeat(colWidths.enabled)}  ${'-'.repeat(colWidths.cadence)}  ${'-'.repeat(colWidths.project)}  --------\n`;
     const body = rows.map(r =>
-      `${r.id.padEnd(colWidths.id)}  ${r.name.padEnd(colWidths.name)}  ${r.enabled.padEnd(colWidths.enabled)}  ${r.every.padEnd(colWidths.every)}  ${r.project.padEnd(colWidths.project)}  ${r.lastResult}`
+      `${r.id.padEnd(colWidths.id)}  ${r.name.padEnd(colWidths.name)}  ${r.enabled.padEnd(colWidths.enabled)}  ${r.cadence.padEnd(colWidths.cadence)}  ${r.project.padEnd(colWidths.project)}  ${r.lastResult}`
     ).join('\n') + '\n';
 
     output = header + separator + body;

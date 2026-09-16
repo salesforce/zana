@@ -7,6 +7,7 @@
 declare module '@zana-ai/zcc-plugin-sdk' {
   export const PLUGIN_SDK_VERSION: string;
   export const PLUGIN_SDK_API_MAJOR: number;
+  export function derivePluginId(packageName: string): string;
   export function definePluginApp(
     setup: (app: { slots: Record<string, (registration: Record<string, unknown>) => void> }) => void
   ): unknown;
