@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { Copy, FileText } from 'lucide-react';
 import { product } from '../../../lib/product-client.js';
 import { DocContent } from '../../MarkdownContent.js';
@@ -26,6 +26,14 @@ import {
   type ThreadPlanDocument,
   planDocumentBadge
 } from './thread-plan-document.js';
+
+const HostPreviewContext = createContext<ReactNode>(null);
+
+// File openers render this as a component. Keep its type stable across thread
+// updates so React preserves the document DOM and its scroll position.
+function OriginalFilePreview() {
+  return useContext(HostPreviewContext);
+}
 
 export function ThreadFilePreviewView({
   path,
@@ -292,18 +300,20 @@ export function ThreadFilePreviewTab({
     <div className="thread-file-preview-host">
       {chrome}
       <PluginSlotBoundary pluginId={opener.pluginId} generation={opener.generation}>
-        <OpenerComponent
-          pluginId={opener.pluginId}
-          path={path}
-          source={{
-            kind: storage ? 'thread-storage' : 'workspace',
-            threadId: threadId ?? null,
-            environmentId: null,
-            projectId: projectId ?? null
-          }}
-          lineNumber={lineNumber}
-          experimental_Original={() => hostPreview}
-        />
+        <HostPreviewContext.Provider value={hostPreview}>
+          <OpenerComponent
+            pluginId={opener.pluginId}
+            path={path}
+            source={{
+              kind: storage ? 'thread-storage' : 'workspace',
+              threadId: threadId ?? null,
+              environmentId: null,
+              projectId: projectId ?? null
+            }}
+            lineNumber={lineNumber}
+            experimental_Original={OriginalFilePreview}
+          />
+        </HostPreviewContext.Provider>
       </PluginSlotBoundary>
     </div>
   );

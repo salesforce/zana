@@ -50,7 +50,7 @@ export function ThreadInfoRows({
   machineName = null,
   startPathSource = null,
   ownerId,
-  header,
+  gitHeader,
   children
 }: {
   isWorktree: boolean;
@@ -69,7 +69,7 @@ export function ThreadInfoRows({
   machineName?: string | null;
   startPathSource?: string | null;
   ownerId?: string;
-  header?: ReactNode;
+  gitHeader?: ReactNode;
   children?: ReactNode;
 }) {
   const gitLabel = remoteToolProxy ? null : workspaceStatusPresentation(workspaceStatus).label;
@@ -88,7 +88,7 @@ export function ThreadInfoRows({
 
   return (
     <div className="thread-info-content" data-testid="thread-info-tab">
-      {header}
+      {gitHeader}
       <InfoRow icon={<Box size={14} />} label="Environment" testId="thread-info-environment">
         {threadInfoEnvironmentLabel(isWorktree, environmentName, remoteToolProxy)}
       </InfoRow>
@@ -138,19 +138,19 @@ export function ThreadInfoRows({
         </InfoRow>
       ) : null}
 
-      {branchName && !remoteToolProxy ? (
+      {!gitHeader && branchName && !remoteToolProxy ? (
         <InfoRow icon={<GitBranch size={14} />} label="Branch" testId="thread-info-branch">
           {branchName}
         </InfoRow>
       ) : null}
 
-      {gitSummary ? (
+      {!gitHeader && gitSummary ? (
         <InfoRow icon={<GitBranch size={14} />} label="Git status" testId="thread-info-git">
           {gitSummary}
         </InfoRow>
       ) : null}
 
-      {filePreview.files.length > 0 ? (
+      {!gitHeader && filePreview.files.length > 0 ? (
         <ul className="thread-info-files" data-testid="thread-info-files" aria-label="Changed files">
           {filePreview.files.map((file) => (
             <li key={file.path} className={`thread-info-file is-${file.kind}`} title={file.path}>
@@ -164,7 +164,7 @@ export function ThreadInfoRows({
         </ul>
       ) : null}
 
-      {pullRequest ? (
+      {!gitHeader && pullRequest ? (
         <InfoRow icon={<GitPullRequest size={14} />} label="Pull request" testId="thread-info-pr">
           <a
             className="thread-info-link"
@@ -309,7 +309,7 @@ export function ThreadInfoContent({
       machineName={inspection?.machineName ?? null}
       startPathSource={inspection?.sourceLabel ?? null}
       ownerId={threadId}
-      header={<EnvironmentActions environmentId={environmentId} />}
+      gitHeader={environmentId ? <EnvironmentActions environmentId={environmentId} /> : null}
     >
       <ThreadStorageBrowser threadId={threadId} onOpenFile={onOpenStorageFile} />
     </ThreadInfoRows>

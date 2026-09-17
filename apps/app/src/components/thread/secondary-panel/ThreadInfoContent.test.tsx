@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { environmentLabel, ThreadInfoContent, ThreadInfoRows } from './ThreadInfoContent.js';
+import { EnvironmentActionsView } from '../../EnvironmentActions.js';
 
 describe('ThreadInfoRows', () => {
   it('renders Local environment and a copyable directory without a parent control', () => {
@@ -228,7 +228,7 @@ describe('ThreadInfoRows', () => {
           projectId={null}
           isWorktree={false}
           cwd="/tmp/proj"
-          branchName={null}
+          branchName="main"
           environmentId={null}
         />
       </MemoryRouter>
@@ -237,14 +237,28 @@ describe('ThreadInfoRows', () => {
     expect(html).not.toContain('None');
     expect(html).toContain('Local');
     expect(html).toContain('/tmp/proj');
+    expect(html).toContain('data-testid="thread-info-branch"');
+    expect(html).not.toContain('data-testid="environment-actions"');
     expect(html).toMatch(/data-testid="thread-info-tab"[\s\S]*data-testid="thread-info-storage"/);
   });
 });
 
 describe('ThreadInfoContent workspace git', () => {
   it('hosts EnvironmentActions so managed worktrees get commit/PR controls', () => {
-    const source = readFileSync(new URL('./ThreadInfoContent.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('header={<EnvironmentActions environmentId={environmentId} />}');
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadInfoContent
+          threadId="t1"
+          projectId={null}
+          isWorktree
+          cwd="/tmp/proj"
+          branchName="feat/panel"
+          environmentId="env-1"
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="environment-actions"');
+    expect(html).not.toContain('data-testid="thread-info-branch"');
   });
 
   it('keeps workspace git inside the padded info content', () => {
@@ -256,7 +270,7 @@ describe('ThreadInfoContent workspace git', () => {
           branchName={null}
           workspaceStatus={null}
           pullRequest={null}
-          header={<section className="environment-actions" data-testid="environment-actions" />}
+          gitHeader={<section className="environment-actions" data-testid="environment-actions" />}
         />
       </MemoryRouter>
     );
@@ -265,5 +279,58 @@ describe('ThreadInfoContent workspace git', () => {
     expect(infoIdx).toBeGreaterThan(-1);
     expect(envIdx).toBeGreaterThan(infoIdx);
     expect(html.indexOf('data-testid="thread-info-environment"')).toBeGreaterThan(envIdx);
+  });
+
+  it.each([false, true])('shows one git summary and file list with action controls (PR: %s)', (hasPr) => {
+    const status = {
+      dirty: true,
+      branchName: 'feat/panel',
+      files: Array.from({ length: 210 }, (_, i) => ({ path: `src/file-${i}.ts`, kind: 'modified' }))
+    } as never;
+    const pr = hasPr ? { url: 'https://example.com/pr/42', number: 42, state: 'open' } as never : null;
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadInfoRows
+          isWorktree={false}
+          cwd="/tmp/proj"
+          branchName="feat/panel"
+          workspaceStatus={status}
+          pullRequest={pr}
+          model="claude-sonnet-5"
+          reasoningLevel="high"
+          gitHeader={
+            <EnvironmentActionsView
+              status={status}
+              pr={pr}
+              busy={false}
+              message={null}
+              transcript={[]}
+              onCancelProvision={() => {}}
+              onAction={() => {}}
+            />
+          }
+        >
+          <div data-testid="storage-content" />
+        </ThreadInfoRows>
+      </MemoryRouter>
+    );
+    expect(html.match(/>file-0.ts</g)).toHaveLength(1);
+    expect(html.match(/\+198 more/g)).toHaveLength(1);
+    expect(html.match(/>feat\/panel</g)).toHaveLength(1);
+    expect(html.match(/>Uncommitted</g)).toHaveLength(1);
+    for (const row of ['branch', 'git', 'files', 'pr']) {
+      expect(html).not.toContain(`data-testid="thread-info-${row}"`);
+    }
+    for (const row of ['environment', 'directory', 'model', 'reasoning']) {
+      expect(html).toContain(`data-testid="thread-info-${row}"`);
+    }
+    expect(html).toContain('data-testid="storage-content"');
+    expect(html).toContain('data-testid="environment-commit"');
+    if (hasPr) {
+      expect(html.match(/href="https:\/\/example.com\/pr\/42"/g)).toHaveLength(1);
+      expect(html).toContain('Merge squash');
+    } else {
+      expect(html).toContain('data-testid="environment-create-pr"');
+    }
   });
 });
