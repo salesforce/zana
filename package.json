@@ -15,6 +15,7 @@
     "fetch:opencode": "node scripts/fetch-opencode-binaries.mjs",
     "predev": "node scripts/ensure-node-pty-helper.mjs && node scripts/ensure-better-sqlite3.mjs && pnpm run build:cli && node scripts/seed-extensions.mjs",
     "dev": "node scripts/dev-local.mjs",
+    "dev:prod": "node scripts/dev-local.mjs --packaged",
     "dev:web": "ZCC_SKIP_DESKTOP=1 node scripts/dev-local.mjs",
     "start": "node scripts/start-packaged.mjs",
     "seed:extensions": "node scripts/seed-extensions.mjs",

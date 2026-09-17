@@ -103,9 +103,10 @@ function readDotenvKey(key) {
 /**
  * Isolated `~/.zcc-dev` is the default so `pnpm dev` can sit beside the
  * installed app. `--packaged` / `ZCC_DEV_TARGET=packaged` share `~/.zcc`
- * instead (Turbo still — not the .app). Do not pass `--prod` to `pnpm` itself
- * (`pnpm dev --prod` is pnpm's production-deps flag); use `pnpm start` to open
- * the packaged app, or `pnpm dev -- --packaged` to point Turbo at `~/.zcc`.
+ * instead (Turbo still — not the .app). `pnpm dev:prod` is the alias.
+ * Do not pass `--prod` to `pnpm` itself (`pnpm dev --prod` is pnpm's
+ * production-deps flag); use `pnpm start` to open the packaged app, or
+ * `pnpm dev -- --packaged` / `pnpm dev:prod` to point Turbo at `~/.zcc`.
  */
 export function parseDevTarget(argv = [], env = process.env) {
   const flags = argv.filter((arg) => arg !== '--');

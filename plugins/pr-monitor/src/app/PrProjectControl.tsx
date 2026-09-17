@@ -59,6 +59,7 @@ interface Props {
 
 export function PrProjectControl({ projectId, projects, onAssign }: Props) {
   const anchorRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<PickerPosition | null>(null);
 
@@ -73,13 +74,15 @@ export function PrProjectControl({ projectId, projects, onAssign }: Props) {
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+    if (!open || !pos) return;
+    const menu = menuRef.current;
+    (menu?.querySelector<HTMLButtonElement>('.is-active') ?? menu?.querySelector('button') ?? menu)?.focus();
+  }, [open, pos]);
+
+  const closeMenu = () => {
+    setOpen(false);
+    anchorRef.current?.focus();
+  };
 
   // Hover text + accessible name: state + what activating does; red state states
   // "inbox notifications disabled" explicitly (AC-LIST-20.2a / AC-LIST-20.5).
@@ -95,6 +98,8 @@ export function PrProjectControl({ projectId, projects, onAssign }: Props) {
         className={`prm-project-row ${associated ? 'prm-project-row--associated' : 'prm-project-row--unassociated'}`}
         title={title}
         aria-label={title}
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
@@ -111,15 +116,33 @@ export function PrProjectControl({ projectId, projects, onAssign }: Props) {
           <>
             <div
               className="prm-project-menu-backdrop"
-              onMouseDown={(e) => {
+              onClick={(e) => {
                 e.stopPropagation();
-                setOpen(false);
+                closeMenu();
               }}
             />
             <div
+              ref={menuRef}
               className="prm-tile-menu prm-project-picker"
               style={{ position: 'fixed', ...pos }}
               role="menu"
+              aria-label="Associate a project"
+              tabIndex={-1}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' || e.key === 'Tab') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  closeMenu();
+                } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button'));
+                  const index = items.indexOf(document.activeElement as HTMLButtonElement);
+                  const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1
+                    : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+                  items[next]?.focus();
+                }
+              }}
             >
               {projects.length === 0 && <div className="prm-project-menu-empty">No projects</div>}
               {associated && (
@@ -130,7 +153,7 @@ export function PrProjectControl({ projectId, projects, onAssign }: Props) {
                   onClick={(e) => {
                     e.stopPropagation();
                     onAssign(null);
-                    setOpen(false);
+                    closeMenu();
                   }}
                 >
                   Clear association
@@ -145,7 +168,7 @@ export function PrProjectControl({ projectId, projects, onAssign }: Props) {
                   onClick={(e) => {
                     e.stopPropagation();
                     onAssign(p.id);
-                    setOpen(false);
+                    closeMenu();
                   }}
                 >
                   {p.name}
