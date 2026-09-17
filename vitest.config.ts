@@ -45,6 +45,7 @@ export default defineConfig({
       'e2e-web/**',
       '.claude/worktrees/**',
       '.worktrees/**',
+      '.zcc/**',
       'salesforce-only/**',
       'marketplace/**',
       'packages/agent-runtime/src/integration*.test.ts',
