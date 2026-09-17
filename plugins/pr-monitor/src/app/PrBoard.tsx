@@ -73,7 +73,7 @@ export function PrBoard({
   const selectionActive = selected.size > 0 || selectMode;
 
   return (
-    <Kanban label="Pull requests by status" columnWidth={260} className="prm-board">
+    <Kanban label="Pull requests by status" className="prm-board">
       {visible.map((status) => {
         const cards = columns[status];
         const Icon = COLUMN_ICONS[status];

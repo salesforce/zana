@@ -142,6 +142,37 @@ describe('PrDetailModal', () => {
     expect(closed).toEqual([]);
   });
 
+  it('focuses the dialog, wraps keyboard focus, and restores the opener', () => {
+    const opener = document.createElement('button');
+    document.body.append(opener);
+    opener.focus();
+    mount(makePr());
+    expect(document.activeElement).toBe(dialog());
+    const buttons = dialog()!.querySelectorAll('button');
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+    expect(document.activeElement).toBe(buttons[0]);
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(buttons[buttons.length - 1]);
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+    expect(document.activeElement).toBe(buttons[0]);
+    unmountFn?.();
+    unmountFn = null;
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it('keeps details open when Escape dismisses a nested project picker', () => {
+    const onClose = vi.fn();
+    mount(makePr(), { onClose });
+    fireEvent.click(dialog()!.querySelector('.prm-project-row')!);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(document.querySelector('.prm-project-picker')).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(dialog()!.querySelector('.prm-project-row'));
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores non-Escape keys', () => {
     const closed: number[] = [];
     mount(makePr(), { onClose: () => closed.push(1) });
@@ -152,6 +183,14 @@ describe('PrDetailModal', () => {
   it('opens a safe GitHub URL', () => {
     const { opened } = mount(makePr());
     fireEvent.click(dialog()!.querySelector<HTMLButtonElement>('button[title="Open on GitHub"]')!);
+    expect(opened).toEqual(['https://github.com/acme/webapp/pull/42']);
+  });
+
+  it('labels the cached description as a preview and offers the full PR description', () => {
+    const { opened } = mount(makePr());
+    expect(dialog()?.textContent).toContain('Description preview');
+    const full = Array.from(dialog()!.querySelectorAll('button')).find((b) => b.textContent?.includes('Read full description'))!;
+    fireEvent.click(full);
     expect(opened).toEqual(['https://github.com/acme/webapp/pull/42']);
   });
 

@@ -15,12 +15,11 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { runPrAction } from './prAction.js';
 import type { ModuleHost } from './host.js';
 import {
   type MonitoredPr,
   extractWorkItem,
-  MONITORED_COUNT_CACHE_KEY,
-  MONITORED_PRS_CACHE_KEY,
 } from '../../lib/types.js';
 import {
   formatRelative,
@@ -108,26 +107,16 @@ export function PrBoardCard({
   const stallClass = build === 'merge-stall' || build === 'danger' ? 'danger' : build === 'warn' ? 'warn' : '';
   const showCheckbox = selected || selectMode || selectionActive;
 
-  const applyResult = (result: { ok: boolean; prs?: MonitoredPr[] } | undefined) => {
-    if (result?.ok && result.prs) {
-      host.cache.set(MONITORED_PRS_CACHE_KEY, result.prs);
-      host.cache.set(MONITORED_COUNT_CACHE_KEY, result.prs.length);
-      host.cache.refreshBadge();
-    }
-  };
-
   const markSeen = async () => {
     if (!unread) return;
-    const result = await host.call<{ ok: boolean; prs?: MonitoredPr[] }>('markPrAsSeen', { url: pr.url });
-    applyResult(result);
+    await runPrAction(host, 'markPrAsSeen', { url: pr.url });
   };
 
   const toggleFavorite = async () => {
-    const result = await host.call<{ ok: boolean; prs?: MonitoredPr[] }>('setPrFavorite', {
+    await runPrAction(host, 'setPrFavorite', {
       url: pr.url,
       favorite: !favorite,
     });
-    applyResult(result);
   };
 
   const openPr = () => {
@@ -138,8 +127,7 @@ export function PrBoardCard({
   const retrySync = async () => {
     setRetrying(true);
     try {
-      const result = await host.call<{ ok: boolean; prs?: MonitoredPr[] }>('retryPr', { url: pr.url });
-      applyResult(result);
+      await runPrAction(host, 'retryPr', { url: pr.url });
     } finally {
       setRetrying(false);
     }
@@ -173,10 +161,14 @@ export function PrBoardCard({
         .filter(Boolean)
         .join(' ')}
       onClick={handleCardClick}
+      // The canvas captures pointers to pan empty space. Capturing a card's
+      // pointer retargets its click to the canvas, so the details never open.
+      onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          if (selectMode) onToggleSelect(pr.url);
+          if (selectMode || e.metaKey || e.ctrlKey) onToggleSelect(pr.url);
           else openDetails();
         }
       }}
@@ -200,7 +192,7 @@ export function PrBoardCard({
         />
         <span className="prm-board-card-id">
           <span className="prm-board-card-num">#{pr.number}</span>
-          <span className="prm-board-card-repo">{shortRepoName(pr.repo)}</span>
+          <span className="prm-board-card-repo" title={pr.repo}>{shortRepoName(pr.repo)}</span>
         </span>
         {workItem && <span className="prm-workitem-chip prm-board-card-wi">{workItem}</span>}
         <span className="prm-board-card-actions">

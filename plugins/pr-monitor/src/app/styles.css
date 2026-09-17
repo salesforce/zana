@@ -2304,6 +2304,13 @@
   padding: 0 2px 12px;
 }
 
+.prm-board > .zcc-kanban-col:not(.is-collapsed) {
+  min-width: 260px;
+  max-width: 420px;
+  flex: 1 0 260px;
+  width: auto;
+}
+
 .prm-board-col-empty {
   padding: 18px 8px;
   text-align: center;
@@ -2412,6 +2419,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .prm-board-card-select {
@@ -2439,7 +2447,7 @@
   align-items: baseline;
   gap: 6px;
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 1 1 100px;
   overflow: hidden;
   font-size: 11px;
   color: var(--text-muted);
@@ -2487,6 +2495,8 @@
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s;
+  /* Keep the repository readable; actions share a separate row with the key. */
+  order: 2;
 }
 
 .prm-board-card:hover .prm-board-card-actions,
@@ -2540,10 +2550,9 @@
     display: none;
   }
 
-  .prm-board {
-    --zcc-kanban-col-min: 220px;
-    --zcc-kanban-col-flex: 0 0 220px;
-    --zcc-kanban-col-width: 220px;
+  .prm-board > .zcc-kanban-col:not(.is-collapsed) {
+    min-width: 220px;
+    flex-basis: 220px;
   }
 }
 
@@ -2552,6 +2561,23 @@
 .prm-modal--detail {
   width: min(720px, 94vw);
   max-height: 86vh;
+  outline: none;
+}
+
+.prm-modal--detail .prm-modal-header,
+.prm-modal--detail .prm-modal-footer {
+  flex-shrink: 0;
+}
+
+.prm-modal--detail .prm-modal-header h3 {
+  min-width: 0;
+}
+
+.prm-modal--detail .prm-row-icon-btn,
+.prm-detail-footer .prm-tile-icon-btn {
+  min-width: 28px;
+  min-height: 28px;
+  flex-shrink: 0;
 }
 
 .prm-detail-body {
@@ -2567,12 +2593,14 @@
   align-items: baseline;
   gap: 8px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .prm-detail-repo {
   font-weight: 500;
   color: var(--text-muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .prm-detail-heading {
@@ -2588,6 +2616,7 @@
   font-weight: 600;
   line-height: 1.35;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 .prm-detail-status-row {
@@ -2663,6 +2692,10 @@
   overflow-wrap: anywhere;
 }
 
+.prm-detail-description-link {
+  align-self: flex-start;
+}
+
 .prm-detail-sync-error {
   display: flex;
   align-items: center;
@@ -2682,6 +2715,11 @@
 .prm-detail-footer {
   align-items: center;
   justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.prm-detail-footer-spacer {
+  flex: 1;
 }
 
 .prm-detail-section .prm-checks-list {
@@ -2693,4 +2731,3 @@
 .prm-detail-section .prm-reviewers {
   margin-top: 0;
 }
-

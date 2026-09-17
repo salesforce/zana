@@ -256,6 +256,70 @@ describe.skip('PrMonitorPanel project assignment (DOM, full round-trip)', () => 
   });
 });
 
+describe('PrMonitorPanel recovery and fresh project snapshots', () => {
+  function mount(host: ModuleHost) {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => root.render(<PrMonitorPanel host={host} />));
+    cleanup = () => { act(() => root.unmount()); container.remove(); };
+    return container;
+  }
+
+  it('shows a retryable load error without overwriting the cache or starting sync', async () => {
+    const { host, cacheStore } = makeStatefulHost();
+    const cached = [makePr()];
+    cacheStore.set(MONITORED_PRS_CACHE_KEY, cached);
+    const originalGet = host.storage.get;
+    let failing = true;
+    host.storage.get = async (key) => {
+      if (key === SETTINGS_STORAGE_KEY && failing) throw new Error('Storage unavailable');
+      return originalGet(key);
+    };
+    const save = vi.spyOn(host.storage, 'set');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const container = mount(host);
+      await flush();
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('Storage unavailable');
+      expect(cacheStore.get(MONITORED_PRS_CACHE_KEY)).toBe(cached);
+      expect(save).not.toHaveBeenCalled();
+      expect(host.call).not.toHaveBeenCalledWith('pollAll');
+      failing = false;
+      userClick(container.querySelector('button')!);
+      await flush();
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      expect(container.querySelector('.prm-board-card')?.textContent).toContain('A change');
+      expect(host.call).toHaveBeenCalledWith('pollAll');
+    } finally { log.mockRestore(); }
+  });
+
+  it('clears stale cached cards when storage successfully returns an empty list', async () => {
+    const { host, prs, cacheStore } = makeStatefulHost();
+    cacheStore.set(MONITORED_PRS_CACHE_KEY, [makePr()]);
+    prs.clear();
+    const container = mount(host);
+    await flush();
+    expect(cacheStore.get(MONITORED_PRS_CACHE_KEY)).toEqual([]);
+    expect(cacheStore.get(MONITORED_COUNT_CACHE_KEY)).toBe(0);
+    expect(container.querySelector('.prm-board-card')).toBeNull();
+  });
+
+  it('updates the assigned project name when the roster changes without changing length', async () => {
+    const { host, prs } = makeStatefulHost();
+    prs.get(makePr().url)!.projectId = 'proj-a';
+    let roster = PROJECTS;
+    host.listProjects = () => roster;
+    const container = mount(host);
+    await flush();
+    userClick(container.querySelector('.prm-board-card-title')!);
+    expect(document.querySelector('.prm-project-row')?.textContent).toContain('Alpha');
+    roster = [{ ...PROJECTS[0], name: 'Renamed Alpha' }, PROJECTS[1]];
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+    expect(document.querySelector('.prm-project-row')?.textContent).toContain('Renamed Alpha');
+  });
+});
+
 describe('PrMonitorPanel fresh-poll on open (DOM)', () => {
   it('polls for live status once on mount, not just listPrs from storage', async () => {
     // Reported bug: opening the app showed a stale "13m ago" board; clicking

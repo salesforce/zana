@@ -5,7 +5,7 @@
  * the same row actions as the list tile.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   Bell,
@@ -24,6 +24,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { runPrAction } from './prAction.js';
 import type { ModuleHost, ProjectInfo } from './host.js';
 import {
   type MonitoredPr,
@@ -31,8 +32,6 @@ import {
   type ReviewState,
   extractWorkItem,
   buildWorkItemLink,
-  MONITORED_PRS_CACHE_KEY,
-  MONITORED_COUNT_CACHE_KEY,
 } from '../../lib/types.js';
 import {
   formatRelative,
@@ -106,14 +105,40 @@ export function PrDetailModal({
   onProjectAssign,
 }: Props) {
   const [retrying, setRetrying] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.defaultPrevented) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeRef.current();
+      }
+      if (e.key === 'Tab') {
+        const dialog = dialogRef.current;
+        const buttons = dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), [tabindex="0"]');
+        if (!dialog || !buttons?.length) return;
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && (document.activeElement === last || document.activeElement === dialog)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, []);
 
   const unread = pr.lastSeenAt === 0 || pr.lastStatusChange > (pr.lastSeenAt ?? pr.addedAt);
   const closed = pr.status === 'closed-merged' || pr.status === 'closed-abandoned';
@@ -176,14 +201,6 @@ export function PrDetailModal({
         ? GitPullRequestClosed
         : GitPullRequest;
 
-  const applyResult = (result: { ok: boolean; prs?: MonitoredPr[] } | undefined) => {
-    if (result?.ok && result.prs) {
-      host.cache.set(MONITORED_PRS_CACHE_KEY, result.prs);
-      host.cache.set(MONITORED_COUNT_CACHE_KEY, result.prs.length);
-      host.cache.refreshBadge();
-    }
-  };
-
   const openPr = () => {
     if (isSafeExternalUrl(pr.url)) host.openExternal(pr.url);
     else host.toast('Refusing to open a non-http(s) URL', 'error');
@@ -196,28 +213,24 @@ export function PrDetailModal({
 
   const toggleSeen = async () => {
     const handler = unread ? 'markPrAsSeen' : 'markPrAsUnseen';
-    applyResult(await host.call<{ ok: boolean; prs?: MonitoredPr[] }>(handler, { url: pr.url }));
+    await runPrAction(host, handler, { url: pr.url });
   };
 
   const toggleMute = async () => {
-    applyResult(
-      await host.call<{ ok: boolean; prs?: MonitoredPr[] }>('setPrMuted', { url: pr.url, muted: !muted })
-    );
+    await runPrAction(host, 'setPrMuted', { url: pr.url, muted: !muted });
   };
 
   const toggleFavorite = async () => {
-    applyResult(
-      await host.call<{ ok: boolean; prs?: MonitoredPr[] }>('setPrFavorite', {
-        url: pr.url,
-        favorite: !favorite,
-      })
-    );
+    await runPrAction(host, 'setPrFavorite', {
+      url: pr.url,
+      favorite: !favorite,
+    });
   };
 
   const retrySync = async () => {
     setRetrying(true);
     try {
-      applyResult(await host.call<{ ok: boolean; prs?: MonitoredPr[] }>('retryPr', { url: pr.url }));
+      await runPrAction(host, 'retryPr', { url: pr.url });
     } finally {
       setRetrying(false);
     }
@@ -226,6 +239,8 @@ export function PrDetailModal({
   const dialog = (
     <div className="modal-backdrop" onClick={onClose} data-testid="prm-detail-backdrop">
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="modal prm-modal prm-modal--detail"
         role="dialog"
         aria-modal
@@ -240,7 +255,7 @@ export function PrDetailModal({
               <span className="prm-detail-repo">{pr.repo}</span>
             </span>
           </h3>
-          <button type="button" className="prm-row-icon-btn" onClick={onClose} title="Close">
+          <button type="button" className="prm-row-icon-btn" onClick={onClose} title="Close" aria-label="Close PR details">
             <X size={14} />
           </button>
         </header>
@@ -349,8 +364,11 @@ export function PrDetailModal({
 
           {pr.body && (
             <div className="prm-detail-section">
-              <div className="prm-detail-label">Description</div>
+              <div className="prm-detail-label">Description preview</div>
               <div className="prm-detail-desc">{pr.body}</div>
+              <button type="button" className="prm-btn prm-btn--sm prm-detail-description-link" onClick={openPr}>
+                Read full description on GitHub <ExternalLink size={12} aria-hidden />
+              </button>
             </div>
           )}
 

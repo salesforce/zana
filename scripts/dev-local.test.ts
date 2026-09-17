@@ -248,8 +248,8 @@ describe('dev-local turbo TUI', () => {
       'pnpm --dir ../.. exec node --conditions=source --import tsx apps/host-daemon/src/enroll-entry.ts'
     );
     expect(root.scripts.dev).toBe('node scripts/dev-local.mjs');
+    expect(root.scripts['dev:prod']).toBe('node scripts/dev-local.mjs --packaged');
     expect(root.scripts.start).toBe('node scripts/start-packaged.mjs');
-    expect(root.scripts['dev:prod']).toBeUndefined();
     expect(turbo.tasks.dev.persistent).toBe(true);
     expect(turbo.tasks.dev.passThroughEnv).toEqual(['*']);
   });

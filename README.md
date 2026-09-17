@@ -76,8 +76,8 @@ pnpm start
 `pnpm start` opens `dist/mac-arm64/Zana.app` (or `dist/mac/Zana.app`). It does
 not rebuild. `pnpm preview` is unpackaged production Electron from `out/`
 without electron-builder. Do not run `pnpm dev --prod` — that is pnpm's
-production-deps flag. `pnpm dev -- --packaged` still points Turbo at `~/.zcc`
-on port `8780` if you need that.
+production-deps flag. `pnpm dev:prod` (same as `pnpm dev -- --packaged`)
+points Turbo at `~/.zcc` on port `8780`.
 
 To drive the isolated DEV app from the CLI:
 

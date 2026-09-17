@@ -47,6 +47,7 @@ import {
   X,
   Clock,
 } from 'lucide-react';
+import { runPrAction } from './prAction.js';
 import type { ModuleHost, ProjectInfo } from './host.js';
 import {
   type MonitoredPr,
@@ -54,8 +55,6 @@ import {
   type ReviewState,
   extractWorkItem,
   buildWorkItemLink,
-  MONITORED_PRS_CACHE_KEY,
-  MONITORED_COUNT_CACHE_KEY,
 } from '../../lib/types.js';
 import {
   statusPill,
@@ -228,51 +227,38 @@ export function PrTile({
     ? GitPullRequestClosed
     : GitPullRequest;
 
-  const applyResult = (result: { ok: boolean; prs?: MonitoredPr[] } | undefined) => {
-    if (result?.ok && result.prs) {
-      host.cache.set(MONITORED_PRS_CACHE_KEY, result.prs);
-      host.cache.set(MONITORED_COUNT_CACHE_KEY, result.prs.length);
-      host.cache.refreshBadge();
-    }
-  };
-
   // Mark seen on tile click
   const handleTileClick = async () => {
     if (hasUnseenChanges) {
-      const result = await host.call<{ ok: boolean; prs?: MonitoredPr[] }>('markPrAsSeen', { url: pr.url });
-      applyResult(result);
+      await runPrAction(host, 'markPrAsSeen', { url: pr.url });
     }
   };
 
   // Toggle seen↔unseen without needing an event (used by row action + menu).
   const toggleSeen = async () => {
     const handler = hasUnseenChanges ? 'markPrAsSeen' : 'markPrAsUnseen';
-    const result = await host.call<{ ok: boolean; prs?: MonitoredPr[] }>(handler, { url: pr.url });
-    applyResult(result);
+    await runPrAction(host, handler, { url: pr.url });
   };
 
   const toggleMute = async () => {
-    const result = await host.call<{ ok: boolean; prs?: MonitoredPr[] }>('setPrMuted', {
+    await runPrAction(host, 'setPrMuted', {
       url: pr.url,
       muted: !muted,
     });
-    applyResult(result);
   };
 
   const toggleFavorite = async () => {
-    const result = await host.call<{ ok: boolean; prs?: MonitoredPr[] }>('setPrFavorite', {
+    await runPrAction(host, 'setPrFavorite', {
       url: pr.url,
       favorite: !favorite,
     });
-    applyResult(result);
   };
 
   const retrySync = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setRetrying(true);
     try {
-      const result = await host.call<{ ok: boolean; prs?: MonitoredPr[] }>('retryPr', { url: pr.url });
-      applyResult(result);
+      await runPrAction(host, 'retryPr', { url: pr.url });
     } finally {
       setRetrying(false);
     }
