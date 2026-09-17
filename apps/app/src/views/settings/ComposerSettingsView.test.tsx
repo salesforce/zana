@@ -27,15 +27,15 @@ describe('ComposerSettingsView', () => {
     expect(html).toContain('At least Modern or CLI Agent must stay on.');
     expect(html).toContain('aria-label="CLI Agent"');
     expect(html).toContain('aria-label="Modern"');
-    expect(html).toContain('aria-label="Team"');
-    expect(html).toContain('Show durable Team mode.');
+    expect(html).toContain('aria-label="Squad"');
+    expect(html).toContain('Show durable Squad mode.');
     expect(html).not.toContain('when at least one team exists');
     expect(html).not.toContain('aria-label="Autonomous Team"');
     expect(html).not.toContain('aria-label="Job Team"');
     expect(html.indexOf('aria-label="CLI Agent"')).toBeLessThan(html.indexOf('aria-label="Modern"'));
     expect(switchButton(html, 'CLI Agent')).toContain('aria-checked="true"');
     expect(switchButton(html, 'Modern')).toContain('aria-checked="true"');
-    expect(switchButton(html, 'Team')).toContain('aria-checked="true"');
+    expect(switchButton(html, 'Squad')).toContain('aria-checked="true"');
     expect(html).toContain('Default launch mode');
     expect(html).toContain('Reload slash commands');
     expect(html).toContain('Discover additional native agents');
@@ -52,7 +52,7 @@ describe('ComposerSettingsView', () => {
     );
     expect(switchButton(html, 'CLI Agent')).toContain('aria-checked="true"');
     expect(switchButton(html, 'Modern')).toContain('aria-checked="true"');
-    expect(switchButton(html, 'Team')).toContain('aria-checked="true"');
+    expect(switchButton(html, 'Squad')).toContain('aria-checked="true"');
     expect(switchButton(html, 'CLI Agent')).not.toContain('disabled=""');
     expect(switchButton(html, 'Modern')).not.toContain('disabled=""');
   });
@@ -89,7 +89,7 @@ describe('ComposerSettingsView', () => {
     );
     expect(switchButton(leftover, 'CLI Agent')).toContain('aria-checked="true"');
     expect(switchButton(leftover, 'Modern')).toContain('aria-checked="true"');
-    expect(switchButton(leftover, 'Team')).toContain('aria-checked="true"');
+    expect(switchButton(leftover, 'Squad')).toContain('aria-checked="true"');
 
     const optedOut = renderToStaticMarkup(
       <ComposerSettingsView
@@ -106,6 +106,6 @@ describe('ComposerSettingsView', () => {
     );
     expect(switchButton(optedOut, 'CLI Agent')).toContain('aria-checked="true"');
     expect(switchButton(optedOut, 'Modern')).toContain('aria-checked="false"');
-    expect(switchButton(optedOut, 'Team')).toContain('aria-checked="false"');
+    expect(switchButton(optedOut, 'Squad')).toContain('aria-checked="false"');
   });
 });

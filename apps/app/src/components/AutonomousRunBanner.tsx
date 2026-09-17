@@ -23,7 +23,7 @@ export function AutonomousRunBanner({ projectId }: { projectId: string }) {
         <Zap size={14} />
       </span>
       <div className="autonomous-run-body">
-        <span className="autonomous-run-label">Autonomous team running</span>
+        <span className="autonomous-run-label">Autonomous squad running</span>
         <span className="autonomous-run-goal" title={run.goal}>
           {run.goal}
         </span>

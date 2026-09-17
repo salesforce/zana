@@ -72,9 +72,9 @@ export function TeamComposer({
   const selectedTeam = teams.find((team) => team.id === teamId);
 
   const field = useComposerPromptField({
-    placeholder: 'Describe the GOAL for the team to reach (⌘↵ to launch). Attach or drop supporting files.',
+    placeholder: 'Describe the GOAL for the squad to reach (⌘↵ to launch). Attach or drop supporting files.',
     testId: 'team-command-input',
-    ariaLabel: 'Goal for the team',
+    ariaLabel: 'Goal for the squad',
     projectId,
     projectRoot: composerDropProjectRoot(project),
     projects,
@@ -194,7 +194,7 @@ export function TeamComposer({
       }
       const goal = assembleCliLaunchPrompt({ text: promptText, imagePaths });
       if (!goal) {
-        setError('Describe a goal for the team');
+        setError('Describe a goal for the squad');
         return;
       }
       const res = await product.teams.startJob({
@@ -207,7 +207,7 @@ export function TeamComposer({
         ...(jobSources.length ? { sourceCapabilityIds: jobSources.map(({ id }) => id) } : {})
       });
       if (!res.ok) {
-        const message = `Team launch failed: ${res.message ?? res.code}`;
+        const message = `Squad launch failed: ${res.message ?? res.code}`;
         setError(message);
         pushToast(message, 'error');
         return;
@@ -216,10 +216,10 @@ export function TeamComposer({
       setTitle('');
       setSummary('');
       setJobSources([]);
-      pushToast('Team launched. Open Agents board to monitor it.');
+      pushToast('Squad launched. Open Agents board to monitor it.');
       onClose?.();
     } catch (err) {
-      const message = `Team launch failed: ${err instanceof Error ? err.message : String(err)}`;
+      const message = `Squad launch failed: ${err instanceof Error ? err.message : String(err)}`;
       setError(message);
       pushToast(message, 'error');
     } finally {
@@ -242,12 +242,12 @@ export function TeamComposer({
       onKeyDown={field.handleChromeKeyDown}
       {...field.dropHandlers}
     >
-      <span id="team-command-label" className="thread-command-label">Team composer</span>
+      <span id="team-command-label" className="thread-command-label">Squad composer</span>
       {error ? (
         <p className="thread-command-error" data-testid="team-command-error">{error}</p>
       ) : null}
       {teams.length === 0 ? (
-        <p className="thread-command-error" role="status">No teams configured.</p>
+        <p className="thread-command-error" role="status">No squads configured.</p>
       ) : null}
       <CommandComposer
         className="home-agent-command thread-command-card"
@@ -283,8 +283,8 @@ export function TeamComposer({
                   <PopoverPicklist
                     id="team-picker"
                     value={teamId}
-                    ariaLabel="Team"
-                    placeholder="Select a team"
+                    ariaLabel="Squad"
+                    placeholder="Select a squad"
                     searchable={teams.length > 6}
                     options={teams.map((team) => ({
                       value: team.id,
@@ -293,14 +293,14 @@ export function TeamComposer({
                     }))}
                     onChange={setTeamId}
                     disabled={teams.length === 0}
-                    emptyHint="No teams configured"
+                    emptyHint="No squads configured"
                   />
                 </div>
                 <div className="thread-command-chip">
                   <PopoverPicklist
                     id="team-coordination-mode"
                     value={coordinationMode}
-                    ariaLabel="Team planning"
+                    ariaLabel="Squad planning"
                     searchable={false}
                     options={[
                       { value: 'freeform', label: 'Infer plan from goal' },
@@ -320,7 +320,7 @@ export function TeamComposer({
                     <Paperclip size={14} aria-hidden="true" />
                   </ComposerIconButton>
                 </span>
-                <span className="composer-control-tooltip" data-tooltip="Attach source files for the team to work from">
+                <span className="composer-control-tooltip" data-tooltip="Attach source files for the squad to work from">
                   <ComposerIconButton
                     onClick={() => void pickSources()}
                     disabled={!project || pickingSources}
@@ -353,8 +353,8 @@ export function TeamComposer({
                 </span>
                 <ComposerIconButton
                     className={`thread-command-send${launching ? ' is-sending' : ''}`}
-                    aria-label={launching ? 'Launching team' : 'Launch team'}
-                    title={launching ? 'Launching team' : 'Launch team'}
+                    aria-label={launching ? 'Launching squad' : 'Launch squad'}
+                    title={launching ? 'Launching squad' : 'Launch squad'}
                     aria-busy={launching}
                     data-testid="team-command-send"
                     disabled={!canLaunch}
@@ -389,7 +389,7 @@ export function TeamComposer({
           ))}
         </ul>
       ) : null}
-      <div className="launch-job-details" role="group" aria-label="Team details">
+      <div className="launch-job-details" role="group" aria-label="Squad details">
         <label className="workflow-arg-field" htmlFor="team-title">
           <span>Title <span className="launch-optional">Optional</span></span>
           <input
@@ -408,7 +408,7 @@ export function TeamComposer({
             rows={3}
             maxLength={4000}
             value={summary}
-            placeholder="Add context for this team"
+            placeholder="Add context for this squad"
             onChange={(event) => setSummary(event.target.value)}
           />
         </label>

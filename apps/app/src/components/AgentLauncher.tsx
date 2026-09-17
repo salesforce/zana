@@ -205,7 +205,7 @@ export const AgentLauncher = memo(function AgentLauncher({
         className="palette launch-modal"
         role="dialog"
         aria-modal
-        aria-label={mode === 'team' ? 'New team' : 'New agent'}
+        aria-label={mode === 'team' ? 'New squad' : 'New agent'}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="launch-panel">

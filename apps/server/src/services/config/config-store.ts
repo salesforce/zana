@@ -117,8 +117,7 @@ export function createConfigStore(
     teamJobLaunchEnabled: true,
     executionClaimRecoveryObserveEnabled: true,
     executionClaimRecoveryEnforceEnabled: true,
-    executionPlanStartupGraceMs: 300_000,
-    orchestratorMcpServerDenylist: []
+    executionPlanStartupGraceMs: 300_000
   });
 
   const hydrate = (raw: Partial<AppConfig>): AppConfig =>

@@ -411,7 +411,7 @@ function executionHost(member: AgentCard | undefined, execution: ExecutionBoardP
       status: terminal ? 'exited' : 'running',
       headless: synthetic || session.headless,
       cohort: {
-        ...(session.cohort ?? { cohortId: execution.executionId, teamId: execution.teamId ?? 'execution', teamName: execution.teamName ?? 'Team', role: 'orchestrator' }),
+        ...(session.cohort ?? { cohortId: execution.executionId, teamId: execution.teamId ?? 'execution', teamName: execution.teamName ?? 'Squad', role: 'orchestrator' }),
         executionId: execution.executionId,
         executionJobTitle: displayTitle,
         role: 'orchestrator'
@@ -900,7 +900,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     const isOrchestrator = cohort?.role === 'orchestrator';
     const teamRunTooltip = execution
       ? [
-          `Team: ${execution.teamName ?? cohort?.teamName ?? 'Team'}`,
+          `Squad: ${execution.teamName ?? cohort?.teamName ?? 'Squad'}`,
           `Run ID: ${execution.executionId}`,
           `Goal: ${execution.objective?.trim() || execution.jobTitle}`,
           `Started: ${new Date(execution.createdAt).toLocaleString()}`,
@@ -981,7 +981,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
               instead of a redundant project chip. */}
           {execution && (
             <span className="agent-card-team-run" data-tooltip={teamRunTooltip} tabIndex={0}>
-              <span className="agent-card-team-name">{execution.teamName ?? cohort?.teamName ?? 'Team'}</span>
+              <span className="agent-card-team-name">{execution.teamName ?? cohort?.teamName ?? 'Squad'}</span>
               <span aria-hidden="true"> · </span>
               <span className="team-run-id">Run {shortRunId(execution.executionId)}</span>
             </span>
@@ -1043,9 +1043,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
               className={`agent-card-badge cohort ${isOrchestrator ? 'orch' : 'worker'}`}
               title={
                 c.isSyntheticExecutionHost
-                  ? `${cohort.teamName} — retained Team run`
+                  ? `${cohort.teamName} — retained Squad run`
                   : isOrchestrator
-                  ? `${cohort.teamName} — orchestrator (you talk to this one; closing it ends the whole team)`
+                  ? `${cohort.teamName} — orchestrator (you talk to this one; closing it ends the whole squad)`
                   : `${cohort.teamName} — worker${cohort.slotLabel ? ` · ${cohort.slotLabel}` : ''}`
               }
             >
@@ -1102,16 +1102,16 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
               const result = retryable
                 ? await window.cc.executionBoard.retry(execution.projectId, execution.executionId, execution.stateVersion)
                 : await window.cc.executionBoard.stop(execution.projectId, execution.executionId, execution.stateVersion);
-               if (!result.ok) useUi.getState().pushToast(`Team control failed: ${result.message ?? result.code}`, 'error');
+               if (!result.ok) useUi.getState().pushToast(`Squad control failed: ${result.message ?? result.code}`, 'error');
             } catch (err) {
               console.error(`[AgentBoard] ${execution.executionId} control (retry/stop) failed`, err);
-               useUi.getState().pushToast(`Team control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+               useUi.getState().pushToast(`Squad control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
             } finally { setControllingExecutionId(null); }
           }}
         >
           {controllingExecutionId === execution.executionId
-             ? 'Updating Team run...'
-             : execution.state === 'BLOCKED' && !execution.orchestratorSessionId ? 'Retry Team run' : 'Stop Team run'}
+             ? 'Updating Squad run...'
+             : execution.state === 'BLOCKED' && !execution.orchestratorSessionId ? 'Retry Squad run' : 'Stop Squad run'}
         </button>
       </span>
     ) : null;
@@ -1330,12 +1330,12 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
               if (execution.stateVersion === undefined) return;
               try {
                 const result = await window.cc.executionBoard.stop(execution.projectId, execution.executionId, execution.stateVersion);
-                 if (!result.ok) useUi.getState().pushToast(`Team control failed: ${result.message ?? result.code}`, 'error');
+                 if (!result.ok) useUi.getState().pushToast(`Squad control failed: ${result.message ?? result.code}`, 'error');
               } catch (err) {
                 console.error(`[AgentBoard] ${execution.executionId} stop (context menu) failed`, err);
-                 useUi.getState().pushToast(`Team control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+                 useUi.getState().pushToast(`Squad control failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
               }
-             }}>Stop Team run</button>
+             }}>Stop Squad run</button>
           )}
           {['COMPLETED', 'FAILED', 'STOPPED'].includes(executionMenu.execution.state) && (
             <>
@@ -1348,14 +1348,14 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
                   try {
                     const result = await window.cc.executionBoard.dismiss(execution.projectId, execution.executionId);
                     if (!result.ok) {
-                       useUi.getState().pushToast(`Team run dismissal failed: ${result.message ?? result.code}`, 'error');
+                       useUi.getState().pushToast(`Squad run dismissal failed: ${result.message ?? result.code}`, 'error');
                       return;
                     }
                     useData.getState().dismissTerminals(result.value.dismissedSessionIds);
                     onDismissExecution?.(execution.executionId);
                   } catch (err) {
                     console.error(`[AgentBoard] ${execution.executionId} dismiss failed`, err);
-                     useUi.getState().pushToast(`Team run dismissal failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+                     useUi.getState().pushToast(`Squad run dismissal failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
                   }
                 }}
               >

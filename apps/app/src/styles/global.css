@@ -39653,6 +39653,18 @@ textarea.thread-command-editor {
   color-scheme: light;
 }
 
+/* Qty input can't carry a ::after tooltip (replaced element), so it's wrapped in
+   a .composer-control-tooltip span; stretch the wrapper + input to fill the grid
+   track so the layout matches the other slot-row cells. */
+.team-slot-qty-tip {
+  display: flex;
+  width: 100%;
+}
+
+.team-slot-qty-tip .team-slot-qty {
+  width: 100%;
+}
+
 .team-slot-orch-toggle.is-active {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);

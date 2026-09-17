@@ -804,28 +804,3 @@ describe('afcode configuration', () => {
     expect(store.getConfig().harnesses?.byId?.afcode?.enabled).toBe(true);
   });
 });
-
-describe('normalizeConfig — orchestratorMcpServerDenylist', () => {
-  it('trims, drops blanks, and dedupes', () => {
-    expect(
-      normalizeConfig({ orchestratorMcpServerDenylist: [' mcp-adaptor ', '', 'mcp-adaptor', 'other'] })
-        .orchestratorMcpServerDenylist
-    ).toEqual(['mcp-adaptor', 'other']);
-  });
-
-  it('keeps an explicit empty array (meaningful "off")', () => {
-    expect(normalizeConfig({ orchestratorMcpServerDenylist: [] }).orchestratorMcpServerDenylist).toEqual([]);
-  });
-
-  it('coerces a non-array to undefined but still records the key', () => {
-    // `'orchestratorMcpServerDenylist' in input` is true, so it normalizes to undefined.
-    expect(
-      normalizeConfig({ orchestratorMcpServerDenylist: 'nope' as unknown as string[] })
-        .orchestratorMcpServerDenylist
-    ).toBeUndefined();
-  });
-
-  it('leaves it unset when absent', () => {
-    expect('orchestratorMcpServerDenylist' in normalizeConfig({})).toBe(false);
-  });
-});

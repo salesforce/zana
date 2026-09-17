@@ -67,55 +67,6 @@ describe('sanitizeTeam', () => {
     expect(t?.orchestratorPersonaId).toBe('lead');
     expect(t?.slots[0]).toEqual({ personaId: 'a', quantity: 1, label: 'Engineer' });
   });
-
-  it('omits overrides entirely when none are present', () => {
-    const t = sanitizeTeam({ id: 'x', name: 'X', slots: [{ personaId: 'a' }] });
-    expect(t && 'overrides' in t).toBe(false);
-  });
-
-  it('clamps a denylist override (trim/dedupe/drop blanks) and keeps empty as meaningful', () => {
-    const t = sanitizeTeam({
-      id: 'x',
-      name: 'X',
-      slots: [{ personaId: 'a' }],
-      overrides: { orchestratorMcpServerDenylist: [' mcp-adaptor ', '', 'mcp-adaptor', 'x'] }
-    });
-    expect(t?.overrides?.orchestratorMcpServerDenylist).toEqual(['mcp-adaptor', 'x']);
-
-    const emptied = sanitizeTeam({
-      id: 'x',
-      name: 'X',
-      slots: [{ personaId: 'a' }],
-      overrides: { orchestratorMcpServerDenylist: [] }
-    });
-    expect(emptied?.overrides?.orchestratorMcpServerDenylist).toEqual([]);
-  });
-
-  it('clamps a grace override and drops an override object that yields no valid field', () => {
-    const clamped = sanitizeTeam({
-      id: 'x',
-      name: 'X',
-      slots: [{ personaId: 'a' }],
-      overrides: { executionPlanStartupGraceMs: 500 }
-    });
-    expect(clamped?.overrides?.executionPlanStartupGraceMs).toBe(1000);
-
-    const disabled = sanitizeTeam({
-      id: 'x',
-      name: 'X',
-      slots: [{ personaId: 'a' }],
-      overrides: { executionPlanStartupGraceMs: -1 }
-    });
-    expect(disabled?.overrides?.executionPlanStartupGraceMs).toBe(0);
-
-    const junk = sanitizeTeam({
-      id: 'x',
-      name: 'X',
-      slots: [{ personaId: 'a' }],
-      overrides: { executionPlanStartupGraceMs: 'nope' as never }
-    });
-    expect(junk && 'overrides' in junk).toBe(false);
-  });
 });
 
 describe('TeamStore', () => {

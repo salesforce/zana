@@ -359,9 +359,7 @@ export interface LaunchProvider {
    */
   mcpEnv(
     profile: LaunchProfileId,
-    mcpUrl: string,
-    /** MCP server names to DISABLE for this session (host-supplied config values, Rule 6). */
-    disabledServers?: readonly string[]
+    mcpUrl: string
   ): Record<string, string>;
 
   /**

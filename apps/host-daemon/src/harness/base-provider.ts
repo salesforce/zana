@@ -71,7 +71,7 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
         hookArgs: lifecycle ? this.hookArgs(profile as LaunchProfileId, hookUrls) : [],
         authArgs: injection.args ?? [],
         authEnv: injection.env,
-        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url, mcp.disabledServers) : {}
+        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url) : {}
       };
     }
   };
@@ -140,8 +140,7 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
    */
   mcpEnv(
     _profile: LaunchProfileId,
-    _mcpUrl: string,
-    _disabledServers?: readonly string[]
+    _mcpUrl: string
   ): Record<string, string> {
     return {};
   }

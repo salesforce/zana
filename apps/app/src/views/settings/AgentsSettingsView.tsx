@@ -51,12 +51,12 @@ export function AgentsSettingsView({
 
       <Section
         anchorId="teams"
-        title="Teams"
-        help="How concurrent Team runs are organized across Agents surfaces. Each run stays distinct even when it uses the same Team."
+        title="Squads"
+        help="How concurrent Squad runs are organized across Agents surfaces. Each run stays distinct even when it uses the same Squad."
       >
         <Field
           label="Agents list organization"
-          help="By status keeps Working, Needs you, and Idle sections. By Team run keeps each orchestrator and its workers together."
+          help="By status keeps Working, Needs you, and Idle sections. By Squad run keeps each orchestrator and its workers together."
         >
           <PopoverPicklist
             value={config.agentsListOrganization ?? 'status'}
@@ -65,13 +65,13 @@ export function AgentsSettingsView({
             onChange={(agentsListOrganization) => onUpdate({ agentsListOrganization: agentsListOrganization as AppConfig['agentsListOrganization'] })}
             options={[
               { value: 'status', label: 'By status' },
-              { value: 'team-run', label: 'By Team run' }
+              { value: 'team-run', label: 'By Squad run' }
             ]}
           />
         </Field>
         <Field
           label="Project navigation organization"
-          help="Sessions shows every agent. Team runs shows one orchestrator row per run and hides worker rows from project navigation."
+          help="Sessions shows every agent. Squad runs shows one orchestrator row per run and hides worker rows from project navigation."
         >
           <PopoverPicklist
             value={config.projectNavigationOrganization ?? 'sessions'}
@@ -80,13 +80,13 @@ export function AgentsSettingsView({
             onChange={(projectNavigationOrganization) => onUpdate({ projectNavigationOrganization: projectNavigationOrganization as AppConfig['projectNavigationOrganization'] })}
             options={[
               { value: 'sessions', label: 'Sessions' },
-              { value: 'team-runs', label: 'Team runs' }
+              { value: 'team-runs', label: 'Squad runs' }
             ]}
           />
         </Field>
         <Field
           label="Flow All view"
-          help="Combined canvas preserves the current merged graph. Separate Team runs renders one bounded graph per run; run tabs remain available in both modes."
+          help="Combined canvas preserves the current merged graph. Separate Squad runs renders one bounded graph per run; run tabs remain available in both modes."
         >
           <PopoverPicklist
             value={config.flowAllOrganization ?? 'combined'}
@@ -95,13 +95,13 @@ export function AgentsSettingsView({
             onChange={(flowAllOrganization) => onUpdate({ flowAllOrganization: flowAllOrganization as AppConfig['flowAllOrganization'] })}
             options={[
               { value: 'combined', label: 'Combined canvas' },
-              { value: 'team-runs', label: 'Separate Team runs' }
+              { value: 'team-runs', label: 'Separate Squad runs' }
             ]}
           />
         </Field>
         <Field
           label="Default plan mode"
-          help="Starting selection for a new Team launch. Infer derives the plan from the goal; Plan provided seeds work units from a plan given in the goal or an attached source, dispatching immediately."
+          help="Starting selection for a new Squad launch. Infer derives the plan from the goal; Plan provided seeds work units from a plan given in the goal or an attached source, dispatching immediately."
         >
           <PopoverPicklist
             value={config.teamDefaultCoordinationMode ?? 'freeform'}
@@ -112,46 +112,6 @@ export function AgentsSettingsView({
               { value: 'freeform', label: 'Infer plan from goal' },
               { value: 'structured', label: 'Plan provided in goal' }
             ]}
-          />
-        </Field>
-        <Field
-          label="Plan startup grace (seconds)"
-          help="How long a durable Team run waits for its orchestrator to register a plan before auto-failing the run. Guards against an orchestrator that never dispatches work (a run stuck at 0/0). Default 300 (5 minutes). Set to 0 to disable the check."
-        >
-          <input
-            type="number"
-            min={0}
-            max={3600}
-            value={Math.round((config.executionPlanStartupGraceMs ?? 300_000) / 1000)}
-            onChange={(e) => {
-              const seconds = parseInt(e.target.value, 10);
-              if (!Number.isNaN(seconds)) {
-                onConfigDraft({ ...config, executionPlanStartupGraceMs: Math.max(0, seconds) * 1000 });
-              }
-            }}
-            onBlur={(e) => {
-              const seconds = parseInt(e.target.value, 10);
-              const clamped = Number.isNaN(seconds) ? 300 : Math.max(0, Math.min(3600, seconds));
-              onUpdate({ executionPlanStartupGraceMs: clamped * 1000 });
-            }}
-          />
-        </Field>
-        <Field
-          label="Disable orchestrator MCP servers"
-          help="One MCP server name per line to hide from a Team orchestrator (workers keep every server). Use it to stop the orchestrator reaching for a tool that is unavailable or unreliable when it runs inside a Team — a sandbox/adaptor server whose detour can stall a run at 0/0. Empty = off (the orchestrator sees every server). A Team can override this in its own settings."
-        >
-          <textarea
-            rows={3}
-            defaultValue={(config.orchestratorMcpServerDenylist ?? []).join('\n')}
-            placeholder={'mcp-adaptor'}
-            onBlur={(e) =>
-              onUpdate({
-                orchestratorMcpServerDenylist: e.target.value
-                  .split('\n')
-                  .map((s) => s.trim())
-                  .filter(Boolean)
-              })
-            }
           />
         </Field>
       </Section>
@@ -272,8 +232,8 @@ export function AgentsSettingsView({
           onChange={(v) => onUpdate({ closeIdlePeersEnabled: v })}
         />
         <CheckboxField
-          label="Agent launch-team (MCP)"
-          help="Let a running agent launch a Team via the launch_team MCP tool — opening one tab per slot (workers first, then an orchestrator handed the workers’ session ids to delegate with). Launches into the agent’s own project by default, or a named one. Off by default; takes effect on the next app launch. Operator Team launches remain available through the New-agent launcher."
+          label="Agent launch-squad (MCP)"
+          help="Let a running agent launch a Squad via the launch_team MCP tool — opening one tab per slot (workers first, then an orchestrator handed the workers’ session ids to delegate with). Launches into the agent’s own project by default, or a named one. Off by default; takes effect on the next app launch. Operator Squad launches remain available through the New-agent launcher."
           checked={config.teamLaunchEnabled ?? false}
           onChange={(v) => onUpdate({ teamLaunchEnabled: v })}
         />
@@ -352,8 +312,8 @@ export function AgentsSettingsView({
           </>
         )}
         <Field
-          label="Team timeout (minutes, 0 = no timeout)"
-          help="How long Team runs can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
+          label="Squad timeout (minutes, 0 = no timeout)"
+          help="How long Squad runs can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
         >
           <input
             type="number"

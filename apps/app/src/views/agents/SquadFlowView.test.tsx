@@ -40,7 +40,7 @@ describe('SquadFlowView separate Team-run canvases', () => {
   it('uses one pannable scrollport for the full stack instead of nested run scrollports', () => {
     expect(css).toMatch(/\.squad-flow-run-groups \{[^}]*overflow:\s*auto;[^}]*cursor:\s*grab;/s);
     expect(css).toMatch(/\.squad-flow-run-groups \.squad-flow-canvas \{[^}]*overflow:\s*visible;/s);
-    expect(view).toContain('aria-label="Team run canvases. Drag empty space to pan."');
+    expect(view).toContain('aria-label="Squad run canvases. Drag empty space to pan."');
     expect(view).toContain('pannable={false}');
   });
 });

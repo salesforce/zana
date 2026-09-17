@@ -2,14 +2,6 @@
 
 export interface HarnessMcpConnection {
   readonly url: string;
-  /**
-   * MCP server names the host asks this harness to DISABLE for the session
-   * (deep-merged as `enabled:false` where the harness carries MCP through a
-   * merged config, e.g. OpenCode's `OPENCODE_CONFIG_CONTENT`). Provider-neutral:
-   * the concrete names are host-supplied config VALUES, never named in core.
-   * Empty/absent leaves the session's discovered servers untouched.
-   */
-  readonly disabledServers?: readonly string[];
 }
 
 export interface HarnessLifecycleEndpoints {

@@ -91,7 +91,7 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Unpaired SSH fallback', group: 'remote' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
   { id: 'personas', label: 'Personas', icon: Drama, desc: 'Reusable launch profiles', group: 'agents' },
-  { id: 'squads', label: 'Squads', icon: Users, desc: 'Reusable multi-agent teams', group: 'agents' },
+  { id: 'squads', label: 'Squads', icon: Users, desc: 'Reusable multi-agent squads', group: 'agents' },
   { id: 'usage', label: 'Usage', icon: BarChart3, desc: 'Session activity rollup', group: 'catalogues' },
   { id: 'experimental', label: 'Experimental', icon: FlaskConical, desc: 'Opt-in features under evaluation', group: 'labs' },
   { id: 'about', label: 'About', icon: Info, desc: 'Version, updates, credits & release notes', group: 'app' }
@@ -110,7 +110,7 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'agent-guidance', label: 'Agent guidance' },
     { id: 'git-worktrees', label: 'Git worktrees' },
     { id: 'agent-tabs', label: 'Tabs' },
-    { id: 'teams', label: 'Teams' },
+    { id: 'teams', label: 'Squads' },
     { id: 'agent-attention', label: 'Agent attention' },
     { id: 'scheduled', label: 'Scheduled' },
     { id: 'agent-automation', label: 'Agent automation' },
