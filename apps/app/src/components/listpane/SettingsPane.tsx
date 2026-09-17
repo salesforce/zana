@@ -1,4 +1,4 @@
-import { ArrowLeft, Search, X } from 'lucide-react';
+import { ArrowLeft, FolderCog, Search, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { useData, useUi } from '../../store.js';
@@ -40,7 +40,7 @@ export function SettingsPane() {
 
   const renderRow = (section: { id: string; label: string; subsections: Array<{ id: string; label: string }> }) => {
     const meta = SETTINGS_SECTIONS.find((row) => row.id === section.id);
-    const Icon = meta?.icon;
+    const Icon = meta?.icon ?? FolderCog;
     return (
       <div key={section.id} className="settings-section-group">
         <Link
@@ -50,7 +50,7 @@ export function SettingsPane() {
           aria-current={settingsTab === section.id ? 'page' : undefined}
           onClick={() => setSettingsAnchor(null)}
         >
-          {Icon ? <Icon size={16} aria-hidden="true" /> : null}
+          <Icon size={16} strokeWidth={1.7} aria-hidden="true" />
           <span className="settings-section-copy">
             <span className="settings-section-label">{section.label}</span>
           </span>
@@ -77,11 +77,11 @@ export function SettingsPane() {
   return (
     <aside className="sidebar settings-pane">
       <Link to={routeMemory.appRoutePath} className="settings-app-back">
-        <ArrowLeft size={17} aria-hidden="true" />
-        Back
+        <ArrowLeft size={16} strokeWidth={1.7} aria-hidden="true" />
+        Back to app
       </Link>
       <div className="settings-search">
-        <Search size={12} className="settings-search-icon" aria-hidden="true" />
+        <Search size={14} className="settings-search-icon" aria-hidden="true" />
         <input
           type="text"
           className="settings-search-input"
@@ -90,6 +90,12 @@ export function SettingsPane() {
           placeholder="Search settings…"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && query) {
+              event.stopPropagation();
+              setQuery('');
+            }
+          }}
         />
         {query ? (
           <button
@@ -103,9 +109,8 @@ export function SettingsPane() {
         ) : null}
       </div>
       <nav className="settings-picker" aria-label="Settings navigation">
-            <div className="settings-group-label">Settings</div>
             {groups.length === 0 ? (
-              <p className="settings-search-empty">No matching settings</p>
+              <p className="settings-search-empty" role="status">No matching settings</p>
             ) : (
               groups.map((group) => (
                 <div key={group.id} className="settings-group">

@@ -411,7 +411,7 @@ const api: CcApi = {
     onChanged: () => () => {}
   },
   marketplaces: {
-    list: async () => [],
+    list: () => ipcRenderer.invoke(IPC.marketplaces.list),
     add: async () => {
       throw new Error('marketplaces.add is served over product HTTP');
     },
@@ -564,6 +564,7 @@ const api: CcApi = {
     list: (projectId) => ipcRenderer.invoke(IPC.terminals.list, projectId),
     verifyTmux: () => ipcRenderer.invoke(IPC.terminals.verifyTmux),
     listTmuxRestoreCandidates: () => ipcRenderer.invoke(IPC.terminals.listTmuxRestoreCandidates),
+    listRememberedSessions: () => ipcRenderer.invoke(IPC.terminals.listRememberedSessions),
     create: (req: CreateTerminalRequest) => ipcRenderer.invoke(IPC.terminals.create, req),
     restore: (input) => ipcRenderer.invoke(IPC.terminals.restore, input),
     reconnectRemote: (input) => ipcRenderer.invoke(IPC.terminals.reconnectRemote, input),

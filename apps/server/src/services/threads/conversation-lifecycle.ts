@@ -27,7 +27,7 @@ import {
   resumeConversationQueue
 } from './conversation-deferred-messages.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
-import type { ReasoningLevel, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PermissionMode, ReasoningLevel, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import {
   canDispatch,
@@ -61,8 +61,8 @@ import { startLiveTurnCommand } from './conversation-live-turn.js';
 import { LIVE_TURN_COMMAND_TIMEOUT_MS } from '../../http/host-hub.js';
 import { archiveConversationOnHost, unarchiveConversationOnHost } from './thread-host-commands.js';
 import { collectConversationArchiveDescendants } from './conversation-child-ops.js';
-import { bridgeLaunchForProvider, getThreadProvider, permissionModeForLaunchProfile } from './thread-provider-catalog.js';
-import { clampPermissionModeToHost } from '../hosts/permission-ceiling.js';
+import { bridgeLaunchForProvider, getThreadProvider } from './thread-provider-catalog.js';
+import { threadPermissionMode } from './thread-permission-mode.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
 import {
@@ -96,6 +96,7 @@ export async function sendConversationTurn(
   input: unknown,
   mode: ThreadSendMode = 'auto',
   execution?: {
+    permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
     acpMode?: string;
@@ -113,7 +114,8 @@ export async function sendConversationTurn(
   if (!live.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
-  let packedExecution = execution;
+  const permissionMode = threadPermissionMode(ctx, live, execution?.permissionMode);
+  let packedExecution = { ...execution, permissionMode };
   if (options.compact !== true) {
     const requestedMode = requestedExecutionModeFromTurn({
       acpMode: execution?.acpMode,
@@ -130,13 +132,13 @@ export async function sendConversationTurn(
       threadId: live.id,
       projectId: live.projectId,
       model: execution?.model,
-      permissionMode: clampPermissionModeToHost(ctx.db, live.hostId, permissionModeForLaunchProfile(live.providerId))
-        ?? permissionModeForLaunchProfile(live.providerId),
+      permissionMode,
       promptMode: requestedMode === 'plan' ? 'plan' : undefined,
       plugins: ctx.plugins
     });
     packedExecution = {
       ...execution,
+      permissionMode,
       ...(claudeCodePermissionMode ? { claudeCodePermissionMode } : {}),
       ...(providerOptions ? { providerOptions } : {})
     };
@@ -158,6 +160,7 @@ export async function sendConversationTurn(
   const ghostQueue = shouldQueueGhostActiveSend(ctx, live, mode);
   if (options.compact !== true && isManualCompactionActive(ctx, live.id) && options.drain !== true) {
     deferConversationSend(ctx, { threadId: live.id, input, mode, execution });
+    ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
   const shouldQueue = options.drain !== true && (
@@ -176,6 +179,7 @@ export async function sendConversationTurn(
   );
   if (shouldQueue) {
     deferConversationSend(ctx, { threadId: live.id, input, mode, execution });
+    ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
   const resolvedMode = resolveConversationSendMode(live, mode);
@@ -205,6 +209,7 @@ export async function sendConversationTurn(
     promptInput: resolvedInput,
     kind: steerTurnId ? 'steer' : 'new-turn',
     expectedTurnId: steerTurnId,
+    permissionMode,
     model: execution?.model,
     reasoningLevel: execution?.reasoningLevel,
     acpMode: execution?.acpMode
@@ -252,7 +257,7 @@ async function dispatchTurnSubmit(
     thread: ConversationThreadRow;
     prompt: PromptInput[];
     mode: ThreadSendMode;
-    execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
+    execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
     clientRequestId?: string;
     input: unknown;
     drain: boolean;
@@ -305,7 +310,7 @@ async function recoverOrSettleTurnSubmit(
     thread: ConversationThreadRow;
     prompt: PromptInput[];
     mode: ThreadSendMode;
-    execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
+    execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
     clientRequestId?: string;
     input: unknown;
     drain: boolean;
@@ -608,6 +613,7 @@ export async function forkConversation(
       threadId: forked.id,
       prompt: [],
       promptInput: seed,
+      permissionMode: threadPermissionMode(ctx, forked),
       kind: 'thread-start'
     });
   }
@@ -690,6 +696,7 @@ async function turnSubmitCommand(
   prompt: PromptInput[],
   mode: ThreadSendMode,
   execution?: {
+    permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
     acpMode?: string;
@@ -702,7 +709,7 @@ async function turnSubmitCommand(
   if (!thread.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
-  const resume = await threadResumeFields(ctx, thread);
+  const resume = await threadResumeFields(ctx, thread, execution?.permissionMode);
   return {
     type: 'turn.submit',
     threadId: thread.id,
@@ -733,6 +740,7 @@ async function threadStartCommandForFork(
   thread: ConversationThreadRow,
   prompt: PromptInput[],
   execution?: {
+    permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
     acpMode?: string;
@@ -745,8 +753,7 @@ async function threadStartCommandForFork(
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
   const environment = getEnvironment(ctx.db, thread.environmentId);
-  const requestedMode = permissionModeForLaunchProfile(thread.providerId);
-  const permissionMode = clampPermissionModeToHost(ctx.db, thread.hostId, requestedMode) ?? requestedMode;
+  const permissionMode = threadPermissionMode(ctx, thread, execution?.permissionMode);
   const sessionTooling = await packConversationSessionTooling(ctx, {
     threadId: thread.id,
     projectId: thread.projectId

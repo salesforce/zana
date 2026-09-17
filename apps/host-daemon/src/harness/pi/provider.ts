@@ -6,9 +6,10 @@
  * PI is very Claude-Code / Codex / cursor-agent-shaped at the command line: an
  * interactive TUI by default, a positional prompt taken as the first user turn
  * (`pi "do the thing"`), and `--continue` / `--resume` / `--session <id>` to
- * reopen a prior session. But the launcher-injected Claude flags — `--mcp-config`,
- * `--settings` (lifecycle hooks), `--session-id`, `--permission-mode` — are NOT
- * part of PI's interface: PI is deliberately MCP-less (it exposes tools through
+ * reopen a prior session. `--session-id <uuid>` creates a new conversation with
+ * a launcher-minted id (so each tab is independently resumable). The
+ * launcher-injected Claude flags — `--mcp-config`, `--settings` (lifecycle hooks),
+ * `--permission-mode` — are NOT part of PI's interface: PI is deliberately MCP-less (it exposes tools through
  * extensions/skills, not an MCP `--mcp-config` flag), wires lifecycle behavior
  * through extensions rather than a `--settings` JSON, and gates its own tools.
  * So this provider is a "base command + resume" provider in v1: it resolves the
@@ -123,9 +124,19 @@ export class PiProvider extends BaseLaunchProvider {
     return args;
   }
 
-  resolveLaunch(profile: LaunchProfileId, config: AppConfig, _autoModeActive: boolean): ResolvedLaunch {
+  resolveLaunch(
+    profile: LaunchProfileId,
+    config: AppConfig,
+    _autoModeActive: boolean,
+    resumeSessionId?: string
+  ): ResolvedLaunch {
     const command = piBinary(config);
     const defaults = piDefaultArgs(config);
+    // Exact-id restore: `--session <uuid>` reopens THAT conversation. `--session-id`
+    // is create-only mint (spliced by nativeSessionMint on first spawn).
+    if (resumeSessionId) {
+      return { command, args: ['--session', resumeSessionId, ...defaults] };
+    }
     // `pi-resume` continues the most-recent session in the cwd. `-c`/`--continue`
     // reopens the latest session (parity with claude's `--continue` intent); it's
     // the flag that pins the session, so `baseArgsPinSession` returns true. The
@@ -147,7 +158,7 @@ export class PiProvider extends BaseLaunchProvider {
   // false / null defaults from BaseLaunchProvider. PI has no launcher-injectable
   // MCP / guidance / hook surface (it's MCP-less and wires hooks via extensions,
   // not a `--settings` flag), its flag surface differs from claude's (no
-  // --mcp-config / --settings / --session-id / --permission-mode), and it
+  // --mcp-config / --settings / --permission-mode), and it
   // authenticates via its own `/login` (OAuth in `~/.pi`) or provider env keys —
   // there is no verified single endpoint+token spawn-env override to inject. Auto
   // mode is Claude Code's classifier-backed --permission-mode, not a PI concept.

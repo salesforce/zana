@@ -1,0 +1,24 @@
+{
+  "id": "provider-codex",
+  "displayName": "Codex provider",
+  "description": "Run Zana threads with Codex.",
+  "overview": "Start a thread, pick Codex, and let it write and review code in your repository from ZCC. The plugin drives the Codex CLI on the host machine. It streams the agent's work into the ZCC timeline.\n\n## What you get\n\n- Permission modes `accept-edits`, `auto`, and `full`, plus plan and goal actions in the composer.\n- Reasoning levels from Low to Ultra. Ultra adds automatic task delegation.\n- A service tier picker with two tiers.\n- Checkpoint forks, manual compaction, thread rename, and thread archive.\n- Codex skills from your home directory and project, listed next to ZCC skills.\n- Health, usage, and install status on each host, with an install or update action.\n- A Codex AI service for inference and voice that other ZCC features can use.\n\n## Settings\n\n- `Codex memory`: let Codex recall and create memories from ZCC threads.\n- `Disable provider subagents`: stop native subagents so the agent delegates through ZCC.\n\n## Requirements\n\n- Install the Codex CLI (`codex`) on the host machine, version 0.136.0 or newer. The plugin can run the npm install for you.\n- Sign in with `codex login` on that machine. A ChatGPT account or an OpenAI API key both work.\n- Usage limits show only for ChatGPT accounts.\n",
+  "icon": {
+    "lucide": "./icons/codex.svg"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/provider-codex",
+      "ref": "HEAD"
+    }
+  }
+}

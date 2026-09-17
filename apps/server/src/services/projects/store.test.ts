@@ -91,7 +91,9 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'enableUpdateSimulation',
     'microVmEnabled',
     'followupsFromIdle',
-    'autoOpenThreadPlanPanel'
+    'autoOpenThreadPlanPanel',
+    'classicSessionViewEnabled',
+    'inAppAgentTerminalsEnabled'
   ] as const)('persists %s', (flag) => {
     store.setConfig({ [flag]: true });
     expect(store.getConfig()[flag]).toBe(true);

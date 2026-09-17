@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ConnectionError } from './connection.js';
 import { compactError } from './dx-project.js';
 import type { SalesforceSdk } from './sdk-contract.js';
@@ -48,6 +49,14 @@ function fromSObjectName(soql: string): string | undefined {
 }
 
 export class SoqlExplorer {
+  private historyWrites: Promise<unknown> = Promise.resolve();
+
+  private serializeHistory<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.historyWrites.then(work);
+    this.historyWrites = result.catch(() => {});
+    return result;
+  }
+
   private readonly memory = new Map<string, unknown>();
   private readonly inflight = new Map<string, AbortController>();
 
@@ -136,7 +145,7 @@ export class SoqlExplorer {
 
   async query(args: unknown): Promise<ExplorerResult<QuerySuccess>> {
     const soql = rpcString(args, 'soql') || rpcString(args, 'query');
-    if (!soql) return { ok: false, code: 'invalid_input', error: 'query requires soql.' };
+    if (!soql || soql.length > 20_000) return { ok: false, code: 'invalid_input', error: 'query requires soql.' };
     const executable = stripSoqlComments(soql);
     const inspection = inspectSoql(executable);
     if (!inspection.ok) return { ok: false, code: 'invalid_input', error: inspection.error };
@@ -206,7 +215,7 @@ export class SoqlExplorer {
 
   async explain(args: unknown): Promise<ExplorerResult<{ plans: unknown; soql: string; org: PublicOrgView }>> {
     const soql = rpcString(args, 'soql') || rpcString(args, 'query');
-    if (!soql) return { ok: false, code: 'invalid_input', error: 'explain requires soql.' };
+    if (!soql || soql.length > 20_000) return { ok: false, code: 'invalid_input', error: 'explain requires soql.' };
     const executable = stripSoqlComments(soql);
     const inspection = inspectSoql(executable);
     if (!inspection.ok) return { ok: false, code: 'invalid_input', error: inspection.error };
@@ -244,8 +253,9 @@ export class SoqlExplorer {
   }
 
   async historySave(args: unknown): Promise<ExplorerResult<{ item: SoqlHistoryItem; recent: SoqlHistoryItem[]; saved: SoqlHistoryItem[] }>> {
+    return this.serializeHistory(async () => {
     const soql = rpcString(args, 'soql');
-    if (!soql) return { ok: false, code: 'invalid_input', error: 'save requires soql.' };
+    if (!soql || soql.length > 20_000) return { ok: false, code: 'invalid_input', error: 'save requires soql.' };
     const kind = (rpcString(args, 'kind') || 'saved') as SoqlHistoryKind;
     if (kind !== 'recent' && kind !== 'saved') {
       return { ok: false, code: 'invalid_input', error: 'kind must be recent or saved.' };
@@ -254,7 +264,7 @@ export class SoqlExplorer {
       const org = await this.sdk.connect();
       const store = await readHistory(this.kv, org.orgId);
       const item: SoqlHistoryItem = {
-        id: rpcString(args, 'id') || `q-${this.now()}`,
+        id: rpcString(args, 'id') || `q-${randomUUID()}`,
         name: rpcString(args, 'name') || undefined,
         soql,
         useToolingApi: rpcBool(args, 'useToolingApi'),
@@ -262,7 +272,7 @@ export class SoqlExplorer {
         at: this.now()
       };
       if (kind === 'recent') {
-        const recent = pushRecent(store.recent, item);
+        const recent = pushRecent(store.recent, { ...item, id: item.id ?? `q-${randomUUID()}` });
         await writeHistoryKind(this.kv, org.orgId, 'recent', recent);
         return { ok: true, item, recent, saved: store.saved };
       }
@@ -272,9 +282,11 @@ export class SoqlExplorer {
     } catch (error) {
       return failCaught(error);
     }
+    });
   }
 
   async historyRemove(args: unknown): Promise<ExplorerResult<{ recent: SoqlHistoryItem[]; saved: SoqlHistoryItem[] }>> {
+    return this.serializeHistory(async () => {
     const id = rpcString(args, 'id');
     const kind = (rpcString(args, 'kind') || 'saved') as SoqlHistoryKind;
     if (!id) return { ok: false, code: 'invalid_input', error: 'remove requires id.' };
@@ -295,6 +307,7 @@ export class SoqlExplorer {
     } catch (error) {
       return failCaught(error);
     }
+    });
   }
 
   private arm(requestId: string): AbortSignal | undefined {
@@ -310,24 +323,24 @@ export class SoqlExplorer {
   }
 
   private async readCache<T>(key: string): Promise<T | undefined> {
-    if (this.memory.has(key)) return this.memory.get(key) as T;
-    const stored = await this.kv.get<T>(key);
-    if (stored !== undefined) this.memory.set(key, stored);
-    return stored;
+    return this.memory.get(key) as T | undefined;
   }
 
   private async writeCache(key: string, value: unknown): Promise<void> {
+    this.memory.delete(key);
     this.memory.set(key, value);
-    await this.kv.set(key, value);
+    if (this.memory.size > 100) this.memory.delete(this.memory.keys().next().value!);
   }
 
   private async rememberRecent(
     orgId: string,
     item: Omit<SoqlHistoryItem, 'id'>
   ): Promise<void> {
-    const store = await readHistory(this.kv, orgId);
-    const recent = pushRecent(store.recent, item);
-    await writeHistoryKind(this.kv, orgId, 'recent', recent);
+    await this.serializeHistory(async () => {
+      const store = await readHistory(this.kv, orgId);
+      const recent = pushRecent(store.recent, { ...item, id: `q-${randomUUID()}` });
+      await writeHistoryKind(this.kv, orgId, 'recent', recent);
+    });
   }
 }
 

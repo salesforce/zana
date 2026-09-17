@@ -26,15 +26,15 @@ export function resolvedComposerSendMode(config: {
 
 export function resolveThreadSendMode(args: {
   pickerMode: ComposerSendMode;
-  threadRunning: boolean;
   modifierEnter: boolean;
-}): ComposerSendMode {
-  if (!args.threadRunning) return 'auto';
+}): 'queue-if-active' | 'steer-if-active' {
+  // Send intent to the server even when the renderer thinks the thread is idle:
+  // another turn can start before the request arrives.
   if (args.pickerMode === 'steer') {
-    return args.modifierEnter ? 'queue-if-active' : 'steer';
+    return args.modifierEnter ? 'queue-if-active' : 'steer-if-active';
   }
   if (args.pickerMode === 'queue-if-active') return 'queue-if-active';
-  return 'auto';
+  return args.modifierEnter ? 'steer-if-active' : 'queue-if-active';
 }
 
 export function composerPromptExtensions(markdownEnabled: boolean, placeholder: string) {

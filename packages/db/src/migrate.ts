@@ -347,6 +347,9 @@ export function migrate(database: SqliteDatabase): void {
   if (!applied.has(14)) applyVersion(database, 14, MIGRATE_V14);
   if (!applied.has(15)) applyVersion(database, 15, MIGRATE_V15);
   if (!applied.has(16)) applyVersion(database, 16, MIGRATE_V16);
+  if (!applied.has(17)) applyVersion(database, 17, [
+    'CREATE INDEX thread_events_thread_type_seq_idx ON thread_events(thread_id, type, sequence)'
+  ]);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

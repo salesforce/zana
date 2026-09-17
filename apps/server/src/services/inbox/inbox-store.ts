@@ -63,13 +63,13 @@ export interface InboxInput {
    */
   report?: boolean;
   /**
-   * Structured multiple-choice question form (the `inbox_ask` tool). When set,
+   * Structured multiple-choice question form. When set,
    * the entry renders Cursor-style options + Skip/Continue and the chosen answer
    * is injected back into {@link sessionId}'s pty. See {@link InboxQuestion}.
    */
   question?: InboxQuestion;
   /**
-   * Multiple structured questions asked together (the `inbox_ask` tool with a
+   * Multiple structured questions asked together (an `inbox_push` with a
    * `questions` array). Mutually exclusive with {@link question}. See
    * {@link InboxEntry.questions}.
    */

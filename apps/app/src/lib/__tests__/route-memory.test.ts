@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   INITIAL_STORED_ROUTE_MEMORY,
   nextStoredRouteMemory,
+  resolveProjectBackPath,
   visibleRouteMemory
 } from '../route-memory.js';
 
@@ -33,6 +34,19 @@ describe('route memory', () => {
     stored = nextStoredRouteMemory(stored, loc('/projects/p1/terminals'));
     const visible = visibleRouteMemory(stored, loc('/projects/p1/terminals'));
     expect(visible.projectBackRoutePath).toBe('/agents');
+  });
+
+  it('falls back to Agents when no non-project path has been visited', () => {
+    const visible = visibleRouteMemory(INITIAL_STORED_ROUTE_MEMORY, loc('/projects/p1/feed'));
+    expect(visible.projectBackRoutePath).toBe('/agents');
+  });
+
+  it('rejects a project URL as the Back destination', () => {
+    expect(resolveProjectBackPath(undefined)).toBe('/agents');
+    expect(resolveProjectBackPath('')).toBe('/agents');
+    expect(resolveProjectBackPath('/inbox')).toBe('/inbox');
+    expect(resolveProjectBackPath('/projects/p1/feed')).toBe('/agents');
+    expect(resolveProjectBackPath('/projects/p1')).toBe('/agents');
   });
 
   it('keeps search and hash on remembered paths', () => {

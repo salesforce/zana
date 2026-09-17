@@ -22,6 +22,7 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import type { LaunchProfileId, Persona } from '@zana-ai/zcc-domain/product';
+import { AfcodeIcon } from '../components/icons/AfcodeIcon.js';
 import { GrokIcon } from '../components/icons/GrokIcon.js';
 import { MastracodeIcon } from '../components/icons/MastracodeIcon.js';
 
@@ -66,6 +67,12 @@ export function profileIcon(profile: LaunchProfileId, size = 11) {
     case 'mastracode-resume':
       return <History size={size} />;
     case 'mastracode-yolo':
+      return <Zap size={size} />;
+    case 'afcode':
+      return <AfcodeIcon size={size} />;
+    case 'afcode-resume':
+      return <History size={size} />;
+    case 'afcode-yolo':
       return <Zap size={size} />;
     case 'shell':
       return <Play size={size} />;

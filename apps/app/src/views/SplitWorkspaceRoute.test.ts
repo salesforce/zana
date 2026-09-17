@@ -49,8 +49,8 @@ describe('SplitWorkspaceRoute', () => {
     expect(area).toContain('<SchedulerView />');
     expect(area).toContain("content.kind === 'project-view'");
     expect(area).toContain('<ProjectModePane');
-    expect(area).toContain('data-split="false"');
-    expect(area).toContain('data-split-pane-id={paneId}');
+    expect(area).toContain("data-split={isSplitActive ? 'true' : 'false'}");
+    expect(area).toContain('data-split-pane-id={node.paneId}');
     expect(area).toContain("content.kind === 'empty'");
     expect(area).toContain('data-testid="split-pane-empty"');
     expect(area).toContain('Drop a view here');
@@ -70,10 +70,10 @@ describe('SplitWorkspaceRoute', () => {
     expect(area).not.toContain('<SplitWorkspaceSecondaryPanelHost');
     expect(area).not.toContain('createPaneSecondaryPanelRegistry');
     expect(area).toContain('secondaryPanelRegistry={null}');
-    expect(css).toContain('.split-workspace {\n  display: flex;');
-    expect(css).toContain(
-      '.split-workspace {\n  display: flex;\n  flex-direction: column;\n  min-width: 0;\n  min-height: 0;\n  width: 100%;\n  height: 100%;\n  grid-column: 2 / -1;\n  /* Grid item with a non-auto z-index creates a stacking context, so nested\n     list-pane z-index (Inbox) cannot paint over the sidebar. */\n  z-index: 0;\n}'
-    );
+    const workspaceRules = /\.split-workspace\s*\{([^}]+)\}/.exec(css)?.[1] ?? '';
+    for (const rule of ['position: relative', 'overflow: hidden', 'display: flex', 'flex-direction: column', 'min-width: 0', 'min-height: 0', 'width: 100%', 'height: 100%', 'grid-column: 2 / -1', 'z-index: 0']) {
+      expect(workspaceRules).toContain(rule);
+    }
     expect(css).toContain('.split-pane.is-maximized {');
     expect(css).toContain('.split-pane-scrim.is-dimmed {');
     expect(css).toContain('.split-pane-minimap {');

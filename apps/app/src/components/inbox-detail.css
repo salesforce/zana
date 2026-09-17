@@ -1,0 +1,203 @@
+/* Linear-style reading surface for the selected inbox entry. Overrides the
+   denser/cardy rules in global.css without growing that file. */
+
+.inbox-detail {
+  max-width: 760px;
+  padding: 18px 28px 48px;
+}
+
+.inbox-detail .inbox-detail-header {
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.inbox-detail .inbox-detail-overview-back {
+  border-radius: 6px;
+  padding: 3px 8px 3px 6px;
+}
+
+.inbox-detail .inbox-detail-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.inbox-detail .inbox-detail-label.tombstoned {
+  color: var(--text-dim);
+}
+
+.inbox-detail .inbox-detail-ts {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.inbox-detail .inbox-detail-trash,
+.inbox-detail .inbox-detail-download,
+.inbox-detail .inbox-detail-spawn,
+.inbox-detail .inbox-detail-keep,
+.inbox-detail .inbox-detail-save {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+}
+
+.inbox-detail .inbox-detail-title {
+  padding: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+.inbox-detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+
+.inbox-status-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.inbox-status-pill--live {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.inbox-status-pill--ended {
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.inbox-status-pill--gone {
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  text-decoration: none;
+}
+
+.inbox-detail-session-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.inbox-detail .inbox-detail-context {
+  margin: 8px 0 14px;
+}
+
+.inbox-detail-dock {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.inbox-detail-dock .inbox-reply,
+.inbox-detail-dock .inbox-question {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-top: 0;
+}
+
+.inbox-detail-dock .inbox-detail-footer {
+  flex: 0 0 auto;
+  margin-top: 0;
+  margin-left: auto;
+}
+
+.inbox-detail .inbox-detail-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  gap: 0;
+}
+
+.inbox-detail .inbox-detail-open:not(.disabled):not(:disabled):hover {
+  background: var(--bg-hover);
+  border-color: color-mix(in srgb, var(--border-strong) 70%, transparent);
+  color: var(--text-primary);
+}
+
+.inbox-detail .inbox-detail-open.disabled,
+.inbox-detail-unavailable {
+  cursor: default;
+  font-style: normal;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.inbox-detail-unavailable {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.inbox-reply-composer {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
+}
+
+.inbox-reply-composer:hover {
+  border-color: color-mix(in srgb, var(--border-strong) 75%, transparent);
+  color: var(--text-muted);
+}
+
+.inbox-detail .inbox-reply-input {
+  min-height: 72px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+}
+
+button.inbox-reply-again {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+button.inbox-reply-again:hover {
+  color: var(--text-primary);
+  text-decoration: none;
+  background: var(--bg-hover);
+}

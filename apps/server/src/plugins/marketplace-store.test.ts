@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createMarketplaceStore, marketplaceStorePath } from './marketplace-store.js';
+import { createMarketplaceStore, listPublicMarketplaceCatalogs, marketplaceStorePath, toPublicMarketplaceCatalog } from './marketplace-store.js';
 import type { MarketplaceIndex } from './marketplace.js';
 
 const dirs: string[] = [];
@@ -66,5 +66,35 @@ describe('marketplace store', () => {
     await store.add('https://example.test/user.json', INDEX);
     await expect(store.remove('https://example.test/user.json')).resolves.toBe(true);
     expect(store.list()).toHaveLength(0);
+  });
+
+  it('projects public catalog rows without cachedIndex', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-mp-public-'));
+    dirs.push(dataDir);
+    const store = createMarketplaceStore({ file: marketplaceStorePath(dataDir) });
+    await store.add('https://example.test/official.json', INDEX, { official: true });
+    const row = store.list()[0]!;
+    expect(row.cachedIndex?.name).toBe('official');
+    const published = toPublicMarketplaceCatalog(row);
+    expect(published).toEqual({
+      source: 'https://example.test/official.json',
+      sourceKind: 'https',
+      name: 'official',
+      displayName: 'Official',
+      addedAt: row.addedAt,
+      entryCount: 1,
+      lastRefreshAt: row.lastRefreshAt,
+      lastAttemptAt: row.lastAttemptAt,
+      lastError: null,
+      official: true
+    });
+    expect(published).not.toHaveProperty('cachedIndex');
+    expect(listPublicMarketplaceCatalogs(dataDir)).toEqual([published]);
+  });
+
+  it('lists an empty public catalog when the store file is missing', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-mp-missing-'));
+    dirs.push(dataDir);
+    expect(listPublicMarketplaceCatalogs(dataDir)).toEqual([]);
   });
 });

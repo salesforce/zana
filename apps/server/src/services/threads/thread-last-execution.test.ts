@@ -8,6 +8,25 @@ vi.mock('@zana-ai/zcc-db', () => ({
 import { listConversationThreadEventsWindow } from '@zana-ai/zcc-db';
 
 describe('readLastThreadExecution', () => {
+  it.each(['accept-edits', 'auto', 'full'])('reads the newest valid %s permission and filters the bounded query to turn requests', (permissionMode) => {
+    const turn = (execution: unknown) => ({ payload: { type: 'client/turn/requested', execution } });
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([
+      turn({ permissionMode: 'auto' }),
+      turn({ permissionMode, acpMode: 'plan' }),
+      turn({ model: 'new-model', permissionMode: 'invalid' }),
+      turn(null),
+      { payload: {} },
+      { payload: null },
+      { payload: { type: 'turn/completed' } }
+    ] as never);
+    expect(readLastThreadExecution({ db: {} }, 't1')).toEqual({
+      model: 'new-model', reasoningLevel: null, acpMode: 'plan', permissionMode
+    });
+    expect(listConversationThreadEventsWindow).toHaveBeenLastCalledWith({}, 't1', {
+      limit: 80, type: 'client/turn/requested'
+    });
+  });
+
   it('returns model, reasoning, and native role from the newest client/turn/requested event', () => {
     vi.mocked(listConversationThreadEventsWindow).mockReturnValue([
       {
@@ -44,7 +63,8 @@ describe('readLastThreadExecution', () => {
     expect(readLastThreadExecution({ db: {} }, 't1')).toEqual({
       model: 'claude-sonnet-5',
       reasoningLevel: 'xhigh',
-      acpMode: 'plan'
+      acpMode: 'plan',
+      permissionMode: null
     });
   });
 
@@ -77,7 +97,8 @@ describe('readLastThreadExecution', () => {
     expect(readLastThreadExecution({ db: {} }, 't1')).toEqual({
       model: 'claude-opus-5[1m]',
       reasoningLevel: 'high',
-      acpMode: 'plan'
+      acpMode: 'plan',
+      permissionMode: null
     });
   });
 
@@ -98,7 +119,8 @@ describe('readLastThreadExecution', () => {
     expect(readLastThreadExecution({ db: {} }, 't1')).toEqual({
       model: 'claude-sonnet-5',
       reasoningLevel: 'high',
-      acpMode: null
+      acpMode: null,
+      permissionMode: null
     });
   });
 
@@ -107,7 +129,8 @@ describe('readLastThreadExecution', () => {
     expect(readLastThreadExecution({ db: {} }, 't1')).toEqual({
       model: null,
       reasoningLevel: null,
-      acpMode: null
+      acpMode: null,
+      permissionMode: null
     });
   });
 });

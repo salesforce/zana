@@ -341,6 +341,11 @@ for (const row of CLI_CASES) {
         await expect(agentModal.getByTestId('thread-secondary-panel')).toBeVisible();
         await expect(agentModal.getByTestId('thread-info-pin')).toBeVisible();
         await expect(agentModal.getByRole('button', { name: 'Delete' })).toBeVisible();
+        await agentModal.getByTestId('thread-diff-pin').click();
+        await expect(agentModal.getByTestId('thread-diff-pin')).toHaveAttribute('aria-pressed', 'true');
+        await expect(agentModal.getByRole('button', { name: 'Delete' })).toHaveCount(0);
+        await agentModal.getByTestId('thread-info-pin').click();
+        await expect(agentModal.getByRole('button', { name: 'Delete' })).toBeVisible();
         await events.waitForEvent(
           (e) =>
             e.channel === 'terminals:onAgentStatus' &&

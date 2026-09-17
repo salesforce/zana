@@ -116,9 +116,9 @@ describe('workspace banner', () => {
     );
     expect(stack).toContain('width: 100%;');
     expect(stack).toContain('box-sizing: border-box;');
-    expect(css).toContain('.thread-composer-dock:has(> .thread-workspace-banner + .thread-command-composer) .thread-command-composer .ui-command-composer');
+    expect(css).toContain('.thread-composer-dock:has(> .thread-workspace-banner) .thread-command-composer .ui-command-composer');
     const flatten = css.slice(
-      css.indexOf('.thread-composer-dock:has(> .thread-workspace-banner + .thread-command-composer) .thread-command-composer .ui-command-composer {'),
+      css.indexOf('.thread-composer-dock:has(> .thread-workspace-banner) .thread-command-composer .ui-command-composer {'),
       css.indexOf('.thread-prompt-mode-card,')
     );
     expect(flatten).toContain('box-shadow: none;');
@@ -735,6 +735,7 @@ describe('expandable row and chips', () => {
     expect(source).not.toContain('shouldAutoOpenThreadPlanPanel');
     expect(source).toContain('showPlanPin');
     expect(source).toContain('<ThreadExplorerTab');
+    expect(source).toContain('<ThreadInboxTab');
     expect(source).toContain('thread-secondary-show');
     expect(source).toContain('<ThreadDetailHeading');
     expect(source).toContain('<ThreadDetailSearch');
@@ -743,7 +744,12 @@ describe('expandable row and chips', () => {
     expect(source).toContain('<ThreadDetailOverflow');
     expect(source).toContain('createCoalescedRunner');
     expect(source).toContain('<ThreadDetail key={threadId} threadId={threadId} />');
-    expect(source).toContain('applyTimelineDelta');
+    expect(source).toContain('resolveTimelinePollRows');
+    expect(source).toContain('Promise.allSettled');
+    expect(source).not.toContain('/* keep last */');
+    const load = readFileSync(fileURLToPath(new URL('../../views/threads/thread-detail-load.ts', import.meta.url)), 'utf8');
+    expect(load).toContain('applyTimelineDelta');
+    expect(load).toContain('retainLatestTimelineWindow');
     expect(source).toContain('afterSequence');
     expect(source).toContain("if ((payload as { id: unknown }).id === threadId) scheduleDelta()");
     expect(source).not.toContain('setInterval');
@@ -799,6 +805,7 @@ describe('expandable row and chips', () => {
     expect(source).not.toContain('thread-load-older');
     const column = source.slice(columnAt);
     expect(column).toContain('<ThreadTimeline');
+    expect(column).toContain('loadError={loadError}');
     expect(column).toContain('planExecution={durablePlan?.tasks.length');
     expect(column).toContain('<ThreadWorkspaceBanner');
     expect(column).toContain('<ThreadCommandComposer');
@@ -832,6 +839,8 @@ describe('expandable row and chips', () => {
     expect(css).toContain('.thread-prompt-mode-card');
     expect(css).toContain('.thread-pending-banner-plan');
     expect(css).toContain('.thread-plan-panel');
+    expect(css).toContain('.thread-timeline-load-error');
+    expect(css).toContain('.thread-timeline-load-retry');
     expect(css).toContain('.thread-plan-status');
     expect(css).toContain('.thread-plan-execution');
     expect(css).toContain('.thread-todo-checklist');
@@ -911,8 +920,13 @@ describe('expandable row and chips', () => {
     expect(mermaid).toContain('mermaidSvgLayout');
     expect(mermaid).toContain('inbox-mermaid-frame');
     expect(mermaid).toContain('flowchart: { useMaxWidth: false }');
+    expect(mermaid).toContain('loadMermaidSvg');
     expect(mermaid).toContain('readMermaidSvgCache');
     expect(mermaid).not.toMatch(/setSvg\(null\)/);
+
+    const markdown = readFileSync(fileURLToPath(new URL('../MarkdownContent.tsx', import.meta.url)), 'utf8');
+    expect(markdown).toContain('renderFencedPre');
+    expect(markdown).toContain('useCallback');
 
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
     const mermaidRow = css.slice(
@@ -923,6 +937,12 @@ describe('expandable row and chips', () => {
     expect(mermaidRow).toContain('max-width: 100%;');
     expect(css).toContain('.inbox-mermaid-frame.is-sized svg');
     expect(css).toContain('position: absolute;');
+    const fencedPre = css.slice(
+      css.indexOf('.inbox-md pre {'),
+      css.indexOf('.inbox-md pre code,')
+    );
+    expect(fencedPre).toContain('color: #e6edf3;');
+    expect(css).toContain('.inbox-mermaid-source {\n  text-align: left;\n  margin: 0;\n  color: #e6edf3;');
   });
 
   it('keeps the transcript scrollbar invisible at rest and paints it only while scrolling', () => {
@@ -962,7 +982,7 @@ describe('expandable row and chips', () => {
     expect(source).toContain('route.isProjectFocused ? route.focusedProjectId');
     expect(source).toContain('pendingChildThreads(threads, threadId)');
     expect(source).not.toContain('useThreads((s) => s.threads.filter');
-    expect(source).toContain('lastReadSeq: typeof timeline.lastReadSeq === \'number\' ? timeline.lastReadSeq : null');
+    expect(source).toContain('lastReadSeq: typeof timeline?.lastReadSeq === \'number\' ? timeline.lastReadSeq : existing?.lastReadSeq ?? null');
     expect(source).toContain('useThreads.getState().upsert({ ...existing, lastReadSeq: seq })');
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
     expect(css).toContain('.thread-detail-view--embedded');

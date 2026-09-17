@@ -58,6 +58,7 @@ export const IPC = {
     list: 'terminals:list',
     verifyTmux: 'terminals:verifyTmux',
     listTmuxRestoreCandidates: 'terminals:listTmuxRestoreCandidates',
+    listRememberedSessions: 'terminals:listRememberedSessions',
     create: 'terminals:create',
     restore: 'terminals:restore',
     /** Re-attach a remote tab whose local `ssh` proxy died during machine sleep.
@@ -372,6 +373,14 @@ export const IPC = {
     applyUpdate: 'pluginApps:applyUpdate',
     remove: 'pluginApps:remove',
     reload: 'pluginApps:reload'
+  },
+  /**
+   * Configured plugin marketplace catalogs (`plugins/marketplaces.json`).
+   * `list` is a main-process store read so Catalog sources matches Browse
+   * even when product HTTP is on another port or down. Mutations stay HTTP.
+   */
+  marketplaces: {
+    list: 'marketplaces:list'
   },
   /**
    * Runtime extensions under `~/.zcc/extensions/<id>/`. Mirrors the

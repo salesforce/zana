@@ -1,5 +1,6 @@
+import { registerSalesforcePanels } from './panels.js';
 import type { ComponentType } from 'react';
-import { definePluginApp, useZccContext, useZccNavigate, type PluginCreateProjectDialogProps, type PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, useComposerView, useZccContext, useZccNavigate, type PluginCreateProjectDialogProps, type PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { AgentforcePlaygroundPanel } from './src/app/AgentScriptPanel.js';
 import { AgentforcePreviewPanel } from './src/app/AgentforcePreviewPanel.js';
 import { OrgPicker } from './src/app/OrgPicker.js';
@@ -44,25 +45,29 @@ function SalesforceGuardrailForm(props: PluginPendingInteractionProps) {
       : null,
     React.createElement(
       'div',
-      { style: { display: 'flex', gap: 8 } },
+      { style: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 } },
       React.createElement(
         'button',
-        { type: 'button', onClick: () => void props.submit({ approved: true }) },
+        { type: 'button', className: 'btn primary', onClick: () => void props.submit({ approved: true }) },
         'Allow this action'
       ),
-      React.createElement('button', { type: 'button', onClick: () => void props.cancel() }, 'Deny')
+      React.createElement('button', { type: 'button', className: 'btn', onClick: () => void props.cancel() }, 'Deny')
     )
   );
 }
 
 function SalesforceComposerBanner(props: { pluginId?: string }) {
+  const { scope } = useComposerView();
+  const projectId = 'projectId' in scope ? scope.projectId : undefined;
+  const threadId = 'threadId' in scope ? scope.threadId : undefined;
   const React = hostReact();
   if (!React) return null;
   const [status, setStatus] = React.useState<null | Record<string, unknown>>(null);
   React.useEffect(() => {
     let cancelled = false;
+    setStatus(null);
     pluginHost()
-      ?.callRpc(props.pluginId || 'salesforce', 'status')
+      ?.callRpc(props.pluginId || 'salesforce', 'status', { projectId, threadId })
       .then((next) => {
         if (!cancelled) setStatus(next as Record<string, unknown>);
       })
@@ -70,7 +75,7 @@ function SalesforceComposerBanner(props: { pluginId?: string }) {
     return () => {
       cancelled = true;
     };
-  }, [props.pluginId]);
+  }, [props.pluginId, projectId, threadId]);
   if (!status) return null;
   const last = status.lastDoctor as { org?: { kind?: string }; agentBundleCount?: number } | undefined;
   const kind = last?.org?.kind;
@@ -296,6 +301,7 @@ function CreateSalesforceProjectDialog(props: PluginCreateProjectDialogProps) {
 }
 
 export default definePluginApp((app) => {
+  registerSalesforcePanels(app);
   app.slots.settingsSection({
     id: 'orgs',
     title: 'Connected orgs',

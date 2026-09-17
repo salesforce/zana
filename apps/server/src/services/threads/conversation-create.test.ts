@@ -198,6 +198,9 @@ describe('thread provider catalog', () => {
     expect(canonicalThreadProviderId('mastracode')).toBe('acp-mastracode');
     expect(canonicalThreadProviderId('mastracode-resume')).toBe('acp-mastracode');
     expect(canonicalThreadProviderId('mastracode-yolo')).toBe('acp-mastracode');
+    for (const profile of ['afcode', 'afcode-resume', 'afcode-yolo']) {
+      expect(canonicalThreadProviderId(profile)).toBe('acp-afcode');
+    }
     expect(canonicalThreadProviderId('codex')).toBe('codex');
   });
 

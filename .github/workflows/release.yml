@@ -292,26 +292,6 @@ jobs:
             merged/*.zip
             merged/*.blockmap
             merged/latest-mac.yml
-          generate_release_notes: true
+          # Use the same curated notes as the in-app What's New view.
+          body_path: docs/releases/${{ steps.meta.outputs.title }}.md
           fail_on_unmatched_files: true
-          body: |
-            ### Zana Command Center ${{ steps.meta.outputs.title }}
-
-            macOS builds (Apple Silicon + Intel), signed with Developer ID and
-            notarized. First launch should open without Gatekeeper prompts.
-            Auto-updates install on quit.
-
-            After you update, the app opens **What's New** with the curated notes
-            for this version (the same `docs/releases` markdown bundled in the app).
-
-            > **Note:** if this build is unsigned (no signing secrets configured),
-            > auto-update is disabled and you will need to bypass Gatekeeper manually:
-            > **System Settings → Privacy & Security → Open Anyway**, or run
-            > `xattr -dr com.apple.quarantine` on the app. Once signing + notarization
-            > secrets are configured, builds will be fully notarized and auto-update
-            > seamlessly.
-
-            | Mac | Download |
-            | --- | --- |
-            | Apple Silicon (M-series) | `*-arm64.dmg` |
-            | Intel | `*-x64.dmg` |

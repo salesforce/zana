@@ -5,6 +5,8 @@ export const LEGACY_THREAD_STORAGE_PREFIX = 'zcc.thread.secondaryPanel.';
 export const SECONDARY_PANEL_DEFAULT_WIDTH_PX = 352;
 export const SECONDARY_PANEL_MIN_WIDTH_PX = 288;
 export const SECONDARY_PANEL_MAX_WIDTH_RATIO = 0.7;
+export const SECONDARY_PANEL_OPEN_WIDTH_RATIO = 0.5;
+export const SECONDARY_PANEL_MODAL_OPEN_WIDTH_RATIO = 0.33;
 
 export type PinnedSecondaryView = 'info' | 'diff' | 'plan';
 
@@ -15,6 +17,7 @@ export type ClosableSecondaryTabKind =
   | 'browser'
   | 'terminal'
   | 'explorer'
+  | 'inbox'
   | 'plugin';
 
 export interface ClosableSecondaryTab {
@@ -94,6 +97,7 @@ function isTabKind(value: unknown): value is ClosableSecondaryTabKind {
     || value === 'browser'
     || value === 'terminal'
     || value === 'explorer'
+    || value === 'inbox'
     || value === 'plugin'
   );
 }
@@ -147,6 +151,25 @@ export function clampWidth(widthPx: number, containerWidthPx = 1200): number {
     Math.floor(containerWidthPx * SECONDARY_PANEL_MAX_WIDTH_RATIO)
   );
   return Math.min(max, Math.max(SECONDARY_PANEL_MIN_WIDTH_PX, Math.round(widthPx)));
+}
+
+export function secondaryPanelOpenWidthPx(containerWidthPx: number, modal: boolean): number {
+  const ratio = modal ? SECONDARY_PANEL_MODAL_OPEN_WIDTH_RATIO : SECONDARY_PANEL_OPEN_WIDTH_RATIO;
+  return containerWidthPx * ratio;
+}
+
+export function applySecondaryPanelOpenWidth(
+  previous: ThreadSecondaryPanelState,
+  next: ThreadSecondaryPanelState,
+  layout: { containerWidthPx: number; modal: boolean }
+): ThreadSecondaryPanelState {
+  if (previous.isOpen || !next.isOpen) return next;
+  if (!(layout.containerWidthPx > 0)) return next;
+  return setSecondaryPanelWidth(
+    next,
+    secondaryPanelOpenWidthPx(layout.containerWidthPx, layout.modal),
+    layout.containerWidthPx
+  );
 }
 
 function readStoredPanelRaw(ownerId: string): string | null {
@@ -290,7 +313,7 @@ function matchExistingTab(
 ): ClosableSecondaryTab | undefined {
   return tabs.find((tab) => {
     if (tab.kind !== input.kind) return false;
-    if (input.kind === 'explorer') return true;
+    if (input.kind === 'explorer' || input.kind === 'inbox') return true;
     if (input.kind === 'file-preview' || input.kind === 'storage-preview') return tab.path === input.path;
     if (input.kind === 'terminal') return tab.sessionId === input.sessionId;
     if (input.kind === 'plugin') {
@@ -378,6 +401,11 @@ export function activePinnedView(state: ThreadSecondaryPanelState): PinnedSecond
   if (state.activeId === DIFF_PIN_ID) return 'diff';
   if (state.activeId === PLAN_PIN_ID) return 'plan';
   return null;
+}
+
+/** Inspector lifecycle actions (Delete / summarize) belong on Info, not Diff. */
+export function secondaryPanelShowsInspectorFooter(state: ThreadSecondaryPanelState): boolean {
+  return activePinnedView(state) === 'info';
 }
 
 export function activeClosableTab(state: ThreadSecondaryPanelState): ClosableSecondaryTab | null {

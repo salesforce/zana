@@ -73,3 +73,14 @@ describe('useData.setIncludeScheduledAgentsInAgentView', () => {
     expect(useData.getState().includeScheduledAgentsInAgentView).toBe(true);
   });
 });
+
+// Settings persists these flags before notifying the renderer store.
+describe('afcode harness setting mirror', () => {
+  it('updates picker availability without writing configuration a second time', () => {
+    useData.getState().setHarnessAfcodeEnabled(true);
+    expect(useData.getState().harnessAfcodeEnabled).toBe(true);
+    useData.getState().setHarnessAfcodeEnabled(false);
+    expect(useData.getState().harnessAfcodeEnabled).toBe(false);
+    expect(configSet).not.toHaveBeenCalled();
+  });
+});

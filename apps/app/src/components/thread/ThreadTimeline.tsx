@@ -28,6 +28,7 @@ import {
 import {
   ThreadGoalBanner,
   ThreadHostDisconnectedBanner,
+  ThreadTimelineLoadError,
   ThreadWorkflowChips,
   ThreadWorkingIndicator
 } from './timeline/ThreadBanners.js';
@@ -57,6 +58,8 @@ export interface ThreadTimelineProps {
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
   planExecution?: { title: string; tasks: readonly PlanExecutionTask[] } | null;
+  loadError?: string | null;
+  onRetryLoad?: () => void;
 }
 
 function flattenForUnread(rows: ThreadTimelineViewRow[]): Array<{ id: string; sourceSeqStart?: number }> {
@@ -98,7 +101,9 @@ export function ThreadTimeline({
   searchHitRowId,
   messageActions,
   includePluginMessageActions,
-  planExecution
+  planExecution,
+  loadError = null,
+  onRetryLoad
 }: ThreadTimelineProps) {
   const [now, setNow] = useState(() => Date.now());
   const [retainedTerminalIds, setRetainedTerminalIds] = useState<string[]>([]);
@@ -204,6 +209,7 @@ export function ThreadTimeline({
     <div className="thread-detail-timeline-shell">
       <div className="thread-banner-stack">
         <ThreadGoalBanner goal={goal} />
+        <ThreadTimelineLoadError message={loadError} onRetry={onRetryLoad} />
         <ThreadWorkflowChips workflows={activeWorkflows} />
       </div>
       <div

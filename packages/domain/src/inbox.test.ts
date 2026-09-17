@@ -64,7 +64,7 @@ describe('isThreadPendingInboxClone', () => {
     })).toBe(true);
   });
 
-  it('leaves real inbox_ask questions alone', () => {
+  it('leaves real structured inbox questions alone', () => {
     expect(isThreadPendingInboxClone({
       subject: 'Ready to ship?',
       question: {

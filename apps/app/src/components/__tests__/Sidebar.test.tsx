@@ -132,7 +132,7 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(markup).toContain('aria-orientation="vertical"');
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).toContain('aria-label="Report a bug"');
-    expect(markup).not.toContain('>Settings<');
+    expect(markup).toContain('>Settings<');
     expect(markup).not.toContain('aria-label="Open Agents dashboard"');
     expect(markup).not.toContain('data-testid="sidebar-agents-heading"');
     expect(markup).not.toContain('data-testid="sidebar-agents-toggle"');
@@ -386,5 +386,8 @@ describe('Sidebar structure and compact accessibility', () => {
     const source = readFileSync(new URL('../sidebar/useThreadRowSplitDrag.ts', import.meta.url), 'utf8');
     expect(source).toContain("const MAIN_CONTENT_SELECTOR = '.split-workspace'");
     expect(source).not.toContain('main.shell-main');
+    expect(source).toContain('consumeClick: () => boolean');
+    expect(source).toContain('suppressClickRef.current = true');
+    expect(source).toContain('onEnd: () => {');
   });
 });

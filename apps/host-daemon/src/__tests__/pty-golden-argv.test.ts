@@ -204,6 +204,9 @@ const PROFILES: LaunchProfileId[] = [
   'mastracode',
   'mastracode-resume',
   'mastracode-yolo',
+  'afcode',
+  'afcode-resume',
+  'afcode-yolo',
   'shell'
 ];
 type LayerName = 'plain' | 'persona' | 'projectSettings' | 'persona+projectSettings';
@@ -523,7 +526,7 @@ describe('golden command — remote buildRemoteCmd matrix', () => {
 
   const remote: ProjectRemote = { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' };
 
-  for (const profile of PROFILES) {
+  for (const profile of PROFILES.filter((profile) => !profile.startsWith('afcode'))) {
     for (const layer of LAYERS) {
       const label = `remote ${profile} · ${layer}`;
       it(label, () => {

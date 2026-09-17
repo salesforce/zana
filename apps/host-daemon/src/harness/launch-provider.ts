@@ -125,6 +125,12 @@ export interface RemoteCommandInput {
    */
   resume?: boolean;
   /**
+   * Provider-native EXACT-session resume target — passed through to
+   * {@link LaunchProvider.resolveLaunch} on the remote path so Pi/Grok/Cursor
+   * `--session` / `--resume <uuid>` stay in lockstep with local create().
+   */
+  resumeSessionId?: string;
+  /**
    * The reverse-tunnel loopback URL of the zcc-inbox MCP server, as the remote
    * agent sees it: `http://127.0.0.1:<remotePort>/mcp/<projectId>/<sessionId>`
    * (the `ssh -R` forward back to our local MCP/hook HTTP server). Set by
@@ -205,6 +211,9 @@ export interface LaunchProvider {
 
   /** Trusted capability/contribution metadata. It never changes emitted argv by itself. */
   readonly adapter: TrustedHarnessAdapter;
+
+  /** Terminal sequence emitted when stdin can accept an opening task. */
+  readonly stdinReadyMarker?: string;
 
   /**
    * Provider-native rendering of host-minted MCP, guidance, hooks, and auth.

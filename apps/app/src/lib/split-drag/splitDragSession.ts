@@ -1,3 +1,4 @@
+import { suppressPostDragClick } from '../suppress-post-drag-click.js';
 import { pickZone, zoneBox, type SplitZone, type ZoneDecision } from './zones.js';
 
 /** Marks a pane's root element so the drag layer can hit-test it. */
@@ -15,6 +16,7 @@ export interface SplitDragFallbackTarget {
 
 export interface SplitDragConfig {
   ghostLabel: string;
+  pointerId?: number;
   sourceEl?: HTMLElement | null;
   decide: (paneId: string, zone: SplitZone) => ZoneDecision | null;
   onDrop: (target: SplitDropTarget) => void;
@@ -30,7 +32,15 @@ interface ResolvedTarget {
   rect: DOMRect;
 }
 
-export function beginSplitDrag(config: SplitDragConfig): void {
+let cancelActiveDrag: (() => void) | null = null;
+
+/** Returns an idempotent cancellation function for the owning component. */
+export function beginSplitDrag(config: SplitDragConfig): () => void {
+  cancelActiveDrag?.();
+  let finished = false;
+  const previousCursor = document.body.style.cursor;
+  const previousUserSelect = document.body.style.userSelect;
+  const previousOpacity = config.sourceEl?.style.opacity ?? '';
   let engaged = false;
   let target: SplitDropTarget | null = null;
   let ghostEl: HTMLElement | null = null;
@@ -52,8 +62,10 @@ export function beginSplitDrag(config: SplitDragConfig): void {
     overlayEl = createOverlay();
     document.body.append(ghostEl, overlayEl);
     document.body.style.cursor = 'grabbing';
+    document.body.style.userSelect = 'none';
     if (config.sourceEl) config.sourceEl.style.opacity = '0.45';
     config.onEngage?.();
+    window.addEventListener('keydown', handleKey, true);
   };
 
   const resolveTarget = (clientX: number, clientY: number): ResolvedTarget | null => {
@@ -72,20 +84,14 @@ export function beginSplitDrag(config: SplitDragConfig): void {
     return null;
   };
 
-  const handleMove = (event: PointerEvent): void => {
-    if (!engaged) {
-      if (!config.shouldEngage(event.clientX, event.clientY)) return;
-      engage();
-    }
-    event.preventDefault();
-    if (ghostEl) {
-      ghostEl.style.left = `${event.clientX + 12}px`;
-      ghostEl.style.top = `${event.clientY + 8}px`;
-    }
+  const isOwnPointer = (event: PointerEvent): boolean =>
+    config.pointerId === undefined || config.pointerId === event.pointerId;
+
+  const updateTarget = (clientX: number, clientY: number): void => {
     target = null;
-    const resolved = resolveTarget(event.clientX, event.clientY);
+    const resolved = resolveTarget(clientX, clientY);
     if (resolved && overlayEl) {
-      const zone = pickZone(resolved.rect, event.clientX, event.clientY);
+      const zone = pickZone(resolved.rect, clientX, clientY);
       const decision = config.decide(resolved.paneId, zone);
       if (decision) {
         target = { paneId: resolved.paneId, zone: decision.zone };
@@ -98,48 +104,75 @@ export function beginSplitDrag(config: SplitDragConfig): void {
     }
   };
 
+  const handleMove = (event: PointerEvent): void => {
+    if (!isOwnPointer(event)) return;
+    if (!engaged) {
+      if (!config.shouldEngage(event.clientX, event.clientY)) return;
+      engage();
+    }
+    event.preventDefault();
+    if (ghostEl) {
+      ghostEl.style.left = `${event.clientX + 12}px`;
+      ghostEl.style.top = `${event.clientY + 8}px`;
+    }
+    updateTarget(event.clientX, event.clientY);
+  };
+
   const teardown = (): void => {
     window.removeEventListener('pointermove', handleMove);
     window.removeEventListener('pointerup', handleUp);
     window.removeEventListener('pointercancel', handleCancel);
     window.removeEventListener('dragstart', preventNativeDrag);
+    window.removeEventListener('keydown', handleKey, true);
+    window.removeEventListener('blur', handleCancel);
+    if (cancelActiveDrag === handleCancel) cancelActiveDrag = null;
     ghostEl?.remove();
     overlayEl?.remove();
-    document.body.style.cursor = '';
-    if (config.sourceEl) config.sourceEl.style.opacity = '';
+    document.body.style.cursor = previousCursor;
+    document.body.style.userSelect = previousUserSelect;
+    if (config.sourceEl) config.sourceEl.style.opacity = previousOpacity;
   };
 
-  function handleUp(): void {
+  function handleUp(event: PointerEvent): void {
+    if (finished || !isOwnPointer(event)) return;
+    // The layout or pointer can change between the last move and release.
+    if (engaged) updateTarget(event.clientX, event.clientY);
+    finished = true;
     const wasEngaged = engaged;
     const dropTarget = engaged ? target : null;
     teardown();
-    if (wasEngaged) swallowNextClick();
-    if (dropTarget) config.onDrop(dropTarget);
-    if (wasEngaged) config.onEnd?.({ dropped: dropTarget !== null });
+    if (wasEngaged) suppressPostDragClick();
+    try {
+      if (dropTarget) config.onDrop(dropTarget);
+    } finally {
+      if (wasEngaged) config.onEnd?.({ dropped: dropTarget !== null });
+    }
   }
 
-  function handleCancel(): void {
+  function handleCancel(event?: Event): void {
+    if (finished || (event instanceof PointerEvent && !isOwnPointer(event))) return;
+    finished = true;
     const wasEngaged = engaged;
     teardown();
     if (wasEngaged) {
-      swallowNextClick();
+      suppressPostDragClick();
       config.onEnd?.({ dropped: false });
     }
   }
 
+  function handleKey(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    handleCancel();
+  }
+
+  cancelActiveDrag = handleCancel;
+  window.addEventListener('blur', handleCancel);
   window.addEventListener('pointermove', handleMove);
   window.addEventListener('pointerup', handleUp);
   window.addEventListener('pointercancel', handleCancel);
-}
-
-function swallowNextClick(): void {
-  const swallow = (event: MouseEvent): void => {
-    event.stopPropagation();
-    event.preventDefault();
-    window.removeEventListener('click', swallow, true);
-  };
-  window.addEventListener('click', swallow, true);
-  window.setTimeout(() => window.removeEventListener('click', swallow, true), 300);
+  return handleCancel;
 }
 
 function paneElementAt(clientX: number, clientY: number): HTMLElement | null {

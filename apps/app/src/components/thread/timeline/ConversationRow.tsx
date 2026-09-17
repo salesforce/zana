@@ -20,7 +20,7 @@ import {
 } from './MessageActionBar.js';
 import { resolveIcon } from '../../../lib/resolveIcon.js';
 import { product } from '../../../lib/product-client.js';
-import { SecondaryPanelSelectionActions, readTrimmedSelection } from '../secondary-panel/SecondaryPanelSelectionActions.js';
+import { readTrimmedSelection } from '../secondary-panel/SecondaryPanelSelectionActions.js';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { conversationFilePreviewPaths } from '../../markdown-local-file.js';
 import { dispatchThreadOpenFile } from '../secondary-panel/useThreadOpenFileSignal.js';
@@ -209,8 +209,7 @@ export const ConversationRow = memo(function ConversationRow({
           {requestLabel}
         </span>
       ) : null}
-      <SecondaryPanelSelectionActions threadId={threadId}>
-        <div className="thread-timeline-bubble">
+      <div className="thread-timeline-bubble">
           {imageRefs.length > 0 ? (
             <div className="composer-image-thumbs" aria-label="Attached images">
               {imageRefs.map((image) => {
@@ -369,8 +368,7 @@ export const ConversationRow = memo(function ConversationRow({
               ) : null}
             </div>
           ) : null}
-        </div>
-      </SecondaryPanelSelectionActions>
+      </div>
       {editing ? null : (
         <MessageActionBar
           text={text}

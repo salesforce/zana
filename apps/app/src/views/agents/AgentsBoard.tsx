@@ -16,7 +16,8 @@ import {
 } from '@/store';
 import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { getThreadRoutePath, threadIdFromPath } from '@/lib/route-paths';
+import { threadIdFromPath } from '@/lib/route-paths';
+import { inspectAgentSession, inspectThread } from '@/lib/inspect-session';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
 import { AgentViewToggle, ScheduledColumnToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
@@ -104,6 +105,7 @@ function toCard(
 }
 
 export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
+  const navigate = useNavigate();
   const isGlobal = scope.kind === 'global';
   const scopedProject = scope.kind === 'project' ? scope.project : undefined;
 
@@ -114,13 +116,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const triageById = useIdleTriage((s) => s.byId);
   const overseerById = useOverseerActivity((s) => s.byId);
   const subagentsById = useSubagents((s) => s.byId);
-  const enterProjectFocus = useUi((s) => s.enterProjectFocus);
-  const setNav = useUi((s) => s.setNav);
-  const selectTab = useUi((s) => s.selectTab);
-  const selectProject = useUi((s) => s.selectProject);
-  const setProjectView = useUi((s) => s.setProjectView);
   const selectedTabId = useUi((s) => s.selectedTabId);
-  const restoreTerminal = useData((s) => s.restoreTerminal);
   const closeIdleAgents = useData((s) => s.closeIdleAgents);
   const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
   const scheduledTasks = useScheduler((s) => s.tasks);
@@ -128,10 +124,10 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const boardView = useUi((s) => s.agentsBoardView);
   const threads = useThreads((s) => s.threads);
   useEnsureThreads();
-  const navigate = useNavigate();
   const location = useLocation();
   const [filter, setFilter] = useState('');
   const [closeIdleTarget, setCloseIdleTarget] = useState<AgentCard[] | null>(null);
+  const [closeIdleForce, setCloseIdleForce] = useState(false);
   const [busyAction, setBusyAction] = useState<null | 'close'>(null);
   // Durable Job Team executions surfaced on the board. In project scope they're
   // scoped to one project (with `before`-paginated Load more); in global scope
@@ -209,7 +205,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const cards = useMemo<AgentCard[]>(() => {
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
     if (scopedProject) {
-      return agentViewTerminals(terminals[scopedProject.id], includeScheduled, byId)
+      return agentViewTerminals(terminals[scopedProject.id], includeScheduled)
         .filter((s) => s.profile !== 'shell')
         .map((s) =>
           toCard(s, scopedProject, byId, sinceById, triageById, overseerById, subagentsById)
@@ -219,7 +215,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     for (const [projectId, list] of Object.entries(terminals)) {
       const project = byProjectId.get(projectId);
       if (!project) continue;
-      for (const s of agentViewTerminals(list, includeScheduled, byId)) {
+      for (const s of agentViewTerminals(list, includeScheduled)) {
         if (s.profile === 'shell') continue;
         out.push(toCard(s, project, byId, sinceById, triageById, overseerById, subagentsById));
       }
@@ -272,18 +268,17 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const activeTabId = scopedProject ? selectedTabId[scopedProject.id] : undefined;
   const activeThreadId = threadIdFromPath(location.pathname);
   const activeId = activeThreadId ?? activeTabId;
-  const threadProjectId = isGlobal ? undefined : scopedProject?.id;
   // Keep the toolbar (and this toggle) mounted after the user hides Scheduled
   // so they can turn the column back on even if that was the only fleet.
   const showToolbar = fleet.length > 0 || executions.length > 0 || !includeScheduled;
 
   const inspect = (item: FleetItem) => {
     if (item.kind === 'thread') {
-      useUi.getState().openThreadModal(item.id);
+      inspectThread(item.id, item.projectId, navigate);
       return;
     }
     if (item.kind === 'schedule') {
-      openScheduleFromAgents(item.task, terminals);
+      openScheduleFromAgents(item.task, terminals, navigate);
       return;
     }
     const executionId = item.card.session.cohort?.executionId;
@@ -291,45 +286,19 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       setSelectedExecution({ projectId: item.projectId, executionId });
       return;
     }
-    useUi.getState().openAgentModal(item.card.session.id, item.projectId);
-  };
-
-  const pick = (item: FleetItem) => {
-    if (item.kind === 'thread') {
-      navigate(getThreadRoutePath(item.id, threadProjectId));
-      return;
-    }
-    if (item.kind === 'schedule') {
-      openScheduleFromAgents(item.task, terminals);
-      return;
-    }
-    if (item.card.session.scheduled) {
-      useUi.getState().openAgentModal(item.card.session.id, item.projectId);
-      return;
-    }
-    const c = item.card;
-    if (isGlobal) {
-      setNav('projects');
-      enterProjectFocus(c.projectId);
-    } else {
-      selectProject(c.projectId);
-    }
-    if (c.session.headless && c.session.status !== 'exited') {
-      void restoreTerminal(c.session.id, c.projectId);
-    } else {
-      selectTab(c.projectId, c.session.id);
-    }
-    setProjectView(c.projectId, 'terminals');
+    inspectAgentSession(item.card.session.id, item.projectId, navigate);
   };
 
   const confirmCloseIdle = (summarize: boolean) => {
     if (!closeIdleTarget) return;
     const byProject = groupSessionIdsByProject(closeIdleTarget);
+    const force = closeIdleForce;
     setCloseIdleTarget(null);
+    setCloseIdleForce(false);
     setBusyAction('close');
     void (async () => {
       for (const [projectId, ids] of byProject) {
-        await closeIdleAgents(projectId, ids, summarize);
+        await closeIdleAgents(projectId, ids, summarize, force ? { force: true } : undefined);
       }
     })().finally(() => setBusyAction(null));
   };
@@ -344,7 +313,10 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
             <button
               type="button"
               className="btn agents-board-close-idle"
-              onClick={() => setCloseIdleTarget(reclaimableAgents)}
+              onClick={() => {
+                setCloseIdleForce(false);
+                setCloseIdleTarget(reclaimableAgents);
+              }}
               disabled={busyAction !== null}
               aria-label={
                 busyAction === 'close'
@@ -429,13 +401,14 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       {boardView === 'board' && (
         <CohortBar
           cards={visibleCards}
-          onCloseIdle={(co: LiveCohort) =>
+          onCloseIdle={(co: LiveCohort) => {
+            setCloseIdleForce(false);
             setCloseIdleTarget(
               co.cards.filter(
                 (c) => isReclaimableIdle(c) && !favoriteIds[favoriteKey(c.session)]
               )
-            )
-          }
+            );
+          }}
         />
       )}
 
@@ -490,7 +463,6 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           cards={visibleFleet}
           activeId={activeId}
           onInspect={inspect}
-          onPick={pick}
           showProject={isGlobal}
           executions={executions}
           hasMoreExecutions={hasMoreExecutions}
@@ -498,6 +470,10 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           onDismissExecution={(executionId) => {
             setExecutions((current) => current.filter((execution) => execution.executionId !== executionId));
             setSelectedExecution((current) => (current?.executionId === executionId ? null : current));
+          }}
+          onCloseLaneAgents={(cards) => {
+            setCloseIdleForce(true);
+            setCloseIdleTarget(cards);
           }}
         />
       )}
@@ -508,7 +484,11 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           agents={closeIdleTarget}
           projectName={scopedProject?.name}
           action="close"
-          onClose={() => setCloseIdleTarget(null)}
+          force={closeIdleForce}
+          onClose={() => {
+            setCloseIdleTarget(null);
+            setCloseIdleForce(false);
+          }}
           onConfirm={confirmCloseIdle}
         />
       )}

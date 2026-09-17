@@ -8,7 +8,7 @@ import { product } from '../../lib/product-client.js';
 import {
   Folder, TerminalSquare, Plus, Code2, FolderOpen, FileSearch, Sparkles, Play,
   Zap, Keyboard, History, Search, Inbox, RotateCcw, Trash2, Copy, Pin, PinOff,
-  BookOpen, Clock, LayoutGrid, RotateCw, Undo2, Puzzle, Plug, Drama, Bot, AppWindow
+  BookOpen, Clock, LayoutGrid, RotateCw, Undo2, Puzzle, Plug, Drama, Bot, AppWindow, Settings, FolderCog
 } from 'lucide-react';
 import { CursorIcon } from '../icons/CursorIcon.js';
 import { visibleTerminals, useUi } from '../../store.js';
@@ -27,13 +27,15 @@ import type { PluginCommandPaletteActionRegistration } from '@zana-ai/zcc-plugin
 import { cliAgentRestartConfirm } from '../agentCardActions.js';
 
 /** A category a palette item belongs to, used for empty-query grouping. */
-export type PaletteCategory = 'Projects' | 'Tabs' | 'Actions' | 'Extensions';
+export type PaletteCategory = 'Projects' | 'Threads' | 'Tabs' | 'Actions' | 'Extensions';
 
 export interface PaletteItem {
   key: string;
   icon: React.ReactNode;
   label: string;
   hint?: string;
+  /** Existing project star or followed-session state; never a separate preference. */
+  favorite?: boolean;
   /** Extra fuzzy-match terms beyond label/hint (extension command keywords). */
   keywords?: string[];
   /** Grouping bucket for empty-query section headers. */
@@ -211,13 +213,13 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
     },
     {
       key: 'action:settings',
-      icon: <TerminalSquare size={14} />,
+      icon: <Settings size={14} />,
       label: 'Open Settings',
       hint: '⌘,',
       category: 'Actions',
       source: 'core',
       run: () => {
-        setNav('settings');
+        useUi.getState().exitProjectFocus('/settings');
         onClose();
       }
     },
@@ -374,7 +376,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       },
       {
         key: 'action:project-settings',
-        icon: <TerminalSquare size={14} />,
+        icon: <FolderCog size={14} />,
         label: `Open ${selectedProject.name} settings…`,
         hint: 'CLI flags, MCP, allowed tools',
         category: 'Actions',

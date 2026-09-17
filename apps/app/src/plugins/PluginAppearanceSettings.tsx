@@ -26,7 +26,8 @@ export function PluginThemePicker() {
   return (
     <Field
       label="Plugin theme"
-      help="CSS themes declared in a plugin's package.json zcc.themes. Host chrome stays the system/light/dark picker above."
+      layout="row"
+      help="Use an appearance theme from an installed plugin."
     >
       <PopoverPicklist
         value={value}
@@ -56,7 +57,8 @@ export function PluginThreadListPicker() {
   return (
     <Field
       label="Agents list"
-      help="An exclusive plugin agents list replaces only the scrolling Agents list. Plugin nav rows and the sidebar footer stay host-owned."
+      layout="row"
+      help="Choose how agents appear in the sidebar."
     >
       <PopoverPicklist
         value={value}

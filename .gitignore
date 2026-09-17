@@ -4,6 +4,7 @@ dist
 # node-gyp configure dump at repo root (not a source tree).
 /build/
 .turbo/
+.pnpm-store/
 
 # Test/coverage artifacts (Vitest coverage HTML, Playwright traces/screenshots)
 coverage/
@@ -30,6 +31,7 @@ vendor/opencode
 *.rej
 .fastcontext/trajectory_*.jsonl
 .idea/
+.tmp/
 
 # Playwright E2E artifacts (reports, traces, screenshots) — regenerated per run.
 playwright-report

@@ -1,0 +1,24 @@
+{
+  "id": "provider-acp",
+  "displayName": "ACP providers",
+  "description": "Run Zana threads with ACP agents, including Cursor and OpenCode.",
+  "overview": "Use one ZCC workspace with the coding agents you already run on your machine. This plugin connects ZCC to agents that speak the Agent Client Protocol (ACP). Each agent appears as a provider in the thread composer.\n\n## What you get\n\n- Ready-made providers for Cursor, opencode, omp, Grok Build, and Hermes Agent.\n- A `Custom agents` setting. Add any other ACP agent as a JSON array with an `id`, a `displayName`, and a `command`.\n- Permission modes `accept-edits` and `full` for every ACP provider.\n- Reasoning levels and a model picker where the agent reports them.\n- Skills from the agent's own skill directories, listed next to ZCC skills.\n\n## How it works\n\nThe plugin launches the agent command on the host machine and talks to it over ACP. Cursor is always visible. The other agents appear after ZCC finds their command on a connected host. A background probe checks what each installed agent supports and updates the provider.\n\n## Requirements\n\n- Install the agent CLI on the host: `cursor-agent`, `opencode`, `omp`, `grok`, or `hermes`.\n- Sign in with the agent's own command, for example `cursor-agent login` or `opencode auth login`.\n- A custom agent needs a command that starts an ACP server on stdio.\n",
+  "icon": {
+    "lucide": "./icons/cursor.svg"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/provider-acp",
+      "ref": "HEAD"
+    }
+  }
+}

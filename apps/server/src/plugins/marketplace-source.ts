@@ -59,19 +59,77 @@ export function marketplaceSourceDisplay(source: MarketplaceSource): string {
   return source.ref === 'HEAD' ? `git:${source.url}` : `git:${source.url}@${source.ref}`;
 }
 
-async function runGit(args: string[]): Promise<string> {
+function normalizeGitUrl(url: string): string {
+  return url.replace(/\/+$/u, '').replace(/\.git$/iu, '');
+}
+
+/** Stable identity for catalog rows so `foo.git` and `foo` match. */
+export function marketplaceSourceKey(source: MarketplaceSource): string {
+  if (source.kind === 'https') return `https:${source.manifestUrl}`;
+  if (source.kind === 'path') return `path:${source.directory}`;
+  const url = normalizeGitUrl(source.url);
+  return source.ref === 'HEAD' ? `git:${url}` : `git:${url}@${source.ref}`;
+}
+
+export function marketplaceSourcesEqual(a: string, b: string): boolean {
+  try {
+    return marketplaceSourceKey(parseMarketplaceSource(a)) === marketplaceSourceKey(parseMarketplaceSource(b));
+  } catch {
+    return a === b;
+  }
+}
+
+export interface MarketplaceMaterializeOptions {
+  timeoutMs?: number;
+  /** Seed path only: no TTY prompts. Keeps the user's credential helper. */
+  nonInteractive?: boolean;
+}
+
+async function runGit(args: string[], options: MarketplaceMaterializeOptions = {}): Promise<string> {
   return await new Promise((settle, reject) => {
-    const child = spawn('git', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const env = { ...process.env };
+    if (options.nonInteractive) env.GIT_TERMINAL_PROMPT = '0';
+    const timed = options.timeoutMs != null && options.timeoutMs > 0;
+    const child = spawn('git', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+      detached: timed
+    });
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    const killChild = () => {
+      if (timed && child.pid) {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+          return;
+        } catch {
+          /* process-group kill is Unix-only */
+        }
+      }
+      child.kill('SIGKILL');
+    };
+    const finish = (error: Error | null, value?: string) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (error) reject(error);
+      else settle(value ?? '');
+    };
+    const timer = timed
+      ? setTimeout(() => {
+          killChild();
+          finish(new Error(`git ${args.join(' ')} timed out after ${options.timeoutMs}ms`));
+        }, options.timeoutMs)
+      : null;
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => { stdout += chunk; });
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-    child.on('error', reject);
+    child.on('error', (error) => finish(error));
     child.on('close', (code) => {
-      if (code === 0) settle(stdout.trim());
-      else reject(new Error(stderr.trim() || `git ${args.join(' ')} failed`));
+      if (code === 0) finish(null, stdout.trim());
+      else finish(new Error(stderr.trim() || `git ${args.join(' ')} failed`));
     });
   });
 }
@@ -87,7 +145,8 @@ async function readMarketplaceJson(directory: string): Promise<MarketplaceIndex>
 
 export async function materializeMarketplaceIndex(
   source: MarketplaceSource,
-  fetchJson: (url: string) => Promise<unknown> = defaultFetchJson
+  fetchJson: (url: string) => Promise<unknown> = defaultFetchJson,
+  options: MarketplaceMaterializeOptions = {}
 ): Promise<MarketplaceIndex> {
   if (source.kind === 'https') {
     return parseMarketplaceIndex(await fetchJson(source.manifestUrl));
@@ -102,9 +161,9 @@ export async function materializeMarketplaceIndex(
     const cloneArgs = ['-c', 'core.hooksPath=/dev/null', 'clone', '--quiet', '--depth', '1'];
     if (source.ref !== 'HEAD') cloneArgs.push('--branch', source.ref);
     cloneArgs.push(source.url, staging);
-    await runGit(cloneArgs);
+    await runGit(cloneArgs, options);
     return await readMarketplaceJson(staging);
   } finally {
-    await rm(staging, { recursive: true, force: true });
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   }
 }

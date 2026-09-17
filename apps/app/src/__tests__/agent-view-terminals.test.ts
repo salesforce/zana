@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { agentViewTerminals, listedTerminals, projectRailTerminals } from '../store.js';
 
 function session(over: Partial<TerminalSession>): TerminalSession {
@@ -22,31 +22,18 @@ describe('agentViewTerminals', () => {
   const blocked = session({ id: 'block', scheduled: true });
   const exited = session({ id: 'done', scheduled: true, status: 'exited' });
   const list = [interactive, waiting, working, blocked, exited];
-  const stateById: Record<string, AgentState> = {
-    wait: 'idle',
-    work: 'working',
-    block: 'blocked',
-    done: 'idle'
-  };
 
-  it('drops waiting and exited scheduled sessions when includeScheduled is off', () => {
+  it('drops every scheduled session when includeScheduled is off, including working and blocked', () => {
     expect(listedTerminals(list).map((t) => t.id)).toEqual(['i']);
-    expect(agentViewTerminals(list, false, stateById).map((t) => t.id)).toEqual([
-      'i',
-      'work',
-      'block'
-    ]);
+    expect(agentViewTerminals(list, false).map((t) => t.id)).toEqual(['i']);
   });
 
-  it('treats a scheduled session with no AgentState as waiting', () => {
+  it('drops a waiting scheduled session when includeScheduled is off', () => {
     expect(agentViewTerminals([interactive, waiting], false).map((t) => t.id)).toEqual(['i']);
-    expect(
-      agentViewTerminals([interactive, waiting], false, { wait: 'unknown' }).map((t) => t.id)
-    ).toEqual(['i']);
   });
 
   it('keeps all scheduled sessions when includeScheduled is on', () => {
-    expect(agentViewTerminals(list, true, stateById).map((t) => t.id)).toEqual([
+    expect(agentViewTerminals(list, true).map((t) => t.id)).toEqual([
       'i',
       'wait',
       'work',
@@ -61,5 +48,15 @@ describe('agentViewTerminals', () => {
 
   it('drops scheduled agents from the project rail, even while they are running', () => {
     expect(projectRailTerminals(list).map((t) => t.id)).toEqual(['i']);
+  });
+
+  it('dumps exited CLI agents instead of nesting them like idle threads', () => {
+    const remembered = session({
+      id: 'old',
+      status: 'exited',
+      remembered: true,
+      finishedAt: 1
+    });
+    expect(projectRailTerminals([interactive, remembered, exited]).map((t) => t.id)).toEqual(['i']);
   });
 });

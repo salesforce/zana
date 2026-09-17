@@ -1,7 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { getDesktopBrowserApi } from '../../../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../../../lib/browser-url.js';
-import { OPEN_IN_APP_BROWSER_EVENT } from '../../../lib/in-app-browser-link-preference.js';
+import {
+  inAppBrowserEventMatchesOwner,
+  OPEN_IN_APP_BROWSER_EVENT
+} from '../../../lib/in-app-browser-link-preference.js';
 import { subscribeProductEvent } from '../../../lib/product-ws.js';
 import { appendThreadRecentItem } from './threadRecentItems.js';
 import type { ClosableSecondaryTab } from './threadSecondaryPanelState.js';
@@ -51,7 +54,8 @@ export function useInAppBrowserPanel(ownerId: string, panel: PanelCommands): voi
     const onOpen = (event: Event) => {
       const detail = (event as CustomEvent<{ url?: string; ownerId?: string }>).detail;
       if (!detail?.url) return;
-      if (detail.ownerId && detail.ownerId !== ownerId) return;
+      if (!inAppBrowserEventMatchesOwner(detail.ownerId, ownerId)) return;
+      event.preventDefault();
       addTabRef.current({
         kind: 'browser',
         title: getBrowserUrlHost(detail.url) || 'Browser',

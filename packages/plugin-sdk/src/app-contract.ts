@@ -201,6 +201,8 @@ export function threadPanelActionMatchesScope(
 
 export interface PluginThreadPanelProps {
   pluginId: string;
+  /** Owning thread or CLI-agent project, independent of the focused route. */
+  projectId?: string;
   /**
    * The thread id, or the CLI-agent session id when this tab was opened from
    * an agent-session side panel (`scopes` includes `"agent-session"`).
@@ -217,6 +219,8 @@ export interface PluginThreadPanelActionContext {
 
 export interface PluginThreadPanelActionRegistration extends PluginSlotBase {
   title: string;
+  /** New Tab category. Defaults to the installed plugin's name. */
+  category?: string;
   icon?: string;
   component: ComponentType<PluginThreadPanelProps>;
   layout?: 'padded' | 'flush';
@@ -243,6 +247,8 @@ export interface PluginNewThreadPanelActionContext {
 
 export interface PluginNewThreadPanelActionRegistration extends PluginSlotBase {
   title: string;
+  /** New Tab category. Defaults to the installed plugin's name. */
+  category?: string;
   icon?: string;
   component: ComponentType<PluginNewThreadPanelProps>;
   layout?: 'padded' | 'flush';
@@ -1088,10 +1094,12 @@ export function collectPluginApp(
           throw new Error(`${kind}: "run" must be a function when set`);
         }
         const scopes = requireThreadPanelScopes(kind, registration.scopes);
+        const category = requireOptionalString(kind, 'category', registration.category)?.trim();
         set.threadPanelActions.push(
           stamp({
             id,
             title: requireNonEmptyString(kind, 'title', registration.title),
+            ...(category ? { category } : {}),
             ...(registration.icon !== undefined
               ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
               : {}),
@@ -1111,10 +1119,12 @@ export function collectPluginApp(
         if (registration.run !== undefined && typeof registration.run !== 'function') {
           throw new Error(`${kind}: "run" must be a function when set`);
         }
+        const category = requireOptionalString(kind, 'category', registration.category)?.trim();
         set.newThreadPanelActions.push(
           stamp({
             id,
             title: requireNonEmptyString(kind, 'title', registration.title),
+            ...(category ? { category } : {}),
             ...(registration.icon !== undefined
               ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
               : {}),

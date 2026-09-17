@@ -19,6 +19,7 @@ import { AgentRowDetail } from './AgentRowDetail.js';
 export function ProjectAgentRailRow({
   session,
   projectId,
+  routeProjectId,
   projectRemote = false,
   isUnread,
   active,
@@ -27,6 +28,7 @@ export function ProjectAgentRailRow({
 }: {
   session: TerminalSession;
   projectId: string;
+  routeProjectId: string | null;
   projectRemote?: boolean;
   isUnread: boolean;
   active: boolean;
@@ -34,13 +36,13 @@ export function ProjectAgentRailRow({
   onContextMenu: (e: MouseEvent) => void;
 }) {
   const title = session.cohort?.executionJobTitle?.trim() || session.title;
-  const { onPointerDown, openInSplit } = usePaneContentSplitDrag({
-    content: { kind: 'agent-session', projectId, sessionId: session.id },
+  const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
+    content: { kind: 'agent-session', projectId: routeProjectId, sessionId: session.id },
     title
   });
   const indicator = usePaneContentSplitIndicator({
     kind: 'agent-session',
-    projectId,
+    projectId: routeProjectId,
     sessionId: session.id
   });
   return (
@@ -54,6 +56,7 @@ export function ProjectAgentRailRow({
           onPointerDown?.(e);
         }}
         onClick={(e) => {
+          if (consumeClick()) return;
           if (e.metaKey || e.ctrlKey) {
             e.preventDefault();
             openInSplit();
@@ -85,26 +88,27 @@ export function ProjectAgentRailRow({
 export function ProjectThreadRailRow({
   thread,
   active,
-  projectId,
+  routeProjectId,
   onOpen,
   onContextMenu
 }: {
   thread: ThreadListItem;
   active: boolean;
   projectId: string;
+  routeProjectId: string | null;
   onOpen: () => void;
   onContextMenu: (e: MouseEvent) => void;
 }) {
   const title = threadTitle(thread);
   const status = threadRailStatus(thread);
-  const { onPointerDown, openInSplit } = useThreadRowSplitDrag({
-    projectId,
+  const { onPointerDown, openInSplit, consumeClick } = useThreadRowSplitDrag({
+    projectId: routeProjectId,
     threadId: thread.id,
     title
   });
   const indicator = usePaneContentSplitIndicator({
     kind: 'thread',
-    projectId,
+    projectId: routeProjectId,
     threadId: thread.id
   });
   return (
@@ -119,6 +123,7 @@ export function ProjectThreadRailRow({
           onPointerDown?.(e);
         }}
         onClick={(e) => {
+          if (consumeClick()) return;
           if (e.metaKey || e.ctrlKey) {
             e.preventDefault();
             openInSplit();

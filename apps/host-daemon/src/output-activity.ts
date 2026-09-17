@@ -15,9 +15,14 @@
  *    (the first chunk after silence), then re-arm a silence timer on every chunk.
  *  - `idleAfterMs` of no output ⇒ the agent has settled ⇒ report `idle`.
  *
- * It is NOT a spinner detector — it makes no assumptions about the bytes, so it
- * works for any provider whose turn ends with a quiet prompt. It feeds the SAME
- * generic {@link AgentStatusTracker.report} sink the OSC path uses, so the
+ * It is NOT a spinner detector — it makes no assumptions about the *visible*
+ * bytes, so it works for any provider whose turn ends with a quiet prompt.
+ * Control-only frames (OSC titles, CSI cursor/bracketed-paste, charset switches)
+ * do not count as activity: a Claude-like TUI that re-emits an idle OSC title
+ * every frame would otherwise never settle. OSC classification still runs on
+ * the same chunk via {@link AgentStatusTracker.observeData}, so a real braille /
+ * `✳` glyph still drives working/idle. It feeds the SAME generic
+ * {@link AgentStatusTracker.report} sink the OSC path uses, so the
  * downstream fusion (a sticky `blocked` overlay from a hook still wins), 250 ms
  * emit-debounce, ring buffer and `status` event are all unchanged — this only
  * adds a second SOURCE of the raw working/idle reading.
@@ -41,6 +46,28 @@ import type { AgentState } from '@zana-ai/zcc-domain/product';
  * 250 ms emit-debounce so the two detectors feel consistent.
  */
 export const DEFAULT_IDLE_AFTER_MS = 1500;
+
+const OSC_SEQUENCE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const CSI_SEQUENCE = /\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g;
+const OTHER_ESCAPE = /\x1b[\x20-\x2f]*[\x30-\x7e]/g;
+const LEFTOVER_ESCAPE = /\x1b./g;
+const NON_CONTENT_CONTROLS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+
+/**
+ * True when a PTY chunk contains human-visible output. OSC titles, CSI cursor
+ * / mode probes, and other control sequences are ignored so a TUI that
+ * re-paints its idle chrome does not keep the session `working`.
+ */
+export function chunkHasVisibleActivity(chunk: string): boolean {
+  if (!chunk) return false;
+  const visible = chunk
+    .replace(OSC_SEQUENCE, '')
+    .replace(CSI_SEQUENCE, '')
+    .replace(OTHER_ESCAPE, '')
+    .replace(LEFTOVER_ESCAPE, '')
+    .replace(NON_CONTENT_CONTROLS, '');
+  return visible.trim().length > 0;
+}
 
 /** The subset of {@link AgentStatusTracker} this monitor drives. */
 export interface OutputActivitySink {
@@ -106,7 +133,7 @@ export class OutputActivityMonitor {
    * chunks are ignored (a bare flush shouldn't count as activity).
    */
   observe(sessionId: string, chunk: string): void {
-    if (!chunk) return;
+    if (!chunkHasVisibleActivity(chunk)) return;
     let entry = this.entries.get(sessionId);
     if (!entry) {
       entry = { working: false, timer: null, hasFirstEvent: true, waiting: false };

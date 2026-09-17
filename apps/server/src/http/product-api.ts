@@ -73,6 +73,7 @@ import {
   updateConversationPluginMetadata
 } from '../services/threads/conversation-plugin-metadata.js';
 import { openThreadFilePreview, previewFileDepsFromContext } from '../services/threads/preview-file.js';
+import { openThreadTerminal, openThreadTerminalDepsFromContext } from '../services/threads/open-thread-terminal.js';
 import { listThreadProviders, bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
 import {
   buildThreadExecutionOptions,
@@ -108,12 +109,12 @@ import { mergeHealthIntoExtraInstalled, probeInstalledProviderHealth } from '../
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
 import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
-import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, pinConversationThread, reorderPinnedConversationThread, unpinConversationThread, updateConversationThreadTitle } from '@zana-ai/zcc-db';
+import { getConversationThread, getEnvironment, getHost, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, pinConversationThread, reorderPinnedConversationThread, unpinConversationThread, updateConversationThreadTitle } from '@zana-ai/zcc-db';
 import { handleHostsApi } from './hosts-api.js';
 import { handleDesktopBrowsersApi } from './desktop-browsers-api.js';
 import { handleCliAgentsApi } from './cli-agents-api.js';
 import { isThreadLiveInProject } from '../services/agents/thread-liveness.js';
-import type { MarketplaceCatalogRow } from '../plugins/marketplace-store.js';
+import { toPublicMarketplaceCatalog } from '../plugins/marketplace-store.js';
 import { presentAppConfig } from './public-app-url.js';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
@@ -146,21 +147,6 @@ function isContained(root: string, candidate: string): boolean {
 function pluginSnapshot(plugins: ProductHttpContext['plugins']) {
   if (!plugins || typeof plugins.snapshot !== 'function') return [];
   return plugins.snapshot();
-}
-
-function publicMarketplaceCatalog(row: MarketplaceCatalogRow) {
-  return {
-    source: row.source,
-    sourceKind: row.sourceKind,
-    name: row.name,
-    displayName: row.displayName,
-    addedAt: row.addedAt,
-    entryCount: row.entryCount,
-    lastRefreshAt: row.lastRefreshAt,
-    lastAttemptAt: row.lastAttemptAt,
-    lastError: row.lastError,
-    official: row.official
-  };
 }
 
 async function handlePluginAppEnabled(
@@ -1317,6 +1303,28 @@ export async function handleProductHttp(
           });
           return true;
         }
+        if (parsed.data.terminal) {
+          if (ctx.config.getConfig().inAppAgentTerminalsEnabled !== true) {
+            sendJson(response, 403, {
+              ok: false,
+              code: 'experiment-disabled',
+              message: 'In-app agent terminals are off. Enable “Keep agent terminals in ZCC” in Settings → Experimental features, then start a new session.'
+            });
+            return true;
+          }
+          const opened = openThreadTerminal(openThreadTerminalDepsFromContext(ctx), {
+            threadId: threadOpen.id,
+            projectId: parsed.data.projectId,
+            command: parsed.data.terminal.command,
+            title: parsed.data.terminal.title
+          });
+          sendJson(response, 200, {
+            delivered: opened.delivered,
+            command: opened.command,
+            title: opened.title
+          });
+          return true;
+        }
         const thread = getConversationThread(ctx.db, threadOpen.id);
         if (!thread) {
           sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
@@ -1839,6 +1847,7 @@ export async function handleProductHttp(
         model?: unknown;
         reasoningLevel?: unknown;
         acpMode?: unknown;
+        permissionMode?: unknown;
       };
       const mode = body.mode === 'start' || body.mode === 'auto' || body.mode === 'steer'
         || body.mode === 'queue-if-active' || body.mode === 'steer-if-active'
@@ -1846,6 +1855,8 @@ export async function handleProductHttp(
         : 'auto';
       try {
         const thread = await sendConversationTurn(ctx, id!, body.input ?? body.text, mode, {
+          permissionMode: body.permissionMode === 'accept-edits' || body.permissionMode === 'auto' || body.permissionMode === 'full'
+            ? body.permissionMode : undefined,
           model: typeof body.model === 'string' ? body.model : undefined,
           reasoningLevel: parseReasoningLevel(body.reasoningLevel),
           acpMode: typeof body.acpMode === 'string' ? body.acpMode : undefined
@@ -2509,7 +2520,14 @@ export async function handleProductHttp(
           },
           timeoutMs: 20 * 60 * 1000
         });
-        const project = await ctx.projects.add(cloned.path, { hostId });
+        // Absent hostId means primary (this machine). Match local folder add:
+        // only persist hostId for non-primary enrolled hosts.
+        const host = getHost(ctx.db, hostId);
+        const persistHostId = host && !host.isPrimary ? hostId : undefined;
+        const project = await ctx.projects.add(
+          cloned.path,
+          persistHostId ? { hostId: persistHostId } : undefined
+        );
         ctx.hub.emit('projects:changed', ctx.projects.list());
         sendJson(response, 201, { ok: true, project, path: cloned.path, gitRemoteUrl: cloned.gitRemoteUrl });
       } catch (error) {
@@ -2626,8 +2644,9 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/marketplaces' && method === 'GET') {
+      const listed = ctx.plugins?.listMarketplaces();
       sendJson(response, 200, {
-        catalogs: (ctx.plugins?.listMarketplaces() ?? []).map(publicMarketplaceCatalog)
+        catalogs: (Array.isArray(listed) ? listed : []).map(toPublicMarketplaceCatalog)
       });
       return true;
     }
@@ -2644,7 +2663,7 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        sendJson(response, 201, publicMarketplaceCatalog(await ctx.plugins.addMarketplace(source)));
+        sendJson(response, 201, toPublicMarketplaceCatalog(await ctx.plugins.addMarketplace(source)));
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
       }
@@ -2663,7 +2682,7 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        sendJson(response, 200, publicMarketplaceCatalog(await ctx.plugins.refreshMarketplace(source)));
+        sendJson(response, 200, toPublicMarketplaceCatalog(await ctx.plugins.refreshMarketplace(source)));
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
       }

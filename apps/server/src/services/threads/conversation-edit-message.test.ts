@@ -26,6 +26,7 @@ const thread = {
 vi.mock('@zana-ai/zcc-db', () => ({
   getConversationThread: vi.fn(() => thread),
   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
+  getHost: vi.fn(() => ({ permissionMode: 'auto' })),
   getThreadExecutionState: vi.fn(() => null),
   listConversationThreadEvents: vi.fn(() => []),
   listConversationThreadEventsWindow: vi.fn(() => []),

@@ -1,0 +1,33 @@
+{
+  "name": "@zcc-ext/provider-afcode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Use Agentforce Code in ACP threads and native CLI Agents.",
+  "engines": {
+    "zcc": ">=2.1.2",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "scripts": {
+    "build": "node --import tsx build.mjs",
+    "test": "vitest run src",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-plugin-sdk": "workspace:*"
+  },
+  "zcc": {
+    "name": "Agentforce Code",
+    "description": "Agentforce Code via ACP, with a native CLI Agent launcher. Requires an ACP-enabled afcode installation.",
+    "branding": {
+      "icon": "./icons/afcode.svg"
+    },
+    "server": "./server.mjs",
+    "host": "./host.ts",
+    "pty": "./pty.ts",
+    "extra": {
+      "threadProvider": true,
+      "ptyHarness": true
+    }
+  }
+}

@@ -69,7 +69,8 @@ const FAMILY_PROFILE: Record<HarnessFamily, LaunchProfileId> = {
   pi: 'pi',
   opencode: 'opencode',
   grok: 'grok',
-  mastracode: 'mastracode'
+  mastracode: 'mastracode',
+  afcode: 'afcode'
 };
 
 /** One-line blurb per family, shown under the name in the row. */
@@ -80,7 +81,8 @@ const FAMILY_BLURB: Record<HarnessFamily, string> = {
   pi: 'The multi-provider ‘pi’ coding-agent CLI (~40 providers).',
   opencode: 'The ‘opencode’ terminal agent (npm ‘opencode-ai’). zcc-inbox is wired in automatically.',
   grok: 'xAI’s ‘grok’ coding CLI (Grok Build). Authenticates via its own login.',
-  mastracode: 'The ‘mastracode’ coding CLI (Mastra Code). Authenticates via its own login.'
+  mastracode: 'The ‘mastracode’ coding CLI (Mastra Code). Authenticates via its own login.',
+  afcode: 'Agentforce Code. Uses its existing LLM Gateway environment or native credential configuration.'
 };
 
 /** The `AppConfig` enable flag per family (`claude` has none — always on). */
@@ -90,7 +92,8 @@ const ENABLE_KEY: Partial<Record<HarnessFamily, keyof AppConfig>> = {
   pi: 'harnessPiEnabled',
   opencode: 'harnessOpenCodeEnabled',
   grok: 'harnessGrokEnabled',
-  mastracode: 'harnessMastracodeEnabled'
+  mastracode: 'harnessMastracodeEnabled',
+  afcode: 'harnessAfcodeEnabled'
 };
 
 export function familyEnabled(family: HarnessFamily, config: AppConfig, fallback: boolean): boolean {
@@ -131,7 +134,8 @@ const BINARY_KEY: Record<HarnessFamily, keyof AppConfig> = {
   pi: 'piBinary',
   opencode: 'opencodeBinary',
   grok: 'grokBinary',
-  mastracode: 'mastracodeBinary'
+  mastracode: 'mastracodeBinary',
+  afcode: 'afcodeBinary'
 };
 
 /** Default binary name (the `--version` probe target) shown as the input placeholder. */
@@ -142,7 +146,8 @@ const BINARY_PLACEHOLDER: Record<HarnessFamily, string> = {
   pi: 'pi',
   opencode: 'opencode',
   grok: 'grok',
-  mastracode: 'mastracode'
+  mastracode: 'mastracode',
+  afcode: 'afcode'
 };
 
 function StatusBadge({ h, enabled }: { h: HarnessVerifyResult; enabled: boolean }) {
@@ -513,6 +518,8 @@ const THREAD_PROVIDER_PROFILE: Record<string, LaunchProfileId> = {
   grok: 'grok',
   'acp-mastracode': 'mastracode',
   mastracode: 'mastracode',
+  'acp-afcode': 'afcode',
+  afcode: 'afcode',
   codex: 'codex',
   pi: 'pi'
 };
@@ -525,6 +532,7 @@ const THREAD_PROVIDER_BLURB: Record<string, string> = {
   'acp-omp': 'OMP via the Agent Client Protocol (ACP).',
   'acp-grok': 'Grok Build via the Agent Client Protocol (ACP).',
   'acp-mastracode': 'Mastra Code via the Agent Client Protocol (ACP).',
+  'acp-afcode': 'Agentforce Code via the Agent Client Protocol (ACP).',
   'acp-hermes-agent': 'Hermes Agent via the Agent Client Protocol (ACP).',
   opencode: 'OpenCode via the Agent Client Protocol (ACP).',
   codex: 'OpenAI’s Codex — dedicated app-server Modern provider.',

@@ -4,6 +4,7 @@ import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import { listLocalTmuxSessionIds, verifyTmux } from '@zana-ai/zcc-host-daemon/tmux';
+import { listRememberedTombstones } from '@zana-ai/zcc-host-daemon/remembered-sessions';
 import { CliPlanWatcher } from '@zana-ai/zcc-host-daemon/harness/cli-plan-watch';
 import { isRepliable } from '../menu.js';
 import { app } from 'electron';
@@ -47,6 +48,20 @@ export function registerTerminalsIpc(): void {
           capabilityId: capability.id,
           projectId: capability.request.projectId
         }));
+    },
+    () => []
+  );
+  ctx.safeHandle(
+    IPC.terminals.listRememberedSessions,
+    async () => {
+      const liveTmuxIds = new Set(await listLocalTmuxSessionIds());
+      const livePtyIds = new Set(ctx.ptys.listAll().map((session: { id: string }) => session.id));
+      const knownProjectIds = new Set(store.listProjects().map((project) => project.id));
+      return listRememberedTombstones(ctx.restoreCapabilities.list(), {
+        liveTmuxIds,
+        livePtyIds,
+        knownProjectIds
+      });
     },
     () => []
   );

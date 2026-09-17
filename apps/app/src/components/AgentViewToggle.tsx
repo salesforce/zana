@@ -1,5 +1,5 @@
 import { Calendar, LayoutGrid, List, Workflow } from 'lucide-react';
-import { useData, useUi } from '../store.js';
+import { useData, useUi, useRunningSchedulerCount } from '../store.js';
 import type { AgentsBoardView } from '../store.js';
 
 /**
@@ -38,14 +38,24 @@ export function AgentViewToggle() {
   );
 }
 
+/** Button title / aria for the Calendar toggle, including a live running count. */
+export function scheduledColumnToggleLabel(includeScheduled: boolean, running: number): string {
+  const action = includeScheduled ? 'Hide scheduled agents' : 'Show scheduled agents';
+  return running > 0 ? `${running} running · ${action}` : action;
+}
+
 /**
- * Show/hide the Agents board Scheduled column (and the matching list/flow
- * groups). Owns the AppConfig round-trip — same flag as Settings → Agents →
- * Scheduled, so the two stay in lockstep.
+ * Show/hide scheduled agents on the Agents board (and the matching list/flow
+ * groups) — waiting jobs, armed schedules, and currently working/blocked runs.
+ * Owns the AppConfig round-trip — same flag as Settings → Agents → Scheduled,
+ * so the two stay in lockstep. A gold count badge appears while any scheduled
+ * task has a live session, even when the toggle is off.
  */
 export function ScheduledColumnToggle() {
   const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
   const setIncludeScheduled = useData((s) => s.setIncludeScheduledAgentsInAgentView);
+  const runningSchedules = useRunningSchedulerCount();
+  const label = scheduledColumnToggleLabel(includeScheduled, runningSchedules);
 
   return (
     <div className="agents-view-toggle" role="group" aria-label="Scheduled column">
@@ -55,10 +65,15 @@ export function ScheduledColumnToggle() {
         data-testid="agents-board-scheduled-toggle"
         onClick={() => void setIncludeScheduled(!includeScheduled)}
         aria-pressed={includeScheduled}
-        title={includeScheduled ? 'Hide Scheduled column' : 'Show Scheduled column'}
-        aria-label={includeScheduled ? 'Hide Scheduled column' : 'Show Scheduled column'}
+        title={label}
+        aria-label={label}
       >
         <Calendar size={14} />
+        {runningSchedules > 0 && (
+          <span className="agents-scheduled-toggle-badge nav-badge nav-badge--running" aria-hidden="true">
+            {runningSchedules > 99 ? '99+' : runningSchedules}
+          </span>
+        )}
       </button>
     </div>
   );

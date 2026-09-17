@@ -143,9 +143,19 @@ export function copyConversationThreadEvents(
 export function listConversationThreadEventsWindow(
   db: ZccDatabase,
   threadId: string,
-  opts: { limit: number; beforeSeq?: number }
+  opts: { limit: number; beforeSeq?: number; type?: string }
 ): ConversationThreadEventRow[] {
   const limit = Math.max(1, Math.floor(opts.limit));
+  if (opts.type != null) {
+    return (db.sqlite.prepare(
+      `SELECT * FROM thread_events
+        WHERE thread_id = ? AND type = ?${opts.beforeSeq != null ? ' AND sequence < ?' : ''}
+        ORDER BY sequence DESC
+        LIMIT ?`
+    ).all(threadId, opts.type, ...(opts.beforeSeq != null ? [opts.beforeSeq] : []), limit) as ConversationThreadEventSqlRow[])
+      .map(toEvent)
+      .reverse();
+  }
   if (opts.beforeSeq != null) {
     return (db.sqlite.prepare(
       `SELECT * FROM thread_events

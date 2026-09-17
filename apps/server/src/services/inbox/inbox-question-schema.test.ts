@@ -55,7 +55,7 @@ describe('buildInboxQuestion', () => {
       expect(built.question?.blocking).toBeUndefined();
     });
 
-    it('honors defaultBlocking=true (inbox_ask stance) when unspecified', () => {
+    it('honors defaultBlocking=true when unspecified', () => {
       const built = buildInboxQuestion({ options: ['a'] }, true);
       expect(built.question?.blocking).toBe(true);
     });

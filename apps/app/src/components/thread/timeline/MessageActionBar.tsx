@@ -1,7 +1,6 @@
-import { Copy, CornerUpLeft, GitFork, MessageSquarePlus, Pencil } from 'lucide-react';
+import { Copy, CornerUpLeft, GitFork, Pencil } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { product } from '../../../lib/product-client.js';
-import { dispatchComposerQuote } from '../secondary-panel/SecondaryPanelSelectionActions.js';
 
 export function MessageActionBar({
   text,
@@ -49,23 +48,6 @@ export function MessageActionBar({
           onClick={onEdit}
         >
           <Pencil size={12} />
-        </button>
-      ) : null}
-      {threadId && text ? (
-        <button
-          type="button"
-          className="thread-message-action"
-          aria-label="Add to chat"
-          title="Add to chat"
-          data-testid="thread-add-to-chat"
-          onClick={() => {
-            const selected = typeof window !== 'undefined'
-              ? window.getSelection()?.toString().trim() ?? ''
-              : '';
-            dispatchComposerQuote(threadId, selected || text);
-          }}
-        >
-          <MessageSquarePlus size={12} />
         </button>
       ) : null}
       {onSendToMain && text ? (

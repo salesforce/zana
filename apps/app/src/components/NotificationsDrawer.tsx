@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
-import { Bell, FileText, HelpCircle, Target, X, type LucideIcon } from 'lucide-react';
+import { Bell, FileText, HelpCircle, Target, type LucideIcon } from 'lucide-react';
 import type { InboxEntry } from '@zana-ai/zcc-domain/product';
 import { useData, useInbox, useInboxRead, useUi, useInboxScopeProjectId } from '../store.js';
 import { classifyEntry, FEED_CATEGORIES, type FeedCategoryId } from '@zana-ai/zcc-domain/feed-categories';
 import { inboxPrimaryTitle, inboxSecondaryLine } from '../lib/inboxPresentation.js';
 import { focusInboxEntry } from '../lib/inboxNavigation.js';
+import { QuickAccessPanel } from './QuickAccessPanel.js';
 
 /**
- * Right-edge slide-over quick-glance list of recent/unread Inbox entries —
+ * Quick-glance list of unread Inbox entries in the shared right panel —
  * the structural twin of {@link FavoriteAgentsDrawer}. Opened from the
  * titlebar bell ({@link useUi.toggleNotificationsDrawer}), which used to
  * navigate straight to the full Inbox nav route; that route is unchanged and
@@ -64,10 +65,8 @@ export function NotificationsDrawer() {
 
   const sections = useMemo(() => {
     const scoped = scopeProjectId ? entries.filter((e) => e.projectId === scopeProjectId) : entries;
-    const worthy = scoped
-      .filter((e) => isDrawerWorthy(e, readIds))
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, DRAWER_MAX_ENTRIES);
+    const unread = scoped.filter((e) => isDrawerWorthy(e, readIds)).sort((a, b) => b.ts - a.ts);
+    const worthy = unread.slice(0, DRAWER_MAX_ENTRIES);
     const byId: Record<FeedCategoryId | 'other', InboxEntry[]> = {
       question: [],
       goal: [],
@@ -84,6 +83,7 @@ export function NotificationsDrawer() {
     for (const e of worthy) byId[sectionFor(e)].push(e);
     return {
       worthy,
+      total: unread.length,
       list: SECTION_ORDER.filter((s) => byId[s.id].length > 0).map((s) => ({ ...s, entries: byId[s.id] }))
     };
   }, [entries, readIds, scopeProjectId]);
@@ -105,57 +105,45 @@ export function NotificationsDrawer() {
     focusInboxEntry(entry);
   };
 
-  return (
-    <aside className="notifications-drawer" aria-label="Notifications">
-      <header className="notifications-drawer-header">
-        <Bell size={14} className="notifications-drawer-icon" aria-hidden="true" />
-        <span className="notifications-drawer-title">Notifications</span>
-        <span className="notifications-drawer-count">{total}</span>
-        <span className="grow" />
-        <button
-          className="icon-button"
-          onClick={() => setOpen(false)}
-          aria-label="Close notifications"
-          title="Close"
-        >
-          <X size={16} />
-        </button>
-      </header>
+  const scopeName = scopeProjectId ? projects.find((p) => p.id === scopeProjectId)?.name ?? 'This project' : 'All projects';
 
+  return (
+    <QuickAccessPanel kind="notifications" summary={`${sections.total} unread · ${scopeName}`}
+      footer={sections.total > total ? `View all in Inbox · showing ${total} of ${sections.total}` : 'View all in Inbox'}
+      onViewAll={goToInbox}>
       {total === 0 ? (
-        <div className="notifications-drawer-empty">
-          <Bell size={26} aria-hidden="true" />
-          <h4>You&rsquo;re all caught up</h4>
-          <p>Questions, reports, and loud extension notifications will show up here.</p>
+        <div className="quick-access-empty">
+          <span className="quick-access-empty-icon"><Bell size={22} aria-hidden="true" /></span>
+          <h3>You&rsquo;re all caught up</h3>
+          <p>New questions and updates will appear here.</p>
         </div>
       ) : (
-        <div className="notifications-drawer-list">
+        <div className="quick-access-list">
           {sections.list.map((section) => {
             const Icon = sectionIcon(section.id);
             return (
-              <section key={section.id} className={`notifications-drawer-section section-${section.id}`}>
-                <header className="notifications-drawer-section-head">
-                  <span className="notifications-drawer-section-label">{section.label}</span>
-                  <span className="notifications-drawer-section-count">{section.entries.length}</span>
-                </header>
+              <section key={section.id} className="quick-access-section" data-urgent={section.id === 'question'}
+                aria-labelledby={`notification-section-${section.id}`}>
+                <h3 className="quick-access-section-heading" id={`notification-section-${section.id}`}>
+                  {section.label}<span className="quick-access-section-count">{section.entries.length}</span>
+                </h3>
                 {section.entries.map((entry) => {
                   const project = projects.find((p) => p.id === entry.projectId);
                   const projectName = project?.name ?? entry.projectLabel ?? entry.projectId;
                   const title = inboxPrimaryTitle(entry);
                   const secondary = inboxSecondaryLine(entry);
                   return (
-                    <button
-                      key={entry.id}
-                      className="notifications-drawer-row"
-                      onClick={() => openEntry(entry)}
-                      title={`${title} — ${projectName}`}
-                    >
-                      <Icon size={14} className="notifications-drawer-row-icon" aria-hidden="true" />
-                      <span className="notifications-drawer-row-text">
-                        <span className="notifications-drawer-row-title">{title}</span>
-                        <span className="notifications-drawer-row-meta">
-                          {projectName}
-                          {secondary ? ` · ${secondary}` : ''}
+                    <button type="button" key={entry.id} className="quick-access-row notifications-drawer-row"
+                      onClick={() => openEntry(entry)} title={`${title} — ${projectName}`}>
+                      <Icon size={16} className="quick-access-row-icon" aria-hidden="true" />
+                      <span className="quick-access-row-text">
+                        <span className="quick-access-row-title">{title}</span>
+                        {secondary && <span className="quick-access-row-preview">{secondary}</span>}
+                        <span className="quick-access-row-meta">
+                          <span className="quick-access-row-project">{projectName}</span>
+                          <time dateTime={new Date(entry.ts).toISOString()} title={new Date(entry.ts).toLocaleString()}>
+                            {new Date(entry.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                          </time>
                         </span>
                       </span>
                     </button>
@@ -166,12 +154,6 @@ export function NotificationsDrawer() {
           })}
         </div>
       )}
-
-      <footer className="notifications-drawer-footer">
-        <button className="notifications-drawer-view-all" onClick={goToInbox}>
-          View all in Inbox →
-        </button>
-      </footer>
-    </aside>
+    </QuickAccessPanel>
   );
 }

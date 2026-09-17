@@ -11,7 +11,8 @@ import { DelayedStencilList } from '@/components/ui/Skeleton';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useMonacoTheme } from '@/hooks/useMonacoTheme';
 import {
-  WorktreeSwitcher,
+  WorktreeMenu,
+  ExplorerGitFooter,
   ExplorerTreeHeader,
   ExplorerContextMenu,
   FileViewer,
@@ -821,16 +822,6 @@ export function ExplorerView({ project, embedded = false }: Props) {
     return list;
   }, [gitFiles, viewRoot]);
 
-  // Short label for the active worktree, shown as a tag next to the project
-  // name when viewing a non-main checkout (branch name, else the dir name).
-  const activeWorktreeLabel = useMemo(() => {
-    const wt = worktrees.find((w) => w.path === viewRoot);
-    if (!wt) return 'main';
-    // Show the real checked-out branch even for the main working tree (it isn't
-    // necessarily on a branch literally named "main").
-    return wt.branch ?? (wt.detached ? 'detached' : wt.path.split('/').pop() ?? wt.path);
-  }, [worktrees, viewRoot]);
-
   // Branch name -> the worktree that has it checked out (if any). Lets the
   // branch list badge which checkout each branch is assigned to, and route a
   // click to that worktree's view root.
@@ -842,9 +833,7 @@ export function ExplorerView({ project, embedded = false }: Props) {
     return map;
   }, [worktrees]);
 
-  // Whether to surface the switcher/branch dropdown at all: multiple worktrees,
-  // or more than one branch worth listing.
-  const showSwitcher = worktrees.length > 1 || branches.length > 1;
+  const showGitFooter = !isRemote && !!gitStatus && !!(gitStatus.branch || gitStatus.detached);
 
   const onChangeClick = (path: string) => {
     setExplorerFile(project.id, path);
@@ -926,22 +915,7 @@ export function ExplorerView({ project, embedded = false }: Props) {
           onCreateFile={() => createEntry(viewRoot, 'file')}
           onCreateFolder={() => createEntry(viewRoot, 'dir')}
           onRefresh={refresh}
-        >
-          {showSwitcher ? (
-            <WorktreeSwitcher
-              project={project}
-              activeWorktreeLabel={activeWorktreeLabel}
-              worktreeMenu={worktreeMenu}
-              worktrees={worktrees}
-              branches={branches}
-              viewRoot={viewRoot}
-              worktreeByBranch={worktreeByBranch}
-              onToggleMenu={() => setWorktreeMenu((v) => !v)}
-              onSelectWorktree={(path) => { setViewRoot(path); setWorktreeMenu(false); }}
-              onRemoveWorktree={handleRemoveWorktree}
-            />
-          ) : undefined}
-        </ExplorerTreeHeader>
+        />
         <div
           className={`explorer-tree-body ${isRemote && treeDropOver ? 'drop-over' : ''}`}
           ref={treeBodyRef}
@@ -984,6 +958,27 @@ export function ExplorerView({ project, embedded = false }: Props) {
             />
           )}
         </div>
+        {showGitFooter && gitStatus && (
+          <ExplorerGitFooter
+            gitStatus={gitStatus}
+            worktreeMenu={worktreeMenu}
+            onToggleMenu={() => setWorktreeMenu((v) => !v)}
+            menu={
+              worktreeMenu ? (
+                <WorktreeMenu
+                  project={project}
+                  worktrees={worktrees}
+                  branches={branches}
+                  viewRoot={viewRoot}
+                  worktreeByBranch={worktreeByBranch}
+                  onSelectWorktree={(path) => { setViewRoot(path); setWorktreeMenu(false); }}
+                  onRemoveWorktree={handleRemoveWorktree}
+                  placement="above"
+                />
+              ) : null
+            }
+          />
+        )}
       </aside>
       <div
         className="explorer-resizer"

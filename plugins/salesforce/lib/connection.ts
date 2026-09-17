@@ -56,11 +56,13 @@ export class ConnectionManager {
       );
     }
     const cached = this.cache.get(alias);
-    if (!opts?.forceRefresh && cached && this.deps.now() - cached.at < CACHE_TTL_MS) {
+    if (!opts?.forceRefresh && cached && cached.org.apiVersion === (settings.apiVersion || DEFAULT_API_VERSION) && this.deps.now() - cached.at < CACHE_TTL_MS) {
       return cached.org;
     }
     const org = await this.display(alias, settings.apiVersion || DEFAULT_API_VERSION);
+    this.cache.delete(alias);
     this.cache.set(alias, { org, at: this.deps.now() });
+    if (this.cache.size > 50) this.cache.delete(this.cache.keys().next().value!);
     return org;
   }
 

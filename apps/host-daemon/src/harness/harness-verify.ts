@@ -111,13 +111,29 @@ export function verifiableHarnessVersion(
     ?? UNVERSIONED_HARNESS;
 }
 
+/**
+ * Launch preflight only needs the selected family. Probe that one CLI instead
+ * of waiting on every registered `--version` (the Settings roster API).
+ */
 export async function installedHarnessVersion(
   config: AppConfig,
   adapterId: string
 ): Promise<string | undefined> {
-  return verifiableHarnessVersion(
-    (await verifyHarnesses(config)).find(({ family }) => family === adapterId)
-  );
+  return verifiableHarnessVersion(await verifyHarness(config, adapterId));
+}
+
+/** Share one in-flight/completed lookup per adapter for a single launch. */
+export function memoizeInstalledVersion(
+  lookup: (adapterId: string) => Promise<string | undefined>
+): (adapterId: string) => Promise<string | undefined> {
+  const pending = new Map<string, Promise<string | undefined>>();
+  return (adapterId) => {
+    const existing = pending.get(adapterId);
+    if (existing) return existing;
+    const next = lookup(adapterId);
+    pending.set(adapterId, next);
+    return next;
+  };
 }
 
 /**
@@ -137,37 +153,60 @@ export function harnessEnabledFromProbe(input: {
   return input.installed;
 }
 
+async function verifyHarnessRegistration(
+  registration: (typeof HARNESS_REGISTRATIONS)[number],
+  config: AppConfig,
+  searchPath: string
+): Promise<HarnessVerifyResult> {
+  const verification = registration.verification!;
+  const profile = registration.defaultProfileId ?? registration.profiles[0]!.id;
+  const { command: launchCommand } = registration.implementation.resolveLaunch(profile, config, false);
+  const command = resolveHarnessCommand(launchCommand, searchPath);
+  const probe = await runVersion(command, verification.versionArgs, searchPath);
+  const configEnabled = verification.enabledConfigKey !== undefined
+    ? config[verification.enabledConfigKey as keyof AppConfig] as boolean | undefined
+    : undefined;
+  const enabled = harnessEnabledFromProbe({
+    alwaysEnabled: verification.alwaysEnabled,
+    configEnabled,
+    installed: probe.ok
+  });
+  const normalizedVersion = probe.ok
+    ? resolveProbedHarnessVersion(probe.out, command, nodePrefixBinDirs())
+    : undefined;
+  return {
+    family: registration.id as HarnessFamily,
+    label: registration.label,
+    binary: command,
+    enabled,
+    alwaysEnabled: verification.alwaysEnabled === true,
+    installed: probe.ok,
+    version: normalizedVersion,
+    normalizedVersion,
+    installHint: verification.installHint
+  };
+}
+
+function verificationSearchPath(): string {
+  return augmentPathWithNodePrefixes(augmentPath(process.env.PATH));
+}
+
+async function verifyHarness(
+  config: AppConfig,
+  adapterId: string
+): Promise<HarnessVerifyResult | undefined> {
+  const registration = HARNESS_REGISTRATIONS.find(
+    (candidate) => candidate.id === adapterId && candidate.verification !== undefined
+  );
+  if (!registration) return undefined;
+  return verifyHarnessRegistration(registration, config, verificationSearchPath());
+}
+
 /** Verify every registered binary harness against its registration metadata. */
 export async function verifyHarnesses(config: AppConfig): Promise<HarnessVerifyResult[]> {
-  const searchPath = augmentPathWithNodePrefixes(augmentPath(process.env.PATH));
+  const searchPath = verificationSearchPath();
   const registrations = HARNESS_REGISTRATIONS.filter((registration) => registration.verification !== undefined);
-  return Promise.all(registrations.map(async (registration): Promise<HarnessVerifyResult> => {
-    const verification = registration.verification!;
-    const profile = registration.defaultProfileId ?? registration.profiles[0]!.id;
-    const { command: launchCommand } = registration.implementation.resolveLaunch(profile, config, false);
-    const command = resolveHarnessCommand(launchCommand, searchPath);
-    const probe = await runVersion(command, verification.versionArgs, searchPath);
-    const configEnabled = verification.enabledConfigKey !== undefined
-      ? config[verification.enabledConfigKey as keyof AppConfig] as boolean | undefined
-      : undefined;
-    const enabled = harnessEnabledFromProbe({
-      alwaysEnabled: verification.alwaysEnabled,
-      configEnabled,
-      installed: probe.ok
-    });
-    const normalizedVersion = probe.ok
-      ? resolveProbedHarnessVersion(probe.out, command, nodePrefixBinDirs())
-      : undefined;
-    return {
-      family: registration.id as HarnessFamily,
-      label: registration.label,
-      binary: command,
-      enabled,
-      alwaysEnabled: verification.alwaysEnabled === true,
-      installed: probe.ok,
-      version: normalizedVersion,
-      normalizedVersion,
-      installHint: verification.installHint
-    };
-  }));
+  return Promise.all(
+    registrations.map((registration) => verifyHarnessRegistration(registration, config, searchPath))
+  );
 }

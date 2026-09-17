@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const HarnessFamilySchema = z.enum(['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode']);
+const HarnessFamilySchema = z.enum(['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode', 'afcode']);
 const ExecutionStateSchema = z.enum(['plan', 'interactive', 'accept-edits', 'autonomous']);
 const ModelLevelSchema = z.enum(['low', 'medium', 'high', 'extra-high']);
 const PermissionModeSchema = z.enum(['default', 'acceptEdits', 'plan', 'bypassPermissions']);

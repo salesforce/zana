@@ -1,11 +1,13 @@
-import { useMemo, type CSSProperties } from 'react';
+import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Star, X } from 'lucide-react';
 import type { AgentState } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useFavoriteAgents, favoriteKey, threadFavoriteKey } from '../store.js';
+import { inspectAgentSession, inspectThread } from '../lib/inspect-session.js';
 import { useAllAgentCards } from '../hooks/useAgentCards.js';
 import { useThreads, type ThreadListItem } from '../thread-store.js';
 import type { AgentCard } from './AgentBoard.js';
-import { FavoriteStar } from './FavoriteStar.js';
+import { QuickAccessPanel } from './QuickAccessPanel.js';
 import { isVisibleThread, threadTitle } from './fleet-item.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
 
@@ -19,9 +21,9 @@ import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
  *   Needs you (blocked) → Working → Idle → Background (headless) → Done (exited).
  * "Background" overrides state: any headless (scheduled / detached) session
  * sinks to its own group at the bottom, mirroring how the rest of the app
- * separates background work. Rows reuse the sidebar tray's row style; clicking
- * a CLI agent opens the agent-inspector modal; a thread opens the thread
- * inspector.
+ * separates background work. Clicking a row closes the panel and peeks the
+ * inspector overlay, or the full session/thread page when Classic
+ * session view is on.
  *
  * Reads the favorites set + live CLI cards and visible threads; a starred id
  * whose session/thread is gone is simply absent, so it drops out with no cleanup.
@@ -82,9 +84,11 @@ export function sectionOfEntry(entry: FollowedEntry): FavSectionId {
 }
 
 export function FavoriteAgentsDrawer() {
+  const navigate = useNavigate();
   const open = useUi((s) => s.favoritesDrawerOpen);
   const setOpen = useUi((s) => s.setFavoritesDrawerOpen);
   const favoriteIds = useFavoriteAgents((s) => s.favoriteIds);
+  const toggleFavorite = useFavoriteAgents((s) => s.toggleFavorite);
   const cards = useAllAgentCards();
   const threads = useThreads((s) => s.threads);
   const projects = useData((s) => s.projects);
@@ -123,100 +127,66 @@ export function FavoriteAgentsDrawer() {
   if (!open) return null;
 
   const inspect = (entry: FollowedEntry) => {
+    setOpen(false);
     if (entry.kind === 'thread') {
-      useUi.getState().openThreadModal(entry.thread.id);
+      inspectThread(entry.thread.id, entry.thread.projectId, navigate);
       return;
     }
-    useUi.getState().openAgentModal(entry.card.session.id, entry.card.projectId);
+    inspectAgentSession(entry.card.session.id, entry.card.projectId, navigate);
   };
 
   const total = sections.starred.length;
 
   return (
-    <aside className="favorites-drawer" aria-label="Followed agents">
-      <header className="favorites-drawer-header">
-        <Star size={14} className="favorites-drawer-icon" aria-hidden="true" />
-        <span className="favorites-drawer-title">Following</span>
-        <span className="favorites-drawer-count">{total}</span>
-        <span className="grow" />
-        <button
-          className="icon-button"
-          onClick={() => setOpen(false)}
-          aria-label="Close followed agents"
-          title="Close"
-        >
-          <X size={16} />
-        </button>
-      </header>
-
+    <QuickAccessPanel kind="favorites" summary={`${total} followed · All projects`} footer="View all agents"
+      onViewAll={() => { setOpen(false); useUi.getState().setNav('agents'); }}>
       {total === 0 ? (
-        <div className="favorites-drawer-empty">
-          <Star size={26} aria-hidden="true" />
-          <h4>No followed agents</h4>
-          <p>
-            Click the&nbsp;<Star size={12} aria-hidden="true" />&nbsp;on a CLI agent or thread card, in
-            its inspector, or in the sidebar tray to follow it. It&rsquo;ll appear here so you can keep
-            an eye on it across every project.
-          </p>
+        <div className="quick-access-empty">
+          <span className="quick-access-empty-icon"><Star size={22} aria-hidden="true" /></span>
+          <h3>Keep important work close</h3>
+          <p>Star a thread or agent to follow its progress here, across all your projects.</p>
         </div>
       ) : (
-        <div className="favorites-drawer-list">
+        <div className="quick-access-list">
           {sections.list.map((section) => (
-            <section key={section.id} className={`favorites-drawer-section section-${section.id}`}>
-              <header className="favorites-drawer-section-head">
-                <span className="favorites-drawer-section-label">{section.label}</span>
-                <span className="favorites-drawer-section-count">{section.entries.length}</span>
-              </header>
-              {section.entries.map((entry) =>
-                entry.kind === 'thread' ? (
-                  <button
-                    key={entry.thread.id}
-                    type="button"
-                    className={`agent-tray-row favorites-row ${entry.projectColor ? 'project-tinted' : ''}`}
-                    data-kind="thread"
-                    onClick={() => inspect(entry)}
-                    title={`${threadTitle(entry.thread)} — ${entry.projectName} · ${STATE_LABEL[entry.state]}`}
-                    style={
-                      entry.projectColor
-                        ? ({ '--project-color': entry.projectColor } as CSSProperties)
-                        : undefined
-                    }
-                  >
-                    <span className={`tab-agent-dot agent-${entry.state}`} aria-hidden="true" />
-                    <span className="agent-tray-row-text">
-                      <span className="agent-tray-row-title">{threadTitle(entry.thread)}</span>
-                      <span className="agent-tray-row-meta">{entry.projectName}</span>
-                    </span>
-                    <FavoriteStar session={{ id: entry.thread.id, kind: 'thread' }} className="agent-tray-fav" />
-                  </button>
-                ) : (
-                  <button
-                    key={entry.card.session.id}
-                    className={`agent-tray-row favorites-row ${entry.card.projectColor ? 'project-tinted' : ''}`}
-                    onClick={() => inspect(entry)}
-                    title={`${entry.card.session.title} — ${entry.card.projectName} · ${STATE_LABEL[entry.card.state]}`}
-                    style={
-                      entry.card.projectColor
-                        ? ({ '--project-color': entry.card.projectColor } as CSSProperties)
-                        : undefined
-                    }
-                  >
-                    <span
-                      className={`tab-agent-dot agent-${entry.card.session.status === 'exited' ? 'done' : entry.card.state}`}
-                      aria-hidden="true"
-                    />
-                    <span className="agent-tray-row-text">
-                      <span className="agent-tray-row-title">{entry.card.session.title}</span>
-                      <span className="agent-tray-row-meta">{entry.card.projectName}</span>
-                    </span>
-                    <FavoriteStar session={entry.card.session} className="agent-tray-fav" />
-                  </button>
-                )
-              )}
+            <section key={section.id} className="quick-access-section" aria-labelledby={`favorite-section-${section.id}`}>
+              <h3 className="quick-access-section-heading" id={`favorite-section-${section.id}`}>
+                {section.label}<span className="quick-access-section-count">{section.entries.length}</span>
+              </h3>
+              {section.entries.map((entry) => {
+                const isThread = entry.kind === 'thread';
+                const key = isThread ? threadFavoriteKey(entry.thread.id) : favoriteKey(entry.card.session);
+                const title = isThread ? threadTitle(entry.thread) : entry.card.session.title;
+                const projectName = isThread ? entry.projectName : entry.card.projectName;
+                const state = isThread ? entry.state : entry.card.session.status === 'exited' ? 'done' : entry.card.state;
+                return (
+                  <div key={key} className="quick-access-favorite" data-kind={entry.kind}>
+                    <button type="button" className="quick-access-row favorites-row" onClick={() => inspect(entry)}
+                      title={`${title} — ${projectName} · ${STATE_LABEL[state]}`}>
+                      <span className={`tab-agent-dot agent-${state}`} aria-hidden="true" />
+                      <span className="quick-access-row-text">
+                        <span className="quick-access-row-title">{title}</span>
+                        <span className="quick-access-row-meta">
+                          <span className="quick-access-row-project">{projectName}</span>
+                          <span>{isThread ? 'Thread' : 'CLI agent'}</span>
+                        </span>
+                      </span>
+                    </button>
+                    <button type="button" className="quick-access-icon-button quick-access-remove"
+                      onClick={(event) => {
+                        // The row is removed immediately; keep keyboard focus in the panel.
+                        event.currentTarget.closest('aside')?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
+                        toggleFavorite(key);
+                      }} aria-label={`Remove ${title} from favorites`} title="Remove from favorites">
+                      <X size={14} aria-hidden="true" />
+                    </button>
+                  </div>
+                );
+              })}
             </section>
           ))}
         </div>
       )}
-    </aside>
+    </QuickAccessPanel>
   );
 }

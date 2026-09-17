@@ -23,7 +23,8 @@ const h = vi.hoisted(() => {
     setProjectView: vi.fn(),
     collapsedSections: {},
     toggleSection: vi.fn(),
-    setLauncherOpen: vi.fn()
+    setLauncherOpen: vi.fn(),
+    exitProjectFocus: vi.fn()
   };
   const data = {
     goalsEnabled: false,
@@ -119,7 +120,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).toContain('aria-label="Report a bug"');
     expect(markup).toContain('aria-label="Open this project in a new window"');
-    expect(markup).not.toContain('>Settings<');
+    expect(markup).toContain('>Settings<');
     expect(markup).not.toContain('>Open in new window<');
     expect(markup).not.toContain('Project workspace');
     expect(markup).not.toContain('nav-section-label');
@@ -258,6 +259,8 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain("mode: 'agents'");
+    expect(source).toContain('exitProjectFocus(routeMemory.projectBackRoutePath)');
+    expect(source).not.toContain('void navigate(routeMemory.projectBackRoutePath)');
     expect(source).toContain('getProjectModeRoutePath(project.id, item.mode)');
     expect(source).toContain('testId: `project-nav-${item.mode}`');
     expect(source).toContain("splitContent: { kind: 'project-view', projectId: project.id, mode: item.mode }");
@@ -303,5 +306,6 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(css).toContain('.project-scoped-nav .sidebar-nav {\n  display: flex;\n  flex: 1 1 auto;\n  flex-direction: column;\n  gap: 2px;\n  min-height: 0;\n  overflow: hidden;');
     expect(css).toContain('.project-scoped-nav .project-terminals {\n  margin: 1px 0 4px 8px;\n}');
     expect(css).toContain('.sidebar-section-sortable:last-child:has(.sidebar-projects:not(.sidebar-projects--collapsed)) .sidebar-projects');
+    expect(css).toMatch(/\.settings-app-back \{[\s\S]*?-webkit-app-region: no-drag;/);
   });
 });

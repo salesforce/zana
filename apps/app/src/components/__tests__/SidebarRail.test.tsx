@@ -68,7 +68,20 @@ function renderRail(node: ReactElement) {
 }
 
 describe('SidebarRail', () => {
+  it('keeps Settings accessible by name when a compact rail omits the visible label', () => {
+    h.state.sidebarCollapsed = true;
+    try {
+      const markup = renderRail(<SidebarRail className="sidebar collapsed" navAriaLabel="Nav" storageKey="zcc.testSidebarNavOrder" pinnedIds={['inbox']} items={items} />);
+      expect(markup).toContain('aria-label="Settings"');
+      expect(markup).toContain('href="/settings"');
+      expect(markup).not.toContain('>Settings<');
+    } finally {
+      h.state.sidebarCollapsed = false;
+    }
+  });
+
   it('renders shared chrome: sortable nav, utility dock, resizer', () => {
+    h.state.sidebarCollapsed = false;
     const markup = renderRail(
       <SidebarRail
         className="sidebar sidebar--global"
@@ -91,7 +104,7 @@ describe('SidebarRail', () => {
     expect(markup).toContain('href="/settings"');
     expect(markup).toContain('class="sidebar-resizer"');
     expect(markup).toContain('aria-orientation="vertical"');
-    expect(markup).not.toContain('>Settings<');
+    expect(markup).toContain('>Settings<');
   });
 
   it('pins configured ids and leaves the rest sortable', () => {
@@ -172,5 +185,6 @@ describe('SidebarRail', () => {
     expect(source).toContain('onSplitPointerDown');
     expect(source).toContain('event.metaKey || event.ctrlKey');
     expect(source).toContain('openInSplit()');
+    expect(source).toContain('if (consumeClick())');
   });
 });

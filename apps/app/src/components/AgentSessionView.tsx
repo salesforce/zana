@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
 import type { AgentState, CliPlanFile, SessionStats, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { product } from '../lib/product-client.js';
@@ -11,6 +11,7 @@ import { ThreadFilePreviewTab } from './thread/secondary-panel/ThreadFilePreview
 import { BrowserTabDeck } from './thread/secondary-panel/BrowserTabDeck.js';
 import { ThreadPluginTab } from './thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from './thread/secondary-panel/ThreadExplorerTab.js';
+import { ThreadInboxTab } from './thread/secondary-panel/ThreadInboxTab.js';
 import { ThreadPlanPanel } from './thread/secondary-panel/ThreadPlanPanel.js';
 import {
   planFileTabTitle,
@@ -39,9 +40,51 @@ import { useOptionalPaneContext } from '../views/thread-detail/PaneContext.js';
  * panel terminal.
  */
 
-export function agentWriteScope(stats: SessionStats | null): Set<string> | null {
+function isAbsoluteFsPath(path: string): boolean {
+  return path.startsWith('/') || /^[a-zA-Z]:[\\/]/u.test(path);
+}
+
+function trimTrailingSlash(path: string): string {
+  if (path === '/') return '/';
+  return path.replace(/\/+$/u, '');
+}
+
+/**
+ * Make a transcript write path comparable to git status keys (absolute).
+ * Relative paths resolve against `cwd`; `..` cannot climb out of cwd.
+ * Absolute paths pass through. Empty / unresolvable paths are dropped.
+ */
+export function resolveWriteScopePath(path: string, cwd: string): string | null {
+  if (!path) return null;
+  const normalized = path.replace(/\\/g, '/');
+  if (isAbsoluteFsPath(normalized) || isAbsoluteFsPath(path)) {
+    return trimTrailingSlash(normalized);
+  }
+  if (!cwd) return null;
+  const absCwd = trimTrailingSlash(cwd.replace(/\\/g, '/'));
+  const win = /^[a-zA-Z]:/u.test(absCwd);
+  const segs = absCwd.split('/').filter((seg, index) => seg !== '' || (index === 0 && !win));
+  const cwdLen = segs.length;
+  for (const seg of normalized.split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') {
+      if (segs.length <= cwdLen) return null;
+      segs.pop();
+      continue;
+    }
+    segs.push(seg);
+  }
+  return segs.join('/') || '/';
+}
+
+export function agentWriteScope(stats: SessionStats | null, cwd = ''): Set<string> | null {
   if (!stats) return null;
-  return new Set(stats.files.filter((file) => file.op !== 'R').map((file) => file.path));
+  const paths = stats.files
+    .filter((file) => file.op !== 'R')
+    .map((file) => resolveWriteScopePath(file.path, cwd))
+    .filter((path): path is string => Boolean(path));
+  if (paths.length === 0) return null;
+  return new Set(paths);
 }
 
 export function cliPlanDocument(snapshot: CliPlanFile | null): ThreadPlanDocument {
@@ -132,7 +175,12 @@ export function AgentSessionView({
   modal?: boolean;
 }) {
   const pane = useOptionalPaneContext();
-  const panel = useSecondaryPanel(modal ? `${session.id}:modal` : session.id, { defaultOpen: !modal });
+  const viewRef = useRef<HTMLElement>(null);
+  const panel = useSecondaryPanel(modal ? `${session.id}:modal` : session.id, {
+    defaultOpen: !modal,
+    modal,
+    getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
+  });
   useInAppBrowserPanel(modal ? `${session.id}:modal` : session.id, panel);
   useDesktopBrowserReveal({
     threadId: session.id,
@@ -156,7 +204,7 @@ export function AgentSessionView({
   const exited = session.status === 'exited';
   const loadedStats = useSessionStats(session.id, projectId, exited, providedStats === undefined);
   const stats = providedStats ?? loadedStats;
-  const writeScope = agentWriteScope(stats);
+  const writeScope = agentWriteScope(stats, session.cwd);
   const cliPlan = useCliPlanSnapshot(session);
   const showPlanPin = Boolean(session.cliPlanIntent) || Boolean(cliPlan);
 
@@ -238,6 +286,7 @@ export function AgentSessionView({
         }}
         onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: '' })}
         onOpenExplorer={() => panel.addTab({ kind: 'explorer', title: 'Explorer' })}
+        onOpenInbox={() => panel.addTab({ kind: 'inbox', title: 'Inbox' })}
         onOpenPlugin={(moduleId, title, options) => {
           appendThreadRecentItem(session.id, { kind: 'plugin', moduleId, actionId: options?.actionId, title });
           panel.addTab({
@@ -279,6 +328,8 @@ export function AgentSessionView({
     );
   } else if (closable?.kind === 'explorer') {
     panelBody = <ThreadExplorerTab projectId={projectId} />;
+  } else if (closable?.kind === 'inbox') {
+    panelBody = <ThreadInboxTab projectId={projectId} />;
   } else if (closable?.kind === 'terminal') {
     panelBody = (
       <p className="thread-detail-empty">
@@ -289,6 +340,7 @@ export function AgentSessionView({
 
   return (
     <section
+      ref={viewRef}
       className={viewClass}
       data-testid="agent-session-view"
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}

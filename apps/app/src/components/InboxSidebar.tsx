@@ -33,6 +33,7 @@ import {
   toggleInboxKeep
 } from '../store.js';
 import { type InboxEntry } from '@zana-ai/zcc-domain/product';
+import './inbox-list.css';
 import {
   groupByBucketThenProject,
   groupByBucketFlat,
@@ -99,7 +100,10 @@ export function InboxSidebar({
   unreadOnly = false,
   reportsOnly = false,
   scopeProjectId = null,
-  grouping = 'project'
+  grouping = 'project',
+  selectedId: selectedIdProp,
+  onSelect,
+  autoSelect = false
 }: {
   query?: string;
   unreadOnly?: boolean;
@@ -111,11 +115,24 @@ export function InboxSidebar({
   /** How to group rows within each day bucket: per-project subgroups
    *  ('project', default) or a flat chronological stream ('time'). */
   grouping?: 'project' | 'time';
+  /**
+   * Optional controlled selection. When `onSelect` is provided the sidebar
+   * never writes `useInboxSelection`, so an embedded panel (thread side
+   * panel) cannot desync a split Inbox view.
+   */
+  selectedId?: string | null;
+  onSelect?: (id: string | null) => void;
+  /** When true and nothing is selected, pick the newest visible row. Default
+   *  off so the main Inbox can land on the Overview. */
+  autoSelect?: boolean;
 } = {}) {
   const entries = useInbox((s) => s.entries);
   const loading = useInbox((s) => s.loading);
-  const selectedId = useInboxSelection((s) => s.selectedEntryId);
-  const select = useInboxSelection((s) => s.select);
+  const storeSelectedId = useInboxSelection((s) => s.selectedEntryId);
+  const storeSelect = useInboxSelection((s) => s.select);
+  const controlled = typeof onSelect === 'function';
+  const selectedId = controlled ? (selectedIdProp ?? null) : storeSelectedId;
+  const select = controlled ? onSelect : storeSelect;
   const readIds = useInboxRead((s) => s.readIds);
   const keptIds = useInboxKeep((s) => s.keptIds);
   // Which entries the user has already answered/skipped — a question entry stops
@@ -310,12 +327,16 @@ export function InboxSidebar({
     [projects]
   );
 
-  // NOTE: we intentionally do NOT default-select the newest entry on first
-  // load. With nothing selected, the detail column renders the Inbox Overview
-  // (AI summary + Reports/Ideas/Goals rollups) as the landing page —
-  // see `InboxView`. The user drops into a selected entry by clicking a row or
-  // pressing j/k; both go through `selectAndRead` below. (Historically this
-  // component force-selected `visibleIds[0]`, which pre-empted the Overview.)
+  // Default is no auto-select so the main Inbox detail column can land on the
+  // Overview (AI summary + rollups). Embedded callers may opt in via
+  // `autoSelect`. Historically this component force-selected `visibleIds[0]`.
+  useEffect(() => {
+    if (!autoSelect) return;
+    if (selectedId) return;
+    const first = visibleIds[0];
+    if (first) selectAndRead(first);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSelect, selectedId, visibleIds]);
 
   // Keep selection in scope: if the project scope changes (focus a project /
   // return home) and the selected entry no longer belongs to this scope, DROP
@@ -341,8 +362,11 @@ export function InboxSidebar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeProjectId]);
 
-  // j/k navigation across the visible (render-ordered) sequence.
+  // j/k navigation across the visible (render-ordered) sequence. Skip in
+  // controlled/embedded mode so a side-panel list cannot steal keys from a
+  // split Inbox (or jump to detail on an accidental j).
   useEffect(() => {
+    if (controlled) return;
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -355,7 +379,7 @@ export function InboxSidebar({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleIds, selectedId]);
+  }, [visibleIds, selectedId, controlled]);
 
   if (loading && entries.length === 0) {
     return <DelayedStencilList label="Loading inbox" className="zcc-stencil-padded" />;
@@ -508,8 +532,9 @@ export function InboxSidebar({
                     <span className={`inbox-project-name ${project ? '' : 'tombstoned'}`}>
                       {name}
                     </span>
-                    {/* Pending-question flag — surfaces an unanswered inbox_ask on
-                        the header so it's noticeable even while the group is folded. */}
+                    {/* Pending-question flag — surfaces an unanswered structured
+                        question on the header so it's noticeable even while the
+                        group is folded. */}
                     {pendingQuestions > 0 && (
                       <span
                         className="inbox-project-question"
@@ -825,7 +850,7 @@ function InboxRow({
   unread: boolean;
   /** Flagged "Keep" — shows a star and is protected from Clear inbox. */
   kept?: boolean;
-  /** Carries an unanswered `inbox_ask` question — flagged so it's easy to spot. */
+  /** Carries an unanswered structured question — flagged so it's easy to spot. */
   pendingQuestion?: boolean;
   onClick: () => void;
   /** Right-click → open the row context menu at the cursor. */

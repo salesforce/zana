@@ -650,15 +650,38 @@ export function computeTimelineRowDelta(
 }
 
 /**
+ * Keep the last visible conversation when a newer window projects to zero
+ * rows. An empty projection is only accepted when `maxSeq` went backwards
+ * (rewind/edit) or the previous window was already empty.
+ */
+export function retainLatestTimelineWindow<T>(
+  previous: { maxSeq: number; rows: readonly T[] } | undefined,
+  next: { maxSeq: number; rows: readonly T[] },
+): { maxSeq: number; rows: readonly T[] } {
+  if (
+    previous
+    && previous.rows.length > 0
+    && next.rows.length === 0
+    && next.maxSeq >= previous.maxSeq
+  ) {
+    return { maxSeq: next.maxSeq, rows: previous.rows };
+  }
+  return next;
+}
+
+/**
  * Apply a {@link TimelineDelta} to the rows the client currently holds,
  * yielding the new full window. Returns `null` when the delta references a row
- * the client neither holds nor was sent (a stale/mismatched base) — the caller
- * should fall back to a full fetch.
+ * the client neither holds nor was sent, or when it would empty a non-empty
+ * window via `rowOrder: []` — the caller should fall back to a full fetch.
  */
 export function applyTimelineDelta(
   prevRows: readonly TimelineRow[],
   delta: TimelineDelta,
 ): TimelineRow[] | null {
+  if (delta.rowOrder && delta.rowOrder.length === 0 && prevRows.length > 0) {
+    return null;
+  }
   const byId = new Map<string, TimelineRow>();
   for (const row of prevRows) {
     byId.set(row.id, row);

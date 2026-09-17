@@ -247,7 +247,7 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
     const cdPrefix = remoteCdPrefix(startPath);
     const remoteExtra = cleanExtraArgs(input.extraArgs);
     const effectiveProfile = input.persona?.baseProfile ?? input.profile;
-    const { args: baseArgs } = this.resolveLaunch(effectiveProfile, input.config, false);
+    const { args: baseArgs } = this.resolveLaunch(effectiveProfile, input.config, false, input.resumeSessionId);
     const modelTarget = resolveModelTarget(this, { config: input.config, persona: input.persona, projectSettings: input.projectSettings, perTabRouting: input.harnessRouting, profile: effectiveProfile, extraArgs: remoteExtra, scope: 'remote' });
     const roleTarget = resolveRoleTarget(this, { config: input.config, persona: input.persona, projectSettings: input.projectSettings, perTabRouting: input.harnessRouting, profile: effectiveProfile, extraArgs: remoteExtra, scope: 'remote' });
     const execution = resolveExecutionState(this, { config: input.config, persona: input.persona, projectSettings: input.projectSettings, perTabRouting: input.harnessRouting, profile: effectiveProfile, extraArgs: remoteExtra, scope: 'remote' });

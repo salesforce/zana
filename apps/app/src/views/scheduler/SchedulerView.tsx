@@ -11,6 +11,8 @@ import { openScheduledLive } from '@/components/scheduler/openScheduledLive';
 import { ScheduleRow } from '@/components/scheduler/ScheduleRow';
 import { DeleteConfirmModal } from '@/components/scheduler/DeleteConfirmModal';
 import { TemplatePickerModal } from '@/components/scheduler/TemplatePickerModal';
+import { filterSchedules, type ScheduleFilter } from '@/components/scheduler/schedule-filter';
+import { ScheduleFilters } from '@/components/scheduler/ScheduleFilters';
 import { SchedulerOverview } from '@/components/scheduler/SchedulerOverview';
 import { ScheduleGroupsModal } from '@/components/ScheduleGroupsModal';
 import { getNewScheduleRoutePath, getScheduleRoutePath } from '@/lib/route-paths';
@@ -44,6 +46,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
   const [managingGroups, setManagingGroups] = useState(false);
   const [tick, setTick] = useState(0);
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<ScheduleFilter>('all');
   /** When the user hits "Pause all", we stash the ids that were enabled so
    *  "Resume all" only re-enables those. Session-local — by design. */
   const [pausedSet, setPausedSet] = useState<Set<string> | null>(null);
@@ -99,22 +102,8 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     return tasks;
   }, [tasks, lockedProjectId]);
 
-  const filteredTasks = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return scopedTasks;
-    return scopedTasks.filter((t) => {
-      const project = projects.find((p) => p.id === t.projectId);
-      const haystack = [
-        t.name,
-        t.description ?? '',
-        t.profile,
-        project?.name ?? ''
-      ]
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(q);
-    });
-  }, [scopedTasks, projects, search]);
+  const filteredTasks = useMemo(() => filterSchedules(scopedTasks,
+    new Map(projects.map(p => [p.id, p])), search, filter), [scopedTasks, projects, search, filter]);
 
   const pauseAll = async () => {
     const pausable = scopedTasks.filter((t) => t.enabled && t.external?.kind !== 'claude-loop');
@@ -160,11 +149,6 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     useUi.getState().setProjectView(id, 'scheduler');
   };
 
-  const openByReport = (_run: unknown, taskName: string) => {
-    const match = scopedTasks.find((t) => t.name === taskName);
-    if (match) openSchedule(match);
-  };
-
   return (
     <div
       data-testid="scheduler-view"
@@ -184,7 +168,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
             <p className="settings-help scheduler-subtitle">
               {lockedProject
                 ? `Recurring agents that spawn a terminal in ${lockedProject.name} on a fixed interval.`
-                : 'Recurring agents that spawn a terminal on a fixed interval.'}
+                : 'Plan recurring work and keep track of every run.'}
             </p>
           </div>
           <div className="scheduler-header-actions">
@@ -243,9 +227,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
         <aside className="scheduler-banner-info" role="note">
           <AlertTriangle size={14} />
           <div>
-            <strong>Schedules only fire while this app is running.</strong>{' '}
-            Closing the app stops all schedules until next launch — there is
-            no background daemon. The "app open" pill on each row is a reminder.
+            Schedules run while this app is open. Closing it pauses runs until the next launch.
           </div>
         </aside>
 
@@ -276,7 +258,8 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
             onOpenProject={lockedProject ? undefined : openProjectSchedules}
             onOpenTerminal={(t, sessionId) => openScheduledLive(t.projectId, sessionId, navigate)}
             onEdit={openSchedule}
-            onShowReport={openByReport}
+            onShowReport={(_run, task) => openSchedule(task)}
+            onBrowse={() => setView('schedules')}
             onToggle={toggleSchedule}
             onRunNow={runScheduleNow}
             onStopLive={stopScheduleLive}
@@ -289,13 +272,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
         ) : (
           <>
             <div className="scheduler-list-toolbar">
-              <input
-                className="scheduler-list-search"
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by name, project, profile…"
-              />
+              <ScheduleFilters search={search} filter={filter} onSearch={setSearch} onFilter={setFilter} />
               {pausedSet ? (
                 <button
                   className="settings-btn scheduler-pause-all"
@@ -331,7 +308,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
                     key={t.id}
                     task={t}
                     projectName={
-                      projects.find((p) => p.id === t.projectId)?.name ?? '⟨missing⟩'
+                      projects.find((p) => p.id === t.projectId)?.name ?? 'Project missing'
                     }
                     group={t.group ? groups.find((g) => g.id === t.group) ?? null : null}
                     onOpen={() => openSchedule(t)}

@@ -194,6 +194,30 @@ export function ThreadHostDisconnectedBanner({ status }: { status: string }) {
   );
 }
 
+export function ThreadTimelineLoadError({
+  message,
+  onRetry
+}: {
+  message: string | null;
+  onRetry?: () => void;
+}) {
+  if (!message) return null;
+  return (
+    <div className="thread-banner thread-timeline-load-error" data-testid="thread-timeline-load-error">
+      <span>{message}</span>
+      {onRetry ? (
+        <button
+          type="button"
+          className="thread-timeline-load-retry"
+          onClick={onRetry}
+        >
+          Retry
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function ThreadStatusBadge({
   status,
   waitingOnUser,

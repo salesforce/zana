@@ -69,7 +69,7 @@ import { parsePortablePlan } from '@zana-ai/zcc-server/services/execution/portab
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
-import { createRestoreCapabilityStore } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
+import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
@@ -93,6 +93,7 @@ import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-st
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
 import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { extraArgsPinSession } from '@zana-ai/zcc-spawn-plan';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import { createExecutionConsentManagement } from '@zana-ai/zcc-host-daemon/harness/execution-consent-management';
 import { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
@@ -274,7 +275,7 @@ import { TranscriptSource } from '@zana-ai/zcc-server/services/misc/transcript-s
 import type { HarnessAuthKey, HarnessAuthStatusInfo } from '@zana-ai/zcc-domain/product';
 import { getHarnessAuthStatus, setHarnessAuth } from '@zana-ai/zcc-host-daemon/harness-auth';
 import { microVmPlatformSupported } from '@zana-ai/zcc-host-daemon/harness/microvm-environment';
-import { installedHarnessVersion } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
+import { installedHarnessVersion, memoizeInstalledVersion } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { verifyEditors } from '@zana-ai/zcc-server/services/projects/editor-verify';
 import { PersonaStore, resolvePersonaLaunch } from '@zana-ai/zcc-server/services/agents/persona-store';
 import { TeamStore } from '@zana-ai/zcc-server/services/agents/team-store';
@@ -937,6 +938,33 @@ function restorePrincipal(capability: { id: string; request: CreateTerminalReque
     : { kind: 'automation', id: `restore:${capability.id}` };
 }
 
+async function withPreparedNativeSession<T extends { profile: LaunchProfileId; resumeSessionId?: string; extraArgs?: string[] }>(
+  req: T,
+  cwd: string,
+  config: AppConfig
+): Promise<T> {
+  // Resume profiles already pin the conversation (`--continue` / `--resume` with
+  // no id). Minting a fresh Cursor chat here would replace that blunt restore.
+  if (
+    req.resumeSessionId ||
+    extraArgsPinSession(req.extraArgs) ||
+    providerFor(req.profile).baseArgsPinSession(req.profile)
+  ) {
+    return req;
+  }
+  try {
+    const prepared = await registrationFor(req.profile)?.prepareNativeSession?.({
+      config,
+      cwd,
+      profile: req.profile
+    });
+    if (!prepared?.id) return req;
+    return { ...req, resumeSessionId: prepared.id };
+  } catch {
+    return req;
+  }
+}
+
 const launchAuthorizationBySession = new Map<string, string>();
 const launchPrincipals = new Map<string, LaunchPrincipal>();
 const launchAuthorization = new LaunchAuthorizationService({
@@ -1312,7 +1340,7 @@ const idleTriage = new IdleTriageService({
  * itself before it ever stops. It spends NO tokens — pure gating + a deferred
  * append. `observe` is wired to the agent-status edge and `remove` to pty exit
  * (Rule 3), mirroring {@link IdleTriageService}. The gate is passed into the MCP
- * inbox tools (`inbox_ask` / `inbox_push`) so they can park a question at push
+ * inbox tools (`inbox_push`) so they can park a question at push
  * time; `getAgentState` reads the live tracker (never renderer-supplied, Rule 1).
  */
 const heldQuestions = new HeldQuestionService({
@@ -3505,9 +3533,16 @@ export function createTerminalConfined(
       : undefined;
     const effectivePersona = persona ?? selectedPersona;
     const promptArgs = req.prompt ? seedPromptArgs(selection.profile, req.prompt) : [];
-    const extraArgs = promptArgs.length
+    let extraArgs = promptArgs.length
       ? [...safeExtraArgs, ...promptArgs]
-      : safeExtraArgs.length ? safeExtraArgs : undefined;
+      : safeExtraArgs.length ? [...safeExtraArgs] : [];
+    if (selection.profile === 'shell') {
+      const command = req.prompt?.trim();
+      if (command) {
+        extraArgs.push('-lc', command.length > 10_000 ? command.slice(0, 10_000) : command);
+      }
+    }
+    const extraArgsOrUndef = extraArgs.length > 0 ? extraArgs : undefined;
     // microVM image override chain (env `'microvm'` only): explicit launcher
     // hint > persona default > project default > (builder allowlist default when
     // all absent). Every candidate is ADVISORY — the microVM builder re-resolves
@@ -3552,7 +3587,7 @@ export function createTerminalConfined(
       rows: req.rows,
       config: launchConfig,
       projectSettings: projectMicroVmSettings,
-      extraArgs,
+      extraArgs: extraArgsOrUndef,
       openingPrompt,
       harnessRouting: req.harnessRouting,
       title: req.title,
@@ -3712,6 +3747,9 @@ async function launchAuthorizedTerminal(
     persona: frameworkPersona
   });
   if (!selection.ok) return { ok: false, code: selection.code, message: selection.message };
+  const installedVersion = memoizeInstalledVersion(
+    (adapterId) => installedHarnessVersion(config, adapterId)
+  );
   const executionAuthorization = await preflightTerminalExecution({
     config,
     profile: selection.profile,
@@ -3730,7 +3768,7 @@ async function launchAuthorizedTerminal(
   }, {
     consentStore: executionConsentStore,
     consentService: executionConsentService,
-    installedVersion: (adapterId) => installedHarnessVersion(config, adapterId)
+    installedVersion
   });
   if (executionAuthorization.decision === 'blocked') {
     return { ok: false, code: 'DENIED', message: `Structured execution unavailable: ${executionAuthorization.reason}` };
@@ -3825,7 +3863,12 @@ async function launchAuthorizedTerminal(
       selection.personaId ? resolvedPersonas.find((candidate) => candidate.id === selection.personaId) : undefined
     ),
     spawn: async (authorizedPlan) => {
-      const result = createTerminalConfined(authorizedPlan.request, {
+      const request = await withPreparedNativeSession(
+        authorizedPlan.request,
+        authorizedPlan.resolved.effectiveLaunch.cwd,
+        authorizedPlan.resolved.config
+      );
+      const result = createTerminalConfined(request, {
         ...spawnOpts,
         preallocatedSessionId: authorizedPlan.sessionId,
         launchSnapshot: {
@@ -3924,7 +3967,7 @@ async function launchAuthorizedTerminal(
       legacyPersonaFacetCompatibility
     }, {
       consentStore: executionConsentStore,
-      installedVersion: (adapterId) => installedHarnessVersion(currentConfig, adapterId)
+      installedVersion
     });
     if (currentExecution.decision === 'blocked') return { ok: false, reason: currentExecution.reason };
     const currentBinding = {
@@ -3995,6 +4038,9 @@ async function launchBackgroundTerminal(
       })
     })
   });
+  const installedVersion = memoizeInstalledVersion(
+    (adapterId) => installedHarnessVersion(opts.config, adapterId)
+  );
   const executionAuthorization = await preflightTerminalExecution({
     config: opts.config,
     profile: opts.profile,
@@ -4009,7 +4055,7 @@ async function launchBackgroundTerminal(
     idempotencyKey: plan.idempotencyKey
   }, {
     consentStore: executionConsentStore,
-    installedVersion: (adapterId) => installedHarnessVersion(opts.config, adapterId)
+    installedVersion
   });
   if (executionAuthorization.decision === 'blocked') {
     throw new LaunchSpawnError('DENIED', `Structured execution unavailable: ${executionAuthorization.reason}`);
@@ -4064,7 +4110,7 @@ async function launchBackgroundTerminal(
         idempotencyKey: authorizedPlan.idempotencyKey
       }, {
         consentStore: executionConsentStore,
-        installedVersion: (adapterId) => installedHarnessVersion(currentConfig, adapterId)
+        installedVersion
       });
       if (currentExecution.decision === 'blocked') return { ok: false as const, reason: currentExecution.reason };
       return launchDigest({
@@ -4081,10 +4127,15 @@ async function launchBackgroundTerminal(
     },
     spawn: async (authorizedPlan) => {
       const spawnLaunch = materializeEffectiveLaunch(authorizedPlan.resolved.effectiveLaunch);
+      const request = await withPreparedNativeSession(
+        authorizedPlan.request,
+        spawnLaunch.cwd,
+        authorizedPlan.resolved.config
+      );
       const session = createTerminalFromAuthorizedPlan({
-        ...authorizedPlan.request,
-        projectSettings: authorizedPlan.resolved.projectSettings,
+        ...request,
         cwd: spawnLaunch.cwd,
+        projectSettings: authorizedPlan.resolved.projectSettings,
         preallocatedSessionId: authorizedPlan.sessionId
       });
       return ptys.waitForReady(session.id);
@@ -6792,6 +6843,32 @@ async function bootstrapNormal() {
         source: body.source ?? source
       };
     },
+    runInTerminal: async ({ threadId, projectId, command, title }) => {
+      const response = await fetch(new URL(`api/v1/threads/${encodeURIComponent(threadId)}/open`, productServerUrl()), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          terminal: { command, title }
+        })
+      });
+      const body = await response.json() as {
+        delivered?: number;
+        command?: string | null;
+        title?: string | null;
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error ?? 'terminal open failed');
+      }
+      return {
+        delivered: typeof body.delivered === 'number' ? body.delivered : 0,
+        command: body.command ?? command,
+        title: body.title ?? title
+      };
+    },
+    inAppAgentTerminalsEnabled: () => store.getConfig().inAppAgentTerminalsEnabled === true,
     // Suppress-while-working gate for BLOCKING inbox questions (default ON). The
     // inbox tools call `heldQuestions.maybeHold(...)` at push time; a held
     // question surfaces later on the agent's idle/blocked edge (Rule 1: the gate
@@ -6948,11 +7025,11 @@ async function bootstrapNormal() {
     },
     // Question callback (EXPERIMENTAL, opt-in). A session's `AskUserQuestion`
     // PreToolUse hook forwarded the tool-call JSON; render it in the app's own
-    // Questions UI by REUSING the inbox_ask loop: parse → map to InboxQuestion[]
+    // Questions UI by REUSING the inbox question loop: parse → map to InboxQuestion[]
     // → append to the inbox for this session, so the existing
     // `inbox:onAppended` push → QuestionBlock render fires. The answer flows
     // back through the SAME replyToInboxEntry → terminals:reply → ptys.reply
-    // path inbox_ask uses (the guaranteed terminal fallback stays live), so
+    // path inbox_push questions use (the guaranteed terminal fallback stays live), so
     // there is NO new answer-injection code here. Fail-open: any miss just
     // leaves the in-terminal question as-is.
     onQuestionHook: (projectId: string, sessionId: string, rawBody: string) => {
@@ -6973,7 +7050,7 @@ async function bootstrapNormal() {
       const questions = mapAskUserQuestion(toolInput);
       if (questions.length === 0) return; // garbage / empty payload
       // A question always wants the user's eyes — bump a background run to loud
-      // rather than dropping it into a collapsed group (mirrors inbox_ask).
+      // rather than dropping it into a collapsed group (mirrors a blocking inbox_push).
       const scheduled = session.scheduled;
       const projectLabel = store.listProjects().find((p) => p.id === projectId)?.name;
       void inboxStore

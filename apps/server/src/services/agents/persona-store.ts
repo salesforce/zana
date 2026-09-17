@@ -72,7 +72,7 @@ export function sanitizeHarnessRouting(routing: unknown): PersonaHarnessRoutingV
   if (!r.byAdapter || typeof r.byAdapter !== 'object') return null;
   
   const byAdapter: Partial<Record<HarnessFamily, PersonaHarnessIntentV1>> = {};
-  const validFamilies: HarnessFamily[] = ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode'];
+  const validFamilies: HarnessFamily[] = ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode', 'afcode'];
   
   for (const [key, value] of Object.entries(r.byAdapter)) {
     if (!validFamilies.includes(key as HarnessFamily)) return null;

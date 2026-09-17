@@ -385,21 +385,6 @@ export function AgentsListPane() {
     triage: r.triage
   });
 
-  // Menu "Open"/"View" → graduate the agent into Projects (mirrors the board's
-  // `pick`): open its project, restore a headless session into the strip, focus
-  // its tab, and land on the terminal view.
-  const pick = (c: AgentCard) => {
-    const ui = useUi.getState();
-    ui.setNav('projects');
-    ui.enterProjectFocus(c.projectId);
-    if (c.session.headless && c.session.status !== 'exited') {
-      void useData.getState().restoreTerminal(c.session.id, c.projectId);
-    } else {
-      ui.selectTab(c.projectId, c.session.id);
-    }
-    ui.setProjectView(c.projectId, 'terminals');
-  };
-
   const onRowContextMenu = (e: MouseEvent, r: AgentRow) => {
     e.preventDefault();
     setThreadMenu(null);
@@ -678,7 +663,7 @@ export function AgentsListPane() {
       </div>
       <ListPaneResizer />
       {menu && (
-        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={pick} />
+        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} />
       )}
       {threadMenu && (
         <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />
@@ -734,9 +719,8 @@ function AgentWorkerRow({
   const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
   const label = t.cohort?.slotLabel || t.title;
   const isJob = !!t.cohort?.executionId;
-  const paneProjectId = scopedProjectId ?? row.projectId;
-  const { onPointerDown, openInSplit } = usePaneContentSplitDrag({
-    content: { kind: 'agent-session', projectId: paneProjectId, sessionId: t.id },
+  const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
+    content: { kind: 'agent-session', projectId: scopedProjectId, sessionId: t.id },
     title: t.title
   });
   return (
@@ -746,6 +730,7 @@ function AgentWorkerRow({
       data-kind="agent"
       onPointerDown={onPointerDown}
       onClick={(e) => {
+        if (consumeClick()) return;
         if (isJob) {
           e.preventDefault();
           onOpenJob(row);
@@ -800,14 +785,13 @@ function AgentSideListRow({
   const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
   const isOrch = t.cohort?.role === 'orchestrator';
   const isJob = !!t.cohort?.executionId;
-  const paneProjectId = scopedProjectId ?? row.projectId;
-  const { onPointerDown, openInSplit } = usePaneContentSplitDrag({
-    content: { kind: 'agent-session', projectId: paneProjectId, sessionId: t.id },
+  const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
+    content: { kind: 'agent-session', projectId: scopedProjectId, sessionId: t.id },
     title: t.title
   });
   const indicator = usePaneContentSplitIndicator({
     kind: 'agent-session',
-    projectId: paneProjectId,
+    projectId: scopedProjectId,
     sessionId: t.id
   });
   const button = (
@@ -819,6 +803,7 @@ function AgentSideListRow({
       data-kind="agent"
       onPointerDown={onPointerDown}
       onClick={(e) => {
+        if (consumeClick()) return;
         if (isJob) {
           e.preventDefault();
           onOpenJob(row);

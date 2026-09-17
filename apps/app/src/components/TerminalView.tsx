@@ -11,9 +11,10 @@ import { posixQuote } from '../lib/quote.js';
 import { registerFinder, registerTerminal } from '../lib/findRegistry.js';
 import { scrapeUrls } from '../lib/urlScrape.js';
 import { shouldSuppressWheelArrows } from '../lib/terminalWheel.js';
+import { createResizeSettleScheduler, resyncXtermAndPty } from '../lib/terminalResync.js';
 import { perfCount, perfTime } from '../lib/perfMark.js';
 import { resolveTerminalTheme } from '../lib/terminalThemes.js';
-import { openXtermHttpLink, xtermHttpLinkHandler } from '../lib/xterm-http-link.js';
+import { openXtermHttpLink } from '../lib/xterm-http-link.js';
 import { useData, useUi } from '../store.js';
 
 type Area = 'a' | 'b' | 'c' | 'd';
@@ -80,9 +81,49 @@ function TerminalViewImpl({ session, area }: Props) {
   // Computed from buffer indices, not the DOM, so it stays correct even when
   // the tab is hidden (display:none) and xterm's own measurement is zeroed.
   const stickToBottomRef = useRef(true);
+  // xterm fires onScroll during programmatic fit/resize (column reflow moves
+  // viewportY). That is not user intent — if we let it clear the tail lock,
+  // settle resync skips scrollToBottom and the user is left scrolling through
+  // wrapped TUI junk. Ignore onScroll only while WE are fitting.
+  const ignoreProgrammaticScrollRef = useRef(false);
+  const settleRef = useRef<ReturnType<typeof createResizeSettleScheduler> | null>(null);
+  const runResyncRef = useRef<(opts?: { pinViewport?: boolean }) => (() => void) | void>(
+    () => {}
+  );
+  runResyncRef.current = (opts) => {
+    const term = termRef.current;
+    if (!term || disposedRef.current) return;
+    const pin = opts?.pinViewport === true || stickToBottomRef.current;
+    ignoreProgrammaticScrollRef.current = true;
+    try {
+      const cancelResync = resyncXtermAndPty({
+        term,
+        fit: fitRef.current,
+        resizePty: (cols, rows) => {
+          void product.terminals.resize(session.id, cols, rows).catch(() => {});
+        },
+        stickToBottom: pin,
+        isDisposed: () => disposedRef.current
+      });
+      // Keep ignoring onScroll until after the helper's deferred refresh +
+      // scrollToBottom, otherwise that pin would look like a user scroll-away.
+      const clearId = requestAnimationFrame(() => {
+        ignoreProgrammaticScrollRef.current = false;
+      });
+      return () => {
+        cancelResync();
+        cancelAnimationFrame(clearId);
+        ignoreProgrammaticScrollRef.current = false;
+      };
+    } catch {
+      ignoreProgrammaticScrollRef.current = false;
+    }
+  };
 
   useLayoutEffect(() => {
     if (!ref.current) return;
+    const activateHttpLink = (event: MouseEvent, uri: string) =>
+      openXtermHttpLink(event, uri, session.id);
     const term = new Terminal({
       cursorBlink: true,
       // Prefer Nerd Font / Powerline-capable families first so prompts
@@ -98,7 +139,7 @@ function TerminalViewImpl({ session, area }: Props) {
       allowProposedApi: true,
       // OSC 8 (gh, etc.): without this, xterm confirm()s then window.open()
       // with no URL and Electron denies about:blank — OK does nothing.
-      linkHandler: xtermHttpLinkHandler,
+      linkHandler: { activate: activateHttpLink },
       // Keep a deep scrollback: a long-running agent easily emits more than a
       // few thousand lines, and the old 5k cap silently dropped the oldest — so
       // peeking the agent in the modal (or scrolling back in the tab) lost early
@@ -110,7 +151,7 @@ function TerminalViewImpl({ session, area }: Props) {
     const fit = new FitAddon();
     const search = new SearchAddon();
     term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon(openXtermHttpLink));
+    term.loadAddon(new WebLinksAddon(activateHttpLink));
     term.loadAddon(search);
     term.open(ref.current);
     // Upgrade off the DOM renderer to WebGL now that the terminal has a DOM
@@ -204,6 +245,7 @@ function TerminalViewImpl({ session, area }: Props) {
       return buf.viewportY >= buf.baseY;
     };
     const offScroll = term.onScroll(() => {
+      if (ignoreProgrammaticScrollRef.current) return;
       stickToBottomRef.current = atBottom();
     });
 
@@ -399,12 +441,31 @@ function TerminalViewImpl({ session, area }: Props) {
     let roRaf = 0;
     let lastW = -1;
     let lastH = -1;
+    // Live drag: cheap fit + PTY resize every frame. After the size stops
+    // changing, settle fires the modal-style SIGWINCH nudge + refresh so a
+    // Claude TUI redraws instead of stacking frames on a stale grid.
+    const settle = createResizeSettleScheduler(() => {
+      if (disposedRef.current) return;
+      const el = ref.current;
+      if (!el || el.clientHeight <= 0 || el.clientWidth <= 0) return;
+      if (el.offsetParent === null) return;
+      // Reflow during the drag already moved the viewport off the TUI frame
+      // and may have cleared the tail lock via onScroll. Always pin: a layout
+      // resize is not a user scroll, and the old scroll offset is meaningless
+      // once columns have wrapped.
+      stickToBottomRef.current = true;
+      runResyncRef.current({ pinViewport: true });
+    });
+    settleRef.current = settle;
     const ro = new ResizeObserver((entries) => {
       const box = entries[entries.length - 1]?.contentRect;
       const w = box ? Math.round(box.width) : ref.current?.clientWidth ?? 0;
       const h = box ? Math.round(box.height) : ref.current?.clientHeight ?? 0;
       // Hidden / not-yet-laid-out, or unchanged from the last fit — nothing to do.
-      if (w === 0 || h === 0) return;
+      if (w === 0 || h === 0) {
+        settle.cancel();
+        return;
+      }
       if (w === lastW && h === lastH) return;
       lastW = w;
       lastH = h;
@@ -414,8 +475,15 @@ function TerminalViewImpl({ session, area }: Props) {
         if (disposedRef.current) return;
         try {
           perfCount('terminal-fit'); // TEMP diagnostic — remove after verifying
-          perfTime('terminal-fit', () => fit.fit());
-          void product.terminals.resize(session.id, term.cols, term.rows).catch(() => {});
+          ignoreProgrammaticScrollRef.current = true;
+          try {
+            perfTime('terminal-fit', () => fit.fit());
+            void product.terminals.resize(session.id, term.cols, term.rows).catch(() => {});
+            if (stickToBottomRef.current) term.scrollToBottom();
+          } finally {
+            ignoreProgrammaticScrollRef.current = false;
+          }
+          settle.ping();
         } catch {
           /* ignore */
         }
@@ -425,6 +493,8 @@ function TerminalViewImpl({ session, area }: Props) {
 
     return () => {
       disposedRef.current = true;
+      settle.dispose();
+      settleRef.current = null;
       cancelAnimationFrame(initialFitRaf);
       if (roRaf) cancelAnimationFrame(roRaf);
       ro.disconnect();
@@ -483,28 +553,30 @@ function TerminalViewImpl({ session, area }: Props) {
   // will also catch most pane resizes, but firing here removes a one-frame
   // mismatch when the layout class changes without a size change yet.
   useEffect(() => {
-    if (visible && fitRef.current) {
-      requestAnimationFrame(() => {
-        try {
-          if (disposedRef.current) return;
-          fitRef.current?.fit();
-          if (termRef.current) {
-            void product.terminals
-              .resize(session.id, termRef.current.cols, termRef.current.rows)
-              .catch(() => {});
-            // Output that arrived while hidden couldn't auto-scroll (zero-height
-            // viewport). If we were tailing, snap to bottom now that the tab is
-            // measurable again so the latest output is visible.
-            if (stickToBottomRef.current) termRef.current.scrollToBottom();
-          }
-          // Only focus the primary area ('a') on transition; secondary panes
-          // get focus only from explicit click.
-          if (area === 'a') termRef.current?.focus();
-        } catch {
-          /* ignore */
-        }
-      });
+    if (!visible) {
+      settleRef.current?.cancel();
+      return;
     }
+    if (!fitRef.current) return;
+    let cancelResync: (() => void) | undefined;
+    const raf = requestAnimationFrame(() => {
+      try {
+        if (disposedRef.current) return;
+        // Split open/close can change layout without a lasting pixel delta
+        // (ResizeObserver then skips). The settled-style nudge still has to
+        // run so a Claude TUI redraws and xterm busts a stale cell cache.
+        cancelResync = runResyncRef.current() ?? undefined;
+        // Only focus the primary area ('a') on transition; secondary panes
+        // get focus only from explicit click.
+        if (area === 'a') termRef.current?.focus();
+      } catch {
+        /* ignore */
+      }
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      cancelResync?.();
+    };
   }, [visible, area, session.id]);
 
   // When this session becomes the agent-inspector modal's session, TerminalSurface
@@ -545,6 +617,7 @@ function TerminalViewImpl({ session, area }: Props) {
     // common case and must stay a no-op.
     if (isModalSession === was) return;
     let raf = 0;
+    let cancelResync: (() => void) | undefined;
     const deadline = Date.now() + 2000;
     const sync = () => {
       const term = termRef.current;
@@ -563,59 +636,16 @@ function TerminalViewImpl({ session, area }: Props) {
         return;
       }
       try {
-        fitRef.current?.fit();
-        const cols = term.cols;
-        const rows = term.rows;
-
-        // Re-sync xterm's NATIVE scrollbar to the rendered viewport. The
-        // appendChild reparent silently resets the browser's `.xterm-viewport`
-        // scrollTop to 0, but xterm's Viewport caches the pre-reparent geometry
-        // (`_lastRecordedViewportHeight` / `_lastScrollTop` / cell height) — and
-        // `syncScrollArea()` early-returns when all three still match, which
-        // they do after a bare DOM move. fit() is ALSO a no-op when it lands on
-        // the same grid, so no onResize fires to bust that cache. Result: the
-        // scrollbar THUMB sits at the top while the canvas shows the bottom
-        // (the reported desync). Force it: a rows-only resize on the xterm
-        // OBJECT down one row then back changes the canvas height, so the guard
-        // fails and Viewport re-runs `_innerRefresh`, which writes
-        // scrollTop = ydisp*rowHeight — re-pinning the thumb to the real
-        // position WITHOUT changing scroll position. Rows-only never triggers a
-        // buffer reflow (that's gated on a COLUMN change), so it's cheap and
-        // loses no scrollback. `resize()` early-returns on unchanged dims, hence
-        // the down-then-up round-trip: each leg is a genuine change that fires.
-        term.resize(cols, Math.max(1, rows - 1));
-        term.resize(cols, rows);
-
-        // claude is a full-screen TUI that repaints IN PLACE on the normal
-        // buffer (verified: no alt-screen `\x1b[?1049h`; it uses ESC7/ESC8
-        // save-restore + cursor-relative moves and assumes it knows the current
-        // grid). It only redraws when it receives new output OR a real SIGWINCH.
-        // node-pty suppresses SIGWINCH when the new dims equal the dims it
-        // already holds — exactly the case if fit() lands on the same grid the
-        // agent was spawned at. So we NUDGE the PTY too: resize to one row
-        // short, then back on the next frame. The round-trip guarantees a
-        // genuine dimension change (two SIGWINCHs), prompting claude to redraw
-        // its whole frame so an idle agent isn't left showing a stale grid after
-        // the reparent. Harmless for a shell — it just re-wraps once.
-        void product.terminals.resize(session.id, cols, Math.max(1, rows - 1)).catch(() => {});
-        requestAnimationFrame(() => {
-          if (disposedRef.current) return;
-          void product.terminals.resize(session.id, cols, rows).catch(() => {});
-          // Repaint xterm's own viewport too: the reparent can leave the
-          // renderer's texture stale, so refresh the visible rows and tail-snap.
-          try {
-            term.refresh(0, term.rows - 1);
-            if (stickToBottomRef.current) term.scrollToBottom();
-          } catch {
-            /* ignore */
-          }
-        });
+        cancelResync = runResyncRef.current() ?? undefined;
       } catch {
         /* ignore */
       }
     };
     raf = requestAnimationFrame(sync);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      cancelResync?.();
+    };
   }, [isModalSession, session.id]);
 
   // Drop a file (or absolute path) onto the terminal to type its shell-quoted

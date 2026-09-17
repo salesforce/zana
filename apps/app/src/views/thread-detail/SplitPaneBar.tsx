@@ -1,19 +1,22 @@
 import { useMemo, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import { Maximize2, Minimize2, X } from 'lucide-react';
 import { listNavPanels, subscribePluginSlots } from '../../plugins/plugin-slots.js';
-import type { PaneContent } from '../../lib/split-layout/types.js';
+import { SplitPaneMoveMenu } from './SplitPaneMoveMenu.js';
+import type { PaneContent, SplitSide } from '../../lib/split-layout/types.js';
 import { paneBarTitle } from './split-pane-bar-title.js';
 
 export function SplitPaneBar({
   content,
   isMaximized,
   onClose,
+  onMoveToSide,
   onToggleMaximize,
   onBeginDrag
 }: {
   content: PaneContent;
   isMaximized: boolean;
   onClose: () => void;
+  onMoveToSide: (side: SplitSide) => void;
   onToggleMaximize: () => void;
   onBeginDrag: (event: ReactPointerEvent, label: string) => void;
 }) {
@@ -46,6 +49,7 @@ export function SplitPaneBar({
         {title}
       </p>
       <div className="split-pane-bar-actions">
+        <SplitPaneMoveMenu onMoveToSide={onMoveToSide} />
         <button
           type="button"
           className="icon-btn"

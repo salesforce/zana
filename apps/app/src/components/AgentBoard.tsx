@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Kanban, KanbanColumn } from '@zana-ai/zcc-ui/kanban';
 import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, Calendar, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug } from 'lucide-react';
 import type { AgentState, ExecutionBoardProjection, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
@@ -201,6 +202,14 @@ export function isReclaimableIdle(c: AgentCard): boolean {
     c.triage?.resolution !== 'awaiting-reply' &&
     (c.liveSubagents ?? 0) === 0
   );
+}
+
+/**
+ * CLI agents a lane "Close all" may terminate. Threads and schedule catalog
+ * cards are skipped; synthetic Job Team hosts keep their own Stop/Dismiss.
+ */
+export function closeableLaneAgents(items: FleetItem[]): AgentCard[] {
+  return fleetAgentCards(items).filter((c) => !c.isSyntheticExecutionHost);
 }
 
 interface LaneDef {
@@ -689,18 +698,18 @@ interface AgentBoardLanesProps {
   activeId?: string;
   /**
    * Card click — peek at an agent or thread (inspector modal).
-   * The context-menu "Open"/"View" item uses {@link onPick} for the heavier
-   * navigate-to-workspace path instead, so a glance and a jump stay distinct.
+   * Context-menu "Open"/"View" navigates to the first-class session or thread
+   * page, so a glance and a jump stay distinct.
    */
   onInspect: (c: FleetItem) => void;
-  /** Navigate to the agent's workspace tab (context-menu "Open"/"View"). */
-  onPick: (c: FleetItem) => void;
   /** Show a per-card project chip (the global, cross-project board). */
   showProject?: boolean;
   executions?: ExecutionBoardProjection[];
   hasMoreExecutions?: boolean;
   onLoadMoreExecutions?: () => void;
   onDismissExecution?: (executionId: string) => void;
+  /** Confirm-close the CLI agents in one lane (kanban column Close all). */
+  onCloseLaneAgents?: (cards: AgentCard[]) => void;
 }
 
 /**
@@ -708,7 +717,7 @@ interface AgentBoardLanesProps {
  * "running for X" timers. Caller computes `cards` behind a memo so a status
  * tick doesn't rebuild the world (render-storm guard).
  */
-export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProject, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution }: AgentBoardLanesProps) {
+export function AgentBoardLanes({ cards, activeId, onInspect, showProject, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution, onCloseLaneAgents }: AgentBoardLanesProps) {
   const personas = usePersonas((s) => s.personas);
   // Idle-attention sensitivity (mirror of AppConfig, hydrated in the data
   // store): governs which triaged idle agents the "Needs you" lane pulls up.
@@ -728,6 +737,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   const [relaunchingExecutionId, setRelaunchingExecutionId] = useState<string | null>(null);
   const [controllingExecutionId, setControllingExecutionId] = useState<string | null>(null);
   const [executionMenu, setExecutionMenu] = useState<{ card: AgentCard; execution: ExecutionBoardProjection; x: number; y: number } | null>(null);
+  const [laneMenu, setLaneMenu] = useState<{ x: number; y: number; agents: AgentCard[] } | null>(null);
 
   useEffect(() => {
     if (!executionMenu) return;
@@ -741,6 +751,19 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
       window.removeEventListener('keydown', close);
     };
   }, [executionMenu]);
+
+  useEffect(() => {
+    if (!laneMenu) return;
+    const close = () => setLaneMenu(null);
+    window.addEventListener('mousedown', close);
+    window.addEventListener('blur', close);
+    window.addEventListener('keydown', close);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('blur', close);
+      window.removeEventListener('keydown', close);
+    };
+  }, [laneMenu]);
 
   // One timer drives every live "running for X". Recomputed at render from
   // createdAt vs. now; only mounted while a board is shown.
@@ -908,6 +931,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           e.preventDefault();
           e.stopPropagation();
           setThreadMenu(null);
+          setLaneMenu(null);
           // Both retained synthetic hosts and live coordinators represent one
           // execution. Never expose terminal actions (Open/Delete/Restart) on a
           // Job card: they bypass Job lifecycle controls and obscure its identity.
@@ -1142,6 +1166,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         onClick={() => onInspect(item)}
         onContextMenu={(e) => {
           setMenu(null);
+          setLaneMenu(null);
           openThreadMenu(e, item.thread, setThreadMenu);
         }}
         aria-current={item.id === activeId ? 'true' : undefined}
@@ -1250,6 +1275,16 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
               label={lane.label}
               count={lane.cards.length}
               icon={<Icon size={13} aria-hidden="true" />}
+              onContextMenu={(e: MouseEvent<HTMLElement>) => {
+                e.preventDefault();
+                setMenu(null);
+                setThreadMenu(null);
+                setExecutionMenu(null);
+                setLaneMenu({
+                  ...clampMenuAnchor(e),
+                  agents: closeableLaneAgents(lane.cards)
+                });
+              }}
             >
               {lane.cards.length === 0 ? (
                 <div className="agents-lane-empty" aria-hidden="true" />
@@ -1276,7 +1311,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         })}
       </Kanban>
       {menu && (
-        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={(card) => onPick(agentFleetItem(card))} />
+        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} />
       )}
       {threadMenu && (
         <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />
@@ -1330,6 +1365,32 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           )}
         </div>
       )}
+      {laneMenu &&
+        (typeof document === 'undefined'
+          ? null
+          : createPortal(
+              <div
+                className="tab-context-menu"
+                style={{ top: laneMenu.y, left: laneMenu.x }}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  disabled={laneMenu.agents.length === 0 || !onCloseLaneAgents}
+                  onClick={() => {
+                    const agents = laneMenu.agents;
+                    setLaneMenu(null);
+                    if (agents.length === 0) return;
+                    onCloseLaneAgents?.(agents);
+                  }}
+                >
+                  {laneMenu.agents.length > 0
+                    ? `Close all (${laneMenu.agents.length})`
+                    : 'Close all'}
+                </button>
+              </div>,
+              document.body
+            ))}
       {rename && (
         <PromptModal
           title="Rename agent"

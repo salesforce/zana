@@ -59,8 +59,8 @@ describe('AgentsBoard', () => {
     expect(board).toContain('threadFleetItem');
     expect(board).toContain('fleetAgentCards(visibleFleet)');
     expect(board).toContain('item.kind === \'thread\'');
-    expect(board).toContain('openThreadModal(item.id)');
-    expect(board).toContain('getThreadRoutePath(item.id, threadProjectId)');
+    expect(board).toContain('inspectThread(item.id, item.projectId, navigate)');
+    expect(board).not.toContain('getThreadRoutePath');
     expect(board).toContain('threadIdFromPath');
     expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');
     expect(board).toContain('<AgentMonitor\n          cards={visibleFleet}');
@@ -68,9 +68,21 @@ describe('AgentsBoard', () => {
     expect(board).toContain('schedulesForAgentView');
     expect(board).toContain('openScheduleFromAgents');
     expect(board).toContain('item.kind === \'schedule\'');
-    expect(board).toContain('openAgentModal(item.card.session.id, item.projectId)');
-    expect(board).toContain('item.card.session.scheduled');
+    expect(board).toContain('inspectAgentSession(item.card.session.id, item.projectId, navigate)');
     expect(board).not.toContain('getAgentSessionRoutePath');
+    expect(board).not.toContain('enterProjectFocus');
+  });
+
+  it('confirms lane Close all with force and keeps toolbar Close unforced', () => {
+    expect(board).toContain('onCloseLaneAgents={(cards) => {');
+    expect(board).toContain('setCloseIdleForce(true)');
+    expect(board).toContain('setCloseIdleForce(false)');
+    expect(board).toContain('closeIdleAgents(projectId, ids, summarize, force ? { force: true } : undefined)');
+    expect(board).toContain('force={closeIdleForce}');
+    expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');
+    expect(closeIdle).toContain(') : force ? (');
+    expect(closeIdle).toContain('These agents in {scope} will be <strong>terminated</strong>.');
+    expect(closeIdle).toContain('Working and\n                blocked agents are left running.');
   });
 });
 

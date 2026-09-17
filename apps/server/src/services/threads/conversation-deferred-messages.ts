@@ -16,7 +16,7 @@ import {
   type DeferredThreadMessageRow
 } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
-import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PermissionMode, ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import type { ThreadSendMode } from './conversation-dispatch-checkpoint.js';
 import { canDispatch } from './conversation-dispatch-checkpoint.js';
@@ -26,7 +26,7 @@ export interface DeferredSendPayload {
   kind: 'send';
   input: unknown;
   mode: ThreadSendMode;
-  execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
+  execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
   senderThreadId?: string;
 }
 
@@ -50,7 +50,7 @@ export function deferConversationSend(
     threadId: string;
     input: unknown;
     mode: ThreadSendMode;
-    execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
+    execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
     senderThreadId?: string;
     sendAfter?: number | null;
     paused?: boolean;
@@ -212,7 +212,10 @@ export async function flushDeferredConversationMessages(
     const live = getConversationThread(ctx.db, threadId);
     if (!live || live.archivedAt) return { flushed };
     const first = prefix[0]!;
-    const threadBusy = findOpenConversationTurn(ctx.db, threadId) != null;
+    // Dispatch marks the thread active before the host's turn-start event arrives.
+    // Keep the next message queued through that gap as well.
+    const threadBusy = live.status === 'active' || live.status === 'starting'
+      || findOpenConversationTurn(ctx.db, threadId) != null;
     const decision = canDispatch({
       archived: Boolean(live.archivedAt),
       queuePaused: options.force ? false : isThreadQueueAutoSendPaused(ctx.db, threadId),

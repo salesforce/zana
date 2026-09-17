@@ -145,6 +145,20 @@ describe('splitThreadNavigation', () => {
     expect(replaced.focusedPaneId).toBe(two.focusedPaneId);
   });
 
+  it('replaces an Agents board pane with a global CLI-agent session', () => {
+    const agents = createSinglePaneLayout({ kind: 'agents' });
+    const next = reconcileLayoutForContent(agents, {
+      kind: 'agent-session',
+      projectId: null,
+      sessionId: 's1'
+    });
+    expect(next.root.type === 'pane' && next.root.content).toEqual({
+      kind: 'agent-session',
+      projectId: null,
+      sessionId: 's1'
+    });
+  });
+
   it('reuses a CLI-agent pane across global and project URLs without cloning', () => {
     const content = { kind: 'agent-session' as const, projectId: null, sessionId: 's1' };
     const seeded = reconcileLayoutForContent(null, content);

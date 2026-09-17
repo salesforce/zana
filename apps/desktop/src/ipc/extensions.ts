@@ -11,7 +11,7 @@ import {
   listBundledPluginCatalog
 } from '@zana-ai/zcc-server/plugins/plugin-service';
 import { createPluginStore, pluginStorePath } from '@zana-ai/zcc-server/plugins/plugin-store';
-import { createMarketplaceStore, marketplaceStorePath } from '@zana-ai/zcc-server/plugins/marketplace-store';
+import { createMarketplaceStore, listPublicMarketplaceCatalogs, marketplaceStorePath } from '@zana-ai/zcc-server/plugins/marketplace-store';
 import {
   projectCatalogMarketplaceEntries,
   resolveCatalogInstallSpec,
@@ -807,6 +807,13 @@ export function registerExtensionsIpc(): void {
       code: 'MARKETPLACE_FAILED',
       message: err instanceof Error ? err.message : String(err)
     })
+  );
+  // Catalog sources: same on-disk store Browse already reads. Product HTTP
+  // list can miss this file (vite proxy to another port, listen.ts down).
+  ctx.safeHandle(
+    IPC.marketplaces.list,
+    () => listPublicMarketplaceCatalogs(defaultPluginDataDir()),
+    () => []
   );
 }
 

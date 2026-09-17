@@ -1,0 +1,248 @@
+/* Settings is a reading surface: a focused rail and a centered column of
+   grouped preferences. Reuse theme tokens so plugin and system themes work. */
+.settings-panel--preferences {
+  --settings-divider: color-mix(in srgb, var(--border) 60%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 70%, var(--bg-base));
+  container-type: inline-size;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.settings-panel--preferences .settings-inner {
+  max-width: 800px;
+  padding: 48px 40px 72px;
+}
+
+.settings-panel--preferences .settings-inner--wide {
+  max-width: 1200px;
+}
+
+.settings-panel--preferences .settings-header {
+  margin-bottom: 32px;
+  align-items: flex-start;
+}
+
+.settings-panel--preferences .settings-header-title {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.settings-panel--preferences .settings-header-title h1 {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.035em;
+}
+
+.settings-panel--preferences .settings-header-desc {
+  color: var(--text-muted);
+  font-size: 13px;
+  white-space: normal;
+}
+
+.settings-panel--preferences .settings-section {
+  margin-bottom: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  scroll-margin-top: 24px;
+}
+
+.settings-panel--preferences .settings-section > h3 {
+  margin: 0 0 12px;
+  padding: 0 2px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.settings-panel--preferences .settings-section-body {
+  padding: 4px 16px;
+  border: 1px solid var(--settings-divider);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  min-width: 0;
+}
+
+.settings-panel--preferences .settings-section-body > .settings-field {
+  margin: 0;
+  padding: 14px 0;
+  border: 0;
+}
+
+.settings-panel--preferences .settings-section-body > .settings-field + .settings-field {
+  border-top: 1px solid var(--settings-divider);
+}
+
+/* Non-field children (lists, descriptions, custom controls) keep their own
+   layout; the body only supplies a modest inset around them. */
+.settings-panel--preferences .settings-section-body > :first-child:not(.settings-field) {
+  margin-top: 12px;
+}
+
+.settings-panel--preferences .settings-section-body > :last-child:not(.settings-field) {
+  margin-bottom: 12px;
+}
+
+.settings-panel--preferences .settings-label {
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.settings-panel--preferences .settings-help {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.settings-panel--preferences .settings-toggle-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-toggle-copy .settings-help {
+  margin: 4px 0 0;
+}
+
+.settings-panel--preferences :is(.settings-toggle-row, .settings-action-row) {
+  gap: 24px;
+}
+
+.settings-panel--preferences .settings-field--row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 220px);
+  column-gap: 24px;
+  align-items: center;
+}
+
+.settings-panel--preferences .settings-field--row > label {
+  display: contents;
+}
+
+.settings-panel--preferences .settings-field--row .settings-label {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: end;
+}
+
+.settings-panel--preferences .settings-field--row > label > :not(.settings-label) {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.settings-panel--preferences .settings-field--row > .settings-help {
+  grid-column: 1;
+  grid-row: 2;
+  margin: 3px 0 0;
+  align-self: start;
+}
+
+.settings-panel--preferences :is(.settings-btn, .settings-field input, .settings-field select) {
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.settings-panel--preferences .opener-switch:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.sidebar.settings-pane .settings-app-back {
+  margin: 4px 8px 12px;
+  width: auto;
+  gap: 8px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.sidebar.settings-pane .settings-search {
+  margin: 0 12px 16px;
+}
+
+.sidebar.settings-pane .settings-search-input {
+  min-height: 32px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.sidebar.settings-pane .settings-picker {
+  padding: 0 10px 24px;
+}
+
+.sidebar.settings-pane .settings-group {
+  padding-top: 0;
+  margin-top: 20px;
+  border-top: 0;
+}
+
+.sidebar.settings-pane .settings-group:first-child {
+  margin-top: 0;
+}
+
+.sidebar.settings-pane .settings-group-label {
+  padding: 0 10px 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.sidebar.settings-pane .settings-section-item {
+  min-height: 32px;
+  padding: 6px 10px;
+  gap: 9px;
+  border-radius: 6px;
+  color: var(--text-primary);
+}
+
+.sidebar.settings-pane .settings-section-item > svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.sidebar.settings-pane .settings-section-label {
+  font-weight: 400;
+}
+
+.sidebar.settings-pane .settings-section-item.active {
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--sidebar-bg));
+}
+
+.sidebar.settings-pane .settings-section-item.active .settings-section-label {
+  font-weight: 500;
+}
+
+.sidebar.settings-pane :is(.settings-section-item, .settings-subsection-item, .settings-app-back, .settings-search-clear):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@container (max-width: 600px) {
+  .settings-panel--preferences .settings-inner {
+    padding: 28px 20px 48px;
+  }
+
+  .settings-panel--preferences .settings-field--row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 4px;
+  }
+
+  .settings-panel--preferences .settings-field--row > label > :not(.settings-label) {
+    grid-column: 1;
+    grid-row: 3;
+    margin-top: 8px;
+  }
+
+  .settings-panel--preferences .settings-action-row {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}

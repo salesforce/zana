@@ -528,6 +528,22 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('Waiting for the first turn…');
   });
 
+  it('surfaces a retryable load error above the empty waiting copy', () => {
+    const html = renderToStaticMarkup(
+      <ThreadTimeline
+        rows={[]}
+        status="starting"
+        thinking={null}
+        loadError="timeline-failed"
+        onRetryLoad={() => {}}
+      />
+    );
+    expect(html).toContain('Waiting for the first turn…');
+    expect(html).toContain('timeline-failed');
+    expect(html).toContain('Retry');
+    expect(html).toContain('data-testid="thread-timeline-load-error"');
+  });
+
   it('bundles consecutive commands into a summary row', () => {
     const command = (id: string, command: string): TimelineRow => ({
       ...base,

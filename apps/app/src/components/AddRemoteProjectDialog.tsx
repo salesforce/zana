@@ -3,9 +3,6 @@ import { hasDesktopBridge } from '../lib/app-surface.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Search, X } from 'lucide-react';
 import type { SshHostEntry } from '@zana-ai/zcc-domain/product';
-import { bootstrapOutcome, composerBootstrapErrorMessage } from './composer-host-status.js';
-import { collectBootstrapLogs, remoteAddSubmitLabel } from './add-remote-project.js';
-import { runHostInstallWithDrawer } from '../lib/host-install-run.js';
 import { StencilList } from './ui/Skeleton.js';
 
 interface AddRemoteProjectDialogProps {
@@ -23,7 +20,7 @@ interface AddRemoteProjectDialogProps {
 /**
  * Modal that lists SSH hosts from `~/.ssh/config` and lets the user pick
  * one to register as a remote-backed Project. Threads run on a host daemon
- * installed over SSH.
+ * installed later from the composer.
  * No mutation of the user's ssh config — read-only list.
  */
 export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemoteProjectDialogProps) {
@@ -37,14 +34,8 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
   const [remotePath, setRemotePath] = useState('');
   const [proxyJump, setProxyJump] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [installing, setInstalling] = useState(false);
-  const [installLogs, setInstallLogs] = useState<string[]>([]);
-  const [pairingCommand, setPairingCommand] = useState<string | null>(null);
-  const [createdId, setCreatedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const loadSeq = useRef(0);
-
-  const busy = submitting || installing;
 
   const loadHosts = useCallback((sync: boolean) => {
     if (!hasDesktopBridge()) {
@@ -86,11 +77,11 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape' && !busy) onClose();
+      if (e.key === 'Escape' && !submitting) onClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [busy, onClose]);
+  }, [submitting, onClose]);
 
   const filtered = useMemo(() => {
     if (!hosts) return [];
@@ -105,56 +96,19 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
   }, [filter, hosts]);
 
   const pickHost = (alias: string) => {
-    if (busy || createdId) return;
+    if (submitting) return;
     setPicked(alias);
     if (!name.trim()) setName(alias);
     const entry = hosts?.find((h) => h.alias === alias);
     setProxyJump(entry?.proxyJump ?? '');
   };
 
-  const finish = (projectId: string) => {
-    onSuccess(projectId);
-    onClose();
-  };
-
-  const installDaemon = async (projectId: string) => {
-    setInstalling(true);
-    setError(null);
-    setPairingCommand(null);
-    setInstallLogs(['Installing host daemon over SSH…']);
-    try {
-      const events = await runHostInstallWithDrawer({
-        kind: 'install',
-        target: picked ?? (name.trim() || 'remote'),
-        startLogs: ['Installing host daemon over SSH…'],
-        run: (onEvent) => product.hosts.bootstrap(projectId, onEvent)
-      });
-      setInstallLogs(collectBootstrapLogs(events));
-      const outcome = bootstrapOutcome(events);
-      if (outcome.ok) {
-        finish(projectId);
-        return;
-      }
-      setError(composerBootstrapErrorMessage(outcome));
-      setPairingCommand(outcome.pairingCommand ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not install host daemon');
-    } finally {
-      setInstalling(false);
-    }
-  };
-
-  const canSubmit = picked !== null && !busy;
+  const canSubmit = picked !== null && !submitting;
 
   const submit = async () => {
-    if (!picked || busy) return;
-    if (createdId) {
-      await installDaemon(createdId);
-      return;
-    }
+    if (!picked || submitting) return;
     setSubmitting(true);
     setError(null);
-    setPairingCommand(null);
     try {
       const project = await onSubmit({
         host: picked,
@@ -167,8 +121,8 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
         setError('Could not add remote project');
         return;
       }
-      setCreatedId(project.id);
-      await installDaemon(project.id);
+      onSuccess(project.id);
+      onClose();
     } finally {
       setSubmitting(false);
     }
@@ -187,11 +141,7 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
       user={user}
       remotePath={remotePath}
       proxyJump={proxyJump}
-      created={Boolean(createdId)}
-      busy={busy}
-      installing={installing}
-      installLogs={installLogs}
-      pairingCommand={pairingCommand}
+      busy={submitting}
       canSubmit={canSubmit}
       onFilterChange={setFilter}
       onRefresh={() => loadHosts(true)}
@@ -218,11 +168,7 @@ export function AddRemoteProjectDialogView({
   user,
   remotePath,
   proxyJump,
-  created,
   busy,
-  installing,
-  installLogs,
-  pairingCommand,
   canSubmit,
   onFilterChange,
   onRefresh,
@@ -245,11 +191,7 @@ export function AddRemoteProjectDialogView({
   user: string;
   remotePath: string;
   proxyJump: string;
-  created: boolean;
   busy: boolean;
-  installing: boolean;
-  installLogs: string[];
-  pairingCommand: string | null;
   canSubmit: boolean;
   onFilterChange: (value: string) => void;
   onRefresh: () => void;
@@ -261,7 +203,6 @@ export function AddRemoteProjectDialogView({
   onSubmit: () => void;
   onClose: () => void;
 }) {
-  const fieldsLocked = busy || created;
   return (
     <div
       className="modal-backdrop"
@@ -285,7 +226,7 @@ export function AddRemoteProjectDialogView({
               value={filter}
               onChange={(e) => onFilterChange(e.target.value)}
               autoFocus
-              disabled={fieldsLocked}
+              disabled={busy}
             />
           </div>
 
@@ -297,7 +238,7 @@ export function AddRemoteProjectDialogView({
               type="button"
               className="remote-host-refresh"
               onClick={onRefresh}
-              disabled={loading || fieldsLocked}
+              disabled={loading || busy}
               title="Refresh SSH hosts from the configured provider"
               aria-label="Refresh SSH hosts"
             >
@@ -321,7 +262,7 @@ export function AddRemoteProjectDialogView({
                 type="button"
                 className={`remote-host-row ${picked === h.alias ? 'active' : ''}`}
                 onClick={() => onPickHost(h.alias)}
-                disabled={fieldsLocked}
+                disabled={busy}
               >
                 <span className="remote-host-alias">{h.alias}</span>
                 {h.hostname && <span className="remote-host-target">{h.hostname}</span>}
@@ -340,7 +281,7 @@ export function AddRemoteProjectDialogView({
                 value={name}
                 onChange={(e) => onNameChange(e.target.value)}
                 placeholder={picked ?? 'pick a host first'}
-                disabled={!picked || fieldsLocked}
+                disabled={!picked || busy}
               />
             </label>
             <label className="remote-form-row">
@@ -349,7 +290,7 @@ export function AddRemoteProjectDialogView({
                 value={user}
                 onChange={(e) => onUserChange(e.target.value)}
                 placeholder="defaults to ~/.ssh/config"
-                disabled={!picked || fieldsLocked}
+                disabled={!picked || busy}
               />
             </label>
             <label className="remote-form-row">
@@ -358,7 +299,7 @@ export function AddRemoteProjectDialogView({
                 value={remotePath}
                 onChange={(e) => onRemotePathChange(e.target.value)}
                 placeholder="defaults to Settings remote path, else remote $HOME"
-                disabled={!picked || fieldsLocked}
+                disabled={!picked || busy}
               />
             </label>
             <label className="remote-form-row">
@@ -367,24 +308,13 @@ export function AddRemoteProjectDialogView({
                 value={proxyJump}
                 onChange={(e) => onProxyJumpChange(e.target.value)}
                 placeholder="bastion for double-hop SSH, e.g. user@bastion"
-                disabled={!picked || fieldsLocked}
+                disabled={!picked || busy}
               />
             </label>
-            <p className="modal-hint remote-install-hint">
-              SSHs from this computer and enrolls a host daemon. Composer Send waits until that daemon is online.
+            <p className="modal-hint">
+              Install the host daemon later from the composer. Send waits until that daemon is bound and online.
             </p>
           </div>
-
-          {installLogs.length > 0 ? (
-            <pre className="remote-install-log" data-testid="remote-install-log">
-              {installLogs.join('\n')}
-            </pre>
-          ) : null}
-          {pairingCommand ? (
-            <pre className="remote-install-log" data-testid="remote-pairing-command">
-              {pairingCommand}
-            </pre>
-          ) : null}
         </div>
 
         <div className="modal-footer">
@@ -392,10 +322,7 @@ export function AddRemoteProjectDialogView({
             Cancel
           </button>
           <button className="btn primary" disabled={!canSubmit} onClick={onSubmit}>
-            {remoteAddSubmitLabel({
-              installing,
-              retry: created
-            })}
+            Add
           </button>
         </div>
       </div>

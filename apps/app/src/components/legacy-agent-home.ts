@@ -2,8 +2,11 @@ import type {
   HarnessFamily,
   HarnessModelRoutingV1,
   LaunchProfileId,
+  LaunchProfileSource,
+  ProjectLaunchDefault,
   RemoteTransferResult
 } from '@zana-ai/zcc-domain/product';
+import { harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import type { PromptTextMention } from '@zana-ai/zcc-domain/thread-runtime';
 import type { PluginComposerLaunchPatch } from '@zana-ai/zcc-plugin-sdk/app';
 import {
@@ -24,7 +27,8 @@ export const PROFILE_BY_FAMILY: Record<HarnessFamily, LaunchProfileId> = {
   pi: 'pi',
   opencode: 'opencode',
   grok: 'grok',
-  mastracode: 'mastracode'
+  mastracode: 'mastracode',
+  afcode: 'afcode'
 };
 
 const THREAD_PROVIDER_BY_FAMILY: Record<HarnessFamily, string> = {
@@ -34,7 +38,8 @@ const THREAD_PROVIDER_BY_FAMILY: Record<HarnessFamily, string> = {
   pi: 'pi',
   opencode: 'acp-opencode',
   grok: 'acp-grok',
-  mastracode: 'acp-mastracode'
+  mastracode: 'acp-mastracode',
+  afcode: 'acp-afcode'
 };
 
 export type CliAgentModelOption = CatalogModelPickerRow;
@@ -52,7 +57,9 @@ export function cliAgentModelOptions(input: {
   catalogModels: ReadonlyArray<CatalogModelPickerRow>;
   preferCatalog?: boolean;
   catalogReady?: boolean;
+  modelSelection?: 'native-only';
 }): CliAgentModelOption[] {
+  if (input.modelSelection === 'native-only') return [{ model: '', displayName: 'Native configuration' }];
   if (input.preferCatalog && (input.catalogReady || input.catalogModels.length > 0)) {
     return [...input.catalogModels];
   }
@@ -66,7 +73,9 @@ export function cliAgentMoreModelOptions(input: {
   adapterModelCount: number;
   catalogMoreModels: ReadonlyArray<CatalogModelPickerRow>;
   preferCatalog: boolean;
+  modelSelection?: 'native-only';
 }): CliAgentModelOption[] {
+  if (input.modelSelection === 'native-only') return [];
   if (!input.preferCatalog && input.adapterModelCount > 0) return [];
   return [...input.catalogMoreModels];
 }
@@ -122,6 +131,17 @@ export function familyForThreadProviderId(providerId: string): HarnessFamily | n
   return null;
 }
 
+/** Project exact/persona pin, else Settings `defaultHarness`, as a thread provider id. */
+export function preferredThreadProviderId(input: {
+  launchDefault?: ProjectLaunchDefault | null;
+  defaultHarness?: HarnessFamily | null;
+}): string | null {
+  const family = input.launchDefault && 'adapterId' in input.launchDefault
+    ? input.launchDefault.adapterId
+    : input.defaultHarness ?? null;
+  return family ? threadProviderIdForFamily(family) : null;
+}
+
 /**
  * Keep a still-available family (current, then last-used, then configured default)
  * so the CLI composer does not flash empty on catalog / persona churn.
@@ -131,7 +151,9 @@ export function resolveCliAgentFamily(input: {
   availableFamilyIds: readonly string[];
   rememberedFamilyId: string | null;
   effectiveDefaultFamilyId: string | null;
+  stickyFamilyId?: string | null;
 }): string {
+  if (input.stickyFamilyId) return input.stickyFamilyId;
   const available = new Set(input.availableFamilyIds);
   if (available.size === 0) {
     return input.currentFamilyId || input.rememberedFamilyId || input.effectiveDefaultFamilyId || '';
@@ -157,7 +179,11 @@ export function resolveCliAgentSpawnProfile(input: {
   harnessDefaultProfileId?: LaunchProfileId | null;
   familyId: string;
 }): LaunchProfileId | undefined {
-  if (input.provenance === 'automatic' && input.automaticProfile) {
+  if (
+    input.provenance === 'automatic'
+    && input.automaticProfile
+    && harnessFamilyOf(input.automaticProfile) === input.familyId
+  ) {
     return input.automaticProfile;
   }
   if (input.harnessDefaultProfileId) return input.harnessDefaultProfileId;
@@ -165,6 +191,17 @@ export function resolveCliAgentSpawnProfile(input: {
     return PROFILE_BY_FAMILY[input.familyId as HarnessFamily];
   }
   return undefined;
+}
+
+/** Only a resolved project default may be re-selected by main at launch. */
+export function cliAgentProfileSource(
+  provenance: 'automatic' | 'explicit',
+  automaticProfile: LaunchProfileId | null,
+  familyId?: string
+): LaunchProfileSource {
+  if (provenance !== 'automatic' || automaticProfile === null) return 'explicit';
+  if (familyId && harnessFamilyOf(automaticProfile) !== familyId) return 'explicit';
+  return 'seeded-default';
 }
 
 export function availableAgentHarnesses<T extends {

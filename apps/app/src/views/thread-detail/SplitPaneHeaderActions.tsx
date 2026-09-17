@@ -1,4 +1,5 @@
 import { Maximize2, Minimize2, X } from 'lucide-react';
+import { SplitPaneMoveMenu } from './SplitPaneMoveMenu.js';
 import { useOptionalPaneContext } from './PaneContext.js';
 
 /** Close (and maximize) for split panes that already have a header row. Always
@@ -8,6 +9,7 @@ export function SplitPaneHeaderActions() {
   if (!pane?.onRequestClose && !pane?.onToggleMaximize) return null;
   return (
     <div className="split-pane-header-actions" data-testid="split-pane-header-actions">
+      {pane.onMoveToSide ? <SplitPaneMoveMenu onMoveToSide={pane.onMoveToSide} /> : null}
       {pane.onToggleMaximize ? (
         <button
           type="button"

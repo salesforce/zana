@@ -1,0 +1,46 @@
+#!/usr/bin/env node
+// Strict native argv + ACP fixture. No model calls or user configuration.
+import { appendFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createInterface } from 'node:readline';
+const args = process.argv.slice(2);
+if (args.includes('--version')) {
+  process.stdout.write('afcode 2.3.0\n');
+  process.exit(0);
+}
+if (process.cwd().includes('zcc-afcode-')) {
+  appendFileSync(join(process.cwd(), 'fixture-launches.jsonl'), JSON.stringify({ pid: process.pid, args, cwd: process.cwd(), home: process.env.HOME }) + '\n');
+}
+if (args[0] === 'acp') {
+  process.env.FAKE_ACP_MODEL_CONFIG = '1';
+  process.env.FAKE_ACP_MODE_CONFIG = '1';
+  process.env.FAKE_ACP_LOAD_SESSION = '1';
+  process.env.FAKE_ACP_PROMPT_PREFIX = 'AFCODE_E2E:';
+  if (process.cwd().includes('zcc-afcode-')) {
+    process.env.FAKE_ACP_PROMPT_LOG = join(process.cwd(), 'fixture-prompts.jsonl');
+    process.env.FAKE_ACP_REQUEST_LOG = join(process.cwd(), 'fixture-requests.jsonl');
+  }
+  await import('../../../plugins/provider-acp/src/bridge/fake-acp-agent.mjs');
+} else {
+  const allowed = new Set(['--local', '--resume', '--auto-approve']);
+  for (let i = 0; i < args.length; i++) {
+    if (!allowed.has(args[i])) { process.stderr.write(`Unsupported native flag: ${args[i]}\n`); process.exit(64); }
+    if (args[i] === '--resume' && args[i + 1] && !args[i + 1].startsWith('--')) i++;
+  }
+  if (!args.includes('--local')) process.exit(65);
+  process.stdout.write('afcode fixture initializing\n');
+  let ready = false;
+  // Native startup prints before MCP discovery and terminal negotiation finish.
+  // Discarding early input catches integrations that mistake a banner for ready.
+  setTimeout(() => {
+    ready = true;
+    process.stdout.write('\x1b[?2004hafcode fixture ready\n');
+  }, 1200);
+  if (args.includes('--resume')) process.stdout.write('Resume picker ready\n');
+  createInterface({ input: process.stdin }).on('line', (line) => {
+    if (!ready) return;
+    if (line === '/exit') process.exit(0);
+    if (line === '/large') process.stdout.write('L'.repeat(40000) + '\nAFCODE_OUTPUT_COMPLETE\n');
+    else process.stdout.write(`AFCODE_RECEIVED:${line}\n`);
+  });
+}

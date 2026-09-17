@@ -26,6 +26,12 @@ import {
   type PackedSessionTooling
 } from './host-preview-file-tool.js';
 import {
+  HOST_RUN_IN_TERMINAL_INSTRUCTION,
+  HOST_RUN_IN_TERMINAL_TOOL,
+  HOST_RUN_IN_TERMINAL_TOOL_NAME,
+  invokeHostRunInTerminalTool
+} from './host-run-in-terminal-tool.js';
+import {
   HOST_INBOX_INSTRUCTION,
   HOST_INBOX_TOOLS,
   INBOX_PUSH_NAME,
@@ -87,8 +93,10 @@ export const HOST_SHARE_TOOL_NAMES = [
   CREATE_LOCAL_EXTENSION_NAME
 ] as const;
 
+/** Packed onto conversation sessions only when `inAppAgentTerminalsEnabled`. */
+export const HOST_OPTIONAL_SHARE_TOOL_NAMES = [HOST_RUN_IN_TERMINAL_TOOL_NAME] as const;
+
 export const HOST_ADAPT_TOOL_NAMES = [
-  'inbox_ask',
   'followup_create',
   'followup_list',
   'followup_resolve',
@@ -133,16 +141,36 @@ export const HOST_SESSION_INSTRUCTION = [
   HOST_CATALOG_INSTRUCTION
 ].join('\n');
 
-const HOST_SESSION_TOOL_NAME_SET = new Set<string>(HOST_SHARE_TOOL_NAMES);
+const HOST_SESSION_TOOL_NAME_SET = new Set<string>([
+  ...HOST_SHARE_TOOL_NAMES,
+  ...HOST_OPTIONAL_SHARE_TOOL_NAMES
+]);
 
 export function isHostSessionTool(name: string): boolean {
   return HOST_SESSION_TOOL_NAME_SET.has(name);
 }
 
-export function mergeHostSessionTooling(packed: PackedSessionTooling): PackedSessionTooling {
+export function mergeHostSessionTooling(
+  packed: PackedSessionTooling,
+  opts?: { inAppAgentTerminalsEnabled?: boolean }
+): PackedSessionTooling {
   const pluginTools = (packed.dynamicTools ?? []).filter((tool) => !isHostSessionTool(tool.name));
-  const tools = [...HOST_SESSION_TOOLS, ...pluginTools].slice(0, HOST_SESSION_TOOLS_MAX);
-  const instructions = [HOST_SESSION_INSTRUCTION, packed.instructions]
+  const hostTools = opts?.inAppAgentTerminalsEnabled === true
+    ? [HOST_PREVIEW_FILE_TOOL, HOST_RUN_IN_TERMINAL_TOOL, ...HOST_SESSION_TOOLS.slice(1)]
+    : HOST_SESSION_TOOLS;
+  const hostInstruction = opts?.inAppAgentTerminalsEnabled === true
+    ? [
+        HOST_PREVIEW_FILE_INSTRUCTION,
+        HOST_RUN_IN_TERMINAL_INSTRUCTION,
+        HOST_INBOX_INSTRUCTION,
+        HOST_LIBRARY_INSTRUCTION,
+        HOST_GOAL_INSTRUCTION,
+        HOST_SCHEDULE_INSTRUCTION,
+        HOST_CATALOG_INSTRUCTION
+      ].join('\n')
+    : HOST_SESSION_INSTRUCTION;
+  const tools = [...hostTools, ...pluginTools].slice(0, HOST_SESSION_TOOLS_MAX);
+  const instructions = [hostInstruction, packed.instructions]
     .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
     .join('\n\n')
     .slice(0, HOST_SESSION_INSTRUCTIONS_MAX)
@@ -160,6 +188,9 @@ export async function invokeHostSessionTool(
   const { name } = args;
   if (name === HOST_PREVIEW_FILE_TOOL_NAME) {
     return invokeHostPreviewFileTool(ctx, args);
+  }
+  if (name === HOST_RUN_IN_TERMINAL_TOOL_NAME) {
+    return invokeHostRunInTerminalTool(ctx, args);
   }
   if (name === INBOX_PUSH_NAME || name === INBOX_SEARCH_NAME || name === SUGGEST_ACTION_NAME) {
     return invokeHostInboxTool(ctx, args);

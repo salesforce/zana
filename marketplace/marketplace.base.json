@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "name": "official",
+  "displayName": "Zana official plugins",
+  "description": "First-party plugins shipped with Zana Command Center"
+}

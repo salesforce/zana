@@ -16,7 +16,11 @@ import {
 } from '@zana-ai/zcc-thread-view';
 import { planCommandForProvider } from './thread-provider-catalog.js';
 import type { ThreadEvent } from '@zana-ai/zcc-domain/thread-runtime';
-import { computeTimelineRowDelta, type TimelineRow } from '@zana-ai/zcc-server-contract';
+import {
+  computeTimelineRowDelta,
+  retainLatestTimelineWindow,
+  type TimelineRow
+} from '@zana-ai/zcc-server-contract';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { previewTimelineResponseOutputs } from './timeline-output-preview.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -233,12 +237,14 @@ export function conversationTimeline(
   const full = projectTimeline(ctx, thread, rows, page, { includeNestedRows, turnMessageDetail });
   if (page.kind !== 'latest') return full;
   const cacheKey = latestRowsCacheKey(threadId, segmentLimit, includeNestedRows);
-  const previous = afterSequence === undefined ? undefined : latestRowsCache.get(cacheKey);
+  const cached = latestRowsCache.get(cacheKey);
+  const retained = retainLatestTimelineWindow(cached, { maxSeq: full.maxSeq, rows: full.rows });
+  const previous = afterSequence === undefined ? undefined : cached;
   const delta = previous !== undefined && previous.maxSeq === afterSequence
-    ? computeTimelineRowDelta(previous.rows, full.rows)
+    ? computeTimelineRowDelta(previous.rows, retained.rows as TimelineRow[])
     : undefined;
-  rememberLatestRows(cacheKey, { maxSeq: full.maxSeq, rows: full.rows });
-  if (delta === undefined) return full;
+  rememberLatestRows(cacheKey, { maxSeq: retained.maxSeq, rows: retained.rows as TimelineRow[] });
+  if (delta === undefined) return { ...full, rows: retained.rows as TimelineRow[] };
   return { ...full, rows: [], delta };
 }
 

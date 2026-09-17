@@ -89,6 +89,15 @@ describe('ThreadListEntry', () => {
     expect(source).toContain('splitIndicator.miniMap');
   });
 
+  it('splits and opens on the route-scoped project id, not the owning project', () => {
+    const source = readFileSync(new URL('../ThreadListEntry.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('const routeProjectId = projectId ?? null');
+    expect(source).toContain('projectId: routeProjectId');
+    expect(source).toContain('if (consumeClick()) return;');
+    expect(source).toContain('navigate(getThreadRoutePath(thread.id, projectId))');
+    expect(source).not.toContain('projectId ?? thread.projectId');
+  });
+
   it('shows a plan-mode list badge', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>

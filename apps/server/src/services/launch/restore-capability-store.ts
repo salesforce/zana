@@ -1,8 +1,10 @@
 import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
-import type { CreateTerminalRequest, LaunchProfileId } from '@zana-ai/zcc-domain/product';
+import type { LaunchProfileId, CreateTerminalRequest } from '@zana-ai/zcc-domain/product';
 import { atomicDurableWrite, readRawFile } from '../harness-routing/storage.js';
+
+export type { CreateTerminalRequest };
 
 export interface RestoreCapability {
   id: string;

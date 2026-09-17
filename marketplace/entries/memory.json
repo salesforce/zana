@@ -1,0 +1,24 @@
+{
+  "id": "memory",
+  "displayName": "Memory",
+  "description": "Provider-independent durable memory for agents. We recommend disabling provider-native memory when using this plugin.",
+  "overview": "Give your agents a memory that survives across threads, projects, and providers. The agent reads a short catalog of past learning at the start of each turn. It saves new learning when that helps future work.\n\n## What you get\n\n- Global memories for user preferences and cross-project habits.\n- Project memories for commands, conventions, decisions, and verified quirks.\n- A summary catalog that ZCC adds to the agent's instructions on every turn. The catalog holds summaries only, up to 3,900 characters.\n- A table in the plugin settings where you review, edit, and delete every stored memory.\n- Kinds, tags, importance, pinning, provenance, and version history for each record.\n\n## How it works\n\nThe agent uses the `zcc memory` CLI. `zcc memory search` finds summaries with keyword search. `zcc memory get` reads one complete record. `zcc memory add`, `zcc memory update`, and `zcc memory forget` change the store with version checks. `zcc memory catalog` and `zcc memory history` list summaries and past versions.\n\nProject writes use the project of the current thread. Global writes must pass `--scope global`. The bundled `memory` skill teaches the agent when to search and what to save. The plugin rejects text that looks like a secret or a prompt injection.\n\n## Requirements\n\nDisable provider-native memory in Settings under Providers to avoid duplicate or conflicting stores. The CLI connects to the local ZCC server. Some provider sandboxes ask for approval before they allow that connection.\n",
+  "icon": {
+    "lucide": "Brain"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/memory",
+      "ref": "HEAD"
+    }
+  }
+}

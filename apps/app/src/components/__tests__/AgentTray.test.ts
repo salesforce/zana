@@ -35,6 +35,7 @@ describe('AgentTray context menu', () => {
     expect(source).toContain('onContextMenu={(e) => openAgentMenu(e, item)}');
     expect(source).toContain('useAgentCardActions()');
     expect(source).toContain('<AgentCardMenu menu={menu}');
+    expect(source).toContain('getAgentSessionRoutePath(a.session.id, projectId ?? a.projectId)');
   });
 
   it('uses the thread harness icon instead of a chat bubble', () => {

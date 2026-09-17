@@ -39,6 +39,8 @@ import { CONSTITUTION_INSTRUCTIONS, shouldContributeConstitution } from './const
 import { ConnectionError, ConnectionManager } from './connection.js';
 import { formatDoctor } from './doctor.js';
 import { createSalesforceSdk } from './sdk.js';
+import { WorkbenchService } from './workbench-service.js';
+import { ProjectContexts, ProjectContextError } from './project-context.js';
 import type { SalesforceSdk } from './sdk-contract.js';
 import { compactError, fingerprint, isDxProject, resolveUnderRoot } from './dx-project.js';
 import { generatedOutputPath, parseGenerateInput } from './project-generate.js';
@@ -118,18 +120,7 @@ function dialectSetting(value: unknown): AgentScriptDialect {
 export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: SalesforceDeps = createNodeDeps()): Promise<void> {
   const settings = zcc.settings.define(SETTINGS);
   const artifacts: ArtifactStore = createKvArtifactStore(zcc.storage.kv);
-  const connections = new ConnectionManager(deps, async () => {
-    const values = await settings.get();
-    return {
-      defaultOrg: stringSetting(values[SETTING_DEFAULT_ORG]),
-      apiVersion: stringSetting(values[SETTING_API_VERSION]) || DEFAULT_API_VERSION
-    };
-  });
-  const guardrail = new Guardrail(async (envelope, threadId) => confirmEnvelope(zcc, envelope, threadId));
-  const evalEvidence = new EvalEvidenceStore(zcc.storage.kv);
-  let lastDoctor: DoctorReport | null = null;
-
-  const readSettings = async (): Promise<PluginSettingsValues> => {
+  const readSharedSettings = async (): Promise<PluginSettingsValues> => {
     const values = await settings.get();
     return {
       defaultOrg: stringSetting(values[SETTING_DEFAULT_ORG]),
@@ -138,6 +129,26 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       agentScriptDialect: dialectSetting(values[SETTING_AGENT_SCRIPT_DIALECT])
     };
   };
+  const readSettings = (): Promise<PluginSettingsValues> => contexts.settings();
+  const connections = new ConnectionManager(deps, readSettings);
+  const contexts = new ProjectContexts({
+    settings: readSharedSettings,
+    projects: () => zcc.sdk.projects.list(),
+    resolveAlias: () => connections.resolveAlias(),
+    kv: zcc.storage.kv,
+    fs: deps
+  });
+  const registerRpc = (name: string, handler: (args: unknown) => unknown) => {
+    zcc.rpc.method(name, async (args) => {
+      try { return await contexts.run(args, () => handler(args)); }
+      catch (error) {
+        return { ok: false, code: error instanceof ProjectContextError ? error.code : 'failed', error: error instanceof Error ? error.message : String(error) };
+      }
+    });
+  };
+  const guardrail = new Guardrail(async (envelope, threadId) => confirmEnvelope(zcc, envelope, threadId));
+  const evalEvidence = new EvalEvidenceStore(zcc.storage.kv);
+  let lastDoctor: DoctorReport | null = null;
   const { sdk, emitOrgChange } = createSalesforceSdk({
     connections,
     guardrail,
@@ -145,7 +156,31 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     readSettings
   });
   zcc.services.provide(sdk);
-  const explorer = new SoqlExplorer(sdk, zcc.storage.kv, deps.now);
+  const explorer = new SoqlExplorer(sdk, {
+    get: <T>(key: string) => zcc.storage.kv.get<T>(contexts.key(key)),
+    set: (key, value) => zcc.storage.kv.set(contexts.key(key), value)
+  }, deps.now);
+  registerRpc('context.select', async (args) => {
+    const orgs = await sdk.listOrgs();
+    await contexts.select(args, orgs.flatMap(org => [org.alias, org.username]));
+    zcc.realtime.publish('context.changed', { projectId: contexts.current()?.projectId });
+    return { ok: true };
+  });
+
+  const workbench = new WorkbenchService({
+    sdk, contexts, fs: deps, kv: zcc.storage.kv,
+    apex: (input, origin) => runApex(input, origin, sdk, artifacts, deps, readSettings),
+    lwc: (input) => runLwc(input, deps, readSettings, artifacts)
+  });
+  registerRpc('records.get', args => workbench.record(args));
+  registerRpc('logs.get', args => workbench.log(args));
+  registerRpc('metadata.list', args => workbench.metadata(args));
+  registerRpc('operations.list', () => workbench.list());
+  registerRpc('operations.start', args => workbench.start(args));
+  registerRpc('operations.report', args => workbench.report(args));
+  registerRpc('apex.logs', args => runApex({ action: 'logs.fetch', limit: 20 }, { threadId: rpcString(args, 'threadId') }, sdk, artifacts, deps, readSettings));
+  registerRpc('lwc.scan', () => runLwc({ action: 'scan' }, deps, readSettings, artifacts));
+  zcc.onDispose(() => workbench.dispose());
 
   const applyStatus = async () => {
     const snapshot = await readSettings();
@@ -182,36 +217,49 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     void applyStatus();
   });
 
-  zcc.rpc.method('doctor', async () => {
-    lastDoctor = await sdk.doctor();
-    return lastDoctor;
+  registerRpc('doctor', async () => {
+    const report = await sdk.doctor();
+    if (!contexts.current()?.projectId && contexts.current()?.targetSource !== 'override') lastDoctor = report;
+    return report;
   });
-  zcc.rpc.method('status', async () => {
+  const readStatus = async () => {
     const snapshot = await readSettings();
     const listed = await listOrgsSafe(sdk);
     return {
+      projectId: contexts.current()?.projectId ?? null,
+      projectName: contexts.current()?.projectName ?? null,
+      targetSource: contexts.current()?.targetSource ?? 'shared',
       defaultOrg: snapshot.defaultOrg,
       selectedAlias: listed.selectedAlias,
       apiVersion: snapshot.apiVersion,
       projectRoot: snapshot.projectRoot,
       agentScriptDialect: snapshot.agentScriptDialect,
       dxProject: isDxProject(snapshot.projectRoot, deps.exists),
-      lastDoctor,
+      lastDoctor: contexts.current()?.projectId ? null : lastDoctor,
       orgs: listed.orgs
     };
+  };
+  registerRpc('status', async (args) => {
+    const input = args && typeof args === 'object' ? args as Record<string, unknown> : {};
+    if (!input.projectId && typeof input.threadId === 'string' && input.threadId) {
+      const thread = await zcc.sdk.threads.get({ threadId: input.threadId });
+      if (!thread?.projectId) throw new ProjectContextError('The thread project is unavailable.');
+      return contexts.run({ ...input, projectId: thread.projectId }, readStatus);
+    }
+    return readStatus();
   });
-  zcc.rpc.method('orgs', async () => {
+  registerRpc('orgs', async () => {
     try {
       const orgs = await sdk.listOrgs();
       const selectedAlias = await sdk.resolveAlias();
-      return { ok: true, orgs, selectedAlias };
+      return { ok: true, orgs, selectedAlias, targetSource: contexts.current()?.targetSource ?? 'shared' };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const code = error instanceof ConnectionError ? error.code : 'orgs_failed';
       return { ok: false, error: message, code, orgs: [], selectedAlias: null };
     }
   });
-  zcc.rpc.method('orgs.login', async (args) => {
+  registerRpc('orgs.login', async (args) => {
     const parsed = parseOrgLoginInput(args);
     if (!parsed.ok) return { ok: false, code: parsed.code, error: parsed.error, orgs: [], selectedAlias: null };
     const result = await deps.execSf(orgLoginArgs(parsed), { timeoutMs: SF_ORG_LOGIN_TIMEOUT_MS });
@@ -240,14 +288,14 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     try {
       const orgs = await sdk.listOrgs();
       const selectedAlias = await sdk.resolveAlias();
-      return { ok: true, orgs, selectedAlias };
+      return { ok: true, orgs, selectedAlias, targetSource: contexts.current()?.targetSource ?? 'shared' };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const code = error instanceof ConnectionError ? error.code : 'orgs_failed';
       return { ok: false, error: message, code, orgs: [], selectedAlias: null };
     }
   });
-  zcc.rpc.method('project.generate', async (args) => {
+  registerRpc('project.generate', async (args) => {
     const parsed = parseGenerateInput(args);
     if (!parsed.ok) return { ok: false, code: parsed.code, error: parsed.error };
     const result = await sdk.execSf([
@@ -284,7 +332,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       path: generatedOutputPath(cli.result, parsed.outputDir, parsed.name)
     };
   });
-  zcc.rpc.method('agentFiles.list', async (args) => {
+  registerRpc('agentFiles.list', async (args) => {
     try {
       const resolved = await resolveAgentFilesRoot(args);
       return { ok: true, files: listAgentFiles(resolved.root, deps, resolved.options) };
@@ -292,7 +340,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return agentFilesFailure(error);
     }
   });
-  zcc.rpc.method('agentFiles.read', async (args) => {
+  registerRpc('agentFiles.read', async (args) => {
     const path = rpcString(args, 'path');
     if (!path) return { ok: false, code: 'invalid_input', error: 'read requires path.' };
     try {
@@ -302,7 +350,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return agentFilesFailure(error);
     }
   });
-  zcc.rpc.method('agentFiles.write', async (args) => {
+  registerRpc('agentFiles.write', async (args) => {
     const path = rpcString(args, 'path');
     const content = args && typeof args === 'object' && 'content' in args ? (args as { content?: unknown }).content : undefined;
     const expectedSha256 = rpcString(args, 'expectedSha256') || undefined;
@@ -316,7 +364,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return agentFilesFailure(error);
     }
   });
-  zcc.rpc.method('agentScript.parse', async (args) => {
+  registerRpc('agentScript.parse', async (args) => {
     const snapshot = await readSettings();
     const source = args && typeof args === 'object' && typeof (args as { source?: unknown }).source === 'string'
       ? (args as { source: string }).source
@@ -328,7 +376,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     );
     return { ok: true, result: parseAgentScriptSource(source, dialect) };
   });
-  zcc.rpc.method('agentScript.query', async (args) => {
+  registerRpc('agentScript.query', async (args) => {
     const snapshot = await readSettings();
     const source = args && typeof args === 'object' && typeof (args as { source?: unknown }).source === 'string'
       ? (args as { source: string }).source
@@ -350,17 +398,17 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     });
     return result.ok ? { ok: true, result: result.result } : { ok: false, error: result.error };
   });
-  zcc.rpc.method('agentScript.examples', async () => ({ ok: true, examples: AGENT_SCRIPT_EXAMPLES }));
-  zcc.rpc.method('agentPreview.start', (args) =>
+  registerRpc('agentScript.examples', async () => ({ ok: true, examples: AGENT_SCRIPT_EXAMPLES }));
+  registerRpc('agentPreview.start', (args) =>
     runUiPreview('preview.start', args, sdk, artifacts, deps, readSettings)
   );
-  zcc.rpc.method('agentPreview.send', (args) =>
+  registerRpc('agentPreview.send', (args) =>
     runUiPreview('preview.send', args, sdk, artifacts, deps, readSettings)
   );
-  zcc.rpc.method('agentPreview.end', (args) =>
+  registerRpc('agentPreview.end', (args) =>
     runUiPreview('preview.end', args, sdk, artifacts, deps, readSettings)
   );
-  zcc.rpc.method('org', async () => {
+  registerRpc('org', async () => {
     try {
       const org = await sdk.connect();
       return { ok: true, org };
@@ -383,9 +431,21 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     'history.remove': (args) => explorer.historyRemove(args)
   };
   for (const [name, handler] of Object.entries(soqlRpcs)) {
-    zcc.rpc.method(`soql.${name}`, handler);
-    // Older UI bundles called the Salesforce REST verb (`sql.describeGlobal`).
-    zcc.rpc.method(`sql.${name}`, handler);
+    const guarded = async (args: unknown) => {
+      if (name !== 'abort' && !name.startsWith('history.')) {
+        const org = await sdk.connect();
+        const query = rpcString(args, 'soql');
+        const unbounded = name === 'query' && (!/\bLIMIT\s+\d+\s*$/i.test(query) || /\bALL\s+ROWS\b/i.test(query));
+        const decision = await sdk.confirm({ orgAlias: org.alias, orgId: org.orgId, orgKind: org.kind,
+          kind: unbounded ? 'soql.unbounded' : undefined, summary: `SOQL ${name} on ${org.alias}`, preview: query.slice(0, 400)
+        }, rpcString(args, 'threadId'));
+        if (!decision.approved) return fail('refused', 'This query needs approval in a thread. Open SOQL beside an agent and retry.');
+      }
+      return handler(args);
+    };
+    registerRpc(`soql.${name}`, guarded);
+    // Older bundles used the sql prefix.
+    registerRpc(`sql.${name}`, guarded);
   }
   zcc.onDispose(() => explorer.dispose());
   await applyStatus();
@@ -442,21 +502,21 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     }
   });
 
-  zcc.agents.configure(async () => {
+  zcc.agents.configure(async (ctx) => contexts.run({ projectId: ctx.projectId }, async () => {
     const snapshot = await readSettings();
     if (!shouldContributeConstitution({
-      defaultOrg: snapshot.defaultOrg,
+      defaultOrg: contexts.current()?.targetSource === 'project' ? snapshot.defaultOrg : (await readSharedSettings()).defaultOrg,
       dxProject: isDxProject(snapshot.projectRoot, deps.exists)
     })) {
       return {};
     }
     const listed = await listOrgsSafe(sdk);
     return {
-      instructions: CONSTITUTION_INSTRUCTIONS + orgRosterInstructions(listed.orgs, listed.selectedAlias),
+      instructions: CONSTITUTION_INSTRUCTIONS + `\nSalesforce project target: ${snapshot.defaultOrg || 'not selected'}.\n` + orgRosterInstructions(listed.orgs, listed.selectedAlias),
       tools: ['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent'],
       skills: ['salesforce-constitution', 'salesforce-dx']
     };
-  });
+  }).catch(() => ({})));
 
   zcc.agents.registerTool({
     name: 'sf_soql',
@@ -473,7 +533,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       },
       required: ['action']
     },
-    execute: (input, ctx) => runSoql(input, ctx, sdk, artifacts)
+    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => runSoql(input, ctx, sdk, artifacts))
   });
 
   zcc.agents.registerTool({
@@ -493,7 +553,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       },
       required: ['action']
     },
-    execute: (input, ctx) => runApex(input, ctx, sdk, artifacts, deps, readSettings)
+    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => runApex(input, ctx, sdk, artifacts, deps, readSettings))
   });
 
   zcc.agents.registerTool({
@@ -509,7 +569,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       },
       required: ['action']
     },
-    execute: (input) => runLwc(input, deps, readSettings, artifacts)
+    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => runLwc(input, deps, readSettings, artifacts))
   });
 
   zcc.agents.registerTool({
@@ -552,7 +612,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       required: ['action']
     },
     execute: (input, ctx) =>
-      runAgent(input, ctx, sdk, artifacts, deps, readSettings, evalEvidence)
+      contexts.run({ projectId: ctx.projectId }, () => runAgent(input, ctx, sdk, artifacts, deps, readSettings, evalEvidence))
   });
 }
 
@@ -689,7 +749,7 @@ async function runSoql(
 
 async function runApex(
   input: unknown,
-  ctx: PluginAgentToolContext,
+  ctx: Pick<PluginAgentToolContext, 'threadId'>,
   sdk: SalesforceSdk,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,

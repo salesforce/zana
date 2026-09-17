@@ -242,6 +242,48 @@ describe('deferred conversation messages', () => {
     }
   });
 
+  it.each(['active', 'starting'])('waits while the thread is %s before the host publishes its turn', async (status) => {
+    rows.length = 0;
+    queuePaused = false;
+    openTurn = null;
+    thread.status = status;
+    try {
+      deferConversationSend(ctx(false), { threadId: 'thr-1', input: 'later', mode: 'queue-if-active' });
+      const deliver = vi.fn();
+      await expect(flushDeferredConversationMessages(ctx(false), 'thr-1', deliver))
+        .resolves.toEqual({ flushed: 0, delayed: 'thread-active' });
+      expect(deliver).not.toHaveBeenCalled();
+      expect(rows[0]?.status).toBe('queued');
+    } finally {
+      thread.status = 'idle';
+    }
+  });
+
+  it('keeps the second message queued after dispatch until the first turn finishes', async () => {
+    rows.length = 0;
+    queuePaused = false;
+    openTurn = null;
+    thread.status = 'idle';
+    deferConversationSend(ctx(false), { threadId: 'thr-1', input: 'one', mode: 'queue-if-active' });
+    deferConversationSend(ctx(false), { threadId: 'thr-1', input: 'two', mode: 'queue-if-active' });
+    const deliver = vi.fn(async () => { thread.status = 'active'; });
+    try {
+      await expect(flushDeferredConversationMessages(ctx(false), 'thr-1', deliver))
+        .resolves.toEqual({ flushed: 1, delayed: 'thread-active' });
+      expect(deliver).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ input: 'one' }));
+      expect(rows).toHaveLength(1);
+      expect(parseDeferredSendPayload(rows[0]!)).toMatchObject({ input: 'two' });
+
+      thread.status = 'idle';
+      await expect(flushDeferredConversationMessages(ctx(false), 'thr-1', deliver))
+        .resolves.toEqual({ flushed: 1 });
+      expect(deliver).toHaveBeenLastCalledWith(expect.objectContaining({ input: 'two' }));
+      expect(rows).toHaveLength(0);
+    } finally {
+      thread.status = 'idle';
+    }
+  });
+
   it('honors the concurrency cap on host reconnect fan-out', async () => {
     rows.length = 0;
     queuePaused = false;

@@ -26,6 +26,22 @@ describe('InboxDetail attention layout', () => {
   });
 
   it('opens the agent inspector after spawn without leaving the inbox', () => {
-    expect(source).toContain('onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}');
+    expect(source).toContain(
+      'onLaunched={(session, projectId) => inspectAgentSession(session.id, projectId, navigate)}'
+    );
+  });
+
+  it('uses a status pill and compact reopen labels instead of repeating the title', () => {
+    expect(source).toContain('inbox-status-pill--ended');
+    expect(source).toContain('inbox-status-pill--live');
+    expect(source).toContain('inbox-status-pill--gone');
+    expect(source).toContain("'Reopen'");
+    expect(source).toContain("'Resume'");
+    expect(source).toContain("'Open'");
+    expect(source).not.toContain('· session ended');
+    expect(source).not.toContain('Reopen in a new agent <span');
+    expect(source).not.toContain('Reply / pick this back up');
+    expect(source).toContain('Leave a reply…');
+    expect(source).toContain('inbox-reply-composer');
   });
 });

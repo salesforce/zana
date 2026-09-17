@@ -140,7 +140,7 @@ export function clearPluginSlots(pluginId: string): void {
   emit();
 }
 
-export function interpretPluginApp(pluginId: string, exported: unknown): PluginRegistrationSet {
+export function interpretPluginApp(pluginId: string, exported: unknown, pluginName?: string): PluginRegistrationSet {
   const generation = bump(pluginId);
   if (!isPluginAppDefinition(exported)) {
     const empty = emptyRegistrationSet(pluginId, generation);
@@ -148,6 +148,9 @@ export function interpretPluginApp(pluginId: string, exported: unknown): PluginR
     return empty;
   }
   const set = collectPluginApp(pluginId, generation, exported);
+  for (const action of [...set.threadPanelActions, ...set.newThreadPanelActions]) {
+    action.category ??= pluginName?.trim() || pluginId;
+  }
   replacePluginSlots(pluginId, set);
   return set;
 }

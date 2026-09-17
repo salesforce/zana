@@ -1,6 +1,8 @@
 import { product } from '../lib/product-client.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BotMessageSquare, Code2, Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderOpen, MessageSquare, Send, Sparkles, Star, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BotMessageSquare, Code2, Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderOpen, Send, Sparkles, Star, Trash2 } from 'lucide-react';
+import './inbox-detail.css';
 import { inboxQuestions } from '@zana-ai/zcc-domain/product';
 import type { InboxQuestion, Suggestion } from '@zana-ai/zcc-domain/product';
 import {
@@ -20,6 +22,7 @@ import {
 } from '../store.js';
 import { DelayedStencilLines, StencilLines } from './ui/Skeleton.js';
 import { AgentLauncher } from './AgentLauncher.js';
+import { inspectAgentSession } from '../lib/inspect-session.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
 import { DocContent, MarkdownContent } from './MarkdownContent.js';
 import { renderReportHtml, type ReportDoc } from '../lib/renderReportHtml.js';
@@ -125,6 +128,7 @@ export function InboxDetail({ visible }: InboxDetailProps) {
 const EXPORT_TOTAL_BYTES_CAP = 32 * 1024 * 1024; // 32 MB of source markdown
 
 function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }) {
+  const navigate = useNavigate();
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
   const structuredQuestions = useData((s) => s.structuredQuestionsEnabled);
@@ -458,8 +462,9 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
                          session AND a question-shaped entry that never had a
                          sessionId (e.g. a manual push phrased as a question) — the
                          case the old session-liveness ternary dropped to `null`.
-                         A plain report shows a quiet "Reply…" button first so every
-                         report doesn't sprout a textarea; a real question auto-opens.
+                         A plain report shows a quiet "Leave a reply…" composer
+                         shell first so every report doesn't sprout a textarea;
+                         a real question auto-opens.
               • none   → project gone → honest disabled panel, never a blank node. */}
           {deliveryMode === 'live' && aliveSession ? (
             questionSet.length > 0 ? (
@@ -498,10 +503,11 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
               <div className="inbox-reply">
                 <button
                   type="button"
-                  className="inbox-reply-again"
+                  className="inbox-reply-composer"
                   onClick={() => setReplyExpanded(true)}
+                  aria-label="Leave a reply"
                 >
-                  Reply / pick this back up…
+                  Leave a reply…
                 </button>
               </div>
             )
@@ -510,7 +516,7 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
             // there's nowhere to route an answer, but a question must never render a
             // blank surface — show an honest explanation instead of nothing.
             <div className="inbox-reply">
-              <div className="inbox-detail-open disabled">
+              <div className="inbox-detail-unavailable">
                 This project no longer exists — there's no agent to route an answer to.
               </div>
             </div>
@@ -537,30 +543,6 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
         >
           {displayLabel}
         </span>
-        {aliveSession && (
-          <>
-            <span className="inbox-detail-ts-sep">·</span>
-            <span className="inbox-detail-session" title="Originating terminal">
-              {aliveSession.title}
-            </span>
-          </>
-        )}
-        {sessionTombstoned && (
-          <>
-            <span className="inbox-detail-ts-sep">·</span>
-            <span
-              className="inbox-detail-session tombstoned"
-              title="Original terminal session has ended"
-            >
-              {/* Name the task even though its tab is gone — the author-set
-                  subject or the persisted origin title survives the session,
-                  unlike aliveSession.title. */}
-              {(entry.subject?.trim() || entry.origin?.title?.trim())
-                ? `${(entry.subject?.trim() || entry.origin?.title?.trim())} · session ended`
-                : 'session ended'}
-            </span>
-          </>
-        )}
         <span className="inbox-detail-ts">
           {formatAbsolute(entry.ts)}
           <span className="inbox-detail-ts-sep">·</span>
@@ -633,6 +615,20 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
       </div>
 
       <div className="inbox-detail-title">{inboxPrimaryTitle(entry)}</div>
+      {(!projectAlive || aliveSession || sessionTombstoned) && (
+        <div className="inbox-detail-meta">
+          <SessionStatusPill
+            projectAlive={projectAlive}
+            live={!!aliveSession}
+            ended={sessionTombstoned}
+          />
+          {aliveSession && aliveSession.title !== inboxPrimaryTitle(entry) && (
+            <span className="inbox-detail-session-chip" title="Originating terminal">
+              {aliveSession.title}
+            </span>
+          )}
+        </div>
+      )}
 
       {inboxContextLine(entry) && (
         <div className="inbox-detail-context" title="What the agent/user was trying to achieve">
@@ -664,50 +660,33 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
         </div>
       )}
 
-      <div className="inbox-detail-footer">
-        {projectAlive ? (
-          <button
-            type="button"
-            onClick={() => void handleOpen()}
-            className="inbox-detail-open"
-            disabled={reopening}
-          >
-            <MessageSquare size={15} strokeWidth={1.75} />
-            <span>
-              {reopening ? (
-                resumable ? (
-                  <>Resuming…</>
-                ) : (
-                  <>Opening…</>
-                )
-              ) : aliveSession ? (
-                <>
-                  Open in <span className="strong">{aliveSession.title}</span>…
-                </>
-              ) : resumable ? (
-                <>
-                  Resume <span className="strong">{deriveTitle(entry)}</span>…
-                </>
-              ) : sessionTombstoned ? (
-                <>
-                  Reopen in a new agent <span className="strong">{displayLabel}</span>…
-                </>
-              ) : (
-                <>
-                  Open <span className="strong">{displayLabel}</span>…
-                </>
-              )}
-            </span>
-            <ArrowRight size={15} strokeWidth={1.75} />
-          </button>
-        ) : (
-          <div className="inbox-detail-open disabled">
-            Project no longer exists — nowhere to open.
-          </div>
-        )}
+      <div className="inbox-detail-dock">
+        <div className="inbox-detail-footer">
+          {projectAlive ? (
+            <button
+              type="button"
+              onClick={() => void handleOpen()}
+              className="inbox-detail-open"
+              disabled={reopening}
+              aria-label={openAgentLabel({ reopening, resumable, alive: !!aliveSession, ended: sessionTombstoned })}
+              title={openAgentTitle({
+                reopening,
+                resumable,
+                aliveSession,
+                sessionTombstoned,
+                displayLabel
+              })}
+            >
+              {openAgentLabel({ reopening, resumable, alive: !!aliveSession, ended: sessionTombstoned })}
+            </button>
+          ) : (
+            <div className="inbox-detail-unavailable">
+              Project no longer exists — nowhere to open.
+            </div>
+          )}
+        </div>
+        {questionFirst ? null : answerSurface}
       </div>
-
-      {questionFirst ? null : answerSurface}
 
       {relatedSuggestions.length > 0 && (
         <RelatedNextSteps
@@ -722,12 +701,83 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
         <AgentLauncher
           project={aliveProject}
           initialPrompt={buildSpawnPrompt(entry)}
-          onLaunched={(session, projectId) => useUi.getState().openAgentModal(session.id, projectId)}
+          onLaunched={(session, projectId) => inspectAgentSession(session.id, projectId, navigate)}
           onClose={() => setLauncherOpen(false)}
         />
       )}
     </div>
   );
+}
+
+function SessionStatusPill({
+  projectAlive,
+  live,
+  ended
+}: {
+  projectAlive: boolean;
+  live: boolean;
+  ended: boolean;
+}) {
+  if (!projectAlive) {
+    return (
+      <span className="inbox-status-pill inbox-status-pill--gone" title="Project no longer exists">
+        Gone
+      </span>
+    );
+  }
+  if (live) {
+    return (
+      <span className="inbox-status-pill inbox-status-pill--live" title="Originating terminal is still running">
+        Live
+      </span>
+    );
+  }
+  if (ended) {
+    return (
+      <span className="inbox-status-pill inbox-status-pill--ended" title="Original terminal session has ended">
+        Ended
+      </span>
+    );
+  }
+  return null;
+}
+
+function openAgentLabel({
+  reopening,
+  resumable,
+  alive,
+  ended
+}: {
+  reopening: boolean;
+  resumable: boolean;
+  alive: boolean;
+  ended: boolean;
+}): string {
+  if (reopening) return resumable ? 'Resuming…' : 'Opening…';
+  if (alive) return 'Open';
+  if (resumable) return 'Resume';
+  if (ended) return 'Reopen';
+  return 'Open';
+}
+
+function openAgentTitle({
+  reopening,
+  resumable,
+  aliveSession,
+  sessionTombstoned,
+  displayLabel
+}: {
+  reopening: boolean;
+  resumable: boolean;
+  aliveSession: TerminalSession | null;
+  sessionTombstoned: boolean;
+  displayLabel: string;
+}): string {
+  if (reopening) return resumable ? 'Resuming the agent' : 'Opening a new agent';
+  if (aliveSession) return `Open in ${aliveSession.title}`;
+  if (resumable) return 'Resume the previous conversation';
+  if (sessionTombstoned) return `Reopen in a new agent in ${displayLabel}`;
+  return `Open ${displayLabel}`;
 }
 
 /**
@@ -880,7 +930,7 @@ function ReplyBox({
           }
         }}
         rows={2}
-        placeholder={`Reply to ${sessionTitle}…`}
+        placeholder="Leave a reply…"
         aria-label="Reply to the originating terminal session"
       />
       <div className="inbox-reply-actions">

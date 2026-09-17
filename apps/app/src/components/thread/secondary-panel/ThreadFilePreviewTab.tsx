@@ -13,7 +13,6 @@ import {
 } from '../../../plugins/plugin-slot-resolvers.js';
 import type { PluginFileOpenerRegistration } from '@zana-ai/zcc-plugin-sdk';
 import type { ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
-import { SecondaryPanelSelectionActions } from './SecondaryPanelSelectionActions.js';
 import {
   applyPreviewResult,
   copyText,
@@ -263,17 +262,15 @@ export function ThreadFilePreviewTab({
   );
   if (livePlan && liveDocument) {
     return (
-      <SecondaryPanelSelectionActions threadId={threadId}>
-        <div className="thread-file-preview-host" data-testid="thread-live-plan-preview">
-          {chrome}
-          <ThreadPlanPanel
-            document={liveDocument}
-            durablePlan={livePlan}
-            todos={todos}
-            showStatusBadge={false}
-          />
-        </div>
-      </SecondaryPanelSelectionActions>
+      <div className="thread-file-preview-host" data-testid="thread-live-plan-preview">
+        {chrome}
+        <ThreadPlanPanel
+          document={liveDocument}
+          durablePlan={livePlan}
+          todos={todos}
+          showStatusBadge={false}
+        />
+      </div>
     );
   }
   const hostPreview = (
@@ -310,9 +307,5 @@ export function ThreadFilePreviewTab({
       </PluginSlotBoundary>
     </div>
   );
-  return (
-    <SecondaryPanelSelectionActions threadId={threadId}>
-      {preview}
-    </SecondaryPanelSelectionActions>
-  );
+  return preview;
 }

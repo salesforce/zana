@@ -73,7 +73,7 @@ describe('decideThreadDrop', () => {
   it('labels a center zone as replace', () => {
     expect(decideThreadDrop({ zone: 'center', threadAlreadyOpen: false, atMaxPanes: false })).toEqual({
       zone: 'center',
-      label: 'Replace this chat'
+      label: 'Replace this view'
     });
   });
 
@@ -94,7 +94,7 @@ describe('decideThreadDrop', () => {
   it('coerces edges to center-replace at the pane cap', () => {
     expect(decideThreadDrop({ zone: 'top', threadAlreadyOpen: false, atMaxPanes: true })).toEqual({
       zone: 'center',
-      label: 'Replace this chat'
+      label: 'Pane limit reached — replace this view'
     });
   });
 
@@ -115,7 +115,7 @@ describe('decidePaneDrop', () => {
   it('swaps on center and moves on an edge', () => {
     expect(decidePaneDrop({ zone: 'center', isSelf: false })).toEqual({
       zone: 'center',
-      label: 'Swap chats'
+      label: 'Swap views'
     });
     expect(decidePaneDrop({ zone: 'bottom', isSelf: false })).toEqual({
       zone: 'bottom',
@@ -150,5 +150,18 @@ describe('shouldEngageSidebarSplitDrag', () => {
         distance: 12
       })
     ).toBe(false);
+  });
+});
+
+
+describe('empty and tiny drop targets', () => {
+  it('fills an empty pane from every edge instead of splitting an unused well', () => {
+    for (const zone of ['left', 'right', 'top', 'bottom', 'center'] as const) {
+      expect(decideThreadDrop({ zone, emptyTarget: true, atMaxPanes: false, threadAlreadyOpen: false }))
+        .toEqual({ zone: 'center', label: 'Open here' });
+      const box = zoneBox({ left: 0, top: 0, width: 3, height: 2 }, zone);
+      expect(box.width).toBeGreaterThanOrEqual(0);
+      expect(box.height).toBeGreaterThanOrEqual(0);
+    }
   });
 });

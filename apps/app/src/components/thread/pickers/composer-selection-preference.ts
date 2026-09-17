@@ -67,16 +67,18 @@ export function rememberComposerSelection(input: {
 }): void {
   const providerId = input.providerId.trim();
   const model = input.model.trim();
-  if (!providerId || !model) return;
+  if (!providerId) return;
   const current = readComposerSelectionPreference();
   const previous = current.byProvider[providerId];
   const reasoningLevel = input.reasoningLevel?.trim() || previous?.reasoningLevel;
   const byProvider = { ...current.byProvider };
-  const providerIds = Object.keys(byProvider);
-  if (!byProvider[providerId] && providerIds.length >= MAX_PROVIDERS) {
-    delete byProvider[providerIds[0]!];
+  if (model) {
+    const providerIds = Object.keys(byProvider);
+    if (!byProvider[providerId] && providerIds.length >= MAX_PROVIDERS) {
+      delete byProvider[providerIds[0]!];
+    }
+    byProvider[providerId] = reasoningLevel ? { model, reasoningLevel } : { model };
   }
-  byProvider[providerId] = reasoningLevel ? { model, reasoningLevel } : { model };
   writeComposerSelectionPreference({ providerId, byProvider });
 }
 

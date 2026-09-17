@@ -116,10 +116,12 @@ export function composerProvidersFromCatalog(
 /** Snap off a remembered id the live (or fallback) roster no longer offers. */
 export function snapNewThreadProviderId(
   offeredIds: readonly string[],
-  providerId: string
+  providerId: string,
+  preferredProviderId?: string | null
 ): string | null {
   if (offeredIds.length === 0) return null;
   if (offeredIds.includes(providerId)) return null;
+  if (preferredProviderId && offeredIds.includes(preferredProviderId)) return preferredProviderId;
   return offeredIds[0] ?? null;
 }
 

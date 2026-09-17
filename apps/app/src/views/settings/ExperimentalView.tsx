@@ -36,6 +36,12 @@ export function ExperimentalView({
           onChange={(v) => onUpdate({ catchUpSummaryEnabled: v })}
         />
         <CheckboxField
+          label="Classic session view"
+          help="Skip the inspector overlay. Opening a CLI agent or thread — from the Agents canvas, favorites, a launch peek, or the menu bar — goes to the full session or thread page. Off by default: a click still peeks without leaving the current surface."
+          checked={config.classicSessionViewEnabled ?? false}
+          onChange={(v) => onUpdate({ classicSessionViewEnabled: v })}
+        />
+        <CheckboxField
           label="Feed-noise classifier"
           help="Experimental — a fast-model micro-call that DEMOTES routine 'task done' reports (comment-only, no docs/question/goal) into a folded 'Routine' section of the inbox feed, so high-value reports stay inline. Advisory only: it never hides a report with docs, an idea, a question, or a goal outcome, and a missing verdict just leaves everything inline. Off by default — each inbox change may trigger a background call on your own key."
           checked={config.feedNoiseClassifierEnabled ?? false}
@@ -46,6 +52,12 @@ export function ExperimentalView({
           help="On a remote project, the CLI Agent picker asks that machine which CLIs and models are installed (same execution-options path Modern uses). Off ⇒ today’s local install list."
           checked={config.cliRemoteHostCatalogEnabled ?? false}
           onChange={(v) => onUpdate({ cliRemoteHostCatalogEnabled: v })}
+        />
+        <CheckboxField
+          label="Keep agent terminals in ZCC"
+          help="When an agent would open Terminal.app, iTerm, or another standalone terminal, open a ZCC shell in this thread’s side panel instead. Off by default. Applies to new sessions only."
+          checked={config.inAppAgentTerminalsEnabled ?? false}
+          onChange={(v) => onUpdate({ inAppAgentTerminalsEnabled: v })}
         />
       </Section>
 

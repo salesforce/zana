@@ -58,11 +58,11 @@ const INBOX_USAGE_GUIDANCE = [
   'the question was rhetorical.',
   '',
   'When the question is a CHOICE between concrete options (an approach, a',
-  'config value, a go/no-go), prefer `inbox_ask` (server: zcc-inbox) over a',
-  'free-text `comments` question: it renders a form with lettered options, an',
-  'optional "Other…" row, and Skip/Continue. Pass `question` + `options[]`',
-  '(set `allowOther`/`multiSelect` as needed); the user’s pick arrives here as',
-  'if typed, just like a reply. Same rule applies — ask, then WAIT.',
+  'config value, a go/no-go), pass `options` (or `questions`) on `inbox_push`',
+  'instead of a free-text `comments` question: it renders a form with lettered',
+  'options, an optional "Other…" row, and Skip/Continue. The user’s pick',
+  'arrives here as if typed, just like a reply. Same rule applies — ask, then',
+  'WAIT.',
   '',
   '`docs` are paths relative to this project root, rendered live (no',
   'snapshot). `comments` is short markdown — your voice to the user. At',
@@ -261,7 +261,10 @@ export function buildSystemPromptGuidance(scheduled: boolean, coordinationMode?:
  *
  * Pure + exported for tests and the remote path.
  */
-export function inboxAllowedTools(scheduled: boolean): string[] {
+export function inboxAllowedTools(
+  scheduled: boolean,
+  opts?: { runInTerminal?: boolean }
+): string[] {
   const meshAllow = [
     'mcp__zcc-inbox__register_agent',
     'mcp__zcc-inbox__list_agents',
@@ -283,15 +286,15 @@ export function inboxAllowedTools(scheduled: boolean): string[] {
   ];
   const core = [
     'mcp__zcc-inbox__inbox_push',
-    'mcp__zcc-inbox__inbox_ask',
     'mcp__zcc-inbox__inbox_search',
     'mcp__zcc-inbox__schedule_list',
     'mcp__zcc-inbox__preview_file',
     'mcp__zcc-inbox__suggest_action'
   ];
+  const extras = opts?.runInTerminal === true ? ['mcp__zcc-inbox__run_in_terminal'] : [];
   return scheduled
-    ? [...core, 'mcp__zcc-inbox__schedule_report', ...meshAllow, ...agentDataAllow]
-    : [...core, ...meshAllow, ...agentDataAllow];
+    ? [...core, 'mcp__zcc-inbox__schedule_report', ...meshAllow, ...agentDataAllow, ...extras]
+    : [...core, ...meshAllow, ...agentDataAllow, ...extras];
 }
 
 /**
@@ -355,22 +358,38 @@ export function applyHeapCeiling(
 
 /**
  * Recover a UUID session id explicitly pinned in argv — `--resume <uuid>`,
- * `--session-id <uuid>`, or their `=`-joined forms. Used so a restore
- * re-launch (which carries `--resume <id>`) re-surfaces that same id as the
- * session's `claudeSessionId`, keeping the resume chain stable across repeated
- * relaunches. `--resume`/`-r` with no value (the resume *picker*) yields no id.
- * Returns undefined when none is present. Pure.
+ * `--session-id <uuid>`, `--session <uuid>`, or their `=`-joined forms. Used so a restore
+ * re-launch (which carries `--resume <id>` / Pi `--session <id>`) re-surfaces that
+ * same id as the session's native conversation id, keeping the resume chain stable
+ * across repeated relaunches. `--resume`/`-r` with no value (the resume *picker*)
+ * yields no id. Returns undefined when none is present. Pure.
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PIN_VALUE_FLAGS = new Set(['--resume', '-r', '--session-id', '--session']);
 export function extractPinnedSessionId(argv: string[]): string | undefined {
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if ((a === '--resume' || a === '-r' || a === '--session-id') && i + 1 < argv.length) {
+    if (PIN_VALUE_FLAGS.has(a) && i + 1 < argv.length) {
       const v = argv[i + 1];
       if (UUID_RE.test(v)) return v;
     }
-    const eq = a.match(/^(?:--resume|--session-id)=(.+)$/);
+    const eq = a.match(/^(?:--resume|--session-id|--session)=(.+)$/);
     if (eq && UUID_RE.test(eq[1])) return eq[1];
   }
   return undefined;
+}
+
+/** True when extraArgs already pin a conversation (resume / continue / session id). */
+export function extraArgsPinSession(argv: readonly string[] | undefined): boolean {
+  if (!argv || argv.length === 0) return false;
+  return argv.some(
+    (a) =>
+      PIN_VALUE_FLAGS.has(a) ||
+      a === '--continue' ||
+      a === '-c' ||
+      a.startsWith('--resume=') ||
+      a.startsWith('--continue=') ||
+      a.startsWith('--session-id=') ||
+      a.startsWith('--session=')
+  );
 }

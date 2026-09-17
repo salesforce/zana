@@ -1,6 +1,5 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, type ReactNode, useSyncExternalStore } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Inbox,
   TerminalSquare,
@@ -111,7 +110,6 @@ export function ProjectScopedNav({
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
   const mode = route.projectMode ?? 'agents';
   const routeMemory = useAppSettingsRouteMemory();
-  const navigate = useNavigate();
   const unreadInbox = useUnreadInboxCount();
   const agentCounts = useAgentNavCounts(project.id);
   const activeGoals = useProjectActiveGoalCount(project.id);
@@ -136,9 +134,8 @@ export function ProjectScopedNav({
   }, [mode, goalsEnabled, followUpsEnabled, project.id, setProjectView]);
 
   const handleBack = () => {
-    useUi.getState().exitProjectFocus();
+    useUi.getState().exitProjectFocus(routeMemory.projectBackRoutePath);
     onBack?.();
-    void navigate(routeMemory.projectBackRoutePath);
   };
 
   const items: SidebarRailItem[] = [

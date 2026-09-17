@@ -8,7 +8,7 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).not.toContain('product.threads.create');
     expect(source).not.toContain('shouldLaunchManagedThread');
     expect(source).toContain('buildLaunchArgs');
-    expect(source).toContain('openAgentModal');
+    expect(source).toContain('inspectAgentSession');
     expect(source).not.toContain('openThreadModal');
     expect(source).toContain('product.harness.effectiveDefault');
     expect(source).toContain('<ModelReasoningPicker');
@@ -34,7 +34,8 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('preferHostModels');
     expect(source).toContain('defaultHostId');
     expect(source).toContain('useHosts');
-    expect(source).toContain('pickOfferedComposerModel');
+    expect(source).toContain('preferredComposerModel');
+    expect(source).toContain('defaultOfferedComposerModel');
     expect(source).toContain('rememberComposerSelection');
     expect(source).toContain('resolveCliAgentFamily');
     expect(source).toContain('resolveCliAgentSpawnProfile');
@@ -128,6 +129,8 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('cliLaunchExecutionState');
     expect(source).toContain('hasNativeRole: Boolean(validRoleId)');
     expect(source).toContain('unrestrictedProfileSelected: Boolean(permLaunch.profileId)');
+    expect(source).toContain("modelLockedLabel={");
+    expect(source).toContain('Pinned by native role');
   });
 
   it('offers the OpenCode native role via a popover picker only for the opencode family', () => {
@@ -171,20 +174,27 @@ describe('LegacyAgentHomeComposer', () => {
     // effectiveDefault survives only as the async fallback.
     expect(source).toContain('product.harness.effectiveDefault(projectId)');
     // Concrete model resolution instead of resting on "Select model".
-    expect(source).toContain('pickOfferedComposerModel({');
+    expect(source).toContain('preferredComposerModel({');
     expect(source).toContain('offeredModels: offeredModelIds');
+    expect(source).toContain('const loading = Boolean(selectedProviderId && !catalogEntry)');
     expect(source).not.toContain('if (selectionState !== \'resolved\' || (modelId && models.some((model) => model.id === modelId))) return;');
   });
 
   it('keeps the current harness pick sticky by feeding familyIdRef into resolveCliAgentFamily', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
-    // No explicit-provenance guard: the helper keeps the current family when it is
-    // still available, so a late personas/catalog/config load can't clobber the pick.
     expect(source).toContain('const currentFamilyId = familyIdRef.current;');
     expect(source).toContain('currentFamilyId,');
+    expect(source).toContain('stickyFamilyId');
+    expect(source).toContain('selectionProvenanceRef');
+    expect(source).toContain("selectionProvenanceRef.current === 'explicit' ? currentFamilyId : ''");
+    expect(source).toContain('if (stickyFamilyId)');
     // A remembered family restores its remembered model on switch.
     expect(source).toContain('rememberedSelectionFor(providerId)?.model');
-    expect(source).toContain("setSelectionProvenance('explicit');\n      if (availableFamilyIds.length > 0)");
+    expect(source).toContain('if (kept && availableFamilyIds.includes(kept))');
+    expect(source).not.toContain("setSelectionProvenance('explicit');\n      if (availableFamilyIds.length > 0)");
+    expect(source).not.toContain('harnessProviderOptions[0]');
+    expect(source).toContain('rememberComposerSelection({ providerId: nextProviderId, model: restored })');
+    expect(source).toContain('cliAgentProfileSource(selectionProvenance, automaticProfile, familyId)');
   });
 
   it('replaces the isolation checkbox with a workspace picker for real local projects', () => {
@@ -246,8 +256,10 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('&& !catalogEntry');
     expect(source).toContain('catalog.inflight.has(selectedProviderId)');
     expect(source).toContain('if (!selectedProviderId || catalogEntry) return');
-    expect(source).toContain("familyForThreadProviderId(rememberedProviderId() ?? 'claude-code') ?? 'claude'");
-    expect(source).toContain('if (catalogModelsLoading) return');
+    expect(source).toContain("familyForThreadProviderId(rememberedProviderId() ?? '') ?? ''");
+    expect(source).toContain('if (next && selectedProviderId && !loading');
+    expect(source).toContain('catalogReady');
+    expect(source).not.toContain('Boolean(catalogEntry) || Boolean(selectedProviderId)');
     expect(source).not.toContain("selectionState !== 'resolved' || catalogModelsLoading");
   });
 
@@ -276,7 +288,7 @@ describe('LegacyAgentHomeComposer', () => {
     const launchBlock = source.slice(launchStart, source.indexOf('onClose?.();', launchStart));
     expect(launchBlock).toContain('onLaunched(session, project.id)');
     expect(launchBlock).toContain('selectTab(project.id, session.id)');
-    expect(launchBlock).toContain('if (!onClose) useUi.getState().openAgentModal(session.id, project.id)');
+    expect(launchBlock).toContain('if (!onClose) inspectAgentSession(session.id, project.id, navigate)');
     expect(launchBlock).not.toContain('enterProjectFocus');
   });
 });

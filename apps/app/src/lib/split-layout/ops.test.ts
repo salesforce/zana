@@ -317,3 +317,17 @@ describe('split layout operations', () => {
     expect(focused.focusedPaneId).toBe('pane-8');
   });
 });
+
+
+describe('repeated resizing', () => {
+  it('preserves every sibling outside the resized pair, including small valid sizes', () => {
+    const three: SplitLayout = {
+      root: { type: 'split', dir: 'row', sizes: [0.08, 0.32, 0.6], children: [pane('a'), pane('b'), pane('c')] },
+      focusedPaneId: 'a'
+    };
+    const resized = resizeSplit(three, [], 1, 0.6);
+    expect(resized.root).toMatchObject({ sizes: [0.08, expect.closeTo(0.552, 12), expect.closeTo(0.368, 12)] });
+    const again = resizeSplit(resized, [], 1, 0.5);
+    expect(again.root).toMatchObject({ sizes: [0.08, expect.closeTo(0.46, 12), expect.closeTo(0.46, 12)] });
+  });
+});

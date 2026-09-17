@@ -149,6 +149,7 @@ import {
   archiveConversationThread,
   listConversationThreadEvents,
   listConversationThreadEventsWindow,
+  getHost,
   listConversationThreadsByProject,
   pauseDeferredThreadMessagesForThread,
   setConversationProviderThreadId,
@@ -219,6 +220,7 @@ beforeEach(() => {
     return { applied: true, thread: { ...thread, id: args.threadId, status: nextStatus } };
   });
   vi.mocked(listConversationThreadEventsWindow).mockImplementation(() => listConversationThreadEvents());
+  vi.mocked(getHost).mockReturnValue({ id: 'host-1', maxPermissionMode: 'full' } as never);
   vi.mocked(setConversationProviderThreadId).mockReset();
   vi.mocked(createDeferredThreadMessage).mockClear();
   vi.mocked(pauseDeferredThreadMessagesForThread).mockClear();
@@ -227,6 +229,45 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const handle of providerHandles.splice(0)) handle.unregister();
+});
+
+describe('thread permission persistence', () => {
+  it.each(['accept-edits', 'auto', 'full'] as const)('carries %s into the follow-up event and host runtime', async (permissionMode) => {
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([{
+      payload: { type: 'client/turn/requested', execution: { permissionMode } }
+    }] as never);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, 'second message');
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      payload: expect.objectContaining({ type: 'client/turn/requested', execution: expect.objectContaining({ permissionMode }) })
+    }));
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({ type: 'turn.submit', resume: expect.objectContaining({ permissionMode }) })
+    }));
+  });
+
+  it('applies an explicit change and clamps it again to the host ceiling', async () => {
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([{
+      payload: { type: 'client/turn/requested', execution: { permissionMode: 'full' } }
+    }] as never);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, 'change', 'auto', { permissionMode: 'auto' });
+    expect(callHostOnlineRpc).toHaveBeenLastCalledWith(expect.objectContaining({
+      command: expect.objectContaining({ resume: expect.objectContaining({ permissionMode: 'auto' }) })
+    }));
+    vi.mocked(getHost).mockReturnValue({ maxPermissionMode: 'accept-edits' } as never);
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, 'clamp', 'auto', { permissionMode: 'full' });
+    expect(callHostOnlineRpc).toHaveBeenLastCalledWith(expect.objectContaining({
+      command: expect.objectContaining({ resume: expect.objectContaining({ permissionMode: 'accept-edits' }) })
+    }));
+  });
+
+  it('keeps an explicit queued choice in the deferred payload', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, status: 'active' });
+    await sendConversationTurn(ctx(vi.fn()), thread.id, 'queued', 'queue-if-active', { permissionMode: 'full' });
+    const stored = vi.mocked(createDeferredThreadMessage).mock.calls.at(-1)![1];
+    expect(JSON.parse(stored.payload).execution.permissionMode).toBe('full');
+  });
 });
 
 describe('conversation lifecycle', () => {
@@ -1557,17 +1598,21 @@ describe('conversation lifecycle', () => {
     expect(createDeferredThreadMessage).toHaveBeenCalled();
   });
 
-  it('queues queue-if-active while the thread is already active', async () => {
+  it('queues queue-if-active while active and publishes the queue change without submitting to the host', async () => {
+    vi.mocked(appendConversationThreadEvent).mockClear();
     vi.mocked(getConversationThread).mockReturnValue({ ...thread, status: 'active' });
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    const context = ctx(callHostOnlineRpc);
     await sendConversationTurn(
-      ctx(callHostOnlineRpc),
+      context,
       thread.id,
       [{ type: 'text', text: 'later' }],
       'queue-if-active'
     );
     expect(callHostOnlineRpc).not.toHaveBeenCalled();
     expect(createDeferredThreadMessage).toHaveBeenCalled();
+    expect(context.hub.emit).toHaveBeenCalledWith('threads:updated', expect.objectContaining({ id: thread.id }));
+    expect(appendConversationThreadEvent).not.toHaveBeenCalled();
   });
 
   it('drains queue-if-active onto an active thread as auto', async () => {
@@ -1595,6 +1640,31 @@ describe('conversation lifecycle', () => {
         permissionEscalation: 'deny'
       })
     }));
+  });
+
+  it('publishes a queued message held behind manual compaction', async () => {
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([{
+      id: 'compact-start',
+      threadId: thread.id,
+      sequence: 1,
+      type: 'item/started',
+      createdAt: 1,
+      payload: {
+        type: 'item/started',
+        scope: { kind: 'turn', turnId: 'turn-compact' },
+        item: { id: 'compact-1', type: 'contextCompaction' }
+      }
+    }] as never);
+    const callHostOnlineRpc = vi.fn();
+    const context = ctx(callHostOnlineRpc);
+    try {
+      await sendConversationTurn(context, thread.id, [{ type: 'text', text: 'after compaction' }], 'queue-if-active');
+      expect(createDeferredThreadMessage).toHaveBeenCalled();
+      expect(context.hub.emit).toHaveBeenCalledWith('threads:updated', expect.objectContaining({ id: thread.id }));
+      expect(callHostOnlineRpc).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(listConversationThreadEventsWindow).mockImplementation(() => listConversationThreadEvents());
+    }
   });
 
   it('pauses queued sends on stop instead of dropping them', async () => {

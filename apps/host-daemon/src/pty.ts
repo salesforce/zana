@@ -35,7 +35,8 @@ import {
   buildWorktreeGuidance,
   buildSystemPromptGuidance,
   applyHeapCeiling,
-  extractPinnedSessionId
+  extractPinnedSessionId,
+  extraArgsPinSession
 } from '@zana-ai/zcc-spawn-plan';
 export { applyHeapCeiling, extractPinnedSessionId };
 import { nativeSessionFields } from './harness/session-adapter.js';
@@ -65,6 +66,7 @@ function ensureNodePtySpawnHelperExecutable(): void {
 const DIAGNOSTIC_CAPTURE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** Wait after first TUI output before typing a stdin-after-ready opening task. */
 const STDIN_OPENING_PROMPT_AFTER_READY_MS = 500;
+const STDIN_OPENING_PROMPT_DEADLINE_MS = 60_000;
 
 function sweepStaleDiagnosticCaptures(dir: string): void {
   try {
@@ -327,6 +329,7 @@ export class PtyManager extends EventEmitter {
   private backlogs = new Map<string, string>();
   /** Async execution failures are available to the creator until readiness settles. */
   private startupFailures = new Map<string, string>();
+  private stdinOpeningPromptCleanup = new Map<string, () => void>();
   /** Opt-in diagnostic files retained past exit; never populated in normal runs. */
   private diagnosticFiles = new Map<string, string>();
 
@@ -1184,6 +1187,9 @@ export class PtyManager extends EventEmitter {
     // Still gated on `mcpConfigPath` (no zcc-inbox server is even wired into
     // the session without it, so allowing it is moot).
     const trustAllZcc = opts.config.trustZccToolsEnabled === true;
+    const runInTerminalAllow = opts.config.inAppAgentTerminalsEnabled === true
+      ? ['mcp__zcc-inbox__run_in_terminal']
+      : [];
     // `inbox_search` is read-only (never mutates the inbox), so it's safe to
     // pre-approve alongside the other read tools — same rationale as `agent_inbox`.
     const inboxAllow = !mcpConfigPath
@@ -1193,7 +1199,6 @@ export class PtyManager extends EventEmitter {
         : opts.scheduled
           ? [
               'mcp__zcc-inbox__inbox_push',
-              'mcp__zcc-inbox__inbox_ask',
               'mcp__zcc-inbox__inbox_search',
               'mcp__zcc-inbox__schedule_list',
               'mcp__zcc-inbox__preview_file',
@@ -1202,11 +1207,11 @@ export class PtyManager extends EventEmitter {
               ...agentDataAllow,
               ...remoteExecAllow,
               ...microvmExecAllow,
-              ...remoteFsAllow
+              ...remoteFsAllow,
+              ...runInTerminalAllow
             ]
           : [
               'mcp__zcc-inbox__inbox_push',
-              'mcp__zcc-inbox__inbox_ask',
               'mcp__zcc-inbox__inbox_search',
               'mcp__zcc-inbox__schedule_list',
               'mcp__zcc-inbox__preview_file',
@@ -1214,7 +1219,8 @@ export class PtyManager extends EventEmitter {
               ...agentDataAllow,
               ...remoteExecAllow,
               ...microvmExecAllow,
-              ...remoteFsAllow
+              ...remoteFsAllow,
+              ...runInTerminalAllow
             ];
     // Per-tab Claude session id. Forcing `--session-id <uuid>` at first launch
     // gives each claude tab a *stable, distinct* transcript id, so restore can
@@ -1228,17 +1234,8 @@ export class PtyManager extends EventEmitter {
     const cleanedExtra = preCleanedExtra;
     const callerPinsSession =
       provider.baseArgsPinSession(effectiveProfile) ||
-      cleanedExtra.some(
-        (a) =>
-          a === '--resume' ||
-          a === '-r' ||
-          a === '--continue' ||
-          a === '-c' ||
-          a === '--session-id' ||
-          a.startsWith('--resume=') ||
-          a.startsWith('--continue=') ||
-          a.startsWith('--session-id=')
-      );
+      extraArgsPinSession(cleanedExtra) ||
+      Boolean(opts.resumeSessionId);
     // When WE mint the id, remember it so restore can `--resume` this exact
     // conversation. When the CALLER pins one (restore re-launches carry
     // `--resume <uuid>`), surface that same uuid as the session's
@@ -1248,6 +1245,18 @@ export class PtyManager extends EventEmitter {
       caps.acceptsSessionId && !callerPinsSession ? randomUUID() : undefined;
     const claudeSessionId = minted ?? extractPinnedSessionId(cleanedExtra);
     const sessionIdArgs = minted ? ['--session-id', minted] : [];
+    const nativeMint = !callerPinsSession
+      ? registrationFor(effectiveProfile)?.nativeSessionMint
+      : undefined;
+    const mintedNativeId = nativeMint ? randomUUID() : undefined;
+    const nativeMintArgs = mintedNativeId && nativeMint
+      ? [...nativeMint.spawnArgs(mintedNativeId)]
+      : [];
+    const nativeConversationId =
+      mintedNativeId
+      ?? (registrationFor(effectiveProfile)?.nativeSessionPatch
+        ? (opts.resumeSessionId ?? extractPinnedSessionId(cleanedExtra))
+        : undefined);
     // Invariant: an empty / whitespace-only opening prompt must NEVER reach
     // argv as a positional. `claude ''` is a stray empty first-turn that the
     // CLI may misinterpret; callers (LaunchPanel, GUS, scheduler) mostly guard
@@ -1344,6 +1353,7 @@ export class PtyManager extends EventEmitter {
           ...args,
           ...(!suppressModelForRole && !modelTarget.structuredSelected ? (modelTarget.contribution.args ?? []) : []),
           ...sessionIdArgs,
+          ...nativeMintArgs,
           ...claudeMcpArgs,
            ...(providerIntegration.mcpArgs ?? []),
            ...(providerIntegration.guidanceArgs ?? []),
@@ -1581,9 +1591,11 @@ export class PtyManager extends EventEmitter {
       claudeSessionId,
       cliPlanIntent,
       ...nativeSessionFields(
-        opts.resumeSessionId
-          ? registrationFor(opts.profile)?.nativeSessionPatch?.(opts.resumeSessionId)
-          : undefined
+        nativeConversationId
+          ? registrationFor(opts.profile)?.nativeSessionPatch?.(nativeConversationId)
+          : opts.resumeSessionId
+            ? registrationFor(opts.profile)?.nativeSessionPatch?.(opts.resumeSessionId)
+            : undefined
       ),
       headless: opts.headless || undefined,
       scheduled: opts.scheduled || undefined,
@@ -1708,7 +1720,7 @@ export class PtyManager extends EventEmitter {
       proc.onData(writePrompt);
     }
     if (opts.openingPrompt && !opts.scheduled && !opts.resume) {
-      this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc);
+      this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc, providerFor(session.profile).stdinReadyMarker);
     }
     proc.onExit((event) => {
       const { exitCode } = event;
@@ -1806,6 +1818,7 @@ export class PtyManager extends EventEmitter {
    * gone, so the onExit callback and {@link reapDeadSessions} can't double-fire.
    */
   private finalizeExit(sessionId: string, exitCode: number, signal?: number): void {
+    this.stdinOpeningPromptCleanup.get(sessionId)?.();
     this.flushData(sessionId);
     const live = this.live.get(sessionId);
     // Diagnose an opaque non-zero exit from the retained output tail BEFORE the
@@ -1912,6 +1925,12 @@ export class PtyManager extends EventEmitter {
     projectSettings?: ProjectSettings;
     harnessRouting?: HarnessModelRoutingV1;
     extraArgs?: string[];
+    /**
+     * Provider-native EXACT-session resume target. Threaded into remote
+     * `resolveLaunch` so Pi/Grok/Cursor `--session` / `--resume <uuid>` match
+     * the local create() path.
+     */
+    resumeSessionId?: string;
     title?: string;
     remote: ProjectRemote;
     persona?: Persona;
@@ -2121,12 +2140,25 @@ export class PtyManager extends EventEmitter {
         }
       }
     }
-    // Mint + inject a stable `--session-id` (remote twin of the local path) so a
-    // remote claude conversation is resumable via `--resume <id>`. `randomUUID`
-    // is passed as a thunk — the provider calls it only when it decides to own
-    // the id (interactive claude family, no caller-pinned resume). The recovered
-    // id is stamped onto the session below, closing the parity gap that left
-    // remote `claudeSessionId` permanently undefined.
+    // Mint a harness-owned native conversation id (Pi/Grok `--session-id`) so
+    // remote restore can reopen THAT conversation. Skip when the caller already
+    // pins one (resume profiles / extraArgs / resumeSessionId).
+    const remotePinsSession =
+      remoteProvider.baseArgsPinSession(remoteEffectiveProfile) ||
+      extraArgsPinSession(remoteExtra) ||
+      Boolean(opts.resumeSessionId);
+    const remoteNativeMint = !remotePinsSession
+      ? remoteRegistration.nativeSessionMint
+      : undefined;
+    const remoteMintedNativeId = remoteNativeMint ? randomUUID() : undefined;
+    const remoteExtraWithMint = remoteMintedNativeId && remoteNativeMint
+      ? [...remoteNativeMint.spawnArgs(remoteMintedNativeId), ...remoteExtra]
+      : remoteExtra;
+    const remoteNativeConversationId =
+      remoteMintedNativeId
+      ?? (remoteRegistration.nativeSessionPatch
+        ? (opts.resumeSessionId ?? extractPinnedSessionId(remoteExtraWithMint))
+        : undefined);
     const remoteLifecycle = registrationFor(remoteEffectiveProfile)?.renderLifecycle?.({
       profile: remoteEffectiveProfile,
       caps: remoteProvider.capabilities(remoteEffectiveProfile),
@@ -2139,7 +2171,7 @@ export class PtyManager extends EventEmitter {
         persona: remotePersona,
         projectSettings: opts.projectSettings,
         harnessRouting: remoteHarnessRouting,
-        extraArgs: cleanExtraArgs(opts.extraArgs)
+        extraArgs: remoteExtraWithMint
       }),
       callbacks: remoteHookUrls ? {
         stop: remoteHookUrls.stop,
@@ -2151,6 +2183,8 @@ export class PtyManager extends EventEmitter {
     });
     const { cmd: builtCmd, claudeSessionId: remoteClaudeSessionId } = renderRemoteCommand(remoteEffectiveProfile, {
       ...opts,
+      extraArgs: remoteExtraWithMint,
+      resumeSessionId: opts.resumeSessionId,
       profile: remoteEffectiveProfile,
       persona: remotePersona,
       harnessRouting: remoteHarnessRouting,
@@ -2252,6 +2286,11 @@ export class PtyManager extends EventEmitter {
       extraArgs: opts.extraArgs,
       metadata,
       claudeSessionId: remoteClaudeSessionId,
+      ...nativeSessionFields(
+        remoteNativeConversationId
+          ? remoteRegistration.nativeSessionPatch?.(remoteNativeConversationId)
+          : undefined
+      ),
       headless: opts.headless || undefined,
       scheduled: opts.scheduled || undefined,
       inboxLevel: opts.scheduled ? opts.inboxLevel : undefined,
@@ -2293,7 +2332,7 @@ export class PtyManager extends EventEmitter {
       : undefined;
     this.bindRemoteProc(session, proc, reattach);
     if (opts.openingPrompt && !opts.scheduled && !opts.resume) {
-      this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc);
+      this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc, providerFor(session.profile).stdinReadyMarker);
     }
     this.emit('sessionUpdated', session);
 
@@ -2462,27 +2501,49 @@ export class PtyManager extends EventEmitter {
   }
 
   /**
-   * Type an opening task into a TUI that cannot take seed argv. Waits for first
-   * output (banner / prompt paint) then uses {@link reply} so the submit CR is
-   * a discrete keypress rather than a paste burst.
+   * Type an opening task after the provider's input-ready marker, or first
+   * output for providers without one. Retain only enough tail to match a marker
+   * split across chunks; release the listener and deadline on every exit path.
    */
   private scheduleStdinOpeningPrompt(
     sessionId: string,
     prompt: string,
-    proc: pty.IPty | ExecutionSession
+    proc: pty.IPty | ExecutionSession,
+    readyMarker?: string
   ): void {
     const body = prompt.trim();
     if (!body) return;
     let armed = false;
-    const arm = () => {
-      if (armed) return;
+    let tail = '';
+    let subscription: { dispose(): void } | void;
+    const cleanup = () => {
       armed = true;
-      setTimeout(() => {
-        if (!this.live.get(sessionId)) return;
+      clearTimeout(timer);
+      subscription?.dispose();
+      this.stdinOpeningPromptCleanup.delete(sessionId);
+    };
+    let timer = setTimeout(() => {
+      cleanup();
+      if (this.live.get(sessionId)?.proc !== proc) return;
+      this.emit('data', sessionId, '\r\nInitial task was not sent: the agent input did not become ready. Send the task once its prompt appears.\r\n');
+    }, STDIN_OPENING_PROMPT_DEADLINE_MS);
+    this.stdinOpeningPromptCleanup.set(sessionId, cleanup);
+    subscription = proc.onData((data) => {
+      if (armed) return;
+      if (readyMarker) {
+        const candidate = tail + data;
+        tail = candidate.slice(-readyMarker.length);
+        if (!candidate.includes(readyMarker)) return;
+      }
+      armed = true;
+      subscription?.dispose();
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        cleanup();
+        if (this.live.get(sessionId)?.proc !== proc) return;
         this.reply(sessionId, body);
       }, STDIN_OPENING_PROMPT_AFTER_READY_MS);
-    };
-    proc.onData(arm);
+    });
   }
 
   write(id: string, data: string) {
@@ -2620,6 +2681,7 @@ export class PtyManager extends EventEmitter {
   }
 
   close(id: string) {
+    this.stdinOpeningPromptCleanup.get(id)?.();
     const l = this.live.get(id);
     if (!l) return;
     // A user/host close must win over a pending remote reconnect: disarm the
@@ -2645,6 +2707,7 @@ export class PtyManager extends EventEmitter {
    * because `proc.kill()` delivers a signal. Returns false if already gone.
    */
   closeExpected(id: string): boolean {
+    this.stdinOpeningPromptCleanup.get(id)?.();
     const l = this.live.get(id);
     if (!l) return false;
     this.expectedClose.add(id);

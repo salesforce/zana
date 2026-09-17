@@ -38,6 +38,7 @@ import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { ReasoningEffortPicker } from './thread/pickers/ReasoningEffortPicker.js';
 import { ComposerSendModePicker } from './thread/pickers/ComposerSendModePicker.js';
 import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
+import { useThreadPermissionMode } from './thread/pickers/useThreadPermissionMode.js';
 import {
   applyComposerWorkMode,
   consumeComposerModeCycle
@@ -48,10 +49,11 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { fallbackProviderOption, isOfferedModernProvider } from './thread/pickers/fallback-models.js';
 import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOptions.js';
+import { preferredThreadProviderId } from './legacy-agent-home.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
-import { isBusyThreadStatus, shouldShowThreadStop } from './thread/thread-timeline-model.js';
+import { shouldShowThreadStop } from './thread/thread-timeline-model.js';
 import { resolveThreadSubmitMode } from './thread/thread-submit-mode.js';
 import { promptHistoryTexts, stepPromptHistory } from './thread/prompt-history-step.js';
 import { ThreadContextMeter } from './thread/ThreadContextMeter.js';
@@ -65,7 +67,6 @@ import {
   NAVIGATE_TO_THREAD_ON_CREATE_KEY,
   resolveThreadSendMode
 } from '../lib/thread-composer-preferences.js';
-import { COMPOSER_INSERT_EVENT } from './thread/secondary-panel/SecondaryPanelSelectionActions.js';
 import { dispatchOptimisticUserMessage, dispatchThreadStopRequested } from './thread/timeline/thread-optimistic-events.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
@@ -86,6 +87,7 @@ export interface ThreadCommandComposerProps extends ComposerProjectSelectionProp
   reasoningLevel?: string | null;
   /** Persisted native role/mode of an existing thread, for honest picker display. */
   acpMode?: string | null;
+  permissionMode?: string | null;
   initialText?: string;
   /** Focus the prompt after mounting (hub/browse create-plugin seed). */
   autoFocus?: boolean;
@@ -108,6 +110,7 @@ export function ThreadCommandComposer({
   model: initialModel,
   reasoningLevel: initialReasoningLevel,
   acpMode: initialAcpMode,
+  permissionMode: initialPermissionMode,
   initialText,
   autoFocus = false,
   onCreated,
@@ -133,6 +136,7 @@ export function ThreadCommandComposer({
   const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
   const ensureScratchRef = useRef(false);
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
+  const defaultHarness = useData((s) => s.defaultHarness);
   const hosts = useHosts();
   const threads = useThreads((s) => s.threads);
   const currentThread = threadId ? threads.find((row) => row.id === threadId) : undefined;
@@ -144,10 +148,20 @@ export function ThreadCommandComposer({
     initialModel,
     initialReasoningLevel,
     initialAcpMode: executionModeRequested ?? initialAcpMode,
+    preferredProviderId: threadId || lockedProviderId
+      ? undefined
+      : preferredThreadProviderId({
+          launchDefault: selectedProject?.launchDefault,
+          defaultHarness
+        }),
     hostId: catalogHostId,
     hostPending: !catalogHostId && hosts.length === 0
   });
-  const [permissionMode, setPermissionMode] = useState('accept-edits');
+  const { permissionMode, setPermissionMode } = useThreadPermissionMode({
+    threadId,
+    initialPermissionMode,
+    supportedModes: options.provider?.permissionModes
+  });
   const [composerMode, setComposerMode] = useState('agent');
   const nativeAgentDiscoveryEnabled = useData((s) => s.nativeAgentDiscoveryEnabled);
   const hydratedRequestedRef = useRef<string | null>(null);
@@ -256,13 +270,6 @@ export function ThreadCommandComposer({
     ?? composerModeEntriesForProvider[0];
 
   useEffect(() => {
-    const modes = options.provider?.permissionModes ?? [];
-    if (modes.length > 0 && !modes.includes(permissionMode)) {
-      setPermissionMode(modes[0]!);
-    }
-  }, [permissionMode, options.provider]);
-
-  useEffect(() => {
     hydratedRequestedRef.current = null;
   }, [threadId]);
 
@@ -363,16 +370,6 @@ export function ThreadCommandComposer({
     });
   }, [threadId]);
 
-  useEffect(() => {
-    if (!threadId) return;
-    const onInsert = (event: Event) => {
-      const detail = (event as CustomEvent<{ threadId?: string; text?: string }>).detail;
-      if (!detail?.text || detail.threadId !== threadId) return;
-      field.insertText(detail.text);
-    };
-    window.addEventListener(COMPOSER_INSERT_EVENT, onInsert);
-    return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert);
-  }, [field.insertText, threadId]);
   const voice = useVoiceInput({ onTranscript: field.insertText });
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 
@@ -481,7 +478,6 @@ export function ThreadCommandComposer({
     }
     const sendMode = resolveThreadSendMode({
       pickerMode: composerSendMode,
-      threadRunning: isBusyThreadStatus(status ?? '') || inFlightRetry,
       modifierEnter: opts?.modifierEnter === true
     });
     const applied = applyComposerWorkMode(
@@ -507,9 +503,11 @@ export function ThreadCommandComposer({
         return;
       }
       if (threadId) {
-        dispatchOptimisticUserMessage(threadId, text, imagePaths);
+        // Queued messages belong in the queue card until the server starts them.
+        if (sendMode !== 'queue-if-active') dispatchOptimisticUserMessage(threadId, text, imagePaths);
         try {
           await product.threads.send(threadId, input, sendMode, {
+            permissionMode,
             model: options.model,
             reasoningLevel: options.reasoningLevel,
             acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
@@ -528,7 +526,7 @@ export function ThreadCommandComposer({
         hostId,
         environment: selected!.quickAgent && foreignHost ? { kind: 'personal' } : workspace,
         cwd: foreignHost ? undefined : selected!.path,
-        permissionMode: permissionMode as 'accept-edits' | 'auto' | 'full',
+        permissionMode,
         model: options.model,
         reasoningLevel: options.reasoningLevel,
         acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
@@ -574,9 +572,8 @@ export function ThreadCommandComposer({
     resolvedProviderId,
     route.focusedProjectId,
     route.isProjectFocused,
-    status,
-    inFlightRetry,
     composerSendMode,
+    followUpSubmitBlocked,
     threadId,
     upsertThread,
     workspace,
@@ -592,16 +589,19 @@ export function ThreadCommandComposer({
     field.handleChromeKeyDown(event);
   };
 
+  const sendLabel = busy ? 'Sending' : submitMode.kind === 'queue'
+    ? composerSendMode === 'steer' ? 'Steer' : 'Queue'
+    : 'Send';
   const sendButton = (
     <ComposerIconButton
       className={`thread-command-send${busy ? ' is-sending' : ''}`}
-      aria-label={busy ? 'Sending' : submitMode.kind === 'queue' ? 'Queue' : 'Send'}
+      aria-label={sendLabel}
       title={
         hostSendBlocked && hostAction.kind !== 'ready'
           ? hostAction.reason
           : followUpSubmitBlocked
             ? (submitMode.kind === 'blocked' ? submitMode.reason : 'Stop the agent to send')
-            : busy ? 'Sending' : submitMode.kind === 'queue' ? 'Queue' : 'Send'
+            : sendLabel
       }
       aria-busy={busy}
       data-testid="thread-command-send"

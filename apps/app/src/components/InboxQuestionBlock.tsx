@@ -8,7 +8,7 @@ import { useExecutionInboxBlockerState } from '../lib/executionInboxBlockerState
 
 /**
  * Structured multiple-choice question form — the interactive half of the
- * `inbox_ask` loop, and the Cursor-IDE "Questions" panel analogue. Extracted
+ * inbox question loop, and the Cursor-IDE "Questions" panel analogue. Extracted
  * from `InboxDetail` so BOTH the inbox detail pane AND the agent terminal modal
  * render the SAME form (a question surfaced in the inbox also appears in the
  * agent's modal when you open it — see {@link AgentTerminalModal}). Keeping one
@@ -24,10 +24,10 @@ import { useExecutionInboxBlockerState } from '../lib/executionInboxBlockerState
  *
  * On Continue the answers are injected into the originating pty via the SAME
  * `replyToInboxEntry` channel the free-text box uses — so an agent that asked
- * via `inbox_ask` and blocked gets the answer as if typed. For a single question
- * the raw answer is sent; for several, a labelled "Q: …\nA: …" block per
- * question. Skip marks the entry answered without sending anything (the user
- * declined). ⌘/Ctrl+Enter submits when everything is answered.
+ * via `inbox_push` with options and blocked gets the answer as if typed. For a
+ * single question the raw answer is sent; for several, a labelled "Q: …\nA: …"
+ * block per question. Skip marks the entry answered without sending anything
+ * (the user declined). ⌘/Ctrl+Enter submits when everything is answered.
  */
 
 /** Per-question answer state, one entry per question in the card. */

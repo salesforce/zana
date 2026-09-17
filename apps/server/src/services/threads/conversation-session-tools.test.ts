@@ -105,4 +105,19 @@ describe('packConversationSessionTooling', () => {
     expect(packed.dynamicTools?.filter((tool) => tool.name === 'inbox_push')).toHaveLength(1);
     expect(packed.dynamicTools?.find((tool) => tool.name === 'inbox_push')?.description).toContain('inbox');
   });
+
+  it('packs run_in_terminal only when the experiment is on', async () => {
+    const off = await packConversationSessionTooling({} as ProductHttpContext, {
+      threadId: 'thr-1',
+      projectId: 'proj-1'
+    });
+    expect(off.dynamicTools?.map((tool) => tool.name)).not.toContain('run_in_terminal');
+    expect(off.instructions).not.toContain('run_in_terminal');
+    const on = await packConversationSessionTooling(
+      { config: { getConfig: () => ({ inAppAgentTerminalsEnabled: true }) } } as unknown as ProductHttpContext,
+      { threadId: 'thr-1', projectId: 'proj-1' }
+    );
+    expect(on.dynamicTools?.map((tool) => tool.name)).toContain('run_in_terminal');
+    expect(on.instructions).toContain('run_in_terminal');
+  });
 });

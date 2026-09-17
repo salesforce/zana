@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ThreadTimelineViewRow } from '@zana-ai/zcc-thread-view';
-import { collectTimelineFilePreviewPaths } from './timeline-file-preview-paths.js';
+import {
+  collectTimelineFilePreviewPaths,
+  reuseStringListIfEqual
+} from './timeline-file-preview-paths.js';
 
 const workBase = {
   threadId: 't1',
@@ -76,5 +79,17 @@ describe('collectTimelineFilePreviewPaths', () => {
       'README.md',
       'nested/foo.md'
     ]);
+  });
+});
+
+describe('reuseStringListIfEqual', () => {
+  it('returns the previous array when contents match', () => {
+    const previous = ['a.md', 'b.md'];
+    expect(reuseStringListIfEqual(previous, ['a.md', 'b.md'])).toBe(previous);
+  });
+
+  it('returns the next array when contents differ', () => {
+    const next = ['a.md'];
+    expect(reuseStringListIfEqual(['a.md', 'b.md'], next)).toBe(next);
   });
 });

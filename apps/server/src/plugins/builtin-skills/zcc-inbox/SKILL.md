@@ -10,11 +10,6 @@ Zana exposes an MCP server, `zcc-inbox`, with these inbox tools:
 - **`inbox_push`** — surface something the user should see (a finished analysis,
   a question, a blocked task, a status check-in) without making them re-read
   your terminal scrollback.
-- **`inbox_ask`** — ask the user one or more *structured multiple-choice*
-  questions (an approach, a config value, a go/no-go) and wait for the answer.
-  Renders a form with lettered options, an optional "Other…" row, and
-  Skip/Continue; the user's pick is delivered back to you as if typed at your
-  prompt. Pass several via `questions` to ask them all in one card.
 - **`inbox_search`** — read back what's already in the inbox: list recent
   entries or substring-search them. Use it to answer "what's in my inbox?",
   find an earlier entry, or check whether you already reported something.
@@ -45,7 +40,7 @@ with the other product builtins.
   comments?: string,                // markdown
   report?: boolean,                 // mark as a finished REPORT/deliverable (badge + Reports filter)
 
-  // Optional structured question (same shape as inbox_ask). When present,
+  // Optional structured question. When present,
   // `comments` becomes the question prompt and these render as a lettered form.
   options?: string[],               // single-question choices (1–20), lettered A/B/C…
   allowOther?: boolean,             // add a free-text "Other…" row
@@ -70,9 +65,7 @@ options still show, just without answer-injection.
 a soft follow-up on a status report ("done — want me to open a PR?"). It stays
 answerable but does NOT get pinned to the top "Needs your answer" band. That's
 the right shape for a report that ends with an optional ask. If you are genuinely
-BLOCKED and can't proceed without the answer, either set `blocking: true` here or
-— better — use **`inbox_ask`** (which defaults blocking and is what the pinned
-band is for).
+BLOCKED and can't proceed without the answer, set `blocking: true` so it pins.
 
 ## When to use it
 
@@ -129,10 +122,10 @@ inbox_push({
 > **Asking a genuine decision? Give it structure.** A bare-prose question like the
 > one above lands in the inbox as a free-text reply box — the user has to type the
 > answer out. When you're offering discrete choices (an approach, a go/no-go, a
-> config value), prefer **`inbox_ask`** (or pass `options` / `questions` on
-> `inbox_push`): the host renders a lettered picker with the exact choices YOU
-> authored, and on a live session the user's pick is delivered straight back to
-> you. Reserve free-text `comments` for open-ended questions and status updates.
+> config value), pass `options` / `questions` on `inbox_push`: the host renders a
+> lettered picker with the exact choices YOU authored, and on a live session the
+> user's pick is delivered straight back to you. Reserve free-text `comments` for
+> open-ended questions and status updates.
 
 **Comment plus a doc pointer, flagged as a report** (preferred for deliverables —
 `report: true` gives it the badge + Reports filter so the user can find it fast):
@@ -161,94 +154,6 @@ pick comes back as if typed on a live session):
 inbox_push({
   comments: "Migration audit done — how do you want to handle the legacy API?",
   options: ["Rewrite both files", "Leave them", "Show me the diff first"]
-})
-```
-
-## Asking a structured question — `inbox_ask`
-
-**Tool:** `zcc-inbox.inbox_ask`
-
-**Schema:**
-
-```ts
-{
-  subject?: string,          // optional one-line headline for the inbox row
-  intent?: string,           // one line of context — what this answer unblocks
-
-  // Single-question mode — pass question + options:
-  question?: string,         // one clear line (markdown allowed)
-  options?: string[],        // choosable answers, in display order (1–20)
-  allowOther?: boolean,      // add a free-text "Other…" row
-  multiSelect?: boolean,     // let the user pick more than one option
-  blocking?: boolean,        // default TRUE here — pins to "Needs your answer"
-
-  // OR multi-question mode — pass a questions array instead:
-  questions?: Array<{
-    prompt: string,          // this question, its own heading
-    options: string[],       // its choosable answers (1–20)
-    allowOther?: boolean,
-    multiSelect?: boolean,
-    blocking?: boolean       // per-question; default TRUE on inbox_ask
-  }>,                        // 1–10 questions, stacked in one card
-  preamble?: string          // optional intro line above all the questions
-}
-```
-
-Prefer `inbox_ask` over a free-text `inbox_push` question whenever the answer is
-a **choice between concrete options**. The host assigns the option letters (A,
-B, C, …) — you supply only the text. When the user hits Continue, their chosen
-option label(s) (or the Other text) arrive on THIS session as if typed at your
-prompt. Skip delivers nothing (the user declined). Same rule as a pushed
-question: **ask, then WAIT** — don't guess the answer and continue.
-
-Use `question` + `options` for ONE question; use `questions` for several at once
-— **don't mix the two**. With `questions`, all forms render in one card and
-Continue unlocks only once the user has answered every one; the answers come
-back together as a labelled `Q1: …\nA: …` block.
-
-Set `intent` to one line of context — *what the answer unblocks* — so the
-question shows a "Context" line in the pinned "Needs your answer" section and the
-user can decide it without reopening the session. Falls back to the session task
-title when omitted.
-
-`inbox_ask` defaults **blocking** (`blocking: true`), so it earns a slot in the
-pinned "Needs your answer" band — that's the whole point. Only pass
-`blocking: false` if the ask is genuinely optional and you don't want it pinned
-(in which case a soft `inbox_push` question is usually the cleaner choice).
-
-`inbox_ask` is session-scoped: it only works from a live terminal session (there
-has to be somewhere to deliver the answer). It won't appear on a headless
-project-only connection.
-
-**A go/no-go decision:**
-
-```
-inbox_ask({
-  question: "Two files use the legacy API. Attempt the rewrite?",
-  options: ["Yes, rewrite them", "No, leave them", "Show me the diff first"]
-})
-```
-
-**Open-ended with an escape hatch:**
-
-```
-inbox_ask({
-  question: "Which database should the new service use?",
-  options: ["Postgres", "SQLite", "Reuse the existing Mongo cluster"],
-  allowOther: true
-})
-```
-
-**Several questions at once:**
-
-```
-inbox_ask({
-  preamble: "A few choices before I scaffold the service:",
-  questions: [
-    { prompt: "Which database?", options: ["Postgres", "SQLite"], allowOther: true },
-    { prompt: "Deploy target?", options: ["Docker", "Bare metal", "Serverless"] },
-    { prompt: "Include auth boilerplate?", options: ["Yes", "No"] }
-  ]
 })
 ```
 

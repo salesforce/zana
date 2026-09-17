@@ -46,4 +46,19 @@ describe('store localStorage guard', () => {
     useUi.getState().setFavoritesDrawerOpen(false);
     expect(store.get('zcc.favoritesDrawerOpen')).toBe('0');
   }, 20_000);
+
+  it('normalizes legacy overlapping drawers without resurrecting favorites after dismissal', async () => {
+    vi.resetModules();
+    const values = new Map([['zcc.favoritesDrawerOpen', '1'], ['zcc.notificationsDrawerOpen', '1']]);
+    (globalThis as { localStorage?: object }).localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value)
+    };
+    const { useUi } = await import('../store.js');
+    expect(useUi.getState().favoritesDrawerOpen).toBe(false);
+    expect(useUi.getState().notificationsDrawerOpen).toBe(true);
+    useUi.getState().setNotificationsDrawerOpen(false);
+    expect(values.get('zcc.favoritesDrawerOpen')).toBe('0');
+    expect(values.get('zcc.notificationsDrawerOpen')).toBe('0');
+  });
 });

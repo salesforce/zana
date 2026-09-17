@@ -35,6 +35,13 @@ describe('PiProvider', () => {
     expect(p.resolveLaunch('pi', CONFIG, false)).toEqual({ command: 'pi', args: [] });
   });
 
+  it('resolveLaunch: resumeSessionId uses --session, not --continue', () => {
+    expect(p.resolveLaunch('pi', CONFIG, false, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')).toEqual({
+      command: 'pi',
+      args: ['--session', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee']
+    });
+  });
+
   it('resolveLaunch: pi-resume prepends --continue', () => {
     expect(p.resolveLaunch('pi-resume', CONFIG, false)).toEqual({
       command: 'pi',

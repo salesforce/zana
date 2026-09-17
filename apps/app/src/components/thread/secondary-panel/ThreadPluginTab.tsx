@@ -58,6 +58,7 @@ export function ThreadPluginTab({
           {ThreadPanel ? (
             <ThreadPanel
               pluginId={action.pluginId}
+              projectId={projectId ?? undefined}
               threadId={threadId ?? ''}
               params={params ?? null}
             />

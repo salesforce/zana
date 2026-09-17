@@ -12,6 +12,10 @@ function snapshotCommand(command: string): string {
   return command.replace(/.*[/\\]/, '') || command;
 }
 
+const MINTED_SESSION_ID = expect.stringMatching(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+);
+
 const spawns: SpawnCall[] = [];
 
 vi.mock('node-pty', () => ({
@@ -172,7 +176,7 @@ describe('structured providers final local argv', () => {
       executionState: 'accept-edits'
     }))).toEqual({
       command: 'grok',
-      args: ['--model', 'grok-4.5']
+      args: ['--session-id', MINTED_SESSION_ID, '--model', 'grok-4.5']
     });
   });
 
@@ -248,7 +252,7 @@ describe('structured providers final local argv', () => {
     const last = spawns.at(-1)!;
     expect({ command: snapshotCommand(last.command), args: last.args }).toEqual({
       command: 'pi',
-      args: ['--provider', 'anthropic', '--model', 'claude-sonnet-4-5', '--thinking', 'high']
+      args: ['--session-id', MINTED_SESSION_ID, '--provider', 'anthropic', '--model', 'claude-sonnet-4-5', '--thinking', 'high']
     });
   });
 });

@@ -9,6 +9,7 @@ import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { getScopedProjectId } from '../lib/windowScope.js';
+import { getAgentSessionRoutePath } from '../lib/route-paths.js';
 import { openAgentSessionInSplit } from '../lib/split-layout/openThreadInSplit.js';
 import { isCompactViewport } from '../hooks/useIsCompactViewport.js';
 import { useRouteState } from '../hooks/useRouteState.js';
@@ -220,12 +221,18 @@ export function useAgentCardActions(): {
   return { menu, setMenu, actions, rename, closeRename, submitRename };
 }
 
+/** Project id stamped on a CLI-agent session route from the card menu. */
+export function cliAgentMenuProjectId(route: {
+  isProjectFocused: boolean;
+  focusedProjectId: string | null;
+}): string | null {
+  return route.isProjectFocused ? route.focusedProjectId : (getScopedProjectId() ?? null);
+}
+
 interface AgentCardMenuProps {
   menu: CardMenu;
   setMenu: (m: CardMenu | null) => void;
   actions: AgentCardActions;
-  /** Navigate to the agent's workspace tab (the menu's "Open"/"View" item). */
-  onPick: (c: AgentCard) => void;
 }
 
 /**
@@ -237,11 +244,12 @@ interface AgentCardMenuProps {
  * (`container-type: inline-size` on `.agents-board`) cannot steal
  * `position: fixed` and shove the menu outside the window.
  */
-export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuProps) {
+export function AgentCardMenu({ menu, setMenu, actions }: AgentCardMenuProps) {
   const { card } = menu;
   const navigate = useNavigate();
   const location = useLocation();
   const route = useRouteState();
+  const menuProjectId = cliAgentMenuProjectId(route);
   const exited = card.session.status === 'exited';
   // A remote tombstone can be re-attached to its still-live tmux session on the
   // box (the sleep-recovery path), unlike a local exited session which is truly
@@ -264,16 +272,22 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
       style={{ top: menu.y, left: menu.x }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <button onClick={() => { setMenu(null); onPick(card); }}>{exited ? 'View' : 'Open'}</button>
+      <button
+        type="button"
+        onClick={() => {
+          setMenu(null);
+          navigate(getAgentSessionRoutePath(card.session.id, menuProjectId));
+        }}
+      >
+        {exited ? 'View' : 'Open'}
+      </button>
       <button
         type="button"
         onClick={() => {
           setMenu(null);
           openAgentSessionInSplit({
             navigate,
-            projectId: route.isProjectFocused
-              ? route.focusedProjectId
-              : (getScopedProjectId() ?? null),
+            projectId: menuProjectId,
             sessionId: card.session.id,
             isCompact: isCompactViewport(),
             currentPathname: location.pathname

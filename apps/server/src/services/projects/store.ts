@@ -13,7 +13,7 @@ import { normalizeRepoUrl } from './git-clone.js';
 import { createConfigStore } from '../config/config-store.js';
 import { electronZccDataDir } from '../../electron-data-dir.js';
 
-const HARNESS_FAMILIES = ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode'] as const;
+const HARNESS_FAMILIES = ['claude', 'cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode', 'afcode'] as const;
 
 function isSelectableHarness(value: unknown): value is AppConfig['defaultHarness'] {
   return typeof value === 'string' && registeredAdapters().some((provider) =>
@@ -28,6 +28,7 @@ function harnessEnabled(config: AppConfig, id: NonNullable<AppConfig['defaultHar
   if (id === 'pi') return config.harnessPiEnabled !== false;
   if (id === 'grok') return config.harnessGrokEnabled !== false;
   if (id === 'mastracode') return config.harnessMastracodeEnabled !== false;
+  if (id === 'afcode') return config.harnessAfcodeEnabled !== false;
   return config.harnessOpenCodeEnabled !== false;
 }
 
@@ -102,8 +103,8 @@ export function normalizeProjectSettings(input: Partial<ProjectSettings>): Proje
 function projectConfigCompatibility(config: AppConfig): AppConfig {
   const next = { ...config };
   const byId = config.harnesses?.byId;
-  const binaries = { claude: 'claudeBinary', cursor: 'cursorBinary', codex: 'codexBinary', pi: 'piBinary', opencode: 'opencodeBinary', grok: 'grokBinary', mastracode: 'mastracodeBinary' } as const;
-  const enabled = { cursor: 'harnessCursorEnabled', codex: 'harnessCodexEnabled', pi: 'harnessPiEnabled', opencode: 'harnessOpenCodeEnabled', grok: 'harnessGrokEnabled', mastracode: 'harnessMastracodeEnabled' } as const;
+  const binaries = { claude: 'claudeBinary', cursor: 'cursorBinary', codex: 'codexBinary', pi: 'piBinary', opencode: 'opencodeBinary', grok: 'grokBinary', mastracode: 'mastracodeBinary', afcode: 'afcodeBinary' } as const;
+  const enabled = { cursor: 'harnessCursorEnabled', codex: 'harnessCodexEnabled', pi: 'harnessPiEnabled', opencode: 'harnessOpenCodeEnabled', grok: 'harnessGrokEnabled', mastracode: 'harnessMastracodeEnabled', afcode: 'harnessAfcodeEnabled' } as const;
   for (const id of HARNESS_FAMILIES) {
     const entry = byId?.[id];
     if (entry?.binary !== undefined) (next as Record<string, unknown>)[binaries[id]] = entry.binary;
@@ -150,8 +151,8 @@ function projectSettingsCompatibility(settings: ProjectSettings): ProjectSetting
 }
 
 const RETIRED_CONFIG_KEYS = [
-  'claudeBinary', 'cursorBinary', 'codexBinary', 'piBinary', 'opencodeBinary', 'grokBinary', 'mastracodeBinary',
-  'harnessCursorEnabled', 'harnessCodexEnabled', 'harnessPiEnabled', 'harnessOpenCodeEnabled', 'harnessGrokEnabled', 'harnessMastracodeEnabled',
+  'claudeBinary', 'cursorBinary', 'codexBinary', 'piBinary', 'opencodeBinary', 'grokBinary', 'mastracodeBinary', 'afcodeBinary',
+  'harnessCursorEnabled', 'harnessCodexEnabled', 'harnessPiEnabled', 'harnessOpenCodeEnabled', 'harnessGrokEnabled', 'harnessMastracodeEnabled', 'harnessAfcodeEnabled',
   'defaultModel', 'defaultPermissionMode', 'claudeAppendSystemPrompt', 'claudeExtraArgs',
   'claudeAddDirs', 'claudeAllowedTools', 'claudeDeniedTools', 'defaultCodexSandbox',
   'defaultCodexApproval', 'autoModeEnabled', 'autoModeEnvironment', 'autoModeAllow',
@@ -191,10 +192,10 @@ function canonicalConfigForWrite(config: AppConfig): AppConfig {
   const entry = (id: HarnessFamily): Record<string, any> => byId.byId![id] ??= {};
   const compat = (id: HarnessFamily): Record<string, any> => entry(id).compatibility ??= {};
 
-  const binaries = { claude: 'claudeBinary', cursor: 'cursorBinary', codex: 'codexBinary', pi: 'piBinary', opencode: 'opencodeBinary', grok: 'grokBinary', mastracode: 'mastracodeBinary' } as const;
+  const binaries = { claude: 'claudeBinary', cursor: 'cursorBinary', codex: 'codexBinary', pi: 'piBinary', opencode: 'opencodeBinary', grok: 'grokBinary', mastracode: 'mastracodeBinary', afcode: 'afcodeBinary' } as const;
   for (const id of HARNESS_FAMILIES) setOrDelete(entry(id), 'binary', source[binaries[id]]);
-  const enabled = { cursor: 'harnessCursorEnabled', codex: 'harnessCodexEnabled', pi: 'harnessPiEnabled', opencode: 'harnessOpenCodeEnabled', grok: 'harnessGrokEnabled', mastracode: 'harnessMastracodeEnabled' } as const;
-  for (const id of ['cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode'] as const) setOrDelete(entry(id), 'enabled', source[enabled[id]]);
+  const enabled = { cursor: 'harnessCursorEnabled', codex: 'harnessCodexEnabled', pi: 'harnessPiEnabled', opencode: 'harnessOpenCodeEnabled', grok: 'harnessGrokEnabled', mastracode: 'harnessMastracodeEnabled', afcode: 'harnessAfcodeEnabled' } as const;
+  for (const id of ['cursor', 'codex', 'pi', 'opencode', 'grok', 'mastracode', 'afcode'] as const) setOrDelete(entry(id), 'enabled', source[enabled[id]]);
 
   const claude = compat('claude');
   setOrDelete(claude, 'model', source.defaultModel);
@@ -662,6 +663,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
     const t = input.grokBinary.trim();
     normalized.grokBinary = t || undefined;
   }
+  if (typeof input.afcodeBinary === 'string') {
+    normalized.afcodeBinary = input.afcodeBinary.trim() || undefined;
+  }
+  if (typeof input.harnessAfcodeEnabled === 'boolean') {
+    normalized.harnessAfcodeEnabled = input.harnessAfcodeEnabled;
+  }
   if (typeof input.mastracodeBinary === 'string') {
     const t = input.mastracodeBinary.trim();
     normalized.mastracodeBinary = t || undefined;
@@ -987,8 +994,14 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.catchUpSummaryEnabled === 'boolean') {
     normalized.catchUpSummaryEnabled = input.catchUpSummaryEnabled;
   }
+  if (typeof input.classicSessionViewEnabled === 'boolean') {
+    normalized.classicSessionViewEnabled = input.classicSessionViewEnabled;
+  }
   if (typeof input.feedNoiseClassifierEnabled === 'boolean') {
     normalized.feedNoiseClassifierEnabled = input.feedNoiseClassifierEnabled;
+  }
+  if (typeof input.inAppAgentTerminalsEnabled === 'boolean') {
+    normalized.inAppAgentTerminalsEnabled = input.inAppAgentTerminalsEnabled;
   }
   if (typeof input.autoOpenThreadPlanPanel === 'boolean') {
     normalized.autoOpenThreadPlanPanel = input.autoOpenThreadPlanPanel;

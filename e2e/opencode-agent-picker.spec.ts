@@ -212,7 +212,7 @@ test.describe('real OpenCode home integration', () => {
       await window.getByRole('link', { name: 'Settings' }).click();
       await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
       const openCodeSettings = window.locator('#settings-anchor-harness-opencode');
-      await expect(openCodeSettings.locator('.opener-row-status')).toHaveClass(/opener-row-status--ok/);
+      await expect(openCodeSettings.locator('.opener-row-status').first()).toHaveClass(/opener-row-status--ok/);
 
       projectId = await window.evaluate(async (path) => {
         const result = await window.cc.projects.add(path);

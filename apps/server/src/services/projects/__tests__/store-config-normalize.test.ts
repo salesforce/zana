@@ -369,6 +369,15 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ catchUpSummaryEnabled: 1 }).catchUpSummaryEnabled).toBeUndefined();
   });
 
+  it('passes through a boolean classicSessionViewEnabled, drops non-booleans', () => {
+    expect(normalizeConfig({ classicSessionViewEnabled: true }).classicSessionViewEnabled).toBe(true);
+    expect(normalizeConfig({ classicSessionViewEnabled: false }).classicSessionViewEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ classicSessionViewEnabled: 'yes' }).classicSessionViewEnabled).toBeUndefined();
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ classicSessionViewEnabled: 1 }).classicSessionViewEnabled).toBeUndefined();
+  });
+
   it('passes through a boolean heldQuestionsEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ heldQuestionsEnabled: true }).heldQuestionsEnabled).toBe(true);
     expect(normalizeConfig({ heldQuestionsEnabled: false }).heldQuestionsEnabled).toBe(false);
@@ -381,6 +390,13 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ feedNoiseClassifierEnabled: false }).feedNoiseClassifierEnabled).toBe(false);
     // @ts-expect-error intentional bad input
     expect(normalizeConfig({ feedNoiseClassifierEnabled: 'yes' }).feedNoiseClassifierEnabled).toBeUndefined();
+  });
+
+  it('passes through a boolean inAppAgentTerminalsEnabled, drops non-booleans', () => {
+    expect(normalizeConfig({ inAppAgentTerminalsEnabled: true }).inAppAgentTerminalsEnabled).toBe(true);
+    expect(normalizeConfig({ inAppAgentTerminalsEnabled: false }).inAppAgentTerminalsEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ inAppAgentTerminalsEnabled: 'yes' }).inAppAgentTerminalsEnabled).toBeUndefined();
   });
 
   it('passes through a boolean cliRemoteHostCatalogEnabled, drops non-booleans', () => {
@@ -766,5 +782,25 @@ describe('normalizeConfig — executionPlanStartupGraceMs', () => {
 
   it('leaves it unset when absent (default applies at read time)', () => {
     expect(normalizeConfig({}).executionPlanStartupGraceMs).toBeUndefined();
+  });
+});
+
+describe('afcode configuration', () => {
+  it('normalizes executable overrides and enablement', () => {
+    expect(normalizeConfig({ afcodeBinary: '  /tmp/bin with spaces/afcode  ', harnessAfcodeEnabled: false }))
+      .toMatchObject({ afcodeBinary: '/tmp/bin with spaces/afcode', harnessAfcodeEnabled: false });
+    expect(normalizeConfig({ afcodeBinary: '   ' }).afcodeBinary).toBeUndefined();
+    expect(normalizeConfig({ afcodeBinary: 42 as never, harnessAfcodeEnabled: 'false' as never }))
+      .not.toHaveProperty('afcodeBinary');
+  });
+  it('round trips native settings through canonical storage', () => {
+    store.setConfig({ afcodeBinary: '/tmp/afcode', harnessAfcodeEnabled: false });
+    expect(store.getConfig()).toMatchObject({
+      afcodeBinary: '/tmp/afcode', harnessAfcodeEnabled: false,
+      harnesses: { byId: { afcode: { binary: '/tmp/afcode', enabled: false } } }
+    });
+    store.setConfig({ afcodeBinary: '', harnessAfcodeEnabled: true });
+    expect(store.getConfig().afcodeBinary).toBeUndefined();
+    expect(store.getConfig().harnesses?.byId?.afcode?.enabled).toBe(true);
   });
 });

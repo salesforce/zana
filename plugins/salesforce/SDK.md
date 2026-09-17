@@ -3,9 +3,9 @@
 Experimental shared CLI + REST session. Other ZCC plugins consume it through
 `zcc.services`; they never copy `ConnectionManager` and never see `accessToken`.
 
-This document is the reuse contract and the map for moving the session kernel
-to another repo later. Product UI (SOQL tab, Agentforce playground) stays in
-this plugin.
+This document covers the server session contract. For browser components,
+connected tools, and native side-panel registration, see [UI.md](UI.md).
+Those public exports use ZCC's host React instance and the Salesforce service.
 
 ## Consume from another plugin
 
@@ -37,7 +37,7 @@ Do **not**:
 
 - `import { createSalesforceSdk }` or `ConnectionManager` (host factory)
 - npm-import this plugin’s `lib/` internals
-- share React org pickers across bundles — call `callPluginRpc('salesforce', 'org' | 'orgs')`
+- import private React pickers from `src/`; use the supported `/ui` and `/panels` exports
 - crash host `start()` when Salesforce is missing; use `needsConfiguration`
 
 Missing / disabled Salesforce throws `PluginServiceUnavailableError`

@@ -181,8 +181,17 @@ export class CursorProvider extends BaseLaunchProvider {
     return {};
   }
 
-  resolveLaunch(profile: LaunchProfileId, config: AppConfig, _autoModeActive: boolean): ResolvedLaunch {
+  resolveLaunch(
+    profile: LaunchProfileId,
+    config: AppConfig,
+    _autoModeActive: boolean,
+    resumeSessionId?: string
+  ): ResolvedLaunch {
     const command = cursorBinary(config);
+    if (resumeSessionId) {
+      const rest = profile === 'cursor-yolo' ? ['--force'] : [];
+      return { command, args: ['--resume', resumeSessionId, ...rest] };
+    }
     // `cursor-resume` reopens the most-recent chat in the cwd. `--resume` with no
     // id continues the latest chat (parity with claude's `--continue` intent);
     // it's the flag that pins the session, so `baseArgsPinSession` returns true.

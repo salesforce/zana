@@ -428,7 +428,16 @@ async function resumeThreadRuntimeIfMissing(
   await applyThreadResume(runtime, {
     threadId: command.threadId,
     environmentId: command.environmentId,
-    ...command.resume
+    ...command.resume,
+    // Apply the current selection before reopening the provider. Some ACP
+    // agents validate their model during session/load, before turn.submit.
+    model: command.model ?? command.resume.model,
+    reasoningLevel: command.reasoningLevel ?? command.resume.reasoningLevel,
+    acpMode: command.acpMode ?? command.resume.acpMode,
+    claudeCodePermissionMode: command.claudeCodePermissionMode ?? command.resume.claudeCodePermissionMode,
+    providerOptions: command.providerOptions
+      ? { ...command.resume.providerOptions, ...command.providerOptions }
+      : command.resume.providerOptions
   });
 }
 

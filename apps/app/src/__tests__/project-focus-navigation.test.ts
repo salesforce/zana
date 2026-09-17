@@ -88,6 +88,62 @@ describe('project-focus navigation contract', () => {
     expect(mockConfig.set).toHaveBeenCalledWith({ focusedProjectId: null });
   });
 
+  it('exitProjectFocus navigates off the project URL onto Agents', async () => {
+    const { useUi } = await import('../store.js');
+    const { getLastAppNavigatePath, registerAppNavigate } = await import('../lib/app-navigate.js');
+    const navigate = vi.fn();
+    registerAppNavigate(navigate);
+
+    useUi.getState().enterProjectFocus('proj-123');
+    navigate.mockClear();
+
+    useUi.getState().exitProjectFocus();
+
+    expect(useUi.getState().focusedProjectId).toBeNull();
+    expect(useUi.getState().nav).toBe('agents');
+    expect(getLastAppNavigatePath()).toBe('/agents');
+    expect(navigate).toHaveBeenCalledWith('/agents', undefined);
+
+    registerAppNavigate(null);
+  });
+
+  it('exitProjectFocus keeps Inbox as Back without sticky project focus', async () => {
+    const { useUi } = await import('../store.js');
+    const { getLastAppNavigatePath, registerAppNavigate } = await import('../lib/app-navigate.js');
+    const navigate = vi.fn();
+    registerAppNavigate(navigate);
+
+    useUi.getState().enterProjectFocus('proj-123');
+    navigate.mockClear();
+
+    useUi.getState().exitProjectFocus('/inbox');
+
+    expect(useUi.getState().focusedProjectId).toBeNull();
+    expect(useUi.getState().nav).toBe('inbox');
+    expect(getLastAppNavigatePath()).toBe('/inbox');
+    expect(navigate).toHaveBeenCalledWith('/inbox', undefined);
+
+    registerAppNavigate(null);
+  });
+
+  it('exitProjectFocus ignores a project Back path', async () => {
+    const { useUi } = await import('../store.js');
+    const { getLastAppNavigatePath, registerAppNavigate } = await import('../lib/app-navigate.js');
+    const navigate = vi.fn();
+    registerAppNavigate(navigate);
+
+    useUi.getState().enterProjectFocus('proj-123');
+    navigate.mockClear();
+
+    useUi.getState().exitProjectFocus('/projects/proj-123/feed');
+
+    expect(useUi.getState().focusedProjectId).toBeNull();
+    expect(useUi.getState().nav).toBe('agents');
+    expect(getLastAppNavigatePath()).toBe('/agents');
+
+    registerAppNavigate(null);
+  });
+
   it('enterProjectFocus opens Projects on the Agents board', async () => {
     const { useUi } = await import('../store.js');
 

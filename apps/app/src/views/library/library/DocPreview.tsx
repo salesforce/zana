@@ -1,5 +1,5 @@
 import { product } from '../../../lib/product-client.js';
-import React, { useEffect, useState, isValidElement, type ReactNode } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pencil, Eye, Save, Type, Code2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -11,6 +11,7 @@ import '@/lib/monacoSetup';
 import type { LibraryDoc } from '@zana-ai/zcc-domain/product';
 import { useUi } from '@/store';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
+import { extractMermaid } from '@/components/markdown-mermaid';
 import { useMonacoTheme } from '@/hooks/useMonacoTheme';
 import { useAiEnhanceSelection } from '@/components/AiEnhanceSelection';
 import { StencilLines } from '@/components/ui/Skeleton';
@@ -320,7 +321,7 @@ function renderMarkdownBody(text: string) {
       components={{
         pre: (props) => {
           const mermaid = extractMermaid(props.children);
-          if (mermaid !== null) return <MermaidDiagram key={mermaid} code={mermaid} exportable />;
+          if (mermaid !== null) return <MermaidDiagram code={mermaid} exportable />;
           return <pre {...props} />;
         }
       }}
@@ -328,21 +329,6 @@ function renderMarkdownBody(text: string) {
       {parseFrontMatter(text)?.body ?? text}
     </ReactMarkdown>
   );
-}
-
-/**
- * Given the children of a markdown `<pre>` (which react-markdown renders as a
- * single `<code className="language-…">` element), return the raw source if
- * it's a ```mermaid fence, otherwise null. Returning null lets the caller
- * fall back to the default code-block rendering.
- */
-function extractMermaid(children: ReactNode): string | null {
-  if (!isValidElement(children)) return null;
-  const props = children.props as { className?: string; children?: ReactNode };
-  const className = props.className ?? '';
-  if (!/(^|\s)language-mermaid(\s|$)/.test(className)) return null;
-  const source = props.children;
-  return typeof source === 'string' ? source.replace(/\n$/, '') : null;
 }
 
 /**

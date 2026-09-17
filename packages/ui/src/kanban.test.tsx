@@ -75,4 +75,10 @@ describe('Kanban', () => {
     expect(css).toMatch(/\.zcc-kanban-col-body \{[^}]*overflow-y:\s*auto;/);
     expect(css).toMatch(/\.zcc-kanban-col-body > \* \{[^}]*flex-shrink:\s*0;/);
   });
+
+  it('forwards an optional column context menu', () => {
+    const source = readFileSync(new URL('./kanban.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('onContextMenu?: (event: MouseEvent<HTMLElement>) => void');
+    expect(source).toContain('onContextMenu={onContextMenu}');
+  });
 });

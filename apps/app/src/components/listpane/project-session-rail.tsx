@@ -100,18 +100,6 @@ export function ProjectSessionRail({
     setAgentMenu({ card: sessionToCard(session), ...clampMenuAnchor(e) });
   };
 
-  const pickAgent = (card: AgentCard) => {
-    const ui = useUi.getState();
-    ui.setNav('projects');
-    ui.enterProjectFocus(card.projectId);
-    if (card.session.headless && card.session.status !== 'exited') {
-      void useData.getState().restoreTerminal(card.session.id, card.projectId);
-    } else {
-      ui.selectTab(card.projectId, card.session.id);
-    }
-    ui.setProjectView(card.projectId, 'terminals');
-  };
-
   const nestedCount = liveList.length + railThreads.length;
   const displayName = composerProjectLabel(project);
   const hasUnread = liveList.some((session) => unread[session.id]);
@@ -190,6 +178,7 @@ export function ProjectSessionRail({
                 thread={thread}
                 active={activeThreadId === thread.id}
                 projectId={project.id}
+                routeProjectId={project.id}
                 onOpen={() => {
                   navigate(getThreadRoutePath(thread.id, project.id));
                 }}
@@ -207,6 +196,7 @@ export function ProjectSessionRail({
                 }}
                 onContextMenu={(e) => openAgentCardMenu(e, session)}
                 projectId={project.id}
+                routeProjectId={project.id}
                 projectRemote={Boolean(project.remote)}
               />
             ))}
@@ -214,7 +204,7 @@ export function ProjectSessionRail({
         ) : null}
       </div>
       {agentMenu && (
-        <AgentCardMenu menu={agentMenu} setMenu={setAgentMenu} actions={agentActions} onPick={pickAgent} />
+        <AgentCardMenu menu={agentMenu} setMenu={setAgentMenu} actions={agentActions} />
       )}
       {threadMenu && <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />}
       {agentRename && (

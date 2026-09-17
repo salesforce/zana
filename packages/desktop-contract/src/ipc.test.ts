@@ -24,4 +24,8 @@ describe('IPC channel names', () => {
   it('has a dedicated main-owned folder adoption route', () => {
     expect(IPC.extensions.adoptLocal).toBe('extensions:adoptLocal');
   });
+
+  it('lists marketplace catalogs from main, not product HTTP', () => {
+    expect(IPC.marketplaces.list).toBe('marketplaces:list');
+  });
 });

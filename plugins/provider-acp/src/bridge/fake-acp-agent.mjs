@@ -54,6 +54,8 @@
  * - FAKE_ACP_LAUNCH_LOG      → append one line per process launch (used to
  *                              count model-discovery spawns in cache/TTL tests)
  * - FAKE_ACP_PROMPT_LOG      → append one JSON-encoded prompt text per request
+ * - FAKE_ACP_PROMPT_PREFIX   → select the last prefixed line as the scripted
+ *                              command, ignoring injected host instructions
  * - FAKE_ACP_REPLAY_INSTRUCTION_ECHO=1
  *                            → emit the prompt text as the first
  *                              agent_message_chunk (Mastra Code echo), then
@@ -365,10 +367,14 @@ function sleep(ms) {
 }
 
 function promptText(prompt) {
-  return (Array.isArray(prompt) ? prompt : [])
+  const text = (Array.isArray(prompt) ? prompt : [])
     .filter((block) => block && block.type === "text")
     .map((block) => block.text)
     .join("\n");
+  const prefix = process.env.FAKE_ACP_PROMPT_PREFIX;
+  if (!prefix) return text;
+  const command = text.split("\n").findLast((line) => line.startsWith(prefix));
+  return command?.slice(prefix.length) ?? "fixture ready";
 }
 
 function captureMcpServers(message) {

@@ -29,9 +29,18 @@ vi.mock('./thread/secondary-panel/ThreadPluginTab.js', () => ({
 vi.mock('./thread/secondary-panel/ThreadExplorerTab.js', () => ({
   ThreadExplorerTab: () => <div data-testid="thread-explorer-tab" />
 }));
+vi.mock('./thread/secondary-panel/ThreadInboxTab.js', () => ({
+  ThreadInboxTab: () => <div data-testid="thread-inbox-tab" />
+}));
 
 import { PaneContextProvider } from '../views/thread-detail/PaneContext.js';
-import { AgentSessionView, agentWriteScope, canPreviewCliPlanFile, cliPlanDocument } from './AgentSessionView.js';
+import {
+  AgentSessionView,
+  agentWriteScope,
+  canPreviewCliPlanFile,
+  cliPlanDocument,
+  resolveWriteScopePath
+} from './AgentSessionView.js';
 
 function session(over: Partial<TerminalSession> = {}): TerminalSession {
   return {
@@ -185,9 +194,19 @@ describe('AgentSessionView', () => {
   it('renders Diff, New Tab, file, browser, plugin, and sidecar-terminal empty bodies', () => {
     installMemoryStorage();
     persistPanel('s-diff', { activeId: 'diff' });
-    expect(renderToStaticMarkup(
-      <AgentSessionView session={session({ id: 's-diff' })} projectId="p1" projectName="demo" state="working" terminalAnchorId="a" />
-    )).toContain('data-testid="agent-diff-panel"');
+    const diffHtml = renderToStaticMarkup(
+      <AgentSessionView
+        session={session({ id: 's-diff' })}
+        projectId="p1"
+        projectName="demo"
+        state="working"
+        terminalAnchorId="a"
+        footer={<button type="button">Delete</button>}
+      />
+    );
+    expect(diffHtml).toContain('data-testid="agent-diff-panel"');
+    expect(diffHtml).not.toContain('data-testid="thread-secondary-footer"');
+    expect(diffHtml).not.toContain('Delete');
 
     persistPanel('s-new', { activeId: 'new-tab:1', tabs: [{ id: 'new-tab:1', kind: 'new-tab', title: 'New Tab' }] });
     expect(renderToStaticMarkup(
@@ -213,6 +232,11 @@ describe('AgentSessionView', () => {
     expect(renderToStaticMarkup(
       <AgentSessionView session={session({ id: 's-explorer' })} projectId="p1" projectName="demo" state="working" terminalAnchorId="a" />
     )).toContain('data-testid="thread-explorer-tab"');
+
+    persistPanel('s-inbox', { activeId: 'inbox:1', tabs: [{ id: 'inbox:1', kind: 'inbox', title: 'Inbox' }] });
+    expect(renderToStaticMarkup(
+      <AgentSessionView session={session({ id: 's-inbox' })} projectId="p1" projectName="demo" state="working" terminalAnchorId="a" />
+    )).toContain('data-testid="thread-inbox-tab"');
 
     persistPanel('s-term', { activeId: 'term:1', tabs: [{ id: 'term:1', kind: 'terminal', title: 'Terminal', sessionId: 'other' }] });
     expect(renderToStaticMarkup(
@@ -252,6 +276,12 @@ describe('AgentSessionView', () => {
 
   it('intersects transcript writes for the Diff pin', () => {
     expect(agentWriteScope(null)).toBeNull();
+    expect(agentWriteScope({ files: [], queue: [], model: 'sonnet' } as SessionStats)).toBeNull();
+    expect(agentWriteScope({
+      files: [{ path: '/a.ts', op: 'R' }],
+      queue: [],
+      model: 'sonnet'
+    } as SessionStats)).toBeNull();
     expect([...agentWriteScope({
       files: [
         { path: '/a.ts', op: 'W' },
@@ -261,6 +291,29 @@ describe('AgentSessionView', () => {
       queue: [],
       model: 'sonnet'
     } as SessionStats)!]).toEqual(['/a.ts', '/c.ts']);
+    expect([...agentWriteScope({
+      files: [
+        { path: 'src/a.ts', op: 'W' },
+        { path: '/abs/b.ts', op: 'C' }
+      ],
+      queue: [],
+      model: 'sonnet'
+    } as SessionStats, '/tmp/proj')!]).toEqual(['/tmp/proj/src/a.ts', '/abs/b.ts']);
+    expect(agentWriteScope({
+      files: [{ path: 'src/a.ts', op: 'W' }],
+      queue: [],
+      model: 'sonnet'
+    } as SessionStats)).toBeNull();
+  });
+
+  it('resolves relative write-set paths under cwd and drops escapes', () => {
+    expect(resolveWriteScopePath('/abs/a.ts', '/tmp/proj')).toBe('/abs/a.ts');
+    expect(resolveWriteScopePath('src/a.ts', '/tmp/proj')).toBe('/tmp/proj/src/a.ts');
+    expect(resolveWriteScopePath('./src/a.ts', '/tmp/proj')).toBe('/tmp/proj/src/a.ts');
+    expect(resolveWriteScopePath('src/../b.ts', '/tmp/proj')).toBe('/tmp/proj/b.ts');
+    expect(resolveWriteScopePath('../secret.ts', '/tmp/proj')).toBeNull();
+    expect(resolveWriteScopePath('src/a.ts', '')).toBeNull();
+    expect(resolveWriteScopePath('', '/tmp/proj')).toBeNull();
   });
 
   it('omits the sidecar terminal path and uses AgentDiffPanel for the Diff pin', () => {
@@ -270,6 +323,8 @@ describe('AgentSessionView', () => {
     expect(source).toContain('threadId={session.id}');
     expect(source).toContain("kind: 'explorer'");
     expect(source).toContain('<ThreadExplorerTab');
+    expect(source).toContain("kind: 'inbox'");
+    expect(source).toContain('<ThreadInboxTab');
     expect(source).toContain('thread-detail-split');
     expect(source).toContain('thread-detail-header');
     expect(source.indexOf('thread-detail-split')).toBeLessThan(source.indexOf('thread-detail-main agent-session-main'));
@@ -278,6 +333,8 @@ describe('AgentSessionView', () => {
     expect(source).toContain('data-testid="split-pane-close"');
     expect(source).toContain('thread-detail-view--split-pane');
     expect(source).toContain('defaultOpen: !modal');
+    expect(source).toContain('modal,');
+    expect(source).toContain('getContainerWidthPx');
     expect(source).not.toContain('agent-session-show-panel');
     expect(source).toContain('<AgentDiffPanel');
     expect(source).toContain('<AgentDetailPanel');

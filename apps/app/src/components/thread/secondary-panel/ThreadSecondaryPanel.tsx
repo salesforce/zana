@@ -3,6 +3,7 @@ import { GitCompare, Info, ListTodo, Maximize2, Minimize2, PanelRight, Plus, X }
 import {
   activeClosableTab,
   activePinnedView,
+  secondaryPanelShowsInspectorFooter,
   SECONDARY_PANEL_MIN_WIDTH_PX,
   type ThreadSecondaryPanelState
 } from './threadSecondaryPanelState.js';
@@ -159,7 +160,7 @@ export function ThreadSecondaryPanel({
         </div>
       </div>
       <div className="thread-secondary-body">{children}</div>
-      {footer ? (
+      {footer && secondaryPanelShowsInspectorFooter(state) ? (
         <div className="thread-secondary-footer" data-testid="thread-secondary-footer">
           {footer}
         </div>

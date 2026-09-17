@@ -1,0 +1,24 @@
+{
+  "id": "pr-monitor",
+  "displayName": "PR Monitor",
+  "description": "Keep your authored pull requests visible: CI, review, merge-readiness, and inbox alerts.",
+  "overview": "Keep pull requests you authored visible in ZCC. The plugin watches CI, review, and merge-readiness through the local GitHub CLI.\n\n## What you get\n\n- A list of your open pull requests with CI and review status.\n- Inbox alerts when a PR needs attention.\n- The same `gh` session you already use in the terminal.\n\n## How it works\n\nPR Monitor calls `gh` on this host. It does not store GitHub tokens in ZCC. Status refreshes in the background while the plugin is enabled.\n\n## Requirements\n\n- Install the GitHub CLI (`gh`) and run `gh auth login`.\n- The host must be able to reach GitHub.\n",
+  "icon": {
+    "lucide": "GitPullRequest"
+  },
+  "tags": [
+    "official"
+  ],
+  "author": {
+    "name": "Zana",
+    "github": "salesforce",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/salesforce/zana",
+      "subdir": "plugins/pr-monitor",
+      "ref": "HEAD"
+    }
+  }
+}

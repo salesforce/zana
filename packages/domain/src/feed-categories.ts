@@ -143,7 +143,7 @@ export const FEED_CATEGORIES: Record<FeedCategoryId, FeedCategory> = {
     label: 'Question',
     grouped: false,
     icon: 'HelpCircle',
-    blurb: 'A blocking question (inbox_ask) awaiting the user — must never be folded away.'
+    blurb: 'A blocking question awaiting the user — must never be folded away.'
   },
   goal: {
     id: 'goal',

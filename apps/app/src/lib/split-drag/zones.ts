@@ -35,7 +35,7 @@ export function pickZone(rect: Rect, clientX: number, clientY: number): SplitZon
 
 /** Viewport-space rectangle the drop overlay should cover for a given zone. */
 export function zoneBox(rect: Rect, zone: SplitZone): Rect {
-  const m = ZONE_MARGIN_PX;
+  const m = Math.max(0, Math.min(ZONE_MARGIN_PX, rect.width / 2, rect.height / 2));
   switch (zone) {
     case 'left':
       return {
@@ -91,9 +91,10 @@ export function decideThreadDrop({
   if (threadAlreadyOpen) {
     return { zone: 'center', label: 'Already open — focus pane' };
   }
-  const replaceLabel = emptyTarget ? 'Open here' : 'Replace this chat';
+  if (emptyTarget) return { zone: 'center', label: 'Open here' };
+  const replaceLabel = 'Replace this view';
   if (atMaxPanes) {
-    return { zone: 'center', label: replaceLabel };
+    return { zone: 'center', label: zone === 'center' ? replaceLabel : 'Pane limit reached — replace this view' };
   }
   return {
     zone,
@@ -108,7 +109,7 @@ interface PaneDropInput {
 
 export function decidePaneDrop({ zone, isSelf }: PaneDropInput): ZoneDecision | null {
   if (isSelf) return null;
-  return zone === 'center' ? { zone, label: 'Swap chats' } : { zone, label: `Move ${zone}` };
+  return zone === 'center' ? { zone, label: 'Swap views' } : { zone, label: `Move ${zone}` };
 }
 
 interface SidebarSplitDragEngageInput {

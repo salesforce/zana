@@ -1,4 +1,5 @@
-export { WorktreeSwitcher } from './WorktreeSwitcher.js';
+export { WorktreeMenu } from './WorktreeSwitcher.js';
+export { ExplorerGitFooter } from './ExplorerGitFooter.js';
 export { ExplorerTreeHeader } from './ExplorerTreeHeader.js';
 export { ExplorerContextMenu } from './ExplorerContextMenu.js';
 export { FileViewer } from './FileViewer.js';

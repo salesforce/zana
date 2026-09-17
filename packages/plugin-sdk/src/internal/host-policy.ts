@@ -64,12 +64,15 @@ export function pluginCliCollisionWarning(
  * Built-in dynamic tool names plugins may not shadow. Maintained by hand —
  * kept in sync with conversation SHARE tools in
  * apps/server/src/services/threads/host-session-tools.ts
- * (`HOST_SHARE_TOOL_NAMES`) plus `update_environment_directory`.
+ * (`HOST_SHARE_TOOL_NAMES`) plus `update_environment_directory` and the
+ * optional SHARE name `run_in_terminal` (packed only when the in-app
+ * agent terminals experiment is on).
  * Guarded by host-session-tools.policy.test.ts.
  */
 export const RESERVED_AGENT_TOOL_NAMES: readonly string[] = [
   "update_environment_directory",
   "preview_file",
+  "run_in_terminal",
   "inbox_push",
   "inbox_search",
   "suggest_action",
@@ -1061,12 +1064,13 @@ function validateProviderFallbackModels(
 const AI_SERVICE_KINDS = new Set<PluginAiServiceKind>(["inference", "voice"]);
 
 /**
- * AI-service ids the server serves itself: `openai` transcription and the
- * builtin inference providers (pi-ai 0.84). A plugin cannot register one —
- * it would capture the user's prompts and audio. This list is the one source
- * for both the fake host and production (`isServerDirectAiServiceId`);
- * apps/server/test/services/plugins/plugin-ai-services.test.ts pins it to
- * pi-ai's provider registry, so a pi-ai bump must move it in the same change.
+ * Reservation list, not an enablement list: AI-service ids the server already
+ * serves (`openai` transcription and builtin pi-ai 0.84 inference providers).
+ * A plugin cannot register one — it would capture the user's prompts and audio.
+ * This list is the one source for both the fake host and production
+ * (`isServerDirectAiServiceId`); apps/server/test/services/plugins/plugin-ai-services.test.ts
+ * pins it to pi-ai's provider registry, so a pi-ai bump must move it in the
+ * same change.
  */
 export const SERVER_DIRECT_AI_SERVICE_IDS: readonly string[] = Object.freeze([
   "openai",

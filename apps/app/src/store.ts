@@ -70,6 +70,7 @@ import {
   getSchedulerRoutePath,
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
+import { resolveProjectBackPath } from './lib/route-memory.js';
 import {
   EMPTY_HOST_INSTALL_DRAWER,
   reduceHostInstallAppend,
@@ -475,7 +476,7 @@ interface UiState {
   // Right-edge Notifications drawer: the slide-over quick-glance list of
   // recent/unread Inbox entries. Toggled from the titlebar bell (replacing its
   // old nav-to-Inbox behavior). Persisted in localStorage like the favorites
-  // drawer, and mutually independent — both can be open at once.
+  // drawer. Opening either panel closes the other.
   notificationsDrawerOpen: boolean;
   toggleNotificationsDrawer: () => void;
   setNotificationsDrawerOpen: (open: boolean) => void;
@@ -554,8 +555,8 @@ interface UiState {
   /** Drill the project list column into `id`'s focused session view. Keeps
    *  selection in sync (calls selectProject) and persists the focus. */
   enterProjectFocus: (id: string) => void;
-  /** Leave focus mode and return the column to the full project list. */
-  exitProjectFocus: () => void;
+  /** Leave focus mode and navigate off `/projects/:id` (Agents unless `to`). */
+  exitProjectFocus: (to?: string) => void;
   selectTab: (projectId: string, tabId: string | undefined) => void;
   setPaletteOpen: (open: boolean) => void;
   setQuickOpenOpen: (open: boolean) => void;
@@ -795,6 +796,7 @@ function mirroredConfigFlags(config: AppConfig) {
     autoCloseIdleEnabled: config.autoCloseIdleEnabled ?? false,
     overseerMode: config.overseerMode ?? 'off',
     catchUpSummaryEnabled: config.catchUpSummaryEnabled ?? false,
+    classicSessionViewEnabled: config.classicSessionViewEnabled ?? false,
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
     autoOpenThreadPlanPanel: config.autoOpenThreadPlanPanel ?? false,
@@ -808,6 +810,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled !== false,
     harnessGrokEnabled: config.harnessGrokEnabled !== false,
     harnessMastracodeEnabled: config.harnessMastracodeEnabled !== false,
+    harnessAfcodeEnabled: config.harnessAfcodeEnabled !== false,
     nativeAgentDiscoveryEnabled: config.nativeAgentDiscoveryEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
     teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false,
@@ -1013,27 +1016,21 @@ export const useUi = create<UiState>((set, get) => ({
   projectExpanded: {},
   splitLayout: {},
   splitTabIds: {},
-  favoritesDrawerOpen: readLocalStorageItem('zcc.favoritesDrawerOpen') === '1',
-  toggleFavoritesDrawer: () =>
-    set((s) => {
-      const next = !s.favoritesDrawerOpen;
-      writeLocalStorageItem('zcc.favoritesDrawerOpen', next ? '1' : '0');
-      return { favoritesDrawerOpen: next };
-    }),
+  // Older versions allowed both flags at once. Notifications wins on hydration.
+  favoritesDrawerOpen: readLocalStorageItem('zcc.favoritesDrawerOpen') === '1' &&
+    readLocalStorageItem('zcc.notificationsDrawerOpen') !== '1',
+  toggleFavoritesDrawer: () => get().setFavoritesDrawerOpen(!get().favoritesDrawerOpen),
   setFavoritesDrawerOpen: (open) => {
     writeLocalStorageItem('zcc.favoritesDrawerOpen', open ? '1' : '0');
-    set({ favoritesDrawerOpen: open });
+    writeLocalStorageItem('zcc.notificationsDrawerOpen', !open && get().notificationsDrawerOpen ? '1' : '0');
+    set({ favoritesDrawerOpen: open, ...(open ? { notificationsDrawerOpen: false } : {}) });
   },
   notificationsDrawerOpen: readLocalStorageItem('zcc.notificationsDrawerOpen') === '1',
-  toggleNotificationsDrawer: () =>
-    set((s) => {
-      const next = !s.notificationsDrawerOpen;
-      writeLocalStorageItem('zcc.notificationsDrawerOpen', next ? '1' : '0');
-      return { notificationsDrawerOpen: next };
-    }),
+  toggleNotificationsDrawer: () => get().setNotificationsDrawerOpen(!get().notificationsDrawerOpen),
   setNotificationsDrawerOpen: (open) => {
     writeLocalStorageItem('zcc.notificationsDrawerOpen', open ? '1' : '0');
-    set({ notificationsDrawerOpen: open });
+    writeLocalStorageItem('zcc.favoritesDrawerOpen', !open && get().favoritesDrawerOpen ? '1' : '0');
+    set({ notificationsDrawerOpen: open, ...(open ? { favoritesDrawerOpen: false } : {}) });
   },
   hostInstallDrawer: EMPTY_HOST_INSTALL_DRAWER,
   openHostInstallDrawer: (input) => set((s) => ({
@@ -1143,8 +1140,10 @@ export const useUi = create<UiState>((set, get) => ({
     get().setProjectView(id, 'agents');
     product.config.set({ focusedProjectId: id }).catch(() => {});
   },
-  exitProjectFocus: () => {
-    set({ focusedProjectId: null });
+  exitProjectFocus: (to) => {
+    // URL is the focus source of truth (`route.focusedProjectId ?? store`).
+    // Clearing the store alone leaves `/projects/:id` and the project rail.
+    applyDestination(set, resolveProjectBackPath(to), { focusedProjectId: null });
     product.config.set({ focusedProjectId: null }).catch(() => {});
   },
   selectTab: (projectId, tabId) => {
@@ -1526,8 +1525,9 @@ interface DataState {
   teamDefaultCoordinationMode: NonNullable<AppConfig['teamDefaultCoordinationMode']>;
   /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, waiting
    *  scheduler jobs appear in the Agents board Scheduled column (plus finished
-   *  runs in Done). Working/blocked scheduled runs stay in Working even when
-   *  off. Backs the board-toolbar toggle and the Settings checkbox. Default on. */
+   *  runs in Done) and working/blocked scheduled runs stay in Working. When
+   *  off, every scheduled session is hidden from Agent View. Backs the
+   *  board-toolbar Calendar toggle and the Settings checkbox. Default on. */
   includeScheduledAgentsInAgentView: boolean;
   /** Mirror of AppConfig.voiceInputEnabled — gates the mic button in the prompt
    *  composer. Hydrated on init, kept live by the Settings toggle. Default off. */
@@ -1553,6 +1553,10 @@ interface DataState {
    *  in the agent modal (EXPERIMENTAL). Hydrated on init, kept live by the Settings
    *  toggle. Default off. */
   catchUpSummaryEnabled: boolean;
+  /** Mirror of AppConfig.classicSessionViewEnabled — skip the inspector overlay
+   *  and open CLI agents / threads as full pages (EXPERIMENTAL). Hydrated on init,
+   *  kept live by the Settings toggle. Default off. */
+  classicSessionViewEnabled: boolean;
   /** Mirror of AppConfig.catchUpSummaryDelaySeconds — idle/blocked dwell before
    *  the add-on fires. Hydrated on init. Default 20. Used by the card to compute
    *  the shimmer threshold. */
@@ -1571,7 +1575,7 @@ interface DataState {
    *  toggle. Default off; when off the "Suggestions" nav entry is absent. */
   suggestionsEnabled: boolean;
   /** Mirror of AppConfig.structuredQuestionsEnabled — gates the interactive
-   *  lettered-option question form (inbox_ask / inbox_push options / follow-up
+   *  lettered-option question form (inbox_push options / follow-up
    *  picker) vs. plain markdown + free-text reply. Hydrated on init, kept live by
    *  the Settings toggle. Default ON. */
   structuredQuestionsEnabled: boolean;
@@ -1588,6 +1592,7 @@ interface DataState {
   harnessGrokEnabled: boolean;
   /** Mirror of AppConfig.harnessMastracodeEnabled — explicit hide for Mastra Code. */
   harnessMastracodeEnabled: boolean;
+  harnessAfcodeEnabled: boolean;
   /** Mirror of AppConfig.nativeAgentDiscoveryEnabled. */
   nativeAgentDiscoveryEnabled: boolean;
   /** Last code-harness verification snapshot (Settings → Code Harness). Empty
@@ -1644,6 +1649,7 @@ interface DataState {
   setCliRemoteHostCatalogEnabled: (on: boolean) => void;
   setFollowUpsEnabled: (on: boolean) => void;
   setCatchUpSummaryEnabled: (on: boolean) => void;
+  setClassicSessionViewEnabled: (on: boolean) => void;
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
   setAutoOpenThreadPlanPanel: (on: boolean) => void;
@@ -1655,6 +1661,7 @@ interface DataState {
   setHarnessOpenCodeEnabled: (on: boolean) => void;
   setHarnessGrokEnabled: (on: boolean) => void;
   setHarnessMastracodeEnabled: (on: boolean) => void;
+  setHarnessAfcodeEnabled: (on: boolean) => void;
   setMicroVmEnabled: (on: boolean) => void;
   setWorktreeIsolationDefault: (on: boolean) => void;
   setIdleAttentionSensitivity: (level: 'high' | 'medium' | 'low') => void;
@@ -1899,41 +1906,28 @@ export function listedTerminals(list: TerminalSession[] | undefined): TerminalSe
 }
 
 /**
- * A scheduled job that is actively working or blocked — it belongs in Working,
- * not the Scheduled column. Waiting (`idle`/`unknown`) and exited scheduled
- * jobs are not active.
- */
-function isActiveScheduledRun(
-  session: Pick<TerminalSession, 'scheduled' | 'status'>,
-  state: AgentState | undefined
-): boolean {
-  if (!session.scheduled || session.status === 'exited') return false;
-  return state === 'working' || state === 'blocked';
-}
-
-/**
  * Sessions for the Agents board / list / flow. When `includeScheduled` is on,
  * every scheduler-spawned job is kept (waiting ones sit in the Scheduled
- * column). When off, waiting and exited scheduled jobs are dropped, but a
- * scheduled run that is working or blocked stays visible in Working. The
- * Projects sidebar (global + per-project) never lists scheduled jobs — that
- * tree uses {@link projectRailTerminals} / {@link listedTerminals}.
+ * column; working/blocked ones stay in Working). When off, every scheduled
+ * session is dropped — including a run that is currently working or blocked.
+ * The Projects sidebar (global + per-project) never lists scheduled jobs —
+ * that tree uses {@link projectRailTerminals} / {@link listedTerminals}.
  */
 export function agentViewTerminals(
   list: TerminalSession[] | undefined,
-  includeScheduled: boolean,
-  stateById: Readonly<Record<string, AgentState>> = {}
+  includeScheduled: boolean
 ): TerminalSession[] {
   const sessions = list ?? [];
   if (includeScheduled) return sessions;
-  return sessions.filter((t) => !t.scheduled || isActiveScheduledRun(t, stateById[t.id]));
+  return sessions.filter((t) => !t.scheduled);
 }
 
 /**
  * Live sessions for a project's inline rail expansion (global Workspaces tree
  * and the focused-project session rail). Scheduler jobs stay off this tree —
  * they belong on the Agents board / list when that setting is on, and in the
- * Scheduler panel. Exited/dismissed agents drop out automatically.
+ * Scheduler panel. Exited CLI agents are dumped — they are not conversations
+ * with history the way idle threads are.
  */
 export function projectRailTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
   return listedTerminals(list).filter((t) => t.status !== 'exited');
@@ -2015,6 +2009,7 @@ export const useData = create<DataState>((set, get) => ({
   overseerMode: 'off',
   reviewerApprovalMode: 'ask',
   catchUpSummaryEnabled: false,
+  classicSessionViewEnabled: false,
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
   autoOpenThreadPlanPanel: false,
@@ -2029,6 +2024,7 @@ export const useData = create<DataState>((set, get) => ({
   harnessOpenCodeEnabled: false,
   harnessGrokEnabled: false,
   harnessMastracodeEnabled: false,
+  harnessAfcodeEnabled: false,
   nativeAgentDiscoveryEnabled: false,
   harnessStatus: [],
   editorStatus: [],
@@ -2087,6 +2083,10 @@ export const useData = create<DataState>((set, get) => ({
     set({ catchUpSummaryEnabled: on });
   },
 
+  setClassicSessionViewEnabled(on) {
+    set({ classicSessionViewEnabled: on });
+  },
+
   setFeedNoiseClassifierEnabled(on) {
     set({ feedNoiseClassifierEnabled: on });
   },
@@ -2130,6 +2130,11 @@ export const useData = create<DataState>((set, get) => ({
 
   setHarnessMastracodeEnabled(on) {
     set({ harnessMastracodeEnabled: on });
+    void prefetchThreadModelCatalog().catch(() => undefined);
+  },
+
+  setHarnessAfcodeEnabled(on) {
+    set({ harnessAfcodeEnabled: on });
     void prefetchThreadModelCatalog().catch(() => undefined);
   },
 
@@ -3607,6 +3612,34 @@ export const useData = create<DataState>((set, get) => ({
     const idx = list.findIndex((t) => t.id === sessionId);
     if (idx === -1) return null;
     const src = list[idx];
+    if (src.status === 'exited' && src.restoreCapabilityId) {
+      let created: TerminalSession | null;
+      try {
+        const result = await product.terminals.restore({ capabilityId: src.restoreCapabilityId });
+        if (!result.ok) {
+          pushErrorToast(result.message);
+          return null;
+        }
+        created = result.value;
+      } catch (err) {
+        pushErrorToast(errorMessage(err, 'Failed to resume session'));
+        return null;
+      }
+      if (!created) {
+        pushErrorToast('Failed to resume session');
+        return null;
+      }
+      set((s) => {
+        const cur = s.terminals[projectId] || [];
+        const without = cur.filter((t) => t.id !== sessionId && t.id !== created!.id);
+        const target = Math.min(idx, without.length);
+        const restored = { ...created!, pinned: src.pinned };
+        const next = without.slice(0, target).concat(restored, without.slice(target));
+        return { terminals: { ...s.terminals, [projectId]: next } };
+      });
+      useUi.getState().selectTab(projectId, created.id);
+      return created;
+    }
     // Snapshot what we need before kill/reset — once we close the pty the
     // session may be removed from the live map and we lose pinned/title.
     // Also carries codex/opencode's detected session ids so a restart resumes
@@ -3620,7 +3653,8 @@ export const useData = create<DataState>((set, get) => ({
       cwd: src.cwd,
       claudeSessionId: src.claudeSessionId,
       codexSessionId: src.codexSessionId,
-      openCodeSessionId: src.openCodeSessionId
+      openCodeSessionId: src.openCodeSessionId,
+      nativeConversationId: src.nativeConversationId
     };
     try {
       if (!await product.terminals.close(sessionId)) {
@@ -3651,7 +3685,8 @@ export const useData = create<DataState>((set, get) => ({
       snapshot.extraArgs,
       snapshot.claudeSessionId,
       snapshot.codexSessionId,
-      snapshot.openCodeSessionId
+      snapshot.openCodeSessionId,
+      snapshot.nativeConversationId
     );
     const created = await get().createTerminal(projectId, resolved.profile, 80, 24, {
       extraArgs: resolved.extraArgs,

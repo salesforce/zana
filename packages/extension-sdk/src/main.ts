@@ -376,7 +376,7 @@ export interface MainModuleContext {
    * Push a durable entry to the user's Inbox on this extension's behalf, gated
    * by the `inbox:push` permission. Unlike {@link host}'s ephemeral, non-
    * persisted dialogs, this writes a real row into the same durable Inbox the
-   * `inbox_push`/`inbox_ask` MCP tools use — it survives a restart, counts
+   * `inbox_push` MCP tool uses — it survives a restart, counts
    * toward the unread badge, and is what the bell's notifications drawer reads.
    *
    * The host STAMPS provenance from the AUTHENTICATED calling module id (never
@@ -562,7 +562,10 @@ export type SdkLaunchProfileId =
   | 'grok-yolo'
   | 'mastracode'
   | 'mastracode-resume'
-  | 'mastracode-yolo';
+  | 'mastracode-yolo'
+  | 'afcode'
+  | 'afcode-resume'
+  | 'afcode-yolo';
 
 /** Provenance stamp — see core's `PersonaSource`. The host stamps `{ extensionId }`. */
 export type PersonaSource =

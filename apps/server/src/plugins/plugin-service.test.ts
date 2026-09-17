@@ -567,6 +567,147 @@ describe('PluginService', () => {
     }
   });
 
+  it('seeds the default public official feed when ZCC_OFFICIAL_MARKETPLACE_URL is unset', async () => {
+    const previous = process.env.ZCC_OFFICIAL_MARKETPLACE_URL;
+    delete process.env.ZCC_OFFICIAL_MARKETPLACE_URL;
+    try {
+      const { DEFAULT_OFFICIAL_MARKETPLACE_URL } = await import('./default-marketplaces.js');
+      let fetched: string | undefined;
+      const service = createPluginService({
+        dataDir: root(),
+        bundledRoot: root(),
+        fetchJson: async (url) => {
+          fetched = url;
+          return {
+            schemaVersion: 1,
+            name: 'official',
+            displayName: 'Zana official plugins',
+            plugins: []
+          };
+        }
+      });
+      await service.start();
+      expect(fetched).toBe(DEFAULT_OFFICIAL_MARKETPLACE_URL);
+      const catalogs = service.listMarketplaces();
+      expect(catalogs).toHaveLength(1);
+      expect(catalogs[0]?.official).toBe(true);
+      expect(catalogs[0]?.source).toBe(DEFAULT_OFFICIAL_MARKETPLACE_URL);
+    } finally {
+      if (previous === undefined) delete process.env.ZCC_OFFICIAL_MARKETPLACE_URL;
+      else process.env.ZCC_OFFICIAL_MARKETPLACE_URL = previous;
+    }
+  });
+
+  it('seeds the internal marketplace as official and stays up if it is unreachable', async () => {
+    const previous = process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE;
+    const fixture = mkdtempSync(join(tmpdir(), 'zcc-internal-mp-'));
+    roots.push(fixture);
+    writeFileSync(join(fixture, 'marketplace.json'), JSON.stringify({
+      schemaVersion: 1,
+      name: 'internal',
+      displayName: 'Salesforce internal plugins',
+      plugins: [
+        {
+          id: 'sf-notes',
+          displayName: 'SF Notes',
+          description: 'internal',
+          author: { name: 'Salesforce' },
+          source: { npm: { package: '@sf/notes', range: '1.0.0' } }
+        }
+      ]
+    }));
+    try {
+      process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE = `path:${fixture}`;
+      const ok = createPluginService({ dataDir: root(), bundledRoot: root() });
+      await ok.start();
+      const catalogs = ok.listMarketplaces();
+      expect(catalogs).toHaveLength(1);
+      expect(catalogs[0]?.official).toBe(true);
+      expect(catalogs[0]?.name).toBe('internal');
+      expect(catalogs[0]?.lastError).toBeNull();
+      await expect(ok.removeMarketplace(catalogs[0]!.source)).rejects.toThrow(/cannot be removed/);
+
+      process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE = `path:${join(root(), 'missing-catalog')}`;
+      const failing = createPluginService({ dataDir: root(), bundledRoot: root() });
+      await expect(failing.start()).resolves.toBeUndefined();
+      expect(failing.listMarketplaces()).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE;
+      else process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE = previous;
+    }
+  });
+
+  it('still seeds the public official catalog when an internal official catalog already exists', async () => {
+    const previousOfficial = process.env.ZCC_OFFICIAL_MARKETPLACE_URL;
+    const previousInternal = process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE;
+    const dataDir = root();
+    const fixture = mkdtempSync(join(tmpdir(), 'zcc-internal-mp-'));
+    roots.push(fixture);
+    writeFileSync(join(fixture, 'marketplace.json'), JSON.stringify({
+      schemaVersion: 1,
+      name: 'internal',
+      displayName: 'Salesforce internal plugins',
+      plugins: []
+    }));
+    try {
+      process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE = `path:${fixture}`;
+      process.env.ZCC_OFFICIAL_MARKETPLACE_URL = 'https://example.test/marketplace/v1/marketplace.json';
+      const service = createPluginService({
+        dataDir,
+        bundledRoot: root(),
+        fetchJson: async () => ({
+          schemaVersion: 1,
+          name: 'official',
+          displayName: 'Zana official plugins',
+          plugins: [
+            {
+              id: 'tasks',
+              displayName: 'Tasks',
+              description: 'tasks',
+              author: { name: 'Zana' },
+              source: { git: { url: 'https://github.com/salesforce/zana', subdir: 'plugins/tasks', ref: 'HEAD' } }
+            }
+          ]
+        })
+      });
+      await service.start();
+      const catalogs = service.listMarketplaces();
+      expect(catalogs.map((row) => row.name).sort()).toEqual(['internal', 'official']);
+      expect(catalogs.every((row) => row.official)).toBe(true);
+    } finally {
+      if (previousOfficial === undefined) delete process.env.ZCC_OFFICIAL_MARKETPLACE_URL;
+      else process.env.ZCC_OFFICIAL_MARKETPLACE_URL = previousOfficial;
+      if (previousInternal === undefined) delete process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE;
+      else process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE = previousInternal;
+    }
+  });
+
+  it('promotes a previously manual internal catalog to official without recloning', async () => {
+    const previous = process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE;
+    const fixture = mkdtempSync(join(tmpdir(), 'zcc-internal-mp-'));
+    roots.push(fixture);
+    writeFileSync(join(fixture, 'marketplace.json'), JSON.stringify({
+      schemaVersion: 1,
+      name: 'internal',
+      displayName: 'Salesforce internal plugins',
+      plugins: []
+    }));
+    try {
+      process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE = 'off';
+      const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+      await service.addMarketplace(`path:${fixture}`);
+      expect(service.listMarketplaces()[0]?.official).toBe(false);
+      process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE = `path:${fixture}`;
+      await service.start();
+      const catalogs = service.listMarketplaces();
+      expect(catalogs).toHaveLength(1);
+      expect(catalogs[0]?.official).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE;
+      else process.env.ZCC_INTERNAL_MARKETPLACE_SOURCE = previous;
+    }
+  });
+
   it('exposes skill names, mcpServers without env values, and extra on snapshot', async () => {
     const dataDir = root();
     const pluginDir = writePlugin(join(root(), 'docs'), 'docs');

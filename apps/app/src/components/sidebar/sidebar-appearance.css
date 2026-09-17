@@ -1,0 +1,155 @@
+/* Shared navigation chrome. Keep layout, ordering, and split-drag ownership in
+   SidebarRail; these rules only establish visual hierarchy and target sizes. */
+.sidebar.sidebar--global .nav-item,
+.sidebar.project-scoped-nav .nav-item {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-color: transparent;
+  border-radius: 6px;
+  color: var(--text-primary);
+  line-height: 1.4;
+  font-weight: 400;
+}
+
+.sidebar.sidebar--global .nav-item.active,
+.sidebar.project-scoped-nav .nav-item.active {
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--sidebar-bg));
+  font-weight: 500;
+}
+
+.sidebar .nav-item-icon {
+  color: var(--text-muted);
+}
+
+/* Separate the two pinned destinations from the reorderable destinations. */
+.sidebar.sidebar--global .sidebar-nav > [data-testid='nav-inbox'] {
+  margin-bottom: 8px;
+}
+
+.sidebar .nav-badge {
+  min-width: 20px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Running is ordinary activity. The icon's static dot still signals it;
+   unread and blocked badges retain their stronger semantic colors. */
+.sidebar .nav-badge.nav-badge--running {
+  animation: none;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.sidebar .sidebar-projects-header {
+  padding-top: 10px;
+  padding-bottom: 8px;
+}
+
+.sidebar .sidebar-projects-heading {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.sidebar .sidebar-projects .sidebar-projects-filter {
+  display: flex;
+  flex: 0 0 auto;
+  margin: 0 8px 8px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 60%, var(--sidebar-bg));
+}
+
+.sidebar .sidebar-projects-filter input {
+  min-width: 0;
+  height: 30px;
+  padding: 5px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.sidebar .sidebar-projects-filter .list-filter-icon {
+  color: var(--text-muted);
+}
+
+.sidebar .sidebar-projects-filter .list-filter-clear {
+  width: 24px;
+  height: 24px;
+}
+
+.sidebar .sidebar-projects .sidebar-projects-filter:has(input:focus-visible) {
+  border-color: var(--focus-ring);
+  outline: 2px solid color-mix(in srgb, var(--focus-ring) 25%, transparent);
+  outline-offset: 1px;
+}
+
+.sidebar .sidebar-projects .project-item {
+  min-height: 30px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  border-radius: 6px;
+}
+
+.sidebar .sidebar-projects .project-name {
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.sidebar .sidebar-projects .project-badge {
+  border: 0;
+  background: transparent;
+  padding: 0 3px;
+  font-size: 10px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar .sidebar-projects .project-terminals {
+  margin-left: 11px;
+  padding-left: 6px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+}
+
+/* Make hover actions reachable with Tab as well. Opacity keeps their space
+   reserved, so revealing them never changes the project-name width. */
+.sidebar .sidebar-projects .project-spawn {
+  visibility: visible;
+  opacity: 0;
+}
+
+.sidebar .sidebar-projects .project-item:is(:hover, :focus-within) :is(.project-spawn, .project-actions, .project-favorite-star) {
+  opacity: 1;
+}
+
+.sidebar .sidebar-projects :is(.project-spawn, .project-actions, .project-tree-chevron, .project-favorite-star):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+.sidebar .sidebar-utility-bar {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sidebar .sidebar-utility-button--settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: auto;
+  padding: 0 8px;
+  margin-right: auto;
+  font-size: 12px;
+}
+
+@media (hover: none) {
+  .sidebar .sidebar-projects :is(.project-spawn, .project-actions, .project-favorite-star) {
+    opacity: 1;
+  }
+}

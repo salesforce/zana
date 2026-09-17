@@ -239,17 +239,22 @@ describe('invokeHostSessionTool', () => {
   it('does not pack native browser tools; agents drive tabs through zcc browser', () => {
     expect(HOST_SESSION_INSTRUCTION).not.toContain('browser_open');
     expect(HOST_SHARE_TOOL_NAMES).not.toContain('browser_open');
+    expect(HOST_SESSION_INSTRUCTION).not.toContain('run_in_terminal');
+  });
+
+  it('recognizes run_in_terminal as a host session tool even when it is not packed', () => {
+    expect(isHostSessionTool('run_in_terminal')).toBe(true);
   });
 
   it('reports unsupported for names that are not host SHARE tools', async () => {
-    expect(isHostSessionTool('inbox_ask')).toBe(false);
+    expect(isHostSessionTool('followup_create')).toBe(false);
     expect(isHostSessionTool(HOST_PREVIEW_FILE_TOOL_NAME)).toBe(true);
     const packed = mergeHostSessionTooling({
       dynamicTools: [{ name: 'sf_soql', description: 'SOQL', inputSchema: {} }]
     });
     expect(packed.dynamicTools?.at(-1)?.name).toBe('sf_soql');
     const result = await invokeHostSessionTool(ctx(), {
-      name: 'inbox_ask',
+      name: 'followup_create',
       threadId: 'thr-1',
       projectId: 'proj-1',
       input: {}

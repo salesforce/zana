@@ -238,7 +238,7 @@ Core stays **portable**: environment-specific integrations belong in plugins, no
 
 These are product features that sit *on top of* the server/host split:
 
-- **Inbox** — agents push questions/reports via MCP (`inbox_push` / `inbox_ask` / `inbox_search`). Feed category registry decides SIGNAL vs folded NOISE. Optional LLM feed-noise classifier is an overlay, not a mutation of `classifyEntry`.
+- **Inbox** — agents push questions/reports via MCP (`inbox_push` / `inbox_search`). Feed category registry decides SIGNAL vs folded NOISE. Optional LLM feed-noise classifier is an overlay, not a mutation of `classifyEntry`.
 - **Library** — durable docs; the docs plugin owns Library UI + `library-curator` skill; reads go through confined host FS.
 - **Personas / teams / scheduler / goals / follow-ups** — durable config and timers on the server; launch still goes through host PTY or thread start.
 - **Skills** — builtin skills in `apps/server/src/plugins/builtin-skills/`; roster in `skill-installer.ts`. Threads get a catalog of `{name, description}` and load bodies on demand.

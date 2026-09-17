@@ -17,7 +17,7 @@ interface UsageEntry {
   lastUsedAt: number;
 }
 
-type UsageMap = Record<string, UsageEntry>;
+export type UsageMap = Record<string, UsageEntry>;
 
 /** Drop entries older than this so the store doesn't grow unbounded. */
 const MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000; // 60 days

@@ -231,6 +231,39 @@ describe('launch-provider', () => {
       }
       expect(snapshot).toMatchInlineSnapshot(`
         {
+          "afcode": {
+            "acceptsPermissionMode": false,
+            "acceptsPromptArgv": false,
+            "acceptsSessionId": false,
+            "canAutoCloseOnFinish": false,
+            "emitsOscStatus": false,
+            "hasTranscript": false,
+            "injectsClaudeMcpConfig": false,
+            "isAgent": true,
+            "supportsHooks": false,
+          },
+          "afcode-resume": {
+            "acceptsPermissionMode": false,
+            "acceptsPromptArgv": false,
+            "acceptsSessionId": false,
+            "canAutoCloseOnFinish": false,
+            "emitsOscStatus": false,
+            "hasTranscript": false,
+            "injectsClaudeMcpConfig": false,
+            "isAgent": true,
+            "supportsHooks": false,
+          },
+          "afcode-yolo": {
+            "acceptsPermissionMode": false,
+            "acceptsPromptArgv": false,
+            "acceptsSessionId": false,
+            "canAutoCloseOnFinish": false,
+            "emitsOscStatus": false,
+            "hasTranscript": false,
+            "injectsClaudeMcpConfig": false,
+            "isAgent": true,
+            "supportsHooks": false,
+          },
           "claude": {
             "acceptsPermissionMode": true,
             "acceptsPromptArgv": true,

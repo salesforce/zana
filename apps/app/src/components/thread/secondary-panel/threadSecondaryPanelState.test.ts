@@ -21,7 +21,10 @@ import {
   storageKeyForThread,
   toggleSecondaryPanelMaximized,
   uniqueTabSuffix,
-  activePinnedView
+  activePinnedView,
+  applySecondaryPanelOpenWidth,
+  secondaryPanelOpenWidthPx,
+  secondaryPanelShowsInspectorFooter
 } from './threadSecondaryPanelState.js';
 
 describe('thread secondary panel state', () => {
@@ -36,12 +39,38 @@ describe('thread secondary panel state', () => {
     expect(secondaryPanelStatesEqual(state, { ...state, isOpen: true })).toBe(false);
   });
 
+  it('opens the side panel at 50% normally and 33% in a modal', () => {
+    expect(secondaryPanelOpenWidthPx(1000, false)).toBe(500);
+    expect(secondaryPanelOpenWidthPx(1000, true)).toBe(330);
+    const closed = emptySecondaryPanelState();
+    const opened = { ...closed, isOpen: true };
+    expect(applySecondaryPanelOpenWidth(closed, opened, {
+      containerWidthPx: 1000,
+      modal: false
+    }).widthPx).toBe(500);
+    expect(applySecondaryPanelOpenWidth(closed, opened, {
+      containerWidthPx: 1000,
+      modal: true
+    }).widthPx).toBe(330);
+    expect(applySecondaryPanelOpenWidth(opened, opened, {
+      containerWidthPx: 1000,
+      modal: true
+    })).toBe(opened);
+    expect(applySecondaryPanelOpenWidth(closed, opened, {
+      containerWidthPx: 0,
+      modal: false
+    })).toBe(opened);
+  });
+
   it('opens onto the Info pin by default', () => {
     const next = openSecondaryPanel(emptySecondaryPanelState());
     expect(next.isOpen).toBe(true);
     expect(next.activeId).toBe(INFO_PIN_ID);
     expect(activePinnedView(next)).toBe('info');
     expect(activePinnedView(selectPinnedView(next, 'diff'))).toBe('diff');
+    expect(secondaryPanelShowsInspectorFooter(next)).toBe(true);
+    expect(secondaryPanelShowsInspectorFooter(selectPinnedView(next, 'diff'))).toBe(false);
+    expect(secondaryPanelShowsInspectorFooter(selectPinnedView(next, 'plan'))).toBe(false);
     const withTab = addClosableTab(next, { kind: 'browser', title: 'Browser', url: 'https://example.com' });
     expect(activePinnedView(withTab)).toBeNull();
     expect(toggleSecondaryPanelMaximized(emptySecondaryPanelState())).toMatchObject({
@@ -86,6 +115,18 @@ describe('thread secondary panel state', () => {
     });
     expect(parsed.activeId).toBe('explorer:1');
     expect(parsed.tabs[0]?.kind).toBe('explorer');
+  });
+
+  it('restores a persisted Inbox tab', () => {
+    const parsed = parseSecondaryPanelState({
+      version: 1,
+      isOpen: true,
+      widthPx: 360,
+      activeId: 'inbox:1',
+      tabs: [{ id: 'inbox:1', kind: 'inbox', title: 'Inbox' }]
+    });
+    expect(parsed.activeId).toBe('inbox:1');
+    expect(parsed.tabs[0]?.kind).toBe('inbox');
   });
 
   it('replaces an active New Tab when opening a file preview', () => {
@@ -240,6 +281,8 @@ describe('thread secondary panel state', () => {
     expect(addClosableTab(emptyBrowser, { kind: 'browser', title: 'Browser', url: '' }).tabs).toHaveLength(2);
     const explorer = addClosableTab(emptySecondaryPanelState(), { kind: 'explorer', title: 'Explorer' });
     expect(addClosableTab(explorer, { kind: 'explorer', title: 'Explorer' }).tabs).toHaveLength(1);
+    const inbox = addClosableTab(emptySecondaryPanelState(), { kind: 'inbox', title: 'Inbox' });
+    expect(addClosableTab(inbox, { kind: 'inbox', title: 'Inbox' }).tabs).toHaveLength(1);
   });
 
   it('leaves inactive tabs in place when closing another tab', () => {

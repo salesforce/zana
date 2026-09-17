@@ -180,7 +180,7 @@ export function AgentsSettingsView({
         )}
         <CheckboxField
           label="Quiet questions while working"
-          help="Hold a blocking agent question (inbox_ask, or an inbox_push question marked blocking) while its agent is still working, and surface it the moment the agent goes idle — so a busy fleet doesn’t fill your inbox with half-relevant questions it often resolves itself first. A plain status report or a soft/optional question always appears immediately. Spends no tokens; can only ever delay a question, never drop one. On by default."
+          help="Hold a blocking agent question (an inbox_push question marked blocking) while its agent is still working, and surface it the moment the agent goes idle — so a busy fleet doesn’t fill your inbox with half-relevant questions it often resolves itself first. A plain status report or a soft/optional question always appears immediately. Spends no tokens; can only ever delay a question, never drop one. On by default."
           checked={config.heldQuestionsEnabled ?? true}
           onChange={(v) => onUpdate({ heldQuestionsEnabled: v })}
         />
@@ -205,7 +205,7 @@ export function AgentsSettingsView({
       >
         <CheckboxField
           label="Include scheduled agents in Agent View"
-          help="Show waiting scheduled agents and armed jobs in a Scheduled column on the Agents board, list, and flow. A scheduled run that is working or blocked still appears in Working even when this is off; finished runs use Done only while this is on. On by default. Scheduled runs never appear under a project in the sidebar — use Agent View or the Scheduler panel."
+          help="Show scheduled agents on the Agents board, list, and flow: waiting jobs and armed schedules in a Scheduled column, working or blocked runs in Working, finished runs in Done. Off hides every scheduled session from Agent View, including one that is currently working. On by default. Scheduled runs never appear under a project in the sidebar — use Agent View or the Scheduler panel."
           checked={config.includeScheduledAgentsInAgentView ?? true}
           onChange={(v) => onUpdate({ includeScheduledAgentsInAgentView: v })}
         />
