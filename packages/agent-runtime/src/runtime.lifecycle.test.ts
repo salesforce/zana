@@ -18,6 +18,7 @@ import {
   findLastRecordedCommand,
   fullRuntimeOptions,
   wait,
+  waitForRuntimeThreadEvent,
   waitForThreadAgentMessageText,
   waitForThreadTurnCompleted,
   waitForThreadTurnStarted,
@@ -58,8 +59,14 @@ describe("createAgentRuntime lifecycle", () => {
       });
 
       expect(providerThreadId).toBe("prov-1");
-      await wait(50);
-      expect(events.some((e) => e.type === "thread/identity")).toBe(true);
+      await waitForRuntimeThreadEvent({
+        events,
+        label: "thread/identity for t1",
+        predicate: (event) =>
+          event.type === "thread/identity" && event.threadId === "t1",
+        runtime,
+        threadId: "t1",
+      });
       await runtime.shutdown();
     });
 
@@ -946,7 +953,14 @@ rl.on("line", (line) => {
         providerId: "fake",
         options: fullRuntimeOptions,
       });
-      await wait(100);
+      await waitForRuntimeThreadEvent({
+        events,
+        label: "thread/identity for t1",
+        predicate: (event) =>
+          event.type === "thread/identity" && event.threadId === "t1",
+        runtime,
+        threadId: "t1",
+      });
 
       expect(events.some((event) => event.type === "thread/identity")).toBe(
         true,

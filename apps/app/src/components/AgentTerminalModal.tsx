@@ -4,7 +4,7 @@ import { X, FileText, Sparkles, AppWindow, Loader2, RefreshCw } from 'lucide-rea
 import { inboxQuestions } from '@zana-ai/zcc-domain/product';
 import type { AgentState, InboxEntry, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
-import { useData, useAgentStatus, useCatchUpSummary, useSubagents, useOverseerActivity, useInbox, useInboxAnswered } from '../store.js';
+import { useData, useAgentStatus, useCatchUpSummary, useInbox, useInboxAnswered } from '../store.js';
 import { inboxPrimaryTitle } from '../lib/inboxPresentation.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
 import { AGENT_MODAL_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
@@ -13,8 +13,6 @@ import { AgentSessionActions } from './AgentSessionActions.js';
 import { AgentReportPanel } from './AgentReportPanel.js';
 import { useSessionStats } from './AgentInsights.js';
 import { FavoriteStar } from './FavoriteStar.js';
-import { TaskShelvesPopover } from './TaskShelvesPopover.js';
-import { buildShelves } from '../lib/taskShelves.js';
 import { MarkdownContent } from './MarkdownContent.js';
 import { mdToPlainText } from '../lib/plainText.js';
 import { isReport } from '@zana-ai/zcc-domain/feed-categories';
@@ -64,7 +62,6 @@ export function AgentTerminalModal({
   // panel's Diff pin; reports remain a header overlay so they stay agent-only.
 
   const [showReport, setShowReport] = useState(false);
-  const [focusDiffKey, setFocusDiffKey] = useState(0);
 
   // Full screen: the modal already sizes to ~94vh, so the CSS side just
   // stretches it to fill the viewport and hides its rounded-corner chrome — no
@@ -137,32 +134,6 @@ export function AgentTerminalModal({
   );
   const project = useData((s) => s.projects.find((p) => p.id === projectId) ?? null);
 
-  // Task Shelves (afl-04): a compact ledger of this agent's Sources / Background
-  // / Outputs, derived PURELY from signals the renderer already holds — the
-  // polled file touches, the live sub-agent count, the overseer activity stream,
-  // and the agent's rollup state. Read-only; the popover lives in the header.
-  const subagentCount = useSubagents((s) => s.byId[session.id] ?? 0);
-  const overseer = useOverseerActivity((s) => s.byId[session.id]);
-  const shelves = useMemo(
-    () =>
-      buildShelves({
-        files: stats?.files ?? [],
-        subagentCount,
-        overseer,
-        session,
-        agentState: state
-      }),
-    [stats, subagentCount, overseer, session, state]
-  );
-  // Row-click routes a Sources/Outputs file row to the working-tree diff;
-  // background rows are informational (no file target), so they're a no-op.
-  const onSelectShelfRow = (row: { id: string }) => {
-    if (row.id.startsWith('R:') || row.id.startsWith('C:') || row.id.startsWith('W:')) {
-      setShowReport(false);
-      setFocusDiffKey((n) => n + 1);
-    }
-  };
-
   const modalActions = (
     <AgentSessionActions
       session={session}
@@ -184,7 +155,7 @@ export function AgentTerminalModal({
         tabIndex={-1}
       >
         {/* Title lives on AgentSessionView. This chrome is status / Report /
-            shelves / follow on the left, fullscreen + close on the right. */}
+            follow on the left, fullscreen + close on the right. */}
         <header className="modal-header agent-modal-header" data-testid="agent-modal-header">
           {!exited && (
             <span
@@ -209,7 +180,6 @@ export function AgentTerminalModal({
               {reportCount > 0 && <span className="agent-modal-stage-toggle-count">{reportCount}</span>}
             </button>
           </div>
-          <TaskShelvesPopover shelves={shelves} onSelectRow={onSelectShelfRow} />
           <FavoriteStar session={session} size={16} className="agent-modal-fav" />
           <div className="agent-modal-window-controls">
             <button
@@ -253,7 +223,6 @@ export function AgentTerminalModal({
             maxFiles={6}
             maxQueue={5}
             stats={stats}
-            focusDiffKey={focusDiffKey}
             stageChrome={
               !showReport ? (
                 <>
