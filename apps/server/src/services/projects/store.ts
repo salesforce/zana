@@ -572,6 +572,10 @@ function normalizeBounds(
   return next;
 }
 
+/** Clamp bounds for a non-zero {@link AppConfig.executionPlanStartupGraceMs} (0 disables). */
+const MIN_STARTUP_GRACE_MS = 30_000;
+const MAX_STARTUP_GRACE_MS = 3_600_000;
+
 export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   const normalized: Partial<AppConfig> = {};
   const harnesses = normalizeHarnessConfig(input.harnesses);
@@ -792,6 +796,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (input.flowAllOrganization === 'combined' || input.flowAllOrganization === 'team-runs') {
     normalized.flowAllOrganization = input.flowAllOrganization;
+  }
+  if (input.teamDefaultCoordinationMode === 'freeform' || input.teamDefaultCoordinationMode === 'structured') {
+    normalized.teamDefaultCoordinationMode = input.teamDefaultCoordinationMode;
   }
   if (input.inboxGrouping === 'project' || input.inboxGrouping === 'time') {
     normalized.inboxGrouping = input.inboxGrouping;
@@ -1045,6 +1052,10 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.executionClaimRecoveryEnforceEnabled === 'boolean') {
     normalized.executionClaimRecoveryEnforceEnabled = input.executionClaimRecoveryEnforceEnabled;
+  }
+  if (typeof input.executionPlanStartupGraceMs === 'number' && Number.isFinite(input.executionPlanStartupGraceMs)) {
+    const v = Math.round(input.executionPlanStartupGraceMs);
+    normalized.executionPlanStartupGraceMs = v <= 0 ? 0 : Math.max(MIN_STARTUP_GRACE_MS, Math.min(MAX_STARTUP_GRACE_MS, v));
   }
   if (typeof input.composerShowCliAgent === 'boolean') {
     normalized.composerShowCliAgent = input.composerShowCliAgent;

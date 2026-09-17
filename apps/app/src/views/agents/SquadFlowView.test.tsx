@@ -25,6 +25,17 @@ describe('SquadFlowView execution-board poll refresh', () => {
   });
 });
 
+describe('SquadFlowView back-edge routing', () => {
+  it('raises PAD_TOP so a top-row target keeps inY on-canvas', () => {
+    expect(view).toContain('const EDGE_OFFSET = 22;');
+    expect(view).toContain('const PAD_TOP = EDGE_OFFSET + 16;');
+  });
+
+  it('clamps back-edge inY so a top-row target cannot clip above y=0', () => {
+    expect(view).toContain('const inY = Math.max(ty - EDGE_OFFSET, 4);');
+  });
+});
+
 describe('SquadFlowView separate Team-run canvases', () => {
   it('uses one pannable scrollport for the full stack instead of nested run scrollports', () => {
     expect(css).toMatch(/\.squad-flow-run-groups \{[^}]*overflow:\s*auto;[^}]*cursor:\s*grab;/s);

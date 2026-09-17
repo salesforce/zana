@@ -1813,6 +1813,10 @@ export interface AppConfig {
   projectNavigationOrganization?: 'sessions' | 'team-runs';
   /** Composition of Flow's All Team runs view. */
   flowAllOrganization?: 'combined' | 'team-runs';
+  /** Default Team Composer coordination mode: infer the plan from the goal
+   *  ('freeform', default) or treat a plan as provided in the goal/sources
+   *  ('structured'). Only sets the composer's starting selection. */
+  teamDefaultCoordinationMode?: 'freeform' | 'structured';
   /** How the inbox Feed groups rows within each day bucket: per-project
    *  subgroups ('project', default) or a flat chronological stream ('time'). */
   inboxGrouping?: 'project' | 'time';
@@ -2282,6 +2286,13 @@ export interface AppConfig {
   executionRouteFitObserveEnabled?: boolean;
   /** Allow main-owned recovery to fence and reclaim proven-dead execution claims. */
   executionClaimRecoveryEnforceEnabled?: boolean;
+  /**
+   * Grace window (ms) a durable Team execution may stay live with no registered
+   * work units before the plan-readiness watchdog fails it and cancels workers.
+   * Must exceed normal coordinator plan-derivation time; `0` disables the guard.
+   * Default 300000 (5 min).
+   */
+  executionPlanStartupGraceMs?: number;
   /**
    * Show CLI Agent in the New Chat / New agent launch switcher. Default ON.
    * At least one of this and {@link composerShowModern} must stay on.
@@ -4192,6 +4203,8 @@ export interface SquadFlowEdge {
   /** True if the most recent message on this edge is still queued (its
    *  {@link AgentMessage.deliveredAt} is undefined). */
   pending: boolean;
+  /** Durable work dependency rather than agent-message traffic. */
+  kind?: 'work-dependency';
 }
 
 /**
@@ -5483,6 +5496,7 @@ export interface ExecutionBoardProjection {
     assignments: Array<{
       workUnitId: string;
       title: string;
+      dependencies: string[];
       slotId?: string;
       state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
       failureCode?: ExecutionFailureCode;

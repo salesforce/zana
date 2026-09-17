@@ -143,6 +143,19 @@ describe('ProjectSessionRail', () => {
     expect(markup).not.toContain('Sort by');
   });
 
+  it('renders the current project name as a focus button that navigates like the global row', () => {
+    h.data.terminals = {};
+    h.threads = [];
+    const markup = renderRail();
+    // The project-scoped row is now an actionable button (was an inert span), so
+    // clicking the current project navigates into it — parity with the global list.
+    expect(markup).toContain('class="project-select project-meta project-meta--inline"');
+    expect(markup).toContain('aria-label="Open zana-command-center"');
+    const source = readFileSync(new URL('./project-session-rail.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("ui.setNav('projects')");
+    expect(source).toContain('ui.enterProjectFocus(project.id)');
+  });
+
   it('shows the remote network mark next to an SSH or host-bound project name', () => {
     h.data.terminals = {};
     h.threads = [];

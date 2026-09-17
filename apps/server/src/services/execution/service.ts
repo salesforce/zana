@@ -1,4 +1,4 @@
-import { isDurableCoordination, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
+import { isDurableCoordination, isRestfulAgentState, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
 import { EXECUTION_RETENTION_MS, WORK_CLAIM_LEASE_MS, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
@@ -10,6 +10,7 @@ import type { createExecutionSourceRegistry } from './source-registry.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
 import type { InboxInput } from '../inbox/inbox-store.js';
 import { ExecutionDeadlineWatchdog } from './deadline-watchdog.js';
+import { PlanReadinessWatchdog } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
 import { evaluateSlotEligibility } from './routing-policy.js';
 import { transitionCircuit, type CircuitState } from './retry-policy.js';
@@ -24,6 +25,7 @@ const ROUTE_FACTS_TIMEOUT_MS = 15_000;
 const ROUTE_FACTS_CIRCUIT_RESET_MS = 30_000;
 const ACTIVE_CLAIM_PAGE_SIZE = 50;
 const PROVEN_DEAD_CLAIM_REASON = 'Claim lease expired and assigned Team worker is proven dead';
+const ABANDONED_TURN_CLAIM_REASON = 'Claim lease expired and assigned Team worker returned to rest without an outcome';
 const DEAD_WORKER_PROCESSES = new Set(['exited', 'spawn-failed', 'canceled']);
 const TELEMETRY_GAP_GRACE_SAMPLES = 3;
 
@@ -143,6 +145,10 @@ export interface ExecutionServiceDeps {
   routingEnforcementEnabled?: () => boolean;
   claimRecoveryObserveEnabled?: () => boolean;
   claimRecoveryEnforceEnabled?: () => boolean;
+  /** Grace (ms) a durable execution may stay planless before the watchdog fails it. `0`/absent disables. */
+  planStartupGraceMs?: () => number;
+  /** Main-owned agent status used to detect a live process whose assigned turn ended silently. */
+  getAgentState?: (sessionId: string) => AgentState;
   routeFitObserveEnabled?: () => boolean;
   /** Main-owned TranscriptSource bridge. Renderer and agents cannot submit usage. */
   readSessionStats?: (sessionId: string, options?: { fresh?: boolean }) => Promise<SessionStats | null>;
@@ -348,6 +354,7 @@ export class ExecutionService {
   private readonly mintFlights = new Map<string, Promise<ReturnType<ExecutionService['mintResumeGrantOnce']> extends Promise<infer T> ? T : never>>();
   private readonly autoFinalizeTimers = new Map<string, NodeJS.Timeout>();
   private readonly deadlineWatchdog: ExecutionDeadlineWatchdog;
+  private readonly planReadinessWatchdog: PlanReadinessWatchdog;
   private activeClaimCursor?: ActiveClaimCursor;
   private activeReconcileRunning = false;
   private readonly routeFactCircuits = new Map<string, { state: CircuitState; openedAt?: number }>();
@@ -358,6 +365,13 @@ export class ExecutionService {
       setTimer: deps.setTimer ?? setTimeout,
       clearTimer: deps.clearTimer ?? clearTimeout,
       onDeadline: async (executionId) => { await this.timeoutExecution(executionId); }
+    });
+    this.planReadinessWatchdog = new PlanReadinessWatchdog({
+      now: deps.now ?? Date.now,
+      setTimer: deps.setTimer ?? setTimeout,
+      clearTimer: deps.clearTimer ?? clearTimeout,
+      graceMs: () => deps.planStartupGraceMs?.() ?? 0,
+      onGraceExpired: async (executionId) => { await this.failPlanlessExecution(executionId); }
     });
   }
 
@@ -430,12 +444,14 @@ export class ExecutionService {
     if (claim.outcome === 'replay') {
       const reconciled = await this.reconcile(callerPrincipalId, projectId, claim.record);
       this.deadlineWatchdog.schedule(reconciled);
+      this.planReadinessWatchdog.schedule(reconciled);
       if (reconciled.state === 'BLOCKED' || reconciled.state === 'FAILED') {
         return { ok: false, code: reconciled.state, message: `execution is ${reconciled.state.toLowerCase()}` };
       }
       return { ok: true, value: reconciled };
     }
     this.deadlineWatchdog.schedule(claim.record);
+    this.planReadinessWatchdog.schedule(claim.record);
 
     let record: ExecutionRecord;
     let resumeGrant: { token: string; expiresAt: number } | undefined;
@@ -605,7 +621,9 @@ export class ExecutionService {
   }
 
   async restoreDeadlines(): Promise<void> {
-    this.deadlineWatchdog.restore(await this.deps.store.listActive());
+    const active = await this.deps.store.listActive();
+    this.deadlineWatchdog.restore(active);
+    this.planReadinessWatchdog.restore(active);
   }
 
   /** One bounded main-owned recovery page. Lifecycle failure never reclaims work. */
@@ -632,7 +650,11 @@ export class ExecutionService {
           }
           if (unit.leaseExpiresAt === undefined || unit.leaseExpiresAt > now) return [];
           const worker = lifecycle!.workers!.find((candidate) => candidate.slotId === unit.assignedSlotId && candidate.projectId === record.projectId);
-          if (worker && !DEAD_WORKER_PROCESSES.has(worker.process ?? '')) return [];
+          if (worker && !DEAD_WORKER_PROCESSES.has(worker.process ?? '')) {
+            const agentState = worker.sessionId ? this.deps.getAgentState?.(worker.sessionId) : undefined;
+            if (!agentState || !isRestfulAgentState(agentState)) return [];
+            return [{ workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, reason: ABANDONED_TURN_CLAIM_REASON }];
+          }
           return [{ workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, reason: PROVEN_DEAD_CLAIM_REASON }];
         });
         if (!claims.length) continue;
@@ -651,6 +673,7 @@ export class ExecutionService {
 
   dispose(): void {
     this.deadlineWatchdog.dispose();
+    this.planReadinessWatchdog.dispose();
     const clearTimer = this.deps.clearTimer ?? clearTimeout;
     for (const timer of this.autoFinalizeTimers.values()) clearTimer(timer);
     this.autoFinalizeTimers.clear();
@@ -748,7 +771,9 @@ export class ExecutionService {
 
   async registerPlan(binding: ExecutionCohortBinding, workUnits: ExecutionWorkUnitInput[]) {
     if (binding.role !== 'orchestrator') return deniedBound('only coordinator can register execution plan');
-    return this.mutateBound(binding, (record) => this.deps.store.registerPlan(record.id, record.stateVersion, workUnits));
+    const result = await this.mutateBound(binding, (record) => this.deps.store.registerPlan(record.id, record.stateVersion, workUnits));
+    if (result.ok) this.planReadinessWatchdog.remove(binding.executionId);
+    return result;
   }
 
   async claimWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string) {
@@ -1822,6 +1847,16 @@ export class ExecutionService {
     }
     const blockers = record.blockers?.filter((candidate) => !candidate.resolved && candidate.slotId === slotId) ?? [];
     if (blockers.length === 0) {
+      // Delivery ack already resolves and resumes blocker work atomically. Some
+      // workers still issue the older explicit resume step with the pre-ack
+      // version; accept only an exact durable replay, never resend the message.
+      const deliveredReplay = resume && record.deliveries?.some((delivery) => {
+        if (delivery.state !== 'DELIVERED' || delivery.slotId !== slotId || delivery.payload.text !== text) return false;
+        const blocker = record.blockers?.find((candidate) => candidate.id === delivery.blockerId);
+        return blocker?.resolved === true && blocker.workUnitId === delivery.workUnitId
+          && blocker.slotId === delivery.slotId && blocker.response === text;
+      });
+      if (deliveredReplay) return { ok: true as const, value: record, replay: true as const };
       if (record.stateVersion !== expectedStateVersion) return { ok: false as const, code: 'CONFLICT', message: 'stale execution state', current: record };
       return this.deliverLegacyMessage(record, expectedStateVersion, slotId, text, resume);
     }
@@ -2088,6 +2123,7 @@ export class ExecutionService {
 
   private async cleanupTerminal(record: ExecutionRecord): Promise<void> {
     this.deadlineWatchdog.remove(record.id);
+    this.planReadinessWatchdog.remove(record.id);
     try {
       await this.deps.resumeGrants?.revoke(record.id, record.projectId);
     } catch {
@@ -2120,6 +2156,43 @@ export class ExecutionService {
     await this.cleanupTerminal(stopped);
     await this.cancelTimedOutLaunch(stopped);
     return stopped;
+  }
+
+  /**
+   * Grace elapsed with no registered plan. Re-checks at fire time (the record
+   * may have gained work units or already gone terminal) before failing the run
+   * and cancelling its workers. Mirrors {@link timeoutExecution}'s stale-version
+   * re-arm so a concurrent transition just reschedules rather than throwing.
+   */
+  private async failPlanlessExecution(executionId: string): Promise<void> {
+    const record = await this.deps.store.get(executionId);
+    if (!record) return;
+    if (record.workUnits && record.workUnits.length > 0) return;
+    // A prior attempt can transition to FAILED but then die before the cohort is
+    // cancelled (cleanupTerminal / cancelTimedOutLaunch threw). On the watchdog's
+    // retry the record is already terminal, so re-run the idempotent teardown
+    // instead of returning early — otherwise the run stays FAILED with its workers
+    // still live. Only THIS watchdog's own FAILED reaches here (any other terminal
+    // path removes the timer via cleanupTerminal), so a COMPLETED/STOPPED run is
+    // left untouched. Mirrors timeoutExecution's already-terminal re-cancel.
+    if (isResumeGrantTerminal(record.state)) {
+      if (record.state === 'FAILED') {
+        await this.cleanupTerminal(record);
+        await this.cancelTimedOutLaunch(record);
+      }
+      return;
+    }
+    let failed: ExecutionRecord;
+    try {
+      failed = await this.deps.store.transition(record.id, record.stateVersion, 'FAILED', 'error', 'No plan registered within startup grace');
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
+      const current = await this.deps.store.get(executionId);
+      if (current) this.planReadinessWatchdog.schedule(current);
+      return;
+    }
+    await this.cleanupTerminal(failed);
+    await this.cancelTimedOutLaunch(failed);
   }
 
   private async launchMayProceed(record: ExecutionRecord): Promise<boolean> {

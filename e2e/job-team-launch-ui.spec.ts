@@ -26,7 +26,7 @@
 import { test, expect } from './fixtures/app.js';
 import { makeJobTeamCoordinatorBinary } from './sdk/harness.js';
 import { answerJobBlockerThroughUi } from './sdk/job-team-scenario.js';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -170,6 +170,16 @@ test(`launching a ${coordinationMode} Team through the real UI completes durable
       workTotal: 4
     });
 
+    await expect.poll(async () => window.evaluate(async ({ projectId, executionId }) => {
+      const page = await window.cc.executionBoard.listProject(projectId);
+      return page.executions.find((execution) => execution.executionId === executionId)?.currentBlocker?.question ?? '';
+    }, { projectId: projectId!, executionId }), { timeout: 15_000, intervals: [500] })
+      .toBe('Which label should result.txt use?');
+    await window.getByRole('button', { name: 'Flow view' }).click();
+    await expect(window.locator('svg.squad-flow-edges path.squad-flow-edge').first())
+      .toBeVisible({ timeout: 15_000 });
+    await window.getByRole('button', { name: 'Board view' }).click();
+
     await answerJobBlockerThroughUi({
       window,
       projectId: projectId!,
@@ -213,3 +223,178 @@ test(`launching a ${coordinationMode} Team through the real UI completes durable
   }
 });
 }
+
+/**
+ * "Plan provided in goal" FAST PATH (ramp a): a structured launch whose goal
+ * references a valid portable-executable Markdown plan file must parse + seed the
+ * DAG into `execution.start` BEFORE the run reaches RUNNING — so the coordinator
+ * hits its "plan already valid → dispatch" branch and never spends a model call
+ * deriving the DAG (the stall this feature fixes). The referenced plan carries
+ * the SAME four unit ids the fake workers know how to execute, so once seeded the
+ * cohort completes the identical durable flow. Proof the seed (not the runtime
+ * coordinator) supplied the plan: the fake orchestrator logs `plan present` and
+ * NEVER `plan registered`.
+ */
+test('a structured Team seeds a provided portable plan pre-launch and dispatches without a coordinator register', async ({ app }) => {
+  const { window } = app;
+  const agent = makeJobTeamCoordinatorBinary();
+
+  const projectDir = mkdtempSync(join(tmpdir(), 'zcc-job-team-plan-'));
+  const projectName = basename(projectDir);
+  // Portable-executable plan whose step ids match the fake cohort's SUCCESS_PLAN
+  // (home / about / navigation-label / assemble), so a seeded DAG runs end-to-end.
+  const planPath = join(projectDir, 'plan.md');
+  writeFileSync(planPath, [
+    '# UI Automation Plan',
+    '',
+    '### home: Write Home <!-- executable-step -->',
+    '- **Work:** Create home.txt containing HOME: ready',
+    '- **Depends on:** None',
+    '- **Write scope:** `home.txt`',
+    '- **Verification:** home.txt present',
+    '',
+    '### about: Write About <!-- executable-step -->',
+    '- **Work:** Create about.txt containing ABOUT: ready',
+    '- **Depends on:** None',
+    '- **Write scope:** `about.txt`',
+    '- **Verification:** about.txt present',
+    '',
+    '### navigation-label: Ask Navigation Label <!-- executable-step -->',
+    '- **Work:** Raise a durable human question with two label choices',
+    '- **Depends on:** home, about',
+    '- **Mode:** read-only',
+    '- **Verification:** durable question answered',
+    '',
+    '### assemble: Assemble Result <!-- executable-step -->',
+    '- **Work:** Write result.txt from both worker outputs and the chosen label',
+    '- **Depends on:** navigation-label',
+    '- **Write scope:** `result.txt`',
+    '- **Verification:** cat result.txt',
+    ''
+  ].join('\n'));
+  let projectId: string | null = null;
+
+  try {
+    await window.evaluate((bin) => window.cc.config.set({
+      teamJobLaunchEnabled: true,
+      sponsorPromptDismissed: true,
+      claudeBinary: bin,
+      defaultHarness: 'claude'
+    }), agent.path);
+
+    await window.evaluate(() => window.cc.personas.save({
+      id: 'e2e-orchestrator',
+      name: 'E2E Orchestrator',
+      description: 'Claude orchestrator for the job-team launch spec',
+      baseProfile: 'claude',
+      permissionMode: 'default',
+      systemPrompt: ''
+    }));
+    await window.evaluate(() => window.cc.personas.save({
+      id: 'e2e-worker',
+      name: 'E2E Worker',
+      description: 'Claude worker for the job-team launch spec',
+      baseProfile: 'claude',
+      permissionMode: 'default',
+      systemPrompt: ''
+    }));
+    await window.evaluate(() => window.cc.teams.save({
+      id: 'e2e-job-team',
+      name: 'E2E Job Team',
+      description: 'Durable job team under test',
+      slots: [{ personaId: 'e2e-worker', quantity: 2 }],
+      orchestratorPersonaId: 'e2e-orchestrator'
+    }));
+
+    projectId = await window.evaluate(async (path) => {
+      const res = await window.cc.projects.add(path);
+      const proj = (res && 'ok' in res ? (res as { value: { id: string } }).value : res) as { id: string };
+      return proj.id;
+    }, projectDir);
+    expect(projectId).toBeTruthy();
+
+    await window.locator('[data-testid="nav-agents"]').click();
+    await window.locator('[data-testid="agents-board-new-thread"]').first().click();
+    const modal = window.locator('[data-testid="launch-modal"]');
+    await expect(modal).toBeVisible();
+    await modal.locator('.launch-segmented').getByRole('button', { name: 'Team', exact: true }).click();
+
+    // Goal REFERENCES the plan file — main snapshots it as an execution source and
+    // the launch path parses its content into the seeded DAG.
+    const goal = modal.getByTestId('team-command-input');
+    await goal.click();
+    await goal.fill(`implement ${planPath}`);
+
+    const teamPicker = modal.getByLabel('Team', { exact: true });
+    await teamPicker.click();
+    await window.getByRole('listbox', { name: 'Team' }).getByRole('option', { name: 'E2E Job Team' }).click();
+    await expect(teamPicker).toContainText('E2E Job Team');
+
+    const projectPicker = modal.getByRole('button', { name: 'Project', exact: true });
+    await projectPicker.click();
+    await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();
+    await expect(projectPicker).toContainText(projectName);
+
+    await modal.getByLabel('Team planning').click();
+    await window.getByRole('option', { name: 'Plan provided in goal', exact: true }).click();
+    const send = modal.getByTestId('team-command-send');
+    await expect(send).toBeEnabled({ timeout: 15_000 });
+    await send.click();
+    await expect(modal).toBeHidden();
+
+    // The single durable job in this fresh project — look it up by project, not title
+    // (a referenced-path goal yields a redacted, non-deterministic inferred title).
+    await expect.poll(async () => window.evaluate(async ({ projectId }) => {
+      const page = await window.cc.executionBoard.listProject(projectId);
+      return page.executions[0]?.executionId ?? '';
+    }, { projectId: projectId! }), { timeout: 15_000, intervals: [500] }).not.toBe('');
+    const { executionId, jobTitle } = await window.evaluate(async ({ projectId }) => {
+      const page = await window.cc.executionBoard.listProject(projectId);
+      const execution = page.executions[0]!;
+      return { executionId: execution.executionId, jobTitle: execution.jobTitle };
+    }, { projectId: projectId! });
+
+    // Seeded pre-RUNNING: the structured run carries all four units immediately.
+    await expect.poll(async () => window.evaluate(async ({ projectId, executionId }) => {
+      const snapshot = await window.cc.executionBoard.snapshot(projectId, executionId, 0);
+      return {
+        coordinationMode: snapshot?.execution.coordinationMode,
+        workTotal: snapshot?.execution.work?.total ?? 0
+      };
+    }, { projectId: projectId!, executionId }), { timeout: 15_000, intervals: [500] }).toEqual({
+      coordinationMode: 'structured',
+      workTotal: 4
+    });
+
+    await expect.poll(async () => window.evaluate(async ({ projectId, executionId }) => {
+      const page = await window.cc.executionBoard.listProject(projectId);
+      return page.executions.find((execution) => execution.executionId === executionId)?.currentBlocker?.question ?? '';
+    }, { projectId: projectId!, executionId }), { timeout: 15_000, intervals: [500] })
+      .toBe('Which label should result.txt use?');
+
+    await answerJobBlockerThroughUi({ window, projectId: projectId!, executionId, jobTitle });
+    await expect.poll(() => existsSync(join(projectDir, 'result.txt')), { timeout: 15_000 }).toBe(true);
+    expect(readFileSync(join(projectDir, 'result.txt'), 'utf8')).toContain('LABEL: About Atlas');
+
+    // The seed — not a runtime coordinator register — supplied the DAG.
+    const coordinatorLog = readFileSync(join(projectDir, '.fake-coordinator.log'), 'utf8');
+    expect(coordinatorLog).toContain('plan present');
+    expect(coordinatorLog).not.toContain('plan registered');
+  } finally {
+    if (projectId) {
+      await window.evaluate(async (pid) => {
+        try {
+          const sessions = (await window.cc.terminals.list?.(pid)) as Array<{ id: string }> | undefined;
+          if (Array.isArray(sessions)) {
+            for (const s of sessions) {
+              try { await window.cc.terminals.close(s.id); } catch { /* best-effort */ }
+            }
+          }
+        } catch { /* best-effort */ }
+        try { await window.cc.projects.remove(pid); } catch { /* best-effort */ }
+      }, projectId);
+    }
+    try { rmSync(projectDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    agent.cleanup();
+  }
+});

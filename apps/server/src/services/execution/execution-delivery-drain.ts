@@ -123,7 +123,8 @@ export class ExecutionDeliveryDrainService {
     const sent = this.deps.reply(
       sessionId,
       `[execution] You have ${count} pending blocker ${count === 1 ? 'response' : 'responses'} ` +
-        `for ${executions.join(', ')}. Call execution.delivery.pull, handle one response, then call execution.delivery.ack.`
+        `for ${executions.join(', ')}. Call execution.delivery.pull, apply the response, then call execution.delivery.ack with delivered:true. ` +
+        `Do NOT call execution.resume or execution.respond to accept it — those are owner-only and will fail for you; pull+ack is the whole flow.`
     );
     if (sent) for (const delivery of queued) entry.announced.add(keyOf(delivery));
   }

@@ -173,7 +173,7 @@ describe('execution claim recovery', () => {
     expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
   }));
 
-  it('does not reclaim expired work when main lifecycle shows worker live', async () => fixture(async (filePath) => {
+  it('does not reclaim expired work when main lifecycle shows worker live and working', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
     let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] } })).record;
@@ -182,9 +182,23 @@ describe('execution claim recovery', () => {
     record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
     record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
     now += 90_000;
-    const service = new ExecutionService(deps(filePath, { store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true, getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', projectId: 'project-1', process: 'running' }] }) }));
+    const service = new ExecutionService(deps(filePath, { store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true, getAgentState: () => 'working', getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }) }));
     await service.reconcileActive();
     expect((await store.get(record.id))?.workUnits?.[0].state).toBe('CLAIMED');
+  }));
+
+  it('reclaims an expired claim when its live worker returned to rest without an outcome', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] } })).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    now += 90_000;
+    const service = new ExecutionService(deps(filePath, { store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true, getAgentState: () => 'waiting', getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }) }));
+    await service.reconcileActive();
+    expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
   }));
 });
 
@@ -867,6 +881,29 @@ describe('SquadExecutionService', () => {
     expect(dispatched).toMatchObject({ ok: false, code: 'INVALID' });
     expect(dispatched.ok === false && dispatched.message).toContain('execution.plan.register');
     expect(replyToSession).not.toHaveBeenCalled();
+  }));
+
+  it('retries worker cancellation on a watchdog re-fire after a partial planless teardown', async () => fixture(async (filePath) => {
+    // Grace expiry transitions to FAILED but the worker cancellation throws
+    // (transient). The watchdog re-fires; the retry must re-run the idempotent
+    // teardown on the already-FAILED record instead of returning early, else the
+    // run stays FAILED with its workers still live.
+    const cancelTeamLaunch = vi.fn()
+      .mockResolvedValueOnce({ ok: false as const, code: 'CANCEL_FAILED', message: 'transient' })
+      .mockResolvedValue({ ok: true as const, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } });
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new ExecutionService(deps(filePath, { store, cancelTeamLaunch }));
+    await service.start('owner', 'project-1', request);
+
+    await expect((service as unknown as { failPlanlessExecution(id: string): Promise<void> })
+      .failPlanlessExecution('execution-1')).rejects.toThrow(/CANCEL_FAILED/);
+    expect((await store.get('execution-1'))?.state).toBe('FAILED');
+    expect(cancelTeamLaunch).toHaveBeenCalledTimes(1);
+
+    await (service as unknown as { failPlanlessExecution(id: string): Promise<void> })
+      .failPlanlessExecution('execution-1');
+    expect(cancelTeamLaunch).toHaveBeenCalledTimes(2);
+    expect((await store.get('execution-1'))?.state).toBe('FAILED');
   }));
 
   it('cascades a newly-ready dependent to a free worker on completion with no coordinator relay', async () => fixture(async (filePath) => {
@@ -2080,6 +2117,32 @@ describe('SquadExecutionService', () => {
     expect(ack).toMatchObject({ ok: true, value: { deliveryId: pulled.value.id, state: 'DELIVERED', blockerId: 'blocker-1', resolved: true } });
     expect(JSON.stringify(ack)).not.toContain('deliveries');
     expect(JSON.stringify(ack)).not.toContain('Answer');
+  }));
+
+  it('accepts an exact stale resume replay after delivery ack without sending twice', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: (() => { let n = 0; return () => n++ === 0 ? 'execution-1' : `id-${n}`; })() });
+    const service = new SquadExecutionService(deps(filePath, { store, replyToSession }));
+    await service.start('session-1', 'project-1', request);
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'a', title: 'A', task: 'A', dependencies: [] }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'a', 'slot-1');
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'a', { id: 'blocker-1', question: 'Q?' });
+    const accepted = await service.resume('session-1', 'project-1', record.id, record.stateVersion, 'slot-1', 'Answer');
+    if (!accepted.ok) throw new Error('delivery was not accepted');
+    const expectedStateVersion = accepted.value.stateVersion;
+    const worker = { executionId: record.id, projectId: 'project-1', slotId: 'slot-1', role: 'worker' as const, principalId: 'worker-1', authorizationId: 'auth-current' };
+    const pulled = await service.pullDelivery(worker);
+    if (!pulled.ok || !pulled.value) throw new Error('missing delivery');
+    await service.ackDelivery(worker, pulled.value.id, pulled.value.leaseId!, { delivered: true });
+    const afterAck = (await store.get(record.id))!;
+
+    await expect(service.resume('session-1', 'project-1', record.id, expectedStateVersion, 'slot-1', 'Answer'))
+      .resolves.toMatchObject({ ok: true, replay: true, value: { stateVersion: afterAck.stateVersion, state: 'RUNNING' } });
+    expect((await store.get(record.id))?.stateVersion).toBe(afterAck.stateVersion);
+    expect(replyToSession).toHaveBeenCalledTimes(1);
+    await expect(service.resume('session-1', 'project-1', record.id, expectedStateVersion, 'slot-1', 'Different'))
+      .resolves.toMatchObject({ ok: false, code: 'CONFLICT' });
   }));
 
   it('denies a stale same-slot worker and accepts the current restored worker session', async () => fixture(async (filePath) => {

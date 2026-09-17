@@ -787,6 +787,7 @@ function mirroredConfigFlags(config: AppConfig) {
     agentsListOrganization: config.agentsListOrganization ?? 'status',
     projectNavigationOrganization: config.projectNavigationOrganization ?? 'sessions',
     flowAllOrganization: config.flowAllOrganization ?? 'combined',
+    teamDefaultCoordinationMode: config.teamDefaultCoordinationMode ?? 'freeform',
     includeScheduledAgentsInAgentView: config.includeScheduledAgentsInAgentView ?? true,
     voiceInputEnabled: config.voiceInputEnabled ?? false,
     steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false,
@@ -1522,6 +1523,7 @@ interface DataState {
   agentsListOrganization: NonNullable<AppConfig['agentsListOrganization']>;
   projectNavigationOrganization: NonNullable<AppConfig['projectNavigationOrganization']>;
   flowAllOrganization: NonNullable<AppConfig['flowAllOrganization']>;
+  teamDefaultCoordinationMode: NonNullable<AppConfig['teamDefaultCoordinationMode']>;
   /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, waiting
    *  scheduler jobs appear in the Agents board Scheduled column (plus finished
    *  runs in Done). Working/blocked scheduled runs stay in Working even when
@@ -2004,6 +2006,7 @@ export const useData = create<DataState>((set, get) => ({
   agentsListOrganization: 'status',
   projectNavigationOrganization: 'sessions',
   flowAllOrganization: 'combined',
+  teamDefaultCoordinationMode: 'freeform',
   includeScheduledAgentsInAgentView: true,
   voiceInputEnabled: false,
   steerActiveThreadOnEnter: false,

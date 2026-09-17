@@ -36,7 +36,10 @@ describe('projectExecutionProjection', () => {
       sources: [{ name: 'plan.md', contentDigest: 'sha256:source', extractionWarnings: ['Normalized line endings'] }],
       work: {
         total: 2, completed: 1, counts: { PENDING: 0, READY: 0, CLAIMED: 0, BLOCKED: 1, COMPLETED: 1, FAILED: 0, SKIPPED: 0 },
-        assignments: [{ workUnitId: 'build', slotId: 'builder', state: 'COMPLETED' }, { workUnitId: 'verify', slotId: 'reviewer', state: 'BLOCKED' }]
+        assignments: [
+          { workUnitId: 'build', dependencies: [], slotId: 'builder', state: 'COMPLETED' },
+          { workUnitId: 'verify', dependencies: ['build'], slotId: 'reviewer', state: 'BLOCKED' }
+        ]
       },
       currentBlocker: { id: 'current', workUnitId: 'verify', slotId: 'reviewer', question: 'Use staging?', options: ['Yes', 'No'] },
       blockers: [

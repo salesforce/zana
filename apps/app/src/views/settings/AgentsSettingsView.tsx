@@ -99,6 +99,21 @@ export function AgentsSettingsView({
             ]}
           />
         </Field>
+        <Field
+          label="Default plan mode"
+          help="Starting selection for a new Team launch. Infer derives the plan from the goal; Plan provided seeds work units from a plan given in the goal or an attached source, dispatching immediately."
+        >
+          <PopoverPicklist
+            value={config.teamDefaultCoordinationMode ?? 'freeform'}
+            ariaLabel="Default plan mode"
+            searchable={false}
+            onChange={(teamDefaultCoordinationMode) => onUpdate({ teamDefaultCoordinationMode: teamDefaultCoordinationMode as AppConfig['teamDefaultCoordinationMode'] })}
+            options={[
+              { value: 'freeform', label: 'Infer plan from goal' },
+              { value: 'structured', label: 'Plan provided in goal' }
+            ]}
+          />
+        </Field>
       </Section>
 
       {/* Agent attention — surfacing which agents need you. The triage sub-settings

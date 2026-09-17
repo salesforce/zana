@@ -3,6 +3,7 @@ import type {
   AgentMessage,
   AgentRecord,
   AgentState,
+  ExecutionBoardProjection,
   SquadFlowGraph,
   SquadFlowNode,
   TerminalSession
@@ -273,6 +274,96 @@ describe('buildSquadFlow — handoff edges', () => {
     const g = buildSquadFlow(inputs({ agents: twoAgents, messages: many }));
     // One aggregated edge, but its count reflects only the capped window.
     expect(g!.edges[0].count).toBe(200);
+  });
+
+  it('creates a worker edge from durable work dependencies without agent messages', () => {
+    const execution = {
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Job', state: 'RUNNING', attempt: 1,
+      createdAt: 1_000, updatedAt: 4_000,
+      work: {
+        total: 2, completed: 1,
+        counts: { PENDING: 0, READY: 0, CLAIMED: 1, BLOCKED: 0, COMPLETED: 1, FAILED: 0, SKIPPED: 0 },
+        assignments: [
+          { workUnitId: 'root', title: 'Root', dependencies: [], slotId: 'slot-a', state: 'COMPLETED' },
+          { workUnitId: 'child', title: 'Child', dependencies: ['root'], slotId: 'slot-b', state: 'CLAIMED' }
+        ],
+        rosterSlotIds: ['slot-a', 'slot-b']
+      }
+    } satisfies ExecutionBoardProjection;
+    const g = buildSquadFlow(inputs({
+      agents: twoAgents,
+      sessions: [
+        session({ id: 'a', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-a' } }),
+        session({ id: 'b', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-b' } })
+      ],
+      executions: [execution]
+    }));
+
+    expect(g!.edges).toContainEqual(expect.objectContaining({
+      fromSessionId: 'a', toSessionId: 'b', kind: 'work-dependency'
+    }));
+  });
+
+  it('collapses multiple deps between the same worker pair to one edge without inflating out-degree', () => {
+    // b's unit depends on BOTH of a's units → two a→b dependencies, one edge.
+    // Out-degree(a) must count that pair once, else a beats an equal-degree peer.
+    const execution = {
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Job', state: 'RUNNING', attempt: 1,
+      createdAt: 1_000, updatedAt: 4_000,
+      work: {
+        total: 3, completed: 2,
+        counts: { PENDING: 0, READY: 0, CLAIMED: 1, BLOCKED: 0, COMPLETED: 2, FAILED: 0, SKIPPED: 0 },
+        assignments: [
+          { workUnitId: 'root1', title: 'Root 1', dependencies: [], slotId: 'slot-a', state: 'COMPLETED' },
+          { workUnitId: 'root2', title: 'Root 2', dependencies: [], slotId: 'slot-a', state: 'COMPLETED' },
+          { workUnitId: 'child', title: 'Child', dependencies: ['root1', 'root2'], slotId: 'slot-b', state: 'CLAIMED' }
+        ],
+        rosterSlotIds: ['slot-a', 'slot-b']
+      }
+    } satisfies ExecutionBoardProjection;
+    const g = buildSquadFlow(inputs({
+      agents: [
+        agent({ sessionId: 'a', handle: 'a', registeredAt: 200 }),
+        agent({ sessionId: 'b', handle: 'b', registeredAt: 300 }),
+        agent({ sessionId: 'c', handle: 'c', registeredAt: 100 })
+      ],
+      sessions: [
+        session({ id: 'a', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-a' } }),
+        session({ id: 'b', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-b' } })
+      ],
+      messages: [message({ id: 'cm', fromSessionId: 'c', toSessionId: 'b' })],
+      executions: [execution]
+    }));
+
+    const workEdges = g!.edges.filter((e) => e.kind === 'work-dependency');
+    expect(workEdges).toHaveLength(1);
+    // a and c each have out-degree 1; the earlier-registered c wins the tie. If
+    // a's degree were inflated to 2 by the second dep, a would wrongly lead.
+    expect(nodeMap(g!).get('c')!.isOrchestrator).toBe(true);
+    expect(nodeMap(g!).get('a')!.isOrchestrator).toBe(false);
+  });
+
+  it('does not render a dependency as a self-edge when one worker runs both units', () => {
+    const execution = {
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Job', state: 'RUNNING', attempt: 1,
+      createdAt: 1_000, updatedAt: 4_000,
+      work: {
+        total: 2, completed: 1,
+        counts: { PENDING: 0, READY: 0, CLAIMED: 1, BLOCKED: 0, COMPLETED: 1, FAILED: 0, SKIPPED: 0 },
+        assignments: [
+          { workUnitId: 'root', title: 'Root', dependencies: [], slotId: 'slot-a', state: 'COMPLETED' },
+          { workUnitId: 'child', title: 'Child', dependencies: ['root'], slotId: 'slot-a', state: 'CLAIMED' }
+        ],
+        rosterSlotIds: ['slot-a']
+      }
+    } satisfies ExecutionBoardProjection;
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'a', handle: 'a' })],
+      sessions: [session({ id: 'a', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-a' } })],
+      executions: [execution]
+    }));
+
+    expect(g!.edges).toHaveLength(0);
   });
 });
 

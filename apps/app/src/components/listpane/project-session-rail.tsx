@@ -153,12 +153,21 @@ export function ProjectSessionRail({
       >
         <div className="project-item">
           <ProjectDot project={project} unread={hasUnread} />
-          <span className="project-meta project-meta--inline">
+          <button
+            type="button"
+            className="project-select project-meta project-meta--inline"
+            aria-label={`Open ${displayName}`}
+            onClick={() => {
+              const ui = useUi.getState();
+              ui.setNav('projects');
+              ui.enterProjectFocus(project.id);
+            }}
+          >
             <span className="project-name">{displayName}</span>
             {isRemoteWorkspaceProject(project) && (
               <Network size={11} strokeWidth={2} className="project-remote-icon" aria-label="Remote SSH project" />
             )}
-          </span>
+          </button>
           {nestedCount > 0 ? <span className="project-badge">{nestedCount}</span> : null}
           <button
             type="button"

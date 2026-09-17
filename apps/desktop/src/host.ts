@@ -64,7 +64,8 @@ import { projectIdentityDigest, revalidateLaunchCommit as revalidateCommonLaunch
 import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/authorization';
 import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/services/launch/coordinator';
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
-import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
+import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, normalizeExecutionPlan, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
+import { parsePortablePlan } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
@@ -74,7 +75,7 @@ import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/sto
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
-import type { ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
+import type { ExecutionWorkUnitInput, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { IdleGatedInjector } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
@@ -4180,7 +4181,7 @@ function jobWorkerPrompt(input: {
     `Team worker standby. You are ${input.label} (${input.personaName}), slot \`${input.slotId}\`${input.executionId ? ` in execution \`${input.executionId}\`` : ''}.`,
     'Your working directory is the trusted project workspace. Execution sources and the job plan are coordinator-owned. Wait for an assignment from the coordinator containing the needed source context and file scope. Do not infer or start the overall job independently.',
     'Do not poll `agent_inbox`. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Do not use `agent_send` for routine progress or results. If required source context is missing, use `execution.work.block` so the coordinator wakes through the explicit blocker lane.',
-    'If human input is required, call `execution.work.block`; do not use AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId; report delivered false plus error when application fails.'
+    'If human input is required, call `execution.work.block`; do not use AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.'
   ].join('\n\n');
 }
 
@@ -4236,7 +4237,7 @@ function jobCoordinatorPrompt(input: {
       '- Preserve source-declared execution semantics in generic work units: dependency ids become `dependencies`; bounded work becomes `task`; mutating paths become `files`; read-only work sets `readOnly: true`; checks become `verification`. Every mutating unit needs non-empty `files` before registration.',
       '- Workers must close each unit with `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`.',
       '- After the plan is structured, hand scheduling to the engine with a single `execution.work.dispatch_ready`; the engine assigns and re-dispatches ready units to workers. Then end the turn and remain parked. Do not relay assignments or routine results with `agent_send`. Never let workers independently execute the whole goal.',
-      '- Record meaningful progress and outcomes with `execution.event`. Route human-required questions through `execution.work.block`, never event-only blockers or AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId; report delivered false plus error when application fails.',
+      '- Record meaningful progress and outcomes with `execution.event`. Route human-required questions through `execution.work.block`, never event-only blockers or AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.',
       '- Store durable outputs with `execution.artifact.put`.',
       '- On an explicit wake notification, resolve or escalate only that human blocker, semantic conflict, or policy escalation. Do not resume routine coordination.',
       '- Terminal status and summary are assembled mechanically from durable work outcomes, policy state, events, and artifacts. Optional narrative may augment that record but never gates settlement.'
@@ -4245,23 +4246,47 @@ function jobCoordinatorPrompt(input: {
 }
 
 /**
- * A Team goal can name source files directly. Main resolves only files inside
- * the registered project, then sends them through the same registry as
- * picker-selected sources. Supported and unsupported formats therefore have the
- * same snapshot or visible-failure behavior without granting raw path access.
+ * A Team goal can name source files directly. Main resolves any file the operator
+ * names that resolves under a Rule-2 trust anchor — the registered project root OR
+ * the user's HOME — then sends it through the same registry as picker-selected
+ * sources. The location of a named plan/source NEVER constrains where execution
+ * happens (that is always the project); it is only a read input to snapshot, so a
+ * plan kept outside the project (e.g. a doc vault under HOME) resolves too. The
+ * sensitive HOME roots (`.ssh`, `.aws`, `.zcc`) stay blocked and write confinement
+ * is enforced separately at execution time, so no raw write access is granted.
  */
-export async function goalExecutionSourcePaths(goal: string, home: string): Promise<ExecutionSourcePathDescriptor[]> {
+export async function goalExecutionSourcePaths(
+  goal: string,
+  home: string,
+  userHome: string = homedir()
+): Promise<ExecutionSourcePathDescriptor[]> {
   const paths = new Map<string, ExecutionSourcePathDescriptor>();
-  let realHome: string;
+  // Allowed READ bases follow Rule 2's trust anchors: the target project root and
+  // the user's HOME. Either may be unresolvable (a remote/nonexistent project
+  // root, or an exotic HOME); a named source under whichever base resolves is
+  // still discoverable. Only if NEITHER resolves do we skip discovery entirely.
+  const bases: string[] = [];
   try {
-    realHome = await realpath(home);
+    bases.push(await realpath(home));
   } catch {
-    // `home` is a remote/nonexistent local path (e.g. a remote project root) —
-    // goal-embedded source-path discovery is a local-filesystem nicety, so skip
-    // it rather than failing the whole Team launch.
-    return [];
+    // `home` is a remote/nonexistent local project root — drop that base but keep
+    // the HOME base so a locally-referenced plan is still discoverable.
   }
-  const sensitiveRoots = [join(realHome, '.ssh'), join(realHome, '.aws'), join(realHome, '.zcc')];
+  let realUserHome: string | undefined;
+  try {
+    realUserHome = await realpath(userHome);
+    bases.push(realUserHome);
+  } catch {
+    // No resolvable HOME base either.
+  }
+  if (bases.length === 0) return [];
+  const sensitiveRoots = realUserHome
+    ? [join(realUserHome, '.ssh'), join(realUserHome, '.aws'), join(realUserHome, '.zcc')]
+    : [];
+  const withinAnyBase = (real: string): boolean => bases.some((base) => {
+    const rel = relative(base, real);
+    return rel !== '' && !(rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel));
+  });
   const matches = goal.match(/(?:^|[\s`'"(])(\/[^\s`'"),;:]+)/g) ?? [];
   for (const match of matches) {
     const raw = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
@@ -4270,8 +4295,7 @@ export async function goalExecutionSourcePaths(goal: string, home: string): Prom
     for (const candidate of candidates) {
       try {
         const real = await realpath(candidate);
-        const rel = relative(realHome, real);
-        if (rel === '' || rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel)) continue;
+        if (!withinAnyBase(real)) continue;
         if (sensitiveRoots.some((root) => real === root || real.startsWith(`${root}${sep}`))) continue;
         const representations = new Set([candidate, real]);
         for (const path of [...representations]) {
@@ -5071,6 +5095,8 @@ const squadExecutionService = new SquadExecutionService({
   , routingEnforcementEnabled: () => store.getConfig().teamRoutingEnforcementEnabled === true
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
+  , planStartupGraceMs: () => store.getConfig().executionPlanStartupGraceMs ?? 0
+  , getAgentState: (sessionId) => agentStatus.get(sessionId)
   , routeFitObserveEnabled: () => store.getConfig().executionRouteFitObserveEnabled === true
   , readSessionStats: async (sessionId, options) => {
     const session = ptys.getSession(sessionId);
@@ -5192,6 +5218,41 @@ function teamExecutionEnabled(): boolean {
   return config.teamJobLaunchEnabled !== false || config.composerShowAutonomousTeam !== false;
 }
 
+/**
+ * "Plan provided in goal" fast path: parse the first deterministically-valid
+ * portable-executable plan (a snapshotted goal source, then the inline goal) into
+ * work units so the launch can seed them pre-RUNNING and the coordinator hits its
+ * "plan already valid → dispatch" branch with zero model cost. A plan that is
+ * unparseable or not a complete durable DAG returns undefined and the coordinator
+ * repairs it at runtime (same lane as infer). Only structured launches parse.
+ */
+function seedProvidedPlanWorkUnits(
+  coordinationMode: string,
+  sourceTexts: readonly (string | undefined)[],
+  inlineGoal: string
+): ExecutionWorkUnitInput[] | undefined {
+  if (coordinationMode !== 'structured') return undefined;
+  const candidatePlans = [
+    ...sourceTexts.filter((text): text is string => typeof text === 'string' && text.length > 0),
+    inlineGoal
+  ];
+  for (const text of candidatePlans) {
+    const parsed = parsePortablePlan(text);
+    if (!parsed.ok || parsed.units.length === 0) continue;
+    try {
+      return normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[];
+    } catch (error) {
+      // Parsed but not a complete durable DAG — defer to the coordinator. Log the
+      // rejection reason so a mis-authored provided plan is diagnosable.
+      console.debug(
+        '[team-launch] provided plan rejected by DAG validation; deferring to coordinator:',
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+  return undefined;
+}
+
 export async function startTeamJobFromUi(
   input: TeamJobLaunchInput,
   sourceContext?: { windowId: number }
@@ -5270,6 +5331,11 @@ export async function startTeamJobFromUi(
   const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(originalJobTitle, capturedPathDescriptors)?.slice(0, 256) || undefined;
   const sanitizedSummary = redactCapturedExecutionSourcePaths(originalSummary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
   const sourceMetadata = sourceBundle?.sources.map(({ extractedText: _content, ...metadata }) => metadata);
+  const plannedWorkUnits = seedProvidedPlanWorkUnits(
+    coordinationMode,
+    (sourceBundle?.sources ?? []).map((source) => source.extractedText),
+    originalGoal
+  );
   const sanitizedJobTitle = await nameTeamExecution(launchRequestId, sanitizedGoal, sanitizedExplicitTitle);
   const sharedTask = [
     `Shared job goal: ${sanitizedGoal}`,
@@ -5291,6 +5357,7 @@ export async function startTeamJobFromUi(
     objective: sanitizedGoal,
     summary: sanitizedSummary,
     slots: initialTask,
+    ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
     ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
     policy: {
       ...(store.getConfig().autonomousTimeoutMs === 0

@@ -709,3 +709,62 @@ describe('normalizeConfig — agent guidance', () => {
       .toBeUndefined();
   });
 });
+
+describe('normalizeConfig — teamDefaultCoordinationMode', () => {
+  it('accepts freeform and structured', () => {
+    expect(normalizeConfig({ teamDefaultCoordinationMode: 'freeform' }).teamDefaultCoordinationMode).toBe(
+      'freeform'
+    );
+    expect(normalizeConfig({ teamDefaultCoordinationMode: 'structured' }).teamDefaultCoordinationMode).toBe(
+      'structured'
+    );
+  });
+
+  it('drops an unsupported coordination mode', () => {
+    expect(
+      // @ts-expect-error intentional bad input
+      normalizeConfig({ teamDefaultCoordinationMode: 'job-team' }).teamDefaultCoordinationMode
+    ).toBeUndefined();
+    expect(
+      // @ts-expect-error intentional bad input
+      normalizeConfig({ teamDefaultCoordinationMode: 'garbage' }).teamDefaultCoordinationMode
+    ).toBeUndefined();
+  });
+
+  it('leaves it unset when absent (default applies at read time)', () => {
+    expect(normalizeConfig({}).teamDefaultCoordinationMode).toBeUndefined();
+  });
+});
+
+describe('normalizeConfig — executionPlanStartupGraceMs', () => {
+  it('keeps 0 as disabled', () => {
+    expect(normalizeConfig({ executionPlanStartupGraceMs: 0 }).executionPlanStartupGraceMs).toBe(0);
+  });
+
+  it('collapses a negative value to 0 (disabled)', () => {
+    expect(normalizeConfig({ executionPlanStartupGraceMs: -100 }).executionPlanStartupGraceMs).toBe(0);
+  });
+
+  it('clamps a value below the minimum up to 30_000', () => {
+    expect(normalizeConfig({ executionPlanStartupGraceMs: 5_000 }).executionPlanStartupGraceMs).toBe(30_000);
+  });
+
+  it('clamps a value above the maximum down to 3_600_000', () => {
+    expect(normalizeConfig({ executionPlanStartupGraceMs: 9_999_999 }).executionPlanStartupGraceMs).toBe(
+      3_600_000
+    );
+  });
+
+  it('keeps an in-range value (rounded)', () => {
+    expect(normalizeConfig({ executionPlanStartupGraceMs: 120_000 }).executionPlanStartupGraceMs).toBe(
+      120_000
+    );
+    expect(normalizeConfig({ executionPlanStartupGraceMs: 120_000.7 }).executionPlanStartupGraceMs).toBe(
+      120_001
+    );
+  });
+
+  it('leaves it unset when absent (default applies at read time)', () => {
+    expect(normalizeConfig({}).executionPlanStartupGraceMs).toBeUndefined();
+  });
+});

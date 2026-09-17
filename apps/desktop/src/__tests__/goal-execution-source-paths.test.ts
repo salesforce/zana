@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -90,5 +90,43 @@ describe('goalExecutionSourcePaths', () => {
 
     const descriptors = await goalExecutionSourcePaths(`fix the bug in ${join(targetDir, 'app.ts')}`, home);
     expect(descriptors.length).toBeGreaterThan(0);
+  });
+
+  it('discovers a plan referenced OUTSIDE the project but under the user HOME', async () => {
+    // The reported stall: the goal named a plan in a doc vault under HOME, which
+    // sits outside the selected project. It must still be snapshotted — its
+    // location never constrains where execution happens.
+    const project = mkdtempSync(join(tmpdir(), 'zcc-project-'));
+    const userHome = mkdtempSync(join(tmpdir(), 'zcc-userhome-'));
+    const vaultDir = join(userHome, 'doc-vault', 'zana-ui-automation', 'workflow-testing');
+    mkdirSync(vaultDir, { recursive: true });
+    const plan = join(vaultDir, 'plan.md');
+    writeFileSync(plan, '# plan');
+
+    const descriptors = await goalExecutionSourcePaths(`implement ${plan}`, project, userHome);
+    expect(descriptors.map((d) => d.canonicalPath)).toContain(realpathSync(plan));
+  });
+
+  it('blocks a sensitive HOME root even when named in the goal', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-project-'));
+    const userHome = mkdtempSync(join(tmpdir(), 'zcc-userhome-'));
+    const sshDir = join(userHome, '.ssh');
+    mkdirSync(sshDir, { recursive: true });
+    const secret = join(sshDir, 'id_rsa');
+    writeFileSync(secret, 'PRIVATE');
+
+    const descriptors = await goalExecutionSourcePaths(`read ${secret}`, project, userHome);
+    expect(descriptors).toEqual([]);
+  });
+
+  it('skips a path outside both the project and the user HOME', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-project-'));
+    const userHome = mkdtempSync(join(tmpdir(), 'zcc-userhome-'));
+    const elsewhere = mkdtempSync(join(tmpdir(), 'zcc-elsewhere-'));
+    const stray = join(elsewhere, 'notes.md');
+    writeFileSync(stray, '# stray');
+
+    const descriptors = await goalExecutionSourcePaths(`consider ${stray}`, project, userHome);
+    expect(descriptors).toEqual([]);
   });
 });

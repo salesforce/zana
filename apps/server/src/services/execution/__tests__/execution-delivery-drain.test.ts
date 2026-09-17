@@ -29,6 +29,21 @@ describe('ExecutionDeliveryDrainService', () => {
     expect(reply.mock.calls[0][1]).toContain('execution.delivery.ack');
   });
 
+  it('steers the worker to ack delivered:true and away from owner-only resume', async () => {
+    // The observed deadlock: a worker pulled the answer, then called the
+    // owner-only execution.resume, got denied, and reported that denial as a
+    // delivery error — looping the response forever. The nudge must name the
+    // correct terminal (ack delivered:true) and forbid resume/respond.
+    queue.worker = [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }];
+    restful.worker = true;
+    service.observe('worker', 'idle');
+    await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
+    const nudge = reply.mock.calls[0][1];
+    expect(nudge).toContain('delivered:true');
+    expect(nudge).toContain('execution.resume');
+    expect(nudge).toContain('owner-only');
+  });
+
   it('announces all pending blockers for one worker in one bounded production nudge', async () => {
     queue.worker = [
       { id: 'delivery-1', executionId: 'execution-1', attempt: 0 },
