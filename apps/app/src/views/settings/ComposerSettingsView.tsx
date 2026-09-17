@@ -121,7 +121,7 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
         <Field
           label="Send mode"
           layout="row"
-          help="Auto starts a new turn. Steer uses Enter to interrupt a running turn (Cmd/Ctrl+Enter queues). Queue holds the next message until the current turn finishes. Default is Auto."
+          help="Auto sends immediately when idle and queues while running (Cmd/Ctrl+Enter steers). Steer uses Enter to steer a running turn (Cmd/Ctrl+Enter queues). Queue always waits for the current turn to finish. Default is Auto."
         >
           <PopoverPicklist
             ariaLabel="Send mode"

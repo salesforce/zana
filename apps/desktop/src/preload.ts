@@ -411,7 +411,7 @@ const api: CcApi = {
     onChanged: () => () => {}
   },
   marketplaces: {
-    list: async () => [],
+    list: () => ipcRenderer.invoke(IPC.marketplaces.list),
     add: async () => {
       throw new Error('marketplaces.add is served over product HTTP');
     },

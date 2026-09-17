@@ -36,11 +36,14 @@ export function AgentforcePreviewPanel(props: {
   pluginId: string;
   threadId?: string;
   projectId?: string;
+  orgAlias?: string;
   params?: unknown;
 }) {
   const pluginId = props.pluginId || PLUGIN_ID;
   const ctx = useZccContext();
-  const projectId = props.projectId ?? ctx.projectId ?? undefined;
+  const resource = props.params && typeof props.params === 'object' ? props.params as Record<string, unknown> : {};
+  const pinnedOrg = props.orgAlias ?? (typeof resource.orgAlias === 'string' ? resource.orgAlias : undefined);
+  const projectId = props.projectId ?? (typeof resource.projectId === 'string' ? resource.projectId : undefined) ?? ctx.projectId ?? undefined;
   const threadId = props.threadId ?? ctx.threadId ?? '';
   const [files, setFiles] = useState<PlaygroundFileRef[]>([]);
   const [path, setPath] = useState<string | null>(parseAgentforcePanelPath(props.params) ?? null);
@@ -56,9 +59,9 @@ export function AgentforcePreviewPanel(props: {
   const hasTarget = Boolean(targetPath || apiName);
 
   const refreshOrg = useCallback(async () => {
-    const payload = await fetchConnectedOrg(pluginId);
+    const payload = await fetchConnectedOrg(pluginId, projectId, pinnedOrg);
     setOrg(payload.ok ? payload.org : null);
-  }, [pluginId]);
+  }, [pluginId, projectId, pinnedOrg]);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,7 +89,7 @@ export function AgentforcePreviewPanel(props: {
           pluginId,
           action,
           rpcProject(projectId, {
-            threadId,
+            threadId, orgAlias: org?.alias ?? pinnedOrg,
             path: targetPath || undefined,
             apiName: apiName || undefined,
             live: mode === 'live',
@@ -106,7 +109,7 @@ export function AgentforcePreviewPanel(props: {
         setBusy(false);
       }
     },
-    [apiName, mode, pluginId, projectId, targetPath, threadId]
+    [apiName, mode, pluginId, projectId, targetPath, threadId, org?.alias, pinnedOrg]
   );
 
   const start = useCallback(async () => {
@@ -179,7 +182,7 @@ export function AgentforcePreviewPanel(props: {
           </select>
         </label>
         <span className="sf-as-spacer" />
-        <OrgPicker pluginId={pluginId} compact disabled={Boolean(sessionId)} onSelect={() => void refreshOrg()} />
+        {pinnedOrg ? <span className="sf-badge">{pinnedOrg}</span> : <OrgPicker pluginId={pluginId} projectId={projectId} compact disabled={Boolean(sessionId)} onSelect={() => void refreshOrg()} />}
         {orgSessionLabel(org) ? (
           <span className="sf-as-crumb-seg" data-testid="salesforce-preview-org">
             {orgSessionLabel(org)}

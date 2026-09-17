@@ -223,3 +223,17 @@ describe('plugin slot registry', () => {
     clearPluginSlots('harness-claude');
   });
 });
+
+
+it('defaults panel categories to the plugin name while preserving explicit categories', () => {
+  const app = definePluginApp((builder) => {
+    builder.slots.threadPanelAction({ id: 'default', title: 'Tool', component: () => null });
+    builder.slots.threadPanelAction({ id: 'custom', title: 'Another', category: 'Data', component: () => null });
+    builder.slots.experimental_newThreadPanelAction({ id: 'compose', title: 'New', component: () => null });
+  });
+  const named = interpretPluginApp('category-fixture', app, 'Example tools');
+  expect(named.threadPanelActions.map((action) => action.category)).toEqual(['Example tools', 'Data']);
+  expect(named.newThreadPanelActions[0].category).toBe('Example tools');
+  expect(interpretPluginApp('category-fixture', app).threadPanelActions[0].category).toBe('category-fixture');
+  clearPluginSlots('category-fixture');
+});

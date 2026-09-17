@@ -1,6 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, FileText, Sparkles, Maximize2, Minimize2, Loader2, RefreshCw } from 'lucide-react';
+import { X, FileText, Sparkles, AppWindow, Loader2, RefreshCw } from 'lucide-react';
 import { inboxQuestions } from '@zana-ai/zcc-domain/product';
 import type { AgentState, InboxEntry, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
@@ -213,14 +213,17 @@ export function AgentTerminalModal({
           <FavoriteStar session={session} size={16} className="agent-modal-fav" />
           <div className="agent-modal-window-controls">
             <button
-              className="icon-button"
+              type="button"
+              className="agent-modal-fullscreen-button"
               onClick={toggleFullScreen}
               aria-label={fullScreen ? 'Exit full screen' : 'Full screen'}
-              title={fullScreen ? 'Exit full screen' : 'Full screen'}
+              title={fullScreen ? 'Exit full screen for the agent window' : 'Show the entire agent window in full screen'}
             >
-              {fullScreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+              <AppWindow size={14} aria-hidden="true" />
+              <span>{fullScreen ? 'Exit full screen' : 'Full screen'}</span>
             </button>
-            <button className="icon-button" onClick={onClose} aria-label="Close">
+            <span className="agent-modal-window-divider" aria-hidden="true" />
+            <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close agent window">
               <X size={16} />
             </button>
           </div>

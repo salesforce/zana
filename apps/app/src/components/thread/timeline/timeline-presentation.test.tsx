@@ -602,7 +602,7 @@ describe('conversation and banners', () => {
     );
     expect(assistant).toContain('thread-fork-message');
     expect(assistant).toContain('thread-send-to-main');
-    expect(assistant).toContain('thread-add-to-chat');
+    expect(assistant).not.toContain('thread-add-to-chat');
     expect(assistant).toContain('thread-copy-message');
     expect(assistant).toContain('thread-timeline-bubble');
     expect(assistant).toContain('thread-timeline-row is-assistant');

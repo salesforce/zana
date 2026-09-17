@@ -179,6 +179,15 @@ describe('buildPaletteItems', () => {
     expect(setNav).toHaveBeenCalledWith('home');
   });
 
+  it('opens global Settings with its own navigation after leaving project focus', () => {
+    const exitProjectFocus = vi.fn();
+    vi.mocked(useUi.getState).mockReturnValue({ exitProjectFocus, enterProjectFocus: () => {} } as never);
+    const onClose = vi.fn();
+    buildPaletteItems(baseCtx({ onClose })).find((item) => item.key === 'action:settings')!.run();
+    expect(exitProjectFocus).toHaveBeenCalledWith('/settings');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('opens Skills, Plugins, and MCP on the Extensions workspace', () => {
     const setNav = vi.fn();
     const setExtensionsTab = vi.fn();

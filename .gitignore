@@ -31,6 +31,7 @@ vendor/opencode
 *.rej
 .fastcontext/trajectory_*.jsonl
 .idea/
+.tmp/
 
 # Playwright E2E artifacts (reports, traces, screenshots) — regenerated per run.
 playwright-report

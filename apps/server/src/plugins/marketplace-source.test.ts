@@ -1,11 +1,14 @@
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   materializeMarketplaceIndex,
   parseMarketplaceSource,
-  marketplaceSourceDisplay
+  marketplaceSourceDisplay,
+  marketplaceSourcesEqual
 } from './marketplace-source.js';
 
 const dirs: string[] = [];
@@ -69,6 +72,17 @@ describe('parseMarketplaceSource', () => {
     expect(marketplaceSourceDisplay(parseMarketplaceSource('git:https://example.test/mp.git@v2')))
       .toBe('git:https://example.test/mp.git@v2');
   });
+
+  it('treats git URLs with and without a .git suffix as the same source', () => {
+    expect(marketplaceSourcesEqual(
+      'git:https://git.soma.salesforce.com/chatbots/zana-internal-marketplace.git',
+      'git:https://git.soma.salesforce.com/chatbots/zana-internal-marketplace'
+    )).toBe(true);
+    expect(marketplaceSourcesEqual(
+      'https://example.test/a.json',
+      'https://example.test/b.json'
+    )).toBe(false);
+  });
 });
 
 describe('materializeMarketplaceIndex', () => {
@@ -108,4 +122,49 @@ describe('materializeMarketplaceIndex', () => {
     await expect(materializeMarketplaceIndex({ kind: 'path', directory: dir }))
       .rejects.toThrow();
   });
+
+  it('clones a local git catalog', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'zcc-mp-git-'));
+    dirs.push(repo);
+    writeFileSync(join(repo, 'marketplace.json'), JSON.stringify(SAMPLE_INDEX));
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'T',
+      GIT_AUTHOR_EMAIL: 't@example.com',
+      GIT_COMMITTER_NAME: 'T',
+      GIT_COMMITTER_EMAIL: 't@example.com'
+    };
+    const run = (args: string[]) => {
+      const result = spawnSync('git', args, { cwd: repo, env: gitEnv, encoding: 'utf8' });
+      if (result.status !== 0) throw new Error(result.stderr || `git ${args.join(' ')} failed`);
+    };
+    run(['init', '-b', 'main']);
+    run(['add', 'marketplace.json']);
+    run(['commit', '-m', 'init']);
+    const index = await materializeMarketplaceIndex({ kind: 'git', url: repo, ref: 'HEAD' });
+    expect(index.name).toBe('official');
+    expect(index.plugins).toHaveLength(1);
+  });
+
+  it('times out a hung git clone when timeoutMs is set', async () => {
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+      server.on('error', reject);
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close();
+      throw new Error('expected a TCP port');
+    }
+    try {
+      await expect(materializeMarketplaceIndex(
+        { kind: 'git', url: `http://127.0.0.1:${address.port}/marketplace.git`, ref: 'HEAD' },
+        undefined,
+        { timeoutMs: 400, nonInteractive: true }
+      )).rejects.toThrow(/timed out/);
+    } finally {
+      server.close();
+    }
+  }, 10_000);
 });

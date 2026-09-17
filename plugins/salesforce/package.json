@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-    "description": "Salesforce DX inner loop for ZCC: org identity, SOQL Explorer, Apex/LWC/Agentforce editor and family tools, and fail-closed mutation confirms.",
+  "description": "Salesforce project workbench for ZCC: connected orgs, SOQL, Apex, deployments, Agentforce, and reusable native side panels.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
@@ -15,7 +15,7 @@
   },
   "zcc": {
     "name": "Salesforce",
-    "description": "Org identity, doctor, Agentforce Playground and Preview, and API-native SOQL/Apex/LWC/Agentforce tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
+    "description": "A project-aware Salesforce workbench with data exploration, Apex and logs, deployments, Agentforce, and tools beside your agents. Install with `zcc plugin install salesforce`.",
     "branding": {
       "icon": "Cloud"
     },
@@ -26,7 +26,9 @@
     ]
   },
   "exports": {
-    "./sdk": "./lib/sdk-contract.ts"
+    "./sdk": "./lib/sdk-contract.ts",
+    "./ui": "./ui.ts",
+    "./panels": "./panels.tsx"
   },
   "dependencies": {
     "@sf-agentscript/agentforce": "2.10.38",

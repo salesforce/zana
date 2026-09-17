@@ -114,7 +114,7 @@ import { handleHostsApi } from './hosts-api.js';
 import { handleDesktopBrowsersApi } from './desktop-browsers-api.js';
 import { handleCliAgentsApi } from './cli-agents-api.js';
 import { isThreadLiveInProject } from '../services/agents/thread-liveness.js';
-import type { MarketplaceCatalogRow } from '../plugins/marketplace-store.js';
+import { toPublicMarketplaceCatalog } from '../plugins/marketplace-store.js';
 import { presentAppConfig } from './public-app-url.js';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
@@ -147,21 +147,6 @@ function isContained(root: string, candidate: string): boolean {
 function pluginSnapshot(plugins: ProductHttpContext['plugins']) {
   if (!plugins || typeof plugins.snapshot !== 'function') return [];
   return plugins.snapshot();
-}
-
-function publicMarketplaceCatalog(row: MarketplaceCatalogRow) {
-  return {
-    source: row.source,
-    sourceKind: row.sourceKind,
-    name: row.name,
-    displayName: row.displayName,
-    addedAt: row.addedAt,
-    entryCount: row.entryCount,
-    lastRefreshAt: row.lastRefreshAt,
-    lastAttemptAt: row.lastAttemptAt,
-    lastError: row.lastError,
-    official: row.official
-  };
 }
 
 async function handlePluginAppEnabled(
@@ -1862,6 +1847,7 @@ export async function handleProductHttp(
         model?: unknown;
         reasoningLevel?: unknown;
         acpMode?: unknown;
+        permissionMode?: unknown;
       };
       const mode = body.mode === 'start' || body.mode === 'auto' || body.mode === 'steer'
         || body.mode === 'queue-if-active' || body.mode === 'steer-if-active'
@@ -1869,6 +1855,8 @@ export async function handleProductHttp(
         : 'auto';
       try {
         const thread = await sendConversationTurn(ctx, id!, body.input ?? body.text, mode, {
+          permissionMode: body.permissionMode === 'accept-edits' || body.permissionMode === 'auto' || body.permissionMode === 'full'
+            ? body.permissionMode : undefined,
           model: typeof body.model === 'string' ? body.model : undefined,
           reasoningLevel: parseReasoningLevel(body.reasoningLevel),
           acpMode: typeof body.acpMode === 'string' ? body.acpMode : undefined
@@ -2656,8 +2644,9 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/marketplaces' && method === 'GET') {
+      const listed = ctx.plugins?.listMarketplaces();
       sendJson(response, 200, {
-        catalogs: (ctx.plugins?.listMarketplaces() ?? []).map(publicMarketplaceCatalog)
+        catalogs: (Array.isArray(listed) ? listed : []).map(toPublicMarketplaceCatalog)
       });
       return true;
     }
@@ -2674,7 +2663,7 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        sendJson(response, 201, publicMarketplaceCatalog(await ctx.plugins.addMarketplace(source)));
+        sendJson(response, 201, toPublicMarketplaceCatalog(await ctx.plugins.addMarketplace(source)));
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
       }
@@ -2693,7 +2682,7 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        sendJson(response, 200, publicMarketplaceCatalog(await ctx.plugins.refreshMarketplace(source)));
+        sendJson(response, 200, toPublicMarketplaceCatalog(await ctx.plugins.refreshMarketplace(source)));
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
       }

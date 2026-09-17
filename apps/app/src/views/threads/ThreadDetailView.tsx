@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useNavigate, useParams } from 'react-router-dom';
 import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelineModelFallback, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
-import { applyTimelineDelta, type ThreadContextWindowUsage, type TimelineDelta, type TimelineRow } from '@zana-ai/zcc-server-contract';
+import { type ThreadContextWindowUsage, type TimelineRow } from '@zana-ai/zcc-server-contract';
 import { buildTimelineViewRows, type TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { product } from '../../lib/product-client.js';
 import { ThreadCommandComposer } from '../../components/ThreadCommandComposer.js';
@@ -79,6 +79,12 @@ import {
   findDeepestTimelineSearchHit,
   type TimelineSearchHit
 } from '../../components/thread/timeline/thread-search.js';
+import {
+  resolveThreadDetailStatus,
+  resolveTimelinePollRows,
+  shouldClearPlaceholderStartingStatus,
+  threadDetailLoadError
+} from './thread-detail-load.js';
 
 /** Safety cap (Rule 5). Large enough that a normal thread loads in one shot. */
 const TIMELINE_SEGMENT_LIMIT = 10_000;
@@ -142,6 +148,7 @@ export function ThreadDetail({
   const [threadModel, setThreadModel] = useState<string | null>(null);
   const [threadReasoning, setThreadReasoning] = useState<string | null>(null);
   const [threadAcpMode, setThreadAcpMode] = useState<string | null>(null);
+  const [threadPermissionMode, setThreadPermissionMode] = useState<{ threadId: string; mode: string | null } | null>(null);
   const [rows, setRows] = useState<TimelineRow[]>([]);
   const [thinking, setThinking] = useState<ActiveThinking | null>(null);
   const [todos, setTodos] = useState<ThreadTimelinePendingTodos | null>(null);
@@ -165,9 +172,12 @@ export function ThreadDetail({
   const [searchDraft, setSearchDraft] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchHit, setSearchHit] = useState<TimelineSearchHit | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const rowsRef = useRef<TimelineRow[]>([]);
   const maxSeqRef = useRef(0);
   const loadedRef = useRef(false);
+  const hadThreadRecordRef = useRef(false);
+  const runLoadRef = useRef<() => void>(() => {});
   useThreadOpenFileSignal({
     threadId,
     environmentId,
@@ -257,6 +267,8 @@ export function ThreadDetail({
     rowsRef.current = [];
     maxSeqRef.current = 0;
     loadedRef.current = false;
+    hadThreadRecordRef.current = false;
+    setLoadError(null);
     setExecutionModeRequested(null);
 
     const applyTimeline = (
@@ -293,88 +305,117 @@ export function ThreadDetail({
         includeNestedRows: 'false',
         summaryOnly: 'true'
       });
-      if (useDelta && timeline.delta) {
-        const merged = applyTimelineDelta(rowsRef.current, timeline.delta as TimelineDelta);
-        if (merged == null) return loadTimeline(true);
-        return { timeline, nextRows: merged };
+      const resolved = resolveTimelinePollRows({
+        prevRows: rowsRef.current,
+        prevMaxSeq: maxSeqRef.current,
+        useDelta,
+        timeline
+      });
+      if (resolved.kind === 'stale') return loadTimeline(true);
+      return { timeline, nextRows: resolved.rows };
+    };
+
+    const applyThreadRecord = (
+      detail: Awaited<ReturnType<typeof product.threads.get>>,
+      timeline: Awaited<ReturnType<typeof product.threads.timeline>> | null
+    ) => {
+      const thread = detail.thread as {
+        id?: string;
+        title?: string | null;
+        status?: string;
+        cwd?: string | null;
+        projectId?: string;
+        hostId?: string;
+        environmentId?: string | null;
+        providerId?: string;
+        createdAt?: number;
+        branchName?: string | null;
+        isWorktree?: boolean;
+        archivedAt?: number | null;
+        model?: string | null;
+        reasoningLevel?: string | null;
+        acpMode?: string | null;
+        permissionMode?: string | null;
+        parentThreadId?: string | null;
+        originKind?: unknown;
+        hasPendingInteraction?: boolean;
+        updatedAt?: number;
+        runtime?: ThreadListItem['runtime'] & { displayStatus?: string };
+      };
+      const nextStatus = resolveThreadDetailStatus(thread, timeline?.status);
+      setTitle(thread.title?.trim() || 'Agent');
+      if (nextStatus) setStatus(nextStatus);
+      setCwd(typeof thread.cwd === 'string' ? thread.cwd : null);
+      setProjectId(typeof thread.projectId === 'string' ? thread.projectId : null);
+      setEnvironmentId(typeof thread.environmentId === 'string' ? thread.environmentId : null);
+      setIsWorktree(thread.isWorktree ?? false);
+      setBranchName(thread.branchName ?? null);
+      setThreadProviderId(typeof thread.providerId === 'string' ? thread.providerId : null);
+      setThreadModel(typeof thread.model === 'string' ? thread.model : null);
+      setThreadReasoning(typeof thread.reasoningLevel === 'string' ? thread.reasoningLevel : null);
+      setThreadAcpMode(typeof thread.acpMode === 'string' ? thread.acpMode : null);
+      setThreadPermissionMode({ threadId, mode: typeof thread.permissionMode === 'string' ? thread.permissionMode : null });
+      setParentThreadId(thread.parentThreadId ?? null);
+      setOriginKind(typeof thread.originKind === 'string' ? thread.originKind : null);
+      hadThreadRecordRef.current = true;
+      if (thread.id) {
+        const existing = useThreads.getState().threads.find((row) => row.id === thread.id);
+        upsertThread({
+          id: thread.id,
+          projectId: thread.projectId ?? '',
+          hostId: thread.hostId ?? '',
+          environmentId: thread.environmentId ?? null,
+          providerId: thread.providerId ?? '',
+          status: nextStatus || thread.status || 'starting',
+          title: thread.title ?? null,
+          createdAt: thread.createdAt ?? Date.now(),
+          cwd: typeof thread.cwd === 'string' ? thread.cwd : null,
+          branchName: thread.branchName ?? null,
+          isWorktree: thread.isWorktree ?? false,
+          archivedAt: thread.archivedAt ?? null,
+          parentThreadId: thread.parentThreadId ?? null,
+          hasPendingInteraction: Boolean(thread.hasPendingInteraction),
+          lastReadSeq: typeof timeline?.lastReadSeq === 'number' ? timeline.lastReadSeq : existing?.lastReadSeq ?? null,
+          maxSeq: typeof timeline?.maxSeq === 'number' ? timeline.maxSeq : existing?.maxSeq ?? 0,
+          updatedAt: typeof thread.updatedAt === 'number' ? thread.updatedAt : undefined,
+          runtime: thread.runtime
+        });
       }
-      if (useDelta && Array.isArray(timeline.rows) && timeline.rows.length === 0 && !timeline.delta) {
-        return loadTimeline(true);
-      }
-      return { timeline, nextRows: (timeline.rows as TimelineRow[]) ?? [] };
     };
 
     const runner = createCoalescedRunner(async () => {
-      try {
-        const [detail, loaded] = await Promise.all([
-          product.threads.get(threadId),
-          loadTimeline(false)
-        ]);
-        if (cancelled) return;
-        const timeline = loaded.timeline;
-        const nextRows = applyTimeline(timeline, loaded.nextRows);
-        const thread = detail.thread as {
-          id?: string;
-          title?: string | null;
-          status?: string;
-          cwd?: string | null;
-          projectId?: string;
-          hostId?: string;
-          environmentId?: string | null;
-          providerId?: string;
-          createdAt?: number;
-          branchName?: string | null;
-          isWorktree?: boolean;
-          archivedAt?: number | null;
-          model?: string | null;
-          reasoningLevel?: string | null;
-          acpMode?: string | null;
-        };
-        const runtimeStatus = (thread as { runtime?: { displayStatus?: string } }).runtime?.displayStatus;
-        const nextStatus = runtimeStatus || thread.status || timeline.status;
-        setTitle(thread.title?.trim() || 'Agent');
-        setStatus(nextStatus);
-        setCwd(typeof thread.cwd === 'string' ? thread.cwd : null);
-        setProjectId(typeof thread.projectId === 'string' ? thread.projectId : null);
-        setEnvironmentId(typeof thread.environmentId === 'string' ? thread.environmentId : null);
-        setIsWorktree(thread.isWorktree ?? false);
-        setBranchName(thread.branchName ?? null);
-        setThreadProviderId(typeof thread.providerId === 'string' ? thread.providerId : null);
-        setThreadModel(typeof thread.model === 'string' ? thread.model : null);
-        setThreadReasoning(typeof thread.reasoningLevel === 'string' ? thread.reasoningLevel : null);
-        setThreadAcpMode(typeof thread.acpMode === 'string' ? thread.acpMode : null);
-        setParentThreadId((thread as { parentThreadId?: string | null }).parentThreadId ?? null);
-        setOriginKind(typeof (thread as { originKind?: unknown }).originKind === 'string'
-          ? (thread as { originKind: string }).originKind
-          : null);
-        if (thread.id) {
-          upsertThread({
-            id: thread.id,
-            projectId: thread.projectId ?? '',
-            hostId: thread.hostId ?? '',
-            environmentId: thread.environmentId ?? null,
-            providerId: thread.providerId ?? '',
-            status: nextStatus,
-            title: thread.title ?? null,
-            createdAt: thread.createdAt ?? Date.now(),
-            cwd: typeof thread.cwd === 'string' ? thread.cwd : null,
-            branchName: thread.branchName ?? null,
-            isWorktree: thread.isWorktree ?? false,
-            archivedAt: thread.archivedAt ?? null,
-            parentThreadId: (thread as { parentThreadId?: string | null }).parentThreadId ?? null,
-            hasPendingInteraction: Boolean((thread as { hasPendingInteraction?: boolean }).hasPendingInteraction),
-            lastReadSeq: typeof timeline.lastReadSeq === 'number' ? timeline.lastReadSeq : null,
-            maxSeq: typeof timeline.maxSeq === 'number' ? timeline.maxSeq : 0,
-            updatedAt: typeof (thread as { updatedAt?: number }).updatedAt === 'number'
-              ? (thread as { updatedAt: number }).updatedAt
-              : undefined,
-            runtime: (thread as { runtime?: ThreadListItem['runtime'] }).runtime
-          });
+      const [detailOutcome, timelineOutcome] = await Promise.allSettled([
+        product.threads.get(threadId),
+        loadTimeline(false)
+      ]);
+      if (cancelled) return;
+      const detailFailed = detailOutcome.status === 'rejected';
+      const timelineFailed = timelineOutcome.status === 'rejected';
+      if (timelineOutcome.status === 'fulfilled') {
+        applyTimeline(timelineOutcome.value.timeline, timelineOutcome.value.nextRows);
+      }
+      if (detailOutcome.status === 'fulfilled') {
+        applyThreadRecord(
+          detailOutcome.value,
+          timelineOutcome.status === 'fulfilled' ? timelineOutcome.value.timeline : null
+        );
+      } else if (timelineOutcome.status === 'fulfilled') {
+        const timelineStatus = timelineOutcome.value.timeline.status;
+        if (typeof timelineStatus === 'string' && timelineStatus) setStatus(timelineStatus);
+      }
+      if (detailFailed || timelineFailed) {
+        const reason = timelineFailed
+          ? (timelineOutcome as PromiseRejectedResult).reason
+          : (detailOutcome as PromiseRejectedResult).reason;
+        setLoadError(threadDetailLoadError(reason));
+        if (shouldClearPlaceholderStartingStatus(hadThreadRecordRef.current, detailFailed, timelineFailed)) {
+          setStatus('');
         }
-      } catch {
-        /* keep last */
+      } else {
+        setLoadError(null);
       }
     });
+    runLoadRef.current = () => runner.run();
     const scheduleDelta = () => {
       if (debounceTimer !== null) window.clearTimeout(debounceTimer);
       debounceTimer = window.setTimeout(() => {
@@ -395,6 +436,7 @@ export function ThreadDetail({
     });
     return () => {
       cancelled = true;
+      runLoadRef.current = () => {};
       runner.dispose();
       if (debounceTimer !== null) window.clearTimeout(debounceTimer);
       stopUpdated();
@@ -474,7 +516,6 @@ export function ThreadDetail({
   } else if (pin === 'diff' && environmentId) {
     panelBody = (
       <ThreadDiffPanel
-        threadId={threadId}
         environmentId={environmentId}
         path={diffPath}
         embedded
@@ -735,6 +776,8 @@ export function ThreadDetail({
               waitingOnUser={awaitingUser}
               thinking={thinking}
               goal={goal}
+              loadError={loadError}
+              onRetryLoad={() => runLoadRef.current()}
               activeWorkflows={workflows}
               planExecution={durablePlan?.tasks.length
                 ? { title: planExecutionTitle(durablePlan.markdown), tasks: durablePlan.tasks }
@@ -825,6 +868,7 @@ export function ThreadDetail({
                 model={threadModel}
                 reasoningLevel={threadReasoning}
                 acpMode={threadAcpMode}
+                permissionMode={threadPermissionMode?.threadId === threadId ? threadPermissionMode.mode : null}
                 executionModeRequested={executionModeRequested}
               />
             </div>

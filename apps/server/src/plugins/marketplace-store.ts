@@ -43,6 +43,28 @@ export function marketplaceStorePath(dataDir: string): string {
   return join(dataDir, 'plugins', 'marketplaces.json');
 }
 
+/** Renderer/HTTP projection — never include `cachedIndex`. */
+export function toPublicMarketplaceCatalog(row: MarketplaceCatalogRow) {
+  return {
+    source: row.source,
+    sourceKind: row.sourceKind,
+    name: row.name,
+    displayName: row.displayName,
+    addedAt: row.addedAt,
+    entryCount: row.entryCount,
+    lastRefreshAt: row.lastRefreshAt,
+    lastAttemptAt: row.lastAttemptAt,
+    lastError: row.lastError,
+    official: row.official
+  };
+}
+
+export function listPublicMarketplaceCatalogs(dataDir: string) {
+  return createMarketplaceStore({ file: marketplaceStorePath(dataDir) })
+    .list()
+    .map(toPublicMarketplaceCatalog);
+}
+
 function migrateCatalog(raw: Record<string, unknown>): MarketplaceCatalogRow | null {
   const source = typeof raw.source === 'string'
     ? raw.source

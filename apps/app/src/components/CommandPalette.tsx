@@ -1,7 +1,7 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { ChevronRight, FileText, Folder, Globe, Slash, CornerDownLeft } from 'lucide-react';
-import { useData, useScheduler, usePersonas, useUi, visibleTerminals } from '../store.js';
+import { ChevronRight, FileText, Folder, Globe, Slash, CornerDownLeft, Star } from 'lucide-react';
+import { useData, useScheduler, usePersonas, useUi, useFavoriteAgents, visibleTerminals } from '../store.js';
 import type { LaunchProfileId, WalkedFile, SlashCommand, SshHostEntry, Project, Persona } from '@zana-ai/zcc-domain/product';
 import { fuzzyMatchPaths, fuzzyScore } from '../lib/fuzzy.js';
 import { projectDefaultProfile } from '../lib/launchProfile.js';
@@ -10,31 +10,23 @@ import { useMergedModules } from '../modules/index.js';
 import { buildPaletteItems, type PaletteItem, type PaletteCategory } from './palette/buildItems.js';
 import { highlightMatches } from './palette/highlight.js';
 import type { WhenContext } from './palette/whenContext.js';
-import { isScopedWindow } from '../lib/windowScope.js';
-import { recordUse, recencyBoost, getRecents } from '../lib/paletteRecents.js';
+import { getScopedProjectId, isScopedWindow } from '../lib/windowScope.js';
+import { recordUse, getRecents } from '../lib/paletteRecents.js';
 import { titleFromPrompt } from '../lib/promptTitle.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { listCommandPaletteActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { StencilList } from './ui/Skeleton.js';
+import { useNavigate } from 'react-router-dom';
+import { useThreads } from '../thread-store.js';
+import { useEnsureThreads } from '../hooks/useEnsureThreads.js';
+import { getThreadRoutePath } from '../lib/route-paths.js';
+import { buildThreadPaletteItems } from './palette/threadItems.js';
+import { CATEGORY_LABELS, searchPaletteItems, type PaletteScope, type ScoredRow } from './palette/searchItems.js';
+import { PaletteFrame, paletteOptionProps } from './palette/PaletteFrame.js';
+import { favoritePaletteKeys } from './palette/favoriteItems.js';
 
 interface Props {
   onClose: () => void;
-}
-
-// Empty-query (landing) view caps for the UNBOUNDED categories, so a long
-// project/tab list doesn't bury the fixed Actions. Categories absent here
-// (Actions, Extensions) are shown in full. Typing lifts the cap entirely.
-const EMPTY_CATEGORY_CAP: Partial<Record<PaletteCategory, number>> = {
-  Projects: 5,
-  Tabs: 5
-};
-
-/** A scored command row (typed-query mode). `labelMatchIdx` is set only when
- *  the *label itself* produced the winning score, so highlighting never paints
- *  positions from a hint/keyword-derived match. */
-interface ScoredRow {
-  item: PaletteItem;
-  labelMatchIdx?: number[];
 }
 
 /** A file row in `@` mode. */
@@ -76,7 +68,11 @@ const commandCache = new Map<string, SlashCommand[]>();
 
 export function CommandPalette({ onClose }: Props) {
   const projects = useData((s) => s.projects);
+  const threads = useThreads((s) => s.threads);
+  const navigate = useNavigate();
+  useEnsureThreads();
   const terminals = useData((s) => s.terminals);
+  const favoriteIds = useFavoriteAgents((s) => s.favoriteIds);
   const addProject = useData((s) => s.addProject);
   const addRemoteProject = useData((s) => s.addRemoteProject);
   const createTerminal = useData((s) => s.createTerminal);
@@ -210,6 +206,7 @@ export function CommandPalette({ onClose }: Props) {
   };
 
   const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<PaletteScope>('all');
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -235,10 +232,6 @@ export function CommandPalette({ onClose }: Props) {
   const launchCommitted = launchSpaceIdx >= 0 && launchToken.length > 0;
   const launchBody = launchCommitted ? query.slice(launchSpaceIdx + 1) : '';
   const slashQuery = slashMode ? query.slice(1).trim() : '';
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
 
   // Keep the highlighted row in view when arrow-keying past the visible
   // window. `block: 'nearest'` avoids jumpy centering when the row is
@@ -326,7 +319,7 @@ export function CommandPalette({ onClose }: Props) {
     };
   }, [nav, selectedProject, activeTab, selectedProjectTabs.length, projectViewMap]);
 
-  const items = useMemo<PaletteItem[]>(() => buildPaletteItems({
+  const coreItems = useMemo<PaletteItem[]>(() => buildPaletteItems({
     projects, terminals, selectedProject, selectedProjectTabs, activeTab,
     scheduledTasks, personas, modules, overviewOpen, whenCtx, onClose, launch,
     launchPersona, addProject, setNav, selectProject, selectTab, setProjectView,
@@ -341,89 +334,22 @@ export function CommandPalette({ onClose }: Props) {
     setPinned, restartTerminal, closeTerminal, reopenLastClosed, restoreLastDetached, pushToast,
     commandPaletteActions, route.threadId, route.focusedProjectId]);
 
-  // --- command filtering / ranking -----------------------------------------
-  const rows = useMemo<ScoredRow[]>(() => {
-    if (fileMode || launchMode || slashMode) return [];
-    const q = query.trim();
-    if (!q) {
-      // Empty query: a CURATED landing view, not the full list. Keep the
-      // natural projects→tabs→actions→extensions grouping and float
-      // recently/frequently used items up *within* each category, but CAP the
-      // unbounded categories (Projects, Tabs) to their few most-recent so the
-      // fixed Actions don't get pushed off-screen by a long project list.
-      // Typing reveals everything (the typed path below scans all items).
-      //
-      // We group first (preserving each category's first-appearance order) then
-      // stable-sort each group by boost — NOT a single global comparator, which
-      // would interleave categories (fragmenting the section headers) and be
-      // non-transitive against the cross-category idx comparison.
-      const recents = getRecents();
-      const now = Date.now();
-      const groups: PaletteItem[][] = [];
-      const groupByCategory = new Map<string, PaletteItem[]>();
-      for (const item of items) {
-        let g = groupByCategory.get(item.category);
-        if (!g) { g = []; groupByCategory.set(item.category, g); groups.push(g); }
-        g.push(item);
-      }
-      const out: ScoredRow[] = [];
-      for (const g of groups) {
-        const sorted = g
-          .map((item, idx) => ({ item, idx, boost: recencyBoost(item.key, recents, now) }))
-          .sort((a, b) => (b.boost - a.boost) || (a.idx - b.idx));
-        const cap = EMPTY_CATEGORY_CAP[g[0].category];
-        (cap ? sorted.slice(0, cap) : sorted).forEach(({ item }) => out.push({ item }));
-      }
-      return out;
-    }
-    const recents = getRecents();
-    const now = Date.now();
-    const scored: Array<{ item: PaletteItem; score: number; idx: number; boost: number; labelMatchIdx?: number[] }> = [];
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      const lm = fuzzyScore(it.label, q);
-      let score = lm?.score ?? -Infinity;
-      // Highlight only when the label is the source of the chosen score.
-      let labelMatchIdx: number[] | undefined = lm ? lm.matchIdx : undefined;
-      if (it.hint) {
-        const hm = fuzzyScore(it.hint, q);
-        if (hm) {
-          const hintScore = hm.score * 0.5;
-          if (hintScore > score) { score = hintScore; labelMatchIdx = undefined; }
-        }
-      }
-      if (it.keywords) {
-        for (const kw of it.keywords) {
-          const km = fuzzyScore(kw, q);
-          if (km) {
-            const kwScore = km.score * 0.5;
-            if (kwScore > score) { score = kwScore; labelMatchIdx = undefined; }
-          }
-        }
-      }
-      if (score > -Infinity) {
-        scored.push({ item: it, score, idx: i, boost: recencyBoost(it.key, recents, now), labelMatchIdx });
-      }
-    }
-    // Fuzzy score dominates; recency is only a final, bounded tiebreaker.
-    scored.sort((a, b) => (b.score - a.score) || (b.boost - a.boost) || (a.idx - b.idx));
-    return scored.map((s) => ({ item: s.item, labelMatchIdx: s.labelMatchIdx }));
-  }, [items, query, fileMode, launchMode, slashMode]);
-
-  // How many items each capped category hides in the empty-query landing view,
-  // so the section header can show a "+N more — type to search" affordance.
-  // Empty only — typing lifts the caps, so there's nothing hidden to announce.
-  const overflow = useMemo<Partial<Record<PaletteCategory, number>>>(() => {
-    if (fileMode || launchMode || slashMode || query.trim() !== '') return {};
-    const counts: Partial<Record<PaletteCategory, number>> = {};
-    for (const it of items) counts[it.category] = (counts[it.category] ?? 0) + 1;
-    const out: Partial<Record<PaletteCategory, number>> = {};
-    for (const [cat, total] of Object.entries(counts) as [PaletteCategory, number][]) {
-      const cap = EMPTY_CATEGORY_CAP[cat];
-      if (cap && total > cap) out[cat] = total - cap;
-    }
-    return out;
-  }, [items, query, fileMode, launchMode, slashMode]);
+  const favorites = useMemo(() => favoritePaletteKeys(projects, terminals, favoriteIds), [projects, terminals, favoriteIds]);
+  const items = useMemo(() => [
+    ...buildThreadPaletteItems(threads, projects, (thread) => {
+      onClose();
+      navigate(getThreadRoutePath(thread.id, route.focusedProjectId ? thread.projectId : undefined));
+    }, getScopedProjectId()),
+    ...coreItems
+  ].map((item) => ({ ...item, favorite: favorites.has(item.key) })),
+  [threads, projects, coreItems, onClose, navigate, route.focusedProjectId, favorites]);
+  const search = useMemo(() => searchPaletteItems(items, query, scope, getRecents()), [items, query, scope]);
+  const { rows, overflow } = search;
+  const chooseScope = (next: PaletteScope) => {
+    setScope(next);
+    setActiveIdx(0);
+    inputRef.current?.focus();
+  };
 
   // --- file rows (@ mode) ----------------------------------------------------
   const fileRows = useMemo<FileRow[]>(() => {
@@ -581,17 +507,16 @@ export function CommandPalette({ onClose }: Props) {
 
   // Reset selection to the top whenever the query changes (incl. entering /
   // leaving `@` mode) so the highlight never points at a stale row.
-  useEffect(() => { setActiveIdx(0); }, [query]);
+  useEffect(() => { setActiveIdx(0); }, [query, scope]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
     // Arrow nav wraps around top↔bottom so the highlight reads as discrete
     // row-to-row movement, not a viewport scroll that dead-ends at the edges.
     if (e.key === 'ArrowDown') { e.preventDefault(); if (rowCount) setActiveIdx((i) => (i + 1) % rowCount); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); if (rowCount) setActiveIdx((i) => (i - 1 + rowCount) % rowCount); return; }
     if (e.key === 'Home') { e.preventDefault(); setActiveIdx(0); return; }
     if (e.key === 'End') { e.preventDefault(); setActiveIdx(Math.max(0, rowCount - 1)); return; }
-    if (e.key === 'PageDown') { e.preventDefault(); setActiveIdx((i) => Math.min(i + 8, rowCount - 1)); return; }
+    if (e.key === 'PageDown') { e.preventDefault(); setActiveIdx((i) => Math.max(0, Math.min(i + 8, rowCount - 1))); return; }
     if (e.key === 'PageUp') { e.preventDefault(); setActiveIdx((i) => Math.max(i - 8, 0)); return; }
     // Tab completes the highlighted `#` target (token + committing space).
     // Available in the picker — including the committed-but-ambiguous case,
@@ -630,32 +555,27 @@ export function CommandPalette({ onClose }: Props) {
       ? 'Launch a task in a project or host…'
       : slashMode
         ? (selectedProject ? `Slash commands in ${selectedProject.name}…` : 'Slash commands…')
-        : 'Type to search · @ files · # launch · / commands…';
+        : 'Search anything… · @ files · # launch · / commands';
+
+  const modeLabel = fileMode ? `Files in ${selectedProject!.name}`
+    : launchMode ? 'Launch a task · Tab to choose a destination'
+      : slashMode ? `Slash commands in ${selectedProject!.name}` : undefined;
 
   return (
-    <div className="palette-backdrop" onMouseDown={onClose}>
-      <div className="palette" onMouseDown={(e) => e.stopPropagation()}>
-        <input
-          ref={inputRef}
-          className="palette-input"
-          placeholder={placeholder}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={onKeyDown}
-        />
-        <div className="palette-list" ref={listRef}>
-          {fileMode
-            ? renderFileRows(files, fileRows, activeIdx, setActiveIdx, chooseFile)
-            : launchMode
-              ? renderLaunchRows(launchRows, hosts, activeIdx, setActiveIdx, completeTarget,
-                  launchShowBanner, committedTarget, launchBody,
-                  (t, b) => void launchInTarget(t, b))
-              : slashMode
-                ? renderSlashRows(slashRows, slashCommands, selectedProject !== null, activeIsClaude, activeIdx, setActiveIdx, runSlash)
-                : renderCommandRows(rows, showHeaders, activeIdx, setActiveIdx, runItem, overflow)}
-        </div>
-      </div>
-    </div>
+    <PaletteFrame query={query} onQuery={setQuery} placeholder={placeholder}
+      scope={scope} onScope={chooseScope} modeLabel={modeLabel}
+      activeIndex={activeIdx} rowCount={rowCount} total={modeLabel ? rowCount : search.total}
+      inputRef={inputRef} listRef={listRef} onInputKeyDown={onKeyDown} onClose={onClose}>
+      {fileMode
+        ? renderFileRows(files, fileRows, activeIdx, setActiveIdx, chooseFile)
+        : launchMode
+          ? renderLaunchRows(launchRows, hosts, activeIdx, setActiveIdx, completeTarget,
+              launchShowBanner, committedTarget, launchBody,
+              (t, b) => void launchInTarget(t, b))
+          : slashMode
+            ? renderSlashRows(slashRows, slashCommands, selectedProject !== null, activeIsClaude, activeIdx, setActiveIdx, runSlash)
+            : renderCommandRows(rows, showHeaders, activeIdx, setActiveIdx, runItem, overflow, scope, query)}
+    </PaletteFrame>
   );
 }
 
@@ -671,6 +591,9 @@ function renderFileRows(
   return fileRows.map((r, i) => (
     <button
       key={r.file.path}
+      aria-label={r.file.rel}
+      {...paletteOptionProps(i, activeIdx)}
+      onMouseDown={(event) => event.preventDefault()}
       data-idx={i}
       className={`palette-item ${i === activeIdx ? 'active' : ''}`}
       onMouseEnter={() => setActiveIdx(i)}
@@ -699,6 +622,8 @@ function renderLaunchRows(
     const trimmed = body.trim();
     return (
       <button
+        {...paletteOptionProps(0, activeIdx)}
+        onMouseDown={(event) => event.preventDefault()}
         data-idx={0}
         className={`palette-item palette-launch-banner ${activeIdx === 0 ? 'active' : ''}`}
         onMouseEnter={() => setActiveIdx(0)}
@@ -730,6 +655,9 @@ function renderLaunchRows(
     return (
       <button
         key={key}
+        aria-label={`${label} ${hint}`}
+        {...paletteOptionProps(i, activeIdx)}
+        onMouseDown={(event) => event.preventDefault()}
         data-idx={i}
         className={`palette-item ${i === activeIdx ? 'active' : ''}`}
         onMouseEnter={() => setActiveIdx(i)}
@@ -759,6 +687,9 @@ function renderSlashRows(
   return slashRows.map((r, i) => (
     <button
       key={r.cmd.id}
+      aria-label={`${r.cmd.invocation} ${r.cmd.description ?? ''}`.trim()}
+      {...paletteOptionProps(i, activeIdx)}
+      onMouseDown={(event) => event.preventDefault()}
       data-idx={i}
       className={`palette-item ${i === activeIdx ? 'active' : ''}`}
       onMouseEnter={() => setActiveIdx(i)}
@@ -778,22 +709,39 @@ function renderCommandRows(
   activeIdx: number,
   setActiveIdx: (i: number) => void,
   runItem: (item: PaletteItem) => void,
-  overflow: Partial<Record<PaletteCategory, number>>
+  overflow: Partial<Record<PaletteCategory, number>>,
+  scope: PaletteScope,
+  query: string
 ) {
-  if (rows.length === 0) return <div className="palette-empty">No matches</div>;
+  if (rows.length === 0) return (
+    <div className="palette-empty">
+      <div className="command-palette-empty-title">{scope === 'favorites'
+        ? (query.trim() ? 'No favorites match your search' : 'No favorites yet')
+        : 'No results found'}</div>
+      <div className="command-palette-empty-help">{scope === 'favorites' && !query.trim()
+        ? 'Star a project or follow a thread or CLI agent to find it here.'
+        : scope === 'all' ? 'Try a thread title, project name, or command.'
+          : 'Try another search or choose All to search every category.'}</div>
+    </div>
+  );
 
   const renderRow = (row: ScoredRow, i: number) => (
     <button
       key={row.item.key}
+      aria-label={`${row.item.label} ${row.item.hint ?? ''}`.trim()}
+      title={row.item.hint ? `${row.item.label} — ${row.item.hint}` : row.item.label}
+      {...paletteOptionProps(i, activeIdx)}
+      onMouseDown={(event) => event.preventDefault()}
       data-idx={i}
       className={`palette-item ${i === activeIdx ? 'active' : ''}`}
       onMouseEnter={() => setActiveIdx(i)}
       onClick={() => runItem(row.item)}
     >
-      <span className="palette-icon">{row.item.icon}</span>
+      <span className="palette-icon" aria-hidden="true">{row.item.icon}</span>
       <span className="palette-label">
         {row.labelMatchIdx ? highlightMatches(row.item.label, row.labelMatchIdx) : row.item.label}
       </span>
+      {row.item.favorite && <Star size={12} className="command-palette-favorite" fill="currentColor" aria-hidden="true" />}
       {row.item.hint && <span className="palette-hint">{row.item.hint}</span>}
       <ChevronRight size={12} className="palette-chev" />
     </button>
@@ -808,19 +756,19 @@ function renderCommandRows(
   let lastCategory: string | null = null;
   let lastSource: string | null = null;
   rows.forEach((row, i) => {
-    if (row.item.category !== lastCategory) {
-      lastCategory = row.item.category;
+    if (row.section !== lastCategory) {
+      lastCategory = row.section;
       lastSource = null;
-      const more = overflow[row.item.category];
+      const more = row.section === 'Recent' ? 0 : overflow[row.item.category];
       out.push(
-        <div key={`hdr:${row.item.category}`} className="palette-section">
-          <span>{row.item.category}</span>
-          {more ? <span className="palette-section-more">+{more} more · type to search</span> : null}
+        <div key={`hdr:${row.section}`} className="palette-section">
+          <span>{CATEGORY_LABELS[row.section]}</span>
+          {more ? <span className="palette-section-more">+{more} more · filter or search</span> : null}
         </div>
       );
     }
     // Within Extensions, sub-group by the extension's source title.
-    if (row.item.category === 'Extensions' && row.item.source !== lastSource) {
+    if (row.section === 'Extensions' && row.item.source !== lastSource) {
       lastSource = row.item.source;
       out.push(<div key={`sub:${row.item.source}`} className="palette-subsection">{row.item.source}</div>);
     }

@@ -6,7 +6,9 @@
  * shipped engine enforces: opt-in channel, HTTPS, sha256 integrity, Ed25519
  * signature, and the UI wiring from a click through IPC to disk.
  */
-import { test, expect } from './fixtures/app.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { test, expect, launchApp } from './fixtures/app.js';
 import { MarketplacePage } from './fixtures/marketplace.js';
 
 test.describe('marketplace — bundled catalog without a remote registry', () => {
@@ -89,5 +91,72 @@ test.describe('marketplace — integrity gates (signed registry)', () => {
     });
     expect(bad.ok).toBe(false);
     expect(bad.code).toBe('NOT_FOUND');
+  });
+});
+
+test.describe('marketplace — catalog sources from the on-disk store', () => {
+  test('lists seeded official catalogs in Catalog sources', async ({ home }) => {
+    mkdirSync(join(home, '.zcc', 'plugins'), { recursive: true });
+    writeFileSync(
+      join(home, '.zcc', 'plugins', 'marketplaces.json'),
+      JSON.stringify({
+        version: 2,
+        catalogs: [
+          {
+            source: 'https://example.test/official.json',
+            sourceKind: 'https',
+            name: 'zana-official-plugins',
+            displayName: 'Zana official plugins',
+            addedAt: 1,
+            entryCount: 30,
+            lastRefreshAt: 1,
+            lastAttemptAt: 1,
+            lastError: null,
+            official: true
+          },
+          {
+            source: 'git:https://git.example.test/internal.git',
+            sourceKind: 'git',
+            name: 'zana-internal-plugins',
+            displayName: 'Zana internal plugins',
+            addedAt: 1,
+            entryCount: 1,
+            lastRefreshAt: 1,
+            lastAttemptAt: 1,
+            lastError: null,
+            official: true
+          }
+        ]
+      })
+    );
+    const handle = await launchApp(home, {
+      env: {
+        ZCC_OFFICIAL_MARKETPLACE_URL: 'off',
+        ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off'
+      }
+    });
+    try {
+      const market = new MarketplacePage(handle.window);
+      await market.open();
+      const listed = await handle.window.evaluate(() =>
+        (
+          window as unknown as {
+            cc: { marketplaces: { list: () => Promise<Array<{ displayName: string }>> } };
+          }
+        ).cc.marketplaces.list()
+      );
+      expect(listed.map((row) => row.displayName)).toEqual([
+        'Zana official plugins',
+        'Zana internal plugins'
+      ]);
+      await market.openCatalogSources();
+      await expect(market.catalogNames()).toHaveText([
+        'Zana official plugins',
+        'Zana internal plugins'
+      ]);
+      await expect(handle.window.locator('.ext-market-item-source--official')).toHaveCount(2);
+    } finally {
+      await handle.electron.close();
+    }
   });
 });

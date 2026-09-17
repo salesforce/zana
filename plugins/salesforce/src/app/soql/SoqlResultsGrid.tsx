@@ -1,6 +1,8 @@
 import { cellDisplay, discoverColumns, flattenRecords } from './soql-flatten.js';
 
 export function SoqlResultsGrid(props: {
+  hasRun?: boolean;
+  onSelectRecord?(record: Record<string, unknown>): void;
   records: Array<Record<string, unknown>>;
   search: string;
   totalSize?: number;
@@ -21,7 +23,7 @@ export function SoqlResultsGrid(props: {
   if (props.records.length === 0) {
     return (
       <div className="sf-soql-empty" data-testid="soql-results-empty">
-        Run a query to see records.
+        {props.hasRun ? 'No records matched this query.' : 'Run a query to see records.'}
       </div>
     );
   }
@@ -57,7 +59,7 @@ export function SoqlResultsGrid(props: {
             {rows.map((row, index) => (
               <tr key={String(row.Id ?? index)}>
                 {columns.map((col) => (
-                  <td key={col}>{cellDisplay(row[col])}</td>
+                  <td key={col}>{props.onSelectRecord && (col === 'Name' || col === 'Id') ? <button type="button" className="sf-link" onClick={() => props.onSelectRecord?.(props.records[flat.indexOf(row)])}>{cellDisplay(row[col])}</button> : cellDisplay(row[col])}</td>
                 ))}
               </tr>
             ))}

@@ -69,7 +69,9 @@ zcc marketplace add https://<PUBLIC_BASE_URL>/marketplace/v1/marketplace.json
 zcc marketplace install memory@official
 ```
 
-Desktop builds seed the official catalog from `ZCC_OFFICIAL_MARKETPLACE_URL` when that env var is an `https://` URL.
+Desktop builds seed the official catalog from the public HTTPS feed
+(`https://zcc-7808c5bc8f3d.herokuapp.com/marketplace/v1/marketplace.json`)
+unless `ZCC_OFFICIAL_MARKETPLACE_URL` overrides or disables it (`off` / `0`).
 
 ## Tests
 

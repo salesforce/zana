@@ -65,7 +65,7 @@ export function pushRecent(
 
 export function upsertSaved(items: SoqlHistoryItem[], next: SoqlHistoryItem): SoqlHistoryItem[] {
   const rest = items.filter((row) => row.id !== next.id);
-  return [next, ...rest];
+  return [next, ...rest].slice(0, 100);
 }
 
 export function removeItem(items: SoqlHistoryItem[], id: string): SoqlHistoryItem[] {

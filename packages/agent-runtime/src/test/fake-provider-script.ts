@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
 
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = number | string;
@@ -24,6 +25,7 @@ type ToolTurnIdMode = "active" | "unresolved";
 interface ThreadState {
   activeTurn: ActiveTurn | null;
   providerThreadId: string;
+  turnIdPrefix: string;
   turnCount: number;
   userMessageCount: number;
 }
@@ -373,7 +375,7 @@ function beginTurn(threadId: string, input: unknown, clientRequestId?: string): 
   clearActiveTurn(thread);
   thread.turnCount += 1;
 
-  const turnId = `turn-${thread.turnCount}`;
+  const turnId = `${thread.turnIdPrefix}-${thread.turnCount}`;
   const inputText = parseInputText(input);
   const plan = parseTurnPlan(inputText);
 
@@ -463,6 +465,9 @@ function startOrResumeThread(
   threads.set(threadId, {
     activeTurn: null,
     providerThreadId,
+    // Resume can run in a fresh process. Reusing turn-1 would collide with the
+    // persisted completed turn and make the host discard the new boundaries.
+    turnIdPrefix: mode === "resume" ? `turn-${randomUUID()}` : "turn",
     turnCount: 0,
     userMessageCount: 0,
   });

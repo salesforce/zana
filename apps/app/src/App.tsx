@@ -693,6 +693,8 @@ export function App() {
           className={`titlebar-fav ${favoriteCount > 0 ? 'has-favs' : ''} ${favoritesOpen ? 'active' : ''}`}
           onClick={() => useUi.getState().toggleFavoritesDrawer()}
           aria-pressed={favoritesOpen}
+          aria-expanded={favoritesOpen}
+          aria-controls={favoritesOpen ? 'favorites-panel' : undefined}
           aria-label={favoriteCount > 0 ? `Followed agents — ${favoriteCount}` : 'Followed agents'}
           title={favoriteCount > 0 ? `Followed agents — ${favoriteCount}` : 'Followed agents'}
         >
@@ -708,6 +710,8 @@ export function App() {
           className={`titlebar-bell ${unreadInbox > 0 ? 'has-unread' : ''} ${notificationsOpen ? 'active' : ''}`}
           onClick={() => useUi.getState().toggleNotificationsDrawer()}
           aria-pressed={notificationsOpen}
+          aria-expanded={notificationsOpen}
+          aria-controls={notificationsOpen ? 'notifications-panel' : undefined}
           aria-label={unreadInbox > 0 ? `Notifications — ${unreadInbox} unread` : 'Notifications'}
           title={unreadInbox > 0 ? `Notifications — ${unreadInbox} unread` : 'Notifications'}
         >

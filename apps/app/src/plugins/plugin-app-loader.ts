@@ -124,7 +124,7 @@ async function loadPluginApp(
     (globalThis as Record<string, unknown>).__ZCC_HOST_REACT_DOM_CLIENT__ = ReactDOMClient;
     const mod = await importer(entry.appUrl);
     if (isPluginAppDefinition(mod.default)) {
-      const set = interpretPluginApp(entry.id, mod.default);
+      const set = interpretPluginApp(entry.id, mod.default, entry.name);
       return moduleFromSet(entry, set);
     }
     // Leftover extension.json renderers call ModuleHost.call → modules:call.

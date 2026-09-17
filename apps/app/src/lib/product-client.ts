@@ -578,8 +578,8 @@ function httpProduct(): Pick<
     } as CcApi['relay'],
     marketplaces: {
       list: async () => {
-        const body = await apiJson<{ catalogs: Awaited<ReturnType<CcApi['marketplaces']['list']>> }>('/marketplaces');
-        return body.catalogs;
+        const body = await apiJson<{ catalogs?: Awaited<ReturnType<CcApi['marketplaces']['list']>> }>('/marketplaces');
+        return Array.isArray(body.catalogs) ? body.catalogs : [];
       },
       add: async (source) => apiJson('/marketplaces', {
         method: 'POST',
@@ -650,6 +650,7 @@ function httpProduct(): Pick<
           body: JSON.stringify({
             input,
             mode,
+            ...(extras?.permissionMode ? { permissionMode: extras.permissionMode } : {}),
             ...(extras?.model ? { model: extras.model } : {}),
             ...(extras?.reasoningLevel ? { reasoningLevel: extras.reasoningLevel } : {})
             , ...(extras?.acpMode ? { acpMode: extras.acpMode } : {})
@@ -1207,7 +1208,28 @@ export const product: CcApi = new Proxy({} as CcApi, {
       }
       return withStubs('hosts', http);
     }
-    if (name === 'threads' || name === 'environments' || name === 'relay' || name === 'marketplaces' || name === 'cliSkills') {
+    if (name === 'marketplaces') {
+      const http = httpProduct().marketplaces;
+      if (hasDesktopBridge()) {
+        const desktop = (window.cc as unknown as CcApi).marketplaces;
+        return withStubs('marketplaces', {
+          list: async () => {
+            try {
+              const rows = await desktop?.list?.();
+              if (Array.isArray(rows) && rows.length > 0) return rows;
+            } catch {
+              /* product HTTP still has the catalogs when preload is stale */
+            }
+            return http.list();
+          },
+          add: http.add,
+          refresh: http.refresh,
+          remove: http.remove
+        });
+      }
+      return withStubs('marketplaces', http);
+    }
+    if (name === 'threads' || name === 'environments' || name === 'relay' || name === 'cliSkills') {
       const http = httpProduct() as unknown as Record<string, unknown>;
       return withStubs(name, http[name] as object);
     }

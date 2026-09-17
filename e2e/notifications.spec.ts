@@ -264,7 +264,9 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
 
       // Drawer closes and exact pushed entry opens in Inbox.
       await expect(drawer).toBeHidden({ timeout: 5_000 });
-      await expect(win.locator('.nav-item.active', { hasText: /^Inbox$/ })).toHaveCount(1);
+      // The Inbox label can include another entry's unread badge.
+      await expect(win.getByTestId('nav-inbox')).toHaveClass(/active/);
+      await expect(win).toHaveURL(/\/inbox$/);
       await expect(win.locator('.inbox-detail')).toContainText(marker, { timeout: 5_000 });
     } finally {
       if (projectId) {

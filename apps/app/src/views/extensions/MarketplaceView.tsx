@@ -141,7 +141,7 @@ export function MarketplaceView({
   const refreshCatalogs = useCallback(() => {
     product.marketplaces
       .list()
-      .then(setCatalogs)
+      .then((rows) => setCatalogs(Array.isArray(rows) ? rows : []))
       .catch(() => setCatalogs([]));
   }, []);
 
@@ -149,10 +149,24 @@ export function MarketplaceView({
     refresh();
     refreshCatalogs();
     const offExt = product.extensions.onChanged(() => refresh());
-    const offApps = product.pluginApps?.onChanged?.(() => refresh()) ?? (() => {});
+    const offApps = product.pluginApps?.onChanged?.(() => {
+      refresh();
+      refreshCatalogs();
+    }) ?? (() => {});
+    // Background git.soma seed can finish after first paint.
+    const later = window.setTimeout(() => {
+      refresh();
+      refreshCatalogs();
+    }, 2_000);
+    const last = window.setTimeout(() => {
+      refresh();
+      refreshCatalogs();
+    }, 9_000);
     return () => {
       offExt();
       offApps();
+      window.clearTimeout(later);
+      window.clearTimeout(last);
     };
   }, [refresh, refreshCatalogs]);
 

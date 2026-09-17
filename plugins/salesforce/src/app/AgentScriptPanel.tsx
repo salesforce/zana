@@ -40,7 +40,7 @@ import { fetchConnectedOrg } from './org-rpc.js';
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
 export const AGENTFORCE_PANEL_STYLES = `
-.sf-as { --sf-as-surface: var(--bg, #1a1d23); --sf-as-elevated: var(--bg-panel, #22262e); --sf-as-sunken: #14161b; --sf-as-border: var(--border, #2c313a); --sf-as-text: var(--text, #e6e8ec); --sf-as-muted: var(--text-muted, #9aa1ad); --sf-as-accent: #1b96ff; }
+.sf-as { --sf-as-surface: var(--bg-panel); --sf-as-elevated: var(--bg-panel, #22262e); --sf-as-sunken: #14161b; --sf-as-border: var(--border, #2c313a); --sf-as-text: var(--text-primary); --sf-as-muted: var(--text-muted, #9aa1ad); --sf-as-accent: var(--accent); }
 .sf-as-header { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 16px; flex-shrink: 0; background: var(--sf-as-elevated); border-bottom: 1px solid var(--sf-as-border); color: var(--sf-as-text); }
 .sf-as-brand { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
 .sf-as-crumb { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--sf-as-muted); font-size: 13px; }
@@ -198,7 +198,7 @@ export function AgentScriptPanel(props: {
   );
 
   const refreshOrg = useCallback(async () => {
-    const payload = await fetchConnectedOrg(pluginId);
+    const payload = await fetchConnectedOrg(pluginId, projectId);
     const next = payload.ok ? payload.org : null;
     setOrg(next);
     postToPlayground(frameRef.current, {
@@ -207,7 +207,7 @@ export function AgentScriptPanel(props: {
       org: next
     });
     return next;
-  }, [pluginId]);
+  }, [pluginId, projectId]);
 
   const refreshFiles = useCallback(async () => {
     const listed = (await callPluginRpc(pluginId, 'agentFiles.list', rpcArgs())) as {
@@ -220,7 +220,7 @@ export function AgentScriptPanel(props: {
 
   useEffect(() => {
     let cancelled = false;
-    void callPluginRpc(pluginId, 'status')
+    void callPluginRpc(pluginId, 'status', rpcArgs())
       .then((next) => {
         if (!cancelled) setStatus((next ?? {}) as StatusPayload);
       })
@@ -451,7 +451,7 @@ export function AgentScriptPanel(props: {
           ))}
         </nav>
         <span className="sf-as-spacer" />
-        <OrgPicker pluginId={pluginId} compact onSelect={() => void refreshOrg()} />
+        <OrgPicker pluginId={pluginId} projectId={projectId} compact onSelect={() => void refreshOrg()} />
         {orgSessionLabel(org) ? (
           <span className="sf-as-crumb-seg" data-testid="salesforce-playground-org">
             {orgSessionLabel(org)}

@@ -72,6 +72,14 @@ describe('MarketplaceView presentation', () => {
     expect(source).not.toContain("? 'Bundled' : 'Marketplace'");
   });
 
+  it('reloads catalog sources when plugin apps change and after delayed seed', () => {
+    expect(source).toContain('refreshCatalogs()');
+    expect(source).toContain('pluginApps?.onChanged');
+    expect(source).toContain('9_000');
+    expect(source).toContain('product.marketplaces');
+    expect(source).toContain('Array.isArray(rows) ? rows : []');
+  });
+
   it('keeps the browse toolbar to search, install, and create', () => {
     expect(source).toContain('ext-market-search-refresh');
     expect(source).toContain('aria-label="Reload the catalog"');

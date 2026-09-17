@@ -3321,6 +3321,7 @@ body.resizing-col {
 .agent-modal-header.thread-modal-header {
   justify-content: flex-end;
 }
+.agent-modal-header.thread-modal-header .agent-modal-window-controls,
 .agent-modal-header.thread-modal-header .icon-button {
   margin-left: 0;
 }
@@ -3330,8 +3331,41 @@ body.resizing-col {
 .agent-modal-window-controls {
   margin-left: auto;
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+}
+
+/* Window sizing is labeled; the nested panel keeps its compact expand icon. */
+.agent-modal-fullscreen-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.agent-modal-fullscreen-button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.agent-modal-fullscreen-button:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+.agent-modal-window-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
 }
 
 /* Title / close / fullscreen stay above the split: maximize and the narrow
@@ -31806,12 +31840,12 @@ textarea.ui-command-composer-input {
 }
 
 .thread-composer-dock:has(.thread-composer-stack-card) .thread-command-composer .ui-command-composer,
-.thread-composer-dock:has(> .thread-workspace-banner + .thread-command-composer) .thread-command-composer .ui-command-composer {
+.thread-composer-dock:has(> .thread-workspace-banner) .thread-command-composer .ui-command-composer {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
 }
 
-.thread-composer-dock:has(> .thread-workspace-banner + .thread-command-composer) .thread-command-composer .ui-command-composer {
+.thread-composer-dock:has(> .thread-workspace-banner) .thread-command-composer .ui-command-composer {
   box-shadow: none;
 }
 
@@ -34897,6 +34931,23 @@ textarea.thread-command-editor {
   max-width: 100%;
 }
 
+.thread-timeline-load-error {
+  border-radius: 8px;
+  max-width: 100%;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-elevated, var(--bg-2)));
+}
+
+.thread-timeline-load-retry {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .thread-banner-meta {
   margin-left: auto;
 }
@@ -36971,35 +37022,6 @@ textarea.thread-command-editor {
   font: inherit;
   font-size: 12px;
   text-align: left;
-}
-
-.thread-selection-add {
-  position: fixed;
-  z-index: 40;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid var(--accent-blue);
-  border-radius: 8px;
-  background: var(--accent-blue);
-  color: #fff;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.thread-selection-add:hover {
-  background: color-mix(in srgb, var(--accent-blue) 85%, #000);
-  border-color: color-mix(in srgb, var(--accent-blue) 85%, #000);
-}
-
-.thread-selection-add:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
 }
 
 .thread-terminal-tab {

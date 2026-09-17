@@ -120,7 +120,7 @@ export function createSalesforceSdk(opts: {
       const path = confineQueryMorePath(org.instanceUrl, nextRecordsUrl);
       const { org: fromRequest, response } = await request(path, {
         method: 'GET',
-        alias: moreOpts.alias,
+        alias: org.alias,
         signal: moreOpts.signal
       });
       return { org: fromRequest, response, ...asQueryPage(response.json) };

@@ -212,6 +212,105 @@ describe('conversationTimeline', () => {
     expect(second.rows).toEqual([]);
     expect(second.delta).toEqual({ upsertRows: [] });
   });
+
+  it('does not emit an emptying rowOrder when a later window projects to zero rows', () => {
+    const threadId = '11111111-1111-4111-8111-111111111111';
+    const ctx = { db: {}, dataDir: '/tmp' } as ProductHttpContext;
+    vi.mocked(getConversationThread).mockReturnValueOnce({
+      id: threadId,
+      projectId: 'proj-1',
+      hostId: 'host-1',
+      environmentId: null,
+      providerId: 'pi',
+      status: 'active',
+      title: 'Hello'
+    });
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([
+      {
+        id: 'evt-200',
+        threadId,
+        sequence: 200,
+        type: 'item/agentMessage/delta',
+        payload: {
+          type: 'item/agentMessage/delta',
+          threadId,
+          providerThreadId: 'p1',
+          scope: { kind: 'turn', turnId: 'turn-1' },
+          itemId: 'assistant-1',
+          delta: 'Hello from the tail of a long turn.'
+        },
+        createdAt: 200
+      },
+      {
+        id: 'evt-201',
+        threadId,
+        sequence: 201,
+        type: 'turn/completed',
+        payload: {
+          type: 'turn/completed',
+          threadId,
+          providerThreadId: 'p1',
+          scope: { kind: 'turn', turnId: 'turn-1' },
+          status: 'completed'
+        },
+        createdAt: 201
+      }
+    ]);
+    vi.mocked(countConversationThreadEvents).mockReturnValueOnce(201);
+    const first = conversationTimeline(ctx, threadId);
+    expect(first.rows.length).toBeGreaterThan(0);
+
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([]);
+    vi.mocked(countConversationThreadEvents).mockReturnValue(300);
+    const second = conversationTimeline(ctx, threadId, { afterSequence: String(first.maxSeq) });
+    expect(second.delta?.rowOrder).toBeUndefined();
+    expect(second.delta).toEqual({ upsertRows: [] });
+
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([]);
+    const third = conversationTimeline(ctx, threadId);
+    expect(JSON.stringify(third.rows)).toContain('Hello from the tail of a long turn.');
+    vi.mocked(countConversationThreadEvents).mockReturnValue(0);
+  });
+
+  it('allows an emptying window when maxSeq went backwards', () => {
+    const threadId = '11111111-1111-4111-8111-111111111111';
+    const ctx = { db: {}, dataDir: '/tmp' } as ProductHttpContext;
+    vi.mocked(getConversationThread).mockReturnValueOnce({
+      id: threadId,
+      projectId: 'proj-1',
+      hostId: 'host-1',
+      environmentId: null,
+      providerId: 'pi',
+      status: 'idle',
+      title: 'Hello'
+    });
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([
+      {
+        id: 'evt-200',
+        threadId,
+        sequence: 200,
+        type: 'item/agentMessage/delta',
+        payload: {
+          type: 'item/agentMessage/delta',
+          threadId,
+          providerThreadId: 'p1',
+          scope: { kind: 'turn', turnId: 'turn-1' },
+          itemId: 'assistant-1',
+          delta: 'Hello from the tail of a long turn.'
+        },
+        createdAt: 200
+      }
+    ]);
+    vi.mocked(countConversationThreadEvents).mockReturnValueOnce(200);
+    const first = conversationTimeline(ctx, threadId);
+    expect(first.rows.length).toBeGreaterThan(0);
+
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([]);
+    vi.mocked(countConversationThreadEvents).mockReturnValue(4);
+    const second = conversationTimeline(ctx, threadId, { afterSequence: String(first.maxSeq) });
+    expect(second.delta).toEqual({ upsertRows: [], rowOrder: [] });
+    vi.mocked(countConversationThreadEvents).mockReturnValue(0);
+  });
 });
 
 describe('conversationOutline', () => {

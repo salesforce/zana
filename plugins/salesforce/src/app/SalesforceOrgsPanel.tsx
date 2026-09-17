@@ -1,11 +1,6 @@
 import { OrgPicker } from './OrgPicker.js';
+import { SalesforcePanelFrame } from './components/ui.js';
 
-export function SalesforceOrgsPanel(props: { pluginId: string; subPath: string }) {
-  return (
-    <div className="sf-orgs-panel" data-testid="salesforce-orgs-panel" style={{ padding: 24, height: '100%', boxSizing: 'border-box' }}>
-      <h2 style={{ marginTop: 0 }}>Salesforce</h2>
-      <p style={{ color: 'var(--text-muted)' }}>CLI-connected orgs. Selecting one sets the shared default org for SOQL, Apex, LWC, and Agentforce.</p>
-      <OrgPicker pluginId={props.pluginId} />
-    </div>
-  );
+export function SalesforceOrgsPanel(props: { pluginId: string; subPath?: string }) {
+  return <SalesforcePanelFrame title="Salesforce orgs"><div className="sf-scroll sf-content" data-testid="salesforce-orgs-panel"><h2>Your Salesforce connections.</h2><p className="sf-muted">Inspect connected orgs and manage the shared fallback. Project targets are selected inside each project.</p><OrgPicker pluginId={props.pluginId} /></div></SalesforcePanelFrame>;
 }

@@ -2137,6 +2137,20 @@ describe('product HTTP plugins', () => {
       catalogs: []
     });
   });
+
+  it('lists empty catalogs when listMarketplaces is not a sync array', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-mp-async-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    server.ctx.plugins = {
+      listMarketplaces: () => Promise.resolve([{ source: 'https://example.test/mp.json' }])
+    } as never;
+    const listed = await fetch(`${server.url}api/v1/marketplaces`);
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toEqual({ catalogs: [] });
+  });
 });
 
 describe('product HTTP CLI skills', () => {

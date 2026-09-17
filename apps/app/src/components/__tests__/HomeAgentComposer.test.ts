@@ -196,7 +196,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('options.rosterReady');
     expect(source).toContain('isOfferedModernProvider(options.registeredProviderIds, resolvedProviderId)');
     expect(source).toContain('That harness is not available for Modern threads');
-    expect(source).toContain('permissionMode: permissionMode as');
+    expect(source).toContain('useThreadPermissionMode');
     expect(source).toContain('permissionModeOptionsFor');
     expect(source).toContain('acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue');
     expect(source).toContain('compactLabel: row.compactLabel');

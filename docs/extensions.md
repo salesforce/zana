@@ -83,21 +83,24 @@ catalog without a tree copy.
 First-party Browse listings are authored under repo-root
 [`marketplace/entries/`](../marketplace/entries/) (one JSON file per plugin).
 `node marketplace/scripts/build.mjs` writes the pointer feed the website serves
-at `/marketplace/v1/marketplace.json`. See
+at `/marketplace/v1/marketplace.json`. The desktop app seeds that public feed
+automatically at start (Official, not removable). Override or disable with
+`ZCC_OFFICIAL_MARKETPLACE_URL` (`off` / `0` skips it). See
 [`marketplace/README.md`](../marketplace/README.md).
 
 ## Internal marketplace (Salesforce)
 
-Salesforce-internal plugins are **not** seeded automatically. Add the private
-catalog on git.soma when you need it:
+Salesforce-internal plugins are seeded automatically from git.soma at app
+start, beside the public official catalog. The catalog is Official (not
+removable). Clone requires VPN/SSO git access; if the repo is unreachable the
+seed is skipped and Browse does not show an error.
 
 ```bash
-zcc marketplace add git:https://git.soma.salesforce.com/chatbots/zana-internal-marketplace.git
-zcc marketplace refresh
 zcc marketplace install <plugin-id>@internal
 ```
 
-Requires VPN/SSO git access. Authoring and PR flow live in that repo's README.
+Authoring and PR flow live in that repo's README. Override or disable the seed
+with `ZCC_INTERNAL_MARKETPLACE_SOURCE` (`off` / `0` skips it).
 
 ## CLI
 

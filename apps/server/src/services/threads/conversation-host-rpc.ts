@@ -1,16 +1,17 @@
 import { getEnvironment, getThreadExecutionState, listConversationThreadEvents, type ConversationThreadRow } from '@zana-ai/zcc-db';
 import type { ThreadResumeFields } from '@zana-ai/zcc-contracts/host-rpc';
+import type { PermissionMode } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
 import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
 import {
   bridgeLaunchForProvider,
-  getThreadProvider,
-  permissionModeForLaunchProfile
+  getThreadProvider
 } from './thread-provider-catalog.js';
 import { latestProviderCheckpoint } from './conversation-edit-message.js';
 import { claudeCodePermissionModeForTurn } from './conversation-execution-mode.js';
+import { threadPermissionMode } from './thread-permission-mode.js';
 
 export function isUnknownThreadHostError(error: unknown): boolean {
   return Boolean(
@@ -23,7 +24,8 @@ export function isUnknownThreadHostError(error: unknown): boolean {
 
 export async function threadResumeFields(
   ctx: ProductHttpContext,
-  thread: ConversationThreadRow
+  thread: ConversationThreadRow,
+  requestedPermissionMode?: PermissionMode
 ): Promise<ThreadResumeFields | undefined> {
   if (!thread.providerThreadId) return undefined;
   const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : undefined;
@@ -31,7 +33,7 @@ export async function threadResumeFields(
     threadId: thread.id,
     projectId: thread.projectId
   });
-  const permissionMode = permissionModeForLaunchProfile(thread.providerId);
+  const permissionMode = threadPermissionMode(ctx, thread, requestedPermissionMode);
   const requestedMode = getThreadExecutionState(ctx.db, thread.id)?.requestedMode;
   const claudeCodePermissionMode = requestedMode
     ? claudeCodePermissionModeForTurn(thread.providerId, requestedMode)

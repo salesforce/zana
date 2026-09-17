@@ -1,0 +1,106 @@
+/* One restrained surface for both titlebar shortcuts. The doubled selector
+   also isolates these panels from the older host-install drawer styles. */
+.quick-access-panel.quick-access-panel {
+  position: fixed;
+  top: calc(var(--titlebar-h) + 8px);
+  right: 8px;
+  bottom: 8px;
+  width: min(392px, calc(100vw - 16px));
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 12%), 0 2px 8px rgb(0 0 0 / 6%);
+  animation: quick-access-in 120ms ease-out;
+}
+
+.quick-access-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quick-access-tabs { display: flex; align-self: stretch; flex: 1; gap: 16px; min-width: 0; }
+.quick-access-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.quick-access-tabs button[aria-selected='true'] { color: var(--text-primary); border-bottom-color: var(--text-primary); font-weight: 600; }
+.quick-access-tabs button:hover { color: var(--text-primary); }
+.quick-access-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.quick-access-icon-button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.quick-access-panel button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 5px; }
+.quick-access-summary { padding: 14px 16px 6px; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+.quick-access-content { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; }
+.quick-access-list { padding: 8px; }
+.quick-access-section + .quick-access-section { margin-top: 16px; }
+.quick-access-section-heading { display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px 8px; font-size: 11px; font-weight: 500; color: var(--text-muted); }
+.quick-access-section-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+.quick-access-panel .quick-access-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.quick-access-panel .quick-access-row:hover { background: var(--bg-hover); }
+.quick-access-row-icon { flex: 0 0 16px; margin-top: 2px; color: var(--text-muted); }
+.quick-access-section[data-urgent='true'] .quick-access-row-icon { color: var(--danger); }
+.quick-access-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 4px; }
+.quick-access-row-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 13px; font-weight: 500; line-height: 1.45; }
+.quick-access-row-preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; line-height: 1.4; color: var(--text-muted); }
+.quick-access-row-meta { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+.quick-access-row-project { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.quick-access-row-meta time { flex-shrink: 0; margin-left: auto; font-variant-numeric: tabular-nums; }
+.quick-access-favorite { display: flex; align-items: center; border-radius: 6px; }
+.quick-access-favorite:hover, .quick-access-favorite:focus-within { background: var(--bg-hover); }
+.quick-access-favorite .quick-access-row { flex: 1; }
+.quick-access-favorite .tab-agent-dot { flex-shrink: 0; margin: 6px 4px 0; }
+.quick-access-remove { margin-right: 8px; opacity: 0; }
+.quick-access-favorite:hover .quick-access-remove, .quick-access-favorite:focus-within .quick-access-remove { opacity: 1; }
+.quick-access-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 32px; gap: 12px; text-align: center; color: var(--text-muted); }
+.quick-access-empty-icon { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--border); border-radius: 12px; }
+.quick-access-empty h3 { margin: 4px 0 0; font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.quick-access-empty p { max-width: 260px; margin: 0; font-size: 12px; line-height: 1.6; }
+.quick-access-footer { border-top: 1px solid var(--border); padding: 8px; }
+.quick-access-footer button { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: none; color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.quick-access-footer button:hover { background: var(--bg-hover); color: var(--text-primary); }
+@keyframes quick-access-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .quick-access-panel.quick-access-panel { animation: none; } }
+@media (hover: none) { .quick-access-remove { opacity: 1; } }

@@ -88,7 +88,7 @@ describe('FavoriteAgentsDrawer sectionOf', () => {
   it('opens a starred thread through inspectThread, not a raw CLI modal call', () => {
     const source = readFileSync(new URL('../FavoriteAgentsDrawer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('inspectThread(entry.thread.id, entry.thread.projectId, navigate)');
-    expect(source).toContain("data-kind=\"thread\"");
+    expect(source).toContain('data-kind={entry.kind}');
     expect(source).toContain("kind: 'thread'");
   });
 });

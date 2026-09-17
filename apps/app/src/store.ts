@@ -476,7 +476,7 @@ interface UiState {
   // Right-edge Notifications drawer: the slide-over quick-glance list of
   // recent/unread Inbox entries. Toggled from the titlebar bell (replacing its
   // old nav-to-Inbox behavior). Persisted in localStorage like the favorites
-  // drawer, and mutually independent — both can be open at once.
+  // drawer. Opening either panel closes the other.
   notificationsDrawerOpen: boolean;
   toggleNotificationsDrawer: () => void;
   setNotificationsDrawerOpen: (open: boolean) => void;
@@ -1016,27 +1016,21 @@ export const useUi = create<UiState>((set, get) => ({
   projectExpanded: {},
   splitLayout: {},
   splitTabIds: {},
-  favoritesDrawerOpen: readLocalStorageItem('zcc.favoritesDrawerOpen') === '1',
-  toggleFavoritesDrawer: () =>
-    set((s) => {
-      const next = !s.favoritesDrawerOpen;
-      writeLocalStorageItem('zcc.favoritesDrawerOpen', next ? '1' : '0');
-      return { favoritesDrawerOpen: next };
-    }),
+  // Older versions allowed both flags at once. Notifications wins on hydration.
+  favoritesDrawerOpen: readLocalStorageItem('zcc.favoritesDrawerOpen') === '1' &&
+    readLocalStorageItem('zcc.notificationsDrawerOpen') !== '1',
+  toggleFavoritesDrawer: () => get().setFavoritesDrawerOpen(!get().favoritesDrawerOpen),
   setFavoritesDrawerOpen: (open) => {
     writeLocalStorageItem('zcc.favoritesDrawerOpen', open ? '1' : '0');
-    set({ favoritesDrawerOpen: open });
+    writeLocalStorageItem('zcc.notificationsDrawerOpen', !open && get().notificationsDrawerOpen ? '1' : '0');
+    set({ favoritesDrawerOpen: open, ...(open ? { notificationsDrawerOpen: false } : {}) });
   },
   notificationsDrawerOpen: readLocalStorageItem('zcc.notificationsDrawerOpen') === '1',
-  toggleNotificationsDrawer: () =>
-    set((s) => {
-      const next = !s.notificationsDrawerOpen;
-      writeLocalStorageItem('zcc.notificationsDrawerOpen', next ? '1' : '0');
-      return { notificationsDrawerOpen: next };
-    }),
+  toggleNotificationsDrawer: () => get().setNotificationsDrawerOpen(!get().notificationsDrawerOpen),
   setNotificationsDrawerOpen: (open) => {
     writeLocalStorageItem('zcc.notificationsDrawerOpen', open ? '1' : '0');
-    set({ notificationsDrawerOpen: open });
+    writeLocalStorageItem('zcc.favoritesDrawerOpen', !open && get().favoritesDrawerOpen ? '1' : '0');
+    set({ notificationsDrawerOpen: open, ...(open ? { favoritesDrawerOpen: false } : {}) });
   },
   hostInstallDrawer: EMPTY_HOST_INSTALL_DRAWER,
   openHostInstallDrawer: (input) => set((s) => ({

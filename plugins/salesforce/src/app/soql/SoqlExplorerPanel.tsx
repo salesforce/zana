@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
 import { EXPLORER_LOAD_ALL_CAP } from '../../../lib/types.js';
 import type { PublicOrgView } from '../../../lib/types.js';
 import type { SObjectListEntry, SoqlDescribeCatalogs, SoqlSObjectDescribe } from '../../../lib/soql-describe.js';
@@ -22,23 +21,28 @@ import { SoqlEditor, type SoqlEditorHandle } from './SoqlEditor.js';
 import { SoqlHistoryDrawer } from './SoqlHistoryDrawer.js';
 import { SoqlResultsGrid } from './SoqlResultsGrid.js';
 import { SoqlSchemaRail } from './SoqlSchemaRail.js';
+import { useSalesforceCall, requireResult } from '../components/client.js';
+import { SALESFORCE_STYLES } from '../components/styles.js';
+import { RecordInspector, OrgBadge } from '../components/ui.js';
+import { ActionDialog } from '../components/ActionDialog.js';
+import { useSalesforceDraft } from '../components/drafts.js';
 import { OrgPicker } from '../OrgPicker.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
 export const SOQL_HOST_STYLES = `
-.sf-soql { --sf-soql-surface: var(--bg, #1a1d23); --sf-soql-elevated: var(--bg-panel, #22262e); --sf-soql-sunken: #14161b; --sf-soql-border: var(--border, #2c313a); --sf-soql-text: var(--text, #e6e8ec); --sf-soql-muted: var(--text-muted, #9aa1ad); --sf-soql-accent: #1b96ff; height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--sf-soql-text); background: var(--sf-soql-surface); }
-.sf-soql-header { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 12px; flex-shrink: 0; background: var(--sf-soql-elevated); border-bottom: 1px solid var(--sf-soql-border); }
+.sf-soql { --sf-soql-surface: var(--bg-panel); --sf-soql-elevated: var(--bg-elevated); --sf-soql-sunken: var(--bg-base); --sf-soql-border: var(--border); --sf-soql-text: var(--text-primary); --sf-soql-muted: var(--text-muted); --sf-soql-accent: var(--accent); height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--sf-soql-text); background: var(--sf-soql-surface); }
+.sf-soql-header { display: flex; align-items: center; gap: 8px; min-height: 48px; flex-wrap: wrap; padding: 10px 12px; flex-shrink: 0; background: var(--sf-soql-elevated); border-bottom: 1px solid var(--sf-soql-border); }
 .sf-soql-brand { font-size: 13px; font-weight: 600; }
 .sf-soql-chip { font-size: 12px; color: var(--sf-soql-muted); }
 .sf-org-picker { font: inherit; font-size: 12px; color: var(--sf-soql-text); background: var(--sf-soql-sunken); border: 1px solid var(--sf-soql-border); border-radius: 6px; height: 28px; max-width: 280px; }
 .sf-soql-spacer { flex: 1; }
 .sf-soql-btn { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--sf-soql-border); background: transparent; color: var(--sf-soql-text); font-size: 12px; cursor: pointer; }
-.sf-soql-btn.primary { background: var(--sf-soql-accent); border-color: transparent; color: #061121; font-weight: 600; }
+.sf-soql-btn.primary { background: var(--sf-soql-accent); border-color: transparent; color: var(--text-bright); font-weight: 600; }
 .sf-soql-btn:disabled { opacity: .45; cursor: default; }
 .sf-soql-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sf-soql-muted); }
 .sf-soql-banner { padding: 6px 12px; font-size: 12px; border-bottom: 1px solid var(--sf-soql-border); color: var(--sf-soql-muted); }
-.sf-soql-banner.is-warn { color: #e8c07a; }
+.sf-soql-banner.is-warn { color: var(--accent-gold); }
 .sf-soql-banner.is-error { color: var(--danger, #ff8a8a); }
 .sf-soql-body { display: flex; flex: 1; min-height: 0; }
 .sf-soql-rail { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sf-soql-sunken); border-right: 1px solid var(--sf-soql-border); }
@@ -79,25 +83,29 @@ export const SOQL_HOST_STYLES = `
 .sf-soql-search-table { height: 28px; width: 160px; font: inherit; font-size: 12px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--sf-soql-border); background: var(--sf-soql-sunken); color: var(--sf-soql-text); }
 `;
 
-type QueryState = QueryPage & { soql?: string; sobjectName?: string };
+type QueryState = QueryPage & { soql?: string; sobjectName?: string; useToolingApi?: boolean; includeDeleted?: boolean };
 
 type RpcFail = { ok: false; code?: string; error?: string; line?: number; column?: number };
 
-export function SoqlExplorerPanel(props: { pluginId: string; projectId: string }) {
+export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string; orgAlias?: string; threadId?: string; initialQuery?: string; draftId?: string; onAddToPrompt?(text: string): void; onOpenRecord?(recordId: string, objectName: string, orgAlias: string): void }) {
   const pluginId = props.pluginId || PLUGIN_ID;
+  const call = useSalesforceCall(pluginId, { projectId: props.projectId, orgAlias: props.orgAlias }, props.threadId);
+  const epoch = useRef(0);
+  const describeEpoch = useRef(0);
+  const draftKey = `${props.projectId ?? 'global'}:${props.draftId ?? props.threadId ?? 'data'}`;
   const editorRef = useRef<SoqlEditorHandle>(null);
   const requestIdRef = useRef<string | null>(null);
   const [org, setOrg] = useState<PublicOrgView | null>(null);
   const [orgError, setOrgError] = useState<string | null>(null);
   const [catalogs, setCatalogs] = useState<SoqlDescribeCatalogs>({ standard: [], tooling: [] });
-  const [soql, setSoql] = useState(DEFAULT_SOQL);
+  const [soql, setSoql] = useSalesforceDraft(draftKey, props.initialQuery ?? DEFAULT_SOQL);
   const [useToolingApi, setUseToolingApi] = useState(false);
   const [includeDeleted, setIncludeDeleted] = useState(false);
   const [selected, setSelected] = useState<string | undefined>();
   const [describe, setDescribe] = useState<SoqlSObjectDescribe | null>(null);
   const [schemaSearch, setSchemaSearch] = useState('');
   const [tableSearch, setTableSearch] = useState('');
-  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(Boolean(props.threadId));
   const [historyOpen, setHistoryOpen] = useState(false);
   const [recent, setRecent] = useState<SoqlHistoryItem[]>([]);
   const [saved, setSaved] = useState<SoqlHistoryItem[]>([]);
@@ -105,7 +113,11 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId: string }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; line?: number; column?: number } | null>(null);
   const [apiUsage, setApiUsage] = useState<string | null>(null);
+  const [inspected, setInspected] = useState<Record<string, unknown> | null>(null);
+  const [dialog, setDialog] = useState<{ title: string; message?: string; input?: string; confirm(value: string): void } | null>(null);
   const [explain, setExplain] = useState<string | null>(null);
+
+
 
   const hasOrg = Boolean(org);
   const banner = productionBanner(org);
@@ -113,11 +125,15 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId: string }
 
   const loadOrgAndSchema = useCallback(
     async (forceRefresh = false) => {
-      setOrgError(null);
+      const generation = ++epoch.current;
+      setOrgError(null); setError(null); setOrg(null); setRecent([]); setSaved([]); setCatalogs({ standard: [], tooling: [] }); setApiUsage(null); setExplain(null); setDialog(null); setResult(null); setInspected(null); setDescribe(null); setSelected(undefined); setBusy(false);
+      if (requestIdRef.current) void call('soql.abort', { requestId: requestIdRef.current }).catch(() => {});
+      requestIdRef.current = null;
       try {
-        const payload = (await callPluginRpc(pluginId, 'soql.describeGlobal', { forceRefresh })) as
+        const payload = (await call('soql.describeGlobal', { forceRefresh })) as
           | { ok: true; catalogs: SoqlDescribeCatalogs; org: PublicOrgView }
           | RpcFail;
+        if (generation !== epoch.current) return;
         if (!payload || payload.ok !== true) {
           const failed = payload as RpcFail;
           setOrg(null);
@@ -126,94 +142,119 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId: string }
         }
         setOrg(payload.org);
         setCatalogs(payload.catalogs);
-        const limits = (await callPluginRpc(pluginId, 'soql.limits')) as
+        const limits = (await call('soql.limits', { orgAlias: payload.org.alias })) as
           | { ok: true; dailyApiRequests?: { max: number; remaining: number } | null }
           | RpcFail;
+        if (generation !== epoch.current) return;
         if (limits && limits.ok === true && limits.dailyApiRequests) {
           setApiUsage(`${limits.dailyApiRequests.remaining}/${limits.dailyApiRequests.max}`);
         }
-        const history = (await callPluginRpc(pluginId, 'soql.history.list')) as
+        const history = (await call('soql.history.list', { orgAlias: payload.org.alias })) as
           | { ok: true; recent: SoqlHistoryItem[]; saved: SoqlHistoryItem[] }
           | RpcFail;
+        if (generation !== epoch.current) return;
         if (history && history.ok === true) {
           setRecent(history.recent);
           setSaved(history.saved);
         }
       } catch (err) {
+        if (generation !== epoch.current) return;
         setOrg(null);
         setOrgError(err instanceof Error ? err.message : emptyOrgMessage());
       }
     },
-    [pluginId]
+    [call]
   );
 
   useEffect(() => {
     void loadOrgAndSchema();
-  }, [loadOrgAndSchema]);
+    const changed = (event: Event) => {
+      if ((event as CustomEvent).detail?.projectId === (props.projectId ?? null)) void loadOrgAndSchema(true);
+    };
+    window.addEventListener('sf:context-changed', changed);
+    return () => {
+      epoch.current += 1;
+      window.removeEventListener('sf:context-changed', changed);
+      if (requestIdRef.current) void call('soql.abort', { requestId: requestIdRef.current }).catch(() => {});
+    };
+  }, [loadOrgAndSchema, call, props.projectId]);
 
   const selectSObject = async (name: string) => {
-    setSelected(name);
-    setSoql((current) => seedQueryForSObject(name, current));
-    const payload = (await callPluginRpc(pluginId, 'soql.describeSObject', {
-      sobject: name,
-      useToolingApi
-    })) as { ok: true; describe: SoqlSObjectDescribe } | RpcFail;
-    if (payload && payload.ok === true) setDescribe(payload.describe);
+    const generation = epoch.current;
+    const selection = ++describeEpoch.current;
+    setSelected(name); setDescribe(null);
+    setSoql(current => seedQueryForSObject(name, current));
+    try {
+      const payload = requireResult<{ describe: SoqlSObjectDescribe }>(await call('soql.describeSObject', { sobject: name, useToolingApi, orgAlias: org?.alias }));
+      if (generation === epoch.current && selection === describeEpoch.current) setDescribe(payload.describe);
+    } catch (err) { if (generation === epoch.current && selection === describeEpoch.current) setError({ message: String(err) }); }
   };
 
   const run = async () => {
     if (!runEnabled) return;
+    const generation = epoch.current;
     setBusy(true);
     setError(null);
     setExplain(null);
     const requestId = newRequestId();
     requestIdRef.current = requestId;
     try {
-      const payload = (await callPluginRpc(pluginId, 'soql.query', {
+      const payload = (await call('soql.query', {
         soql,
         useToolingApi,
         includeDeleted,
-        requestId
+        requestId, orgAlias: org?.alias
       })) as (QueryState & { ok: true }) | RpcFail;
+      if (generation !== epoch.current) return;
       if (!payload || payload.ok !== true) {
         const failed = payload as RpcFail;
         setError({ message: failed?.error || 'Query failed.', line: failed?.line, column: failed?.column });
         return;
       }
-      setResult(payload);
-      const history = (await callPluginRpc(pluginId, 'soql.history.list')) as
+      setResult({ ...payload, useToolingApi, includeDeleted });
+      const history = (await call('soql.history.list', { orgAlias: org?.alias })) as
         | { ok: true; recent: SoqlHistoryItem[] }
         | RpcFail;
-      if (history && history.ok === true) setRecent(history.recent);
+      if (generation === epoch.current && history && history.ok === true) setRecent(history.recent);
+    } catch (err) {
+      if (generation === epoch.current) setError({ message: err instanceof Error ? err.message : String(err) });
     } finally {
       if (requestIdRef.current === requestId) requestIdRef.current = null;
-      setBusy(false);
+      if (generation === epoch.current) setBusy(false);
     }
   };
 
   const abort = async () => {
     const requestId = requestIdRef.current;
     if (!requestId) return;
-    await callPluginRpc(pluginId, 'soql.abort', { requestId });
+    const generation = ++epoch.current;
+    requestIdRef.current = null;
+    setBusy(false);
+    await call('soql.abort', { requestId }).catch(err => {
+      if (generation === epoch.current) setError({ message: String(err) });
+    });
   };
 
-  const loadMore = async (loadAll = false) => {
+  const loadMore = async (loadAll = false, approved = false) => {
     if (!result?.nextRecordsUrl) return;
-    if (loadAll && !window.confirm(confirmLoadAll(result.records?.length ?? 0, result.totalSize ?? 0, EXPLORER_LOAD_ALL_CAP))) {
-      return;
-    }
+    if (loadAll && !approved) { setDialog({ title: 'Load more records', message: confirmLoadAll(result.records?.length ?? 0, result.totalSize ?? 0, EXPLORER_LOAD_ALL_CAP), confirm: () => { setDialog(null); void loadMore(true, true); } }); return; }
+    const generation = epoch.current;
+    const requestId = newRequestId();
+    requestIdRef.current = requestId;
     setBusy(true);
+    setError(null);
     try {
       let current = result;
       let guard = 0;
       do {
-        const payload = (await callPluginRpc(pluginId, 'soql.queryMore', {
+        const payload = (await call('soql.queryMore', {
           nextRecordsUrl: current.nextRecordsUrl,
           soql: current.soql,
           sobjectName: current.sobjectName,
-          useToolingApi,
-          includeDeleted
+          useToolingApi: current.useToolingApi,
+          includeDeleted: current.includeDeleted, orgAlias: org?.alias, requestId
         })) as (QueryPage & { ok: true }) | RpcFail;
+        if (generation !== epoch.current) return;
         if (!payload || payload.ok !== true) {
           const failed = payload as RpcFail;
           setError({ message: failed?.error || 'Could not load more records.' });
@@ -223,26 +264,35 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId: string }
         setResult(current);
         guard += 1;
       } while (loadAll && current.nextRecordsUrl && guard < 50);
+    } catch (err) {
+      if (generation === epoch.current) setError({ message: err instanceof Error ? err.message : String(err) });
     } finally {
-      setBusy(false);
+      if (requestIdRef.current === requestId) requestIdRef.current = null;
+      if (generation === epoch.current) setBusy(false);
     }
   };
 
   const runExplain = async () => {
-    const payload = (await callPluginRpc(pluginId, 'soql.explain', { soql, useToolingApi })) as
-      | { ok: true; plans: unknown }
-      | RpcFail;
-    if (!payload || payload.ok !== true) {
-      setError({ message: (payload as RpcFail)?.error || 'Explain failed.' });
-      return;
-    }
-    setExplain(JSON.stringify(payload.plans, null, 2));
+    const generation = epoch.current;
+    try {
+      const payload = requireResult<{ plans: unknown }>(await call('soql.explain', { soql, useToolingApi, orgAlias: org?.alias }));
+      if (generation === epoch.current) setExplain(JSON.stringify(payload.plans, null, 2));
+    } catch (err) { if (generation === epoch.current) setError({ message: String(err) }); }
   };
 
-  const exportResult = async (kind: 'csv' | 'json' | 'copy-json' | 'copy-csv' | 'copy-tsv') => {
+  const exportResult = async (kind: 'csv' | 'json' | 'copy-json' | 'copy-csv' | 'copy-tsv', approved = false) => {
     const records = flattenRecords(result?.records ?? []);
     if (records.length === 0) return;
-    if (!window.confirm(confirmExport(records.length))) return;
+    if (!approved) {
+      const generation = epoch.current;
+      setDialog({ title: 'Export query results', message: confirmExport(records.length), confirm: () => {
+        setDialog(null);
+        void exportResult(kind, true).catch(err => {
+          if (generation === epoch.current) setError({ message: String(err) });
+        });
+      } });
+      return;
+    }
     const columns = discoverColumns(result?.records ?? []);
     if (kind === 'json' || kind === 'copy-json') {
       const text = recordsToJson(records);
@@ -259,18 +309,41 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId: string }
     else await copyText(csv);
   };
 
+  const saveQuery = (name: string) => {
+    const generation = epoch.current;
+    setDialog(null);
+    void call('soql.history.save', { kind: 'saved', name, soql, useToolingApi, includeDeleted, orgAlias: org?.alias }).then(raw => {
+      const payload = requireResult<{ saved: SoqlHistoryItem[] }>(raw);
+      if (generation === epoch.current) setSaved(payload.saved);
+    }).catch(err => {
+      if (generation === epoch.current) setError({ message: String(err) });
+    });
+  };
+
+  const removeQuery = (kind: 'recent' | 'saved', id: string) => {
+    const generation = epoch.current;
+    void call('soql.history.remove', { kind, id, orgAlias: org?.alias }).then(raw => {
+      const payload = requireResult<{ recent?: SoqlHistoryItem[]; saved?: SoqlHistoryItem[] }>(raw);
+      if (generation !== epoch.current) return;
+      if (payload.recent) setRecent(payload.recent);
+      if (payload.saved) setSaved(payload.saved);
+    }).catch(err => {
+      if (generation === epoch.current) setError({ message: String(err) });
+    });
+  };
+
   const entries: SObjectListEntry[] = useMemo(
     () => (useToolingApi ? catalogs.tooling : catalogs.standard),
     [catalogs, useToolingApi]
   );
 
   return (
-    <div className="sf-soql" data-testid="soql-explorer" style={PANEL_ROOT}>
-      <style>{SOQL_HOST_STYLES}</style>
+    <div className="sf-surface sf-soql" data-testid="soql-explorer" style={PANEL_ROOT}>
+      <style>{SALESFORCE_STYLES + SOQL_HOST_STYLES + SOQL_RESPONSIVE_STYLES}</style>
       <header className="sf-soql-header">
         <span className="sf-soql-brand">SOQL</span>
-        <OrgPicker pluginId={pluginId} compact onSelect={() => void loadOrgAndSchema(true)} />
-        {org ? <span className="sf-soql-chip">{orgChip(org)}</span> : null}
+        {props.orgAlias ? <OrgBadge org={org ?? { alias: props.orgAlias, kind: 'unknown' }} /> : <OrgPicker pluginId={pluginId} projectId={props.projectId} disabled={busy} compact />}
+        {org && !props.orgAlias ? <span className="sf-soql-chip">{orgChip(org)}</span> : null}
         {apiUsage ? <span className="sf-soql-chip">API {apiUsage}</span> : null}
         <span className="sf-soql-spacer" />
         <input
@@ -369,6 +442,8 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId: string }
             ) : (
               <SoqlResultsGrid
                 records={result?.records ?? []}
+                hasRun={result !== null}
+                onSelectRecord={(record) => setInspected(record)}
                 search={tableSearch}
                 totalSize={result?.totalSize}
                 hasMore={Boolean(result?.nextRecordsUrl)}
@@ -379,6 +454,7 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId: string }
             )}
           </div>
         </div>
+        {inspected && <aside className="sf-soql-record"><div className="sf-toolbar"><strong>Record</strong><span className="sf-grow" /><button type="button" className="sf-btn quiet" onClick={() => setInspected(null)}>Close</button></div><RecordInspector record={inspected} org={org ?? undefined} onAddToPrompt={props.onAddToPrompt} />{props.onOpenRecord && org && result?.sobjectName && typeof inspected.Id === 'string' && <button type="button" className="sf-btn" onClick={() => props.onOpenRecord?.(String(inspected.Id), result.sobjectName!, org.alias)}>Open beside agent</button>}</aside>}
         <SoqlHistoryDrawer
           open={historyOpen}
           recent={recent}
@@ -389,30 +465,20 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId: string }
             setUseToolingApi(tooling);
             setIncludeDeleted(deleted);
           }}
-          onSave={() => {
-            void callPluginRpc(pluginId, 'soql.history.save', {
-              kind: 'saved',
-              name: window.prompt('Saved query name', selected || 'Query') || 'Query',
-              soql,
-              useToolingApi,
-              includeDeleted
-            }).then((raw) => {
-              const payload = raw as { ok?: boolean; saved?: SoqlHistoryItem[] };
-              if (payload?.ok && payload.saved) setSaved(payload.saved);
-            });
-          }}
-          onRemove={(kind, id) => {
-            void callPluginRpc(pluginId, 'soql.history.remove', { kind, id }).then((raw) => {
-              const payload = raw as { ok?: boolean; recent?: SoqlHistoryItem[]; saved?: SoqlHistoryItem[] };
-              if (payload?.ok) {
-                if (payload.recent) setRecent(payload.recent);
-                if (payload.saved) setSaved(payload.saved);
-              }
-            });
-          }}
+          onSave={() => setDialog({ title: 'Save query', input: selected || 'Query', confirm: saveQuery })}
+          onRemove={removeQuery}
         />
       </div>
+      {dialog && <ActionDialog {...dialog} onClose={() => setDialog(null)} onConfirm={dialog.confirm} />}
       <span hidden>{entries.length}</span>
     </div>
   );
 }
+
+const SOQL_RESPONSIVE_STYLES = `
+.sf-soql { position:relative; }
+.sf-soql-record { width:300px; flex-shrink:0; border-left:1px solid var(--border); overflow:auto; }
+.sf-soql-header { background:var(--bg-panel); }
+@container sf (max-width:900px) { .sf-soql-rail { width:200px; } .sf-soql-record { width:260px; } .sf-soql-history { position:absolute; right:0; top:100px; bottom:0; z-index:3; width:min(100%,300px); box-shadow:-10px 0 30px color-mix(in srgb,var(--text-primary) 8%,transparent); } }
+@container sf (max-width:600px) { .sf-soql-rail:not(.is-collapsed) { width:150px; } .sf-soql-record { position:absolute; inset:0; width:auto; z-index:3; background:var(--bg-panel); } .sf-soql-header .sf-soql-chip { display:none; } .sf-soql-editor { min-height:160px; } .sf-soql-search-table { width:120px; } }
+`;

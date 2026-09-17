@@ -8,7 +8,7 @@ describe('product-client hosts.relaunchLocal', () => {
     expect(source).toContain('relaunchLocal');
     expect(source).toContain("'/hosts/relaunch-local'");
     const hostsStart = source.indexOf("if (name === 'hosts')");
-    const hostsBlock = source.slice(hostsStart, source.indexOf("if (name === 'threads'", hostsStart));
+    const hostsBlock = source.slice(hostsStart, source.indexOf("if (name === 'marketplaces'", hostsStart));
     expect(hostsBlock).toContain('hasDesktopBridge()');
     expect(hostsBlock).toContain('desktop?.relaunchLocal');
     expect(hostsBlock).toContain('desktop?.pairing');

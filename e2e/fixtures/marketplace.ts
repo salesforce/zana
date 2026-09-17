@@ -67,4 +67,15 @@ export class MarketplacePage {
       [method, args] as const
     ) as Promise<T>;
   }
+
+  /** Expand Catalog sources and return the visible catalog name chips. */
+  async openCatalogSources() {
+    const panel = this.window.getByTestId('marketplace-catalogs');
+    await panel.locator('summary').click();
+    return panel;
+  }
+
+  catalogNames() {
+    return this.window.locator('.ext-market-catalog-name');
+  }
 }

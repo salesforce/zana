@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyTimelineDelta,
   computeTimelineRowDelta,
+  retainLatestTimelineWindow,
   type TimelineRow,
 } from "../src/thread-timeline.js";
 
@@ -67,5 +68,41 @@ describe("timeline delta", () => {
         rowOrder: ["a", "z"],
       }),
     ).toBeNull();
+  });
+
+  it("returns null instead of wiping a filled window with an empty rowOrder", () => {
+    expect(
+      applyTimelineDelta([row("a", 1)], {
+        upsertRows: [],
+        rowOrder: [],
+      }),
+    ).toBeNull();
+  });
+
+  it("still applies an empty rowOrder to an already-empty window", () => {
+    expect(applyTimelineDelta([], { upsertRows: [], rowOrder: [] })).toEqual([]);
+  });
+});
+
+describe("retainLatestTimelineWindow", () => {
+  it("keeps previous rows when a newer window projects empty", () => {
+    const previous = { maxSeq: 10, rows: [row("a", 1)] };
+    const next = { maxSeq: 14, rows: [] as TimelineRow[] };
+    expect(retainLatestTimelineWindow(previous, next)).toEqual({
+      maxSeq: 14,
+      rows: previous.rows,
+    });
+  });
+
+  it("accepts an empty window when maxSeq went backwards", () => {
+    const previous = { maxSeq: 10, rows: [row("a", 1)] };
+    const next = { maxSeq: 4, rows: [] as TimelineRow[] };
+    expect(retainLatestTimelineWindow(previous, next)).toEqual(next);
+  });
+
+  it("does not invent rows when the previous window was empty", () => {
+    const next = { maxSeq: 2, rows: [] as TimelineRow[] };
+    expect(retainLatestTimelineWindow({ maxSeq: 0, rows: [] }, next)).toEqual(next);
+    expect(retainLatestTimelineWindow(undefined, next)).toEqual(next);
   });
 });

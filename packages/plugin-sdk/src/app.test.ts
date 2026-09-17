@@ -420,3 +420,23 @@ describe('shimLegacyExtensionManifest', () => {
     });
   });
 });
+
+
+describe('panel action categories', () => {
+  for (const slot of ['threadPanelAction', 'experimental_newThreadPanelAction'] as const) {
+    it(`${slot} trims optional categories and leaves uncategorized actions compatible`, () => {
+      const set = collectPluginApp('example', 1, definePluginApp((app) => {
+        for (const [id, category] of [['explicit', ' Data '], ['blank', '  '], ['default', undefined]]) {
+          app.slots[slot]({ id: id!, title: 'Tool', category, component: () => null });
+        }
+      }));
+      const actions = [...set.threadPanelActions, ...set.newThreadPanelActions];
+      expect(actions.map((action) => action.category)).toEqual(['Data', undefined, undefined]);
+    });
+    it(`${slot} rejects non-string categories`, () => {
+      expect(() => collectPluginApp('example', 1, definePluginApp((app) => {
+        app.slots[slot]({ id: 'tool', title: 'Tool', category: 42 as never, component: () => null });
+      }))).toThrow('"category" must be a string');
+    });
+  }
+});

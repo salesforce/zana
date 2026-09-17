@@ -14,9 +14,15 @@ import {
 } from './marketplace-store.js';
 import {
   marketplaceSourceDisplay,
+  marketplaceSourcesEqual,
   materializeMarketplaceIndex,
   parseMarketplaceSource
 } from './marketplace-source.js';
+import {
+  INTERNAL_MARKETPLACE_SEED_TIMEOUT_MS,
+  resolveInternalMarketplaceSource,
+  resolveOfficialMarketplaceUrl
+} from './default-marketplaces.js';
 import {
   compareVersions,
   formatPluginRequireCycle,
@@ -1247,17 +1253,76 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     });
   }
 
+  function matchingMarketplace(source: string) {
+    return marketplaces.list().find(
+      (row) => marketplaceSourcesEqual(row.source, source) || (row.url != null && marketplaceSourcesEqual(row.url, source))
+    );
+  }
+
   async function seedOfficialMarketplace(): Promise<void> {
-    const url = process.env.ZCC_OFFICIAL_MARKETPLACE_URL?.trim();
-    if (!url || !url.startsWith('https://')) return;
-    if (marketplaces.list().some((row) => row.official || row.source === url)) return;
+    const url = resolveOfficialMarketplaceUrl();
+    if (!url) return;
+    if (matchingMarketplace(url)) return;
     try {
       const parsed = parseMarketplaceSource(url);
       const index = await materializeMarketplaceIndex(parsed, fetchJson);
       await marketplaces.add(marketplaceSourceDisplay(parsed), index, { official: true });
+      await emitAppsChanged();
     } catch {
       /* fail-soft: bundled Browse still works offline */
     }
+  }
+
+  async function seedInternalMarketplace(): Promise<void> {
+    const raw = resolveInternalMarketplaceSource();
+    if (!raw) return;
+    let parsed;
+    try {
+      parsed = parseMarketplaceSource(raw);
+    } catch {
+      return;
+    }
+    const display = marketplaceSourceDisplay(parsed);
+    const existing = matchingMarketplace(display);
+    if (existing) {
+      if (!existing.official && existing.cachedIndex) {
+        try {
+          await marketplaces.add(existing.source, existing.cachedIndex, { official: true });
+          await emitAppsChanged();
+        } catch {
+          /* fail-soft */
+        }
+      }
+      return;
+    }
+    try {
+      const index = await materializeMarketplaceIndex(parsed, fetchJson, {
+        timeoutMs: INTERNAL_MARKETPLACE_SEED_TIMEOUT_MS,
+        nonInteractive: true
+      });
+      await marketplaces.add(display, index, { official: true });
+      await emitAppsChanged();
+    } catch {
+      /* fail-soft: unreachable git.soma must not persist lastError */
+    }
+  }
+
+  async function seedDefaultMarketplaces(): Promise<void> {
+    await seedOfficialMarketplace();
+    const raw = resolveInternalMarketplaceSource();
+    if (!raw) return;
+    let kind: ReturnType<typeof parseMarketplaceSource>['kind'] | undefined;
+    try {
+      kind = parseMarketplaceSource(raw).kind;
+    } catch {
+      return;
+    }
+    const pending = seedInternalMarketplace();
+    if (kind === 'git') {
+      void pending;
+      return;
+    }
+    await pending;
   }
 
   async function retireRetiredFirstPartyPlugins(): Promise<void> {
@@ -1486,7 +1551,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     async start() {
       await retireRetiredFirstPartyPlugins();
       await this.reconcileBuiltins();
-      await seedOfficialMarketplace();
+      await seedDefaultMarketplaces();
       const pending = store.list().filter((row) => !live.has(row.id));
       const { ordered, cycles } = sortPluginsByRequires(
         pending.map((row) => ({ id: row.id, requires: requiresOf(row), row }))

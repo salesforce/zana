@@ -155,7 +155,7 @@ const ctx = { threadId: 'thr-1', projectId: 'p1', signal: AbortSignal.abort() };
 
 describe('salesforce family tools', () => {
   it('exposes doctor/status/org RPC and CLI help', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps());
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const doctor = await harness.callRpc('doctor');
@@ -249,12 +249,12 @@ describe('salesforce family tools', () => {
     );
     await expect(harness.callRpc('agentFiles.list', { projectId: 'missing' })).resolves.toMatchObject({
       ok: false,
-      code: 'not_found'
+      code: 'invalid_context'
     });
   });
 
   it('searches, describes, and validates SOQL', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps());
     harness.setSettings({ defaultOrg: 'dev' });
     const soql = harness.agentTools.find((row) => row.name === 'sf_soql')!;
@@ -272,7 +272,7 @@ describe('salesforce family tools', () => {
   });
 
   it('diagnoses Apex, runs targeted tests, and fetches logs on a sandbox', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps());
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const apex = harness.agentTools.find((row) => row.name === 'sf_apex')!;
@@ -284,7 +284,7 @@ describe('salesforce family tools', () => {
   });
 
   it('scans, inspects, diagnoses, and jests local LWCs', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps());
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const lwc = harness.agentTools.find((row) => row.name === 'sf_lwc')!;
@@ -295,10 +295,10 @@ describe('salesforce family tools', () => {
   });
 
   it('refuses LWC work without a DX project and reports jest failures', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps({ jestCode: 1 }));
     const lwc = harness.agentTools.find((row) => row.name === 'sf_lwc')!;
-    await expect(lwc.execute({ action: 'scan' }, ctx)).resolves.toMatchObject({ code: 'not_configured' });
+    await expect(lwc.execute({ action: 'scan' }, { ...ctx, projectId: '' })).resolves.toMatchObject({ code: 'not_configured' });
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     await expect(lwc.execute({ action: 'test.jest', component: 'hello' }, ctx)).resolves.toMatchObject({
       ok: false,
@@ -307,7 +307,7 @@ describe('salesforce family tools', () => {
   });
 
   it('surfaces org RPC/CLI failures and Apex/LWC input errors', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(
       zcc,
       mockDeps({
@@ -334,7 +334,7 @@ describe('salesforce family tools', () => {
   });
 
   it('requires confirmation for production reads and SOQL export', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps({ kind: 'production' }));
     harness.setSettings({ defaultOrg: 'dev' });
     const soql = harness.agentTools.find((row) => row.name === 'sf_soql')!;
@@ -343,7 +343,7 @@ describe('salesforce family tools', () => {
     harness.submitInteraction({ approved: true });
     await expect(pending).resolves.toMatchObject({ ok: true });
 
-    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc2, mockDeps());
     harness2.setSettings({ defaultOrg: 'dev' });
     const soql2 = harness2.agentTools.find((row) => row.name === 'sf_soql')!;
@@ -352,7 +352,7 @@ describe('salesforce family tools', () => {
     harness2.cancelInteraction();
     await expect(exported).resolves.toMatchObject({ code: 'refused' });
 
-    const { zcc: zcc3, harness: harness3 } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zcc3, harness: harness3 } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc3, mockDeps({ kind: 'production' }));
     harness3.setSettings({ defaultOrg: 'dev' });
     const soql3 = harness3.agentTools.find((row) => row.name === 'sf_soql')!;
@@ -363,7 +363,7 @@ describe('salesforce family tools', () => {
   });
 
   it('fails closed when requestInput throws and when the CLI org lookup fails', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps({ kind: 'production' }));
     harness.setSettings({ defaultOrg: 'dev' });
     zcc.ui.requestInput = async () => {
@@ -374,7 +374,7 @@ describe('salesforce family tools', () => {
       soql.execute({ action: 'query.sample', query: 'SELECT Id FROM Account LIMIT 1' }, ctx)
     ).resolves.toMatchObject({ ok: false, code: 'refused' });
 
-    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(
       zcc2,
       mockDeps({
@@ -394,7 +394,7 @@ describe('salesforce family tools', () => {
       ...mockDeps(),
       execSf: async () => ({ code: 127, stdout: '', stderr: '' })
     };
-    const { zcc: zcc3, harness: harness3 } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zcc3, harness: harness3 } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc3, missingCli);
     harness3.setSettings({ defaultOrg: 'dev' });
     await expect(harness3.callRpc('org')).resolves.toMatchObject({ ok: false, code: 'cli_missing' });
@@ -405,11 +405,11 @@ describe('salesforce family tools', () => {
   });
 
   it('refuses Apex paths outside the project and missing LWC Jest', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps());
     const apex = harness.agentTools.find((row) => row.name === 'sf_apex')!;
     await expect(
-      apex.execute({ action: 'diagnose', path: 'force-app/main/default/classes/Widget.cls' }, ctx)
+      apex.execute({ action: 'diagnose', path: 'force-app/main/default/classes/Widget.cls' }, { ...ctx, projectId: '' })
     ).resolves.toMatchObject({ code: 'not_configured' });
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     await expect(apex.execute({ action: 'diagnose', path: 'nope.cls' }, ctx)).resolves.toMatchObject({
@@ -421,7 +421,7 @@ describe('salesforce family tools', () => {
       stat: (path) => (path.includes('node_modules/.bin') ? 'missing' : mockDeps().stat(path)),
       exists: (path) => (path.includes('node_modules/.bin') ? false : mockDeps().exists(path))
     };
-    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc2, noJest);
     harness2.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const lwc = harness2.agentTools.find((row) => row.name === 'sf_lwc')!;
@@ -434,7 +434,7 @@ describe('salesforce family tools', () => {
   });
 
   it('persists Apex compile errors and empty log lists', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(
       zcc,
       mockDeps({
@@ -465,7 +465,7 @@ describe('salesforce family tools', () => {
     await expect(apex.execute({ action: 'test.run', className: 'Missing' }, ctx)).resolves.toMatchObject({
       code: 'api_error'
     });
-    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc2, {
       ...mockDeps(),
       execSf: async () => {
@@ -479,10 +479,10 @@ describe('salesforce family tools', () => {
   });
 
   it('inspects confined Agent Script bundles and compiles via CLI fallback', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps());
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
-    await expect(agent.execute({ action: 'inspect' }, ctx)).resolves.toMatchObject({ code: 'not_configured' });
+    await expect(agent.execute({ action: 'inspect' }, { ...ctx, projectId: '' })).resolves.toMatchObject({ code: 'not_configured' });
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     await expect(agent.execute({ action: 'inspect' }, ctx)).resolves.toMatchObject({
       ok: true,
@@ -521,9 +521,8 @@ describe('salesforce family tools', () => {
     });
     await expect(agent.execute({ action: 'compile', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({ ok: true });
     harness.setSettings({ defaultOrg: '', projectRoot: '/proj' });
-    await expect(agent.execute({ action: 'compile', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({
-      code: 'not_configured'
-    });
+    // The project now resolves the shared CLI fallback before compiling.
+    await expect(agent.execute({ action: 'compile', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({ ok: true });
     await expect(agent.execute({ action: 'nope' }, ctx)).resolves.toMatchObject({ code: 'invalid_input' });
   });
 
@@ -538,7 +537,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args);
       }
     };
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, deps);
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -548,7 +547,7 @@ describe('salesforce family tools', () => {
   });
 
   it('compiles with the official library and surfaces compiler failures', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(
       zcc,
       mockDeps({ extraFiles: { '/proj/node_modules/.bin/agent-script': '#!/usr/bin/env node' } })
@@ -560,7 +559,7 @@ describe('salesforce family tools', () => {
       summary: expect.stringMatching(/library/)
     });
 
-    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(
       zcc2,
       mockDeps({
@@ -585,7 +584,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args, opts);
       }
     };
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, deps);
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -618,7 +617,7 @@ describe('salesforce family tools', () => {
         return base.request(org, req);
       }
     };
-    const { zcc: zccEval, harness: harnessEval } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccEval, harness: harnessEval } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccEval, evalDeps);
     harnessEval.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agentEval = harnessEval.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -640,7 +639,7 @@ describe('salesforce family tools', () => {
   });
 
   it('requires confirmation for preview on production and always for publish', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps({ kind: 'production' }));
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -649,7 +648,7 @@ describe('salesforce family tools', () => {
     harness.submitInteraction({ approved: true });
     await expect(preview).resolves.toMatchObject({ ok: true });
 
-    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc2, mockDeps());
     harness2.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent2 = harness2.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -674,7 +673,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args, opts);
       }
     };
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, deps);
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     await expect(
@@ -716,7 +715,7 @@ describe('salesforce family tools', () => {
   });
 
   it('gates activate on eval evidence and still confirms untested intent', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps());
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -732,7 +731,7 @@ describe('salesforce family tools', () => {
     harness.submitInteraction({ approved: true });
     await expect(activate).resolves.toMatchObject({ ok: true });
 
-    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zcc2, harness: harness2 } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc2, mockDeps());
     harness2.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent2 = harness2.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -777,7 +776,7 @@ describe('salesforce family tools', () => {
       }
     });
     deps.sleep = async () => undefined;
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, deps);
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -814,7 +813,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args, opts);
       }
     };
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, deps);
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -832,7 +831,7 @@ describe('salesforce family tools', () => {
   });
 
   it('surfaces Connect eval poll failures and published preview identity errors', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(
       zcc,
       mockDeps({
@@ -861,7 +860,7 @@ describe('salesforce family tools', () => {
         return { status: 200, json: { records: [] }, text: '{}' };
       }
     });
-    const { zcc: zccP, harness: harnessP } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccP, harness: harnessP } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccP, pollFail);
     harnessP.setSettings({ defaultOrg: 'dev' });
     const agentP = harnessP.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -881,7 +880,7 @@ describe('salesforce family tools', () => {
       }
     });
     stuck.sleep = async () => undefined;
-    const { zcc: zccT, harness: harnessT } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccT, harness: harnessT } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccT, stuck);
     harnessT.setSettings({ defaultOrg: 'dev' });
     const agentT = harnessT.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -889,7 +888,7 @@ describe('salesforce family tools', () => {
       agentT.execute({ action: 'eval.run', aiEvaluationDefinitionName: 'My_Eval' }, ctx)
     ).resolves.toMatchObject({ code: 'eval_timeout' });
 
-    const { zcc: zccS, harness: harnessS } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccS, harness: harnessS } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccS, mockDeps());
     harnessS.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agentS = harnessS.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -909,7 +908,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args);
       }
     };
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, compileFail);
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -932,7 +931,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args, opts);
       }
     };
-    const { zcc: zccSpec, harness: harnessSpec } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccSpec, harness: harnessSpec } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccSpec, evalCliFail);
     harnessSpec.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agentSpec = harnessSpec.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -947,7 +946,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args);
       }
     };
-    const { zcc: zccT, harness: harnessT } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccT, harness: harnessT } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccT, thrown);
     harnessT.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agentT = harnessT.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -962,7 +961,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args);
       }
     };
-    const { zcc: zccP, harness: harnessP } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccP, harness: harnessP } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccP, previewFail);
     harnessP.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agentP = harnessP.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -970,7 +969,7 @@ describe('salesforce family tools', () => {
       code: 'preview_failed'
     });
 
-    const { zcc: zccE, harness: harnessE } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccE, harness: harnessE } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(
       zccE,
       mockDeps({
@@ -986,7 +985,7 @@ describe('salesforce family tools', () => {
       agentE.execute({ action: 'eval.run', aiEvaluationDefinitionName: 'My_Eval' }, ctx)
     ).resolves.toMatchObject({ code: 'api_error' });
 
-    const { zcc: zccL, harness: harnessL } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccL, harness: harnessL } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(
       zccL,
       mockDeps({
@@ -1006,7 +1005,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args);
       }
     };
-    const { zcc: zccPub, harness: harnessPub } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccPub, harness: harnessPub } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccPub, publishFail);
     harnessPub.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agentPub = harnessPub.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -1027,7 +1026,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args);
       }
     };
-    const { zcc: zccA, harness: harnessA } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccA, harness: harnessA } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccA, activateFail);
     harnessA.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agentA = harnessA.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -1046,7 +1045,7 @@ describe('salesforce family tools', () => {
         return base.execSf(args);
       }
     };
-    const { zcc: zccV, harness: harnessV } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccV, harness: harnessV } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccV, vanished);
     harnessV.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agentV = harnessV.agentTools.find((row) => row.name === 'sf_agent')!;
@@ -1054,7 +1053,7 @@ describe('salesforce family tools', () => {
       code: 'compiler_missing'
     });
 
-    const { zcc: zccProd, harness: harnessProd } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc: zccProd, harness: harnessProd } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zccProd, mockDeps({ kind: 'production' }));
     harnessProd.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agentProd = harnessProd.agentTools.find((row) => row.name === 'sf_agent')!;

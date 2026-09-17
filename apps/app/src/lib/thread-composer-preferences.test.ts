@@ -15,34 +15,21 @@ describe('resolveThreadSendMode', () => {
     })).toBe('queue-if-active');
   });
 
-  it('uses auto unless the picker is Steer/Queue and the thread is running', () => {
-    expect(resolveThreadSendMode({
-      pickerMode: 'auto',
-      threadRunning: true,
-      modifierEnter: false
-    })).toBe('auto');
-    expect(resolveThreadSendMode({
-      pickerMode: 'steer',
-      threadRunning: false,
-      modifierEnter: false
-    })).toBe('auto');
+  it.each([
+    ['auto', false, 'queue-if-active'],
+    ['auto', true, 'steer-if-active'],
+    ['steer', false, 'steer-if-active'],
+    ['steer', true, 'queue-if-active'],
+    ['queue-if-active', false, 'queue-if-active'],
+    ['queue-if-active', true, 'queue-if-active']
+  ] as const)('maps %s with modifier=%s to %s', (pickerMode, modifierEnter, expected) => {
+    expect(resolveThreadSendMode({ pickerMode, modifierEnter })).toBe(expected);
   });
 
-  it('inverts Steer to Queue only on modifier+Enter', () => {
+  it('keeps the default send conditional so the server can queue if a turn starts before delivery', () => {
     expect(resolveThreadSendMode({
-      pickerMode: 'steer',
-      threadRunning: true,
+      pickerMode: resolvedComposerSendMode({}),
       modifierEnter: false
-    })).toBe('steer');
-    expect(resolveThreadSendMode({
-      pickerMode: 'steer',
-      threadRunning: true,
-      modifierEnter: true
-    })).toBe('queue-if-active');
-    expect(resolveThreadSendMode({
-      pickerMode: 'queue-if-active',
-      threadRunning: true,
-      modifierEnter: true
     })).toBe('queue-if-active');
   });
 });

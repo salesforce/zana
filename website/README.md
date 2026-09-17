@@ -101,6 +101,6 @@ fails if the synced files or `docs/extensions-sdk-reference.md` drift.
 
 `scripts/generate-marketplace.mjs` writes `content/marketplace/marketplace.json`
 from the repo `plugins/` tree (git pointers with `subdir: plugins/<id>`). The
-site serves it at `/marketplace/v1/marketplace.json`. Point a packaged app at
-that HTTPS URL with `ZCC_OFFICIAL_MARKETPLACE_URL` so PluginService can seed
-the official catalog on boot (fail-soft if the feed is unreachable).
+site serves it at `/marketplace/v1/marketplace.json`. Desktop apps seed that
+HTTPS URL automatically (override with `ZCC_OFFICIAL_MARKETPLACE_URL`; `off`
+skips the seed). The seed is fail-soft if the feed is unreachable.

@@ -69,6 +69,21 @@ function mockDeps(kind: 'sandbox' | 'production' = 'sandbox', rest?: (req: Sales
 }
 
 describe('salesforce plugin contract', () => {
+  it('resolves composer status from the owning thread when the route has no project', async () => {
+    const getThread = vi.fn(async ({ threadId }: { threadId: string }) => threadId === 't' ? { id: 't', projectId: 'p1' } as never : null);
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', getThread, listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
+    await createSalesforcePlugin(zcc, mockDeps());
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/shared' });
+    await zcc.storage.kv.set('sf:project:p1:org', 'project-dev');
+    await expect(harness.callRpc('status', { threadId: 't' })).resolves.toMatchObject({ projectId: 'p1', defaultOrg: 'project-dev', projectRoot: '/tmp/dx' });
+    await expect(harness.callRpc('status', { threadId: 'missing' })).resolves.toMatchObject({ ok: false, code: 'invalid_context' });
+    getThread.mockClear();
+    await expect(harness.callRpc('status', { projectId: 'p1', threadId: 'cli-session' })).resolves.toMatchObject({ projectId: 'p1' });
+    expect(getThread).not.toHaveBeenCalled();
+    await harness.callRpc('doctor', { projectId: 'p1' });
+    await expect(harness.callRpc('status', {})).resolves.toMatchObject({ lastDoctor: null });
+  });
+
   it('derives a stable id and ships DX skills', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { name: string };
     expect(derivePluginId(pkg.name)).toBe('salesforce');
@@ -100,9 +115,9 @@ describe('salesforce plugin contract', () => {
     ]);
     expect(set.projectTabs.map((tab) => tab.id)).toEqual(['salesforce', 'soql']);
     expect(set.projectTabs[1]).toMatchObject({ label: 'SOQL', icon: 'Database', global: false });
-    expect(set.threadPanelActions.map((row) => row.id)).toEqual(['playground', 'preview']);
-    expect(set.threadPanelActions[0]).toMatchObject({ title: 'Playground', layout: 'flush' });
-    expect(set.threadPanelActions[1]).toMatchObject({ title: 'Preview', layout: 'flush' });
+    expect(set.threadPanelActions.map((row) => row.id)).toEqual(['sf-org', 'sf-soql', 'sf-object', 'sf-record', 'sf-logs', 'sf-deployments', 'sf-operations', 'playground', 'preview']);
+    expect(set.threadPanelActions.find(row => row.id === 'playground')).toMatchObject({ title: 'Playground', layout: 'flush' });
+    expect(set.threadPanelActions.find(row => row.id === 'preview')).toMatchObject({ title: 'Preview', layout: 'flush' });
     expect(set.newThreadPanelActions).toEqual([]);
     expect(set.navPanels).toMatchObject([
       { id: 'orgs', title: 'Salesforce', icon: 'Cloud', placement: 'unlisted' }
@@ -139,7 +154,7 @@ describe('salesforce plugin contract', () => {
     expect(set.composerCustomizations[0]?.id).toBe('salesforce-banner');
     expect(set.fileOpeners[0]?.extensions).toEqual(['agent', 'afscript']);
     expect(set.fileOpeners[0]?.title).toBe('Agentforce Playground');
-    expect(set.commandPaletteActions.map((row) => row.id)).toEqual([
+    expect(set.commandPaletteActions.filter(row => !row.id.startsWith('sf-')).map((row) => row.id)).toEqual([
       'open-orgs',
       'open-playground',
       'open-preview',
@@ -168,7 +183,7 @@ describe('salesforce plugin contract', () => {
   });
 
   it('loads against the fake host and registers family tools plus zcc sf', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await plugin(zcc);
     expect(harness.cli?.name).toBe('sf');
     expect(harness.agentTools.map((tool) => tool.name).sort()).toEqual(['sf_agent', 'sf_apex', 'sf_lwc', 'sf_soql']);
@@ -178,7 +193,7 @@ describe('salesforce plugin contract', () => {
 
 describe('salesforce plugin behavior', () => {
   it('injects constitution only after an org is configured', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, mockDeps());
     expect(await harness.agentConfigurers[0]?.({})).toEqual({});
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
@@ -193,7 +208,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('runs doctor and org CLI without leaking the access token', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, mockDeps());
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const doctor = await harness.cli!.run(['doctor'], { pluginId: 'salesforce', argv: ['doctor'] });
@@ -209,7 +224,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('provides SalesforceSdk on zcc.services without leaking accessToken', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, mockDeps());
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const sf = zcc.services.use<SalesforceSdk>('salesforce');
@@ -225,7 +240,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('generates a DX project via sf project generate', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, {
       ...mockDeps(),
       execSf: async (args) => {
@@ -252,7 +267,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('starts Salesforce CLI web login and refreshes the org roster', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     const seen: string[][] = [];
     await createSalesforcePlugin(zcc, {
       ...mockDeps(),
@@ -296,7 +311,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('surfaces a missing Salesforce CLI when connecting an org', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, {
       ...mockDeps(),
       execSf: async (args) => {
@@ -311,7 +326,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('surfaces a failed Salesforce CLI web login', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, {
       ...mockDeps(),
       execSf: async (args) => {
@@ -326,7 +341,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('surfaces a missing Salesforce CLI when generating a project', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, {
       ...mockDeps(),
       execSf: async () => ({ code: 127, stdout: '', stderr: 'sf: not found' })
@@ -338,7 +353,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('returns generate_failed when sf project generate exits nonzero', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, {
       ...mockDeps(),
       execSf: async () => ({
@@ -355,7 +370,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('runs bounded sandbox SOQL without a confirmation prompt', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, mockDeps('sandbox'));
     harness.setSettings({ defaultOrg: 'dev' });
     const tool = harness.agentTools.find((row) => row.name === 'sf_soql');
@@ -368,7 +383,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('fails closed for anonymous Apex when the operator cancels', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, mockDeps('sandbox'));
     harness.setSettings({ defaultOrg: 'dev' });
     const tool = harness.agentTools.find((row) => row.name === 'sf_apex');
@@ -382,7 +397,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('runs anonymous Apex after an explicit approval and ignores allow_mutation as approval', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(
       zcc,
       mockDeps('sandbox', () => ({ status: 200, json: { compiled: true, success: true }, text: '{}' }))
@@ -399,7 +414,7 @@ describe('salesforce plugin behavior', () => {
   });
 
   it('fails closed without a thread id', async () => {
-    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, mockDeps('production'));
     harness.setSettings({ defaultOrg: 'dev' });
     const tool = harness.agentTools.find((row) => row.name === 'sf_soql');

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Clock,
   Activity,
@@ -15,6 +15,9 @@ import {
 } from 'lucide-react';
 import type { ScheduledTask, Project, ScheduleRun } from '@zana-ai/zcc-domain/product';
 import { useData } from '../../store.js';
+import { filterSchedules, scheduleIssue, type ScheduleFilter } from './schedule-filter.js';
+import { ScheduleFilters } from './ScheduleFilters.js';
+import './scheduler-overview.css';
 import { KpiCard } from './KpiCard.js';
 import { ProjectDot } from '../listpane/ProjectDot.js';
 import {
@@ -32,13 +35,14 @@ interface SchedulerOverviewProps {
   onJump: (t: ScheduledTask) => void;
   onOpenTerminal: (t: ScheduledTask, sessionId: string) => void;
   onEdit: (t: ScheduledTask) => void;
-  onShowReport: (run: ScheduleRun, taskName: string) => void;
+  onShowReport: (run: ScheduleRun, task: ScheduledTask) => void;
   onToggle: (t: ScheduledTask) => void;
   onRunNow: (t: ScheduledTask) => void;
   onStopLive: (t: ScheduledTask, sessionId: string) => void;
   /** Hide the cross-project "By project" breakdown — redundant when the
    *  overview is already scoped to a single project (the per-project tab). */
   hideByProject?: boolean;
+  onBrowse?: () => void;
   /** Open a project's own Scheduler tab from the "By project" breakdown. */
   onOpenProject?: (projectId: string) => void;
 }
@@ -55,8 +59,23 @@ export function SchedulerOverview({
   onRunNow,
   onStopLive,
   hideByProject = false,
-  onOpenProject
+  onOpenProject,
+  onBrowse
 }: SchedulerOverviewProps) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<ScheduleFilter>('all');
+  const [page, setPage] = useState(0);
+  const inventory = useRef<HTMLElement>(null);
+  const projectMap = useMemo(() => new Map(projects.map(p => [p.id, p])), [projects]);
+  const issues = useMemo(() => tasks.filter(t => scheduleIssue(t, projectMap)), [tasks, projectMap]);
+  const missing = issues.filter(t => !projectMap.has(t.projectId)).length;
+  const reviewIssues = () => {
+    setSearch('');
+    setFilter('attention');
+    setPage(0);
+    inventory.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    inventory.current?.focus({ preventScroll: true });
+  };
   const terminalsByProject = useData((s) => s.terminals);
 
   const {
@@ -159,7 +178,7 @@ export function SchedulerOverview({
         .map((t) => ({ task: t, at: t.status?.nextRunAt ? new Date(t.status.nextRunAt) : null }))
         .filter((x): x is { task: ScheduledTask; at: Date } => x.at !== null && !Number.isNaN(x.at.getTime()))
         .sort((a, b) => a.at.getTime() - b.at.getTime())
-        .slice(0, 10),
+        .slice(0, 5),
     [enabled]
   );
 
@@ -169,7 +188,7 @@ export function SchedulerOverview({
         .flatMap((t) => (t.status?.runs ?? []).map((r) => ({ task: t, run: r, ts: Date.parse(r.at) })))
         .filter((x) => !Number.isNaN(x.ts))
         .sort((a, b) => b.ts - a.ts)
-        .slice(0, 12),
+        .slice(0, 5),
     [tasks]
   );
 
@@ -213,10 +232,23 @@ export function SchedulerOverview({
     });
   }, [tasks]);
 
+  const matches = useMemo(() => filterSchedules(allSchedules, projectMap, search, filter), [allSchedules, projectMap, search, filter]);
+  const pageSize = 8;
+  const pageCount = Math.max(1, Math.ceil(matches.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleSchedules = matches.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+
   return (
     <div className="scheduler-overview">
+      {issues.length > 0 && <section className="schedule-attention" aria-label="Schedules needing attention">
+        <AlertTriangle size={20} aria-hidden />
+        <div><h3>{issues.length} {issues.length === 1 ? 'schedule needs' : 'schedules need'} attention</h3>
+          <p>{missing > 0 ? `${missing} with a missing project. ` : ''}{issues.length - missing > 0 ? `${issues.length - missing} with a failed or incomplete latest run. ` : ''}Check the project and recent run details.</p>
+        </div>
+        <button type="button" className="settings-btn" onClick={reviewIssues}>Review schedules</button>
+      </section>}
       <section className="overview-kpis">
-        <KpiCard label="Schedules" value={tasks.length} sub={`${enabled.length} on · ${disabled} off`} />
+        <KpiCard label="Schedules" value={tasks.length} sub={`${enabled.length} enabled · ${disabled} paused`} />
         <KpiCard
           label="Running now"
           value={working.length}
@@ -230,14 +262,14 @@ export function SchedulerOverview({
           accent={working.length > 0 ? 'live' : undefined}
         />
         <KpiCard
-          label="Next fire"
+          label="Next run"
           value={nextFire ? formatCountdown(nextFire) : '—'}
           sub={nextFire ? upcoming[0].task.name : 'Nothing scheduled'}
         />
         <KpiCard
-          label="Last 24h"
+          label="Runs · last 24 hours"
           value={runs24}
-          sub={`${success24} ok · ${errors24} err · ${incomplete24} incomplete · ${skipped24} skip`}
+          sub={`${success24} succeeded · ${errors24} failed · ${incomplete24} incomplete · ${skipped24} skipped`}
           accent={errors24 > 0 || incomplete24 > 0 ? 'error' : undefined}
         />
       </section>
@@ -251,7 +283,7 @@ export function SchedulerOverview({
           </header>
           <ul className="overview-list">
             {working.map(({ task, sessionId }) => {
-              const project = projects.find((p) => p.id === task.projectId);
+              const project = projectMap.get(task.projectId);
               return (
                 <li key={task.id} className="overview-item overview-item--running">
                   <span
@@ -266,7 +298,7 @@ export function SchedulerOverview({
                   >
                     <div className="overview-item-name">{task.name}</div>
                     <div className="overview-item-meta">
-                      {project?.name ?? '⟨missing⟩'} · {PROFILE_LABEL[task.profile]} · {cadenceLabel(task.schedule)}
+                      {project?.name ?? 'Project missing'} · {PROFILE_LABEL[task.profile]} · {cadenceLabel(task.schedule)}
                     </div>
                   </button>
                   <button
@@ -294,7 +326,7 @@ export function SchedulerOverview({
           </header>
           <ul className="overview-list">
             {finishedOpen.map(({ task, sessionId }) => {
-              const project = projects.find((p) => p.id === task.projectId);
+              const project = projectMap.get(task.projectId);
               return (
                 <li key={task.id} className="overview-item">
                   <span
@@ -309,7 +341,7 @@ export function SchedulerOverview({
                   >
                     <div className="overview-item-name">{task.name}</div>
                     <div className="overview-item-meta">
-                      {project?.name ?? '⟨missing⟩'} · {PROFILE_LABEL[task.profile]} · {cadenceLabel(task.schedule)}
+                      {project?.name ?? 'Project missing'} · {PROFILE_LABEL[task.profile]} · {cadenceLabel(task.schedule)}
                     </div>
                   </button>
                   <button
@@ -332,14 +364,14 @@ export function SchedulerOverview({
         <section className="overview-card">
           <header className="overview-card-header">
             <Clock size={14} />
-            <h3>Next up</h3>
+            <h3>Next up</h3>{onBrowse && <button type="button" className="schedule-text-button" onClick={onBrowse}>View schedules</button>}
           </header>
           {upcoming.length === 0 ? (
-            <div className="overview-empty">No upcoming fires. Enable a schedule to populate this list.</div>
+            <div className="overview-empty">No upcoming runs. Enable a schedule to populate this list.</div>
           ) : (
             <ul className="overview-list">
               {upcoming.map(({ task, at }) => {
-                const project = projects.find((p) => p.id === task.projectId);
+                const project = projectMap.get(task.projectId);
                 return (
                   <li key={task.id} className="overview-item">
                     <button
@@ -350,7 +382,7 @@ export function SchedulerOverview({
                     >
                       <div className="overview-item-name">{task.name}</div>
                       <div className="overview-item-meta">
-                        {project?.name ?? '⟨missing⟩'} · {PROFILE_LABEL[task.profile]} · {cadenceLabel(task.schedule)}
+                        {project?.name ?? 'Project missing'} · {PROFILE_LABEL[task.profile]} · {cadenceLabel(task.schedule)}
                       </div>
                     </button>
                     <div className="overview-item-when">
@@ -367,14 +399,14 @@ export function SchedulerOverview({
         <section className="overview-card">
           <header className="overview-card-header">
             <History size={14} />
-            <h3>Recent activity</h3>
+            <h3>Recent activity</h3><span className="schedule-section-caption">Latest {recent.length}</span>
           </header>
           {recent.length === 0 ? (
             <div className="overview-empty">No runs recorded yet.</div>
           ) : (
             <ul className="overview-list">
               {recent.map(({ task, run, ts }, i) => (
-                <li key={`${task.id}-${i}`} className="overview-item">
+                <li key={`${task.id}-${i}`} className="overview-item overview-activity-item">
                   <div className={`overview-result overview-result--${run.result}`}>
                     {run.result === 'success' ? (
                       <CheckCircle2 size={14} />
@@ -396,7 +428,6 @@ export function SchedulerOverview({
                     <div className="overview-item-meta">
                       {run.result}
                       {run.durationMs ? ` · ${formatDuration(run.durationMs)}` : ''}
-                      {run.message ? ` · ${run.message}` : ''}
                     </div>
                   </button>
                   {run.report && (
@@ -405,7 +436,7 @@ export function SchedulerOverview({
                       className="scheduler-run-report-btn"
                       title="View run report"
                       aria-label="View run report"
-                      onClick={() => onShowReport(run, task.name)}
+                      onClick={() => onShowReport(run, task)}
                     >
                       <FileText size={13} strokeWidth={1.75} />
                     </button>
@@ -413,6 +444,7 @@ export function SchedulerOverview({
                   <div className="overview-item-when">
                     <div className="overview-item-abs">{formatRelative(new Date(ts))}</div>
                   </div>
+                  {run.message && <details className="schedule-run-message"><summary>Run details</summary><p>{run.message}</p></details>}
                 </li>
               ))}
             </ul>
@@ -420,23 +452,29 @@ export function SchedulerOverview({
         </section>
       </div>
 
-      <section className="overview-card">
+      <section className="overview-card schedule-inventory" ref={inventory} tabIndex={-1} aria-label="All schedules">
         <header className="overview-card-header">
           <Clock size={14} />
           <h3>All schedules</h3>
           <span className="overview-card-badge overview-card-badge--neutral">
-            {enabled.length} on · {disabled} off
+            {tasks.length} total
           </span>
         </header>
-        {allSchedules.length === 0 ? (
-          <div className="overview-empty">No schedules yet.</div>
+        <ScheduleFilters search={search} filter={filter}
+          onSearch={value => { setSearch(value); setPage(0); }}
+          onFilter={value => { setFilter(value); setPage(0); }} />
+        {matches.length === 0 ? (
+          <div className="overview-empty">{tasks.length === 0 ? 'No schedules yet.' : 'No schedules match these filters.'}
+            {tasks.length > 0 && <button type="button" className="schedule-text-button" onClick={() => { setSearch(''); setFilter('all'); setPage(0); }}>Clear filters</button>}
+          </div>
         ) : (
           <ul className="overview-list">
-            {allSchedules.map((t) => {
-              const project = projects.find((p) => p.id === t.projectId);
+            {visibleSchedules.map((t) => {
+              const project = projectMap.get(t.projectId);
               const nextRun = t.status?.nextRunAt ? new Date(t.status.nextRunAt) : null;
               const nextValid = nextRun && !Number.isNaN(nextRun.getTime());
               const external = t.external?.kind === 'claude-loop';
+              const issue = scheduleIssue(t, projectMap);
               const { liveSessionId, lastReportRun } = rowActionState.get(t.id) ?? {
                 liveSessionId: null,
                 lastReportRun: null
@@ -458,7 +496,7 @@ export function SchedulerOverview({
                       onClick={(e) => e.stopPropagation()}
                       title={t.enabled ? 'Disable schedule' : 'Enable schedule'}
                     >
-                      <input type="checkbox" checked={t.enabled} onChange={() => onToggle(t)} />
+                      <input type="checkbox" aria-label={`${t.enabled ? 'Pause' : 'Enable'} ${t.name}`} checked={t.enabled} onChange={() => onToggle(t)} />
                       <span aria-hidden />
                     </label>
                   )}
@@ -469,8 +507,9 @@ export function SchedulerOverview({
                     title="Edit schedule"
                   >
                     <div className="overview-item-name">{t.name}</div>
+                    {issue && <span className="schedule-issue-label">{issue}</span>}
                     <div className="overview-item-meta">
-                      {project?.name ?? '⟨missing⟩'} · {PROFILE_LABEL[t.profile]} · {cadenceLabel(t.schedule)}
+                      {project?.name ?? 'Project missing'} · {PROFILE_LABEL[t.profile]} · {cadenceLabel(t.schedule)}
                     </div>
                   </button>
                   {/* Per-row actions — the same gestures as a SchedulerCard:
@@ -487,7 +526,7 @@ export function SchedulerOverview({
                           type="button"
                           className="scheduler-icon-btn"
                           onClick={() => onOpenTerminal(t, liveSessionId)}
-                          title="Peek live run"
+                          title="Peek live run" aria-label={`Open live run for ${t.name}`}
                         >
                           <ExternalLink size={14} />
                         </button>
@@ -495,7 +534,7 @@ export function SchedulerOverview({
                           type="button"
                           className="scheduler-icon-btn scheduler-icon-btn--danger"
                           onClick={() => onStopLive(t, liveSessionId)}
-                          title="Stop live run"
+                          title="Stop live run" aria-label={`Stop live run for ${t.name}`}
                         >
                           <Square size={14} />
                         </button>
@@ -506,7 +545,7 @@ export function SchedulerOverview({
                         type="button"
                         className="scheduler-icon-btn"
                         onClick={() => onRunNow(t)}
-                        title="Run now"
+                        title="Run now" aria-label={`Run ${t.name}`}
                       >
                         <Play size={14} />
                       </button>
@@ -515,8 +554,8 @@ export function SchedulerOverview({
                       <button
                         type="button"
                         className="scheduler-icon-btn scheduler-icon-btn--report"
-                        onClick={() => onShowReport(lastReportRun, t.name)}
-                        title="View last report"
+                        onClick={() => onShowReport(lastReportRun, t)}
+                        title="View last report" aria-label={`View last report for ${t.name}`}
                       >
                         <FileText size={14} strokeWidth={1.75} />
                       </button>
@@ -541,6 +580,11 @@ export function SchedulerOverview({
             })}
           </ul>
         )}
+        <footer className="schedule-pagination">
+          <span role="status">{matches.length === 0 ? '0' : `${currentPage * pageSize + 1}–${Math.min((currentPage + 1) * pageSize, matches.length)}`} of {matches.length} schedules</span>
+          <div><button type="button" className="settings-btn" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>
+          <button type="button" className="settings-btn" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>Next</button></div>
+        </footer>
       </section>
 
       {!hideByProject && (

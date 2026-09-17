@@ -701,7 +701,6 @@ rl.on("line", (line) => {
       providerId: "fake",
       runtime,
       threadId: "t1",
-      turnId: "turn-1",
     });
     await expect(
       runtime.steerTurn({
@@ -1299,7 +1298,6 @@ process.on("SIGTERM", () => {
       providerId: "fake",
       runtime,
       threadId: "t1",
-      turnId: "turn-1",
     });
     await expect(runtime.stopThread({ threadId: "t1" })).rejects.toThrow(
       /returned no provider request for thread\/stop with active turn/,

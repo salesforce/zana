@@ -512,6 +512,7 @@ export interface CcApi {
       input: string | unknown[],
       mode?: string,
       extras?: {
+        permissionMode?: 'accept-edits' | 'auto' | 'full';
         model?: string;
         reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
         acpMode?: string;

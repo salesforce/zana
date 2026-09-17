@@ -2486,7 +2486,8 @@ export interface AppConfig {
   remoteMcpEnabled?: boolean;
   /**
    * When on and a thread is running, Enter steers the active turn and
-   * Cmd/Ctrl+Enter queues. Default off: Enter always uses `auto`.
+   * Cmd/Ctrl+Enter queues. Default off: Enter queues while active;
+   * Cmd/Ctrl+Enter steers.
    * Kept for backward compatibility; {@link composerSendMode} is the picker.
    */
   steerActiveThreadOnEnter?: boolean;

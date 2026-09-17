@@ -44,7 +44,14 @@ describe('OrgPicker and Salesforce project tab', () => {
   const nodes: Array<{ unmount: () => void }> = [];
 
   beforeEach(() => {
-    rpc.mockClear();
+    rpc.mockReset();
+    rpc.mockImplementation(async (_pluginId, method) => {
+      if (method === 'orgs') return { ok: true, orgs, selectedAlias: 'dev' };
+      if (method === 'status') return { ok: true, defaultOrg: 'dev', selectedAlias: 'dev', dxProject: true, orgs };
+      if (method === 'operations.list') return { ok: true, operations: [] };
+      if (method === 'context.select') return { ok: true };
+      return { ok: false, error: `unexpected ${method}` };
+    });
     setSettings.mockClear();
     (globalThis as { __ZCC_PLUGIN_HOST__?: unknown }).__ZCC_PLUGIN_HOST__ = {
       callRpc: rpc,
@@ -103,6 +110,8 @@ describe('OrgPicker and Salesforce project tab', () => {
     await act(async () => {
       await Promise.resolve();
     });
+    expect(setSettings).not.toHaveBeenCalled();
+    await act(async () => { [...el.querySelectorAll('button')].find(button => button.textContent === 'Set shared default')!.click(); });
     expect(setSettings).toHaveBeenCalledWith('salesforce', { defaultOrg: 'prod' });
   });
 
@@ -157,9 +166,10 @@ describe('OrgPicker and Salesforce project tab', () => {
 
   it('renders CLI orgs on the Salesforce project tab', async () => {
     const el = await mount(createElement(SalesforceProjectTab, { pluginId: 'salesforce', projectId: 'proj-1' }));
-    expect(el.textContent).toContain('CLI-connected orgs');
+    expect(el.querySelectorAll('[role=tab]')).toHaveLength(5);
+    expect(el.textContent).toContain('Explore data');
+    await act(async () => { [...el.querySelectorAll('button')].find(button => button.textContent === 'Org details')!.click(); });
     expect(el.querySelector('[data-testid="salesforce-org:prod"]')).toBeTruthy();
-    expect(el.textContent).toContain('Open SOQL');
   });
 
   it('renders the unlisted Salesforce orgs panel', async () => {

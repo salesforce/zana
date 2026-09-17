@@ -375,6 +375,14 @@ export const IPC = {
     reload: 'pluginApps:reload'
   },
   /**
+   * Configured plugin marketplace catalogs (`plugins/marketplaces.json`).
+   * `list` is a main-process store read so Catalog sources matches Browse
+   * even when product HTTP is on another port or down. Mutations stay HTTP.
+   */
+  marketplaces: {
+    list: 'marketplaces:list'
+  },
+  /**
    * Runtime extensions under `~/.zcc/extensions/<id>/`. Mirrors the
    * `plugins:` shape. `readRendererEntry` returns the extension's renderer
    * bundle JS as a string for the renderer to blob-import (P1-C).
