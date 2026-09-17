@@ -5195,6 +5195,41 @@ function teamExecutionEnabled(): boolean {
   return config.teamJobLaunchEnabled !== false || config.composerShowAutonomousTeam !== false;
 }
 
+/**
+ * "Plan provided in goal" fast path: parse the first deterministically-valid
+ * portable-executable plan (a snapshotted goal source, then the inline goal) into
+ * work units so the launch can seed them pre-RUNNING and the coordinator hits its
+ * "plan already valid → dispatch" branch with zero model cost. A plan that is
+ * unparseable or not a complete durable DAG returns undefined and the coordinator
+ * repairs it at runtime (same lane as infer). Only structured launches parse.
+ */
+function seedProvidedPlanWorkUnits(
+  coordinationMode: string,
+  sourceTexts: readonly (string | undefined)[],
+  inlineGoal: string
+): ExecutionWorkUnitInput[] | undefined {
+  if (coordinationMode !== 'structured') return undefined;
+  const candidatePlans = [
+    ...sourceTexts.filter((text): text is string => typeof text === 'string' && text.length > 0),
+    inlineGoal
+  ];
+  for (const text of candidatePlans) {
+    const parsed = parsePortablePlan(text);
+    if (!parsed.ok || parsed.units.length === 0) continue;
+    try {
+      return normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[];
+    } catch (error) {
+      // Parsed but not a complete durable DAG — defer to the coordinator. Log the
+      // rejection reason so a mis-authored provided plan is diagnosable.
+      console.debug(
+        '[team-launch] provided plan rejected by DAG validation; deferring to coordinator:',
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+  return undefined;
+}
+
 export async function startTeamJobFromUi(
   input: TeamJobLaunchInput,
   sourceContext?: { windowId: number }
@@ -5273,30 +5308,11 @@ export async function startTeamJobFromUi(
   const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(originalJobTitle, capturedPathDescriptors)?.slice(0, 256) || undefined;
   const sanitizedSummary = redactCapturedExecutionSourcePaths(originalSummary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
   const sourceMetadata = sourceBundle?.sources.map(({ extractedText: _content, ...metadata }) => metadata);
-  // "Plan provided in goal" fast path: a deterministically-valid portable-executable
-  // plan (inline in the goal OR in a snapshotted source) is parsed into work units
-  // and seeded pre-RUNNING, so the coordinator hits the "plan already valid → dispatch"
-  // branch with zero model cost. An unparseable/incomplete plan seeds nothing and the
-  // coordinator repairs it at runtime (same lane as infer). freeform never parses.
-  let plannedWorkUnits: ExecutionWorkUnitInput[] | undefined;
-  if (coordinationMode === 'structured') {
-    const candidatePlans = [
-      ...(sourceBundle?.sources ?? [])
-        .map((source) => source.extractedText)
-        .filter((text): text is string => typeof text === 'string' && text.length > 0),
-      originalGoal
-    ];
-    for (const text of candidatePlans) {
-      const parsed = parsePortablePlan(text);
-      if (!parsed.ok || parsed.units.length === 0) continue;
-      try {
-        plannedWorkUnits = normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[];
-        break;
-      } catch {
-        // Parsed but not a complete durable DAG — let the coordinator repair it.
-      }
-    }
-  }
+  const plannedWorkUnits = seedProvidedPlanWorkUnits(
+    coordinationMode,
+    (sourceBundle?.sources ?? []).map((source) => source.extractedText),
+    originalGoal
+  );
   const sanitizedJobTitle = await nameTeamExecution(launchRequestId, sanitizedGoal, sanitizedExplicitTitle);
   const sharedTask = [
     `Shared job goal: ${sanitizedGoal}`,

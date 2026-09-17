@@ -88,6 +88,52 @@ function labelFor(handle: string | undefined, displayName: string | undefined, s
 }
 
 /**
+ * Fold Job Team durable work dependencies into worker→worker edges. Job dispatch
+ * bypasses the agent message log, so a durable DAG would otherwise show no
+ * handoffs. Mutates `edgeByKey`/`outDegree` in place; out-degree counts each
+ * UNIQUE worker pair once (multiple unit dependencies between the same pair
+ * collapse to one edge, so counting every dependency would inflate the source
+ * node's degree and skew orchestrator selection).
+ */
+function projectWorkDependencyEdges(
+  executions: readonly ExecutionBoardProjection[],
+  ctx: {
+    sessionByExecutionSlot: Map<string, string>;
+    isNode: (sessionId: string) => boolean;
+    edgeByKey: Map<string, SquadFlowEdge>;
+    outDegree: Map<string, number>;
+  }
+): void {
+  const { sessionByExecutionSlot, isNode, edgeByKey, outDegree } = ctx;
+  for (const execution of executions) {
+    const assignments = execution.work?.assignments ?? [];
+    const assignmentById = new Map(assignments.map((assignment) => [assignment.workUnitId, assignment]));
+    for (const assignment of assignments) {
+      if (!assignment.slotId) continue;
+      const toSessionId = sessionByExecutionSlot.get(`${execution.executionId}\0${assignment.slotId}`);
+      if (!toSessionId || !isNode(toSessionId)) continue;
+      for (const dependencyId of assignment.dependencies) {
+        const dependency = assignmentById.get(dependencyId);
+        if (!dependency?.slotId) continue;
+        const fromSessionId = sessionByExecutionSlot.get(`${execution.executionId}\0${dependency.slotId}`);
+        if (!fromSessionId || fromSessionId === toSessionId || !isNode(fromSessionId)) continue;
+        const key = `${fromSessionId}\0${toSessionId}`;
+        if (edgeByKey.has(key)) continue;
+        edgeByKey.set(key, {
+          fromSessionId,
+          toSessionId,
+          count: 1,
+          lastTs: execution.updatedAt,
+          pending: false,
+          kind: 'work-dependency'
+        });
+        outDegree.set(fromSessionId, (outDegree.get(fromSessionId) ?? 0) + 1);
+      }
+    }
+  }
+}
+
+/**
  * Project one project's live mesh into a {@link SquadFlowGraph}, or `null` when
  * the project has no agent nodes at all (a "squad" is ≥1 live agent — a plain
  * shell does not count).
@@ -227,33 +273,12 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
 
   // Job Team dispatch bypasses agent messages. Project durable work dependencies
   // onto their assigned worker sessions so the Flow still shows actual handoffs.
-  for (const execution of input.executions ?? []) {
-    const assignments = execution.work?.assignments ?? [];
-    const assignmentById = new Map(assignments.map((assignment) => [assignment.workUnitId, assignment]));
-    for (const assignment of assignments) {
-      if (!assignment.slotId) continue;
-      const toSessionId = sessionByExecutionSlot.get(`${execution.executionId}\0${assignment.slotId}`);
-      if (!toSessionId || !bySession.has(toSessionId)) continue;
-      for (const dependencyId of assignment.dependencies) {
-        const dependency = assignmentById.get(dependencyId);
-        if (!dependency?.slotId) continue;
-        const fromSessionId = sessionByExecutionSlot.get(`${execution.executionId}\0${dependency.slotId}`);
-        if (!fromSessionId || fromSessionId === toSessionId || !bySession.has(fromSessionId)) continue;
-        const key = `${fromSessionId}\0${toSessionId}`;
-        if (!edgeByKey.has(key)) {
-          edgeByKey.set(key, {
-            fromSessionId,
-            toSessionId,
-            count: 1,
-            lastTs: execution.updatedAt,
-            pending: false,
-            kind: 'work-dependency'
-          });
-        }
-        outDegree.set(fromSessionId, (outDegree.get(fromSessionId) ?? 0) + 1);
-      }
-    }
-  }
+  projectWorkDependencyEdges(input.executions ?? [], {
+    sessionByExecutionSlot,
+    isNode: (sessionId) => bySession.has(sessionId),
+    edgeByKey,
+    outDegree
+  });
 
   const edges = [...edgeByKey.values()];
 

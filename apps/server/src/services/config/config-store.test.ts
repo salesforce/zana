@@ -35,6 +35,27 @@ describe('createConfigStore', () => {
     });
   });
 
+  it('defaults claim-recovery enforcement on and a 5-minute plan startup grace', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-durable-'));
+    const configFile = join(homeDir, '.zcc', 'config.json');
+    const config = createConfigStore(
+      { homeDir, configFile },
+      {
+        normalizeConfig: (input) => input,
+        projectConfigCompatibility: (input) => input,
+        canonicalConfigForWrite: (input) => input,
+        harnessEnabled: (_input, id) => id === 'claude'
+      }
+    );
+
+    // Enforce-by-default is deliberate for this branch: durable claim fencing is
+    // active on fresh installs, and a planless durable run is guarded after 5 min.
+    expect(config.getConfig()).toMatchObject({
+      executionClaimRecoveryEnforceEnabled: true,
+      executionPlanStartupGraceMs: 300_000
+    });
+  });
+
   it('defaults composer launch surfaces on and migrates leftover CLI-only once', () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-surfaces-'));
     const configFile = join(homeDir, '.zcc', 'config.json');

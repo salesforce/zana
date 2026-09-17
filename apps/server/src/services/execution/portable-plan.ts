@@ -44,10 +44,56 @@ function stripBackticks(value: string): string {
 function parseList(value: string): string[] {
   const cleaned = stripBackticks(value);
   if (!cleaned || cleaned.toLowerCase() === 'none') return [];
-  return value
+  return cleaned
     .split(',')
-    .map(stripBackticks)
+    .map((item) => item.trim())
     .filter((item) => item && item.toLowerCase() !== 'none');
+}
+
+interface PlanStepBlock {
+  heading: string;
+  body: string[];
+}
+
+/** Map one executable-step block onto a work unit, or explain why it is invalid. */
+function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInput } | { ok: false; reason: string } {
+  const headingText = stripInlineComment(block.heading);
+  const colon = headingText.indexOf(':');
+  if (colon <= 0) return { ok: false, reason: `step heading missing "id: title": ${headingText}` };
+  const id = headingText.slice(0, colon).trim();
+  const title = headingText.slice(colon + 1).trim();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) return { ok: false, reason: `invalid step id: ${id}` };
+  if (!title) return { ok: false, reason: `step ${id} missing title` };
+
+  const labels = new Map<string, string>();
+  for (const raw of block.body) {
+    const labelMatch = LABEL.exec(raw);
+    if (labelMatch) labels.set(labelMatch[1].trim().toLowerCase(), labelMatch[2].trim());
+  }
+
+  const task = labels.get('work');
+  if (!task) return { ok: false, reason: `step ${id} missing Work` };
+
+  const dependencies = parseList(labels.get('depends on') ?? 'None');
+  const files = parseList(labels.get('write scope') ?? 'None');
+  const verificationText = labels.get('verification');
+  const readOnly = /read[-\s]?only/i.test(labels.get('mode') ?? '');
+  const executionClass = stripBackticks(labels.get('execution class') ?? '').toLowerCase();
+  const minimumLevel = EXECUTION_CLASS_LEVEL[executionClass];
+
+  return {
+    ok: true,
+    unit: {
+      id,
+      title,
+      task,
+      dependencies,
+      ...(files.length ? { files } : {}),
+      ...(verificationText ? { verification: [verificationText] } : {}),
+      ...(readOnly ? { readOnly: true } : {}),
+      ...(minimumLevel ? { routing: { version: 1, minimumLevel } } : {})
+    }
+  };
 }
 
 export function parsePortablePlan(text: string): PortablePlanParse {
@@ -72,41 +118,9 @@ export function parsePortablePlan(text: string): PortablePlanParse {
 
   const units: ExecutionWorkUnitInput[] = [];
   for (const block of blocks) {
-    const headingText = stripInlineComment(block.heading);
-    const colon = headingText.indexOf(':');
-    if (colon <= 0) return { ok: false, reason: `step heading missing "id: title": ${headingText}` };
-    const id = headingText.slice(0, colon).trim();
-    const title = headingText.slice(colon + 1).trim();
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) return { ok: false, reason: `invalid step id: ${id}` };
-    if (!title) return { ok: false, reason: `step ${id} missing title` };
-
-    const labels = new Map<string, string>();
-    for (const raw of block.body) {
-      const labelMatch = LABEL.exec(raw);
-      if (labelMatch) labels.set(labelMatch[1].trim().toLowerCase(), labelMatch[2].trim());
-    }
-
-    const task = labels.get('work');
-    if (!task) return { ok: false, reason: `step ${id} missing Work` };
-
-    const dependencies = parseList(labels.get('depends on') ?? 'None');
-    const files = parseList(labels.get('write scope') ?? 'None');
-    const verificationText = labels.get('verification');
-    const mode = labels.get('mode') ?? '';
-    const readOnly = /read[-\s]?only/i.test(mode);
-    const executionClass = stripBackticks(labels.get('execution class') ?? '').toLowerCase();
-    const minimumLevel = EXECUTION_CLASS_LEVEL[executionClass];
-
-    units.push({
-      id,
-      title,
-      task,
-      dependencies,
-      ...(files.length ? { files } : {}),
-      ...(verificationText ? { verification: [verificationText] } : {}),
-      ...(readOnly ? { readOnly: true } : {}),
-      ...(minimumLevel ? { routing: { version: 1, minimumLevel } } : {})
-    });
+    const parsed = parseStep(block);
+    if (!parsed.ok) return parsed;
+    units.push(parsed.unit);
   }
 
   return { ok: true, units };

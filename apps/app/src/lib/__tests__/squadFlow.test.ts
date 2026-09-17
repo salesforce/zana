@@ -304,6 +304,45 @@ describe('buildSquadFlow — handoff edges', () => {
     }));
   });
 
+  it('collapses multiple deps between the same worker pair to one edge without inflating out-degree', () => {
+    // b's unit depends on BOTH of a's units → two a→b dependencies, one edge.
+    // Out-degree(a) must count that pair once, else a beats an equal-degree peer.
+    const execution = {
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Job', state: 'RUNNING', attempt: 1,
+      createdAt: 1_000, updatedAt: 4_000,
+      work: {
+        total: 3, completed: 2,
+        counts: { PENDING: 0, READY: 0, CLAIMED: 1, BLOCKED: 0, COMPLETED: 2, FAILED: 0, SKIPPED: 0 },
+        assignments: [
+          { workUnitId: 'root1', title: 'Root 1', dependencies: [], slotId: 'slot-a', state: 'COMPLETED' },
+          { workUnitId: 'root2', title: 'Root 2', dependencies: [], slotId: 'slot-a', state: 'COMPLETED' },
+          { workUnitId: 'child', title: 'Child', dependencies: ['root1', 'root2'], slotId: 'slot-b', state: 'CLAIMED' }
+        ],
+        rosterSlotIds: ['slot-a', 'slot-b']
+      }
+    } satisfies ExecutionBoardProjection;
+    const g = buildSquadFlow(inputs({
+      agents: [
+        agent({ sessionId: 'a', handle: 'a', registeredAt: 200 }),
+        agent({ sessionId: 'b', handle: 'b', registeredAt: 300 }),
+        agent({ sessionId: 'c', handle: 'c', registeredAt: 100 })
+      ],
+      sessions: [
+        session({ id: 'a', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-a' } }),
+        session({ id: 'b', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-b' } })
+      ],
+      messages: [message({ id: 'cm', fromSessionId: 'c', toSessionId: 'b' })],
+      executions: [execution]
+    }));
+
+    const workEdges = g!.edges.filter((e) => e.kind === 'work-dependency');
+    expect(workEdges).toHaveLength(1);
+    // a and c each have out-degree 1; the earlier-registered c wins the tie. If
+    // a's degree were inflated to 2 by the second dep, a would wrongly lead.
+    expect(nodeMap(g!).get('c')!.isOrchestrator).toBe(true);
+    expect(nodeMap(g!).get('a')!.isOrchestrator).toBe(false);
+  });
+
   it('does not render a dependency as a self-edge when one worker runs both units', () => {
     const execution = {
       executionId: 'execution-1', projectId: 'p1', jobTitle: 'Job', state: 'RUNNING', attempt: 1,

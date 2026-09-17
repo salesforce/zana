@@ -883,6 +883,29 @@ describe('SquadExecutionService', () => {
     expect(replyToSession).not.toHaveBeenCalled();
   }));
 
+  it('retries worker cancellation on a watchdog re-fire after a partial planless teardown', async () => fixture(async (filePath) => {
+    // Grace expiry transitions to FAILED but the worker cancellation throws
+    // (transient). The watchdog re-fires; the retry must re-run the idempotent
+    // teardown on the already-FAILED record instead of returning early, else the
+    // run stays FAILED with its workers still live.
+    const cancelTeamLaunch = vi.fn()
+      .mockResolvedValueOnce({ ok: false as const, code: 'CANCEL_FAILED', message: 'transient' })
+      .mockResolvedValue({ ok: true as const, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } });
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new ExecutionService(deps(filePath, { store, cancelTeamLaunch }));
+    await service.start('owner', 'project-1', request);
+
+    await expect((service as unknown as { failPlanlessExecution(id: string): Promise<void> })
+      .failPlanlessExecution('execution-1')).rejects.toThrow(/CANCEL_FAILED/);
+    expect((await store.get('execution-1'))?.state).toBe('FAILED');
+    expect(cancelTeamLaunch).toHaveBeenCalledTimes(1);
+
+    await (service as unknown as { failPlanlessExecution(id: string): Promise<void> })
+      .failPlanlessExecution('execution-1');
+    expect(cancelTeamLaunch).toHaveBeenCalledTimes(2);
+    expect((await store.get('execution-1'))?.state).toBe('FAILED');
+  }));
+
   it('cascades a newly-ready dependent to a free worker on completion with no coordinator relay', async () => fixture(async (filePath) => {
     const replyToSession = vi.fn(() => true);
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });

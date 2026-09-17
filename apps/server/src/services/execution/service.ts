@@ -2166,8 +2166,22 @@ export class ExecutionService {
    */
   private async failPlanlessExecution(executionId: string): Promise<void> {
     const record = await this.deps.store.get(executionId);
-    if (!record || isResumeGrantTerminal(record.state)) return;
+    if (!record) return;
     if (record.workUnits && record.workUnits.length > 0) return;
+    // A prior attempt can transition to FAILED but then die before the cohort is
+    // cancelled (cleanupTerminal / cancelTimedOutLaunch threw). On the watchdog's
+    // retry the record is already terminal, so re-run the idempotent teardown
+    // instead of returning early — otherwise the run stays FAILED with its workers
+    // still live. Only THIS watchdog's own FAILED reaches here (any other terminal
+    // path removes the timer via cleanupTerminal), so a COMPLETED/STOPPED run is
+    // left untouched. Mirrors timeoutExecution's already-terminal re-cancel.
+    if (isResumeGrantTerminal(record.state)) {
+      if (record.state === 'FAILED') {
+        await this.cleanupTerminal(record);
+        await this.cancelTimedOutLaunch(record);
+      }
+      return;
+    }
     let failed: ExecutionRecord;
     try {
       failed = await this.deps.store.transition(record.id, record.stateVersion, 'FAILED', 'error', 'No plan registered within startup grace');
