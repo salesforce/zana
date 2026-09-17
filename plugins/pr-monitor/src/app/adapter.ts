@@ -3,8 +3,8 @@ import { packRpcArgs } from '../../lib/rpc.js';
 import type { PluginPanelCache, PluginPanelHost, ProjectInfo } from './host.js';
 
 const cacheStore = new Map<string, unknown>();
-let projectsCache: ProjectInfo[] = [];
 let badgeRefresh: (() => void) | undefined;
+export const PROJECT_REFRESH_MS = 5_000;
 
 export function setBadgeRefresh(fn: (() => void) | undefined): void {
   badgeRefresh = fn;
@@ -41,14 +41,25 @@ export function openSafeExternal(url: string): void {
 }
 
 export function createPluginPanelHost(pluginId: string): PluginPanelHost {
-  projectsCache = [];
-  void callPluginRpc(pluginId, 'listProjects')
-    .then((list) => {
+  let projectsCache: ProjectInfo[] = [];
+  let refreshingProjects = false;
+  let nextProjectRefresh = 0;
+  // The panel reads this snapshot frequently. Refresh on demand with one
+  // in-flight request and a time floor; no timer outlives the panel's host.
+  const refreshProjects = async () => {
+    if (refreshingProjects || Date.now() < nextProjectRefresh) return;
+    refreshingProjects = true;
+    try {
+      const list = await callPluginRpc(pluginId, 'listProjects');
       if (Array.isArray(list)) projectsCache = list as ProjectInfo[];
-    })
-    .catch(() => {
-      /* panel tick will retry via listProjects() length */
-    });
+    } catch {
+      // Preserve the last good list and retry on a later panel read.
+    } finally {
+      nextProjectRefresh = Date.now() + PROJECT_REFRESH_MS;
+      refreshingProjects = false;
+    }
+  };
+  void refreshProjects();
 
   return {
     call: <T = unknown>(method: string, ...args: unknown[]) =>
@@ -61,7 +72,10 @@ export function createPluginPanelHost(pluginId: string): PluginPanelHost {
     },
     cache: sharedPanelCache(),
     toast: runtimeToast,
-    listProjects: () => projectsCache,
+    listProjects: () => {
+      void refreshProjects();
+      return projectsCache;
+    },
     openExternal: openSafeExternal,
     pushInbox: async (input) => {
       if (!input.projectId) return { id: '' };

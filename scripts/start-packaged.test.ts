@@ -68,7 +68,7 @@ describe('start-packaged', () => {
     expect(pkg.scripts.start).toBe('node scripts/start-packaged.mjs');
     expect(pkg.scripts.dev).toBe('node scripts/dev-local.mjs');
     expect(pkg.scripts.dev).not.toBe(pkg.scripts.start);
-    expect(pkg.scripts['dev:prod']).toBeUndefined();
+    expect(pkg.scripts['dev:prod']).toBe('node scripts/dev-local.mjs --packaged');
     expect(pkg.scripts['start:prod']).toBeUndefined();
     expect(pkg.scripts.prestart).toBeUndefined();
     expect(pkg.scripts['dev:legacy']).toBeUndefined();

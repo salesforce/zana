@@ -1,6 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { packRpcArgs } from '../../lib/rpc.js';
-import { createPluginPanelHost, openSafeExternal, setBadgeRefresh, sharedPanelCache } from './adapter.js';
+import { createPluginPanelHost, openSafeExternal, PROJECT_REFRESH_MS, setBadgeRefresh, sharedPanelCache } from './adapter.js';
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  setBadgeRefresh(undefined);
+});
 
 describe('openSafeExternal', () => {
   it('opens only http(s) URLs', () => {
@@ -16,6 +22,61 @@ describe('openSafeExternal', () => {
 });
 
 describe('createPluginPanelHost', () => {
+  it('coalesces roster reads and refreshes renamed projects without a remount', async () => {
+    vi.useFakeTimers();
+    let resolve!: (value: unknown) => void;
+    const rpc = vi.fn(() => new Promise((done) => { resolve = done; }));
+    vi.stubGlobal('__ZCC_PLUGIN_HOST__', { callRpc: rpc });
+    const host = createPluginPanelHost('pr-monitor');
+    host.listProjects();
+    await vi.advanceTimersByTimeAsync(PROJECT_REFRESH_MS * 2);
+    host.listProjects();
+    expect(rpc).toHaveBeenCalledTimes(1);
+    resolve([{ id: 'p1', name: 'Alpha' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.listProjects()[0].name).toBe('Alpha');
+    await vi.advanceTimersByTimeAsync(PROJECT_REFRESH_MS);
+    expect(rpc).toHaveBeenCalledTimes(1); // no background timer
+    host.listProjects();
+    expect(rpc).toHaveBeenCalledTimes(2);
+    resolve([{ id: 'p1', name: 'Renamed' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.listProjects()[0].name).toBe('Renamed');
+  });
+
+  it('retries roster failures at a bounded rate and preserves the last good snapshot', async () => {
+    vi.useFakeTimers();
+    const rpc = vi.fn().mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([{ id: 'p1', name: 'Alpha' }])
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('offline again'));
+    vi.stubGlobal('__ZCC_PLUGIN_HOST__', { callRpc: rpc });
+    const host = createPluginPanelHost('pr-monitor');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.listProjects()).toEqual([]);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(PROJECT_REFRESH_MS);
+    host.listProjects();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.listProjects()).toEqual([{ id: 'p1', name: 'Alpha' }]);
+    for (let i = 0; i < 2; i++) {
+      await vi.advanceTimersByTimeAsync(PROJECT_REFRESH_MS);
+      host.listProjects();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.listProjects()[0].name).toBe('Alpha');
+    }
+  });
+
+  it('does not clear another panel host\'s project snapshot', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('__ZCC_PLUGIN_HOST__', { callRpc: vi.fn().mockResolvedValue([{ id: 'p1', name: 'Alpha' }]) });
+    const first = createPluginPanelHost('pr-monitor');
+    await vi.advanceTimersByTimeAsync(0);
+    createPluginPanelHost('pr-monitor');
+    expect(first.listProjects()).toEqual([{ id: 'p1', name: 'Alpha' }]);
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
   it('packs RPC args and writes through storage/cache/toast/inbox', async () => {
     const calls: Array<{ pluginId: string; method: string; args: unknown }> = [];
     const toast = vi.fn();

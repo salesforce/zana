@@ -64,6 +64,8 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
   const [error, setError] = useState<string | null>(null);
   const [subTab, setSubTab] = useState<SubTab>('prs');
   const [hydrated, setHydrated] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [pullOpen, setPullOpen] = useState(false);
   const [syncFilterOpen, setSyncFilterOpen] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
@@ -101,6 +103,8 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
   // Hydrate settings, restore last sub-tab, and load PRs from storage on first mount.
   useEffect(() => {
     let alive = true;
+    setLoadError(null);
+    setHydrated(false);
     Promise.all([
       host.storage.get<PrMonitorSettings>(SETTINGS_STORAGE_KEY),
       host.storage.get<SubTab>(STORAGE_TAB_KEY),
@@ -152,7 +156,7 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
         }
         void host.storage.set(STORAGE_TAB_KEY, 'prs');
       }
-      if (Array.isArray(prsList) && prsList.length > 0) {
+      if (Array.isArray(prsList)) {
         setPrs(prsList);
         host.cache.set(MONITORED_PRS_CACHE_KEY, prsList);
         host.cache.set(MONITORED_COUNT_CACHE_KEY, prsList.length);
@@ -162,21 +166,17 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
       setHydrated(true);
       setInitialLoadDone(true);
     }).catch((err) => {
-      // Hydration is the ONLY thing that clears the loading spinner. If any
-      // read here rejects (a storage/host error, or an older host shell whose
-      // cache API lacks a method we call), a bare .then would strand the panel
-      // on the spinner forever. Always flip the hydrated flags so the panel
-      // paints its (possibly empty) UI instead of spinning; surface the error.
+      // A failed read is not first-run setup. Keep the cache intact and allow
+      // retry without saving defaults or starting a poll over unknown settings.
       if (!alive) return;
       console.error('pr-monitor hydrate failed', err);
-      setSettingsLoaded(true);
+      setLoadError(err instanceof Error ? err.message : String(err));
       setHydrated(true);
-      setInitialLoadDone(true);
     });
     return () => {
       alive = false;
     };
-  }, [host]);
+  }, [host, loadAttempt]);
 
   // Refetch from the cache whenever the background poller writes a new snapshot.
   // The headless background component is the source of truth; the panel just
@@ -195,11 +195,11 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
         // reference, React bails out automatically.
         setPrs((prev) => (prev === next ? prev : next));
       }
-      // Re-read the (non-reactive) projects snapshot so a list that hydrated
-      // after mount fills in. Only replace state when it actually grew/changed
-      // length, to avoid a needless re-render every tick.
+      // Names and paths can change without the project count changing.
       const nextProjects = host.listProjects();
-      setProjects((prev) => (prev.length === nextProjects.length ? prev : nextProjects));
+      setProjects((prev) => prev.length === nextProjects.length && prev.every((p, i) =>
+        p.id === nextProjects[i].id && p.name === nextProjects[i].name && p.path === nextProjects[i].path
+      ) ? prev : nextProjects);
     };
     const id = window.setInterval(tick, 100);
     return () => window.clearInterval(id);
@@ -565,6 +565,21 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
       <section className="prm-panel">
         <div className="prm-loading">
           <Loader2 size={16} className="prm-spin" /> Loading PR Monitor…
+        </div>
+      </section>
+    );
+  }
+
+  if (loadError !== null) {
+    return (
+      <section className="prm-panel">
+        <div className="prm-empty" role="alert">
+          <AlertTriangle size={28} aria-hidden />
+          <h3>Couldn't load PR Monitor</h3>
+          <p>{loadError}</p>
+          <button type="button" className="prm-btn" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+            <RefreshCw size={13} aria-hidden /> Retry loading
+          </button>
         </div>
       </section>
     );

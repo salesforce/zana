@@ -150,6 +150,27 @@ describe('PrBoardCard', () => {
     expect(calls).toEqual([]);
   });
 
+  it('keeps card pointers out of canvas panning', () => {
+    const { container } = mount(makePr());
+    const bubbled: Event[] = [];
+    const onPointerDown = (e: Event) => bubbled.push(e);
+    document.addEventListener('pointerdown', onPointerDown);
+    fireEvent.pointerDown(container.querySelector('.prm-board-card-title')!);
+    document.removeEventListener('pointerdown', onPointerDown);
+    expect(bubbled).toEqual([]);
+  });
+
+  it('leaves Enter and Space on nested actions and checkboxes to those controls', () => {
+    const opened: string[] = [];
+    const { container, calls } = mount(makePr({ lastSeenAt: 0 }), { onOpen: (url) => opened.push(url) });
+    for (const control of container.querySelectorAll('button, input')) {
+      expect(fireEvent.keyDown(control, { key: 'Enter' })).toBe(true);
+      expect(fireEvent.keyDown(control, { key: ' ' })).toBe(true);
+    }
+    expect(opened).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
   it('opens details on a seen card without marking it seen', async () => {
     const calls: Array<{ handler: string }> = [];
     const opened: string[] = [];
