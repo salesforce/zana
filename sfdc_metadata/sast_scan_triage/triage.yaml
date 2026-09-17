@@ -1,0 +1,19 @@
+false_positive:
+  - id: packages/plugin-sdk/src/internal/host-policy.ts:67f2d22514622d1be30c14ee9f3cb104503a159a33a656ca91a1953aa9616429
+    justification: >
+      These literals are reserved pi-ai service ids on SERVER_DIRECT_AI_SERVICE_IDS.
+      Plugins are forbidden to register them (assertAiServiceRegistrable); the names
+      do not select or call restricted models.
+  - id: packages/plugin-sdk/src/internal/host-policy.ts:6f7ac1823da81d2e52d1a1549ee69c85bbf8bb56d06682849e7c09da2785ce3b
+    justification: >
+      Reserved server-direct AI service id. Listing it here prevents a plugin from
+      capturing that id and intercepting prompts; it is not outbound model configuration.
+  - id: packages/plugin-sdk/src/internal/host-policy.ts:e4c85d725b38365d99b85483e36a477bcbe58b9bf10fe541d6124a16a62a6de4
+    justification: >
+      Reserved server-direct AI service id. Listing it here prevents a plugin from
+      capturing that id and intercepting prompts; it is not outbound model configuration.
+  - id: packages/domain/src/launch-provider.ts:a1850496108e365919ff906a3ad19aef03d419c820d362ae38782e0bd4fce0ad
+    justification: >
+      False match on a Mastra Code TUI capability comment (seed-prompt / headless
+      argv behavior). It does not name or select a restricted AI model.
+not_exploitable: []

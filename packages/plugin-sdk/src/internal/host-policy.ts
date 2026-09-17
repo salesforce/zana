@@ -1064,12 +1064,13 @@ function validateProviderFallbackModels(
 const AI_SERVICE_KINDS = new Set<PluginAiServiceKind>(["inference", "voice"]);
 
 /**
- * AI-service ids the server serves itself: `openai` transcription and the
- * builtin inference providers (pi-ai 0.84). A plugin cannot register one —
- * it would capture the user's prompts and audio. This list is the one source
- * for both the fake host and production (`isServerDirectAiServiceId`);
- * apps/server/test/services/plugins/plugin-ai-services.test.ts pins it to
- * pi-ai's provider registry, so a pi-ai bump must move it in the same change.
+ * Reservation list, not an enablement list: AI-service ids the server already
+ * serves (`openai` transcription and builtin pi-ai 0.84 inference providers).
+ * A plugin cannot register one — it would capture the user's prompts and audio.
+ * This list is the one source for both the fake host and production
+ * (`isServerDirectAiServiceId`); apps/server/test/services/plugins/plugin-ai-services.test.ts
+ * pins it to pi-ai's provider registry, so a pi-ai bump must move it in the
+ * same change.
  */
 export const SERVER_DIRECT_AI_SERVICE_IDS: readonly string[] = Object.freeze([
   "openai",

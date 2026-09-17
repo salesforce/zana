@@ -483,7 +483,7 @@ export function providerCapabilities(profile: LaunchProfileId): ProviderCapabili
   if (isMastracodeProfile(profile)) {
     return {
       // v1: Mastra Code (`mastracode`) is a TUI in a PTY. `--prompt` / a
-      // positional prompt forks headless and exits when the task ends, so the
+      // positional prompt forks headless and exits at task end, so the
       // seed-prompt ARGV channel stays OFF. Interactive first tasks ride
       // stdin-after-ready (see the adapter's initialTaskDelivery). `--mode` /
       // `--continue` / `--thinking-level` are headless-only; the TUI honors
