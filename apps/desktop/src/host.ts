@@ -4246,23 +4246,47 @@ function jobCoordinatorPrompt(input: {
 }
 
 /**
- * A Team goal can name source files directly. Main resolves only files inside
- * the registered project, then sends them through the same registry as
- * picker-selected sources. Supported and unsupported formats therefore have the
- * same snapshot or visible-failure behavior without granting raw path access.
+ * A Team goal can name source files directly. Main resolves any file the operator
+ * names that resolves under a Rule-2 trust anchor — the registered project root OR
+ * the user's HOME — then sends it through the same registry as picker-selected
+ * sources. The location of a named plan/source NEVER constrains where execution
+ * happens (that is always the project); it is only a read input to snapshot, so a
+ * plan kept outside the project (e.g. a doc vault under HOME) resolves too. The
+ * sensitive HOME roots (`.ssh`, `.aws`, `.zcc`) stay blocked and write confinement
+ * is enforced separately at execution time, so no raw write access is granted.
  */
-export async function goalExecutionSourcePaths(goal: string, home: string): Promise<ExecutionSourcePathDescriptor[]> {
+export async function goalExecutionSourcePaths(
+  goal: string,
+  home: string,
+  userHome: string = homedir()
+): Promise<ExecutionSourcePathDescriptor[]> {
   const paths = new Map<string, ExecutionSourcePathDescriptor>();
-  let realHome: string;
+  // Allowed READ bases follow Rule 2's trust anchors: the target project root and
+  // the user's HOME. Either may be unresolvable (a remote/nonexistent project
+  // root, or an exotic HOME); a named source under whichever base resolves is
+  // still discoverable. Only if NEITHER resolves do we skip discovery entirely.
+  const bases: string[] = [];
   try {
-    realHome = await realpath(home);
+    bases.push(await realpath(home));
   } catch {
-    // `home` is a remote/nonexistent local path (e.g. a remote project root) —
-    // goal-embedded source-path discovery is a local-filesystem nicety, so skip
-    // it rather than failing the whole Team launch.
-    return [];
+    // `home` is a remote/nonexistent local project root — drop that base but keep
+    // the HOME base so a locally-referenced plan is still discoverable.
   }
-  const sensitiveRoots = [join(realHome, '.ssh'), join(realHome, '.aws'), join(realHome, '.zcc')];
+  let realUserHome: string | undefined;
+  try {
+    realUserHome = await realpath(userHome);
+    bases.push(realUserHome);
+  } catch {
+    // No resolvable HOME base either.
+  }
+  if (bases.length === 0) return [];
+  const sensitiveRoots = realUserHome
+    ? [join(realUserHome, '.ssh'), join(realUserHome, '.aws'), join(realUserHome, '.zcc')]
+    : [];
+  const withinAnyBase = (real: string): boolean => bases.some((base) => {
+    const rel = relative(base, real);
+    return rel !== '' && !(rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel));
+  });
   const matches = goal.match(/(?:^|[\s`'"(])(\/[^\s`'"),;:]+)/g) ?? [];
   for (const match of matches) {
     const raw = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
@@ -4271,8 +4295,7 @@ export async function goalExecutionSourcePaths(goal: string, home: string): Prom
     for (const candidate of candidates) {
       try {
         const real = await realpath(candidate);
-        const rel = relative(realHome, real);
-        if (rel === '' || rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel)) continue;
+        if (!withinAnyBase(real)) continue;
         if (sensitiveRoots.some((root) => real === root || real.startsWith(`${root}${sep}`))) continue;
         const representations = new Set([candidate, real]);
         for (const path of [...representations]) {
