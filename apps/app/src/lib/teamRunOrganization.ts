@@ -31,7 +31,7 @@ export function groupSessionsByTeamRun<T extends { session: TerminalSession }>(i
   return groups;
 }
 
-/** Team-runs project navigation shows one coordinator per run, plus solo sessions. */
+/** Team-runs project navigation shows one orchestrator per run, plus solo sessions. */
 export function projectNavigationSessions(
   sessions: TerminalSession[],
   organization: 'sessions' | 'team-runs'

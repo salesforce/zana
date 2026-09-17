@@ -3430,6 +3430,9 @@ export function createTerminalConfined(
     autonomous?: boolean;
     coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
     suppressPersonaInitialPrompt?: boolean;
+    /** Orchestrator-only MCP server denylist, main-resolved by `launchTeam`
+     *  (team override ⊕ global). MAIN-only; never from the renderer req. */
+    orchestratorMcpServerDenylist?: readonly string[];
     /** Wake reconnect (remote only): original session id to re-attach as the
      *  remote `cc-<id>` tmux session. MAIN-only; never from the renderer req. */
     reconnectTmuxId?: string;
@@ -3600,6 +3603,7 @@ export function createTerminalConfined(
       // forbidden by managed policy). Never sourced from the renderer req.
       autonomous: opts?.autonomous === true,
       coordinationMode: opts?.coordinationMode,
+      orchestratorMcpServerDenylist: opts?.orchestratorMcpServerDenylist,
       suppressPersonaInitialPrompt: opts?.suppressPersonaInitialPrompt,
       // MAIN-only wake-reconnect params (remote only). The pty layer UUID-checks
       // reconnectTmuxId before it reaches the tmux command string.
@@ -4612,6 +4616,12 @@ export async function launchTeam(
   const project = store.listProjects().find((p) => p.id === targetProjectId);
   if (!project) return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
   const currentConfig = store.getConfig();
+  // Orchestrator MCP denylist: a team override REPLACES the global list (even an
+  // explicit empty array, which re-enables everything for this team); an absent
+  // override inherits the global default. Resolved once, main-side (Rule 1), and
+  // applied only to the orchestrator slot below.
+  const orchestratorMcpServerDenylist =
+    team.overrides?.orchestratorMcpServerDenylist ?? currentConfig.orchestratorMcpServerDenylist ?? [];
 
   const personaSnapshot = personas.list();
   const known = new Set(personaSnapshot.map((p) => p.id));
@@ -4884,7 +4894,11 @@ export async function launchTeam(
     const result = await launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
-       { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt },
+       {
+         autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt,
+         // Only the orchestrator slot strips MCP servers; workers are untouched.
+         ...(expectedSlot.role === 'orchestrator' ? { orchestratorMcpServerDenylist } : {})
+       },
        team.id,
        async (identity) => {
          const record = await teamLifecycle.addWorker(claim.record.id, {

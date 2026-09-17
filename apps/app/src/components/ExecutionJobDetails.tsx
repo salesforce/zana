@@ -84,9 +84,9 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         <dt>Goal</dt><dd>{execution.objective ?? execution.jobTitle}</dd>
         <dt>Summary</dt><dd>{execution.summary ?? '—'}</dd>
         <dt>Team</dt><dd>{execution.teamName ?? execution.teamId ?? '—'}</dd>
-        <dt>Coordinator</dt><dd>{execution.coordinator?.status ?? 'unknown'}{execution.coordinator?.sessionId ? ` · ${execution.coordinator.sessionId}` : ''}</dd>
+        <dt>Orchestrator</dt><dd>{execution.coordinator?.status ?? 'unknown'}{execution.coordinator?.sessionId ? ` · ${execution.coordinator.sessionId}` : ''}</dd>
       </dl>
-      {execution.recoveryAttention && <p role="alert">Coordinator lost. {execution.recovery?.status === 'available'
+      {execution.recoveryAttention && <p role="alert">Orchestrator lost. {execution.recovery?.status === 'available'
         ? 'Recovery available. Rotation creates a replacement credential; no cached token is required.'
         : 'Recovery deadline expired.'}</p>}
       <h4>Sources</h4>
@@ -198,7 +198,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       <div>
         {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Team run</button>}
         {execution.state === 'BLOCKED' && !execution.currentBlocker && !execution.resourceBlock && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Team run</button>}
-        {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover coordinator</button>}
+        {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover orchestrator</button>}
       </div>
     </section>
   );

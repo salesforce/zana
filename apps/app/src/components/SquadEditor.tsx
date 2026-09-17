@@ -2,7 +2,7 @@ import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, Plus, GripVertical, Crown } from 'lucide-react';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
-import type { Persona, Team, TeamInput, TeamSlot } from '@zana-ai/zcc-domain/product';
+import type { Persona, Team, TeamInput, TeamSlot, TeamOverrides } from '@zana-ai/zcc-domain/product';
 import { usePersonas, useData, useUi } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { personaIcon } from '../lib/profileIcon.js';
@@ -234,6 +234,23 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
     team?.orchestratorPersonaId ?? ''
   );
   const [defaultProjectId, setDefaultProjectId] = useState(team?.defaultProjectId ?? '');
+  // Per-team execution overrides (default OFF = inherit the global setting). Each
+  // toggle, when on, sends its field in `overrides` — even an empty denylist,
+  // which for this team re-enables every server the global list disabled.
+  const [overrideDenyOn, setOverrideDenyOn] = useState(
+    team?.overrides?.orchestratorMcpServerDenylist != null
+  );
+  const [overrideDenyText, setOverrideDenyText] = useState(
+    (team?.overrides?.orchestratorMcpServerDenylist ?? []).join('\n')
+  );
+  const [overrideGraceOn, setOverrideGraceOn] = useState(
+    team?.overrides?.executionPlanStartupGraceMs != null
+  );
+  const [overrideGraceText, setOverrideGraceText] = useState(
+    team?.overrides?.executionPlanStartupGraceMs != null
+      ? String(Math.round(team.overrides.executionPlanStartupGraceMs / 1000))
+      : ''
+  );
   const [slots, setSlots] = useState<SlotDraft[]>(
     (team?.slots ?? []).map((s) => ({
       personaId: s.personaId,
@@ -298,6 +315,18 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       orchestratorPersonaId && cleanSlots.some((s) => s.personaId === orchestratorPersonaId)
         ? orchestratorPersonaId
         : undefined;
+    const overrides: TeamOverrides = {};
+    if (overrideDenyOn) {
+      overrides.orchestratorMcpServerDenylist = overrideDenyText
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    if (overrideGraceOn) {
+      const secs = parseInt(overrideGraceText, 10);
+      const clamped = Number.isNaN(secs) ? 300 : Math.max(0, Math.min(3600, secs));
+      overrides.executionPlanStartupGraceMs = clamped * 1000;
+    }
     const input: TeamInput = {
       name: name.trim(),
       icon: icon || undefined,
@@ -305,7 +334,8 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       orchestratorPersonaId: orch,
       slots: cleanSlots,
       initialPrompt: initialPrompt.trim() || undefined,
-      defaultProjectId: defaultProjectId || undefined
+      defaultProjectId: defaultProjectId || undefined,
+      ...(Object.keys(overrides).length ? { overrides } : {})
     };
     if (keepsId && team) input.id = team.id;
 
@@ -539,6 +569,52 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
               ...projects.map((project) => ({ value: project.id, label: project.name }))
             ]}
           />
+        </div>
+
+        <div className="scheduler-form-field team-overrides">
+          <label>Overrides</label>
+          <p className="settings-help">
+            Team-specific overrides of the global Team settings. Off by default —
+            each override inherits the global value until you turn it on.
+          </p>
+          <label className="team-override-toggle">
+            <input
+              type="checkbox"
+              checked={overrideDenyOn}
+              onChange={(e) => setOverrideDenyOn(e.target.checked)}
+            />
+            Override disabled orchestrator MCP servers
+          </label>
+          {overrideDenyOn && (
+            <textarea
+              className="team-override-input"
+              rows={3}
+              value={overrideDenyText}
+              onChange={(e) => setOverrideDenyText(e.target.value)}
+              placeholder={'mcp-adaptor'}
+              aria-label="Team orchestrator MCP server denylist"
+            />
+          )}
+          <label className="team-override-toggle">
+            <input
+              type="checkbox"
+              checked={overrideGraceOn}
+              onChange={(e) => setOverrideGraceOn(e.target.checked)}
+            />
+            Override plan startup grace (seconds)
+          </label>
+          {overrideGraceOn && (
+            <input
+              className="team-override-input"
+              type="number"
+              min={0}
+              max={3600}
+              value={overrideGraceText}
+              onChange={(e) => setOverrideGraceText(e.target.value)}
+              placeholder="300"
+              aria-label="Team plan startup grace (seconds)"
+            />
+          )}
         </div>
 
         <p className="settings-help persona-form-hint">

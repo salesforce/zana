@@ -91,6 +91,80 @@ describe('AgentsTab worktree isolation', () => {
     expect(html).toContain('Plan provided in goal');
   });
 
+  it('exposes a Plan startup grace field defaulting to 300 seconds when unset', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={config}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('Plan startup grace (seconds)');
+    expect(html).toContain('auto-failing');
+    // Absent config → 300_000 ms default renders as 300 seconds.
+    expect(html).toContain('value="300"');
+  });
+
+  it('renders the persisted grace in seconds (ms ÷ 1000)', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={{ ...config, executionPlanStartupGraceMs: 600_000 }}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('value="600"');
+  });
+
+  it('renders grace 0 (disabled) without falling back to the default', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={{ ...config, executionPlanStartupGraceMs: 0 }}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('value="0"');
+  });
+
+  it('exposes an orchestrator MCP denylist field, empty by default', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={config}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('Disable orchestrator MCP servers');
+    // Absent config → empty textarea (no server names disabled).
+    expect(html).toContain('<textarea');
+  });
+
+  it('renders a persisted orchestrator MCP denylist newline-joined', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={{ ...config, orchestratorMcpServerDenylist: ['mcp-adaptor', 'other'] }}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('mcp-adaptor\nother');
+  });
+
+  it('uses orchestrator (not coordinator) in Teams organization help text', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={config}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('each orchestrator and its workers together');
+    expect(html).toContain('one orchestrator row per run');
+    expect(html).not.toContain('each coordinator and its workers');
+    expect(html).not.toContain('one coordinator row per run');
+  });
+
   it('groups CLI Agent, Overseer, and Auto mode after general settings, Auto mode last', () => {
     const html = renderToStaticMarkup(
       <AgentsTab

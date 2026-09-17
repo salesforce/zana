@@ -84,12 +84,12 @@ export function CohortBar({ cards, onCloseIdle }: CohortBarProps) {
         // team's lead both visually (crown) and in the chip's title.
         const leadName = co.orchestrator?.session.title?.trim();
         const leadTitle = co.orchestrator
-          ? `${co.teamName} — lead: ${leadName || 'orchestrator'} (close it to end the whole team)`
-          : `${co.teamName} — no live lead (orchestrator has exited)`;
+          ? `${co.teamName} — orchestrator: ${leadName || 'orchestrator'} (close it to end the whole team)`
+          : `${co.teamName} — no live orchestrator (it has exited)`;
         return (
         <div key={co.cohortId} className="cohort-chip" title={leadTitle}>
           {co.orchestrator && (
-            <span className="cohort-chip-orch" aria-label="Team lead">
+            <span className="cohort-chip-orch" aria-label="Orchestrator">
               <Crown size={11} aria-hidden="true" />
             </span>
           )}

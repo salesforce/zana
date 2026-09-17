@@ -52,7 +52,9 @@ describe('createConfigStore', () => {
     // active on fresh installs, and a planless durable run is guarded after 5 min.
     expect(config.getConfig()).toMatchObject({
       executionClaimRecoveryEnforceEnabled: true,
-      executionPlanStartupGraceMs: 300_000
+      executionPlanStartupGraceMs: 300_000,
+      // Denylist ships empty = OFF: a fresh orchestrator sees every MCP server.
+      orchestratorMcpServerDenylist: []
     });
   });
 

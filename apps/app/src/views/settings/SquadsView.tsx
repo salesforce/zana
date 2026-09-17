@@ -1,7 +1,7 @@
 import { product } from '../../lib/product-client.js';
 import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
-import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2 } from 'lucide-react';
+import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2, Crown } from 'lucide-react';
 import type { CancelTeamLaunchResult, LaunchTeamResult, Project, Result, Team, Persona } from '@zana-ai/zcc-domain/product';
 import { useTeams, useData, useUi, usePersonas } from '@/store';
 import { resolveIcon } from '@/lib/resolveIcon';
@@ -638,8 +638,11 @@ function TeamRow({
                           {persona?.name ?? slot.personaId}
                         </span>
                         {isOrchestrator && (
-                          <span className="teams-agent-badge teams-agent-badge--orch">
-                            Orchestrator
+                          <span
+                            className="teams-agent-badge teams-agent-badge--orch"
+                            title="Orchestrator — launched first, carries the opening prompt"
+                          >
+                            <Crown size={11} aria-hidden="true" /> Orchestrator
                           </span>
                         )}
                         {quantity > 1 && (

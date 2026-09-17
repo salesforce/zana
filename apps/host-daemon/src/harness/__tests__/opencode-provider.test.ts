@@ -523,6 +523,36 @@ describe('OpenCodeProvider', () => {
     expect(env.OPENCODE_CONFIG_CONTENT).not.toContain('${');
   });
 
+  it('mcpEnv deep-merges enabled:false for each host-supplied disabled server', () => {
+    const env = p.mcpEnv('opencode', 'http://h/mcp/a/b', ['mcp-adaptor', 'other-tool']);
+    expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT)).toEqual({
+      mcp: {
+        'zcc-inbox': { type: 'remote', url: 'http://h/mcp/a/b', enabled: true },
+        'mcp-adaptor': { enabled: false },
+        'other-tool': { enabled: false }
+      }
+    });
+  });
+
+  it('mcpEnv leaves discovered servers untouched when the disabled list is empty/absent', () => {
+    const empty = p.mcpEnv('opencode', 'http://h/mcp/a/b', []);
+    const absent = p.mcpEnv('opencode', 'http://h/mcp/a/b');
+    const onlyInbox = {
+      mcp: { 'zcc-inbox': { type: 'remote', url: 'http://h/mcp/a/b', enabled: true } }
+    };
+    expect(JSON.parse(empty.OPENCODE_CONFIG_CONTENT)).toEqual(onlyInbox);
+    expect(JSON.parse(absent.OPENCODE_CONFIG_CONTENT)).toEqual(onlyInbox);
+  });
+
+  it('mcpEnv never lets a disabled entry clobber the zcc-inbox connection', () => {
+    const env = p.mcpEnv('opencode', 'http://h/mcp/a/b', ['zcc-inbox']);
+    expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT).mcp['zcc-inbox']).toEqual({
+      type: 'remote',
+      url: 'http://h/mcp/a/b',
+      enabled: true
+    });
+  });
+
   it('arg builders are no-ops (OpenCode reads MCP/agents/hooks from its own config)', () => {
     expect(p.personaArgs({ id: 'p', name: 'P', appendSystemPrompt: 'x' }, 'opencode')).toEqual([]);
     expect(p.projectSettingsArgs({ model: 'opus' }, 'opencode')).toEqual([]);

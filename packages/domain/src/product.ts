@@ -2330,6 +2330,17 @@ export interface AppConfig {
    */
   executionPlanStartupGraceMs?: number;
   /**
+   * MCP server names the host DISABLES for a Team orchestrator session (deep-merged
+   * as `enabled:false` into the harness's own discovered MCP config, e.g. OpenCode's
+   * `OPENCODE_CONFIG_CONTENT`). Lets an operator strip a tool the orchestrator must
+   * not reach for — a sandbox/adaptor server that is unavailable or unreliable when
+   * the harness is Zana-spawned — so a durable run can't stall waiting on it. The
+   * concrete names are config VALUES, never hard-coded in core (Rule 6). Empty/absent
+   * = OFF (today's behaviour): the orchestrator sees every discovered server. A Team
+   * may override this via {@link Team.overrides}.
+   */
+  orchestratorMcpServerDenylist?: string[];
+  /**
    * Show CLI Agent in the New Chat / New agent launch switcher. Default ON.
    * At least one of this and {@link composerShowModern} must stay on.
    */
@@ -4049,8 +4060,30 @@ export interface Team {
   defaultProjectId?: string;
   /** Opening prompt handed to the orchestrator's tab. */
   initialPrompt?: string;
+  /**
+   * Per-team overrides of global execution settings. Each field, when present,
+   * takes precedence over the matching {@link AppConfig} value for THIS team's
+   * runs only; an absent field falls back to the global default. Houses all
+   * team-level execution knobs so they live in one editable place.
+   */
+  overrides?: TeamOverrides;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
+}
+
+/**
+ * Team-scoped overrides of global execution config. Every field is optional and
+ * OFF by default (absent = inherit the global {@link AppConfig} value).
+ */
+export interface TeamOverrides {
+  /**
+   * Overrides {@link AppConfig.orchestratorMcpServerDenylist} for this team. When
+   * present (even empty), it REPLACES the global list for this team's orchestrator
+   * — an explicit empty array re-enables every server the global list disabled.
+   */
+  orchestratorMcpServerDenylist?: string[];
+  /** Overrides {@link AppConfig.executionPlanStartupGraceMs} for this team's runs. */
+  executionPlanStartupGraceMs?: number;
 }
 
 /**

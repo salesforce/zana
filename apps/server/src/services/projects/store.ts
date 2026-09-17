@@ -1070,6 +1070,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
     const v = Math.round(input.executionPlanStartupGraceMs);
     normalized.executionPlanStartupGraceMs = v <= 0 ? 0 : Math.max(MIN_STARTUP_GRACE_MS, Math.min(MAX_STARTUP_GRACE_MS, v));
   }
+  // Host-supplied MCP server names disabled for a Team orchestrator (Rule 6 —
+  // config values, never literals in core). Reuses the claude-list normalizer:
+  // trims, dedupes, drops blanks; an explicit `[]` is a meaningful "off".
+  if ('orchestratorMcpServerDenylist' in input) {
+    normalized.orchestratorMcpServerDenylist = normalizeClaudeList(input.orchestratorMcpServerDenylist);
+  }
   if (typeof input.composerShowCliAgent === 'boolean') {
     normalized.composerShowCliAgent = input.composerShowCliAgent;
   }

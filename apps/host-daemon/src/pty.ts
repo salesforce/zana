@@ -688,6 +688,16 @@ export class PtyManager extends EventEmitter {
     autonomous?: boolean;
     /** Main-owned Team launch semantics; renderer cannot set this field. */
     coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
+    /**
+     * MCP server names to DISABLE for this session when it is the team
+     * ORCHESTRATOR (deep-merged as `enabled:false` where the harness reads MCP
+     * from a merged config, e.g. OpenCode). MAIN-only: resolved by `launchTeam`
+     * from the team's override or the global `orchestratorMcpServerDenylist`, so
+     * the concrete names are host config VALUES (Rule 6) and never sourced from
+     * the renderer. The gate below still requires the cohort role to be
+     * `orchestrator`; absent/empty leaves discovered servers untouched.
+     */
+    orchestratorMcpServerDenylist?: readonly string[];
     /** Opening task already composes persona kickoff, so delayed pty injection must stay off. */
     suppressPersonaInitialPrompt?: boolean;
     /**
@@ -1054,9 +1064,14 @@ export class PtyManager extends EventEmitter {
     // byte-identical (guarded by the golden-argv net). `env` is merged into the
     // child env below; `args` splice into fullArgs alongside the other `-c` args.
     const authFamily = provider.authKey(effectiveProfile);
+    // Orchestrator MCP denylist (main-resolved, Rule 6): only the team
+    // orchestrator strips servers, and only from the main-supplied list — never
+    // from the renderer-influenced cohort. Absent/empty = today's behaviour.
+    const orchestratorDisabledServers =
+      opts.cohort?.role === 'orchestrator' ? (opts.orchestratorMcpServerDenylist ?? []) : [];
     const providerIntegration = provider.integration.configure({
       profile: effectiveProfile,
-      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl }, guidance: composedGuidanceText } : {}),
+      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl, disabledServers: orchestratorDisabledServers }, guidance: composedGuidanceText } : {}),
       ...(providerHookBase ? {
         lifecycle: {
           stop: providerHookUrls.stop,

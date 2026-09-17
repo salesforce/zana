@@ -13,7 +13,7 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import type { Project, Team, TeamSlot } from '@zana-ai/zcc-domain/product';
+import type { Project, Team, TeamSlot, TeamOverrides } from '@zana-ai/zcc-domain/product';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
 
@@ -85,6 +85,29 @@ export function sanitizeTeam(raw: unknown): Team | null {
     });
   }
 
+  // Per-team execution overrides. Each field is clamped; the block is emitted
+  // only when at least one override is present, so an absent/empty overrides
+  // object leaves the team inheriting every global default. A denylist that is
+  // present-but-empty is meaningful (re-enables everything for this team), so
+  // it is preserved distinct from absent.
+  let overrides: TeamOverrides | undefined;
+  if (r.overrides && typeof r.overrides === 'object') {
+    const o = r.overrides as Partial<TeamOverrides>;
+    const next: TeamOverrides = {};
+    if (Array.isArray(o.orchestratorMcpServerDenylist)) {
+      const names = o.orchestratorMcpServerDenylist
+        .filter((n): n is string => typeof n === 'string')
+        .map((n) => n.trim())
+        .filter(Boolean);
+      next.orchestratorMcpServerDenylist = [...new Set(names)].slice(0, 100);
+    }
+    if (typeof o.executionPlanStartupGraceMs === 'number' && Number.isFinite(o.executionPlanStartupGraceMs)) {
+      const v = Math.round(o.executionPlanStartupGraceMs);
+      next.executionPlanStartupGraceMs = v <= 0 ? 0 : Math.max(1000, Math.min(3_600_000, v));
+    }
+    if (Object.keys(next).length) overrides = next;
+  }
+
   return {
     id: r.id.trim(),
     name: r.name.trim(),
@@ -99,7 +122,8 @@ export function sanitizeTeam(raw: unknown): Team | null {
       typeof r.defaultProjectId === 'string' && r.defaultProjectId.trim()
         ? r.defaultProjectId.trim()
         : undefined,
-    initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined
+    initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined,
+    ...(overrides ? { overrides } : {})
   };
 }
 

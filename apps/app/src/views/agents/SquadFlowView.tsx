@@ -565,8 +565,8 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                     <span className="squad-flow-node-top">
                       <span className="squad-flow-node-label">{prettyLabel(node.label)}</span>
                       {node.isOrchestrator && (
-                        <span className="squad-flow-orch-tag" title="Team lead — close it to end the whole team">
-                          lead
+                        <span className="squad-flow-orch-tag" title="Orchestrator — close it to end the whole team">
+                          orchestrator
                         </span>
                       )}
                     </span>

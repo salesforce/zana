@@ -56,7 +56,7 @@ export function AgentsSettingsView({
       >
         <Field
           label="Agents list organization"
-          help="By status keeps Working, Needs you, and Idle sections. By Team run keeps each coordinator and its workers together."
+          help="By status keeps Working, Needs you, and Idle sections. By Team run keeps each orchestrator and its workers together."
         >
           <PopoverPicklist
             value={config.agentsListOrganization ?? 'status'}
@@ -71,7 +71,7 @@ export function AgentsSettingsView({
         </Field>
         <Field
           label="Project navigation organization"
-          help="Sessions shows every agent. Team runs shows one coordinator row per run and hides worker rows from project navigation."
+          help="Sessions shows every agent. Team runs shows one orchestrator row per run and hides worker rows from project navigation."
         >
           <PopoverPicklist
             value={config.projectNavigationOrganization ?? 'sessions'}
@@ -112,6 +112,46 @@ export function AgentsSettingsView({
               { value: 'freeform', label: 'Infer plan from goal' },
               { value: 'structured', label: 'Plan provided in goal' }
             ]}
+          />
+        </Field>
+        <Field
+          label="Plan startup grace (seconds)"
+          help="How long a durable Team run waits for its orchestrator to register a plan before auto-failing the run. Guards against an orchestrator that never dispatches work (a run stuck at 0/0). Default 300 (5 minutes). Set to 0 to disable the check."
+        >
+          <input
+            type="number"
+            min={0}
+            max={3600}
+            value={Math.round((config.executionPlanStartupGraceMs ?? 300_000) / 1000)}
+            onChange={(e) => {
+              const seconds = parseInt(e.target.value, 10);
+              if (!Number.isNaN(seconds)) {
+                onConfigDraft({ ...config, executionPlanStartupGraceMs: Math.max(0, seconds) * 1000 });
+              }
+            }}
+            onBlur={(e) => {
+              const seconds = parseInt(e.target.value, 10);
+              const clamped = Number.isNaN(seconds) ? 300 : Math.max(0, Math.min(3600, seconds));
+              onUpdate({ executionPlanStartupGraceMs: clamped * 1000 });
+            }}
+          />
+        </Field>
+        <Field
+          label="Disable orchestrator MCP servers"
+          help="One MCP server name per line to hide from a Team orchestrator (workers keep every server). Use it to stop the orchestrator reaching for a tool that is unavailable or unreliable when it runs inside a Team — a sandbox/adaptor server whose detour can stall a run at 0/0. Empty = off (the orchestrator sees every server). A Team can override this in its own settings."
+        >
+          <textarea
+            rows={3}
+            defaultValue={(config.orchestratorMcpServerDenylist ?? []).join('\n')}
+            placeholder={'mcp-adaptor'}
+            onBlur={(e) =>
+              onUpdate({
+                orchestratorMcpServerDenylist: e.target.value
+                  .split('\n')
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+              })
+            }
           />
         </Field>
       </Section>

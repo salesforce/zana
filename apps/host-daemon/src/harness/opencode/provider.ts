@@ -681,17 +681,30 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    * "remote"` + `url` is OpenCode's `StreamableHTTPClientTransport` server shape,
    * matching the zcc-inbox streamable-http server the claude path points at.
    */
-  mcpEnv(_profile: LaunchProfileId, mcpUrl: string): Record<string, string> {
-    const config = {
-      mcp: {
-        'zcc-inbox': {
-          type: 'remote',
-          url: mcpUrl,
-          enabled: true
-        }
+  mcpEnv(
+    _profile: LaunchProfileId,
+    mcpUrl: string,
+    disabledServers?: readonly string[]
+  ): Record<string, string> {
+    const mcp: Record<string, { type?: string; url?: string; enabled: boolean }> = {
+      'zcc-inbox': {
+        type: 'remote',
+        url: mcpUrl,
+        enabled: true
       }
     };
-    return { OPENCODE_CONFIG_CONTENT: JSON.stringify(config) };
+    // Deep-merge `enabled:false` over any same-named server the user's own
+    // OpenCode config discovered, so the host can strip a tool the session must
+    // not use (e.g. a sandbox tool unavailable under this spawn env) WITHOUT
+    // naming the concrete server in core — the names arrive as host config
+    // values. The merge preserves the user's `command`/`environment`, only
+    // flipping `enabled`, so a re-enable elsewhere is a config edit away.
+    for (const name of disabledServers ?? []) {
+      if (name && name !== 'zcc-inbox') {
+        mcp[name] = { enabled: false };
+      }
+    }
+    return { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp }) };
   }
 
   baseArgsPinSession(profile: LaunchProfileId): boolean {

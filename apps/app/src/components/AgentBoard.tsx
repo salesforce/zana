@@ -1045,7 +1045,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
                 c.isSyntheticExecutionHost
                   ? `${cohort.teamName} — retained Team run`
                   : isOrchestrator
-                  ? `${cohort.teamName} — team lead (you talk to this one; closing it ends the whole team)`
+                  ? `${cohort.teamName} — orchestrator (you talk to this one; closing it ends the whole team)`
                   : `${cohort.teamName} — worker${cohort.slotLabel ? ` · ${cohort.slotLabel}` : ''}`
               }
             >
