@@ -44,7 +44,8 @@ function workProjection(record: ExecutionRecord): WorkProjection {
     completed: counts.COMPLETED,
     counts,
     assignments: (record.workUnits ?? []).map((unit) => ({
-      workUnitId: unit.id, title: unit.title, ...(unit.assignedSlotId ? { slotId: unit.assignedSlotId } : {}), state: unit.state,
+      workUnitId: unit.id, title: unit.title, dependencies: [...unit.dependencies],
+      ...(unit.assignedSlotId ? { slotId: unit.assignedSlotId } : {}), state: unit.state,
       ...(unit.failureCode ? { failureCode: unit.failureCode } : {}),
       ...(unit.result !== undefined ? { result: resultPreview(unit.result) } : {})
     })),

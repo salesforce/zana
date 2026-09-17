@@ -116,7 +116,8 @@ export function createConfigStore(
     composerShowAutonomousTeam: true,
     teamJobLaunchEnabled: true,
     executionClaimRecoveryObserveEnabled: true,
-    executionClaimRecoveryEnforceEnabled: false
+    executionClaimRecoveryEnforceEnabled: true,
+    executionPlanStartupGraceMs: 300_000
   });
 
   const hydrate = (raw: Partial<AppConfig>): AppConfig =>

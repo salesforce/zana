@@ -3,6 +3,7 @@ import type {
   AgentMessage,
   AgentRecord,
   AgentState,
+  ExecutionBoardProjection,
   SquadFlowGraph,
   SquadFlowNode,
   TerminalSession
@@ -273,6 +274,57 @@ describe('buildSquadFlow — handoff edges', () => {
     const g = buildSquadFlow(inputs({ agents: twoAgents, messages: many }));
     // One aggregated edge, but its count reflects only the capped window.
     expect(g!.edges[0].count).toBe(200);
+  });
+
+  it('creates a worker edge from durable work dependencies without agent messages', () => {
+    const execution = {
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Job', state: 'RUNNING', attempt: 1,
+      createdAt: 1_000, updatedAt: 4_000,
+      work: {
+        total: 2, completed: 1,
+        counts: { PENDING: 0, READY: 0, CLAIMED: 1, BLOCKED: 0, COMPLETED: 1, FAILED: 0, SKIPPED: 0 },
+        assignments: [
+          { workUnitId: 'root', title: 'Root', dependencies: [], slotId: 'slot-a', state: 'COMPLETED' },
+          { workUnitId: 'child', title: 'Child', dependencies: ['root'], slotId: 'slot-b', state: 'CLAIMED' }
+        ],
+        rosterSlotIds: ['slot-a', 'slot-b']
+      }
+    } satisfies ExecutionBoardProjection;
+    const g = buildSquadFlow(inputs({
+      agents: twoAgents,
+      sessions: [
+        session({ id: 'a', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-a' } }),
+        session({ id: 'b', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-b' } })
+      ],
+      executions: [execution]
+    }));
+
+    expect(g!.edges).toContainEqual(expect.objectContaining({
+      fromSessionId: 'a', toSessionId: 'b', kind: 'work-dependency'
+    }));
+  });
+
+  it('does not render a dependency as a self-edge when one worker runs both units', () => {
+    const execution = {
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Job', state: 'RUNNING', attempt: 1,
+      createdAt: 1_000, updatedAt: 4_000,
+      work: {
+        total: 2, completed: 1,
+        counts: { PENDING: 0, READY: 0, CLAIMED: 1, BLOCKED: 0, COMPLETED: 1, FAILED: 0, SKIPPED: 0 },
+        assignments: [
+          { workUnitId: 'root', title: 'Root', dependencies: [], slotId: 'slot-a', state: 'COMPLETED' },
+          { workUnitId: 'child', title: 'Child', dependencies: ['root'], slotId: 'slot-a', state: 'CLAIMED' }
+        ],
+        rosterSlotIds: ['slot-a']
+      }
+    } satisfies ExecutionBoardProjection;
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'a', handle: 'a' })],
+      sessions: [session({ id: 'a', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-a' } })],
+      executions: [execution]
+    }));
+
+    expect(g!.edges).toHaveLength(0);
   });
 });
 

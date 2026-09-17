@@ -65,6 +65,31 @@ describe('AgentsTab worktree isolation', () => {
     );
   });
 
+  it('exposes a Default plan mode picklist that defaults to Infer (freeform)', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={config}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('Default plan mode');
+    expect(html).toContain('aria-label="Default plan mode"');
+    // Absent config → the picklist shows the infer default (today's behavior).
+    expect(html).toContain('Infer plan from goal');
+  });
+
+  it('reflects a persisted structured default in the plan-mode picklist', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={{ ...config, teamDefaultCoordinationMode: 'structured' }}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('Plan provided in goal');
+  });
+
   it('groups CLI Agent, Overseer, and Auto mode after general settings, Auto mode last', () => {
     const html = renderToStaticMarkup(
       <AgentsTab

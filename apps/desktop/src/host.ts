@@ -64,7 +64,8 @@ import { projectIdentityDigest, revalidateLaunchCommit as revalidateCommonLaunch
 import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/authorization';
 import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/services/launch/coordinator';
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
-import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
+import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, normalizeExecutionPlan, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
+import { parsePortablePlan } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
@@ -74,7 +75,7 @@ import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/sto
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
-import type { ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
+import type { ExecutionWorkUnitInput, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { IdleGatedInjector } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
@@ -5071,6 +5072,8 @@ const squadExecutionService = new SquadExecutionService({
   , routingEnforcementEnabled: () => store.getConfig().teamRoutingEnforcementEnabled === true
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
+  , planStartupGraceMs: () => store.getConfig().executionPlanStartupGraceMs ?? 0
+  , getAgentState: (sessionId) => agentStatus.get(sessionId)
   , routeFitObserveEnabled: () => store.getConfig().executionRouteFitObserveEnabled === true
   , readSessionStats: async (sessionId, options) => {
     const session = ptys.getSession(sessionId);
@@ -5270,6 +5273,30 @@ export async function startTeamJobFromUi(
   const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(originalJobTitle, capturedPathDescriptors)?.slice(0, 256) || undefined;
   const sanitizedSummary = redactCapturedExecutionSourcePaths(originalSummary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
   const sourceMetadata = sourceBundle?.sources.map(({ extractedText: _content, ...metadata }) => metadata);
+  // "Plan provided in goal" fast path: a deterministically-valid portable-executable
+  // plan (inline in the goal OR in a snapshotted source) is parsed into work units
+  // and seeded pre-RUNNING, so the coordinator hits the "plan already valid → dispatch"
+  // branch with zero model cost. An unparseable/incomplete plan seeds nothing and the
+  // coordinator repairs it at runtime (same lane as infer). freeform never parses.
+  let plannedWorkUnits: ExecutionWorkUnitInput[] | undefined;
+  if (coordinationMode === 'structured') {
+    const candidatePlans = [
+      ...(sourceBundle?.sources ?? [])
+        .map((source) => source.extractedText)
+        .filter((text): text is string => typeof text === 'string' && text.length > 0),
+      originalGoal
+    ];
+    for (const text of candidatePlans) {
+      const parsed = parsePortablePlan(text);
+      if (!parsed.ok || parsed.units.length === 0) continue;
+      try {
+        plannedWorkUnits = normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[];
+        break;
+      } catch {
+        // Parsed but not a complete durable DAG — let the coordinator repair it.
+      }
+    }
+  }
   const sanitizedJobTitle = await nameTeamExecution(launchRequestId, sanitizedGoal, sanitizedExplicitTitle);
   const sharedTask = [
     `Shared job goal: ${sanitizedGoal}`,
@@ -5291,6 +5318,7 @@ export async function startTeamJobFromUi(
     objective: sanitizedGoal,
     summary: sanitizedSummary,
     slots: initialTask,
+    ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
     ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
     policy: {
       ...(store.getConfig().autonomousTimeoutMs === 0

@@ -55,7 +55,9 @@ export function TeamComposer({
   };
   const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
   const [teamId, setTeamId] = useState('');
-  const [coordinationMode, setCoordinationMode] = useState<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>('freeform');
+  const [coordinationMode, setCoordinationMode] = useState<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>(
+    () => useData.getState().teamDefaultCoordinationMode
+  );
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
   const [jobSources, setJobSources] = useState<ExecutionSourceCapabilityView[]>([]);

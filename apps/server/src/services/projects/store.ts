@@ -793,6 +793,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (input.flowAllOrganization === 'combined' || input.flowAllOrganization === 'team-runs') {
     normalized.flowAllOrganization = input.flowAllOrganization;
   }
+  if (input.teamDefaultCoordinationMode === 'freeform' || input.teamDefaultCoordinationMode === 'structured') {
+    normalized.teamDefaultCoordinationMode = input.teamDefaultCoordinationMode;
+  }
   if (input.inboxGrouping === 'project' || input.inboxGrouping === 'time') {
     normalized.inboxGrouping = input.inboxGrouping;
   }
@@ -1045,6 +1048,10 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.executionClaimRecoveryEnforceEnabled === 'boolean') {
     normalized.executionClaimRecoveryEnforceEnabled = input.executionClaimRecoveryEnforceEnabled;
+  }
+  if (typeof input.executionPlanStartupGraceMs === 'number' && Number.isFinite(input.executionPlanStartupGraceMs)) {
+    const v = Math.round(input.executionPlanStartupGraceMs);
+    normalized.executionPlanStartupGraceMs = v <= 0 ? 0 : Math.max(30_000, Math.min(3_600_000, v));
   }
   if (typeof input.composerShowCliAgent === 'boolean') {
     normalized.composerShowCliAgent = input.composerShowCliAgent;

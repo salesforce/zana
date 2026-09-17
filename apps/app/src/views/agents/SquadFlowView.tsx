@@ -161,7 +161,8 @@ const NODE_H = 88;
 const COL_GAP = 26;
 const ROW_GAP = 96;
 const PAD_X = 24;
-const PAD_TOP = 16;
+const EDGE_OFFSET = 22;
+const PAD_TOP = EDGE_OFFSET + 16;
 
 interface Placed {
   node: SquadFlowNode;
@@ -255,8 +256,7 @@ function roundedPath(pts: Pt[], radius: number): string {
   return d;
 }
 
-const EDGE_RADIUS = 14; // corner radius for the rounded orthogonal routing
-const EDGE_OFFSET = 22; // how far an edge steps out of a node before turning
+const EDGE_RADIUS = 14;
 
 /**
  * Orthogonal, rounded-corner route from source (exits bottom) to target
@@ -280,7 +280,7 @@ function edgeRoute(from: Placed, to: Placed): Pt[] {
     // Back-edge (target at/above source): drop out, run along a side lane, and
     // climb up to enter the target from the top.
     const outY = sy + EDGE_OFFSET;
-    const inY = ty - EDGE_OFFSET;
+    const inY = Math.max(ty - EDGE_OFFSET, 4);
     // Pick a vertical lane between the nodes; if they're near-stacked, push the
     // lane clear of both node bodies so the route doesn't overlap them.
     const gap = Math.abs(tx - sx);

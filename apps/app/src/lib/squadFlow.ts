@@ -103,12 +103,16 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
   const executionIdBySession = new Map<string, string>();
   const cohortRoleBySession = new Map<string, string>();
   const cohortIdBySession = new Map<string, string>();
+  const sessionByExecutionSlot = new Map<string, string>();
   for (const s of input.sessions) {
     exitedBySession.set(s.id, s.status === 'exited');
     if (s.cohort?.slotLabel) cohortLabelBySession.set(s.id, s.cohort.slotLabel);
     if (s.cohort?.executionId) executionIdBySession.set(s.id, s.cohort.executionId);
     if (s.cohort?.role) cohortRoleBySession.set(s.id, s.cohort.role);
     if (s.cohort?.cohortId) cohortIdBySession.set(s.id, s.cohort.cohortId);
+    if (s.cohort?.executionId && s.cohort.slotId) {
+      sessionByExecutionSlot.set(`${s.cohort.executionId}\0${s.cohort.slotId}`, s.id);
+    }
   }
 
   // Node set: every registry agent, plus any live non-shell session that never
@@ -219,6 +223,36 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
   for (const [key, edge] of edgeByKey) {
     const latest = latestMsgByKey.get(key)!;
     edge.pending = latest.deliveredAt === undefined;
+  }
+
+  // Job Team dispatch bypasses agent messages. Project durable work dependencies
+  // onto their assigned worker sessions so the Flow still shows actual handoffs.
+  for (const execution of input.executions ?? []) {
+    const assignments = execution.work?.assignments ?? [];
+    const assignmentById = new Map(assignments.map((assignment) => [assignment.workUnitId, assignment]));
+    for (const assignment of assignments) {
+      if (!assignment.slotId) continue;
+      const toSessionId = sessionByExecutionSlot.get(`${execution.executionId}\0${assignment.slotId}`);
+      if (!toSessionId || !bySession.has(toSessionId)) continue;
+      for (const dependencyId of assignment.dependencies) {
+        const dependency = assignmentById.get(dependencyId);
+        if (!dependency?.slotId) continue;
+        const fromSessionId = sessionByExecutionSlot.get(`${execution.executionId}\0${dependency.slotId}`);
+        if (!fromSessionId || fromSessionId === toSessionId || !bySession.has(fromSessionId)) continue;
+        const key = `${fromSessionId}\0${toSessionId}`;
+        if (!edgeByKey.has(key)) {
+          edgeByKey.set(key, {
+            fromSessionId,
+            toSessionId,
+            count: 1,
+            lastTs: execution.updatedAt,
+            pending: false,
+            kind: 'work-dependency'
+          });
+        }
+        outDegree.set(fromSessionId, (outDegree.get(fromSessionId) ?? 0) + 1);
+      }
+    }
   }
 
   const edges = [...edgeByKey.values()];
