@@ -74,7 +74,29 @@ vi.mock('../test-tap.js', () => ({
   reset: () => {}
 }));
 
-const { goalExecutionSourcePaths } = await import('../host.js');
+const { goalExecutionSourcePaths, jobWorkerPrompt } = await import('../host.js');
+
+describe('jobWorkerPrompt', () => {
+  const prompt = jobWorkerPrompt({ executionId: 'exec-1', slotId: 'slot-1', label: 'Worker 1', personaName: 'Builder' });
+
+  it('directs the worker to EXECUTE the assigned unit, not wait for pushed source context', () => {
+    expect(prompt).toContain('EXECUTE it');
+    expect(prompt).toContain('the file scope');
+    // the old reflexive-block framing must be gone
+    expect(prompt).not.toContain('containing the needed source context');
+    expect(prompt).not.toContain('do NOT infer or start independently');
+    expect(prompt).toMatch(/do not wait for extra "source context"/i);
+    expect(prompt).toContain('Do not block just because a task looks large or under-detailed');
+  });
+
+  it('teaches the two block audiences: coordinator for a decidable plan/spec choice, human for a real human decision', () => {
+    expect(prompt).toContain('audience: "coordinator"');
+    expect(prompt).toContain('audience: "human"');
+    expect(prompt).toContain('resumes automatically');
+    // delivery pull/ack idempotency contract preserved verbatim
+    expect(prompt).toContain('never call `execution.resume` or `execution.respond`');
+  });
+});
 
 describe('goalExecutionSourcePaths', () => {
   it('returns an empty list instead of throwing when home does not resolve (remote/nonexistent project root)', async () => {

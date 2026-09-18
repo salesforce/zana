@@ -116,7 +116,8 @@ const executionWorkFailureSchema = {
   failure: z.string().min(1).max(EXECUTION_FAILURE_DETAIL_MAX_CHARS),
   failureCode: z.enum(EXECUTION_FAILURE_CODES).optional()
 };
-const executionWorkBlockSchema = { ...executionWorkSchema, blockerId: z.string().min(1).max(2048), question: z.string().min(1).max(2048), options: z.array(z.string().min(1).max(2048)).max(20).optional() };
+const executionWorkBlockSchema = { ...executionWorkSchema, blockerId: z.string().min(1).max(2048), question: z.string().min(1).max(2048), options: z.array(z.string().min(1).max(2048)).max(20).optional(), audience: z.enum(['human', 'coordinator']).optional() };
+const executionWorkAnswerSchema = { ...executionIdSchema, blockerId: z.string().min(1).max(2048), answer: z.string().min(1).max(16 * 1024) };
 const executionDeliveryAckSchema = {
   deliveryId: z.string().min(1).max(2048), leaseId: z.string().min(1).max(2048), delivered: z.boolean(),
   error: z.string().min(1).max(1024).optional()
@@ -367,9 +368,13 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       ? options.service.failWork(bound, workUnitId, failure, failureCode, claim, true)
       : options.service.failWork(bound, workUnitId, failure, failureCode, undefined, true)));
   });
-  register('execution.work.block', { description: 'Block one assigned work unit with a durable question.', inputSchema: executionWorkBlockSchema }, async ({ executionId, workUnitId, blockerId, question, options: choices, claimId, claimGeneration }) => {
+  register('execution.work.block', { description: 'Block one assigned work unit with a durable question. audience "human" (default) routes to a human via the inbox; audience "coordinator" is a self-heal ask — it wakes the coordinator (no human) to decide a plan/spec detail and answer with execution.work.answer.', inputSchema: executionWorkBlockSchema }, async ({ executionId, workUnitId, blockerId, question, options: choices, audience, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.block'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.block');
-    return boundResult('execution.work.block', await options.service.blockWork(bound, workUnitId, { id: blockerId, question, options: choices }, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
+    return boundResult('execution.work.block', await options.service.blockWork(bound, workUnitId, { id: blockerId, question, options: choices, ...(audience ? { audience } : {}) }, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
+  });
+  register('execution.work.answer', { description: 'Coordinator answers a coordinator-directed blocker (one raised with audience "coordinator"). The answer is delivered to the blocked worker, which resumes automatically. Not for human-audience blockers.', inputSchema: executionWorkAnswerSchema }, async ({ executionId, blockerId, answer }) => {
+    if (!authorized()) return denied('execution.work.answer'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.answer');
+    return boundResult('execution.work.answer', await options.service.answerBlockerByCoordinator(bound, blockerId, answer));
   });
   register('execution.work.release', { description: 'Release one assigned work unit.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, claimId, claimGeneration }) => {
     if (!authorized()) return denied('execution.work.release'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.release');

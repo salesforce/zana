@@ -143,6 +143,20 @@ describe('projectExecutionProjection', () => {
     expect(verify).not.toHaveProperty('result'); // verify has no stored result
   });
 
+  it('exposes claim liveness timestamps on an assignment and omits them when unclaimed', () => {
+    const input = record();
+    input.workUnits = [
+      { id: 'claimed', title: 'Claimed', task: 'Work', dependencies: [], state: 'CLAIMED', assignedSlotId: 'slot-a', attempt: 1, claimedAt: 1_000, heartbeatAt: 1_500, leaseExpiresAt: 2_000, history: [] },
+      { id: 'pending', title: 'Pending', task: 'Later', dependencies: ['claimed'], state: 'PENDING', attempt: 0, history: [] }
+    ];
+    const assignments = projectExecutionProjection([input], [])[0].work!.assignments;
+    const claimed = assignments.find((a) => a.workUnitId === 'claimed')!;
+    const pending = assignments.find((a) => a.workUnitId === 'pending')!;
+    expect(claimed).toMatchObject({ claimedAt: 1_000, heartbeatAt: 1_500, leaseExpiresAt: 2_000 });
+    expect(pending).not.toHaveProperty('claimedAt');
+    expect(pending).not.toHaveProperty('leaseExpiresAt');
+  });
+
   it('does not claim an exited orchestrator as live', () => {
     const session = { id: 'orch', status: 'exited', cohort: { executionId: 'execution-1', role: 'orchestrator' } } as TerminalSession;
     expect(projectExecutionProjection([record()], [session])[0].orchestratorSessionId).toBeUndefined();

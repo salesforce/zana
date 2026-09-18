@@ -1316,6 +1316,7 @@ export class PtyManager extends EventEmitter {
           'mcp__zcc-inbox__execution.work.complete',
           'mcp__zcc-inbox__execution.work.fail',
           'mcp__zcc-inbox__execution.work.block',
+          'mcp__zcc-inbox__execution.work.answer',
           'mcp__zcc-inbox__execution.work.release',
           'mcp__zcc-inbox__execution.work.retry',
           'mcp__zcc-inbox__execution.delivery.pull',

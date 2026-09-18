@@ -104,6 +104,30 @@ const STATE_VERB: Record<SquadFlowNode['state'], string> = {
   waiting: 'waiting'
 };
 
+/**
+ * Activity treatment for one node, split into two tiers so the graph shows
+ * motion for ANY live worker even when it draws no edges (a single-worker linear
+ * DAG has zero handoffs — the "no arrows, looks dead" gap).
+ *
+ *  - `working` (→ static border accent): a live node that is doing something — it
+ *    holds a durable claim, OR its live agent dot reads 'working'. NO pulse — pulse
+ *    is the kanban board's card language; the Flow graph shows motion via the
+ *    animated chevron on edges/self-arc, not by breathing nodes.
+ *  - `streaming` (→ self-arc + live badge): the stronger, backend-grounded signal.
+ *    The node's assigned CLAIMED unit still has a live lease (`leaseExpiresAt > now`),
+ *    which the host renews from the worker's PTY output — so the backend itself
+ *    considers this worker alive because it kept emitting output. This is truth,
+ *    unlike the sometimes-stale agent-state dot. `streaming ⊆ working`.
+ *
+ * A quiescent (all-exited) squad and any exited node get no treatment.
+ */
+export function nodeActivity(node: SquadFlowNode, now: number): { working: boolean; streaming: boolean } {
+  if (node.exited) return { working: false, streaming: false };
+  const streaming = node.claim?.leaseExpiresAt !== undefined && node.claim.leaseExpiresAt > now;
+  const working = streaming || node.claim !== undefined || node.state === 'working';
+  return { working, streaming };
+}
+
 /** Max child rows rendered in a node card before collapsing to "+N more". */
 const MAX_VISIBLE_CHILDREN = 4;
 
@@ -355,6 +379,27 @@ function FlowEdge({
   );
 }
 
+/**
+ * A self-loop arc drawn above a STREAMING node (fresh claim lease). It gives a
+ * lone worker — one that hands off to nobody, so draws no outgoing edge — a
+ * visible directed arrow onto itself, reading as "actively working on its own
+ * unit". Chevron rides the arc under `animate` (reduced-motion / quiescent off);
+ * the arrowhead alone still conveys direction. */
+function SelfLoopArc({ cx, topY, animate }: { cx: number; topY: number; animate: boolean }) {
+  // Small arc bowing up out of the node's top edge, entering back down into it.
+  const path = `M${cx - 16},${topY} C${cx - 34},${topY - 46} ${cx + 34},${topY - 46} ${cx + 16},${topY}`;
+  return (
+    <g>
+      <path d={path} className="squad-flow-self-loop" markerEnd="url(#sf-arrow-self)" fill="none" />
+      {animate && (
+        <polygon points="0,-3.5 6.5,0 0,3.5" className="squad-flow-chevron--self">
+          <animateMotion dur="1.8s" repeatCount="indefinite" path={path} rotate="auto" />
+        </polygon>
+      )}
+    </g>
+  );
+}
+
 const DRAG_THRESHOLD = 4;
 
 function SquadGraph({ graph, onInspectExecution, pannable = true }: {
@@ -518,6 +563,9 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
               <marker id="sf-arrow-hot" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto">
                 <path d="M0,0 L10,5 L0,10 z" className="squad-flow-arrowhead-hot" />
               </marker>
+              <marker id="sf-arrow-self" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+                <path d="M0,0 L9,4.5 L0,9 z" className="squad-flow-arrowhead-self" />
+              </marker>
             </defs>
             {routedEdges.map(({ edge: e, points }) => {
               const hot = !quiescent && e.lastTs === newestTs && newestTs > 0;
@@ -535,17 +583,31 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                 />
               );
             })}
+            {!quiescent &&
+              resolvedPlaced.map(({ node, x, y }) =>
+                nodeActivity(node, now).streaming ? (
+                  <SelfLoopArc
+                    key={`self:${node.sessionId}`}
+                    cx={x + bounds.offsetX + NODE_W / 2}
+                    topY={y + bounds.offsetY}
+                    animate={animateFlow}
+                  />
+                ) : null
+              )}
           </svg>
 
           {resolvedPlaced.map(({ node, x, y }) => {
-            const verb = STATE_VERB[node.state];
-            const since = node.exited ? '' : sinceLabel(node.stateSince, now);
+            const { working, streaming } = nodeActivity(node, now);
+            // A durable claim is authoritative "working" even when the agent dot
+            // hasn't resolved — prefer it over the (sometimes-stale) state verb.
+            const verb = node.exited ? 'exited' : node.claim ? 'working' : STATE_VERB[node.state];
+            const since = node.exited ? '' : sinceLabel(node.claim?.claimedAt ?? node.stateSince, now);
             const isDragging = draggingId === node.sessionId;
             return (
               <button
                 key={node.sessionId}
                 type="button"
-                className={`squad-flow-node ${node.isOrchestrator ? 'squad-flow-node--orch' : ''} ${node.exited ? 'squad-flow-node--exited' : ''} ${isDragging ? 'squad-flow-node--dragging' : ''}`}
+                className={`squad-flow-node ${node.isOrchestrator ? 'squad-flow-node--orch' : ''} ${node.exited ? 'squad-flow-node--exited' : ''} ${working && !quiescent ? 'squad-flow-node--working' : ''} ${streaming && !quiescent ? 'squad-flow-node--streaming' : ''} ${isDragging ? 'squad-flow-node--dragging' : ''}`}
                 style={{ left: x + bounds.offsetX, top: y + bounds.offsetY, width: NODE_W }}
                 onPointerDown={(e) => handlePointerDown(e, node, x, y)}
                 onPointerMove={handlePointerMove}
@@ -574,9 +636,14 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                       <span
                         className={`squad-flow-state-text agent-${node.exited ? 'done' : node.state}`}
                       >
-                        {node.exited ? 'exited' : verb}
+                        {verb}
                         {since ? ` · ${since}` : ''}
                       </span>
+                      {streaming && (
+                        <span className="squad-flow-live" title="Emitting output — claim lease is live">
+                          live
+                        </span>
+                      )}
                       {node.job?.needsAttention && node.job.blockerQuestion && (
                         <span className="squad-flow-node-blocker" title={node.job.blockerQuestion}>
                           Needs you · {truncate(node.job.blockerQuestion, 56)}

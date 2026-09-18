@@ -99,6 +99,15 @@ export interface ExecutionBlocker {
   slotId: string;
   question: string;
   options?: string[];
+  /**
+   * Who must answer this blocker. `'human'` (the default when absent) is the
+   * legacy behavior: it wakes the coordinator AND appends a human inbox
+   * question, and only the OWNER may answer it. `'coordinator'` is a self-heal
+   * blocker — a worker asking the coordinator for a plan/spec decision it cannot
+   * make itself; it wakes the coordinator WITHOUT a human inbox entry, and the
+   * coordinator answers it via `execution.work.answer` (no owner involvement).
+   */
+  audience?: 'human' | 'coordinator';
   response?: string;
   resolved: boolean;
   createdAt: number;
@@ -278,6 +287,9 @@ export interface ExecutionStoreOptions {
   maxEvents?: number;
   maxEventsPerExecution?: number;
   maxUsageObservationsPerExecution?: number;
+  /** Claim lease TTL; defaults to {@link WORK_CLAIM_LEASE_MS}. Injectable so an E2E can drive
+   * the real reclaim/backstop path in seconds instead of the 90s production lease. */
+  workClaimLeaseMs?: number;
 }
 
 export interface ActiveClaimCursor {
@@ -295,6 +307,13 @@ export interface ReclaimExpiredClaimInput {
   claimId: string;
   claimGeneration: number;
   reason: string;
+  /** Bypass the lease-expiry floor. The wall-clock backstop (`maxClaimWallClockMs`)
+   * is a state-agnostic ceiling that MUST be able to reclaim even a claim whose
+   * lease is still fresh — otherwise a worker that emits output forever (renewing
+   * its lease via {@link renewWorkerLease}) but never completes could never be
+   * reclaimed. Lease-expiry and proven-dead reclaims leave this unset (their lease
+   * is already expired, so the floor passes anyway). */
+  force?: boolean;
 }
 
 const MAX_RECORDS = 2_000;
@@ -320,7 +339,14 @@ const MAX_DELIVERY_TEXT_BYTES = 16 * 1024;
 const MAX_DELIVERY_ERROR_BYTES = 1024;
 export const MAX_DELIVERY_ATTEMPTS = 8;
 const DELIVERY_LEASE_MS = 60_000;
-export const WORK_CLAIM_LEASE_MS = 90_000;
+// Claim lease TTL. The host renews this from the worker's PTY output activity
+// (Part B), so a streaming worker never hits it — only a SILENT worker does. A
+// real worker is legitimately silent for minutes during a long tool call (build,
+// tests, large read) or a long single turn, so 90s was far too tight and drove a
+// dispatch↔reclaim churn that discarded near-finished work. 5 min gives real work
+// room while still detecting a genuinely dead/hung worker within a bounded window
+// (the wall-clock ceiling remains the backstop for a streams-forever worker).
+export const WORK_CLAIM_LEASE_MS = 300_000;
 export const HEARTBEAT_PERSIST_REMAINING_MS = 30_000;
 
 function assertClaimFence(unit: ExecutionWorkUnit, claim?: { claimId: string; claimGeneration: number }, required = false): void {
@@ -735,8 +761,13 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     && (!Number.isInteger(options.maxUsageObservationsPerExecution) || options.maxUsageObservationsPerExecution < 1)) {
     throw new Error('invalid execution max usage observations per execution');
   }
+  if (options.workClaimLeaseMs !== undefined
+    && (!Number.isInteger(options.workClaimLeaseMs) || options.workClaimLeaseMs < 1)) {
+    throw new Error('invalid execution work claim lease');
+  }
   const now = options.now ?? Date.now;
   const id = options.id ?? randomUUID;
+  const workClaimLeaseMs = options.workClaimLeaseMs ?? WORK_CLAIM_LEASE_MS;
   const maxRecords = Math.min(options.maxRecords ?? MAX_RECORDS, MAX_RECORDS);
   const maxUsageObservationsPerExecution = Math.min(
     options.maxUsageObservationsPerExecution ?? MAX_USAGE_OBSERVATIONS_PER_EXECUTION,
@@ -1198,7 +1229,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
        unit.claimId = randomUUID();
        unit.claimedBy = { slotId };
        unit.claimedAt = timestamp;
-       unit.leaseExpiresAt = timestamp + WORK_CLAIM_LEASE_MS;
+       unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
        unit.heartbeatAt = timestamp;
        unit.turnCount = 0;
       unit.attempt += 1;
@@ -1344,7 +1375,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
            unit.claimId = randomUUID();
            unit.claimedBy = { slotId: slot.slotId };
            unit.claimedAt = timestamp;
-           unit.leaseExpiresAt = timestamp + WORK_CLAIM_LEASE_MS;
+           unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
            unit.heartbeatAt = timestamp;
            unit.turnCount = 0;
           unit.attempt += 1;
@@ -1390,16 +1421,44 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   async function completeWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, result: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false, structuredResult?: unknown): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
-      assertUnitAuthority(unit, authority);
       if (structuredResult !== undefined && !unit.output) throw new Error('structuredResult requires a work output declaration');
       if (record.blockers?.some((blocker) => !blocker.resolved && blocker.workUnitId === workUnitId)) {
         throw new Error('work unit has unresolved blockers');
       }
       if (unit.state === 'COMPLETED') return;
-      if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
-      assertClaimFence(unit, claim, requireClaim);
+
+      // Non-destructive completion, authorized by SLOT IDENTITY — not the claim fence.
+      // A doc worker is routinely silent for a full lease window during a long think /
+      // tool phase, so the reconcile reclaims its (still-live) claim and re-dispatches
+      // to the SAME slot with a fresh generation. The worker then finishes and completes
+      // under its now-STALE claim. The old code (CLAIMED-by-this-slot + matching claim
+      // fence) threw that finished result away, and the unit churned reclaim→redispatch
+      // forever (runs b56e63f5, e531f415: `verify-upstream`, 4 generations, real result
+      // discarded each time). The MCP tool ALWAYS passes requireClaim=true, so the fence
+      // can't be the arbiter here — the generation churn is caused by OUR OWN reclaim of
+      // a live worker, not by worker misbehavior. What actually authorizes a completion
+      // is that the caller is the slot that holds (or last held) this unit's claim.
+      const isWorker = authority.role === 'worker';
+      const liveHolderSlotId = unit.state === 'CLAIMED' ? unit.assignedSlotId : undefined;
+      if (isWorker) {
+        if (liveHolderSlotId !== undefined && liveHolderSlotId !== authority.slotId) {
+          // A DIFFERENT slot holds the live claim now — it wins (it may be mid-edit).
+          // (service maps 'another slot' → DENIED.)
+          throw new Error('work unit is assigned to another slot');
+        }
+        // Prove this slot is the unit's current OR most-recent claim holder, so a
+        // forged / stray completion from a slot that never worked the unit is rejected.
+        const lastHolderSlotId = liveHolderSlotId ?? [...unit.history]
+          .reverse()
+          .find((entry) => (entry.action === 'claimed' || entry.action === 'released') && entry.slotId !== undefined)?.slotId;
+        if (lastHolderSlotId !== authority.slotId) throw new Error('work unit is not claimed');
+      } else {
+        // Owner / coordinator: keep the strict live-claim + fence contract.
+        if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
+        assertClaimFence(unit, claim, requireClaim);
+      }
       unit.state = 'COMPLETED';
-      const slotId = unit.assignedSlotId;
+      const slotId = unit.assignedSlotId ?? authority.slotId;
       clearClaim(unit);
       unit.result = string(result, 'work unit result');
       if (structuredResult !== undefined) unit.structuredResult = clone(structuredResult);
@@ -1464,7 +1523,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       }
       if ((unit.leaseExpiresAt ?? 0) - timestamp <= HEARTBEAT_PERSIST_REMAINING_MS) {
         unit.heartbeatAt = timestamp;
-        unit.leaseExpiresAt = timestamp + WORK_CLAIM_LEASE_MS;
+        unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
         changed = true;
       }
       if (changed) {
@@ -1473,6 +1532,34 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         append(snapshot.state, record, record.state, 'info', `Work claim heartbeat: ${workUnitId}`, timestamp, { kind: 'command' });
         persist(snapshot.state, snapshot.hash);
       }
+      return clone(record);
+    });
+  }
+
+  /** Renew the lease of the unit currently CLAIMED by `slotId`, driven by host-observed
+   * worker output activity (see host.ts `PtyManager` `'data'` → `renewWorkerLease`). This
+   * is the engine-owned liveness signal that makes lease expiry MEAN "no worker output for
+   * a full lease window" rather than "turn took longer than 90s" — a live, streaming worker
+   * keeps its lease fresh and is never reclaimed as silent, while a hung one lets the lease
+   * expire on its own. Unlike {@link heartbeatWork} there is no cohort authority or
+   * stateVersion fence (this is not a principal mutation) and NO event append (output is
+   * far too frequent to log). Cheap: only persists when the lease is within
+   * {@link HEARTBEAT_PERSIST_REMAINING_MS} of expiry, so a hot output stream is a no-op. */
+  async function renewWorkerLease(executionId: string, slotId: string): Promise<ExecutionRecord | undefined> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record || terminalStates.has(record.state)) return undefined;
+      const unit = (record.workUnits ?? []).find((candidate) =>
+        candidate.state === 'CLAIMED' && candidate.assignedSlotId === slotId && candidate.claimId !== undefined);
+      if (!unit) return undefined;
+      const timestamp = now();
+      if ((unit.leaseExpiresAt ?? 0) - timestamp > HEARTBEAT_PERSIST_REMAINING_MS) return clone(record);
+      unit.heartbeatAt = timestamp;
+      unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
+      record.stateVersion += 1;
+      record.updatedAt = timestamp;
+      persist(snapshot.state, snapshot.hash);
       return clone(record);
     });
   }
@@ -1516,7 +1603,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       for (const claim of claims.slice(0, MAX_WORK_UNITS)) {
         const unit = record.workUnits?.find((candidate) => candidate.id === claim.workUnitId);
         if (!unit || unit.state !== 'CLAIMED' || unit.claimId !== claim.claimId
-          || unit.claimGeneration !== claim.claimGeneration || (unit.leaseExpiresAt ?? Infinity) > timestamp) continue;
+          || unit.claimGeneration !== claim.claimGeneration
+          || ((unit.leaseExpiresAt ?? Infinity) > timestamp && !claim.force)) continue;
         unit.state = 'READY';
         unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(claim.reason, 'claim recovery reason') });
         clearClaim(unit);
@@ -1581,7 +1669,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Work unit reassigned: ${workUnitId}`);
   }
 
-  async function blockWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, input: { id: string; question: string; options?: string[] }, claim?: { claimId: string; claimGeneration: number }, requireClaim = false): Promise<ExecutionRecord> {
+  async function blockWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, input: { id: string; question: string; options?: string[]; audience?: 'human' | 'coordinator' }, claim?: { claimId: string; claimGeneration: number }, requireClaim = false): Promise<ExecutionRecord> {
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       assertUnitAuthority(unit, authority);
@@ -1592,31 +1680,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(input.question, 'blocker question') });
       clearClaim(unit);
       record.blockers ??= [];
-      record.blockers.push({ id: string(input.id, 'blocker id'), workUnitId: unit.id, slotId: authority.slotId, question: string(input.question, 'blocker question'), ...(input.options ? { options: input.options.map((option) => string(option, 'blocker option')) } : {}), resolved: false, createdAt: timestamp });
+      record.blockers.push({ id: string(input.id, 'blocker id'), workUnitId: unit.id, slotId: authority.slotId, question: string(input.question, 'blocker question'), ...(input.options ? { options: input.options.map((option) => string(option, 'blocker option')) } : {}), ...(input.audience === 'coordinator' ? { audience: 'coordinator' as const } : {}), resolved: false, createdAt: timestamp });
       record.state = 'BLOCKED';
     }, `Work unit blocked: ${workUnitId}`);
-  }
-
-  async function respondToBlocker(executionId: string, expectedStateVersion: number, blockerId: string, response: string): Promise<ExecutionRecord> {
-    return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
-      const blocker = findBlocker(record, blockerId);
-      if (blocker.resolved) throw new Error('execution blocker is resolved');
-      blocker.response = string(response, 'blocker response');
-      blocker.respondedAt = timestamp;
-    }, `Execution blocker response recorded: ${blockerId}`);
-  }
-
-  async function resumeBlocker(executionId: string, expectedStateVersion: number, blockerId: string): Promise<ExecutionRecord> {
-    return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
-      const blocker = findBlocker(record, blockerId);
-      if (!blocker.response) throw new Error('execution blocker has no response');
-      blocker.resolved = true;
-      blocker.resolvedAt = timestamp;
-      failActiveDeliveries(record, blocker.id, 'blocker resolved through alternate path', timestamp);
-      const unit = findUnit(record, blocker.workUnitId);
-      unit.state = unit.assignedSlotId ? 'CLAIMED' : 'READY';
-      record.state = record.blockers?.some((candidate) => !candidate.resolved) ? 'BLOCKED' : 'RUNNING';
-    }, `Execution blocker resumed: ${blockerId}`);
   }
 
   async function enqueueBlockerDelivery(
@@ -2149,7 +2215,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, retryWork, reassignWork, blockWork, respondToBlocker, resumeBlocker, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, retryWork, reassignWork, blockWork, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {

@@ -29,6 +29,22 @@ export interface IdleGatedInjectorDeps {
 /** States in which a worker cannot safely receive an injected task. */
 const BUSY_STATES = new Set(['working', 'blocked', 'waiting']);
 
+/**
+ * A headless team-worker session has NO interactive user: its human-input path
+ * is `execution.work.block` (the coordinator blocker lane), not the TUI "needs
+ * you" blocked overlay, and it is never nudged/triaged/promoted. The host
+ * suppresses the end-of-turn Notification `blocked` overlay for such a session
+ * so a standby worker rests deliverable (`idle`) instead of stranding an
+ * engine-cascade assignment in {@link IdleGatedInjector} — the dispatch↔reclaim
+ * lease-expiry churn a live Job Team run hit when its parked workers resolved
+ * `blocked` and the queued assignment never flushed.
+ */
+export function suppressesInteractiveBlocked(
+  session: { headless?: boolean; cohort?: { role?: string } } | null | undefined
+): boolean {
+  return session?.headless === true && session.cohort?.role === 'worker';
+}
+
 export class IdleGatedInjector {
   private readonly pending = new Map<string, string[]>();
 
@@ -51,14 +67,22 @@ export class IdleGatedInjector {
 
   /**
    * Feed a resolved-state transition (from the host's `agentStatus` 'status'
-   * subscription). On entering idle it flushes ONE queued item; a pile-up
-   * re-queues so the NEXT idle edge delivers the rest, because sending several
-   * back-to-back would re-trigger the very TUI paste-buffering the deferred-CR
-   * split in `reply()` exists to avoid. Cheap no-op for non-idle states or an
-   * empty queue.
+   * subscription). On entering ANY non-busy (deliverable) state it flushes ONE
+   * queued item; a pile-up re-queues so the NEXT deliverable edge delivers the
+   * rest, because sending several back-to-back would re-trigger the very TUI
+   * paste-buffering the deferred-CR split in `reply()` exists to avoid. Cheap
+   * no-op for busy states or an empty queue.
+   *
+   * The gate MIRRORS {@link deliver} (`!BUSY_STATES.has(state)`), not a bare
+   * `=== 'idle'`, on purpose: a worker that comes to rest in a non-busy,
+   * non-idle state (e.g. `done`/`unknown`) would otherwise strand its queue
+   * forever — the exact deadlock a standby team worker hit when its end-of-turn
+   * yield resolved to something other than `idle` and no later `idle` edge ever
+   * arrived. Flushing on any state `deliver()` would itself have injected into
+   * keeps the two paths symmetric.
    */
   onState(sessionId: string, state: string): void {
-    if (state !== 'idle') return;
+    if (BUSY_STATES.has(state)) return;
     const queue = this.pending.get(sessionId);
     if (!queue?.length) return;
     this.pending.delete(sessionId);

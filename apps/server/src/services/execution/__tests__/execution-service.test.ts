@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ExecutionService, KeyedColdStartSemaphore, type ExecutionRequestV1, SquadExecutionService, deriveJobTitle, dependencyResultsSection, deterministicTerminalSummary, MAX_DEP_RESULT_CHARS, AUTO_FAIL_SUMMARY } from '../service.js';
+import { ExecutionService, KeyedColdStartSemaphore, type ExecutionRequestV1, SquadExecutionService, deriveJobTitle, dependencyResultsSection, deterministicTerminalSummary, withDurableClaimWallClockBackstop, MAX_DEP_RESULT_CHARS, AUTO_FAIL_SUMMARY } from '../service.js';
 import { createExecutionStore, type ExecutionRecord } from '../store.js';
 import { createExecutionArtifactStore } from '../artifact-store.js';
 import { createResumeGrantStore } from '../resume-grant-store.js';
@@ -162,7 +162,7 @@ describe('execution claim recovery', () => {
     record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
     record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
     record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
-    now += 90_000;
+    now += 300_000; // past the default lease window
     const base = deps(filePath, { store, now: () => now, logError, getTeamLaunch: async () => ({ workers: [] }), claimRecoveryObserveEnabled: () => true });
     const observe = new ExecutionService(base);
     await observe.reconcileActive();
@@ -173,18 +173,72 @@ describe('execution claim recovery', () => {
     expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
   }));
 
-  it('does not reclaim expired work when main lifecycle shows worker live and working', async () => fixture(async (filePath) => {
+  it('does not reclaim a live worker while its output-renewed lease is still fresh', async () => fixture(async (filePath) => {
+    // The host renews the claim lease from observed PTY output (renewWorkerLease). A worker
+    // that keeps emitting output — even while non-restful ('working') — keeps its lease fresh
+    // and must NOT be reclaimed as silent.
     let now = 1_000;
-    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    // Short injected lease so renewal is genuinely load-bearing: at expiry the host's
+    // output-driven renew must refresh it, otherwise the reconcile below would reclaim.
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now, workClaimLeaseMs: 90_000 });
     let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] } })).record;
     record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
     record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
     record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
-    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
-    now += 90_000;
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit'); // claimedAt=1_000, lease→91_000
+    now += 90_000; // now=91_000: the original lease has just expired...
+    await store.renewWorkerLease(record.id, 'slot-1'); // ...but output activity refreshed it (→181_000)
     const service = new ExecutionService(deps(filePath, { store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true, getAgentState: () => 'working', getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }) }));
     await service.reconcileActive();
     expect((await store.get(record.id))?.workUnits?.[0].state).toBe('CLAIMED');
+  }));
+
+  // Runs e531f415 + df216947: a live worker stuck non-restful ('working') that stopped
+  // emitting output lets its PTY-driven lease lapse. Reclaiming it at lease expiry killed a
+  // live worker and churned its finished work (e531f415). Now the agent state proves
+  // liveness: at lease expiry the reconcile RENEWS the lease from that non-output signal
+  // instead of reclaiming (churn → near-zero), and the wall-clock ceiling — NOT lease
+  // expiry — is the hard stop for a worker that stays 'working' but is genuinely hung
+  // (df216947). So the freeze is still bounded, just at the ceiling rather than the lease.
+  it('renews a live non-restful (working) worker at lease expiry and reclaims it only at the wall-clock ceiling (runs e531f415, df216947)', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [], policy: { maxClaimWallClockMs: 900_000 } } })).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit'); // claimedAt=1_000, lease→301_000
+    const service = new ExecutionService(deps(filePath, { store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true, getAgentState: () => 'working', getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }) }));
+    now += 300_000; // now=301_000: lease expired, NO output renewal — but the worker is alive + 'working'
+    await service.reconcileActive();
+    const renewed = (await store.get(record.id))?.workUnits?.[0];
+    expect(renewed?.state).toBe('CLAIMED'); // renewed from agent state, NOT reclaimed
+    expect(renewed?.leaseExpiresAt).toBe(601_000); // now(301_000) + default lease(300_000)
+    now += 600_000; // now=901_000: 900_000 >= 900_000 wall-clock ceiling → force reclaim despite still 'working'
+    await service.reconcileActive();
+    expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
+  }));
+
+  // The wall-clock backstop remains the ceiling for the pathological worker that keeps emitting
+  // output forever (renewing its lease) yet never completes — the loosened lease gate can never
+  // fire for it (its lease is always fresh), so the state-agnostic ceiling must force the reclaim.
+  it('reclaims a worker that keeps its lease fresh but never completes once it outlives the wall-clock ceiling', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [], policy: { maxClaimWallClockMs: 120_000 } } })).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit'); // claimedAt=1_000
+    const service = new ExecutionService(deps(filePath, { store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true, getAgentState: () => 'working', getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }) }));
+    now += 99_000; // now=100_000: still streaming (lease renewed), 99_000 < 120_000 ceiling
+    await store.renewWorkerLease(record.id, 'slot-1');
+    await service.reconcileActive();
+    expect((await store.get(record.id))?.workUnits?.[0].state).toBe('CLAIMED');
+    now += 30_000; // now=130_000: still streaming but 129_000 >= 120_000 ceiling → force reclaim despite fresh lease
+    await store.renewWorkerLease(record.id, 'slot-1');
+    await service.reconcileActive();
+    expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
   }));
 
   it('reclaims an expired claim when its live worker returned to rest without an outcome', async () => fixture(async (filePath) => {
@@ -195,7 +249,7 @@ describe('execution claim recovery', () => {
     record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
     record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
     record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
-    now += 90_000;
+    now += 300_000; // past the default lease window
     const service = new ExecutionService(deps(filePath, { store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true, getAgentState: () => 'waiting', getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }) }));
     await service.reconcileActive();
     expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
@@ -853,6 +907,34 @@ describe('SquadExecutionService', () => {
     expect((await store.get('execution-1'))?.coordinatorWakes).toEqual([]);
   }));
 
+  it('leaves a wake queued while the coordinator is busy, then delivers on its restful edge (RISK-1)', async () => fixture(async (filePath) => {
+    let coordinatorState: 'working' | 'idle' = 'working';
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession, getAgentState: () => coordinatorState,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.dispatchReady(coordinator);
+    replyToSession.mockClear();
+    // Coordinator is busy: the wake must NOT be wedged into its TUI, and must stay queued.
+    await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Choose?' });
+    expect(replyToSession).not.toHaveBeenCalledWith('coordinator', expect.anything());
+    expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toContain('HUMAN_BLOCKER');
+    // Coordinator returns to rest: the idle-edge retry delivers the queued wake and acks it.
+    coordinatorState = 'idle';
+    await service.drainCoordinatorWake('project-1', 'execution-1', 'coordinator');
+    expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('HUMAN_BLOCKER'));
+    expect((await store.get('execution-1'))?.coordinatorWakes).toEqual([]);
+  }));
+
   it('wakes parked coordinator for a human blocker', async () => fixture(async (filePath) => {
     const replyToSession = vi.fn(() => false);
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
@@ -872,6 +954,144 @@ describe('SquadExecutionService', () => {
     await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Choose target?' });
     expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toContain('HUMAN_BLOCKER');
     expect(await store.get('execution-1')).toMatchObject({ coordinatorState: 'ACTIVE' });
+  }));
+
+  it('routes a coordinator-audience block to a SEMANTIC_CONFLICT wake carrying the blockerId, with no human inbox entry', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => false);
+    const inbox = { append: vi.fn(async () => undefined) };
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession, inbox, deliverToWorker: () => true,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.dispatchReady(coordinator);
+    await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Which target file?', audience: 'coordinator' });
+    const message = (await store.get('execution-1'))?.coordinatorWakes?.[0]?.message;
+    expect(message).toContain('SEMANTIC_CONFLICT');
+    expect(message).toContain('blockerId=blocker');
+    expect(message).toContain('Which target file?');
+    expect(inbox.append).not.toHaveBeenCalled(); // self-heal lane: no human is involved
+    // durable blocker stamped audience so the resolve path can authorize the coordinator
+    expect((await store.get('execution-1'))?.blockers?.[0]).toMatchObject({ id: 'blocker', audience: 'coordinator', resolved: false });
+  }));
+
+  it('default block audience stays human: HUMAN_BLOCKER wake plus a linked inbox entry (back-compat)', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => false);
+    const inbox = { append: vi.fn(async () => undefined) };
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession, inbox, deliverToWorker: () => true,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.dispatchReady(coordinator);
+    await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Need a human decision?' });
+    expect((await store.get('execution-1'))?.coordinatorWakes?.[0]?.message).toContain('HUMAN_BLOCKER');
+    expect(inbox.append).toHaveBeenCalledWith(expect.objectContaining({ executionId: 'execution-1', blockerId: 'blocker', comments: 'Need a human decision?' }));
+    expect((await store.get('execution-1'))?.blockers?.[0]?.audience).toBeUndefined(); // no audience stamped = human
+  }));
+
+  it('coordinator answers a coordinator-audience block: delivery enqueued to the worker slot, and the worker ack resolves the blocker + returns the unit to CLAIMED', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.dispatchReady(coordinator);
+    await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Which file?', audience: 'coordinator' });
+
+    const answered = await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
+    expect(answered).toMatchObject({ ok: true, pending: true });
+    // answer landed as a PENDING delivery targeted to the blocked worker's slot; unit still BLOCKED until the worker acks
+    const afterAnswer = (await store.get('execution-1'))!;
+    expect(afterAnswer.deliveries).toEqual([expect.objectContaining({ slotId: 'slot-1', blockerId: 'blocker', state: 'PENDING', payload: { text: 'Write to a.txt.' } })]);
+    expect(afterAnswer.workUnits.find((unit) => unit.id === 'a')?.state).toBe('BLOCKED');
+
+    // the worker's own pull/ack (unchanged machinery) resolves the blocker and returns the unit to CLAIMED
+    const worker = { role: 'worker' as const, slotId: 'slot-1', executionId: 'execution-1', projectId: 'project-1' };
+    const pulled = await store.pullBlockerDelivery(worker);
+    await store.ackBlockerDelivery(worker, pulled!.id, pulled!.leaseId!, { delivered: true });
+    const resolved = (await store.get('execution-1'))!;
+    expect(resolved.blockers?.[0]).toMatchObject({ id: 'blocker', resolved: true, response: 'Write to a.txt.' });
+    expect(resolved.workUnits.find((unit) => unit.id === 'a')?.state).toBe('CLAIMED');
+  }));
+
+  it('coordinator answer is idempotent on the deterministic client request id (one delivery for a re-issued answer)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.dispatchReady(coordinator);
+    await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Which file?', audience: 'coordinator' });
+    await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
+    await service.answerBlockerByCoordinator(coordinator, 'blocker', 'Write to a.txt.');
+    expect((await store.get('execution-1'))?.deliveries).toHaveLength(1);
+  }));
+
+  it('denies a coordinator answering a human-audience blocker (still owner-only)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.dispatchReady(coordinator);
+    await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Human?' }); // default human audience
+    await expect(service.answerBlockerByCoordinator(coordinator, 'blocker', 'answer')).resolves.toMatchObject({ ok: false, code: 'DENIED' });
+    expect((await store.get('execution-1'))?.deliveries ?? []).toEqual([]);
+  }));
+
+  it('denies a non-orchestrator caller of execution.work.answer', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.dispatchReady(coordinator);
+    await service.blockWork({ ...coordinator, slotId: 'slot-1', role: 'worker' }, 'a', { id: 'blocker', question: 'Which file?', audience: 'coordinator' });
+    const worker = { executionId: 'execution-1', projectId: 'project-1', slotId: 'slot-1', role: 'worker' as const };
+    await expect(service.answerBlockerByCoordinator(worker, 'blocker', 'answer')).resolves.toMatchObject({ ok: false, code: 'DENIED' });
   }));
 
   it('wakes parked coordinator for blocked policy evaluation', async () => fixture(async (filePath) => {
@@ -2720,5 +2940,47 @@ describe('provided-plan persistence caps', () => {
     // Prove it round-trips through the durable file (persist validated + wrote it).
     const persisted = JSON.parse(await readFile(filePath, 'utf8'));
     expect(persisted.records[0].workUnits[0].task).toBe(bigTask);
+  }));
+});
+
+// Anti-freeze backstop (run df216947): durable workers never heartbeat, so a stuck worker's
+// claim can wedge forever unless the state-agnostic wall-clock reclaim has a ceiling to fire on.
+describe('withDurableClaimWallClockBackstop', () => {
+  const DEFAULT_MS = 20 * 60_000;
+
+  it('injects the default ceiling for every durable worker-DAG mode when unset', () => {
+    for (const mode of ['job-team', 'structured', 'freeform'] as const) {
+      expect(withDurableClaimWallClockBackstop(mode, undefined)).toEqual({ maxClaimWallClockMs: DEFAULT_MS });
+      // Preserves other policy fields, only adds the backstop.
+      expect(withDurableClaimWallClockBackstop(mode, { deadlineMs: 5 })).toEqual({ deadlineMs: 5, maxClaimWallClockMs: DEFAULT_MS });
+    }
+  });
+
+  it('leaves a caller-set ceiling untouched (caller wins)', () => {
+    expect(withDurableClaimWallClockBackstop('structured', { maxClaimWallClockMs: 1_000 })).toEqual({ maxClaimWallClockMs: 1_000 });
+  });
+
+  it('does NOT inject for interactive/autonomous chat modes or an unknown mode', () => {
+    expect(withDurableClaimWallClockBackstop('interactive-team', undefined)).toBeUndefined();
+    expect(withDurableClaimWallClockBackstop('autonomous-team', undefined)).toBeUndefined();
+    expect(withDurableClaimWallClockBackstop(undefined, undefined)).toBeUndefined();
+    expect(withDurableClaimWallClockBackstop('interactive-team', { deadlineMs: 5 })).toEqual({ deadlineMs: 5 });
+  });
+
+  // Wiring: a started 'structured' run (the df216947 failure mode) persists the ceiling into
+  // record.request.policy, where reconcileActive reads it to revive the dead wall-clock backstop.
+  it('start persists the default ceiling for a structured run so reconcileActive can reclaim', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } })
+    }));
+    const started = await service.start('owner', 'project-1', { ...request, coordinationMode: 'structured', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+    expect(started.ok).toBe(true);
+    if (started.ok) expect(started.value.request.policy?.maxClaimWallClockMs).toBe(DEFAULT_MS);
   }));
 });

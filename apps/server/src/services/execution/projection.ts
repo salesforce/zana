@@ -47,7 +47,10 @@ function workProjection(record: ExecutionRecord): WorkProjection {
       workUnitId: unit.id, title: unit.title, dependencies: [...unit.dependencies],
       ...(unit.assignedSlotId ? { slotId: unit.assignedSlotId } : {}), state: unit.state,
       ...(unit.failureCode ? { failureCode: unit.failureCode } : {}),
-      ...(unit.result !== undefined ? { result: resultPreview(unit.result) } : {})
+      ...(unit.result !== undefined ? { result: resultPreview(unit.result) } : {}),
+      ...(unit.claimedAt !== undefined ? { claimedAt: unit.claimedAt } : {}),
+      ...(unit.heartbeatAt !== undefined ? { heartbeatAt: unit.heartbeatAt } : {}),
+      ...(unit.leaseExpiresAt !== undefined ? { leaseExpiresAt: unit.leaseExpiresAt } : {})
     })),
     rosterSlotIds: record.authorizationContext?.slots.map((slot) => slot.slotId) ?? []
   };

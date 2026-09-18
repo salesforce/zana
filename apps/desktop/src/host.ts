@@ -62,7 +62,7 @@ import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { sshPairingSession } from '@zana-ai/zcc-host-daemon/ssh-pairing-pty';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
-import { projectIdentityDigest, revalidateLaunchCommit as revalidateCommonLaunchCommit } from '@zana-ai/zcc-server/services/launch/commit-revalidation';
+import { projectIdentityDigest, projectsForStoreRevision, revalidateLaunchCommit as revalidateCommonLaunchCommit } from '@zana-ai/zcc-server/services/launch/commit-revalidation';
 import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/authorization';
 import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/services/launch/coordinator';
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
@@ -73,13 +73,13 @@ import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
-import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/store';
+import { createExecutionStore, WORK_CLAIM_LEASE_MS } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
 import type { ExecutionWorkUnitInput, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
-import { IdleGatedInjector } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
+import { IdleGatedInjector, suppressesInteractiveBlocked } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
 import { createExecutionSourceRegistry, ExecutionSourceError, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
 import { createExecutionHandoffStore } from '@zana-ai/zcc-server/services/execution/handoff-store';
@@ -448,6 +448,19 @@ const E2E_TAP_ENABLED = process.env.ZCC_E2E === '1' || process.env.ZCC_E2E === '
 // suppression must cover ALL E2E launches, so it keys off this signal — never
 // set in production.
 const E2E_LAUNCH = Boolean(process.env.ZCC_E2E_HOME);
+
+// E2E-ONLY durable-execution timing overrides. The built-Electron reclaim spec
+// needs the 90s claim lease (store) and 30s reconcile sweep compressed to
+// seconds to prove the wall-clock backstop reclaims a stuck non-restful worker
+// in bounded wall time. Honored ONLY under an E2E temp HOME (ZCC_E2E_HOME), so
+// production timing is never env-tunable and defaults are byte-unchanged.
+function e2eTimingOverrideMs(name: string): number | undefined {
+  if (!E2E_LAUNCH) return undefined;
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
 
 // E2E ONLY: become an accessory (menu-bar-only, no-Dock, NON-ACTIVATING) app at
 // the earliest point in the main process — at module load, BEFORE
@@ -876,8 +889,34 @@ const teamLifecycle = createTeamLifecycleStore({
   filePath: join(app.getPath('userData'), 'team-lifecycle.json')
 });
 const executionStore = createExecutionStore({
-  filePath: join(app.getPath('userData'), 'squad-executions.json')
+  filePath: join(app.getPath('userData'), 'squad-executions.json'),
+  workClaimLeaseMs: e2eTimingOverrideMs('ZCC_WORK_CLAIM_LEASE_MS')
 });
+// A cohort worker renews its claim lease from observed PTY output activity (see the
+// `ptys.on('data')` hook below → `squadExecutionService.renewWorkerLease`). Throttle the
+// renew attempts to a fraction of the lease so a live, streaming worker always refreshes
+// well before expiry while a hot output stream isn't calling the store per byte. Scales
+// with the (E2E-overridable) lease so the 2s test lease renews sub-second and the 90s
+// production lease renews on a ~10s cadence.
+const WORKER_LEASE_MS = e2eTimingOverrideMs('ZCC_WORK_CLAIM_LEASE_MS') ?? WORK_CLAIM_LEASE_MS;
+const WORKER_LEASE_RENEW_THROTTLE_MS = Math.min(10_000, Math.max(250, Math.floor(WORKER_LEASE_MS / 4)));
+/** Per-session next-allowed renew time (or a far-future sentinel for a non-worker session,
+ * so a hot non-cohort stream short-circuits without a repeat `getSession` lookup). */
+const workerLeaseRenewAt = new Map<string, number>();
+function maybeRenewWorkerLease(sessionId: string): void {
+  const nowMs = Date.now();
+  const next = workerLeaseRenewAt.get(sessionId);
+  if (next !== undefined && nowMs < next) return;
+  const cohort = ptys.getSession(sessionId)?.cohort;
+  if (!cohort?.executionId || cohort.role !== 'worker' || !cohort.slotId) {
+    workerLeaseRenewAt.set(sessionId, nowMs + 3_600_000); // not a cohort worker — skip cheaply
+    return;
+  }
+  workerLeaseRenewAt.set(sessionId, nowMs + WORKER_LEASE_RENEW_THROTTLE_MS);
+  void squadExecutionService.renewWorkerLease(cohort.executionId, cohort.slotId).catch((error) =>
+    logMainError(`execution worker lease renew ${sessionId}`, error)
+  );
+}
 const executionArtifacts = createExecutionArtifactStore({
   filePath: join(app.getPath('userData'), 'squad-execution-artifacts.json')
 });
@@ -1152,7 +1191,8 @@ let conversationHistoryEvictTimer: NodeJS.Timeout | null = null;
  */
 const TMUX_REAP_GRACE_MS = 10_000;
 let teamLifecycleReconcileTimer: NodeJS.Timeout | null = null;
-const EXECUTION_CLAIM_RECONCILE_INTERVAL_MS = 30_000;
+const EXECUTION_CLAIM_RECONCILE_INTERVAL_MS =
+  e2eTimingOverrideMs('ZCC_EXECUTION_RECONCILE_INTERVAL_MS') ?? 30_000;
 let executionClaimReconcileTimer: NodeJS.Timeout | null = null;
 const savedStore: ISavedStore = createSavedStore();
 const libraryStore: ILibraryStore = new LibraryStore(() => store.listProjects());
@@ -3678,20 +3718,6 @@ export function createTerminalConfined(
   }
 }
 
-/**
- * Projects as digested for the launch `storeRevision` fence. `lastActiveAt` is
- * pure activity noise — a concurrent `touchProject` (renderer marking a project
- * active, or a sibling session spawning) bumps it mid-launch and would otherwise
- * invalidate an already-authorized launch at commit ("launch stores changed
- * after preflight"). That broke sequential multi-slot Team launches: earlier
- * slots committed, then a `lastActiveAt` bump failed the later slots.
- * `projectIdentityDigest` already excludes `lastActiveAt` for the same reason —
- * keep the two exclusions aligned.
- */
-function projectsForStoreRevision<T extends { lastActiveAt?: unknown }>(list: readonly T[]): Omit<T, 'lastActiveAt'>[] {
-  return list.map(({ lastActiveAt: _lastActiveAt, ...rest }) => rest);
-}
-
 /** Generic new-launch path. Principal and spawn-only metadata come from main callers. */
 async function launchAuthorizedTerminal(
   req: CreateTerminalRequest,
@@ -4238,7 +4264,7 @@ function orchestratorPrompt(
   return [base, goalBriefing, briefing].filter(Boolean).join('\n\n');
 }
 
-function jobWorkerPrompt(input: {
+export function jobWorkerPrompt(input: {
   executionId?: string;
   slotId: string;
   label: string;
@@ -4246,9 +4272,9 @@ function jobWorkerPrompt(input: {
 }): string {
   return [
     `Team worker standby. You are ${input.label} (${input.personaName}), slot \`${input.slotId}\`${input.executionId ? ` in execution \`${input.executionId}\`` : ''}.`,
-    'Your working directory is the trusted project workspace. Execution sources and the job plan are coordinator-owned. Wait for an assignment from the coordinator containing the needed source context and file scope. Do not infer or start the overall job independently.',
-    'Do not poll `agent_inbox`. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Do not use `agent_send` for routine progress or results. If required source context is missing, use `execution.work.block` so the coordinator wakes through the explicit blocker lane.',
-    'If human input is required, call `execution.work.block`; do not use AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.'
+    'Your working directory is the trusted project workspace. Wait for an assignment for this slot; each assignment carries a fully-specified work unit — its task is the complete instruction. When it arrives, EXECUTE it: do the task using the file scope, the upstream results included in the assignment, and your own reading of the project workspace. Do the work yourself; do not wait for extra "source context" to be pushed to you and do not ask the coordinator to re-explain a task you can carry out. Do not, however, start the overall job or units not assigned to this slot.',
+    'Do not poll `agent_inbox`. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Do not use `agent_send` for routine progress or results.',
+    'Use `execution.work.block` ONLY when you genuinely cannot proceed, and pick the audience: `audience: "coordinator"` when you need ONE specific, decidable plan/spec choice from the coordinator (e.g. which of two interfaces to target, an ambiguous path) — phrase it as a single concrete question the coordinator can answer, and the worker resumes automatically once answered; `audience: "human"` (the default) only when a real human decision or credential is required. Do not block just because a task looks large or under-detailed — attempt it. Do not use AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.'
   ].join('\n\n');
 }
 
@@ -5797,6 +5823,10 @@ function wireBridgeListeners() {
 
   ptys.on('data', (sessionId: string, data: string) => {
     safeSend(IPC.terminals.onData, sessionId, data);
+    // Output = the worker is alive and progressing: renew its claim lease so the reconcile
+    // sweep never reclaims a genuinely-working worker as silent (throttled + self-gated to
+    // cohort worker sessions, so this is a cheap no-op on the hot output path).
+    maybeRenewWorkerLease(sessionId);
     // Feed the raw PTY stream through the OSC-title detector. Cheap and
     // off the render path — only emits when the agent state actually changes.
     agentStatus.observeData(sessionId, data);
@@ -5865,6 +5895,7 @@ function wireBridgeListeners() {
     heldQuestions.remove(sessionId);
     catchUpSummary.remove(sessionId);
     autoReportLinker.remove(sessionId);
+    workerLeaseRenewAt.delete(sessionId); // drop the per-session lease-renew throttle entry (Rule 3/5)
     // Release the Codex rollout-resolver cache entry for this session (Rule 5);
     // a no-op for Claude/shell sessions (nothing cached under that key).
     transcriptSource.forget(sessionId);
@@ -7004,8 +7035,22 @@ async function bootstrapNormal() {
     // status. The agent is waiting on the user on `blocked`, and resumed (or
     // the user answered) on `unblocked`.
     onNotifyHook: (_projectId: string, sessionId: string, action) => {
-      if (action === 'blocked') agentStatus.markBlocked(sessionId);
-      else agentStatus.turnStarted(sessionId);
+      if (action === 'blocked') {
+        // A headless background team worker has NO interactive user to wait on.
+        // Its real human-input path is `execution.work.block` (the coordinator
+        // blocker lane), not the TUI "needs you" overlay — and it is never
+        // nudged/triaged/promoted. Letting the end-of-turn Notification pin it
+        // `blocked` wedges engine-cascade assignment delivery: the idle-gated
+        // injector queues on a busy state and flushes only on a non-busy edge,
+        // so a standby worker parked at `blocked` never receives its dispatched
+        // unit → 90s lease-expiry churn (dispatch↔reclaim forever). Suppress the
+        // overlay for it so it rests idle and ready to receive.
+        if (suppressesInteractiveBlocked(ptys.getSession(sessionId))) {
+          console.log(`[notify-hook] session=${sessionId.slice(0, 8)} action=blocked (suppressed: headless worker)`);
+          return;
+        }
+        agentStatus.markBlocked(sessionId);
+      } else agentStatus.turnStarted(sessionId);
       // Diagnostic: confirms the hook reached the main process. The emit to the
       // renderer is debounced (~250ms), so the red/grey dot is the real proof
       // the state landed — this line just proves the curl callback arrived.

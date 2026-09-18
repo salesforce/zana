@@ -186,9 +186,9 @@ describe('execution store', () => {
     expect(claim).toMatchObject({ claimGeneration: 1, claimedBy: { slotId: 'worker-1' }, heartbeatAt: now, turnCount: 0 });
     const noWrite = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, turnCount: 0 });
     expect(noWrite.stateVersion).toBe(record.stateVersion);
-    now += 60_000;
+    now += 270_000; // within HEARTBEAT_PERSIST_REMAINING_MS of the 300_000 lease expiry → renewal due
     const renewed = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, turnCount: 1 });
-    expect(renewed.workUnits![0]).toMatchObject({ heartbeatAt: now, turnCount: 1, leaseExpiresAt: now + 90_000 });
+    expect(renewed.workUnits![0]).toMatchObject({ heartbeatAt: now, turnCount: 1, leaseExpiresAt: now + 300_000 });
     await expect(store.heartbeatWork(renewed.id, renewed.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: 'stale', claimGeneration: 1 })).rejects.toThrow('stale work claim');
   }));
 
@@ -202,12 +202,140 @@ describe('execution store', () => {
     record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
     const unit = record.workUnits![0];
     expect((await store.listActiveClaims(undefined, 1)).records).toHaveLength(1);
-    now += 90_000;
+    now += 300_000; // past the default WORK_CLAIM_LEASE_MS lease window
     const unchanged = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: 'wrong', claimGeneration: unit.claimGeneration!, reason: 'dead' }]);
     expect(unchanged.workUnits![0].state).toBe('CLAIMED');
     const reclaimed = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'dead' }]);
     expect(reclaimed.workUnits![0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
     expect(reclaimed.workUnits![0]).not.toHaveProperty('claimId');
+  }));
+
+  it('honors an injected workClaimLeaseMs when stamping a claim lease', async () => fixture(async (filePath) => {
+    // The lease TTL is injectable (default WORK_CLAIM_LEASE_MS=300_000) so the
+    // built-Electron reclaim E2E can drive the real backstop in seconds.
+    const now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now, workClaimLeaseMs: 2_000 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const unit = record.workUnits![0];
+    expect(unit.claimedAt).toBe(1_000);
+    expect(unit.leaseExpiresAt).toBe(3_000); // claimedAt + injected 2_000, NOT the 300_000 default
+  }));
+
+  it('rejects a non-positive workClaimLeaseMs option', async () => fixture(async (filePath) => {
+    expect(() => createExecutionStore({ filePath, workClaimLeaseMs: 0 })).toThrow('invalid execution work claim lease');
+    expect(() => createExecutionStore({ filePath, workClaimLeaseMs: -5 })).toThrow('invalid execution work claim lease');
+    expect(() => createExecutionStore({ filePath, workClaimLeaseMs: 1.5 })).toThrow('invalid execution work claim lease');
+  }));
+
+  it('renewWorkerLease renews the active claim lease from observed worker output', async () => fixture(async (filePath) => {
+    // Host wires this off PTY output activity: a live worker refreshes its lease so the
+    // reconcile sweep never reclaims it as silent. Uses a short 2_000ms lease for clarity.
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now, workClaimLeaseMs: 2_000 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // lease→3_000
+    now += 1_500; // now=2_500, remaining 500ms is within HEARTBEAT_PERSIST_REMAINING_MS
+    const renewed = await store.renewWorkerLease(record.id, 'worker-1');
+    expect(renewed?.workUnits![0]).toMatchObject({ heartbeatAt: 2_500, leaseExpiresAt: 4_500 }); // now + 2_000
+  }));
+
+  it('renewWorkerLease is a no-op when no unit is claimed by the slot', async () => fixture(async (filePath) => {
+    const now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now });
+    const record = (await store.claim(request())).record; // claimed but no plan/work claim yet
+    expect(await store.renewWorkerLease(record.id, 'worker-1')).toBeUndefined();
+    expect(await store.renewWorkerLease('missing', 'worker-1')).toBeUndefined();
+  }));
+
+  it('reclaimExpiredClaims honors force to reclaim a still-fresh lease (wall-clock backstop)', async () => fixture(async (filePath) => {
+    // The state-agnostic wall-clock ceiling must reclaim even a claim whose lease is fresh
+    // (a worker that streams output forever, renewing its lease, yet never completes). The
+    // lease-expiry floor otherwise blocks it; `force` bypasses that floor.
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // lease→301_000
+    const unit = record.workUnits![0];
+    now += 10_000; // now=11_000, lease still fresh (< 301_000)
+    const kept = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'ceiling' }]);
+    expect(kept.workUnits![0].state).toBe('CLAIMED'); // floor blocks reclaim of a fresh lease
+    const forced = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'ceiling', force: true }]);
+    expect(forced.workUnits![0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
+  }));
+
+  it('completeWork recovers a finished worker whose claim was reclaimed (non-destructive)', async () => fixture(async (filePath) => {
+    // Run b56e63f5: a worker finished but a reconcile had already reclaimed its
+    // silent claim, so the unit sat READY. The old code discarded the finished
+    // result ('work unit is not claimed') → churn. Now the last claim holder can
+    // still complete a reclaimed-but-idle unit and its real result is kept.
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const unit = record.workUnits![0];
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'dead', force: true }]);
+    expect(record.workUnits![0].state).toBe('READY');
+    record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'done anyway');
+    expect(record.workUnits![0]).toMatchObject({ state: 'COMPLETED', result: 'done anyway' });
+  }));
+
+  it('completeWork accepts a same-slot completion under a STALE claim generation (run e531f415)', async () => fixture(async (filePath) => {
+    // The reconcile reclaimed a still-live silent worker and re-dispatched to the SAME
+    // slot (fresh generation). The worker then finishes and completes under its now-stale
+    // claim (the MCP tool always passes requireClaim=true). Slot identity — not the claim
+    // fence — authorizes it: the generation churn is our own reclaim, and the finished
+    // result must be kept, not discarded into a reclaim→redispatch loop.
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const stale = record.workUnits![0]; // gen 1 claim the worker will complete under
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: stale.claimId!, claimGeneration: stale.claimGeneration!, reason: 'silent', force: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // gen 2, same slot
+    expect(record.workUnits![0]).toMatchObject({ state: 'CLAIMED', claimGeneration: 2, assignedSlotId: 'worker-1' });
+    record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'verified', { claimId: stale.claimId!, claimGeneration: stale.claimGeneration! }, true);
+    expect(record.workUnits![0]).toMatchObject({ state: 'COMPLETED', result: 'verified' });
+  }));
+
+  it('completeWork rejects recovery when a different slot has re-claimed the unit', async () => fixture(async (filePath) => {
+    // Reclaimed then re-dispatched to another worker: the new holder wins (may be
+    // mid-edit); the old worker's late completion must NOT clobber it.
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'orchestrator:lead' }, 'unit', 'worker-1');
+    const unit = record.workUnits![0];
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'dead', force: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'orchestrator:lead' }, 'unit', 'worker-2');
+    await expect(store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'late')).rejects.toThrow('work unit is assigned to another slot');
+  }));
+
+  it('completeWork rejects recovery from a slot that never held the unit', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const unit = record.workUnits![0];
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'dead', force: true }]);
+    await expect(store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-9' }, 'unit', 'nope')).rejects.toThrow('work unit is not claimed');
   }));
 
   it('propagates failed dependencies as skipped and restores them on retry', async () => fixture(async (filePath) => {
@@ -503,22 +631,6 @@ describe('execution store', () => {
     expect((await store.dispatchReady(record.id)).assignments).toEqual([]);
     const completed = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'claimed', 'done', claim, true);
     expect(completed.workUnits).toContainEqual(expect.objectContaining({ id: 'claimed', state: 'COMPLETED' }));
-  }));
-
-  it('fails active delivery when blocker resolves through alternate response path', async () => fixture(async (filePath) => {
-    let id = 0;
-    const store = createExecutionStore({ filePath, id: () => id++ === 0 ? 'execution-1' : `id-${id}` });
-    let record = (await store.claim(request())).record;
-    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
-    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
-    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'a', title: 'A', task: 'A', dependencies: [], files: ['a.txt'], verification: ['check a'] }]);
-    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'a', 'slot-1');
-    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'a', { id: 'blocker-1', question: 'Q?' });
-    record = (await store.enqueueBlockerDelivery(record.id, record.stateVersion, { clientRequestId: 'client-1', blockerId: 'blocker-1', text: 'Queued answer' })).record;
-    record = await store.respondToBlocker(record.id, record.stateVersion, 'blocker-1', 'Direct answer');
-    record = await store.resumeBlocker(record.id, record.stateVersion, 'blocker-1');
-    expect(record.blockers?.[0]).toMatchObject({ resolved: true, response: 'Direct answer' });
-    expect(record.deliveries?.[0]).toMatchObject({ state: 'FAILED', lastError: 'blocker resolved through alternate path' });
   }));
 
   it('retains delivered records for 30 days without evicting active deliveries', async () => fixture(async (filePath) => {
@@ -843,7 +955,7 @@ describe('execution store', () => {
     });
   }));
 
-  it('durably blocks, responds, and resumes exact work and slot with version fencing', async () => fixture(async (filePath) => {
+  it('durably blocks a claimed unit with exact work, slot, and options', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const claimed = await store.claim(request());
     if (claimed.outcome !== 'claimed') throw new Error('expected claim');
@@ -855,11 +967,6 @@ describe('execution store', () => {
       id: 'blocker-1', question: 'Choose?', options: ['A', 'B']
     });
     expect(blocked).toMatchObject({ state: 'BLOCKED', blockers: [{ id: 'blocker-1', workUnitId: 'a', slotId: 'slot-1', question: 'Choose?', options: ['A', 'B'] }] });
-    await expect(store.respondToBlocker(blocked.id, record.stateVersion, 'blocker-1', 'A')).rejects.toThrow('stale execution state');
-    const responded = await store.respondToBlocker(blocked.id, blocked.stateVersion, 'blocker-1', 'A');
-    expect(responded.blockers?.[0]).toMatchObject({ response: 'A', resolved: false });
-    const resumed = await store.resumeBlocker(responded.id, responded.stateVersion, 'blocker-1');
-    expect(resumed).toMatchObject({ state: 'RUNNING', blockers: [{ resolved: true }], workUnits: [{ state: 'CLAIMED', assignedSlotId: 'slot-1' }] });
   }));
 
   it('rejects early completion and persists the full final summary', async () => fixture(async (filePath) => {

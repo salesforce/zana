@@ -40,7 +40,7 @@
     "test:smoke": "node scripts/run-electron-e2e.mjs --build e2e/smoke.spec.ts",
     "test:smoke:only": "node scripts/run-electron-e2e.mjs e2e/smoke.spec.ts",
     "test:e2e:jobteam": "node scripts/run-jobteam-e2e.mjs",
-    "test:e2e:jobteam:only": "playwright test e2e/job-team-launch-ui.spec.ts e2e/job-team-failed-dag.spec.ts e2e/cli-agent-job-team-run.spec.ts e2e/modern-owner-job-team-run.spec.ts",
+    "test:e2e:jobteam:only": "playwright test e2e/job-team-launch-ui.spec.ts e2e/job-team-failed-dag.spec.ts e2e/cli-agent-job-team-run.spec.ts e2e/modern-owner-job-team-run.spec.ts e2e/job-team-stuck-worker-reclaim.spec.ts e2e/job-team-streaming-worker-no-reclaim.spec.ts e2e/job-team-flow-activity-indicator.spec.ts",
     "test:codex:live": "ZCC_LIVE_CODEX=1 vitest run apps/host-daemon/src/harness/__tests__/codex-provider.live.test.ts",
     "live:smoke": "pnpm --filter @zana-ai/zcc-control live:smoke",
     "live:matrix": "pnpm --filter @zana-ai/zcc-control live:matrix",

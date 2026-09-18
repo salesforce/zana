@@ -367,6 +367,55 @@ describe('buildSquadFlow — handoff edges', () => {
   });
 });
 
+// ---- claim liveness (Flow activity indicator source) ------------------------
+
+describe('buildSquadFlow — claim liveness', () => {
+  function claimExecution(assignmentOver: Record<string, unknown>): ExecutionBoardProjection {
+    return {
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Job', state: 'RUNNING', attempt: 1,
+      createdAt: 1_000, updatedAt: 4_000,
+      work: {
+        total: 1, completed: 0,
+        counts: { PENDING: 0, READY: 0, CLAIMED: 1, BLOCKED: 0, COMPLETED: 0, FAILED: 0, SKIPPED: 0 },
+        assignments: [
+          { workUnitId: 'u1', title: 'Unit', dependencies: [], slotId: 'slot-a', state: 'CLAIMED', ...assignmentOver }
+        ],
+        rosterSlotIds: ['slot-a']
+      }
+    } satisfies ExecutionBoardProjection;
+  }
+
+  it('attaches claim timestamps for the node whose slot holds a CLAIMED unit', () => {
+    const execution = claimExecution({ claimedAt: 2_000, heartbeatAt: 4_500, leaseExpiresAt: 6_000 });
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'a', handle: 'a' })],
+      sessions: [session({ id: 'a', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-a' } })],
+      executions: [execution]
+    }));
+    expect(nodeMap(g!).get('a')!.claim).toEqual({ claimedAt: 2_000, heartbeatAt: 4_500, leaseExpiresAt: 6_000 });
+  });
+
+  it('omits claim when the slot has no CLAIMED unit', () => {
+    const execution = claimExecution({ state: 'COMPLETED', claimedAt: 2_000, leaseExpiresAt: 6_000 });
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'a', handle: 'a' })],
+      sessions: [session({ id: 'a', cohort: { cohortId: 'launch-1', role: 'worker', executionId: execution.executionId, slotId: 'slot-a' } })],
+      executions: [execution]
+    }));
+    expect(nodeMap(g!).get('a')!.claim).toBeUndefined();
+  });
+
+  it('omits claim for a session with no cohort slot binding', () => {
+    const execution = claimExecution({ claimedAt: 2_000, leaseExpiresAt: 6_000 });
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'a', handle: 'a' })],
+      sessions: [session({ id: 'a' })],
+      executions: [execution]
+    }));
+    expect(nodeMap(g!).get('a')!.claim).toBeUndefined();
+  });
+});
+
 // ---- orchestrator detection -------------------------------------------------
 
 describe('buildSquadFlow — orchestrator', () => {

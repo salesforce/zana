@@ -4237,6 +4237,14 @@ export interface SquadFlowNode {
   isOrchestrator: boolean;
   /** Job execution status attached to an orchestrator node for attention display. */
   job?: { executionId: string; blockerQuestion?: string; needsAttention: boolean };
+  /** Durable claim liveness when THIS node's session is the assigned slot of a
+   *  CLAIMED work unit — the lease the host renews from the worker's PTY output.
+   *  Absent for a node that isn't actively holding a unit. Drives the Flow view's
+   *  activity treatment: a valid lease (`leaseExpiresAt > builtAt`) means the
+   *  backend still considers the worker alive (it kept streaming output), so the
+   *  node is shown STREAMING (self-loop arc) — independent of the sometimes-stale
+   *  agent-state dot that misreports a live headless worker as idle/unknown. */
+  claim?: { claimedAt?: number; heartbeatAt?: number; leaseExpiresAt?: number };
 }
 
 /**
@@ -5552,6 +5560,14 @@ export interface ExecutionBoardProjection {
       state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
       failureCode?: ExecutionFailureCode;
       result?: string;
+      /** Claim liveness timestamps (epoch ms) for a CLAIMED unit — the durable
+       *  lease the host renews from the worker's PTY output activity. Absent when
+       *  the unit was never claimed. The Flow view derives its "streaming / live"
+       *  node indicator from `leaseExpiresAt > now` (a valid lease = the backend
+       *  still considers the worker alive because it kept emitting output). */
+      claimedAt?: number;
+      heartbeatAt?: number;
+      leaseExpiresAt?: number;
     }>;
     rosterSlotIds: string[];
   };

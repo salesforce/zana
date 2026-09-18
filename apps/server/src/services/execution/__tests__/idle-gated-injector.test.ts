@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { IdleGatedInjector } from '../idle-gated-injector.js';
+import { IdleGatedInjector, suppressesInteractiveBlocked } from '../idle-gated-injector.js';
 
 function makeInjector(initialState = 'idle') {
   const states = new Map<string, string>();
@@ -89,5 +89,48 @@ describe('IdleGatedInjector', () => {
     const { injector, reply } = makeInjector();
     injector.onState('w1', 'idle');
     expect(reply).not.toHaveBeenCalled();
+  });
+
+  it('flushes on any non-busy edge, not only idle (deliver()-symmetric safety net)', () => {
+    // A worker that comes to rest in a non-busy, non-idle state must not strand
+    // its queue — the flush gate mirrors deliver()'s `!BUSY_STATES.has(state)`.
+    for (const restState of ['done', 'unknown']) {
+      const { injector, reply, setState } = makeInjector();
+      setState('w1', 'working');
+      injector.deliver('w1', `task-${restState}`);
+      expect(reply).not.toHaveBeenCalled();
+      injector.onState('w1', restState);
+      expect(reply).toHaveBeenCalledExactlyOnceWith('w1', `task-${restState}`);
+      expect(injector.pendingCount('w1')).toBe(0);
+    }
+  });
+
+  it('a blocked edge never flushes (still a busy state)', () => {
+    const { injector, reply, setState } = makeInjector();
+    setState('w1', 'working');
+    injector.deliver('w1', 'task A');
+    injector.onState('w1', 'blocked');
+    expect(reply).not.toHaveBeenCalled();
+    expect(injector.pendingCount('w1')).toBe(1);
+  });
+});
+
+describe('suppressesInteractiveBlocked', () => {
+  it('suppresses the blocked overlay for a headless team worker', () => {
+    expect(suppressesInteractiveBlocked({ headless: true, cohort: { role: 'worker' } })).toBe(true);
+  });
+
+  it('keeps the overlay for a visible (non-headless) worker', () => {
+    expect(suppressesInteractiveBlocked({ headless: false, cohort: { role: 'worker' } })).toBe(false);
+  });
+
+  it('keeps the overlay for a headless non-worker (e.g. orchestrator or solo run)', () => {
+    expect(suppressesInteractiveBlocked({ headless: true, cohort: { role: 'orchestrator' } })).toBe(false);
+    expect(suppressesInteractiveBlocked({ headless: true })).toBe(false);
+  });
+
+  it('is safe on a missing session', () => {
+    expect(suppressesInteractiveBlocked(null)).toBe(false);
+    expect(suppressesInteractiveBlocked(undefined)).toBe(false);
   });
 });

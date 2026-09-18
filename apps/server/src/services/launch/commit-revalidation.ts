@@ -8,6 +8,22 @@ export function projectIdentityDigest(project: unknown): string {
   return launchDigest(identity);
 }
 
+/**
+ * Projects as digested for the launch `storeRevision` fence. `lastActiveAt` is
+ * pure activity noise — a concurrent `touchProject` (renderer marking a project
+ * active, or a sibling session spawning) bumps it mid-launch and would otherwise
+ * invalidate an already-authorized launch at commit ("launch stores changed
+ * after preflight"). That broke sequential multi-slot Team launches: earlier
+ * slots committed, then a `lastActiveAt` bump failed the later slots.
+ * `projectIdentityDigest` already excludes `lastActiveAt` for the same reason —
+ * keep the two exclusions aligned.
+ */
+export function projectsForStoreRevision<T extends { lastActiveAt?: unknown }>(
+  list: readonly T[]
+): Omit<T, 'lastActiveAt'>[] {
+  return list.map(({ lastActiveAt: _lastActiveAt, ...rest }) => rest);
+}
+
 export interface CommitRevalidationState {
   project: unknown;
   storeRevision: string;

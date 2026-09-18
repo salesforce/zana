@@ -39073,6 +39073,56 @@ textarea.thread-command-editor {
   opacity: 0.5;
 }
 
+/* "Working" indicator: a static border accent marks a live working node. NO
+   pulse — pulse is the kanban board's card language (`agent-card-pulse`); the
+   Flow graph's native motion is the animated chevron traveling an edge/self-arc,
+   so activity is shown there, not by breathing nodes. */
+.squad-flow-node--working {
+  border-color: color-mix(in srgb, var(--accent-blue) 45%, var(--border-strong));
+}
+/* Streaming (fresh claim lease) is the stronger, backend-grounded tier — the
+   host is still renewing the lease from PTY output. Brighter ring than a plain
+   working node; the self-arc (animated chevron) + "live" badge accompany it in
+   the markup and carry the motion. */
+.squad-flow-node--streaming {
+  border-color: color-mix(in srgb, var(--accent-blue) 70%, var(--border-strong));
+}
+
+.squad-flow-self-loop {
+  fill: none;
+  stroke: var(--accent-blue);
+  opacity: 0.85;
+  stroke-width: 1.75;
+}
+.squad-flow-chevron--self {
+  fill: var(--accent-blue);
+}
+.squad-flow-arrowhead-self {
+  fill: var(--accent-blue);
+}
+
+.squad-flow-live {
+  align-self: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 16%, transparent);
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+.squad-flow-live::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  vertical-align: middle;
+}
+
 .squad-flow-node-top {
   display: flex;
   align-items: center;

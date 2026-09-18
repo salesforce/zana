@@ -149,6 +149,7 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
   const executionIdBySession = new Map<string, string>();
   const cohortRoleBySession = new Map<string, string>();
   const cohortIdBySession = new Map<string, string>();
+  const slotIdBySession = new Map<string, string>();
   const sessionByExecutionSlot = new Map<string, string>();
   for (const s of input.sessions) {
     exitedBySession.set(s.id, s.status === 'exited');
@@ -156,6 +157,7 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     if (s.cohort?.executionId) executionIdBySession.set(s.id, s.cohort.executionId);
     if (s.cohort?.role) cohortRoleBySession.set(s.id, s.cohort.role);
     if (s.cohort?.cohortId) cohortIdBySession.set(s.id, s.cohort.cohortId);
+    if (s.cohort?.slotId) slotIdBySession.set(s.id, s.cohort.slotId);
     if (s.cohort?.executionId && s.cohort.slotId) {
       sessionByExecutionSlot.set(`${s.cohort.executionId}\0${s.cohort.slotId}`, s.id);
     }
@@ -178,6 +180,21 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     const terminal = execution?.state === 'COMPLETED' || execution?.state === 'FAILED' || execution?.state === 'STOPPED';
     const needsAttention = !!execution?.currentBlocker && !terminal &&
       execution.currentBlocker.delivery?.state !== 'PENDING' && execution.currentBlocker.delivery?.state !== 'LEASED';
+    // Durable claim liveness: when THIS node's session is the assigned slot of a
+    // CLAIMED work unit, surface the lease the host renews from PTY output. The
+    // Flow view treats `leaseExpiresAt > builtAt` as "streaming / live" — grounded
+    // in the backend's own liveness truth, not the sometimes-stale agent dot.
+    const slotId = slotIdBySession.get(sessionId);
+    const claimAssignment = slotId
+      ? (execution?.work?.assignments ?? []).find((a) => a.slotId === slotId && a.state === 'CLAIMED')
+      : undefined;
+    const claim = claimAssignment && (claimAssignment.claimedAt !== undefined || claimAssignment.leaseExpiresAt !== undefined)
+      ? {
+          ...(claimAssignment.claimedAt !== undefined ? { claimedAt: claimAssignment.claimedAt } : {}),
+          ...(claimAssignment.heartbeatAt !== undefined ? { heartbeatAt: claimAssignment.heartbeatAt } : {}),
+          ...(claimAssignment.leaseExpiresAt !== undefined ? { leaseExpiresAt: claimAssignment.leaseExpiresAt } : {})
+        }
+      : undefined;
     return {
       sessionId,
       label: labelFor(handle, displayName, sessionId),
@@ -195,7 +212,8 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
         executionId: execution.executionId,
         needsAttention,
         ...(execution.currentBlocker ? { blockerQuestion: execution.currentBlocker.question } : {})
-      } } : {})
+      } } : {}),
+      ...(claim ? { claim } : {})
     };
   };
 

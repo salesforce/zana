@@ -109,6 +109,18 @@ describe('jobCoordinatorPrompt — shared invariants (both flows)', () => {
   });
 });
 
+describe('jobCoordinatorPrompt — self-heal (coordinator answers a coordinator-directed blocker)', () => {
+  it.each([true, false])('teaches answering a SEMANTIC_CONFLICT blockerId with execution.work.answer (planReady=%s)', (planReady) => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady });
+    expect(prompt).toContain('SEMANTIC_CONFLICT');
+    expect(prompt).toContain('blockerId=<id>');
+    expect(prompt).toContain('execution.work.answer');
+    expect(prompt).toContain('the worker resumes automatically');
+    // still reserves human escalation for genuine human-only decisions
+    expect(prompt).toContain('human-only decision');
+  });
+});
+
 describe('boundedWorkUnitDigest', () => {
   it('caps the unit count and reports the remainder', () => {
     const many: ExecutionWorkUnitInput[] = Array.from({ length: 25 }, (_, i) => ({ id: `u${i}`, title: 'T', task: 't', dependencies: [] }));
