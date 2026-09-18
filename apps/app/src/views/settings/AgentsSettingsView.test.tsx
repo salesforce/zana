@@ -91,6 +91,20 @@ describe('AgentsTab worktree isolation', () => {
     expect(html).toContain('Plan provided in goal');
   });
 
+  it('uses orchestrator (not coordinator) in Teams organization help text', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={config}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('each orchestrator and its workers together');
+    expect(html).toContain('one orchestrator row per run');
+    expect(html).not.toContain('each coordinator and its workers');
+    expect(html).not.toContain('one coordinator row per run');
+  });
+
   it('groups CLI Agent, Overseer, and Auto mode after general settings, Auto mode last', () => {
     const html = renderToStaticMarkup(
       <AgentsTab

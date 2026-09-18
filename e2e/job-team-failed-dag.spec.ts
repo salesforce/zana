@@ -34,13 +34,13 @@ async function launchFailedDag(window: Page, projectName: string): Promise<void>
   await window.getByTestId('nav-agents').click();
   await window.getByTestId('agents-board-new-thread').first().click();
   const modal = window.getByTestId('launch-modal');
-  await modal.locator('.launch-segmented').getByRole('button', { name: 'Team', exact: true }).click();
+  await modal.locator('.launch-segmented').getByRole('button', { name: 'Squad', exact: true }).click();
   await modal.getByTestId('team-command-input').fill('verify deterministic failed DAG settlement');
-  await modal.getByLabel('Team', { exact: true }).click();
-  await window.getByRole('listbox', { name: 'Team' }).getByRole('option', { name: 'E2E Failure Team' }).click();
+  await modal.getByLabel('Squad', { exact: true }).click();
+  await window.getByRole('listbox', { name: 'Squad' }).getByRole('option', { name: 'E2E Failure Team' }).click();
   await modal.getByRole('button', { name: 'Project', exact: true }).click();
   await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();
-  await modal.getByLabel('Team planning').click();
+  await modal.getByLabel('Squad planning').click();
   await window.getByRole('option', { name: 'Plan provided in goal', exact: true }).click();
   await modal.getByTestId('team-command-send').click();
   await expect(modal).toBeHidden();
@@ -80,7 +80,7 @@ async function expectFailedDagDetails(window: Page): Promise<void> {
   const card = window.locator('.agent-card').filter({ hasText: 'E2E Failure Team' }).first();
   await expect(card).toBeVisible();
   await card.click();
-  const details = window.getByLabel('Team details');
+  const details = window.getByLabel('Squad details');
   await expect(details.getByText(/FAILED · attempt/)).toBeVisible();
   await expect(details.getByText(/Fail Root.*FAILED/).first()).toBeVisible();
   await expect(details.getByText(/Dependent.*SKIPPED/).first()).toBeVisible();

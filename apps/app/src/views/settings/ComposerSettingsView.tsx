@@ -81,8 +81,8 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
           onChange={(showModern) => updateSurfaces({ showModern })}
         />
         <CheckboxField
-          label="Team"
-          help="Show durable Team mode."
+          label="Squad"
+          help="Show durable Squad mode."
           checked={surfaces.showTeam}
           onChange={(showTeam) => updateSurfaces({ showTeam })}
         />

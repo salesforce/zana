@@ -487,7 +487,7 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
          <span className="squad-flow-name">
            {graph.executionId && graph.teamName
              ? teamRunLabel({ cohortId: graph.executionId, executionId: graph.executionId, executionJobTitle: graph.executionJobTitle, teamName: graph.teamName })
-             : graph.teamName ?? graph.squad?.name ?? 'Team'}
+             : graph.teamName ?? graph.squad?.name ?? 'Squad'}
          </span>
         <span className="squad-flow-rollup">
           {rollup.working > 0 && <em className="squad-flow-stat agent-working">{rollup.working} working</em>}
@@ -565,8 +565,8 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                     <span className="squad-flow-node-top">
                       <span className="squad-flow-node-label">{prettyLabel(node.label)}</span>
                       {node.isOrchestrator && (
-                        <span className="squad-flow-orch-tag" title="Team lead — close it to end the whole team">
-                          lead
+                        <span className="squad-flow-orch-tag" title="Orchestrator — close it to end the whole squad">
+                          orchestrator
                         </span>
                       )}
                     </span>
@@ -771,7 +771,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
         <Workflow size={28} aria-hidden="true" />
         <h4>No squads running</h4>
         <p>
-          When you launch a team, its members appear here as a live flow — who&rsquo;s working,
+          When you launch a squad, its members appear here as a live flow — who&rsquo;s working,
           who&rsquo;s blocked, and how work hands off between them.
         </p>
       </div>
@@ -846,7 +846,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
       {separateGraphs.length > 0 ? (
         <div
           className={`squad-flow-run-groups${isStackPanning ? ' is-panning' : ''}`}
-          aria-label="Team run canvases. Drag empty space to pan."
+          aria-label="Squad run canvases. Drag empty space to pan."
           {...stackPanProps}
         >
           {separateGraphs.map((graph) => (

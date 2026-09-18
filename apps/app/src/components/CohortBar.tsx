@@ -73,9 +73,9 @@ export function CohortBar({ cards, onCloseIdle }: CohortBarProps) {
   if (cohorts.length === 0) return null;
 
   return (
-    <div className="cohort-bar" aria-label="Live teams">
+    <div className="cohort-bar" aria-label="Live squads">
       <span className="cohort-bar-label">
-        <Users size={12} aria-hidden="true" /> Teams
+        <Users size={12} aria-hidden="true" /> Squads
       </span>
       {cohorts.map((co) => {
         // The lead = the orchestrator card (host-stamped `role:'orchestrator'`
@@ -84,12 +84,12 @@ export function CohortBar({ cards, onCloseIdle }: CohortBarProps) {
         // team's lead both visually (crown) and in the chip's title.
         const leadName = co.orchestrator?.session.title?.trim();
         const leadTitle = co.orchestrator
-          ? `${co.teamName} — lead: ${leadName || 'orchestrator'} (close it to end the whole team)`
-          : `${co.teamName} — no live lead (orchestrator has exited)`;
+          ? `${co.teamName} — orchestrator: ${leadName || 'orchestrator'} (close it to end the whole squad)`
+          : `${co.teamName} — no live orchestrator (it has exited)`;
         return (
         <div key={co.cohortId} className="cohort-chip" title={leadTitle}>
           {co.orchestrator && (
-            <span className="cohort-chip-orch" aria-label="Team lead">
+            <span className="cohort-chip-orch" aria-label="Orchestrator">
               <Crown size={11} aria-hidden="true" />
             </span>
           )}

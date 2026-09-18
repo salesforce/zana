@@ -17132,6 +17132,44 @@ body.resizing-col .explorer-resizer::after {
   margin: 0;
 }
 
+/* Per-team overrides: a checkbox row + a revealed input, distinct from the
+   uppercase field labels above. */
+.team-overrides .team-override-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.team-overrides .team-override-toggle input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+
+.team-overrides .team-override-input {
+  appearance: none;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 7px 10px;
+  font-family: inherit;
+  width: 100%;
+}
+
+.team-overrides textarea.team-override-input {
+  resize: vertical;
+  min-height: 60px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 11.5px;
+}
+
 .scheduler-form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -39337,6 +39375,7 @@ textarea.thread-command-editor {
 .teams-agent-badge {
   display: inline-flex;
   align-items: center;
+  gap: 3px;
   padding: 1px 7px;
   border-radius: 999px;
   font-size: 10.5px;
@@ -39508,17 +39547,20 @@ textarea.thread-command-editor {
   color: var(--text-primary);
 }
 
+/* Orchestrator badge — one shared gold+crown treatment across the squad editor
+   summary and the squad list (`teams-agent-badge--orch`). Keep the two in sync. */
 .team-slot-orch-badge {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   padding: 1px 7px;
   border-radius: 999px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent-gold, #d8b25a);
+  border: 1px solid color-mix(in srgb, var(--accent-gold, #d8b25a) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-gold, #d8b25a) 14%, transparent);
 }
 
 .team-slot-missing,
@@ -39609,6 +39651,18 @@ textarea.thread-command-editor {
 
 :root[data-theme='light'] .team-slot-qty {
   color-scheme: light;
+}
+
+/* Qty input can't carry a ::after tooltip (replaced element), so it's wrapped in
+   a .composer-control-tooltip span; stretch the wrapper + input to fill the grid
+   track so the layout matches the other slot-row cells. */
+.team-slot-qty-tip {
+  display: flex;
+  width: 100%;
+}
+
+.team-slot-qty-tip .team-slot-qty {
+  width: 100%;
 }
 
 .team-slot-orch-toggle.is-active {

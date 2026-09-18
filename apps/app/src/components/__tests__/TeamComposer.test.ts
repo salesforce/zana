@@ -12,8 +12,8 @@ describe('TeamComposer', () => {
     expect(source).toContain('composerDropProjectRoot');
     expect(source).toContain('preferredComposerProjectId');
     expect(source).toContain('PopoverPicklist');
-    expect(source).toContain('ariaLabel="Team"');
-    expect(source).toContain('Describe a goal for the team');
+    expect(source).toContain('ariaLabel="Squad"');
+    expect(source).toContain('Describe a goal for the squad');
     expect(source).toContain('disabled={!canLaunch}');
     expect(source).toContain('goalReady');
     expect(source).toContain('field.text.trim().length > 0');
@@ -40,7 +40,7 @@ describe('TeamComposer', () => {
     expect(source).not.toContain('EnvironmentPicker');
     expect(source).not.toContain('LauncherModelPicker');
     expect(source).toContain("className=\"composer-control-tooltip\" data-tooltip={field.canAttach ? 'Attach files' : 'File attachments require the desktop app'}");
-    expect(source).toContain('className="composer-control-tooltip" data-tooltip="Attach source files for the team to work from"');
+    expect(source).toContain('className="composer-control-tooltip" data-tooltip="Attach source files for the squad to work from"');
     expect(source).toContain("'Start voice input'");
   });
 

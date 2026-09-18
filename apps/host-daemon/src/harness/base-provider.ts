@@ -138,7 +138,10 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
    * overrides this. Claude/codex/cursor/pi/shell return `{}` — they use the
    * file-arg, `-c`-arg, or no MCP surface. See the interface doc for the rationale.
    */
-  mcpEnv(_profile: LaunchProfileId, _mcpUrl: string): Record<string, string> {
+  mcpEnv(
+    _profile: LaunchProfileId,
+    _mcpUrl: string
+  ): Record<string, string> {
     return {};
   }
 

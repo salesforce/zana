@@ -75,7 +75,7 @@ export function SquadEditor({
         className="modal persona-editor-modal team-editor-modal"
         role="dialog"
         aria-modal="true"
-        aria-label={team ? team.name : 'New team'}
+        aria-label={team ? team.name : 'New squad'}
         tabIndex={-1}
       >
         {mode === 'view' && team ? (
@@ -105,6 +105,17 @@ function TeamDetail({
   const isBuiltin = team.source === 'builtin';
   const Icon = resolveIcon(team.icon ?? 'Users');
 
+  // Show the orchestrator first even when it is a standalone persona not listed
+  // in `slots` (launch gives it its own tab regardless — see expandTeamSlots),
+  // mirroring the catalogue card so the detail view never hides it.
+  const readonlyRows = useMemo(() => {
+    const orchId = team.orchestratorPersonaId;
+    if (orchId && !team.slots.some((s) => s.personaId === orchId)) {
+      return [{ personaId: orchId, quantity: 1 } as TeamSlot, ...team.slots];
+    }
+    return team.slots;
+  }, [team]);
+
   return (
     <>
       <header className="modal-header">
@@ -122,10 +133,10 @@ function TeamDetail({
         {team.description && <p className="persona-detail-desc">{team.description}</p>}
         <div className="persona-detail-block">
           <span className="persona-detail-label">
-            Slots — {totalTabs(team.slots)} tab{totalTabs(team.slots) === 1 ? '' : 's'} total
+            Slots — {totalTabs(readonlyRows)} tab{totalTabs(readonlyRows) === 1 ? '' : 's'} total
           </span>
           <ul className="team-slot-list team-slot-list--readonly">
-            {team.slots.map((slot, i) => {
+            {readonlyRows.map((slot, i) => {
               const p = byId.get(slot.personaId);
               const isOrch = team.orchestratorPersonaId === slot.personaId;
               return (
@@ -136,15 +147,17 @@ function TeamDetail({
                   <span className="team-slot-name">
                     {slot.label || p?.name || slot.personaId}
                     {isOrch && (
-                      <span className="team-slot-orch-badge" title="Orchestrator — launched first">
+                      <span className="team-slot-orch-badge composer-control-tooltip" data-tooltip="Orchestrator — launched first">
                         <Crown size={11} /> Orchestrator
                       </span>
                     )}
                     {!p && <span className="team-slot-missing"> · unknown persona</span>}
                   </span>
-                  <span className="scheduler-pill">
-                    ×{Math.max(1, Math.min(TEAM_SLOT_MAX, slot.quantity ?? 1))}
-                  </span>
+                  {!isOrch && (
+                    <span className="scheduler-pill">
+                      ×{Math.max(1, Math.min(TEAM_SLOT_MAX, slot.quantity ?? 1))}
+                    </span>
+                  )}
                 </li>
               );
             })}
@@ -160,11 +173,11 @@ function TeamDetail({
       <footer className="modal-footer">
         {isExtension ? (
           <span className="persona-detail-note">
-            Extension team — defined by an extension. Use Duplicate to make an editable copy.
+            Extension squad — defined by an extension. Use Duplicate to make an editable copy.
           </span>
         ) : isForeign ? (
           <span className="persona-detail-note">
-            Project team — edit its file in the repo. Use Duplicate to make a personal copy.
+            Project squad — edit its file in the repo. Use Duplicate to make a personal copy.
           </span>
         ) : isBuiltin ? (
           <span className="persona-detail-note">
@@ -234,13 +247,23 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
     team?.orchestratorPersonaId ?? ''
   );
   const [defaultProjectId, setDefaultProjectId] = useState(team?.defaultProjectId ?? '');
-  const [slots, setSlots] = useState<SlotDraft[]>(
-    (team?.slots ?? []).map((s) => ({
+  const [slots, setSlots] = useState<SlotDraft[]>(() => {
+    const base = (team?.slots ?? []).map((s) => ({
       personaId: s.personaId,
       quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity ?? 1)),
       label: s.label ?? ''
-    }))
-  );
+    }));
+    // A squad may name its orchestrator as a persona that is NOT among the
+    // worker slots (launch gives the orchestrator its own tab regardless — see
+    // expandTeamSlots). Surface that standalone orchestrator as a crowned row so
+    // it is visible and editable here instead of silently vanishing from the
+    // form. Saving folds it into `slots`; expansion dedupes it back out.
+    const orchId = team?.orchestratorPersonaId;
+    if (orchId && !base.some((s) => s.personaId === orchId)) {
+      base.unshift({ personaId: orchId, quantity: 1, label: '' });
+    }
+    return base;
+  });
   const [saving, setSaving] = useState(false);
 
   const tabs = totalTabs(slots.map((s) => ({ personaId: s.personaId, quantity: s.quantity })));
@@ -315,7 +338,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       setSaving(false);
       return;
     }
-    pushToast(`Saved team “${result.value.name}”`, 'info');
+    pushToast(`Saved squad “${result.value.name}”`, 'info');
     onClose();
   };
 
@@ -329,7 +352,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
     pushToast(
       team.id.startsWith('builtin:')
         ? `Reset “${team.name}” to the built-in default`
-        : `Deleted team “${team.name}”`,
+        : `Deleted squad “${team.name}”`,
       'info'
     );
     onClose();
@@ -337,7 +360,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
 
   const isUserTeam = team?.source === 'user';
   const title = !team
-    ? 'New team'
+    ? 'New squad'
     : isForeignSource
       ? `Duplicate ${team.name}`
       : team.source === 'builtin'
@@ -413,7 +436,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
             <p className="settings-help team-slots-empty">
               {personas.length === 0
                 ? 'No personas found — create a persona first, then add slots.'
-                : 'No slots yet. Add at least one persona slot to launch this team.'}
+                : 'No slots yet. Add at least one persona slot to launch this squad.'}
             </p>
           ) : (
             <ul className="team-slot-list">
@@ -424,22 +447,22 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                     <div className="team-slot-reorder">
                       <button
                         type="button"
-                        className="icon-button team-slot-move"
+                        className="icon-button team-slot-move composer-control-tooltip"
                         onClick={() => moveSlot(idx, -1)}
                         disabled={idx === 0}
                         aria-label="Move up"
-                        title="Move up"
+                        data-tooltip="Move up"
                       >
                         ▲
                       </button>
                       <GripVertical size={12} className="team-slot-grip" aria-hidden />
                       <button
                         type="button"
-                        className="icon-button team-slot-move"
+                        className="icon-button team-slot-move composer-control-tooltip"
                         onClick={() => moveSlot(idx, 1)}
                         disabled={idx === slots.length - 1}
                         aria-label="Move down"
-                        title="Move down"
+                        data-tooltip="Move down"
                       >
                         ▼
                       </button>
@@ -466,26 +489,27 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                       placeholder="Label (optional)"
                       aria-label="Slot label"
                     />
-                    <input
-                      className="team-slot-qty"
-                      type="number"
-                      min={1}
-                      max={TEAM_SLOT_MAX}
-                      value={slot.quantity}
-                      onChange={(e) =>
-                        updateSlot(idx, {
-                          quantity: Math.max(
-                            1,
-                            Math.min(TEAM_SLOT_MAX, Number(e.target.value) || 1)
-                          )
-                        })
-                      }
-                      aria-label="Tab count"
-                      title="Tabs to open for this slot"
-                    />
+                    <span className="composer-control-tooltip team-slot-qty-tip" data-tooltip="Tabs to open for this slot">
+                      <input
+                        className="team-slot-qty"
+                        type="number"
+                        min={1}
+                        max={TEAM_SLOT_MAX}
+                        value={slot.quantity}
+                        onChange={(e) =>
+                          updateSlot(idx, {
+                            quantity: Math.max(
+                              1,
+                              Math.min(TEAM_SLOT_MAX, Number(e.target.value) || 1)
+                            )
+                          })
+                        }
+                        aria-label="Tab count"
+                      />
+                    </span>
                     <button
                       type="button"
-                      className={`icon-button team-slot-orch-toggle ${orchestratorPersonaId === slot.personaId ? 'is-active' : ''}`}
+                      className={`icon-button team-slot-orch-toggle composer-control-tooltip ${orchestratorPersonaId === slot.personaId ? 'is-active' : ''}`}
                       onClick={() =>
                         setOrchestratorPersonaId(
                           orchestratorPersonaId === slot.personaId ? '' : slot.personaId
@@ -493,16 +517,16 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                       }
                       aria-pressed={orchestratorPersonaId === slot.personaId}
                       aria-label="Mark as orchestrator"
-                      title="Orchestrator — launched first, carries the opening prompt"
+                      data-tooltip="Orchestrator — launched first, carries the opening prompt"
                     >
                       <Crown size={14} />
                     </button>
                     <button
                       type="button"
-                      className="icon-button team-slot-remove"
+                      className="icon-button team-slot-remove composer-control-tooltip"
                       onClick={() => removeSlot(idx)}
                       aria-label="Remove slot"
-                      title="Remove slot"
+                      data-tooltip="Remove slot"
                     >
                       <X size={14} />
                     </button>
@@ -551,7 +575,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
           <button
             className="btn danger persona-form-delete"
             onClick={remove}
-            title={team.source === 'builtin' ? 'Reset to the built-in default' : 'Delete this team'}
+            title={team.source === 'builtin' ? 'Reset to the built-in default' : 'Delete this squad'}
           >
             <Trash2 size={14} /> {team.source === 'builtin' ? 'Reset' : 'Delete'}
           </button>

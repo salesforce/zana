@@ -826,7 +826,7 @@ function AgentSideListRow({
           {!exited && <span className={`tab-agent-dot agent-${row.state}`} aria-hidden="true" />}
           <span className="agents-row-title">{t.title}</span>
           {isOrch && (
-            <span title="Coordinator">
+            <span title="Orchestrator">
               <Crown size={12} className="agents-row-role-icon" style={{ marginLeft: 4, opacity: 0.6 }} />
             </span>
           )}

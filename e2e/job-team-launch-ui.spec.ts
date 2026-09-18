@@ -107,7 +107,7 @@ test(`launching a ${coordinationMode} Team through the real UI completes durable
     await expect(modal).toBeVisible();
 
     // 2. Switch to the unified Team mode.
-    await modal.locator('.launch-segmented').getByRole('button', { name: 'Team', exact: true }).click();
+    await modal.locator('.launch-segmented').getByRole('button', { name: 'Squad', exact: true }).click();
 
     // 3. Describe the goal in the real composer editor (TipTap).
     const goal = modal.getByTestId('team-command-input');
@@ -116,10 +116,10 @@ test(`launching a ${coordinationMode} Team through the real UI completes durable
     await expect(goal).toContainText('coordinate smoke check and report back');
 
     // 4. Pick the team through the composer's Team picklist.
-    const teamPicker = modal.getByLabel('Team', { exact: true });
+    const teamPicker = modal.getByLabel('Squad', { exact: true });
     await teamPicker.click();
     await window
-      .getByRole('listbox', { name: 'Team' })
+      .getByRole('listbox', { name: 'Squad' })
       .getByRole('option', { name: 'E2E Job Team' })
       .click();
     await expect(teamPicker).toContainText('E2E Job Team');
@@ -137,7 +137,7 @@ test(`launching a ${coordinationMode} Team through the real UI completes durable
     await modal.getByLabel('Summary Optional').fill('Durable job launch from the Agents board');
 
     // 7. Launch — this calls the intact `teams.startJob` durable path.
-    await modal.getByLabel('Team planning').click();
+    await modal.getByLabel('Squad planning').click();
     await window.getByRole('option', { name: planningLabel, exact: true }).click();
     const send = modal.getByTestId('team-command-send');
     await expect(send).toBeEnabled({ timeout: 15_000 });
@@ -317,7 +317,7 @@ test('a structured Team seeds a provided portable plan pre-launch and dispatches
     await window.locator('[data-testid="agents-board-new-thread"]').first().click();
     const modal = window.locator('[data-testid="launch-modal"]');
     await expect(modal).toBeVisible();
-    await modal.locator('.launch-segmented').getByRole('button', { name: 'Team', exact: true }).click();
+    await modal.locator('.launch-segmented').getByRole('button', { name: 'Squad', exact: true }).click();
 
     // Goal REFERENCES the plan file — main snapshots it as an execution source and
     // the launch path parses its content into the seeded DAG.
@@ -325,9 +325,9 @@ test('a structured Team seeds a provided portable plan pre-launch and dispatches
     await goal.click();
     await goal.fill(`implement ${planPath}`);
 
-    const teamPicker = modal.getByLabel('Team', { exact: true });
+    const teamPicker = modal.getByLabel('Squad', { exact: true });
     await teamPicker.click();
-    await window.getByRole('listbox', { name: 'Team' }).getByRole('option', { name: 'E2E Job Team' }).click();
+    await window.getByRole('listbox', { name: 'Squad' }).getByRole('option', { name: 'E2E Job Team' }).click();
     await expect(teamPicker).toContainText('E2E Job Team');
 
     const projectPicker = modal.getByRole('button', { name: 'Project', exact: true });
@@ -335,7 +335,7 @@ test('a structured Team seeds a provided portable plan pre-launch and dispatches
     await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();
     await expect(projectPicker).toContainText(projectName);
 
-    await modal.getByLabel('Team planning').click();
+    await modal.getByLabel('Squad planning').click();
     await window.getByRole('option', { name: 'Plan provided in goal', exact: true }).click();
     const send = modal.getByTestId('team-command-send');
     await expect(send).toBeEnabled({ timeout: 15_000 });

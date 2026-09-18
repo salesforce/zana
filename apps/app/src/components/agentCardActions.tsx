@@ -202,7 +202,7 @@ export function useAgentCardActions(): {
       // close keeps the default single-session prompt.
       const isLead = c.session.cohort?.role === 'orchestrator';
       const message = isLead
-        ? `Close “${c.session.title}”? It's the team lead — closing it will also stop every other agent in “${c.session.cohort?.teamName}”.`
+        ? `Close “${c.session.title}”? It's the orchestrator — closing it will also stop every other agent in “${c.session.cohort?.teamName}”.`
         : cliAgentDeleteConfirm(c.session.title);
       if (live && !window.confirm(message)) {
         return;

@@ -39,7 +39,7 @@ describe('ExecutionJobDetails phase 5 projection', () => {
 
   it('keeps stop available and hides generic retry for resource blocks', async () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
-    expect(await screen.findByRole('button', { name: 'Stop Team run' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Retry Team run' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Stop Squad run' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry Squad run' })).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 import { product } from '../../lib/product-client.js';
 import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
-import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2 } from 'lucide-react';
+import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2, Crown } from 'lucide-react';
 import type { CancelTeamLaunchResult, LaunchTeamResult, Project, Result, Team, Persona } from '@zana-ai/zcc-domain/product';
 import { useTeams, useData, useUi, usePersonas } from '@/store';
 import { resolveIcon } from '@/lib/resolveIcon';
@@ -164,7 +164,7 @@ export function SquadsView() {
   // main re-validates the id (Rule 1), so a stale id fails cleanly with a toast.
   const launch = async (team: Team, projectId: string): Promise<Result<LaunchTeamResult> | null> => {
     if (!projectId) {
-      pushToast('Add a project before launching a team.', 'error');
+      pushToast('Add a project before launching a squad.', 'error');
       return null;
     }
     const res = await product.teams.launch(team.id, projectId);
@@ -185,7 +185,7 @@ export function SquadsView() {
 
   const reveal = async () => {
     const res = await product.teams.revealDir();
-    if (!res.ok) pushToast(res.message ?? 'Failed to reveal teams directory', 'error');
+    if (!res.ok) pushToast(res.message ?? 'Failed to reveal squads directory', 'error');
   };
 
   const exportTeam = async (team: Team) => {
@@ -256,8 +256,8 @@ export function SquadsView() {
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search teams…"
-                  aria-label="Search teams"
+                  placeholder="Search squads…"
+                  aria-label="Search squads"
                 />
               </div>
               <div className="skills-filter" role="tablist" aria-label="Source filter">
@@ -278,16 +278,16 @@ export function SquadsView() {
             </div>
 
             {loading ? (
-              <DelayedStencilList label="Loading teams" className="scheduler-empty" />
+              <DelayedStencilList label="Loading squads" className="scheduler-empty" />
             ) : filtered.length === 0 ? (
               <div className="scheduler-empty">
                 <Users size={28} className="scheduler-empty-icon" />
                 <div className="scheduler-empty-title">
-                  {teams.length === 0 ? 'No teams found' : 'No matches'}
+                  {teams.length === 0 ? 'No squads found' : 'No matches'}
                 </div>
                 <div className="scheduler-empty-hint">
                   {teams.length === 0
-                    ? 'Create a team with “New team”, or use a builtin.'
+                    ? 'Create a squad with “New squad”, or use a builtin.'
                     : 'Try a different search or filter.'}
                 </div>
               </div>
@@ -616,7 +616,7 @@ function TeamRow({
         <div className="teams-agents-list" role="region" aria-label={`Agents in ${team.name}`}>
           {team.slots.length === 0 && !team.orchestratorPersonaId ? (
             <div className="teams-agents-empty">
-              No agents configured for this team
+              No agents configured for this squad
             </div>
           ) : slotPersonas.length === 0 ? (
             <DelayedStencilList label="Loading agents" className="teams-agents-empty" />
@@ -638,8 +638,11 @@ function TeamRow({
                           {persona?.name ?? slot.personaId}
                         </span>
                         {isOrchestrator && (
-                          <span className="teams-agent-badge teams-agent-badge--orch">
-                            Orchestrator
+                          <span
+                            className="teams-agent-badge teams-agent-badge--orch composer-control-tooltip"
+                            data-tooltip="Orchestrator — launched first, carries the opening prompt"
+                          >
+                            <Crown size={11} aria-hidden="true" /> Orchestrator
                           </span>
                         )}
                         {quantity > 1 && (

@@ -308,6 +308,9 @@ importers:
       '@zana-ai/zcc-host-daemon-contract':
         specifier: workspace:*
         version: link:../../packages/host-daemon-contract
+      '@zana-ai/zcc-path-confine':
+        specifier: workspace:*
+        version: link:../../packages/path-confine
       '@zana-ai/zcc-server':
         specifier: workspace:*
         version: link:../server

@@ -357,7 +357,10 @@ export interface LaunchProvider {
    * concrete `OPENCODE_CONFIG_CONTENT` string lives ONLY in the OpenCode provider
    * (Rule 6).
    */
-  mcpEnv(profile: LaunchProfileId, mcpUrl: string): Record<string, string>;
+  mcpEnv(
+    profile: LaunchProfileId,
+    mcpUrl: string
+  ): Record<string, string>;
 
   /**
    * Argv fragment that delivers the launcher's inbox/mesh/report GUIDANCE text

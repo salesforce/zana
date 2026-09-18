@@ -516,7 +516,7 @@ function AgentMonitorSession({
           className="agent-monitor-action"
           onClick={() => onInspectExecution(execution.projectId, execution.executionId)}
         >
-          {execution.currentBlocker ? 'Respond in Team details' : 'Team details'}
+          {execution.currentBlocker ? 'Respond in Squad details' : 'Squad details'}
         </button>
       )}
       {!exited && (

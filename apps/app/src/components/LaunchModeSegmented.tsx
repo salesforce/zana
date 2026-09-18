@@ -46,7 +46,7 @@ export function LaunchModeSegmented({
           onClick={() => onChange('team')}
           aria-pressed={value === 'team'}
         >
-          <Users size={13} /> Team
+          <Users size={13} /> Squad
         </button>
       )}
     </div>
