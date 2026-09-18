@@ -8,6 +8,7 @@ import {
   resetThreadModelCatalog,
   setThreadModelCatalogHost,
   setThreadModelCatalogScope,
+  type ThreadExecutionOptionsQuery,
   type ThreadExecutionOptionsFetcher
 } from './thread-model-catalog.js';
 
@@ -321,6 +322,22 @@ describe('thread model catalog', () => {
     calls.length = 0;
     await setThreadModelCatalogHost('other-host');
     expect(calls).toEqual([{ providerId: undefined, hostId: 'other-host' }]);
+  });
+
+  it('clears prior project scope when a host-only caller takes ownership', async () => {
+    const calls: ThreadExecutionOptionsQuery[] = [];
+    resetThreadModelCatalog(async (query) => {
+      calls.push(query ?? {});
+      return optionsBody(['acp-opencode'], query?.providerId ?? 'roster');
+    });
+
+    await setThreadModelCatalogScope({ hostId: 'project-host', projectId: 'project-1' });
+    calls.length = 0;
+    await setThreadModelCatalogHost('host-only');
+
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.hostId === 'host-only' && call.projectId === undefined)).toBe(true);
+    expect(getThreadModelCatalog().projectId).toBeUndefined();
   });
 
   it('scopes every fetch to the selected project and drops project-local roles when it changes', async () => {

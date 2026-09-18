@@ -203,7 +203,7 @@ export function reloadThreadModelCatalog(): Promise<void> {
 
 /** Scope the catalog to the machine that will spawn the thread. Reloads when it changes. */
 export function setThreadModelCatalogHost(hostId: string | undefined): Promise<void> {
-  return setThreadModelCatalogScope({ hostId, projectId: catalogProjectId });
+  return setThreadModelCatalogScope({ hostId });
 }
 
 /** Scope sessionless discovery to the registered project that will own the new thread. */

@@ -10,6 +10,7 @@ import type {
   LaunchProfileId,
   LibraryScope,
   Persona,
+  Project,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
 import { browserRequestProblem, headerValue } from './browser-request-guard.js';
@@ -267,6 +268,59 @@ function confineCwd(
     return isZccManagedWorkspacePath({ dataDir: realpathSync(ctx.dataDir), path: resolved }) ? resolved : null;
   } catch {
     return null;
+  }
+}
+
+type DiscoveryScopeResult =
+  | { ok: true; hostId?: string; cwd?: string }
+  | { ok: false; status: number; code: string; message: string };
+
+async function resolveExecutionOptionsScope(args: {
+  ctx: ProductHttpContext;
+  projectId?: string;
+  requestedHostId?: string;
+}): Promise<DiscoveryScopeResult> {
+  const { ctx, projectId, requestedHostId } = args;
+  const project: Project | undefined = projectId
+    ? ctx.toProjects().find((row) => row.id === projectId)
+    : undefined;
+  if (projectId && !project) {
+    return { ok: false, status: 404, code: 'unknown-project', message: 'project is not registered' };
+  }
+  if (!project) return { ok: true, hostId: requestedHostId };
+  if (!project.remote) {
+    let cwd: string | undefined;
+    try {
+      cwd = confineCwd(ctx, project.path, undefined) ?? undefined;
+    } catch {
+      cwd = undefined;
+    }
+    return cwd
+      ? { ok: true, hostId: project.hostId, cwd }
+      : { ok: false, status: 400, code: 'path-unavailable', message: 'project path is unavailable' };
+  }
+  if (!project.hostId) {
+    return { ok: false, status: 409, code: 'host-unavailable', message: 'remote project has no bound host' };
+  }
+  try {
+    const hostId = ctx.hostHub.resolveHostId(project.hostId);
+    ctx.hostHub.ensureHostSessionReady(hostId);
+    const cwd = await resolveHarnessWorkspacePath({
+      project,
+      remoteToolProxy: false,
+      remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
+      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      probeHostHome: async () => {
+        const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
+          hostId,
+          command: { type: 'host.browse_directory' }
+        });
+        return listing.directory;
+      }
+    });
+    return { ok: true, hostId: project.hostId, cwd };
+  } catch {
+    return { ok: false, status: 409, code: 'path-unavailable', message: 'remote project path is unavailable' };
   }
 }
 
@@ -3081,52 +3135,12 @@ export async function handleProductHttp(
       const providerId = requestUrl.searchParams.get('providerId') ?? undefined;
       const requestedHostId = requestUrl.searchParams.get('hostId') ?? undefined;
       const projectId = requestUrl.searchParams.get('projectId') ?? undefined;
-      const project = projectId ? ctx.toProjects().find((row) => row.id === projectId) : undefined;
-      if (projectId && !project) {
-        sendJson(response, 404, { code: 'unknown-project', message: 'project is not registered' });
+      const scope = await resolveExecutionOptionsScope({ ctx, projectId, requestedHostId });
+      if (!scope.ok) {
+        sendJson(response, scope.status, { code: scope.code, message: scope.message });
         return true;
       }
-      // A project-scoped request derives its host exclusively from main's
-      // registered project record. Renderer hostId is advisory only when no
-      // project is selected.
-      const discoveryHostId = project ? project.hostId : requestedHostId;
-      let discoveryCwd: string | undefined;
-      if (project?.remote) {
-        if (!project.hostId) {
-          sendJson(response, 409, { code: 'host-unavailable', message: 'remote project has no bound host' });
-          return true;
-        }
-        try {
-          const hostId = ctx.hostHub.resolveHostId(project.hostId);
-          ctx.hostHub.ensureHostSessionReady(hostId);
-          discoveryCwd = await resolveHarnessWorkspacePath({
-            project,
-            remoteToolProxy: false,
-            remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
-            hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
-            probeHostHome: async () => {
-              const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
-                hostId,
-                command: { type: 'host.browse_directory' }
-              });
-              return listing.directory;
-            }
-          });
-        } catch {
-          sendJson(response, 409, { code: 'path-unavailable', message: 'remote project path is unavailable' });
-          return true;
-        }
-      } else if (project) {
-        try {
-          discoveryCwd = confineCwd(ctx, project.path, undefined) ?? undefined;
-        } catch {
-          discoveryCwd = undefined;
-        }
-        if (!discoveryCwd) {
-          sendJson(response, 400, { code: 'path-unavailable', message: 'project path is unavailable' });
-          return true;
-        }
-      }
+      const discoveryHostId = scope.hostId;
       let availability: Awaited<ReturnType<typeof harnessVerify>> = [];
       let extraInstalled: Record<string, boolean> = {};
       try {
@@ -3160,7 +3174,7 @@ export async function handleProductHttp(
               type: 'provider.list_models',
               providerId,
               bridgeLaunch: bridgeLaunchForProvider(providerId, ctx.pluginHostArtifacts),
-              ...(discoveryCwd ? { cwd: discoveryCwd } : {})
+              ...(scope.cwd ? { cwd: scope.cwd } : {})
             }
           });
         } catch (error) {

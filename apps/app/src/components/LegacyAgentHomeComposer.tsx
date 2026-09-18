@@ -281,12 +281,10 @@ export function LegacyAgentHomeComposer({
   const openCodeMode = roleTargetId
     ? openCodeModeEntries.find((entry) => entry.nativeValue === roleTargetId)?.id ?? 'agent'
     : 'agent';
+  const selectedOpenCodeRole = roleTargetId
+    ? openCodeModeEntries.find((entry) => entry.nativeValue === roleTargetId)
+    : undefined;
   const modeChip = cliComposerModeChip(familyId);
-
-  useEffect(() => {
-    if (nativeAgentDiscoveryEnabled || !roleTargetId) return;
-    if (!roleOptions.some((option) => option.value === roleTargetId)) setRoleTargetId(undefined);
-  }, [nativeAgentDiscoveryEnabled, roleOptions, roleTargetId]);
 
   const field = useComposerPromptField({
     placeholder: 'Describe the task… Leave empty to open an interactive session',
@@ -345,12 +343,10 @@ export function LegacyAgentHomeComposer({
       if (roleTargetId) setRoleTargetId(undefined);
       return;
     }
-    const options = catalogEntry?.acpMode?.options;
-    if (!options) return;
-    if (roleTargetId && !options.some((option) => option.value === roleTargetId)) {
+    if (roleTargetId && !openCodeModeEntries.some((entry) => entry.nativeValue === roleTargetId)) {
       setRoleTargetId(undefined);
     }
-  }, [familyId, catalogEntry?.acpMode, roleTargetId]);
+  }, [familyId, openCodeModeEntries, roleTargetId]);
 
   useEffect(() => {
     if (permissionModeIds.length > 0 && !permissionModeIds.includes(permissionMode)) {
@@ -829,10 +825,8 @@ export function LegacyAgentHomeComposer({
                   moreModelOptions={availableModelsToPickerOptions(moreModelOptions)}
                   modelIsLoading={catalogModelsLoading}
                   modelLockedLabel={
-                    familyId === 'opencode'
-                    && roleTargetId
-                    && roleOptions.some((role) => role.value === roleTargetId)
-                      ? `Model chosen by ${openCodeModeEntries.find((entry) => entry.nativeValue === roleTargetId)?.label ?? roleTargetId}`
+                    familyId === 'opencode' && selectedOpenCodeRole
+                      ? `Model chosen by ${selectedOpenCodeRole.label}`
                       : undefined
                   }
                   disabled={harnessProviderOptions.length === 0}

@@ -131,7 +131,8 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('hasNativeRole: Boolean(validRoleId)');
     expect(source).toContain('unrestrictedProfileSelected: Boolean(permLaunch.profileId)');
     expect(source).toContain("modelLockedLabel={");
-    expect(source).toContain('Model chosen by ${openCodeModeEntries.find');
+    expect(source).toContain('Model chosen by ${selectedOpenCodeRole.label}');
+    expect(source).toContain('familyId === \'opencode\' && selectedOpenCodeRole');
     expect(source).toContain('disabled={harnessProviderOptions.length === 0}');
   });
 
@@ -165,7 +166,6 @@ describe('LegacyAgentHomeComposer', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
     const footer = source.slice(source.indexOf('thread-command-footer-start'));
     expect(footer.indexOf('<ComposerModePicker')).toBeLessThan(footer.indexOf('<ModelReasoningPicker'));
-    expect(footer.indexOf('<NativeRolePicker')).toBeLessThan(footer.indexOf('<ModelReasoningPicker'));
   });
 
   it('defaults the harness like Modern via resolveCliAgentFamily (current → remembered → effectiveDefault)', () => {
