@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "browser": "151.0.7922.34",
+  "externalRequests": 0,
+  "pageErrors": [],
+  "jsCoveragePercent": 99.51,
+  "coverage": [
+    {
+      "file": "timeline.js",
+      "bytes": 8744,
+      "used": 8738
+    },
+    {
+      "file": "app.js",
+      "bytes": 37053,
+      "used": 36836
+    }
+  ],
+  "checks": [
+    "every timeline transition",
+    "question and resume",
+    "GUS ticket draft then send",
+    "plugin add/toggle/blank input/escaping/bound",
+    "play/pause/restart/seek/chapter jump",
+    "narration enable and pause",
+    "end of playback",
+    "responsive scale and capture mode"
+  ]
+}

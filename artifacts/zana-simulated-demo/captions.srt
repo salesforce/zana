@@ -1,0 +1,115 @@
+1
+00:00:00,700 --> 00:00:06,933
+Meet Zana. A place to organize your projects, work with AI agents, and keep everything in view.
+
+2
+00:00:07,400 --> 00:00:09,289
+Start by adding a project.
+
+3
+00:00:11,500 --> 00:00:16,845
+Choose a local folder. You can also clone a repository or connect to a remote project.
+
+4
+00:00:19,700 --> 00:00:21,303
+Now your work has a home.
+
+5
+00:00:23,400 --> 00:00:28,060
+Create an agent and choose your preferred provider. Here, we'll use Codex.
+
+6
+00:00:29,500 --> 00:00:34,158
+Describe the outcome you want, along with any constraints. Then send it off.
+
+7
+00:00:36,800 --> 00:00:42,679
+The agent reads the project and starts making changes. You can follow its activity as it works.
+
+8
+00:00:46,400 --> 00:00:49,853
+The Agents board gives you an overview across your projects.
+
+9
+00:00:50,800 --> 00:00:54,430
+When a decision needs your input, the thread moves to Needs you.
+
+10
+00:00:55,500 --> 00:00:59,354
+Open the question, choose an answer, and let the work continue.
+
+11
+00:01:00,500 --> 00:01:04,237
+You can inspect the changed files right beside the conversation.
+
+12
+00:01:05,000 --> 00:01:07,969
+Watch the checks finish, then review the result.
+
+13
+00:01:10,600 --> 00:01:15,446
+The agent summarizes what changed. Open the preview to see the dashboard it built.
+
+14
+00:01:19,100 --> 00:01:23,093
+Back on the board, the thread is idle and ready for your next instruction.
+
+15
+00:01:25,400 --> 00:01:29,600
+With the GUS plugin connected to your account, your tickets are right here.
+
+16
+00:01:30,600 --> 00:01:33,681
+Choose Me and the current sprint to focus on your own work.
+
+17
+00:01:35,300 --> 00:01:39,305
+Open a ticket to see its details. Watch it to keep it close.
+
+18
+00:01:41,000 --> 00:01:44,629
+The conversation and acceptance criteria stay with the ticket.
+
+19
+00:01:47,300 --> 00:01:52,486
+Work with agent prepares a draft with the ticket context. Review it, then send.
+
+20
+00:01:53,500 --> 00:01:56,639
+The agent can pick up from the work you're already tracking.
+
+21
+00:01:59,300 --> 00:02:03,008
+Plugins bring your tools into Zana. And you can create your own.
+
+22
+00:02:05,400 --> 00:02:13,192
+Describe your idea in plain language. Let's make a Focus Board with daily priorities, checkboxes, and a completion count.
+
+23
+00:02:17,400 --> 00:02:22,118
+The agent uses the Plugin Guide, builds the panel, and checks its behavior.
+
+24
+00:02:26,400 --> 00:02:29,348
+You can follow the build just like any other task.
+
+25
+00:02:33,400 --> 00:02:37,349
+Review the plugin's access, then install and enable it locally.
+
+26
+00:02:41,400 --> 00:02:44,603
+Your new tool appears in the sidebar, ready to use.
+
+27
+00:02:46,000 --> 00:02:48,849
+Check off a priority and watch the count update.
+
+28
+00:02:50,800 --> 00:02:54,448
+Add another task. A small tool, built around your day.
+
+29
+00:02:59,100 --> 00:03:05,912
+Start a project. Give an agent a goal. Stay in the loop, keep your tickets close, and make Zana your own.

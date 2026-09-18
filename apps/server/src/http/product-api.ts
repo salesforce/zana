@@ -66,6 +66,7 @@ import { listQueuedMessages, createQueuedMessage, updateQueuedMessage, deleteQue
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
+import { sendVideoPreview } from './video-preview.js';
 import { listThreadStorageFiles, readThreadStorageFile } from '../services/threads/thread-storage.js';
 import { getConversationThreadTabs, updateConversationThreadTabs } from '../services/threads/thread-tabs.js';
 import {
@@ -367,6 +368,14 @@ export async function handleProductHttp(
   }
 
   try {
+    if (path === '/api/v1/file-preview/video' && (method === 'GET' || method === 'HEAD')) {
+      try {
+        await sendVideoPreview(request, response, ctx, requestUrl.searchParams);
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
     if (path === '/api/v1/health' && (method === 'GET' || method === 'HEAD')) {
       sendJson(response, 200, { ok: true });
       return true;

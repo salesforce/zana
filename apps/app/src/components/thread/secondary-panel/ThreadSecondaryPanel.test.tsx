@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment happy-dom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ThreadSecondaryPanel } from './ThreadSecondaryPanel.js';
 import { emptySecondaryPanelState, openNewTab, openSecondaryPanel, selectPinnedView } from './threadSecondaryPanelState.js';
@@ -6,7 +8,61 @@ import { emptySecondaryPanelState, openNewTab, openSecondaryPanel, selectPinnedV
 
 const noop = () => undefined;
 
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
 describe('ThreadSecondaryPanel chrome', () => {
+  it('reveals the active tab and keeps pin and panel actions outside the scrolling tabs', () => {
+    const scroll = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
+    const handlers = {
+      onSelectInfo: vi.fn(), onSelectDiff: vi.fn(), onSelectPlan: vi.fn(),
+      onNewTab: vi.fn(), onCloseTab: vi.fn(), onActivateTab: vi.fn(),
+      onToggleMaximized: vi.fn(), onHide: vi.fn(), onResize: vi.fn()
+    };
+    const state = {
+      ...openSecondaryPanel(emptySecondaryPanelState()),
+      activeId: 'first',
+      tabs: [
+        { id: 'first', kind: 'new-tab' as const, title: 'supabase-adapter.ts' },
+        { id: 'last', kind: 'new-tab' as const, title: 'native-build-configuration.ts' }
+      ]
+    };
+    const view = render(<ThreadSecondaryPanel state={state} showDiffPin showPlanPin {...handlers}>body</ThreadSecondaryPanel>);
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
+    expect(scroll.mock.instances[0]).toBe(view.getByText('supabase-adapter.ts').parentElement);
+    for (const [label, handler] of [
+      ['Show info', handlers.onSelectInfo], ['Show workspace diff', handlers.onSelectDiff],
+      ['Show plan', handlers.onSelectPlan], ['New tab', handlers.onNewTab],
+      ['Maximize panel', handlers.onToggleMaximized], ['Hide right panel', handlers.onHide]
+    ] as const) {
+      const button = view.getByRole('button', { name: label });
+      expect(button.closest('.thread-secondary-tabs')).toBeNull();
+      fireEvent.click(button);
+      expect(handler).toHaveBeenCalledOnce();
+    }
+    fireEvent.click(view.getByRole('button', { name: 'native-build-configuration.ts', exact: true }));
+    expect(handlers.onActivateTab).toHaveBeenCalledWith('last');
+    view.rerender(<ThreadSecondaryPanel state={{ ...state, activeId: 'last' }} {...handlers}>body</ThreadSecondaryPanel>);
+    expect(scroll.mock.instances.at(-1)).toBe(view.getByText('native-build-configuration.ts').parentElement);
+    fireEvent.click(view.getByRole('button', { name: 'Close native-build-configuration.ts' }));
+    expect(handlers.onCloseTab).toHaveBeenCalledWith('last');
+    scroll.mockClear();
+    view.rerender(<ThreadSecondaryPanel state={selectPinnedView(state, 'info')} {...handlers}>body</ThreadSecondaryPanel>);
+    expect(scroll).not.toHaveBeenCalled();
+
+    vi.spyOn(view.container, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 600));
+    fireEvent.mouseDown(view.getByRole('separator', { name: 'Resize right panel' }));
+    expect(document.body.classList.contains('resizing-col')).toBe(true);
+    fireEvent.mouseMove(window, { clientX: 600 });
+    expect(handlers.onResize).toHaveBeenCalledWith(400, 1000);
+    fireEvent.mouseUp(window);
+    expect(document.body.classList.contains('resizing-col')).toBe(false);
+    fireEvent.mouseMove(window, { clientX: 500 });
+    expect(handlers.onResize).toHaveBeenCalledOnce();
+  });
+
   it('renders Info, New Tab, maximize, and hide controls', () => {
     const html = renderToStaticMarkup(
       <ThreadSecondaryPanel

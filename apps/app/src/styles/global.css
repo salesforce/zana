@@ -35878,6 +35878,7 @@ textarea.thread-command-editor {
 
 .thread-secondary-chrome {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -35887,6 +35888,7 @@ textarea.thread-command-editor {
 }
 
 .thread-secondary-pins,
+.thread-secondary-tabs,
 .thread-secondary-controls {
   display: flex;
   align-items: center;
@@ -35894,8 +35896,24 @@ textarea.thread-command-editor {
   min-width: 0;
 }
 
+.thread-secondary-pins,
+.thread-secondary-controls {
+  flex: 0 0 auto;
+}
+
+.thread-secondary-pins:empty {
+  display: none;
+}
+
+.thread-secondary-tabs {
+  flex: 1 1 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
 .thread-secondary-pin {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   width: 28px;
@@ -35914,8 +35932,10 @@ textarea.thread-command-editor {
 
 .thread-secondary-tab {
   display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 0;
   align-items: center;
-  max-width: 9rem;
+  max-width: min(9rem, 100%);
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
@@ -35945,6 +35965,7 @@ textarea.thread-command-editor {
 }
 
 .thread-secondary-tab-close {
+  flex: 0 0 auto;
   padding: 4px 6px 4px 0;
 }
 

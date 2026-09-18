@@ -1,4 +1,4 @@
-import { type MouseEvent, type ReactNode, useRef } from 'react';
+import { type MouseEvent, type ReactNode, useEffect, useRef } from 'react';
 import { GitCompare, Info, ListTodo, Maximize2, Minimize2, PanelRight, Plus, X } from 'lucide-react';
 import {
   activeClosableTab,
@@ -43,8 +43,13 @@ export function ThreadSecondaryPanel({
   onResize: (widthPx: number, containerWidthPx: number) => void;
 }) {
   const panelRef = useRef<HTMLElement>(null);
+  const activeTabRef = useRef<HTMLSpanElement>(null);
   const pin = activePinnedView(state);
   const activeTab = activeClosableTab(state);
+
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [activeTab?.id]);
 
   const onResizeMouseDown = (event: MouseEvent<HTMLDivElement>) => {
     startColumnResize(
@@ -110,12 +115,15 @@ export function ThreadSecondaryPanel({
               <ListTodo size={15} />
             </button>
           ) : null}
+        </div>
+        <div className="thread-secondary-tabs">
           {state.tabs.map((tab) => (
             <span
               key={tab.id}
+              ref={activeTab?.id === tab.id ? activeTabRef : undefined}
               className={`thread-secondary-tab${activeTab?.id === tab.id ? ' is-active' : ''}`}
             >
-              <button type="button" className="thread-secondary-tab-label" onClick={() => onActivateTab(tab.id)}>
+              <button type="button" className="thread-secondary-tab-label" title={tab.title} onClick={() => onActivateTab(tab.id)}>
                 {tab.title}
               </button>
               <button
@@ -128,6 +136,8 @@ export function ThreadSecondaryPanel({
               </button>
             </span>
           ))}
+        </div>
+        <div className="thread-secondary-controls">
           <button
             type="button"
             className="thread-secondary-pin"
@@ -137,8 +147,6 @@ export function ThreadSecondaryPanel({
           >
             <Plus size={15} />
           </button>
-        </div>
-        <div className="thread-secondary-controls">
           <button
             type="button"
             className="thread-secondary-pin"

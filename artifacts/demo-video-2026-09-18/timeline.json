@@ -1,0 +1,485 @@
+[
+  {
+    "id": "intro",
+    "chapter": 0,
+    "title": "Your work. One command center.",
+    "subtitle": "Projects \u00b7 Agents \u00b7 GUS \u00b7 Plugins",
+    "lines": [
+      "Meet Zana: one place to organize your projects, launch AI agents, and keep track of their work.",
+      "Let's walk through a project, then explore GUS tickets and custom plugins."
+    ],
+    "duration": 12.0,
+    "frames": 288,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 6.441333333333334,
+        "text": "Meet Zana: one place to organize your projects, launch AI agents, and keep track of their work."
+      },
+      {
+        "start": 6.711333333333334,
+        "end": 11.057416666666668,
+        "text": "Let's walk through a project, then explore GUS tickets and custom plugins."
+      }
+    ],
+    "start": 0
+  },
+  {
+    "id": "project-menu",
+    "chapter": 1,
+    "title": "Start with a project",
+    "shot": "01-add-project-menu.png",
+    "crop": [
+      0,
+      135,
+      820,
+      540
+    ],
+    "focus": [
+      150,
+      345
+    ],
+    "lines": [
+      "Start with the plus button beside Projects.",
+      "Add a local folder, clone from Git, or connect a remote project."
+    ],
+    "duration": 8.125,
+    "frames": 195,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 2.8634999999999997,
+        "text": "Start with the plus button beside Projects."
+      },
+      {
+        "start": 3.1334999999999997,
+        "end": 7.170416666666666,
+        "text": "Add a local folder, clone from Git, or connect a remote project."
+      }
+    ],
+    "start": 12.0
+  },
+  {
+    "id": "project-add",
+    "chapter": 1,
+    "title": "Give the work a home",
+    "shot": "02-add-project.png",
+    "crop": [
+      330,
+      208,
+      984,
+      488
+    ],
+    "focus": [
+      824,
+      388
+    ],
+    "lines": [
+      "Choose your folder and select Add project.",
+      "Your project appears in the sidebar, giving your agents a clear place to work."
+    ],
+    "duration": 8.083333333333334,
+    "frames": 194,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 2.6387916666666666,
+        "text": "Choose your folder and select Add project."
+      },
+      {
+        "start": 2.9087916666666667,
+        "end": 7.1619166666666665,
+        "text": "Your project appears in the sidebar, giving your agents a clear place to work."
+      }
+    ],
+    "start": 20.125
+  },
+  {
+    "id": "agent-pick",
+    "chapter": 2,
+    "title": "Choose your agent",
+    "shot": "03-providers.png",
+    "crop": [
+      351,
+      64,
+      980,
+      510
+    ],
+    "focus": [
+      553,
+      263
+    ],
+    "lines": [
+      "Open New agent from the project.",
+      "Choose a Modern conversation or a CLI agent, then select your installed provider and model."
+    ],
+    "duration": 8.5,
+    "frames": 204,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 2.239291666666667,
+        "text": "Open New agent from the project."
+      },
+      {
+        "start": 2.509291666666667,
+        "end": 7.546083333333334,
+        "text": "Choose a Modern conversation or a CLI agent, then select your installed provider and model."
+      }
+    ],
+    "start": 28.208333333333336
+  },
+  {
+    "id": "agent-prompt",
+    "chapter": 2,
+    "title": "Describe a concrete outcome",
+    "shot": "04-agent-prompt.png",
+    "crop": [
+      365,
+      52,
+      952,
+      390
+    ],
+    "focus": [
+      882,
+      262
+    ],
+    "lines": [
+      "Give the agent a clear objective and constraints.",
+      "Here, we ask for three milestones and an acceptance checklist for a fictional task dashboard.",
+      "Select Send to start the work."
+    ],
+    "duration": 11.208333333333334,
+    "frames": 269,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 2.8766666666666665,
+        "text": "Give the agent a clear objective and constraints."
+      },
+      {
+        "start": 3.1466666666666665,
+        "end": 8.374458333333333,
+        "text": "Here, we ask for three milestones and an acceptance checklist for a fictional task dashboard."
+      },
+      {
+        "start": 8.644458333333333,
+        "end": 10.272749999999998,
+        "text": "Select Send to start the work."
+      }
+    ],
+    "start": 36.708333333333336
+  },
+  {
+    "id": "agent-working",
+    "chapter": 2,
+    "title": "The agent gets to work",
+    "shot": "05-agent-working.png",
+    "crop": [
+      220,
+      29,
+      1304,
+      576
+    ],
+    "lines": [
+      "The thread shows the agent working, with a place to send follow-ups or stop the task."
+    ],
+    "duration": 6.083333333333333,
+    "frames": 146,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 5.12575,
+        "text": "The thread shows the agent working, with a place to send follow-ups or stop the task."
+      }
+    ],
+    "start": 47.91666666666667
+  },
+  {
+    "id": "monitor-board",
+    "chapter": 3,
+    "title": "See where your attention is needed",
+    "shot": "06-agents-board.png",
+    "crop": [
+      220,
+      27,
+      1310,
+      546
+    ],
+    "lines": [
+      "Open Agents for a view across your work, and filter by project or task.",
+      "The board separates Needs you, Working, Idle, and Done, so you can spot what needs attention."
+    ],
+    "duration": 11.958333333333334,
+    "frames": 287,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 4.793458333333334,
+        "text": "Open Agents for a view across your work, and filter by project or task."
+      },
+      {
+        "start": 5.063458333333333,
+        "end": 11.00825,
+        "text": "The board separates Needs you, Working, Idle, and Done, so you can spot what needs attention."
+      }
+    ],
+    "start": 54.00000000000001
+  },
+  {
+    "id": "monitor-trace",
+    "chapter": 3,
+    "title": "Inspect the work, then steer it",
+    "shot": "10-agent-tools.png",
+    "crop": [
+      272,
+      48,
+      1280,
+      550
+    ],
+    "lines": [
+      "Open a thread and expand its activity to inspect commands, file changes, and progress.",
+      "You can add a follow-up whenever the task needs direction."
+    ],
+    "duration": 10.166666666666666,
+    "frames": 244,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 6.000916666666667,
+        "text": "Open a thread and expand its activity to inspect commands, file changes, and progress."
+      },
+      {
+        "start": 6.2709166666666665,
+        "end": 9.212375,
+        "text": "You can add a follow-up whenever the task needs direction."
+      }
+    ],
+    "start": 65.95833333333334
+  },
+  {
+    "id": "monitor-result",
+    "chapter": 3,
+    "title": "Review the result",
+    "shot": "09-agent-result.png",
+    "crop": [
+      275,
+      45,
+      1280,
+      430
+    ],
+    "lines": [
+      "The agent has created the plan and summarized the result.",
+      "Review the output before moving on to the next milestone."
+    ],
+    "duration": 7.875,
+    "frames": 189,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 3.4171666666666667,
+        "text": "The agent has created the plan and summarized the result."
+      },
+      {
+        "start": 3.6871666666666667,
+        "end": 6.922083333333333,
+        "text": "Review the output before moving on to the next milestone."
+      }
+    ],
+    "start": 76.12500000000001
+  },
+  {
+    "id": "gus-board",
+    "chapter": 4,
+    "title": "Keep your GUS work in view",
+    "shot": "07-gus-board.png",
+    "crop": [
+      229,
+      28,
+      1313,
+      583
+    ],
+    "sample": true,
+    "focus": [
+      539,
+      80
+    ],
+    "lines": [
+      "With the GUS plugin configured for your account, My work brings your tickets into Zana.",
+      "Choose a sprint and use the Me filter to focus on your own work, or inspect the team's board."
+    ],
+    "duration": 11.416666666666666,
+    "frames": 274,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 5.2205,
+        "text": "With the GUS plugin configured for your account, My work brings your tickets into Zana."
+      },
+      {
+        "start": 5.490500000000001,
+        "end": 10.457625,
+        "text": "Choose a sprint and use the Me filter to focus on your own work, or inspect the team's board."
+      }
+    ],
+    "start": 84.00000000000001
+  },
+  {
+    "id": "gus-detail",
+    "chapter": 4,
+    "title": "Go from a ticket to an agent",
+    "shot": "08-gus-detail.png",
+    "crop": [
+      349,
+      63,
+      965,
+      665
+    ],
+    "sample": true,
+    "focus": [
+      748,
+      102
+    ],
+    "lines": [
+      "Open a ticket to review its status, details, and chatter.",
+      "Watch tickets you want to follow. Work with agent opens a draft with the ticket context, ready for your instructions."
+    ],
+    "duration": 12.083333333333334,
+    "frames": 290,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 4.1665,
+        "text": "Open a ticket to review its status, details, and chatter."
+      },
+      {
+        "start": 4.4365000000000006,
+        "end": 11.14925,
+        "text": "Watch tickets you want to follow. Work with agent opens a draft with the ticket context, ready for your instructions."
+      }
+    ],
+    "start": 95.41666666666669
+  },
+  {
+    "id": "plugins-hub",
+    "chapter": 5,
+    "title": "Make Zana your own",
+    "shot": "11-plugins.png",
+    "crop": [
+      420,
+      42,
+      1120,
+      565
+    ],
+    "focus": [
+      990,
+      109
+    ],
+    "lines": [
+      "Plugins add tools to your command center.",
+      "To build your own, open Plugins and choose New plugin."
+    ],
+    "duration": 6.791666666666667,
+    "frames": 163,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 2.5459166666666664,
+        "text": "Plugins add tools to your command center."
+      },
+      {
+        "start": 2.8159166666666664,
+        "end": 5.857666666666667,
+        "text": "To build your own, open Plugins and choose New plugin."
+      }
+    ],
+    "start": 107.50000000000001
+  },
+  {
+    "id": "plugins-prompt",
+    "chapter": 5,
+    "title": "Describe the tool you want",
+    "shot": "12-plugin-prompt.png",
+    "crop": [
+      421,
+      44,
+      1133,
+      405
+    ],
+    "lines": [
+      "Describe what you want in plain language.",
+      "Our example is a Focus Board with three daily tasks, checkboxes, and a completion count."
+    ],
+    "duration": 9.333333333333334,
+    "frames": 224,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 2.5785416666666667,
+        "text": "Describe what you want in plain language."
+      },
+      {
+        "start": 2.8485416666666667,
+        "end": 8.394541666666667,
+        "text": "Our example is a Focus Board with three daily tasks, checkboxes, and a completion count."
+      }
+    ],
+    "start": 114.29166666666669
+  },
+  {
+    "id": "plugins-guide",
+    "chapter": 5,
+    "title": "Build on the app's existing surfaces",
+    "shot": "13-plugin-guide.png",
+    "crop": [
+      281,
+      43,
+      1211,
+      640
+    ],
+    "lines": [
+      "The built-in Plugin Guide shows where a plugin can appear, including panels, project views, and thread tools.",
+      "An agent can build and verify the plugin. Review it before installing it locally."
+    ],
+    "duration": 12.791666666666666,
+    "frames": 307,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 6.878833333333334,
+        "text": "The built-in Plugin Guide shows where a plugin can appear, including panels, project views, and thread tools."
+      },
+      {
+        "start": 7.148833333333334,
+        "end": 11.835916666666668,
+        "text": "An agent can build and verify the plugin. Review it before installing it locally."
+      }
+    ],
+    "start": 123.62500000000001
+  },
+  {
+    "id": "outro",
+    "chapter": 6,
+    "title": "Start a project. Give it a goal.",
+    "subtitle": "Launch an agent. Stay in control.",
+    "lines": [
+      "That's the workflow: organize the project, delegate the task, and monitor the result.",
+      "Keep your tickets nearby, and shape Zana around the way you work."
+    ],
+    "duration": 10.5,
+    "frames": 252,
+    "captions": [
+      {
+        "start": 0.4,
+        "end": 5.634041666666667,
+        "text": "That's the workflow: organize the project, delegate the task, and monitor the result."
+      },
+      {
+        "start": 5.904041666666666,
+        "end": 9.547625,
+        "text": "Keep your tickets nearby, and shape Zana around the way you work."
+      }
+    ],
+    "start": 136.41666666666669
+  }
+]

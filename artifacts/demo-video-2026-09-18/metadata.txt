@@ -1,0 +1,39 @@
+;FFMETADATA1
+title=Zana — Projects, Agents, GUS and Plugins
+artist=Zana
+comment=Narrated walkthrough with edited app captures and illustrative GUS ticket data.
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=12000
+title=Welcome to Zana
+[CHAPTER]
+TIMEBASE=1/1000
+START=12000
+END=28208
+title=Create a project
+[CHAPTER]
+TIMEBASE=1/1000
+START=28208
+END=54000
+title=Launch an agent
+[CHAPTER]
+TIMEBASE=1/1000
+START=54000
+END=84000
+title=Monitor the work
+[CHAPTER]
+TIMEBASE=1/1000
+START=84000
+END=107500
+title=Follow your GUS tickets
+[CHAPTER]
+TIMEBASE=1/1000
+START=107500
+END=136417
+title=Create your own plugins
+[CHAPTER]
+TIMEBASE=1/1000
+START=136417
+END=146917
+title=Start with a goal

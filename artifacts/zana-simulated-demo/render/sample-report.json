@@ -1,0 +1,11 @@
+{
+  "file": "sample.mp4",
+  "duration": 9,
+  "fps": 24,
+  "frames": 216,
+  "width": 1920,
+  "height": 1080,
+  "headless": true,
+  "secondsElapsed": 3.9,
+  "pageErrors": []
+}
