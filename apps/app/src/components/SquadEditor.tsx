@@ -133,7 +133,7 @@ function TeamDetail({
         {team.description && <p className="persona-detail-desc">{team.description}</p>}
         <div className="persona-detail-block">
           <span className="persona-detail-label">
-            Slots — {totalTabs(team.slots)} tab{totalTabs(team.slots) === 1 ? '' : 's'} total
+            Slots — {totalTabs(readonlyRows)} tab{totalTabs(readonlyRows) === 1 ? '' : 's'} total
           </span>
           <ul className="team-slot-list team-slot-list--readonly">
             {readonlyRows.map((slot, i) => {

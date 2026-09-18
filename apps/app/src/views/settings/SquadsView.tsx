@@ -639,8 +639,8 @@ function TeamRow({
                         </span>
                         {isOrchestrator && (
                           <span
-                            className="teams-agent-badge teams-agent-badge--orch"
-                            title="Orchestrator — launched first, carries the opening prompt"
+                            className="teams-agent-badge teams-agent-badge--orch composer-control-tooltip"
+                            data-tooltip="Orchestrator — launched first, carries the opening prompt"
                           >
                             <Crown size={11} aria-hidden="true" /> Orchestrator
                           </span>

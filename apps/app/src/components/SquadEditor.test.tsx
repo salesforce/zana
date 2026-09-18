@@ -36,6 +36,23 @@ describe('SquadEditor orchestrator badge (read-only view)', () => {
     );
     expect(html).not.toContain('team-slot-orch-badge');
   });
+
+  it('counts the injected standalone orchestrator in the tab total', () => {
+    // A squad may name an orchestrator persona that is NOT among its worker slots;
+    // the view injects it as a crowned row (launch gives it its own tab). The
+    // heading must count that injected row too, so rows and tab total agree.
+    const standalone: Team = {
+      ...team,
+      orchestratorPersonaId: 'p-orch',
+      slots: [{ personaId: 'p-worker', quantity: 2, label: 'Worker' }]
+    };
+    const html = renderToStaticMarkup(
+      <SquadEditor team={standalone} mode="view" onClose={vi.fn()} />
+    );
+    // 2 workers + 1 injected orchestrator = 3 tabs (not the 2 that team.slots alone implies).
+    expect(html).toContain('Slots — 3 tabs total');
+    expect(html).toContain('team-slot-orch-badge');
+  });
 });
 
 describe('SquadEditor orchestrator toggle (edit form)', () => {
