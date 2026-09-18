@@ -34833,8 +34833,11 @@ textarea.thread-command-editor {
 .thread-working-indicator {
   margin: 0;
   min-height: 1.75rem;
+  box-sizing: border-box;
+  padding: 6px 8px;
   color: var(--text-muted, var(--ink-muted));
   font-size: 14px;
+  line-height: 1.4;
 }
 
 .thread-working-indicator-header {
@@ -34842,6 +34845,17 @@ textarea.thread-command-editor {
   align-items: center;
   gap: 6px;
   min-height: 1.75rem;
+}
+
+.thread-working-indicator-gutter {
+  flex: 0 0 32px;
+  width: 32px;
+}
+
+.thread-working-indicator-glyph-spacer {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
 }
 
 .thread-working-indicator > summary.thread-working-indicator-header {
@@ -35204,7 +35218,7 @@ textarea.thread-command-editor {
 }
 
 .thread-thinking-details {
-  margin: 6px 0 0;
+  margin: 6px 0 0 38px;
   max-height: 18rem;
   overflow: auto;
   white-space: pre-wrap;

@@ -141,6 +141,7 @@ export function ThreadWorkingIndicator({
       <details className="thread-working-indicator" data-testid="thread-thinking">
         <summary className="thread-working-indicator-header">
           <ChevronRight size={12} className="thread-timeline-work-chevron" aria-hidden="true" />
+          <span className="thread-working-indicator-glyph-spacer" aria-hidden="true" />
           <span className="is-shimmer">{label}</span>
         </summary>
         <div className="thread-thinking-details">{details}</div>
@@ -148,8 +149,9 @@ export function ThreadWorkingIndicator({
     );
   }
   return (
-    <p className="thread-working-indicator thread-working-indicator-header is-shimmer" data-testid="thread-thinking">
-      {label}
+    <p className="thread-working-indicator thread-working-indicator-header" data-testid="thread-thinking">
+      <span className="thread-working-indicator-gutter" aria-hidden="true" />
+      <span className="is-shimmer">{label}</span>
     </p>
   );
 }
