@@ -66,24 +66,36 @@ async function packPluginSdk(packDir: string): Promise<string> {
 }
 
 async function installPackedSdk(targetDir: string, tarball: string): Promise<void> {
-  await execFileAsync(
-    'npm',
-    [
-      'install',
-      '--include=dev',
-      '--ignore-scripts',
-      '--legacy-peer-deps',
-      '--omit=dev',
-      '--no-package-lock',
-      '--no-save',
-      '--no-audit',
-      '--no-fund',
-      tarball
-    ],
-    // Full Vitest runs start other temporary npm installs concurrently. Keep
-    // this install's cache inside its disposable fixture to avoid cache races.
-    { cwd: targetDir, env: { ...process.env, npm_config_cache: join(targetDir, '.npm-cache') } }
-  );
+  const args = [
+    'install',
+    '--include=dev',
+    '--ignore-scripts',
+    '--legacy-peer-deps',
+    '--omit=dev',
+    '--no-package-lock',
+    '--no-save',
+    '--no-audit',
+    '--no-fund',
+    tarball
+  ];
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await execFileAsync('npm', args, {
+        cwd: targetDir,
+        // Full Vitest runs start other temporary npm installs concurrently.
+        // Keep cache and partial output inside disposable fixture, then retry
+        // a clean install if another worker temporarily exhausts npm resources.
+        env: { ...process.env, npm_config_cache: join(targetDir, '.npm-cache') }
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      await rm(join(targetDir, 'node_modules'), { recursive: true, force: true });
+    }
+  }
+  const failed = lastError as { stderr?: string; stdout?: string };
+  throw new Error(`packed SDK install failed after 3 attempts:\n${failed.stdout ?? ''}${failed.stderr ?? ''}`);
 }
 
 function linkExternalDependencies(targetDir: string): void {
