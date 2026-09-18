@@ -38,7 +38,7 @@ export function NativeRolePicker({
   return (
     <PopoverPicklist
       ariaLabel={ariaLabel}
-      title={`${selectedLabel} (Shift+Tab)`}
+      title={`Agent: ${selectedLabel} (Shift+Tab)`}
       ariaKeyshortcuts="Shift+Tab"
       value={selected?.value ?? ''}
       placeholder="Agent"
@@ -54,6 +54,7 @@ export function NativeRolePicker({
           return {
             value: option.value,
             label,
+            compactLabel: `Agent: ${label}`,
             content: (
               <span className="composer-mode-picker-row-label">
                 <ComposerModeIcon mode={composerWorkModeForNativeLabel(option.value, option.name)} />

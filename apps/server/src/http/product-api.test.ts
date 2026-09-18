@@ -274,6 +274,126 @@ describe('product HTTP', () => {
     expect(options.providers.map((row) => row.id)).toContain('acp-opencode');
   });
 
+  it('resolves execution-option discovery cwd from the registered project', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-options-project-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-options-root-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({
+      version: 1,
+      projects: [{
+        id: 'proj-options',
+        name: 'Options project',
+        path: projectRoot,
+        createdAt: 1,
+        lastActiveAt: 1
+      }]
+    }));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    server.ctx.pluginHostArtifacts.set('provider-acp', {
+      path: '/tmp/provider-acp-host.js',
+      digest: 'b'.repeat(64),
+      byteLength: 12,
+      generation: 'g1'
+    });
+    providerHandles.push(registerThreadProvider('provider-acp', {
+      id: 'acp-opencode',
+      displayName: 'OpenCode',
+      capabilities: {
+        supportsServiceTier: false,
+        fork: 'checkpoint',
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['full']
+      }
+    }));
+    const rpc = vi.fn(async (input: { command: { type: string } }) => {
+      if (input.command.type === 'provider.status') return { providers: [] };
+      if (input.command.type === 'provider.list_models') return { models: [], selectedOnlyModels: [] };
+      throw new Error(`unexpected ${input.command.type}`);
+    });
+    server.ctx.hostHub.resolveHostId = () => 'host-1';
+    server.ctx.hostHub.callHostOnlineRpc = rpc;
+
+    const response = await fetch(
+      `${server.url}api/v1/system/execution-options?providerId=acp-opencode&projectId=proj-options`
+    );
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
+      hostId: 'host-1',
+      command: expect.objectContaining({
+        type: 'provider.list_models',
+        providerId: 'acp-opencode',
+        cwd: realpathSync(projectRoot)
+      })
+    }));
+
+    const unknown = await fetch(
+      `${server.url}api/v1/system/execution-options?providerId=acp-opencode&projectId=missing`
+    );
+    expect(unknown.status).toBe(404);
+    await expect(unknown.json()).resolves.toMatchObject({ code: 'unknown-project' });
+
+    rpc.mockClear();
+    const conflictingHost = await fetch(
+      `${server.url}api/v1/system/execution-options?providerId=acp-opencode&projectId=proj-options&hostId=foreign`
+    );
+    expect(conflictingHost.status).toBe(200);
+    expect(rpc.mock.calls.every(([input]) => input.hostId === 'host-1')).toBe(true);
+  });
+
+  it('uses the bound remote host and remote workspace for execution-option discovery', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-options-remote-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({
+      version: 1,
+      projects: [{
+        id: 'remote-options',
+        name: 'Remote options',
+        path: join(dataDir, 'placeholder'),
+        hostId: 'remote-host',
+        remote: { host: 'devbox', remotePath: '/srv/project' },
+        createdAt: 1,
+        lastActiveAt: 1
+      }]
+    }));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    server.ctx.pluginHostArtifacts.set('provider-acp', {
+      path: '/tmp/provider-acp-host.js',
+      digest: 'c'.repeat(64),
+      byteLength: 12,
+      generation: 'g1'
+    });
+    providerHandles.push(registerThreadProvider('provider-acp', {
+      id: 'acp-opencode',
+      displayName: 'OpenCode',
+      capabilities: {
+        supportsServiceTier: false,
+        fork: 'checkpoint',
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['full']
+      }
+    }));
+    const rpc = vi.fn(async (input: { command: { type: string } }) => {
+      if (input.command.type === 'provider.status') return { providers: [] };
+      if (input.command.type === 'provider.list_models') return { models: [], selectedOnlyModels: [] };
+      throw new Error(`unexpected ${input.command.type}`);
+    });
+    server.ctx.hostHub.resolveHostId = (id?: string) => id ?? 'primary';
+    server.ctx.hostHub.ensureHostSessionReady = () => ({}) as never;
+    server.ctx.hostHub.callHostOnlineRpc = rpc;
+
+    const response = await fetch(
+      `${server.url}api/v1/system/execution-options?providerId=acp-opencode&projectId=remote-options&hostId=foreign`
+    );
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
+      hostId: 'remote-host',
+      command: expect.objectContaining({ type: 'provider.list_models', cwd: '/srv/project' })
+    }));
+    expect(rpc.mock.calls.every(([input]) => input.hostId === 'remote-host')).toBe(true);
+  });
+
   it('still offers OpenCode when health is a noop and that host reports the CLI installed', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-health-noop-'));
     writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
@@ -2685,4 +2805,3 @@ describe('product HTTP thread tabs', () => {
     expect(stopped.status).toBe(200);
   });
 });
-

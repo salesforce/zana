@@ -7,6 +7,7 @@ import {
   reloadThreadProviderModels,
   resetThreadModelCatalog,
   setThreadModelCatalogHost,
+  setThreadModelCatalogScope,
   type ThreadExecutionOptionsFetcher
 } from './thread-model-catalog.js';
 
@@ -320,5 +321,41 @@ describe('thread model catalog', () => {
     calls.length = 0;
     await setThreadModelCatalogHost('other-host');
     expect(calls).toEqual([{ providerId: undefined, hostId: 'other-host' }]);
+  });
+
+  it('scopes every fetch to the selected project and drops project-local roles when it changes', async () => {
+    const calls: Array<{ providerId?: string; hostId?: string; projectId?: string }> = [];
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      calls.push(query ?? {});
+      const body = optionsBody(['acp-opencode'], query?.providerId ?? 'roster');
+      return {
+        ...body,
+        acpMode: {
+          currentValue: 'build',
+          options: query?.projectId === 'project-a'
+            ? [
+              { value: 'build', name: 'Build' },
+              { value: 'plan', name: 'Plan' },
+              { value: 'doc-vault', name: 'Doc-Vault' }
+            ]
+            : [{ value: 'build', name: 'Build' }, { value: 'plan', name: 'Plan' }]
+        }
+      };
+    };
+    resetThreadModelCatalog(fetcher);
+
+    await setThreadModelCatalogScope({ hostId: 'sfwork', projectId: 'project-a' });
+    expect(calls.every((call) => call.hostId === 'sfwork' && call.projectId === 'project-a')).toBe(true);
+    expect(getThreadModelCatalog().byProvider['acp-opencode']?.acpMode?.options).toContainEqual({
+      value: 'doc-vault',
+      name: 'Doc-Vault'
+    });
+
+    calls.length = 0;
+    await setThreadModelCatalogScope({ hostId: 'sfwork', projectId: 'project-b' });
+    expect(calls.every((call) => call.hostId === 'sfwork' && call.projectId === 'project-b')).toBe(true);
+    expect(getThreadModelCatalog().byProvider['acp-opencode']?.acpMode?.options).not.toContainEqual(
+      expect.objectContaining({ value: 'doc-vault' })
+    );
   });
 });

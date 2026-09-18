@@ -471,6 +471,21 @@ function HarnessRow({
 
       {mode === 'settings' && open ? (
         <div className="opener-row-advanced">
+          {h.family === 'opencode' ? (
+            <Field
+              label="Project agents"
+              help="Show project-specific OpenCode agents in both Modern and CLI Agent pickers. Build and Plan remain available when off."
+            >
+              <ToggleSwitch
+                checked={config.nativeAgentDiscoveryEnabled !== false}
+                onChange={(nativeAgentDiscoveryEnabled) => {
+                  onConfigDraft({ ...config, nativeAgentDiscoveryEnabled });
+                  void onUpdate({ nativeAgentDiscoveryEnabled });
+                }}
+                label="Discover additional native agents"
+              />
+            </Field>
+          ) : null}
           {binaryField}
           <fieldset disabled={!shown || !h.installed} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             {providerField}

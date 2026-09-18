@@ -628,7 +628,7 @@ export interface CcApi {
     }): Promise<{ delivered: number }>;
     onOpen(cb: (payload: unknown) => void): () => void;
     events(threadId: string): Promise<{ events: unknown[] }>;
-    executionOptions(query?: { providerId?: string; hostId?: string }): Promise<{
+    executionOptions(query?: { providerId?: string; hostId?: string; projectId?: string }): Promise<{
       providers: Array<{
         id: string;
         displayName: string;

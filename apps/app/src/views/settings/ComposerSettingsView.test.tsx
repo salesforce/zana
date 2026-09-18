@@ -38,8 +38,7 @@ describe('ComposerSettingsView', () => {
     expect(switchButton(html, 'Squad')).toContain('aria-checked="true"');
     expect(html).toContain('Default launch mode');
     expect(html).toContain('Reload slash commands');
-    expect(html).toContain('Discover additional native agents');
-    expect(html).toContain('compatible coding harnesses');
+    expect(html).not.toContain('Discover additional native agents');
     expect(html).toContain('settings-anchor-composer');
   });
 

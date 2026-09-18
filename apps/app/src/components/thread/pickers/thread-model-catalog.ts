@@ -18,10 +18,12 @@ export type ThreadModelCatalogSnapshot = {
   providers: ThreadComposerProviderOption[];
   byProvider: Readonly<Record<string, ThreadModelCatalogEntry>>;
   inflight: ReadonlySet<string>;
+  hostId?: string;
+  projectId?: string;
 };
 
 type ExecutionOptionsBody = Awaited<ReturnType<typeof product.threads.executionOptions>>;
-export type ThreadExecutionOptionsQuery = { providerId?: string; hostId?: string };
+export type ThreadExecutionOptionsQuery = { providerId?: string; hostId?: string; projectId?: string };
 export type ThreadExecutionOptionsFetcher = (
   query?: ThreadExecutionOptionsQuery
 ) => Promise<ExecutionOptionsBody>;
@@ -38,13 +40,16 @@ let byProvider: Record<string, ThreadModelCatalogEntry> = {};
 let inflight = new Set<string>();
 let catalogEpoch = 0;
 let catalogHostId: string | undefined;
+let catalogProjectId: string | undefined;
 let snapshot: ThreadModelCatalogSnapshot = freezeSnapshot();
 
 function freezeSnapshot(): ThreadModelCatalogSnapshot {
   return {
     providers,
     byProvider,
-    inflight
+    inflight,
+    ...(catalogHostId ? { hostId: catalogHostId } : {}),
+    ...(catalogProjectId ? { projectId: catalogProjectId } : {})
   };
 }
 
@@ -101,10 +106,11 @@ function applyRoster(rows: ThreadComposerProviderOption[]): void {
 }
 
 function optionsQuery(providerId?: string): ThreadExecutionOptionsQuery | undefined {
-  if (!providerId && !catalogHostId) return undefined;
+  if (!providerId && !catalogHostId && !catalogProjectId) return undefined;
   return {
     ...(providerId ? { providerId } : {}),
-    ...(catalogHostId ? { hostId: catalogHostId } : {})
+    ...(catalogHostId ? { hostId: catalogHostId } : {}),
+    ...(catalogProjectId ? { projectId: catalogProjectId } : {})
   };
 }
 
@@ -197,9 +203,21 @@ export function reloadThreadModelCatalog(): Promise<void> {
 
 /** Scope the catalog to the machine that will spawn the thread. Reloads when it changes. */
 export function setThreadModelCatalogHost(hostId: string | undefined): Promise<void> {
-  const next = hostId?.trim() || undefined;
-  if (next === catalogHostId) return prefetchThreadModelCatalog();
-  catalogHostId = next;
+  return setThreadModelCatalogScope({ hostId, projectId: catalogProjectId });
+}
+
+/** Scope sessionless discovery to the registered project that will own the new thread. */
+export function setThreadModelCatalogScope(scope: {
+  hostId?: string;
+  projectId?: string;
+}): Promise<void> {
+  const nextHostId = scope.hostId?.trim() || undefined;
+  const nextProjectId = scope.projectId?.trim() || undefined;
+  if (nextHostId === catalogHostId && nextProjectId === catalogProjectId) {
+    return prefetchThreadModelCatalog();
+  }
+  catalogHostId = nextHostId;
+  catalogProjectId = nextProjectId;
   return reloadThreadModelCatalog();
 }
 
@@ -228,6 +246,7 @@ export function resetThreadModelCatalog(fetcher?: ThreadExecutionOptionsFetcher 
   prefetchInflight = null;
   prefetchDirty = false;
   catalogHostId = undefined;
+  catalogProjectId = undefined;
   catalogEpoch += 1;
   loads.clear();
   offeredSignature = '';

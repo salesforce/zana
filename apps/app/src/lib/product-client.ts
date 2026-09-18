@@ -785,6 +785,7 @@ function httpProduct(): Pick<
         const params = new URLSearchParams();
         if (query?.providerId) params.set('providerId', query.providerId);
         if (query?.hostId) params.set('hostId', query.hostId);
+        if (query?.projectId) params.set('projectId', query.projectId);
         const suffix = params.size ? `?${params.toString()}` : '';
         return apiJson(`/system/execution-options${suffix}`);
       },

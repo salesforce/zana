@@ -14,7 +14,8 @@ describe('NativeRolePicker', () => {
       <NativeRolePicker value="doc-vault" options={options} onChange={() => undefined} onRefresh={() => undefined} />
     );
     expect(html).toContain('data-testid="native-role-picker-trigger"');
-    expect(html).toContain('doc-vault</span>');
+    expect(html).toContain('Agent: doc-vault</span>');
+    expect(html).toContain('title="Agent: doc-vault (Shift+Tab)"');
   });
 
   it('shows a neutral placeholder (never options[0]) when no role is selected', () => {
