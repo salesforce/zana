@@ -22,6 +22,19 @@ async function createThread(app: AppHandle, title: string) {
 
 test('agent inspector exits fullscreen and keeps its window controls clickable (#181)', async ({ app }) => {
   const { window } = app;
+  // The fixture deliberately hides windows and prevents focus. This native OS
+  // test needs a visible, focusable window; CDP can otherwise click a hidden
+  // renderer while macOS ignores its fullscreen request.
+  await app.electron.evaluate(({ app: electronApp }) => {
+    if (process.platform === 'darwin') electronApp.setActivationPolicy('regular');
+  });
+  const nativeWindow = await app.electron.browserWindow(window);
+  await nativeWindow.evaluate((win) => {
+    win.removeAllListeners('show');
+    win.setFocusable(true);
+    win.show();
+    win.focus();
+  });
   await createThread(app, 'Fullscreen regression');
   await window.getByTestId('nav-agents').click();
   await window.locator('.agent-card[data-kind="thread"]').filter({ hasText: 'Fullscreen regression' }).click();
