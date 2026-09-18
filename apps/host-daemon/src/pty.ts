@@ -1454,7 +1454,7 @@ export class PtyManager extends EventEmitter {
     // leak tmux servers). Addressable Team workers are lifecycle-managed and
     // survive for startup reconciliation. `new-session -A -s cc-<id>` attaches
     // if the session exists (restore re-attach) or creates it.
-    const useTmux =
+    const wantsTmux =
       opts.config.tmuxScope === 'all' &&
       !opts.scheduled &&
       (!opts.headless || opts.cohort?.role === 'worker') &&
@@ -1499,7 +1499,7 @@ export class PtyManager extends EventEmitter {
     // sandbox, and microVM stay on their dedicated compatibility backends until
     // their lifecycle/recovery contracts move to the host.
     const useRuntimeHost = opts.runtimeHost === true
-      && !useTmux
+      && !wantsTmux
       && !opts.remote
       && (requestedEnvironment === undefined || requestedEnvironment === 'local');
     const execEnv = environmentFor(useRuntimeHost ? 'runtime-host' : requestedEnvironment);
@@ -1634,8 +1634,36 @@ export class PtyManager extends EventEmitter {
 
     // SYNC ENV (local / sandbox, optionally tmux-wrapped) — byte-identical to
     // before the async branch existed (guarded by the golden-argv net).
-    const spawnCmd = useTmux
+    // tmux relays the whole `new-session … -- <cmd> <args>` invocation to its
+    // server by packing the argv into a libevent imsg capped at MAX_IMSGSIZE
+    // (16 KiB). A launch whose argv is large — a durable Job Team coordinator
+    // carries a multi-KiB `--append-system-prompt` + `--settings` JSON + the
+    // seed-prompt positional — overflows that cap, so tmux exits 1 printing
+    // "command too long" and the inner child is NEVER spawned (the live symptom:
+    // orchestrator never boots → no plan registered → run stuck at 0 work units).
+    // node-pty's own direct spawn is bounded by ARG_MAX (~256 KiB on macOS), far
+    // above any prompt we emit, so when the tmux-wrapped command would breach the
+    // imsg budget we fall back to a plain (non-restore-backed) spawn: launching
+    // correctly beats tmux restore-backing for the rare oversized session.
+    const prospectiveTmux = wantsTmux
       ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, sessionEnv)
+      : undefined;
+    // Conservative bound below MAX_IMSGSIZE (16384) minus tmux's per-arg framing
+    // and imsg header; empirically a serialized argv ~16 KiB is rejected while
+    // ~15.7 KiB is accepted.
+    const TMUX_IMSG_SAFE_BYTES = 15_000;
+    const tmuxCommandBytes = prospectiveTmux
+      ? Buffer.byteLength([prospectiveTmux.command, ...prospectiveTmux.args].join(' '), 'utf8')
+      : 0;
+    const useTmux = wantsTmux && tmuxCommandBytes < TMUX_IMSG_SAFE_BYTES;
+    if (wantsTmux && !useTmux) {
+      console.warn(
+        `[pty] session ${sessionId}: tmux wrapper skipped — command ${tmuxCommandBytes}B ` +
+          `exceeds imsg-safe budget ${TMUX_IMSG_SAFE_BYTES}B; spawning directly (no restore backing).`
+      );
+    }
+    const spawnCmd = useTmux && prospectiveTmux
+      ? prospectiveTmux
       : opts.scheduled && process.platform !== 'win32'
       ? this.scheduledSupervisor(inner.command, inner.args)
       : inner;

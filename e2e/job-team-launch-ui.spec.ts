@@ -376,9 +376,19 @@ test('a structured Team seeds a provided portable plan pre-launch and dispatches
     await expect.poll(() => existsSync(join(projectDir, 'result.txt')), { timeout: 15_000 }).toBe(true);
     expect(readFileSync(join(projectDir, 'result.txt'), 'utf8')).toContain('LABEL: About Atlas');
 
-    // The seed — not a runtime coordinator register — supplied the DAG.
+    // The SEED — not a runtime coordinator register — supplied the DAG. The proof
+    // is the pre-RUNNING snapshot above (structured + workTotal:4 the instant the
+    // job appeared) plus host-side dispatch driving it to result.txt, all WITHOUT
+    // the coordinator on the kickoff critical path. Under host-managed kickoff the
+    // coordinator makes ZERO kickoff calls (the host owns the READ and the seeded
+    // dispatch), so it is NOT required to run before the seeded DAG completes —
+    // asserting it observed the plan would test removed behavior. The load-bearing
+    // negative still holds on the shared cohort log: neither host nor a
+    // correctly-behaving coordinator registers a plan when one is seeded, so a
+    // fallback `execution.plan.register` (logged as 'plan registered') must never
+    // appear. Workers never log that token, so this fires only on a real coordinator
+    // regression and is immune to the local fake-cohort spawn flake.
     const coordinatorLog = readFileSync(join(projectDir, '.fake-coordinator.log'), 'utf8');
-    expect(coordinatorLog).toContain('plan present');
     expect(coordinatorLog).not.toContain('plan registered');
   } finally {
     if (projectId) {

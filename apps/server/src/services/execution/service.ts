@@ -772,8 +772,18 @@ export class ExecutionService {
   async registerPlan(binding: ExecutionCohortBinding, workUnits: ExecutionWorkUnitInput[]) {
     if (binding.role !== 'orchestrator') return deniedBound('only coordinator can register execution plan');
     const result = await this.mutateBound(binding, (record) => this.deps.store.registerPlan(record.id, record.stateVersion, workUnits));
-    if (result.ok) this.planReadinessWatchdog.remove(binding.executionId);
-    return result;
+    if (!result.ok) return result;
+    this.planReadinessWatchdog.remove(binding.executionId);
+    // The coordinator's single authoring WRITE (register) implies dispatch: the
+    // host-neutral kickoff removes the separate model `dispatch_ready` call from
+    // the critical path (weak models chain tool calls unreliably). dispatchReady
+    // assigns only the initially-READY roots and pushes them to workers; units
+    // with unmet deps wait for the completion cascade, exactly as before. Safe if
+    // the coordinator ALSO calls dispatch_ready — a second pass finds no
+    // unassigned READY unit and is a no-op. A dispatch failure (budget/resource)
+    // must NOT mask the successful register, so fall back to the register result.
+    const dispatched = await this.dispatchReady(binding);
+    return dispatched.ok ? dispatched : result;
   }
 
   async claimWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string) {

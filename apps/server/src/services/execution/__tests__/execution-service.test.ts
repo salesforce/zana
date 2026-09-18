@@ -711,6 +711,33 @@ describe('SquadExecutionService', () => {
     expect(replyToSession.mock.calls[0]?.[1]).not.toContain('agent_send');
   }));
 
+  it('registerPlan auto-dispatches ready units to workers (host-neutral kickoff; no separate dispatch_ready)', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    // Flow B/C: start with NO seeded work units — the coordinator authors the plan.
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    // The coordinator's single authoring WRITE (register) implies dispatch: the
+    // ready unit is CLAIMED + pushed to the worker and the coordinator PARKS,
+    // all without a separate dispatch_ready call (the fragile second model call).
+    const registered = await service.registerPlan(coordinator, [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }]);
+    expect(registered).toMatchObject({ ok: true, value: { coordinatorState: 'PARKED', workUnits: [{ id: 'a', state: 'CLAIMED', assignedSlotId: 'slot-1' }] } });
+    expect(replyToSession).toHaveBeenCalledWith('worker-1', expect.stringContaining('assigned work unit `a`'));
+    // A later explicit dispatch_ready remains a harmless no-op — nothing new is READY.
+    const pushesAfterRegister = replyToSession.mock.calls.length;
+    await expect(service.dispatchReady(coordinator)).resolves.toMatchObject({ ok: true });
+    expect(replyToSession.mock.calls.length).toBe(pushesAfterRegister);
+  }));
+
   it.each([
     ['SEMANTIC_CONFLICT', 'SEMANTIC_CONFLICT'],
     ['POLICY_ESCALATION', 'POLICY_ESCALATION']
@@ -2669,4 +2696,29 @@ describe('SquadExecutionService', () => {
     expect(triggerDeliveryDrain).toHaveBeenCalledWith('worker-1');
   }));
 
+});
+
+describe('provided-plan persistence caps', () => {
+  // Regression: a "Plan provided in goal" launch seeds work units whose `task`
+  // carries the full executable-step Work body (bounded at 16 KiB by the
+  // preflight normalizer). The store's persist-time validWorkUnit used to bound
+  // `task` at MAX_STRING (2 KiB), so a legitimately-large provided plan parsed
+  // and normalized cleanly but died at persist ("invalid execution state before
+  // persistence") — the exact live Squad-launch failure.
+  it('persists a seeded work unit whose task exceeds MAX_STRING (2 KiB)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const bigTask = 'x'.repeat(4_000); // > 2 KiB, < 16 KiB
+    const result = await store.claim({
+      callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work',
+      requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [],
+      request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] },
+      coordinationMode: 'structured',
+      workUnits: [{ id: 'big', title: 'Big', task: bigTask, dependencies: [], readOnly: true, verification: ['check'] }]
+    });
+    expect(result.outcome).toBe('claimed');
+    expect(result.record.workUnits?.[0]?.task).toBe(bigTask);
+    // Prove it round-trips through the durable file (persist validated + wrote it).
+    const persisted = JSON.parse(await readFile(filePath, 'utf8'));
+    expect(persisted.records[0].workUnits[0].task).toBe(bigTask);
+  }));
 });

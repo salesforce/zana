@@ -36,7 +36,7 @@ const workflowSchema = z.strictObject({
   supportedRequestVersions: z.array(z.number().int().min(1).max(100)).min(1).max(8)
 });
 const workUnitSchema = z.strictObject({
-  id: z.string().min(1).max(2048), title: z.string().min(1).max(2048), task: z.string().min(1).max(2048),
+  id: z.string().min(1).max(2048), title: z.string().min(1).max(2048), task: z.string().min(1).max(16384),
   dependencies: z.array(z.string().min(1).max(2048)).max(100), preferredRole: z.string().min(1).max(2048).optional(),
   files: z.array(z.string().min(1).max(2048)).max(100).optional(), verification: z.array(z.string().min(1).max(2048)).max(100).optional(), readOnly: z.boolean().optional(),
   routing: z.strictObject({

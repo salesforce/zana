@@ -24,7 +24,12 @@ export type PortablePlanParse =
 const STEP_MARKER = /<!--\s*executable-step\s*-->/i;
 const HEADING = /^\s*###\s+(.*)$/;
 const SECTION_BREAK = /^\s*(#{1,3})\s+/; // next H1/H2/H3 ends a step block
-const LABEL = /^\s*[-*]?\s*\*\*([^:*]+):\*\*\s*(.*)$/;
+// A LABEL bullet REQUIRES a leading list marker + space. This is what separates a
+// real field (`- **Work:**`) from an inner sub-bold on a continuation line
+// (`  **Purpose / why:**`) or a `**bold**` inside prose — those carry no list
+// marker and are folded into the current label's multi-line value.
+const LABEL = /^\s*[-*]\s+\*\*([^:*]+):\*\*\s*(.*)$/;
+const FENCE = /^\s*(```|~~~)/; // fenced-code delimiter: freeze label detection inside
 
 const EXECUTION_CLASS_LEVEL: Record<string, 'low' | 'medium' | 'high'> = {
   routine: 'low',
@@ -65,11 +70,33 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
   if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) return { ok: false, reason: `invalid step id: ${id}` };
   if (!title) return { ok: false, reason: `step ${id} missing title` };
 
+  // Accumulate MULTI-LINE label values: a label bullet opens a value; every
+  // following non-label line (continuation prose, indented sub-bold, fenced code)
+  // extends it until the next label bullet or the step block ends. This is why a
+  // real plan's `- **Work:**` with the body on the lines beneath it parses (the
+  // old single-line grammar read the empty inline remainder and rejected the step
+  // as "missing Work", collapsing the whole plan to the coordinator-derive path).
   const labels = new Map<string, string>();
+  let current: string | null = null;
+  let buffer: string[] = [];
+  let inFence = false;
+  const flush = (): void => {
+    if (current !== null) labels.set(current, buffer.join('\n').trim());
+    current = null;
+    buffer = [];
+  };
   for (const raw of block.body) {
-    const labelMatch = LABEL.exec(raw);
-    if (labelMatch) labels.set(labelMatch[1].trim().toLowerCase(), labelMatch[2].trim());
+    if (FENCE.test(raw)) inFence = !inFence;
+    const labelMatch = inFence ? null : LABEL.exec(raw);
+    if (labelMatch) {
+      flush();
+      current = labelMatch[1].trim().toLowerCase();
+      buffer.push(labelMatch[2]);
+    } else if (current !== null) {
+      buffer.push(raw);
+    }
   }
+  flush();
 
   const task = labels.get('work');
   if (!task) return { ok: false, reason: `step ${id} missing Work` };
@@ -107,8 +134,15 @@ export function parsePortablePlan(text: string): PortablePlanParse {
     if (!headingMatch || !STEP_MARKER.test(lines[i])) continue;
     const body: string[] = [];
     let j = i + 1;
+    // Track fenced-code state while collecting so a `#`-prefixed line INSIDE a
+    // code block (e.g. a shell/BUILD comment) is not mistaken for the next
+    // heading. Without this the step block truncates mid-fence and drops every
+    // label after the code (Verification, Completion criteria, …), which then
+    // fails DAG completeness even though the plan is well-formed.
+    let inFence = false;
     for (; j < lines.length; j += 1) {
-      if (SECTION_BREAK.test(lines[j])) break;
+      if (FENCE.test(lines[j])) inFence = !inFence;
+      if (!inFence && SECTION_BREAK.test(lines[j])) break;
       body.push(lines[j]);
     }
     blocks.push({ heading: headingMatch[1], body });

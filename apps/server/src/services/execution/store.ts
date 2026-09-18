@@ -303,6 +303,12 @@ const MAX_EVENTS_PER_EXECUTION = 500;
 export const EXECUTION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 export const EXECUTION_RECOVERY_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_STRING = 2_048;
+// A work unit's `task` carries the full executable-step Work body, so it is
+// bounded far above MAX_STRING. MUST match MAX_WORK_UNIT_TASK_LEN in the
+// preflight normalizer (normalizeExecutionPlan) — a smaller cap here rejects a
+// legitimately-large provided plan at persist ("invalid execution state before
+// persistence") that the normalizer already accepted.
+const MAX_WORK_UNIT_TASK = 16_384;
 const MAX_FINAL_SUMMARY = 64 * 1024;
 const MAX_WORK_UNITS = 100;
 const MAX_UNIT_LIST = 100;
@@ -383,7 +389,8 @@ function validRecord(value: unknown): value is ExecutionRecord {
 function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
   if (!value || typeof value !== 'object') return false;
   const unit = value as Partial<ExecutionWorkUnit>;
-  return validString(unit.id) && validString(unit.title) && validString(unit.task)
+  return validString(unit.id) && validString(unit.title)
+    && typeof unit.task === 'string' && unit.task.length > 0 && unit.task.length <= MAX_WORK_UNIT_TASK
     && Array.isArray(unit.dependencies) && unit.dependencies.length <= MAX_UNIT_LIST && unit.dependencies.every(validString)
     && (unit.preferredRole === undefined || validString(unit.preferredRole))
     && (unit.files === undefined || Array.isArray(unit.files) && unit.files.length <= MAX_UNIT_LIST && unit.files.every(validString))

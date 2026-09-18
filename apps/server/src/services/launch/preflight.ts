@@ -262,7 +262,7 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
     return {
       id,
       title: boundedString(input.title, 'work unit title'),
-      task: boundedString(input.task, 'work unit task'),
+      task: boundedString(input.task, 'work unit task', MAX_WORK_UNIT_TASK_LEN),
       dependencies,
       ...(input.preferredRole ? { preferredRole: boundedString(input.preferredRole, 'work unit preferred role') } : {}),
       ...(files ? { files } : {}),
@@ -329,10 +329,20 @@ function normalizeFileScope(value: string): string {
   return parts.join('/');
 }
 
-function boundedString(value: unknown, label: string): string {
-  if (typeof value !== 'string' || !value.trim() || value.length > 2_048) throw new Error(`invalid ${label}`);
+function boundedString(value: unknown, label: string, maxLen = 2_048): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > maxLen) throw new Error(`invalid ${label}`);
   return value.trim();
 }
+
+/**
+ * A work unit's `task` carries the full executable-step Work body — detailed
+ * prose, sub-sections, and fenced snippets a worker needs to execute WITHOUT
+ * re-reading the plan through an MCP call (that read path is blocked under some
+ * harness sandboxes). It is delivered host-side (pty push), never argv, so a
+ * generous per-unit cap is safe; total plan size stays bounded by the 512KB
+ * whole-plan byte cap enforced at register/start.
+ */
+const MAX_WORK_UNIT_TASK_LEN = 16_384;
 
 function boundedStrings(values: readonly string[] | undefined): readonly string[] {
   return [...new Set(values ?? [])].sort().slice(0, MAX_ADMISSION_REQUIREMENTS);

@@ -115,6 +115,69 @@ describe('parsePortablePlan', () => {
     expect(result.reason).toContain('invalid step id');
   });
 
+  it('captures a multi-line Work body and the labels that follow it', () => {
+    const text = [
+      '### migrate: Migrate Store <!-- executable-step -->',
+      '',
+      '- **Depends on:** None',
+      '- **Mode:** Mutating',
+      '- **Write scope:** `store.ts`',
+      '- **Work:**',
+      '  Rewrite the persistence layer. Details:',
+      '',
+      '  **Purpose / why:** durability without a per-step model round-trip.',
+      '  - keep the JSON shape stable',
+      '  - GC on team dismissal',
+      '- **Verification:** Unit tests pass.',
+      '- **Completion criteria:** Store migrated.',
+      ''
+    ].join('\n');
+    const result = parsePortablePlan(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const unit = result.units[0];
+    // The body prose AND the indented sub-bold are folded into Work; the next
+    // real label bullet (`- **Verification:**`) closes it rather than being
+    // swallowed as continuation.
+    expect(unit.task).toContain('Rewrite the persistence layer');
+    expect(unit.task).toContain('Purpose / why:');
+    expect(unit.task).toContain('GC on team dismissal');
+    expect(unit.verification).toEqual(['Unit tests pass.']);
+    expect(unit.files).toEqual(['store.ts']);
+  });
+
+  it('does not treat a `#` comment inside a fenced code block as a section break', () => {
+    // Regression: a shell/BUILD comment line (`# ...`) inside a ```code``` block
+    // matched the H1/H2/H3 SECTION_BREAK regex, truncating the step block
+    // mid-fence and dropping every label after the code (Verification, …), which
+    // then failed DAG completeness even though the plan was well-formed.
+    const text = [
+      '### build-test: Bazel Validation <!-- executable-step -->',
+      '',
+      '- **Depends on:** None',
+      '- **Mode:** Read-only',
+      '- **Work:**',
+      '  Build and run tests. Proposed shape:',
+      '',
+      '  ```java',
+      '  Preconditions.checkState(enabled, "must be on");',
+      '',
+      '  # In cdp-api/BUILD.bazel or p13n-impl/BUILD.bazel',
+      '  # (do not manually create new packages).',
+      '  ```',
+      '- **Verification:** All tests pass.',
+      '- **Completion criteria:** Clean tests.',
+      ''
+    ].join('\n');
+    const result = parsePortablePlan(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const unit = result.units[0];
+    expect(unit.task).toContain('In cdp-api/BUILD.bazel');
+    expect(unit.verification).toEqual(['All tests pass.']);
+    expect(() => normalizeExecutionPlan(result.units, true)).not.toThrow();
+  });
+
   it('treats a step with no Depends on / Write scope as a dependency-free read step', () => {
     const text = '### solo: Solo <!-- executable-step -->\n\n- **Mode:** Read-only\n- **Work:** inspect only\n';
     const result = parsePortablePlan(text);
