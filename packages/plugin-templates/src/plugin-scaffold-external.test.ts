@@ -80,7 +80,9 @@ async function installPackedSdk(targetDir: string, tarball: string): Promise<voi
       '--no-fund',
       tarball
     ],
-    { cwd: targetDir }
+    // Full Vitest runs start other temporary npm installs concurrently. Keep
+    // this install's cache inside its disposable fixture to avoid cache races.
+    { cwd: targetDir, env: { ...process.env, npm_config_cache: join(targetDir, '.npm-cache') } }
   );
 }
 
