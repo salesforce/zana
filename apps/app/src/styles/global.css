@@ -3264,6 +3264,9 @@ body.resizing-col {
 
 /* --- Agent-inspector modal (live terminal peek) --- */
 .agent-terminal-modal {
+  /* Native drag regions behind the overlay still intercept pointer clicks
+     unless the inspector explicitly excludes itself from window dragging. */
+  -webkit-app-region: no-drag;
   /* Wider + taller than the default modal: it hosts a live terminal beside the
      detail panel, so give it the full viewport height (less a thin gutter) and a
      wider cap than a plain modal — the extra height flows into the terminal
@@ -6519,6 +6522,8 @@ body.resizing-col {
   overflow: auto;
 }
 .thread-provider-models li {
+  flex: 0 0 auto;
+  line-height: 1.5;
   font-size: 11.5px;
   color: var(--text-dim);
   overflow: hidden;
