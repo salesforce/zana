@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { realpath, stat } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
 import { resolveZccDataDir } from './host-config.js';
 import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
@@ -611,10 +612,19 @@ export async function dispatchHostCommand(
       if (!runtime.listModels) {
         throw new HostCommandError('unsupported', 'model listing is not available on this host');
       }
+      let cwd: string | undefined;
+      if (command.cwd !== undefined) {
+        try {
+          cwd = await realpath(command.cwd);
+          if (!(await stat(cwd)).isDirectory()) throw new Error('not a directory');
+        } catch {
+          throw new HostCommandError('invalid_request', 'model discovery cwd is unavailable');
+        }
+      }
       return runtime.listModels({
         providerId: command.providerId,
         bridgeLaunch: command.bridgeLaunch,
-        ...(command.cwd !== undefined ? { cwd: command.cwd } : {})
+        ...(cwd !== undefined ? { cwd } : {})
       });
     }
     case 'provider.health': {

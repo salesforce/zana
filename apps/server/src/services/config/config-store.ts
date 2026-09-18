@@ -115,6 +115,7 @@ export function createConfigStore(
     composerShowModern: true,
     composerShowAutonomousTeam: true,
     teamJobLaunchEnabled: true,
+    nativeAgentDiscoveryEnabled: true,
     executionClaimRecoveryObserveEnabled: true,
     executionClaimRecoveryEnforceEnabled: true,
     executionPlanStartupGraceMs: 300_000

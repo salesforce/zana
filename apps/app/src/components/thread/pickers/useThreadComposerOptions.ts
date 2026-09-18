@@ -25,7 +25,7 @@ import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
   reloadThreadProviderModels,
-  setThreadModelCatalogHost,
+  setThreadModelCatalogScope,
   subscribeThreadModelCatalog
 } from './thread-model-catalog.js';
 import { nextAcpModeSelection } from './acp-mode-selection.js';
@@ -65,6 +65,7 @@ export function useThreadComposerOptions(input: {
   initialAcpMode?: string | null;
   preferredProviderId?: string | null;
   hostId?: string;
+  projectId?: string;
   /** True while the host roster is still hydrating — do not treat missing hostId as a machine change. */
   hostPending?: boolean;
 }) {
@@ -145,8 +146,8 @@ export function useThreadComposerOptions(input: {
 
   useEffect(() => {
     if (input.hostPending) return;
-    void setThreadModelCatalogHost(input.hostId);
-  }, [input.hostId, input.hostPending]);
+    void setThreadModelCatalogScope({ hostId: input.hostId, projectId: input.projectId });
+  }, [input.hostId, input.hostPending, input.projectId]);
 
   const providers = composerProvidersFromCatalog(
     catalog.providers,
@@ -155,7 +156,8 @@ export function useThreadComposerOptions(input: {
   );
   const rosterReady = catalog.providers.length > 0 || Boolean(input.threadId || input.lockedProviderId);
   const registeredProviderIds = catalog.providers.map((row) => row.id);
-  const cached = catalog.byProvider[providerId];
+  const scopeMatches = catalog.hostId === input.hostId && catalog.projectId === input.projectId;
+  const cached = scopeMatches ? catalog.byProvider[providerId] : undefined;
   const models = cached?.models ?? fallbackModelsForProvider(providerId);
   const moreModels = cached?.selectedOnlyModels ?? fallbackMoreModelsForProvider(providerId);
   const loading = !cached && catalog.inflight.has(providerId);

@@ -29,8 +29,8 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('hostId?: string');
     expect(source).toContain('hostPending?: boolean');
     expect(source).toContain('if (input.hostPending) return');
-    expect(source).toContain('void setThreadModelCatalogHost(input.hostId)');
-    expect(source).toContain('setThreadModelCatalogHost');
+    expect(source).toContain('void setThreadModelCatalogScope({ hostId: input.hostId, projectId: input.projectId })');
+    expect(source).toContain('setThreadModelCatalogScope');
     expect(source).toContain('ensureThreadProviderModels');
     expect(source).toContain('if (cached) return');
     expect(source).toContain('[providerId, cached]');

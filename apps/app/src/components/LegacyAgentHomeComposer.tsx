@@ -35,7 +35,6 @@ import {
   type ComposerProjectSelectionProps
 } from './composer-project-default.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
-import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
 import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { consumeComposerModeCycle, type ComposerWorkMode } from './thread/pickers/composer-mode.js';
 import { composerModeEntries, visibleAcpModeOptions } from '@zana-ai/zcc-domain/thread-runtime';
@@ -95,7 +94,7 @@ import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
   reloadThreadProviderModels,
-  setThreadModelCatalogHost,
+  setThreadModelCatalogScope,
   subscribeThreadModelCatalog
 } from './thread/pickers/thread-model-catalog.js';
 import { defaultHostId, useHosts } from '../hooks/useHosts.js';
@@ -216,7 +215,11 @@ export function LegacyAgentHomeComposer({
     getThreadModelCatalog
   );
   const selectedProviderId = (familyId && threadProviderIdForFamily(familyId)) || '';
-  const catalogEntry = selectedProviderId ? catalog.byProvider[selectedProviderId] : undefined;
+  const catalogHostId = project?.hostId ?? executionHostId;
+  const catalogScopeMatches = catalog.hostId === catalogHostId && catalog.projectId === project?.id;
+  const catalogEntry = selectedProviderId && catalogScopeMatches
+    ? catalog.byProvider[selectedProviderId]
+    : undefined;
   const catalogPermissionModes = useMemo(() => {
     const fromCatalog = catalog.providers.find((row) => row.id === selectedProviderId)?.permissionModes;
     if (fromCatalog && fromCatalog.length > 0) return fromCatalog;
@@ -234,7 +237,6 @@ export function LegacyAgentHomeComposer({
   // loading placeholder — including on a remote project. Which machine's
   // catalog is fetched is `catalogHostId` below, not this flag.
   const preferHostModels = true;
-  const catalogHostId = project?.hostId ?? executionHostId;
   const nativeModelSelection = selectedHarness?.modelSelection === 'native-only';
   const catalogReady = Boolean(catalogEntry);
   const models = cliAgentModelOptions({
@@ -273,12 +275,16 @@ export function LegacyAgentHomeComposer({
   const roleOptions = familyId === 'opencode'
     ? visibleAcpModeOptions(catalogEntry?.acpMode?.options ?? [], nativeAgentDiscoveryEnabled)
     : [];
+  const openCodeModeEntries = familyId === 'opencode'
+    ? composerModeEntries({ acpModeOptions: roleOptions })
+    : [];
+  const openCodeMode = roleTargetId
+    ? openCodeModeEntries.find((entry) => entry.nativeValue === roleTargetId)?.id ?? 'agent'
+    : 'agent';
+  const selectedOpenCodeRole = roleTargetId
+    ? openCodeModeEntries.find((entry) => entry.nativeValue === roleTargetId)
+    : undefined;
   const modeChip = cliComposerModeChip(familyId);
-
-  useEffect(() => {
-    if (nativeAgentDiscoveryEnabled || !roleTargetId) return;
-    if (!roleOptions.some((option) => option.value === roleTargetId)) setRoleTargetId(undefined);
-  }, [nativeAgentDiscoveryEnabled, roleOptions, roleTargetId]);
 
   const field = useComposerPromptField({
     placeholder: 'Describe the task… Leave empty to open an interactive session',
@@ -321,32 +327,26 @@ export function LegacyAgentHomeComposer({
     // Hosts start empty on a fresh mount. Don't treat that as "no machine" and
     // wipe the catalog Modern already loaded.
     if (!catalogHostId && hosts.length === 0) return;
-    void setThreadModelCatalogHost(catalogHostId);
-  }, [catalogHostId, hosts.length]);
+    void setThreadModelCatalogScope({ hostId: catalogHostId, projectId: project?.id });
+  }, [catalogHostId, hosts.length, project?.id]);
 
   useEffect(() => {
     if (!selectedProviderId || catalogEntry) return;
     void ensureThreadProviderModels(selectedProviderId);
   }, [catalogEntry, selectedProviderId]);
 
-  // Keep the role pick coherent with the ACP mode list (same discipline as the
-  // Modern composer): seed from `acpMode.currentValue` when unset, and drop a
-  // selection the freshly-loaded list no longer offers.
+  // Keep an explicit custom role coherent with the ACP mode list. The native
+  // default (`build`) maps to portable Agent, so it never becomes a role
+  // override and never suppresses the independently selected model.
   useEffect(() => {
     if (familyId !== 'opencode') {
       if (roleTargetId) setRoleTargetId(undefined);
       return;
     }
-    const options = catalogEntry?.acpMode?.options;
-    if (!options) return;
-    if (roleTargetId && !options.some((option) => option.value === roleTargetId)) {
-      setRoleTargetId(catalogEntry?.acpMode?.currentValue);
-      return;
+    if (roleTargetId && !openCodeModeEntries.some((entry) => entry.nativeValue === roleTargetId)) {
+      setRoleTargetId(undefined);
     }
-    if (!roleTargetId && catalogEntry?.acpMode?.currentValue) {
-      setRoleTargetId(catalogEntry.acpMode.currentValue);
-    }
-  }, [familyId, catalogEntry?.acpMode, roleTargetId]);
+  }, [familyId, openCodeModeEntries, roleTargetId]);
 
   useEffect(() => {
     if (permissionModeIds.length > 0 && !permissionModeIds.includes(permissionMode)) {
@@ -779,14 +779,16 @@ export function LegacyAgentHomeComposer({
             <>
               <div className="thread-command-footer-start">
                 {familyId === 'opencode' ? (
-                  <NativeRolePicker
-                    value={roleTargetId}
-                    options={roleOptions.map((role) => ({ value: role.value, name: role.name }))}
-                    onChange={setRoleTargetId}
+                  <ComposerModePicker
+                    value={openCodeMode}
+                    entries={openCodeModeEntries}
+                    onChange={(value) => {
+                      const selected = openCodeModeEntries.find((entry) => entry.id === value);
+                      setRoleTargetId(selected?.id === 'agent' ? undefined : selected?.nativeValue);
+                    }}
                     onRefresh={() => {
                       if (selectedProviderId) void reloadThreadProviderModels(selectedProviderId);
                     }}
-                    discoveryEnabled={nativeAgentDiscoveryEnabled}
                   />
                 ) : modeChip === 'work-mode' ? (
                   <ComposerModePicker
@@ -823,12 +825,11 @@ export function LegacyAgentHomeComposer({
                   moreModelOptions={availableModelsToPickerOptions(moreModelOptions)}
                   modelIsLoading={catalogModelsLoading}
                   modelLockedLabel={
-                    familyId === 'opencode'
-                    && roleTargetId
-                    && roleOptions.some((role) => role.value === roleTargetId)
-                      ? 'Pinned by native role'
+                    familyId === 'opencode' && selectedOpenCodeRole
+                      ? `Model chosen by ${selectedOpenCodeRole.label}`
                       : undefined
                   }
+                  disabled={harnessProviderOptions.length === 0}
                   modelLoadError={
                     !nativeModelSelection && (preferHostModels || (selectedHarness?.targets?.models?.length ?? 0) === 0)
                       ? catalogEntry?.modelLoadError ?? null
@@ -840,7 +841,6 @@ export function LegacyAgentHomeComposer({
                       rememberComposerSelection({ providerId: selectedProviderId, model: value });
                     }
                   }}
-                  disabled={harnessProviderOptions.length === 0}
                 />
               </div>
               <div className="thread-command-footer-end">

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures/app.js';
 import type { Locator, Page } from '@playwright/test';
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,25 +40,28 @@ async function openLegacyAgentLauncher(window: Page) {
   return modal;
 }
 
-// The native-role picker is a popover chip that only renders for the OpenCode
-// family. Its trigger lives in the composer; its menu portals to document.body.
-// It now sources the SAME ACP session-mode list the Modern composer uses
-// (`catalogEntry.acpMode`), so both surfaces show an identical, plain-named list.
+// OpenCode uses the same mode picker and portable projection as Modern:
+// Agent/Plan first, then project-specific custom agents.
 function roleTrigger(modal: Locator) {
-  return modal.locator('[data-testid="native-role-picker-trigger"]');
+  return modal.locator('[data-testid="composer-mode-picker-trigger"]');
 }
 
 async function openRoleMenu(window: Page, modal: Locator, timeout = 5_000) {
   const trigger = roleTrigger(modal);
   await expect(trigger).toBeVisible({ timeout });
   await trigger.click();
-  const menu = window.getByRole('listbox', { name: 'Native role' });
+  const menu = window.getByRole('listbox', { name: 'Composer mode' });
   await expect(menu).toBeVisible();
   return menu;
 }
 
 async function readRoleLabels(window: Page, modal: Locator, timeout = 5_000) {
   const menu = await openRoleMenu(window, modal, timeout);
+  await expect.poll(async () => (
+    (await menu.getByRole('option').allTextContents())
+      .map((label) => label.replace(/^∞/, '').trim())
+      .filter((label) => label !== 'Refresh roles')
+  ), { timeout }).not.toEqual(['Agent']);
   const labels = (await menu.getByRole('option').allTextContents())
     .map((label) => label.replace(/^∞/, '').trim())
     .filter((label) => label !== 'Refresh roles');
@@ -75,6 +78,8 @@ async function selectRole(window: Page, modal: Locator, value: string) {
 async function refreshRoles(window: Page, modal: Locator) {
   const menu = await openRoleMenu(window, modal);
   await menu.getByText('Refresh roles', { exact: true }).click();
+  await roleTrigger(modal).click();
+  await expect(menu).toBeHidden();
 }
 
 // The CLI Agent composer rests on claude-code (Modern-parity default), so the
@@ -108,6 +113,7 @@ test.describe('OpenCode native-role picker (ACP mode parity)', () => {
   test('lists the session-advertised ACP modes with plain names, matching Modern', async ({ app }) => {
     const { window } = app;
     const projectDir = mkdtempSync(join(tmpdir(), 'zcc-opencode-picker-'));
+    writeFileSync(join(projectDir, '.zcc-doc-vault-agent'), 'project-only');
     const projectName = basename(projectDir);
     let projectId: string | null = null;
 
@@ -132,12 +138,16 @@ test.describe('OpenCode native-role picker (ACP mode parity)', () => {
       await selectHarness(window, modal, 'acp-opencode');
 
       // Plain names, no `[state]` decoration — identical to the Modern list.
-      expect(await readRoleLabels(window, modal, 30_000)).toEqual(['Build', 'Plan']);
+      expect(await readRoleLabels(window, modal, 30_000)).toEqual(['Agent', 'Plan', 'Doc-Vault']);
+      await expect(roleTrigger(modal)).toContainText('Agent');
+      await expect(modal.locator('[data-testid="model-reasoning-picker-trigger"]')).not.toContainText('Model chosen by');
+      await selectRole(window, modal, 'doc-vault');
+      await expect(modal.locator('[data-testid="model-reasoning-picker-trigger"]')).toContainText('Model chosen by Doc-Vault');
       await selectRole(window, modal, 'plan');
       await expect(roleTrigger(modal)).toContainText('Plan');
       // Refresh re-fetches the provider catalog; the fake advertises the same set.
       await refreshRoles(window, modal);
-      expect(await readRoleLabels(window, modal)).toEqual(['Build', 'Plan']);
+      expect(await readRoleLabels(window, modal)).toEqual(['Agent', 'Plan', 'Doc-Vault']);
     } finally {
       if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
       await window.evaluate(() => window.cc.config.set({
@@ -182,7 +192,7 @@ test('real OpenCode CLI agents become selectable through Electron UI', async ({ 
     // identical to the Modern composer. A mode that maps to a subagent is still
     // offered here even though the legacy CLI picker used to filter it out.
     const labels = await readRoleLabels(window, modal, 30_000);
-    expect(labels).toEqual(expect.arrayContaining(['build', 'plan']));
+    expect(labels).toEqual(expect.arrayContaining(['Agent', 'Plan']));
     // No `[state]` decoration — plain names only.
     expect(labels.some((label) => label.includes('['))).toBe(false);
     await selectRole(window, modal, 'plan');
@@ -232,12 +242,12 @@ test.describe('real OpenCode home integration', () => {
         throw new Error(`${error.message}\nRelevant main logs:\n${JSON.stringify(harnessLogs, null, 2)}`);
       });
       const options = await readRoleLabels(window, modal, 30_000);
-      expect(options).toEqual(expect.arrayContaining(['build', 'plan']));
-      // Plain names, and at least one project-specific mode beyond build/plan.
+      expect(options).toEqual(expect.arrayContaining(['Agent', 'Plan']));
+      // Plain names, and at least one project-specific mode beyond Agent/Plan.
       expect(options.some((label) => label.includes('['))).toBe(false);
-      expect(options.some((label) => label !== 'build' && label !== 'plan')).toBe(true);
+      expect(options.some((label) => label !== 'Agent' && label !== 'Plan')).toBe(true);
       await selectRole(window, modal, 'plan');
-      await expect(roleTrigger(modal)).toContainText('plan');
+      await expect(roleTrigger(modal)).toContainText('Plan');
     } finally {
       if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
     }
