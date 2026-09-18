@@ -710,7 +710,9 @@ export class ExecutionService {
           // ('working'/'blocked'/'unknown') or its state is unresolved, treat it as alive and
           // RENEW the lease from this signal instead of reclaiming; the wall-clock ceiling
           // above remains the hard stop for a worker that stays non-restful but is truly hung.
-          const state = this.deps.getAgentState?.(worker.sessionId);
+          const state = worker.sessionId === undefined
+            ? undefined
+            : this.deps.getAgentState?.(worker.sessionId);
           if (state !== undefined && isRestfulAgentState(state)) {
             claims.push({ workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, reason: SILENT_WORKER_CLAIM_REASON });
             continue;
