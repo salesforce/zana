@@ -692,12 +692,13 @@ describe('conversation and banners', () => {
     expect(renderToStaticMarkup(
       <ThreadWorkingIndicator status="starting" thinking={{ id: 'th', text: 'Plan first.', startedAt: 1, updatedAt: 1 }} />
     )).toContain('Thinking…');
-    expect(renderToStaticMarkup(
+    const plainThinking = renderToStaticMarkup(
       <ThreadWorkingIndicator status="active" thinking={null} />
-    )).toContain('Planning next move…');
-    expect(renderToStaticMarkup(
-      <ThreadWorkingIndicator status="active" thinking={null} />
-    )).not.toContain('thread-timeline-work-chevron');
+    );
+    expect(plainThinking).toContain('Planning next move…');
+    expect(plainThinking).toContain('thread-working-indicator-gutter');
+    expect(plainThinking).not.toContain('thread-timeline-work-chevron');
+    expect(withText).toContain('thread-working-indicator-glyph-spacer');
     expect(renderToStaticMarkup(
       <ThreadGoalBanner goal={{
         sourceSeq: 1,
