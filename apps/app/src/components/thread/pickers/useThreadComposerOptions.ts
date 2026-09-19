@@ -59,10 +59,11 @@ export function useThreadComposerOptions(input: {
   initialAcpMode?: string | null;
   preferredProviderId?: string | null;
   hostId?: string;
+  projectId?: string;
   /** True while the host roster is still hydrating — do not treat missing hostId as a machine change. */
   hostPending?: boolean;
 }) {
-  const hostCatalog = threadModelCatalogForHost(input.hostId);
+  const hostCatalog = threadModelCatalogForHost(input.hostId, input.projectId);
   const catalog = useSyncExternalStore(hostCatalog.subscribe, hostCatalog.getSnapshot, hostCatalog.getSnapshot);
   const [providerId, setProviderIdState] = useState(
     () => input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code'

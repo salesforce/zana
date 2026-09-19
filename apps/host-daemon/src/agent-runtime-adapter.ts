@@ -389,17 +389,21 @@ export function createAgentRuntimeAdapter(options: {
       syncProviderBridgeRecording();
       const workspaceCwd = input.cwd ?? join(storageRoot, 'model-list', input.providerId);
       if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
-      const runtime = runtimeFor(`model-list:${input.providerId}`, workspaceCwd);
-      const listed = await runtime.listModels({
-        providerId: input.providerId,
-        bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
-        ...(input.cwd ? { cwd: input.cwd } : {})
-      });
-      return {
-        models: listed.models,
-        selectedOnlyModels: listed.selectedOnlyModels,
-        ...(listed.acpMode ? { acpMode: listed.acpMode } : {})
-      };
+      const runtime = createEnvironmentRuntime(workspaceCwd);
+      try {
+        const listed = await runtime.listModels({
+          providerId: input.providerId,
+          bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
+          ...(input.cwd ? { cwd: input.cwd } : {})
+        });
+        return {
+          models: listed.models,
+          selectedOnlyModels: listed.selectedOnlyModels,
+          ...(listed.acpMode ? { acpMode: listed.acpMode } : {})
+        };
+      } finally {
+        await runtime.shutdown();
+      }
     },
     async providerHealth(input: {
       providerId: string;

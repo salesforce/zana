@@ -81,5 +81,9 @@ describe('Install status login check copy', () => {
     expect(source).toContain('data-testid={`harness-cli-update-${h.family}`}');
     expect(source).toContain('cliHint={row?.status.updateUnavailableReason ?? undefined}');
     expect(source).toContain('testId={`harness-cli-hint-${h.family}`}');
+    expect(source).toContain('Discover additional native agents');
+    expect(source).toContain('label="Project agents"');
+    expect(source).toContain("h.family === 'opencode'");
+    expect(source).toContain('nativeAgentDiscoveryEnabled');
   });
 });

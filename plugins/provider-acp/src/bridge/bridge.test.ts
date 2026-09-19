@@ -318,10 +318,11 @@ async function stopThread(providerThreadId: string): Promise<void> {
 /** Send a turn request in the canonical shape, keyed by provider session id. */
 /** Send `model/list` with the launch spec the bridge derives everything from. */
 function sendModelList(
-  args: AgentLaunchArgs & { modelLines?: string } = {},
+  args: AgentLaunchArgs & { modelLines?: string; cwd?: string } = {},
 ): number {
-  const { modelLines, ...launch } = args;
+  const { modelLines, cwd, ...launch } = args;
   return sendRequest("model/list", {
+    ...(cwd ? { cwd } : {}),
     providerOptions: {
       ...(launch.dialectId ? { acpDialect: launch.dialectId } : {}),
       ...(launch.parameterizedModelPicker === true
@@ -637,6 +638,28 @@ describe("acp bridge", () => {
         },
       ],
       selectedOnlyModels: [],
+    });
+  });
+
+  it("runs ACP-native model and mode discovery in the requested project cwd", async () => {
+    const modelListId = sendModelList({
+      cwd: workspaceDir,
+      envVars: {
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_MODE_CONFIG: "1",
+        FAKE_ACP_MODE_OPTIONS: "build:Build,plan:Plan,doc-vault:Doc-Vault",
+      },
+    });
+
+    expect((await waitForResponse(modelListId)).result).toMatchObject({
+      acpMode: {
+        currentValue: "build",
+        options: [
+          { value: "build", name: "Build" },
+          { value: "plan", name: "Plan" },
+          { value: "doc-vault", name: "Doc-Vault" },
+        ],
+      },
     });
   });
 

@@ -81,7 +81,7 @@ test('local project switches reuse models while remote discovery remains pending
     const url = new URL(route.request().url());
     requests.push(url.search);
     const remote = url.searchParams.get('hostId') === remoteHost;
-    if (remote) await remoteGate;
+    if (remote || url.searchParams.get('projectId') === 'composer-local-b') await remoteGate;
     await route.fulfill({ json: {
       providers: [{ id: 'claude-code', displayName: 'Claude', available: true,
         composerActions: [], capabilities: { permissionModes: ['full'] } }],
@@ -110,7 +110,7 @@ test('local project switches reuse models while remote discovery remains pending
     };
     await choose('Local A');
     await expect(model).toContainText('Local Model');
-    const localRequestCount = () => requests.filter((query) => !query.includes(remoteHost)).length;
+    const localRequestCount = () => requests.filter((query) => query.includes('composer-local-a')).length;
     const count = localRequestCount();
     await choose('Remote first in store');
     await expect.poll(() => requests.some((query) => query.includes(remoteHost))).toBe(true);

@@ -30,7 +30,7 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('hostPending?: boolean');
     expect(source).toContain('if (input.hostPending) return');
     expect(source).toContain('void hostCatalog.ensure()');
-    expect(source).toContain('threadModelCatalogForHost(input.hostId)');
+    expect(source).toContain('threadModelCatalogForHost(input.hostId, input.projectId)');
     expect(source).toContain('hostCatalog.ensureProvider');
     expect(source).toContain('if (input.hostPending || cached) return');
     expect(source).toContain('[hostCatalog, input.hostPending, providerId, cached]');

@@ -155,6 +155,7 @@ export function ThreadCommandComposer({
           defaultHarness
         }),
     hostId: catalogHostId,
+    projectId: currentThread?.projectId ?? selectedProject?.id,
     hostPending: !catalogHostId && hosts.length === 0
   });
   const { permissionMode, setPermissionMode } = useThreadPermissionMode({

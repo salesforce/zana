@@ -411,6 +411,42 @@ describe('thread model catalog', () => {
     await refresh;
   });
 
+  it('reuses same-host models immediately but discovers each project’s own roles', async () => {
+    let release!: (body: OptionsBody) => void;
+    const gate = new Promise<OptionsBody>((resolve) => { release = resolve; });
+    const fetcher = vi.fn(async (query?: { hostId?: string; projectId?: string; providerId?: string }) => {
+      if (query?.projectId === 'project-b' && query.providerId) return gate;
+      return { ...optionsBody(['acp-opencode'], 'shared'), acpMode: {
+        currentValue: 'build', options: [{ value: 'build', name: 'Build' }, { value: 'project-a-role', name: 'A role' }]
+      } };
+    });
+    resetThreadModelCatalog(fetcher);
+    const a = threadModelCatalogForHost('local', 'project-a');
+    await a.ensure();
+    const b = threadModelCatalogForHost('local', 'project-b');
+    expect(b.getSnapshot().byProvider['acp-opencode']?.models).toBe(a.getSnapshot().byProvider['acp-opencode']?.models);
+    expect(b.getSnapshot().byProvider['acp-opencode']?.acpMode).toBeUndefined();
+    const loading = b.ensure();
+    const providerLoading = b.ensureProvider('acp-opencode');
+    await vi.waitFor(() => expect(b.getSnapshot().inflight.has('acp-opencode')).toBe(true));
+    expect(b.getSnapshot().byProvider['acp-opencode']?.models[0]?.model).toBe('shared-model');
+    await a.ensure();
+    expect(a.getSnapshot().inflight.size).toBe(0);
+    release({ ...optionsBody(['acp-opencode'], 'shared'), acpMode: { currentValue: 'build', options: [{ value: 'build' }] } });
+    await Promise.all([loading, providerLoading]);
+    expect(b.getSnapshot().byProvider['acp-opencode']?.acpMode?.options).toEqual([{ value: 'build' }]);
+    expect(a.getSnapshot().byProvider['acp-opencode']?.acpMode?.options).toHaveLength(2);
+    expect(fetcher.mock.calls.every(([query]) => query?.hostId === 'local' && query.projectId)).toBe(true);
+    expect(threadModelCatalogForHost('local', ' project-b ')).toBe(b);
+    fetcher.mockClear();
+    await threadModelCatalogForHost('local', 'project-a').ensure();
+    await b.ensure();
+    expect(fetcher).not.toHaveBeenCalled();
+    const hostOnly = threadModelCatalogForHost('local');
+    await hostOnly.ensure();
+    expect(fetcher.mock.calls.every(([query]) => query?.projectId === undefined)).toBe(true);
+  });
+
   it('bounds inactive host caches while retaining mounted subscribers', () => {
     const mounted = threadModelCatalogForHost('mounted');
     const unsubscribe = mounted.subscribe(() => {});

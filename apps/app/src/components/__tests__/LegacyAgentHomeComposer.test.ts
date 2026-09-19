@@ -112,7 +112,8 @@ describe('LegacyAgentHomeComposer', () => {
     // Refresh re-fetches the provider's catalog entry (same as Modern's refresh).
     expect(source).toContain('hostCatalog.reloadProvider(selectedProviderId)');
     // Role selection stays coherent with the loaded mode list.
-    expect(source).toContain('setRoleTargetId(catalogEntry.acpMode.currentValue)');
+    expect(source).not.toContain('setRoleTargetId(catalogEntry.acpMode.currentValue)');
+    expect(source).toContain("selected?.id === 'agent' ? undefined : selected?.nativeValue");
   });
 
   it('drops the forced catalog model when a native OpenCode role is picked', () => {
@@ -130,15 +131,18 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('hasNativeRole: Boolean(validRoleId)');
     expect(source).toContain('unrestrictedProfileSelected: Boolean(permLaunch.profileId)');
     expect(source).toContain("modelLockedLabel={");
-    expect(source).toContain('Pinned by native role');
+    expect(source).toContain('Model chosen by ${selectedOpenCodeRole.label}');
+    expect(source).toContain('familyId === \'opencode\' && selectedOpenCodeRole');
+    expect(source).toContain('disabled={harnessProviderOptions.length === 0}');
   });
 
-  it('offers the OpenCode native role via a popover picker only for the opencode family', () => {
+  it('maps OpenCode Agent to no role override and custom modes to native roles', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('<NativeRolePicker');
+    expect(source).toContain('<ComposerModePicker');
     expect(source).toContain("familyId === 'opencode' ? (");
-    expect(source).toContain('value={roleTargetId}');
-    expect(source).toContain('onChange={setRoleTargetId}');
+    expect(source).toContain('value={openCodeMode}');
+    expect(source).toContain('entries={openCodeModeEntries}');
+    expect(source).toContain("selected?.id === 'agent' ? undefined : selected?.nativeValue");
     expect(source).toContain('consumeComposerModeCycle');
     expect(source).toContain('interceptKeyDown');
     expect(source).toContain("kind: 'native'");
@@ -146,7 +150,7 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('onChange: setRoleTargetId');
   });
 
-  it('offers ComposerModePicker Agent/Plan only for Claude, Cursor, and Codex', () => {
+  it('offers ComposerModePicker Agent/Plan for standard harnesses and Modern-parity modes for OpenCode', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<ComposerModePicker');
     expect(source).toContain("modeChip === 'work-mode'");
@@ -155,14 +159,13 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain("kind: 'work'");
     expect(source).not.toContain("kind: 'new-thread'");
     expect(source).toContain("familyId === 'opencode' ? (");
-    expect(source).toContain('<NativeRolePicker');
+    expect(source).toContain('composerModeEntries({ acpModeOptions: roleOptions })');
   });
 
   it('puts mode before the harness picker, matching Thread', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
     const footer = source.slice(source.indexOf('thread-command-footer-start'));
     expect(footer.indexOf('<ComposerModePicker')).toBeLessThan(footer.indexOf('<ModelReasoningPicker'));
-    expect(footer.indexOf('<NativeRolePicker')).toBeLessThan(footer.indexOf('<ModelReasoningPicker'));
   });
 
   it('defaults the harness like Modern via resolveCliAgentFamily (current → remembered → effectiveDefault)', () => {

@@ -15,32 +15,45 @@ export type ThreadModelCatalogEntry = {
 };
 
 export type ThreadModelCatalogSnapshot = {
+  hostId?: string;
+  projectId?: string;
   providers: ThreadComposerProviderOption[];
   byProvider: Readonly<Record<string, ThreadModelCatalogEntry>>;
   inflight: ReadonlySet<string>;
 };
 
 type ExecutionOptionsBody = Awaited<ReturnType<typeof product.threads.executionOptions>>;
-export type ThreadExecutionOptionsQuery = { providerId?: string; hostId?: string };
+export type ThreadExecutionOptionsQuery = { providerId?: string; hostId?: string; projectId?: string };
 export type ThreadExecutionOptionsFetcher = (
   query?: ThreadExecutionOptionsQuery
 ) => Promise<ExecutionOptionsBody>;
 
-// One cache per execution machine. A remote probe must never hold up, replace,
-// or clear a local composer's models (including composers mounted behind a modal).
+// Independent discovery per host/project. New projects reuse the same host's
+// models while their own roles and configuration are discovered in the background.
 export const MODEL_CATALOG_TIMEOUT_MS = 60_000;
 const MAX_IDLE_HOST_CATALOGS = 8;
 let fetchOptions: ThreadExecutionOptionsFetcher = (query) => product.threads.executionOptions(query);
-const catalogs = new Map<string | undefined, ReturnType<typeof createCatalog>>();
+const catalogs = new Map<string, ReturnType<typeof createCatalog>>();
 
-function createCatalog(catalogHostId: string | undefined, fetchOptions: ThreadExecutionOptionsFetcher) {
+function createCatalog(
+  catalogHostId: string | undefined,
+  fetchOptions: ThreadExecutionOptionsFetcher,
+  catalogProjectId?: string,
+  seed?: ThreadModelCatalogSnapshot
+) {
   const listeners = new Set<() => void>();
   const loads = new Map<string, Promise<void>>();
   let prefetchInflight: Promise<void> | null = null;
   let prefetchDirty = false;
   let offeredSignature = '';
-  let providers: ThreadComposerProviderOption[] = [];
-  let byProvider: Record<string, ThreadModelCatalogEntry> = {};
+  let providers: ThreadComposerProviderOption[] = seed?.providers ?? [];
+  // Roles are project-local. Only model rows may serve as a warm placeholder.
+  let byProvider: Record<string, ThreadModelCatalogEntry> = Object.fromEntries(
+    Object.entries(seed?.byProvider ?? {})
+      .filter(([, entry]) => !entry.modelLoadError)
+      .map(([id, { acpMode: _acpMode, ...entry }]) => [id, entry])
+  );
+  const inherited = new Set(Object.keys(byProvider));
   let inflight = new Set<string>();
   let catalogEpoch = 0;
   let initialized = false;
@@ -50,7 +63,9 @@ function createCatalog(catalogHostId: string | undefined, fetchOptions: ThreadEx
     return {
       providers,
       byProvider,
-      inflight
+      inflight,
+      hostId: catalogHostId,
+      projectId: catalogProjectId
     };
   }
 
@@ -107,10 +122,11 @@ function createCatalog(catalogHostId: string | undefined, fetchOptions: ThreadEx
   }
 
   function optionsQuery(providerId?: string): ThreadExecutionOptionsQuery | undefined {
-    if (!providerId && !catalogHostId) return undefined;
+    if (!providerId && !catalogHostId && !catalogProjectId) return undefined;
     return {
       ...(providerId ? { providerId } : {}),
-      ...(catalogHostId ? { hostId: catalogHostId } : {})
+      ...(catalogHostId ? { hostId: catalogHostId } : {}),
+      ...(catalogProjectId ? { projectId: catalogProjectId } : {})
     };
   }
 
@@ -124,10 +140,12 @@ function createCatalog(catalogHostId: string | undefined, fetchOptions: ThreadEx
       try {
         const body = await fetchBounded(optionsQuery(providerId));
         if (epoch !== catalogEpoch) return;
+        inherited.delete(providerId);
         applyRoster(mapProviders(body.providers));
         byProvider = { ...byProvider, [providerId]: entryFor(providerId, body) };
       } catch {
         if (epoch !== catalogEpoch) return;
+        inherited.delete(providerId);
         byProvider = { ...byProvider, [providerId]: entryFor(providerId, null) };
       } finally {
         if (epoch === catalogEpoch) {
@@ -158,7 +176,7 @@ function createCatalog(catalogHostId: string | undefined, fetchOptions: ThreadEx
       if (epoch === catalogEpoch) emit();
       return;
     }
-    const missing = roster.filter((row) => !byProvider[row.id]).map((row) => row.id);
+    const missing = roster.filter((row) => !byProvider[row.id] || inherited.has(row.id)).map((row) => row.id);
     if (missing.length === 0) return;
     await Promise.allSettled(missing.map((id) => loadProvider(id)));
   }
@@ -199,6 +217,7 @@ function createCatalog(catalogHostId: string | undefined, fetchOptions: ThreadEx
     prefetchInflight = null;
     initialized = false;
     loads.clear();
+    inherited.clear();
     offeredSignature = '';
     providers = [];
     byProvider = {};
@@ -209,6 +228,7 @@ function createCatalog(catalogHostId: string | undefined, fetchOptions: ThreadEx
   }
 
   function ensureThreadProviderModels(providerId: string): Promise<void> {
+    if (inherited.has(providerId)) return loadProvider(providerId);
     const cached = byProvider[providerId];
     if (cached && cached.models.length > 0) return Promise.resolve();
     if (cached && cached.modelLoadError === null) return Promise.resolve();
@@ -250,11 +270,15 @@ function createCatalog(catalogHostId: string | undefined, fetchOptions: ThreadEx
   };
 }
 
-export function threadModelCatalogForHost(hostId?: string) {
-  const key = hostId?.trim() || undefined;
+export function threadModelCatalogForHost(hostId?: string, projectId?: string) {
+  const normalizedHostId = hostId?.trim() || undefined;
+  const normalizedProjectId = projectId?.trim() || undefined;
+  const key = JSON.stringify([normalizedHostId, normalizedProjectId]);
   let catalog = catalogs.get(key);
   if (!catalog) {
-    catalog = createCatalog(key, fetchOptions);
+    const seed = [...catalogs.values()].reverse().map((entry) => entry.getSnapshot())
+      .find((entry) => entry.hostId === normalizedHostId && Object.keys(entry.byProvider).length > 0);
+    catalog = createCatalog(normalizedHostId, fetchOptions, normalizedProjectId, seed);
     catalogs.set(key, catalog);
   } else {
     catalogs.delete(key);

@@ -93,12 +93,24 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'followupsFromIdle',
     'autoOpenThreadPlanPanel',
     'classicSessionViewEnabled',
-    'inAppAgentTerminalsEnabled'
+    'inAppAgentTerminalsEnabled',
+    'nativeAgentDiscoveryEnabled'
   ] as const)('persists %s', (flag) => {
     store.setConfig({ [flag]: true });
     expect(store.getConfig()[flag]).toBe(true);
     store.setConfig({ [flag]: false });
     expect(store.getConfig()[flag]).toBe(false);
+  });
+
+  it('enables native agent discovery for legacy configs while preserving explicit choices', () => {
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(configFile, JSON.stringify({ version: 1, theme: 'dark' }));
+    expect(store.getConfig().nativeAgentDiscoveryEnabled).toBe(true);
+
+    store.setConfig({ nativeAgentDiscoveryEnabled: false });
+    expect(store.getConfig().nativeAgentDiscoveryEnabled).toBe(false);
+    store.setConfig({ nativeAgentDiscoveryEnabled: true });
+    expect(store.getConfig().nativeAgentDiscoveryEnabled).toBe(true);
   });
 
   it('persists CLI Agent or Modern off when the other surface stays on', () => {

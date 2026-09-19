@@ -56,8 +56,8 @@ async function openLegacyAgentLauncher(window: Page) {
   return modal;
 }
 
-// The CLI Agent composer rests on claude-code; OpenCode (and its native-role
-// picker) only appear after explicitly picking the acp-opencode provider.
+// The CLI Agent composer rests on claude-code; OpenCode modes only appear after
+// explicitly picking the acp-opencode provider.
 async function selectHarness(window: Page, modal: Locator, providerId: string) {
   const trigger = modal.locator('[data-testid="model-reasoning-picker-trigger"]');
   await expect(trigger).toBeVisible({ timeout: 30_000 });
@@ -69,13 +69,12 @@ async function selectHarness(window: Page, modal: Locator, providerId: string) {
 }
 
 async function selectRole(window: Page, modal: Locator, value: string, timeout = 30_000) {
-  const trigger = modal.locator('[data-testid="native-role-picker-trigger"]');
+  const trigger = modal.locator('[data-testid="composer-mode-picker-trigger"]');
   await expect(trigger).toBeVisible({ timeout });
   await trigger.click();
-  const menu = window.getByRole('listbox', { name: 'Native role' });
+  const menu = window.getByRole('listbox', { name: 'Composer mode' });
   await expect(menu).toBeVisible();
   await menu.getByText('Refresh roles', { exact: true }).click();
-  await trigger.click();
   await expect(menu).toBeVisible({ timeout });
   const label = `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
   await menu.getByRole('option', { name: label, exact: true }).click({ timeout });
@@ -128,7 +127,7 @@ test('launches a directly-launchable OpenCode role validated by preflight discov
     // therefore PROVES the composer dropped the forced model once a native role
     // was picked — the native agent pins its own model.
     await selectRole(window, modal, 'reviewer');
-    await expect(modal.locator('[data-testid="native-role-picker-trigger"]')).toContainText('Reviewer');
+    await expect(modal.locator('[data-testid="composer-mode-picker-trigger"]')).toContainText('Reviewer');
 
     await modal.locator('[data-testid="legacy-agent-command-input"]').fill('review the changes');
     const send = modal.locator('[data-testid="legacy-agent-command-send"]');
@@ -170,7 +169,7 @@ test('rejects a non-directly-launchable OpenCode role at the preflight boundary'
     // SUBAGENT in `agent list` — preflight discovery filters it out, so the
     // launch is blocked before spawn.
     await selectRole(window, modal, 'sandbox');
-    await expect(modal.locator('[data-testid="native-role-picker-trigger"]')).toContainText('Sandbox');
+    await expect(modal.locator('[data-testid="composer-mode-picker-trigger"]')).toContainText('Sandbox');
 
     await modal.locator('[data-testid="legacy-agent-command-input"]').fill('poke around');
     const send = modal.locator('[data-testid="legacy-agent-command-send"]');
