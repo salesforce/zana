@@ -137,6 +137,16 @@ describe('video HTTP streaming', () => {
     rpc.mockRejectedValue(new Error('host offline'));
     expect((await fetch(url(join(root, 'large.mp4')))).status).toBe(500);
   });
+  it('resolves CLI-agent panels through a registered project while retaining confinement', async () => {
+    vi.mocked(getConversationThread).mockReturnValue(null);
+    const extra = { threadId: 'cli-session', projectId: 'p1' };
+    const response = await fetch(url('large.mp4', extra), { headers: { Range: 'bytes=0-9' } });
+    expect(response.status).toBe(206);
+    expect((await response.arrayBuffer()).byteLength).toBe(10);
+    expect((await fetch(url('../other.mp4', extra))).status).toBe(403);
+    expect((await fetch(url('large.mp4', { ...extra, projectId: 'missing' }))).status).toBe(404);
+    expect((await fetch(url('large.mp4', { ...extra, source: 'thread-storage' }))).status).toBe(404);
+  });
   it('handles empty files and terminates a stream if its file changes', async () => {
     await writeFile(join(root, 'empty.mp4'), '');
     const empty = await fetch(url(join(root, 'empty.mp4')));

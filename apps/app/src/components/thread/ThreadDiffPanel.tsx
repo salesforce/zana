@@ -1,9 +1,13 @@
+import './thread-diff.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronRight, ChevronsDown, ChevronsUp, Columns2, Copy, Rows2, Search, TextWrap } from 'lucide-react';
+import { ChevronRight, ChevronsDown, ChevronsUp, Columns2, Copy, Rows2, GitBranch, GitCompare, MoreHorizontal, PanelRightClose, PanelRightOpen, TextWrap } from 'lucide-react';
 import { formatDiffCount, formatDiffStatsText } from '@zana-ai/zcc-thread-view';
 import { product } from '../../lib/product-client.js';
 import { PopoverPicklist } from '../ui/PopoverPicklist.js';
 import { Skeleton } from '../ui/Skeleton.js';
+import { ThreadDiffFileNavigator, DiffFileIcon } from './ThreadDiffFileNavigator.js';
+import { ThreadDiffCommit } from './ThreadDiffCommit.js';
+import type { WorkspaceStatus } from '@zana-ai/zcc-domain';
 import { ThreadDiffHunkView } from './ThreadDiffHunkView.js';
 import {
   areAllDiffCardsCollapsed,
@@ -93,12 +97,20 @@ export function ThreadDiffPanel({
   const [selection, setSelection] = useState<DiffSelection>(DIFF_SELECTION_ALL);
   const [wrap, setWrap] = useState(false);
   const [splitView, setSplitView] = useState(false);
+  const [showFiles, setShowFiles] = useState(false);
+  const [activePath, setActivePath] = useState<string | null>(path);
+  const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const requestGeneration = useRef(0);
   const cardsRef = useRef<HTMLDivElement>(null);
   const pendingScrollPath = useRef<string | null>(path);
   const target = useMemo(() => diffTargetForSelection(selection), [selection]);
 
   useEffect(() => {
     let cancelled = false;
+    requestGeneration.current += 1;
+    setWorkspaceStatus(null);
+    setActivePath(path);
     let inFlight = false;
     pendingScrollPath.current = path;
     const load = (reset: boolean) => {
@@ -110,8 +122,12 @@ export function ThreadDiffPanel({
         setPatches({});
         setCollapsedByPath({});
       }
+      void product.environments.status(environmentId).then((status) => {
+        if (!cancelled) setWorkspaceStatus(status);
+      }).catch(() => { /* The diff remains usable when branch status is unavailable. */ });
       void product.environments.diffFiles(environmentId, target).then((next) => {
         if (cancelled) return;
+        setError(null);
         setFiles(next.files);
         setListTruncated(next.truncated);
         setPatches((previous) => {
@@ -137,23 +153,27 @@ export function ThreadDiffPanel({
     const timer = window.setInterval(() => load(false), DIFF_STATUS_POLL_MS);
     return () => {
       cancelled = true;
+      requestGeneration.current += 1;
       window.clearInterval(timer);
     };
-  }, [environmentId, path, target]);
+  }, [environmentId, path, target, refreshKey]);
 
   const loadPatch = useCallback((filePath: string) => {
+    const generation = requestGeneration.current;
     setPatches((previous) => {
       const current = previous[filePath];
       if (current?.status === 'loading' || current?.status === 'ready') return previous;
       return { ...previous, [filePath]: { status: 'loading' } };
     });
     void product.environments.diffPatch(environmentId, { paths: [filePath], target }).then((next) => {
+      if (requestGeneration.current !== generation) return;
       const loaded = next.patches[0] ?? { path: filePath, patch: '', truncated: false };
       setPatches((previous) => ({
         ...previous,
         [filePath]: { status: 'ready', patch: loaded.patch, truncated: loaded.truncated }
       }));
     }).catch((err: unknown) => {
+      if (requestGeneration.current !== generation) return;
       setPatches((previous) => ({
         ...previous,
         [filePath]: {
@@ -180,7 +200,7 @@ export function ThreadDiffPanel({
       node.scrollIntoView({ block: 'start' });
       pendingScrollPath.current = null;
     }
-  }, [files, collapsedByPath]);
+  }, [files, collapsedByPath, query]);
 
   return (
     <aside className={`thread-diff-panel${embedded ? ' is-embedded' : ''}`} data-testid="thread-diff-panel">
@@ -196,6 +216,7 @@ export function ThreadDiffPanel({
         <>
             <div className="thread-diff-toolbar" data-testid="thread-diff-toolbar">
               <div className="thread-diff-toolbar-selector">
+                <GitCompare size={16} aria-hidden="true" />
                 <PopoverPicklist
                   ariaLabel="Diff scope"
                   value={selection}
@@ -206,71 +227,44 @@ export function ThreadDiffPanel({
                   minWidth={220}
                 />
               </div>
-              <label className="thread-diff-toolbar-search">
-                <Search size={12} />
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search files…"
-                  aria-label="Search changed files"
-                />
-              </label>
-              <div className="thread-diff-toolbar-details">
-                <span className="thread-diff-toolbar-summary" data-testid="thread-diff-toolbar-summary">
-                  {listTruncated ? (
-                    <>
-                      {formatDiffFilesLabel(stats.filesCount, true)}
-                      {stats.insertions > 0 || stats.deletions > 0 ? (
-                        <>
-                          {' · shown '}
-                          <DiffStatTally insertions={stats.insertions} deletions={stats.deletions} />
-                        </>
-                      ) : null}
-                    </>
-                  ) : (
-                    <>
-                      {formatDiffFilesLabel(stats.filesCount)}
-                      {stats.insertions > 0 || stats.deletions > 0 ? (
-                        <>
-                          {', '}
-                          <DiffStatTally insertions={stats.insertions} deletions={stats.deletions} />
-                        </>
-                      ) : null}
-                    </>
-                  )}
+              <span className="thread-diff-toolbar-summary" data-testid="thread-diff-toolbar-summary"
+                title={`${formatDiffFilesLabel(stats.filesCount, listTruncated)} changed${listTruncated ? ' (totals for shown files)' : ''}`}>
+                <DiffStatTally insertions={stats.insertions} deletions={stats.deletions} />
+                {listTruncated ? <span> shown</span> : null}
+              </span>
+              {workspaceStatus?.branchName ? (
+                <span className="thread-diff-branch" title={`On branch ${workspaceStatus.branchName}`}>
+                  <GitBranch size={14} aria-hidden="true" />
+                  <span>{workspaceStatus.branchName}</span>
                 </span>
-                <div className="thread-diff-toolbar-actions">
-                  <DiffToolbarButton
-                    label={allCollapsed ? 'Expand all files' : 'Collapse all files'}
-                    onClick={() => setCollapsedByPath(collapseAllDiffCards(files, !allCollapsed))}
-                  >
-                    {allCollapsed ? <ChevronsDown size={16} /> : <ChevronsUp size={16} />}
-                  </DiffToolbarButton>
-                  <DiffToolbarButton
-                    label={wrap ? 'Disable diff line wrap' : 'Wrap diff lines'}
-                    pressed={wrap}
-                    onClick={() => setWrap((current) => !current)}
-                  >
-                    <TextWrap size={16} />
-                  </DiffToolbarButton>
-                  <div className="thread-diff-mode" role="tablist" aria-label="Diff view mode">
-                    <DiffToolbarButton
-                      label="Stacked diff view"
-                      pressed={!splitView}
-                      onClick={() => setSplitView(false)}
-                    >
-                      <Rows2 size={16} />
-                    </DiffToolbarButton>
-                    <DiffToolbarButton
-                      label="Split diff view"
-                      pressed={splitView}
-                      onClick={() => setSplitView(true)}
-                    >
-                      <Columns2 size={16} />
-                    </DiffToolbarButton>
+              ) : null}
+              <div className="thread-diff-toolbar-actions">
+                <details className="thread-diff-options" onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.open = false;
+                }} onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.currentTarget.open = false;
+                    event.currentTarget.querySelector('summary')?.focus();
+                  }
+                }}>
+                  <summary className="thread-diff-toolbar-btn" aria-label="Diff display options" title="Diff display options"><MoreHorizontal size={18} /></summary>
+                  <div className="thread-diff-options-menu">
+                    <button type="button" onClick={() => setCollapsedByPath(collapseAllDiffCards(files, !allCollapsed))}>
+                      {allCollapsed ? <ChevronsDown size={16} /> : <ChevronsUp size={16} />}
+                      {allCollapsed ? 'Expand all files' : 'Collapse all files'}
+                    </button>
+                    <button type="button" aria-pressed={wrap} onClick={() => setWrap((current) => !current)}>
+                      <TextWrap size={16} />{wrap ? 'Disable diff line wrap' : 'Wrap diff lines'}
+                    </button>
+                    <button type="button" aria-pressed={!splitView} onClick={() => setSplitView(false)}><Rows2 size={16} />Stacked diff view</button>
+                    <button type="button" aria-pressed={splitView} onClick={() => setSplitView(true)}><Columns2 size={16} />Split diff view</button>
                   </div>
-                </div>
+                </details>
+                {workspaceStatus?.dirty ? <ThreadDiffCommit key={environmentId} environmentId={environmentId} onCommitted={() => setRefreshKey((key) => key + 1)} /> : null}
+                <DiffToolbarButton label={showFiles ? 'Hide changed files' : 'Show changed files'} pressed={showFiles}
+                  onClick={() => { setShowFiles((current) => !current); setQuery(''); }}>
+                  {showFiles ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                </DiffToolbarButton>
               </div>
             </div>
             {files.length === 0 ? (
@@ -282,6 +276,7 @@ export function ThreadDiffPanel({
                 Showing the first {files.length} changed files. Additional changes are omitted.
               </p>
             ) : null}
+            <div className="thread-diff-workbench">
             <div className="thread-diff-cards" ref={cardsRef} data-testid="thread-diff-cards">
               {visibleFiles.length === 0 ? (
                 <p className="thread-diff-empty">No matching files.</p>
@@ -305,6 +300,13 @@ export function ThreadDiffPanel({
                   />
                 );
               })}
+            </div>
+            {showFiles ? <ThreadDiffFileNavigator files={visibleFiles} total={files.length} truncated={listTruncated}
+              query={query} onQueryChange={setQuery} activePath={activePath} onSelect={(filePath) => {
+                setActivePath(filePath);
+                pendingScrollPath.current = filePath;
+                setCollapsedByPath((previous) => ({ ...previous, [filePath]: false }));
+              }} /> : null}
             </div>
               </>
             )}
@@ -521,6 +523,7 @@ function ThreadDiffFileCard({
         >
           <ChevronRight size={14} aria-hidden="true" />
         </button>
+        <DiffFileIcon path={file.path} />
         <span className="thread-diff-card-path" title={label}>
           <span className="thread-diff-card-path-text">{label}</span>
         </span>
@@ -537,7 +540,7 @@ function ThreadDiffFileCard({
         <DiffStatTally
           insertions={stats.insertions}
           deletions={stats.deletions}
-          hideZero={stats.hideZero}
+          hideZero
         />
       </div>
       {bodyKind === 'hidden' || !visible ? null : (

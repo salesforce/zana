@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zana — a simulated walkthrough</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="product.css">
+</head>
+<body>
+  <div id="viewport">
+    <main id="stage" aria-label="Zana simulated product demo">
+      <header class="film-header"><div class="wordmark"><img src="assets/zana.png" alt="">Zana<span>Your work, in one place.</span></div><div id="chapter-label"></div></header>
+      <div id="app-window">
+        <div class="titlebar"><span class="traffic"><i></i><i></i><i></i></span><span class="chrome-navigation">◧ &nbsp; ‹ &nbsp; ›</span><span>Zana</span><span class="simulation">Simulated demo</span></div>
+        <div class="app-layout"><aside id="sidebar"></aside><section id="content" aria-live="off"></section></div>
+        <div id="overlay"></div>
+        <div id="toast" role="status"></div>
+      </div>
+      <div id="subtitle" aria-live="off"></div>
+      <div id="chapter-track"></div>
+      <div id="virtual-cursor" aria-hidden="true"><div class="click-ring"></div><svg width="31" height="38" viewBox="0 0 31 38"><path d="M3 2L4 29L11 23L17 35L23 32L17 20L28 19Z" fill="#202937" stroke="white" stroke-width="2.4" stroke-linejoin="round"/></svg></div>
+    </main>
+  </div>
+  <nav class="player" aria-label="Demo playback">
+    <button id="play" aria-label="Play walkthrough">▶ Play</button>
+    <button id="restart" aria-label="Restart walkthrough">↺ Restart</button>
+    <label class="scrubber"><span id="time-label">0:00 / 2:28</span><input id="seek" aria-label="Timeline" type="range" min="0" max="148" step="0.05" value="0"></label>
+    <select id="chapter-select" aria-label="Jump to chapter"></select>
+    <button id="sound" aria-label="Enable narration">♪ Sound off</button>
+    <button id="explore">Try the plugin</button>
+  </nav>
+  <p class="player-note">A scripted replica with fictional projects, agents and tickets. No accounts, live agents or external services are connected.</p>
+  <audio id="narration" src="audio/narration.m4a" preload="metadata"></audio>
+  <script src="story-timeline.js"></script>
+  <script src="timeline.js"></script>
+  <script src="captions.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

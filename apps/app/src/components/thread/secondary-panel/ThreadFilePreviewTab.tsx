@@ -213,7 +213,7 @@ export function ThreadFilePreviewTab({
   const opener = resolveFileOpener(path, openers, override);
   const OpenerComponent = opener?.component;
   const matches = matchingFileOpeners(path, openers);
-  const videoSrc = videoContentType(path) ? videoPreviewUrl(path, threadId, storage) : null;
+  const videoSrc = videoContentType(path) ? videoPreviewUrl(path, threadId, storage, projectId) : null;
 
   const liveDocument = livePlan
     ? (planDocument ?? {

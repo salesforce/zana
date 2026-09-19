@@ -81,6 +81,7 @@ export function ThreadPendingInteractionBanner({
 }
 
 function BannerShell({
+  className,
   title,
   sourceThread,
   errorMessage,
@@ -89,6 +90,7 @@ function BannerShell({
   onFooterKeyDown,
   children
 }: {
+  className?: string;
   title?: string;
   sourceThread?: SourceThread;
   errorMessage?: string | null;
@@ -99,6 +101,7 @@ function BannerShell({
 }) {
   return (
     <PendingInteractionShell
+      className={className}
       title={title}
       sourceThread={sourceThread}
       errorMessage={errorMessage}
@@ -178,6 +181,7 @@ function ApprovalPendingInteractionBanner({
   };
   return (
     <BannerShell
+      className={payload.subject.kind === 'command' ? 'thread-pending-command' : undefined}
       title={title}
       sourceThread={sourceThread}
       errorMessage={error}
@@ -215,7 +219,9 @@ function ApprovalPendingInteractionBanner({
           {shouldShowPendingInteractionReason(payload.reason, details) ? (
             <p className="thread-pending-banner-reason">{payload.reason}</p>
           ) : null}
-          {details.length > 0 ? (
+          {payload.subject.kind === 'command' ? (
+            <CommandApprovalDetails key={interaction.id} command={payload.subject.command} details={details} />
+          ) : details.length > 0 ? (
             <div className="thread-pending-banner-details">
               {details.map((detail, index) => (
                 <ApprovalDetailBlock key={`${detail.label}:${index}`} detail={detail} />
@@ -225,6 +231,30 @@ function ApprovalPendingInteractionBanner({
         </>
       )}
     </BannerShell>
+  );
+}
+
+function CommandApprovalDetails({ command, details }: { command: string; details: PendingInteractionDetail[] }) {
+  const extraDetails = details.filter((detail) => detail.label !== 'Command' && detail.label !== 'Session grant');
+  return (
+    <>
+      <pre className="thread-pending-banner-code" data-testid="thread-pending-banner-code" aria-label="Command">
+        {`$ ${command}`}
+      </pre>
+      {details.filter((detail) => detail.label === 'Session grant').map((detail) => (
+        <ApprovalDetailBlock key={detail.label} detail={detail} />
+      ))}
+      {extraDetails.length > 0 ? (
+        <details className="thread-pending-command-extra">
+          <summary>Details</summary>
+          <div className="thread-pending-banner-details">
+            {extraDetails.map((detail, index) => (
+              <ApprovalDetailBlock key={`${detail.label}:${index}`} detail={detail} />
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </>
   );
 }
 

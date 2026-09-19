@@ -1,0 +1,39 @@
+;FFMETADATA1
+title=Zana — a simulated product walkthrough
+artist=Zana
+comment=Fictional projects, agents, tickets and plugin actions. Rendered from a scripted replica.
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=4000
+title=Welcome
+[CHAPTER]
+TIMEBASE=1/1000
+START=4000
+END=14000
+title=Create a project
+[CHAPTER]
+TIMEBASE=1/1000
+START=14000
+END=28500
+title=Launch an agent
+[CHAPTER]
+TIMEBASE=1/1000
+START=28500
+END=55000
+title=Monitor the work
+[CHAPTER]
+TIMEBASE=1/1000
+START=55000
+END=77500
+title=Your GUS tickets
+[CHAPTER]
+TIMEBASE=1/1000
+START=77500
+END=119000
+title=Create a plugin
+[CHAPTER]
+TIMEBASE=1/1000
+START=119000
+END=130000
+title=Ready for your next idea

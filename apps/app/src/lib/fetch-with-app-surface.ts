@@ -13,7 +13,8 @@ export async function fetchWithAppSurface(
 
 export async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body !== undefined && !headers.has('content-type')) {
+  const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes((init.method ?? 'GET').toUpperCase());
+  if ((init.body !== undefined || isMutation) && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
   }
   const response = await fetchWithAppSurface(`/api/v1${path}`, { ...init, headers });

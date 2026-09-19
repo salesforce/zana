@@ -1,0 +1,47 @@
+{
+  "ok": true,
+  "durationSeconds": 148.0,
+  "width": 1920,
+  "height": 1080,
+  "fps": "24/1",
+  "frames": 3552,
+  "videoCodec": "h264",
+  "audioCodec": "aac",
+  "audioRate": 48000,
+  "bytes": 5345132,
+  "chapters": [
+    {
+      "start": 0.0,
+      "title": "Welcome"
+    },
+    {
+      "start": 4.0,
+      "title": "Create a project"
+    },
+    {
+      "start": 14.0,
+      "title": "Launch an agent"
+    },
+    {
+      "start": 28.5,
+      "title": "Monitor the work"
+    },
+    {
+      "start": 51.0,
+      "title": "CLI Agent"
+    },
+    {
+      "start": 73.0,
+      "title": "Your GUS tickets"
+    },
+    {
+      "start": 95.5,
+      "title": "Create a plugin"
+    },
+    {
+      "start": 137.0,
+      "title": "Ready for your next idea"
+    }
+  ],
+  "fullDecodeErrors": 0
+}

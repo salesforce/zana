@@ -86,6 +86,19 @@ test('Enter and Send queue follow-ups until the active response finishes', async
   await expect(window.locator('.thread-status-badge.is-error')).toHaveCount(0);
   await expect(window.locator('.thread-status-badge.is-working')).toBeVisible();
 
+  await followInput.fill('Do not send this cancelled follow-up');
+  await followInput.press('Enter');
+  const cancelledMessage = queued.locator('.thread-queued-ghost').filter({ hasText: 'Do not send this cancelled follow-up' });
+  await expect(cancelledMessage).toBeVisible();
+  const removalResponse = window.waitForResponse((response) => response.request().method() === 'DELETE'
+    && response.url().includes('/next-turn/'));
+  await cancelledMessage.getByRole('button', { name: 'Remove queued message' }).click();
+  expect((await removalResponse).status()).toBe(200);
+  await expect(cancelledMessage).toHaveCount(0);
+  await expect(queued.getByTestId('thread-queued-flush-error')).toHaveCount(0);
+  await expect(queued.locator('.thread-queued-item-text')).toHaveText(['Is it done ?']);
+  await expect(window.locator('.thread-status-badge.is-working')).toBeVisible();
+
   await expect(followSend).toBeEnabled({ timeout: 15_000 });
   await followInput.click();
   await followInput.fill('delay:1000 Is it done yet?');
@@ -152,4 +165,53 @@ test('Enter and Send queue follow-ups until the active response finishes', async
   await expect(timeline).toContainText('Response to: delay:10000 verify explicit steering', { timeout: 20_000 });
   await expect(timeline).toContainText('Response to: delay:1000 Queue with modifier', { timeout: 20_000 });
   await expect(queued).toHaveCount(0);
+});
+
+test('Remove deletes paused queued messages, including the last one', async ({ app }) => {
+  const { window } = app;
+  const support = window.getByRole('dialog', { name: 'Support Zana' });
+  if (await support.isVisible().catch(() => false)) {
+    await support.getByRole('button', { name: 'Dismiss' }).click();
+  }
+  await window.getByTestId('nav-home').click();
+  const homeComposer = window.locator('.thread-command-composer').first();
+  await expect(homeComposer.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
+  await homeComposer.getByTestId('thread-command-input').fill('delay:60000 keep running until stopped');
+  await homeComposer.getByTestId('thread-command-send').click();
+
+  const detail = window.getByTestId('thread-detail');
+  await expect(detail).toBeVisible({ timeout: 30_000 });
+  const composer = detail.locator('.thread-command-composer');
+  const input = composer.getByTestId('thread-command-input');
+  const queued = detail.getByTestId('thread-queued-messages');
+  await expect(composer.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Queue');
+  for (const message of ['First queued message', 'Second queued message']) {
+    await input.fill(message);
+    await input.press('Enter');
+    await expect(queued).toContainText(message);
+  }
+  await window.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(queued.getByTestId('thread-queued-paused')).toBeVisible();
+
+  for (const message of ['First queued message', 'Second queued message']) {
+    const row = queued.locator('.thread-queued-ghost').filter({ hasText: message });
+    const removalResponse = window.waitForResponse((response) => response.request().method() === 'DELETE'
+      && response.url().includes('/next-turn/'));
+    await row.getByRole('button', { name: 'Remove queued message' }).click();
+    const response = await removalResponse;
+    expect(response.status()).toBe(200);
+    await expect(row).toHaveCount(0);
+    await expect(detail.getByTestId('thread-queued-flush-error')).toHaveCount(0);
+
+    // Verify persisted queue state independently of the card's optimistic removal.
+    const remaining = await window.evaluate(async (deleteUrl) => {
+      const listUrl = deleteUrl.slice(0, deleteUrl.lastIndexOf('/'));
+      return (await (await fetch(listUrl)).json()).items.length;
+    }, response.url());
+    expect(remaining).toBe(message === 'First queued message' ? 1 : 0);
+  }
+  await expect(queued).toHaveCount(0);
+  await expect(detail.getByTestId('thread-timeline').getByTestId('thread-user-text')).toHaveText([
+    'delay:60000 keep running until stopped'
+  ]);
 });

@@ -178,6 +178,32 @@ describe('conversation host recovery', () => {
     ]);
   });
 
+  it('treats a legacy bare turn.completed row as closing the latest turn', () => {
+    const database = openTestDb();
+    const host = seedHost(database);
+    const thread = seedThread(database, host.id, { status: 'active' });
+    appendConversationThreadEvent(database, {
+      threadId: thread.id,
+      type: 'turn/started',
+      payload: turnStarted(thread.id, 'turn-1')
+    });
+    appendConversationThreadEvent(database, {
+      threadId: thread.id,
+      type: 'turn.completed'
+    });
+    expect(findOpenConversationTurn(database, thread.id)).toBeNull();
+
+    appendConversationThreadEvent(database, {
+      threadId: thread.id,
+      type: 'turn/started',
+      payload: turnStarted(thread.id, 'turn-2')
+    });
+    expect(findOpenConversationTurn(database, thread.id)).toEqual({
+      turnId: 'turn-2',
+      providerThreadId: 'prov-1'
+    });
+  });
+
   it('reads nested event payloads and ignores other hosts and archived threads', () => {
     const database = openTestDb();
     const host = seedHost(database, 'alpha');

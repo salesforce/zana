@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, openSync, closeSync, writeSync, ftruncateSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, openSync, closeSync, writeSync, ftruncateSync, statSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './fixtures/app.js';
@@ -7,8 +7,8 @@ test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, isolateBundledCatalog: true })
 
 test('video previews stream large files, play and seek in built Electron', async ({ app }, testInfo) => {
   const { window, home } = app;
-  const projectPath = join(home, 'video-project');
-  mkdirSync(projectPath);
+  mkdirSync(join(home, 'video-project'));
+  const projectPath = realpathSync(join(home, 'video-project'));
   const path = join(projectPath, 'demo #1.mp4');
   // Tiny deterministic H.264 fixture plus a legal MP4 free box above both read caps.
   // Generated with ffmpeg testsrc2=size=160x90:rate=12, -t 4, libx264, yuv420p, +faststart.
@@ -44,6 +44,12 @@ test('video previews stream large files, play and seek in built Electron', async
   }, { threadId, path });
   const video = window.getByLabel('Video preview: demo #1.mp4');
   await expect(video).toBeVisible();
+  const probe = await video.evaluate(async (node: HTMLVideoElement) => {
+    const res = await fetch(node.src, { headers: { Range: 'bytes=0-31' } });
+    return { status: res.status, type: res.headers.get('content-type'), prefix: await res.text() };
+  });
+  expect(probe, JSON.stringify(probe)).toMatchObject({ status: 206, type: 'video/mp4' });
+  expect(probe.prefix).toContain('ftyp');
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => ({
     error: node.error?.message ?? null, width: node.videoWidth, duration: node.duration
   }))).toEqual({ error: null, width: 160, duration: 4 });
@@ -59,6 +65,18 @@ test('video previews stream large files, play and seek in built Electron', async
     return { status: response.status, range: response.headers.get('content-range'), length: (await response.arrayBuffer()).byteLength };
   });
   expect(tail).toEqual({ status: 206, range: `bytes ${originalSize + padding - 32}-${originalSize + padding - 1}/${originalSize + padding}`, length: 32 });
+  const panelSources = await video.evaluate(async (node: HTMLVideoElement) => {
+    const url = new URL(node.src);
+    const { thread } = await (await fetch(`/api/v1/threads/${url.searchParams.get('threadId')}`)).json();
+    url.searchParams.set('threadId', 'cli-panel');
+    url.searchParams.set('projectId', thread.projectId);
+    const cli = await fetch(url, { headers: { Range: 'bytes=0-31' } });
+    await cli.arrayBuffer();
+    url.searchParams.delete('threadId');
+    const project = await fetch(url, { method: 'HEAD' });
+    return [cli.status, project.status];
+  });
+  expect(panelSources).toEqual([206, 200]);
   await window.getByTestId('thread-secondary-maximize').click();
   await expect(video).toBeVisible();
   expect(await video.evaluate((node) => node.getBoundingClientRect().width)).toBeGreaterThan(480);

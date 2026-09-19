@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import './ThreadVideoPreview.css';
 
-export function videoPreviewUrl(path: string, threadId?: string, storage = false): string {
+export function videoPreviewUrl(path: string, threadId?: string, storage = false, projectId?: string | null): string {
   const params = new URLSearchParams({ path, source: storage ? 'thread-storage' : 'workspace' });
   if (threadId) params.set('threadId', threadId);
+  if (projectId) params.set('projectId', projectId);
   return `/api/v1/file-preview/video?${params}`;
 }
 

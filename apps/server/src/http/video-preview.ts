@@ -41,7 +41,15 @@ function videoReader(ctx: ProductHttpContext, params: URLSearchParams): RangeRea
       throw new ProjectFsError(400, 'invalid-thread-id', 'invalid thread id');
     }
     const thread = getConversationThread(ctx.db, threadId);
-    if (!thread) throw new ProjectFsError(404, 'unknown-thread', 'thread is not registered');
+    if (!thread) {
+      // CLI-agent panels use a session id. As with preview_file, main resolves
+      // their registered project rather than treating that id as a conversation.
+      const project = ctx.toProjects().find((row) => row.id === params.get('projectId'));
+      if (source !== 'workspace' || !project?.path || project.remote) {
+        throw new ProjectFsError(404, 'unknown-thread', 'thread is not registered');
+      }
+      return hostReader(ctx.hostHub.resolveHostId(project.hostId), project.path, confined(project.path, candidate));
+    }
     if (source === 'thread-storage') return localReader(threadStorageRoot(ctx.dataDir, threadId));
     if (thread.projectId && isAbsolute(candidate)) {
       const root = projectAttachmentDir(ctx.dataDir, thread.projectId);

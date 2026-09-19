@@ -22,9 +22,8 @@
  *   · MCP (`-c mcp_servers.zcc-inbox.url=…`) → parses without error.
  *   · AUTH (`-c model_providers.zcc.*` block) → parses without error via
  *     `codex debug models`.
- * The HOOKS bridge is intentionally NOT exercised: it requires codex's
- * `--dangerously-bypass-hook-trust` flag, which shouldn't run in an unattended
- * `vitest` process — its exact argv is covered by the string-level suite.
+ * HOOKS are parse-checked through the same inspection command; no model turn
+ * executes a hook. The built-Electron status spec exercises their callbacks.
  *
  * ## The REAL-TURN block (the leg that actually spends a token)
  *
@@ -137,6 +136,16 @@ function runCodex(
 
 describe.skipIf(!liveEnabled())('CodexProvider — LIVE parse-verify against the real codex CLI', () => {
   const provider = new CodexProvider();
+
+  it('HOOKS: the installed CLI accepts correlated input and interruption hooks', async () => {
+    const args = provider.hookArgs('codex', {
+      stop: 'http://127.0.0.1:1/hook/stop/probe/session',
+      notify: 'http://127.0.0.1:1/hook/notify/probe/session'
+    });
+    const res = await runCodex([...args, 'debug', 'prompt-input']);
+    expect(res.ok, res.stderr).toBe(true);
+    expect(Array.isArray(JSON.parse(res.stdout))).toBe(true);
+  }, LIVE_TIMEOUT_MS);
 
   it(
     'binary is resolvable and reports a version (env sanity)',

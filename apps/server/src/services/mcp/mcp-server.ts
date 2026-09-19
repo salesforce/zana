@@ -82,6 +82,7 @@ import { registerLibraryTools, type LibraryAgentApi } from '../library/library-m
 import { registerGoalTools, type GoalAgentApi } from '../goals/goal-mcp-tools.js';
 import { registerFollowUpTools, type FollowUpAgentApi } from '../followups/followup-mcp-tools.js';
 import { verifySessionControlCredential } from '@zana-ai/zcc-host-daemon/control-credential';
+import { readHookBody } from './read-hook-body.js';
 
 interface ProjectLookup {
   /** Return the current project meta or null if unknown. Called per-request. */
@@ -118,8 +119,9 @@ export interface McpServerOptions {
    * interactive question) or `unblocked` (user answered / turn ended). Drives
    * the live "blocked — needs you" agent status. The url path carries identity:
    * `/hook/notify/:projectId/:sessionId/:action`. Best-effort; always 200s.
+   * Native hooks may forward a bounded JSON body for provider-owned correlation.
    */
-  onNotifyHook?: (projectId: string, sessionId: string, action: 'blocked' | 'unblocked') => void;
+  onNotifyHook?: (projectId: string, sessionId: string, action: 'blocked' | 'unblocked', body?: string) => void;
   /**
    * Called when a session's SYNCHRONOUS PreToolUse Overseer hook posts a tool
    * call (experimental auto-approval). Unlike the fire-and-forget hooks, the
@@ -1285,13 +1287,19 @@ async function handleRequest(
     return;
   }
 
-  // Notification / UserPromptSubmit callback. Fire-and-forget, same contract
-  // as the stop-hook route: drain the body, invoke the handler, always 200.
+  // Native interaction hooks include correlation data; legacy notifications
+  // still send an empty body. Invalid/oversized/incomplete bodies do not change state.
   const notifyRoute = matchNotifyHookRoute(req.url);
   if (notifyRoute) {
-    req.resume();
+    if (req.method !== 'POST') {
+      req.resume();
+      res.writeHead(405).end();
+      return;
+    }
+    const body = await readHookBody(req);
     try {
-      opts.onNotifyHook?.(notifyRoute.projectId, notifyRoute.sessionId, notifyRoute.action);
+      if (body === '') opts.onNotifyHook?.(notifyRoute.projectId, notifyRoute.sessionId, notifyRoute.action);
+      else if (body !== null) opts.onNotifyHook?.(notifyRoute.projectId, notifyRoute.sessionId, notifyRoute.action, body);
     } catch (err) {
       log(`[mcp] notify-hook handler failed: ${err instanceof Error ? err.message : String(err)}`);
     }

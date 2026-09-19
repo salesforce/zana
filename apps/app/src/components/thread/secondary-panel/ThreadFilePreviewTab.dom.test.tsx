@@ -38,8 +38,9 @@ describe('file opener host preview lifetime', () => {
     expect(storagePlayer.getAttribute('src')).toContain('source=thread-storage');
     expect(view.queryByRole('status')).toBeNull();
     expect(storagePlayer).not.toBe(player);
-    view.rerender(<ThreadFilePreviewTab path="/project/clip.mov" />);
+    view.rerender(<ThreadFilePreviewTab path="/project/clip.mov" projectId="p1" />);
     expect(view.getByLabelText('Video preview: clip.mov').getAttribute('src')).not.toContain('threadId');
+    expect(view.getByLabelText('Video preview: clip.mov').getAttribute('src')).toContain('projectId=p1');
     expect(mocks.readFile).not.toHaveBeenCalled();
   });
 

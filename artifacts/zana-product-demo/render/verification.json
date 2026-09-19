@@ -1,0 +1,35 @@
+{
+  "ok": true,
+  "browser": "151.0.7922.34",
+  "externalRequests": 0,
+  "pageErrors": [],
+  "jsCoveragePercent": 99.53,
+  "coverage": [
+    {
+      "file": "story-timeline.js",
+      "bytes": 8803,
+      "used": 8797
+    },
+    {
+      "file": "timeline.js",
+      "bytes": 3220,
+      "used": 3189
+    },
+    {
+      "file": "app.js",
+      "bytes": 41672,
+      "used": 41455
+    }
+  ],
+  "checks": [
+    "every timeline transition",
+    "CLI selection / launch / terminal output / fullscreen / board return",
+    "question and resume",
+    "GUS ticket draft then send",
+    "plugin add/toggle/blank input/escaping/bound",
+    "play/pause/restart/seek/chapter jump",
+    "narration enable and pause",
+    "end of playback",
+    "responsive scale and capture mode"
+  ]
+}

@@ -31859,8 +31859,8 @@ textarea.ui-command-composer-input {
     white-space: nowrap;
   }
 
-  .thread-pending-shell:not(.is-collapsed) .thread-pending-banner-details,
-  .thread-pending-shell:not(.is-collapsed) .thread-pending-banner-reason {
+  .thread-pending-shell:not(.is-collapsed):not(.thread-pending-command) .thread-pending-banner-details,
+  .thread-pending-shell:not(.is-collapsed):not(.thread-pending-command) .thread-pending-banner-reason {
     display: none;
   }
 }
@@ -32120,6 +32120,68 @@ textarea.ui-command-composer-input {
   background: color-mix(in srgb, var(--danger, #c44) 10%, var(--bg-elevated));
   color: var(--danger, #c44);
 }
+
+.thread-pending-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.thread-pending-command > :is(.thread-pending-shell-header, .thread-pending-banner-reason, .thread-pending-banner-code, .thread-pending-banner-detail, .thread-pending-banner-error) {
+  grid-column: 1 / -1;
+}
+
+.thread-pending-command .thread-pending-banner-title,
+.thread-pending-command .thread-pending-banner-source,
+.thread-pending-command .thread-pending-banner-reason {
+  margin: 0;
+}
+
+.thread-pending-command .thread-pending-banner-title {
+  font-size: 13px;
+}
+
+.thread-pending-command > .thread-pending-banner-code {
+  max-height: 5.5em;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.thread-pending-command .thread-pending-banner-actions {
+  grid-column: 2;
+  margin: 0;
+  gap: 4px;
+}
+
+.thread-pending-command-extra {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.thread-pending-command-extra > summary {
+  width: fit-content;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.thread-pending-command-extra[open] {
+  grid-column: 1 / -1;
+}
+
+.thread-pending-command-extra .thread-pending-banner-details {
+  margin: 4px 0 0;
+}
+
+@container (max-width: 420px) {
+  .thread-pending-command .thread-pending-banner-actions {
+    grid-column: 1 / -1;
+  }
+}
+
 .thread-pending-question-form {
   display: flex;
   flex-direction: column;
