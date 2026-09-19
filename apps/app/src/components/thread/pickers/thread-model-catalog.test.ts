@@ -6,7 +6,8 @@ import {
   reloadThreadModelCatalog,
   reloadThreadProviderModels,
   resetThreadModelCatalog,
-  setThreadModelCatalogHost,
+  threadModelCatalogForHost,
+  MODEL_CATALOG_TIMEOUT_MS,
   type ThreadExecutionOptionsFetcher
 } from './thread-model-catalog.js';
 
@@ -48,6 +49,7 @@ function optionsBody(
 
 afterEach(() => {
   resetThreadModelCatalog();
+  vi.useRealTimers();
 });
 
 describe('thread model catalog', () => {
@@ -248,9 +250,8 @@ describe('thread model catalog', () => {
     const first = prefetchThreadModelCatalog();
     roster = ['claude-code', 'codex'];
     const second = prefetchThreadModelCatalog();
-    expect(second).toBe(first);
     release();
-    await first;
+    await Promise.all([first, second]);
     expect(getThreadModelCatalog().byProvider.codex).toBeDefined();
   });
 
@@ -295,30 +296,128 @@ describe('thread model catalog', () => {
     });
   });
 
-  it('passes hostId on every fetch and drops the old roster when the machine changes', async () => {
-    const calls: Array<{ providerId?: string; hostId?: string }> = [];
-    let roster = ['claude-code', 'acp-opencode'];
-    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
-      calls.push({ providerId: query?.providerId, hostId: query?.hostId });
-      return optionsBody(roster, query?.providerId ?? 'roster');
-    };
-    resetThreadModelCatalog(fetcher);
-
-    await setThreadModelCatalogHost('sfwork');
-    expect(calls.some((call) => call.hostId === 'sfwork' && call.providerId === undefined)).toBe(true);
-    expect(calls.filter((call) => call.providerId).every((call) => call.hostId === 'sfwork')).toBe(true);
-    expect(getThreadModelCatalog().byProvider['acp-opencode']?.models[0]?.model).toBe('acp-opencode-model');
-
-    roster = ['claude-code'];
+  it('scopes every request and cached roster to its own machine', async () => {
+    const calls: Array<{ providerId?: string; hostId?: string } | undefined> = [];
+    resetThreadModelCatalog(async (query) => {
+      calls.push(query);
+      return optionsBody(query?.hostId === 'remote' ? ['acp-opencode'] : ['codex'], query?.hostId ?? 'local');
+    });
+    const local = threadModelCatalogForHost('local');
+    const remote = threadModelCatalogForHost('remote');
+    await local.ensure();
+    await remote.ensure();
+    expect(local.getSnapshot().byProvider.codex?.models[0]?.model).toBe('local-model');
+    expect(remote.getSnapshot().byProvider['acp-opencode']?.models[0]?.model).toBe('remote-model');
+    expect(local.getSnapshot().byProvider['acp-opencode']).toBeUndefined();
+    expect(calls).toEqual([
+      { hostId: 'local' }, { hostId: 'local', providerId: 'codex' },
+      { hostId: 'remote' }, { hostId: 'remote', providerId: 'acp-opencode' }
+    ]);
     calls.length = 0;
-    await setThreadModelCatalogHost('other-host');
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((call) => call.hostId === 'other-host')).toBe(true);
-    expect(getThreadModelCatalog().byProvider['acp-opencode']).toBeUndefined();
-    expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+    await threadModelCatalogForHost('local').ensure();
+    await local.ensureProvider('codex');
+    expect(calls).toEqual([]);
+    expect(threadModelCatalogForHost(' local ')).toBe(local);
+    expect(threadModelCatalogForHost(' ')).toBe(threadModelCatalogForHost());
+  });
 
-    calls.length = 0;
-    await setThreadModelCatalogHost('other-host');
-    expect(calls).toEqual([{ providerId: undefined, hostId: 'other-host' }]);
+  it('loads local models while a remote roster is stalled, without cross-host notifications', async () => {
+    let release!: (body: OptionsBody) => void;
+    const gate = new Promise<OptionsBody>((resolve) => { release = resolve; });
+    resetThreadModelCatalog(async (query) => query?.hostId === 'remote' ? gate : optionsBody(['codex'], 'local'));
+    const remote = threadModelCatalogForHost('remote');
+    const local = threadModelCatalogForHost('local');
+    const changed = vi.fn();
+    const unsubscribe = local.subscribe(changed);
+    const waiting = remote.ensure();
+    expect(remote.ensure()).toBe(waiting);
+    await local.ensure();
+    expect(local.getSnapshot().byProvider.codex?.models[0]?.model).toBe('local-model');
+    changed.mockClear();
+    release(optionsBody(['acp-opencode'], 'remote'));
+    await waiting;
+    expect(local.getSnapshot().providers.map((row) => row.id)).toEqual(['codex']);
+    expect(changed).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it('restores a warm local cache immediately while a remote provider is still discovering models', async () => {
+    let release!: (body: OptionsBody) => void;
+    const gate = new Promise<OptionsBody>((resolve) => { release = resolve; });
+    resetThreadModelCatalog(async (query) => query?.hostId === 'remote' && query.providerId
+      ? gate : optionsBody(['codex'], query?.hostId ?? 'local'));
+    const local = threadModelCatalogForHost('local');
+    await local.ensure();
+    const snapshot = local.getSnapshot();
+    const remote = threadModelCatalogForHost('remote');
+    const waiting = remote.ensure();
+    await vi.waitFor(() => expect(remote.getSnapshot().inflight.has('codex')).toBe(true));
+    await local.ensure();
+    expect(local.getSnapshot()).toBe(snapshot);
+    expect(local.getSnapshot().inflight.size).toBe(0);
+    release(optionsBody(['codex'], 'remote'));
+    await waiting;
+    expect(local.getSnapshot()).toBe(snapshot);
+  });
+
+  it('ignores a late stale roster after reload and starts the new load immediately', async () => {
+    let release!: (body: OptionsBody) => void;
+    const gate = new Promise<OptionsBody>((resolve) => { release = resolve; });
+    let first = true;
+    resetThreadModelCatalog(async () => {
+      if (first) { first = false; return gate; }
+      return optionsBody(['codex'], 'fresh');
+    });
+    const catalog = threadModelCatalogForHost();
+    const old = catalog.ensure();
+    await catalog.reload();
+    expect(catalog.getSnapshot().byProvider.codex?.models[0]?.model).toBe('fresh-model');
+    release(optionsBody(['acp-opencode'], 'stale'));
+    await old;
+    expect(catalog.getSnapshot().providers.map((row) => row.id)).toEqual(['codex']);
+    expect(catalog.getSnapshot().inflight.size).toBe(0);
+  });
+
+  it('ends a hung provider load at the deadline and allows an explicit retry', async () => {
+    vi.useFakeTimers();
+    let stalled = true;
+    resetThreadModelCatalog(async () => stalled ? new Promise<OptionsBody>(() => {}) : optionsBody(['codex'], 'recovered'));
+    const catalog = threadModelCatalogForHost('local');
+    const waiting = catalog.ensureProvider('codex');
+    expect(catalog.getSnapshot().inflight.has('codex')).toBe(true);
+    await vi.advanceTimersByTimeAsync(MODEL_CATALOG_TIMEOUT_MS);
+    await waiting;
+    expect(catalog.getSnapshot().inflight.size).toBe(0);
+    expect(catalog.getSnapshot().byProvider.codex?.modelLoadError).toBe('failed');
+    expect(vi.getTimerCount()).toBe(0);
+    stalled = false;
+    await catalog.reloadProvider('codex');
+    expect(catalog.getSnapshot().byProvider.codex?.models[0]?.model).toBe('recovered-model');
+  });
+
+  it('can retry a failed roster and keeps models visible during a provider refresh', async () => {
+    let fails = true;
+    resetThreadModelCatalog(async () => {
+      if (fails) throw new Error('offline');
+      return optionsBody(['codex'], 'loaded');
+    });
+    const catalog = threadModelCatalogForHost();
+    await catalog.ensure();
+    fails = false;
+    await catalog.ensure();
+    const models = catalog.getSnapshot().byProvider.codex;
+    const refresh = catalog.reloadProvider('codex');
+    expect(catalog.getSnapshot().byProvider.codex).toBe(models);
+    await refresh;
+  });
+
+  it('bounds inactive host caches while retaining mounted subscribers', () => {
+    const mounted = threadModelCatalogForHost('mounted');
+    const unsubscribe = mounted.subscribe(() => {});
+    const oldest = threadModelCatalogForHost('oldest');
+    for (let i = 0; i < 12; i += 1) threadModelCatalogForHost(`host-${i}`);
+    expect(threadModelCatalogForHost('mounted')).toBe(mounted);
+    expect(threadModelCatalogForHost('oldest')).not.toBe(oldest);
+    unsubscribe();
   });
 });

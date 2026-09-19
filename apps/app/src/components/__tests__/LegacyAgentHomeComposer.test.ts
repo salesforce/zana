@@ -25,8 +25,8 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('moreModelOptions={availableModelsToPickerOptions(moreModelOptions)}');
     expect(source).toContain('const preferHostModels = true');
     expect(source).toContain('const catalogHostId = project?.hostId ?? executionHostId');
-    expect(source).toContain('ensureThreadProviderModels');
-    expect(source).toContain('setThreadModelCatalogHost');
+    expect(source).toContain('hostCatalog.ensureProvider');
+    expect(source).toContain('threadModelCatalogForHost');
     expect(source).not.toContain('prefetchThreadModelCatalog');
     expect(source).toContain('cliRemoteHostCatalogEnabled');
     expect(source).toContain('cliAgentCatalogProviders');
@@ -110,7 +110,7 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).not.toContain('resolveOpenCodeRoleOptions');
     expect(source).not.toContain('reconcileOpenCodeRole');
     // Refresh re-fetches the provider's catalog entry (same as Modern's refresh).
-    expect(source).toContain('reloadThreadProviderModels(selectedProviderId)');
+    expect(source).toContain('hostCatalog.reloadProvider(selectedProviderId)');
     // Role selection stays coherent with the loaded mode list.
     expect(source).toContain('setRoleTargetId(catalogEntry.acpMode.currentValue)');
   });
@@ -228,11 +228,11 @@ describe('LegacyAgentHomeComposer', () => {
 
   it('scopes the model catalog to the project host like Modern, including remote machines', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('void setThreadModelCatalogHost(catalogHostId)');
-    expect(source).toContain('[catalogHostId, hosts.length]');
+    expect(source).toContain('void hostCatalog.ensure()');
+    expect(source).toContain('[hostCatalog, catalogHostId, hosts.length]');
     expect(source).toContain('if (!catalogHostId && hosts.length === 0) return');
     expect(source).toContain('const catalogHostId = project?.hostId ?? executionHostId');
-    expect(source).not.toContain('setThreadModelCatalogHost(undefined)');
+    expect(source).not.toContain('threadModelCatalogForHost(undefined)');
     expect(source).not.toContain('prefetchThreadModelCatalog');
     expect(source).toContain('cliRemoteHostCatalogEnabled\n      ? cliAgentCatalogProviders(catalog.providers)');
     expect(source).not.toContain('cliRemoteHostCatalogEnabled && isRemoteWorkspaceProject(project)');
@@ -255,7 +255,7 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).not.toContain("selectionState === 'loading' || catalogModelsLoading");
     expect(source).toContain('&& !catalogEntry');
     expect(source).toContain('catalog.inflight.has(selectedProviderId)');
-    expect(source).toContain('if (!selectedProviderId || catalogEntry) return');
+    expect(source).toContain('if ((!catalogHostId && hosts.length === 0) || !selectedProviderId || catalogEntry) return');
     expect(source).toContain("familyForThreadProviderId(rememberedProviderId() ?? '') ?? ''");
     expect(source).toContain('if (next && selectedProviderId && !loading');
     expect(source).toContain('catalogReady');
