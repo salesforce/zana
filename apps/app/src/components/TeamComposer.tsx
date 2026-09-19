@@ -53,7 +53,7 @@ export function TeamComposer({
     if (!onComposerProjectIdChange) setInternalProjectId(resolved);
     onComposerProjectIdChange?.(resolved);
   };
-  const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
+  const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
   const [teamId, setTeamId] = useState('');
   const [coordinationMode, setCoordinationMode] = useState<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>(
     () => useData.getState().teamDefaultCoordinationMode

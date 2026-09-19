@@ -103,34 +103,57 @@ describe('resolveComposerProjectId', () => {
       [scratch, coreRepo, alpha],
       '',
       'core-repo',
-      preferredComposerProjectId({ lastProjectId: 'alpha', selectedProjectId: scratch.id })
+      preferredComposerProjectId({ projects: [alpha, scratch, coreRepo], lastProjectId: 'alpha', selectedProjectId: scratch.id })
     )).toBe('core-repo');
   });
 });
 
 describe('preferredComposerProjectId', () => {
   it('prefers last-used over a leftover sidebar selection', () => {
-    expect(preferredComposerProjectId({
+    expect(preferredComposerProjectId({ projects: [alpha, scratch, coreRepo],
       lastProjectId: 'alpha',
-      selectedProjectId: 'pony'
+      selectedProjectId: 'core-repo'
     })).toBe('alpha');
   });
 
   it('falls back to the sidebar when nothing was last used', () => {
-    expect(preferredComposerProjectId({
+    expect(preferredComposerProjectId({ projects: [alpha, scratch, coreRepo],
       lastProjectId: null,
-      selectedProjectId: 'pony'
-    })).toBe('pony');
+      selectedProjectId: 'core-repo'
+    })).toBe('core-repo');
   });
 
   it('treats empty strings as missing', () => {
-    expect(preferredComposerProjectId({
+    expect(preferredComposerProjectId({ projects: [alpha, scratch, coreRepo],
       lastProjectId: '',
       selectedProjectId: 'alpha'
     })).toBe('alpha');
-    expect(preferredComposerProjectId({
+    expect(preferredComposerProjectId({ projects: [alpha, scratch, coreRepo],
       lastProjectId: null,
       selectedProjectId: null
     })).toBeUndefined();
   });
+});
+
+const remote = { id: 'remote', name: 'Remote', hostId: 'remote-host', quickAgent: true };
+const ssh = { id: 'ssh', name: 'SSH', remote: { host: 'devbox' } };
+
+it('keeps remote projects behind local projects and never chooses a remote scratch default', () => {
+  const projects = [remote, ssh, alpha, scratch, coreRepo];
+  expect(composerProjectOptions(projects).map((row) => row.id)).toEqual([
+    scratch.id, alpha.id, coreRepo.id, remote.id, ssh.id
+  ]);
+  expect(projects[0]).toBe(remote);
+  expect(scratchWorkspaceProject(projects)).toBe(scratch);
+  expect(scratchWorkspaceProject([remote])).toBeUndefined();
+  expect(resolveComposerProjectId(projects, '')).toBe(scratch.id);
+});
+
+it('ignores old remote defaults but preserves explicitly selected and pinned remote projects', () => {
+  const projects = [remote, ssh, alpha, scratch];
+  expect(preferredComposerProjectId({ projects, lastProjectId: remote.id, selectedProjectId: alpha.id })).toBe(alpha.id);
+  expect(preferredComposerProjectId({ projects, lastProjectId: ssh.id, selectedProjectId: remote.id })).toBeUndefined();
+  expect(preferredComposerProjectId({ projects, lastProjectId: 'deleted', selectedProjectId: alpha.id })).toBe(alpha.id);
+  expect(resolveComposerProjectId(projects, remote.id)).toBe(remote.id);
+  expect(resolveComposerProjectId(projects, '', ssh.id)).toBe(ssh.id);
 });

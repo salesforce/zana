@@ -133,7 +133,7 @@ export function ThreadCommandComposer({
     if (!onComposerProjectIdChange) setInternalProjectId(resolved);
     onComposerProjectIdChange?.(resolved);
   };
-  const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
+  const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
   const ensureScratchRef = useRef(false);
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
   const defaultHarness = useData((s) => s.defaultHarness);

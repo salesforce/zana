@@ -90,13 +90,7 @@ import {
   rememberedProviderId,
   rememberedSelectionFor
 } from './thread/pickers/composer-selection-preference.js';
-import {
-  ensureThreadProviderModels,
-  getThreadModelCatalog,
-  reloadThreadProviderModels,
-  setThreadModelCatalogScope,
-  subscribeThreadModelCatalog
-} from './thread/pickers/thread-model-catalog.js';
+import { threadModelCatalogForHost } from './thread/pickers/thread-model-catalog.js';
 import { defaultHostId, useHosts } from '../hooks/useHosts.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
@@ -154,7 +148,7 @@ export function LegacyAgentHomeComposer({
     if (!onComposerProjectIdChange) setInternalProjectId(resolved);
     onComposerProjectIdChange?.(resolved);
   };
-  const preferredProjectId = preferredComposerProjectId({ lastProjectId, selectedProjectId });
+  const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
   const [familyId, setFamilyId] = useState<HarnessFamily | ''>(
     () => familyForThreadProviderId(rememberedProviderId() ?? '') ?? ''
   );
@@ -209,17 +203,11 @@ export function LegacyAgentHomeComposer({
     setExtraArgs(readCliExtraArgs(familyId));
     setWorkMode('agent');
   }, [familyId]);
-  const catalog = useSyncExternalStore(
-    subscribeThreadModelCatalog,
-    getThreadModelCatalog,
-    getThreadModelCatalog
-  );
-  const selectedProviderId = (familyId && threadProviderIdForFamily(familyId)) || '';
   const catalogHostId = project?.hostId ?? executionHostId;
-  const catalogScopeMatches = catalog.hostId === catalogHostId && catalog.projectId === project?.id;
-  const catalogEntry = selectedProviderId && catalogScopeMatches
-    ? catalog.byProvider[selectedProviderId]
-    : undefined;
+  const hostCatalog = threadModelCatalogForHost(catalogHostId, project?.id);
+  const catalog = useSyncExternalStore(hostCatalog.subscribe, hostCatalog.getSnapshot, hostCatalog.getSnapshot);
+  const selectedProviderId = (familyId && threadProviderIdForFamily(familyId)) || '';
+  const catalogEntry = selectedProviderId ? catalog.byProvider[selectedProviderId] : undefined;
   const catalogPermissionModes = useMemo(() => {
     const fromCatalog = catalog.providers.find((row) => row.id === selectedProviderId)?.permissionModes;
     if (fromCatalog && fromCatalog.length > 0) return fromCatalog;
@@ -235,7 +223,7 @@ export function LegacyAgentHomeComposer({
   const permissionOptions = permissionModeOptionsFor(permissionModeIds);
   // Same thread AvailableModel roster as Modern. The PTY snapshot is only a
   // loading placeholder — including on a remote project. Which machine's
-  // catalog is fetched is `catalogHostId` below, not this flag.
+  // catalog is fetched is `catalogHostId`, not this flag.
   const preferHostModels = true;
   const nativeModelSelection = selectedHarness?.modelSelection === 'native-only';
   const catalogReady = Boolean(catalogEntry);
@@ -324,16 +312,15 @@ export function LegacyAgentHomeComposer({
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 
   useEffect(() => {
-    // Hosts start empty on a fresh mount. Don't treat that as "no machine" and
-    // wipe the catalog Modern already loaded.
+    // Wait for the host roster before discovering models on the default machine.
     if (!catalogHostId && hosts.length === 0) return;
-    void setThreadModelCatalogScope({ hostId: catalogHostId, projectId: project?.id });
-  }, [catalogHostId, hosts.length, project?.id]);
+    void hostCatalog.ensure();
+  }, [hostCatalog, catalogHostId, hosts.length]);
 
   useEffect(() => {
-    if (!selectedProviderId || catalogEntry) return;
-    void ensureThreadProviderModels(selectedProviderId);
-  }, [catalogEntry, selectedProviderId]);
+    if ((!catalogHostId && hosts.length === 0) || !selectedProviderId || catalogEntry) return;
+    void hostCatalog.ensureProvider(selectedProviderId);
+  }, [hostCatalog, catalogHostId, hosts.length, catalogEntry, selectedProviderId]);
 
   // Keep an explicit custom role coherent with the ACP mode list. The native
   // default (`build`) maps to portable Agent, so it never becomes a role
@@ -787,7 +774,7 @@ export function LegacyAgentHomeComposer({
                       setRoleTargetId(selected?.id === 'agent' ? undefined : selected?.nativeValue);
                     }}
                     onRefresh={() => {
-                      if (selectedProviderId) void reloadThreadProviderModels(selectedProviderId);
+                      if (selectedProviderId) void hostCatalog.reloadProvider(selectedProviderId);
                     }}
                   />
                 ) : modeChip === 'work-mode' ? (
