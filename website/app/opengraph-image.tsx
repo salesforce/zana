@@ -1,5 +1,7 @@
 import { ImageResponse } from 'next/og';
-import { site } from '@/lib/site';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { site } from '../lib/site';
 
 /**
  * Site-wide default social card, generated at build time via Satori/ImageResponse
@@ -12,7 +14,9 @@ export const alt = 'Zana Command Center — the control plane for AI coding harn
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
-export default function OgImage() {
+export default async function OgImage() {
+  const icon = await readFile(join(process.cwd(), 'public', 'zana-icon-512.png'));
+  const iconUrl = `data:image/png;base64,${icon.toString('base64')}`;
   return new ImageResponse(
     (
       <div
@@ -39,7 +43,7 @@ export default function OgImage() {
             }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`${site.publicBaseUrl}/favicon.svg`} alt="" width={68} height={68} />
+            <img src={iconUrl} alt="" width={68} height={68} />
           </div>
           <div style={{ fontSize: 30, fontWeight: 600, color: '#c9d1d9' }}>Zana Command Center</div>
         </div>

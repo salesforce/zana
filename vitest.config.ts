@@ -41,6 +41,9 @@ export default defineConfig({
     // `pnpm test` fails on unrelated code and masks real failures.
     exclude: [
       ...configDefaults.exclude,
+      'artifacts/**',
+      // Next's standalone output can copy website tests alongside app sources.
+      'website/.next/**',
       'e2e/**',
       'e2e-web/**',
       '.claude/worktrees/**',

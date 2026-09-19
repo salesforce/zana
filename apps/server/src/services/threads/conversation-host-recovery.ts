@@ -72,12 +72,18 @@ export function findOpenConversationTurn(
   let latestStarted: OpenTurn | null = null;
   for (const row of rows) {
     const payload = payloadRecord(row);
-    if (!payload) continue;
-    const type = eventTypeOf(payload) ?? row.type;
-    const turnId = turnIdOf(payload);
-    if (!turnId) continue;
-    if (type === 'turn/completed') completed.add(turnId);
-    if (type === 'turn/started') {
+    const type = payload ? eventTypeOf(payload) ?? row.type : row.type;
+    const turnId = payload ? turnIdOf(payload) : null;
+    if (type === 'turn/completed') {
+      if (turnId) completed.add(turnId);
+      else latestStarted = null;
+      continue;
+    }
+    if (type === 'turn.completed') {
+      latestStarted = null;
+      continue;
+    }
+    if (type === 'turn/started' && payload && turnId) {
       latestStarted = {
         turnId,
         providerThreadId: providerThreadIdOf(payload)
@@ -262,4 +268,3 @@ export function healDisconnectedConversationThreadsForHost(
   settleDanglingBackgroundTasks({ db, hub }, { hostId });
   return [...healed, ...settled];
 }
-

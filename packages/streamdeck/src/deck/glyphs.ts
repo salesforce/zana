@@ -14,7 +14,10 @@
  * the shape channel, not just the fill colour.
  */
 
-import type { SKRSContext2D } from '@napi-rs/canvas';
+import { Path2D, type SKRSContext2D } from '@napi-rs/canvas';
+import { FAIRY_PATH } from './fairy-path.js';
+
+const fairyPath = new Path2D(FAIRY_PATH);
 
 /** The catalogue of drawable glyphs. Function icons + per-state indicators. */
 export type GlyphName =
@@ -90,7 +93,7 @@ function house(ctx: SKRSContext2D, cx: number, cy: number, r: number, color: str
   ctx.stroke();
 }
 
-/** Robot head: antenna + head + two eyes — the ZCC brand mark and `agents` icon. */
+/** Robot head: antenna + head + two eyes — the `agents` icon. */
 function robot(ctx: SKRSContext2D, cx: number, cy: number, r: number, color: string): void {
   setup(ctx, r, color);
   ctx.beginPath();
@@ -106,12 +109,19 @@ function robot(ctx: SKRSContext2D, cx: number, cy: number, r: number, color: str
 }
 
 export const GLYPHS: Record<GlyphName, GlyphFn> = {
-  // ZCC hub / brand mark: the robot head (user-chosen over the house).
-  hub: (ctx, cx, cy, r, color) => robot(ctx, cx, cy, r, color),
+  // The hub carries Zana's fairy; individual agents retain their robot glyph.
+  hub: (ctx, cx, cy, r, color) => {
+    ctx.save();
+    ctx.translate(cx - r, cy - r);
+    ctx.scale(r / 32, r / 32);
+    ctx.fillStyle = color;
+    ctx.fill(fairyPath);
+    ctx.restore();
+  },
 
   home: (ctx, cx, cy, r, color) => house(ctx, cx, cy, r, color),
 
-  // Robot head — same mark as the hub.
+  // Individual agents use the robot head.
   agents: (ctx, cx, cy, r, color) => robot(ctx, cx, cy, r, color),
 
   // Folder with a tab.
@@ -391,10 +401,10 @@ export const GLYPHS: Record<GlyphName, GlyphFn> = {
 /**
  * Terminal-simulator fallback: one single-width BMP unicode char per glyph. NOT
  * emoji (double-width chars would break the sim's fixed CELL_W grid). Two glyphs
- * may share a char (hub/home are both houses) — chars needn't be unique.
+ * may share a char — chars needn't be unique.
  */
 export const GLYPH_CHARS: Record<GlyphName, string> = {
-  hub: '☻',
+  hub: '✦',
   home: '⌂',
   agents: '☻',
   projects: '▤',

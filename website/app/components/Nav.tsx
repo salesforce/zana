@@ -75,7 +75,7 @@ export function Nav({ starCount = null }: { starCount?: number | null }) {
     <nav className="nav">
       <div className="wrap">
         <Link href="/" className="brand">
-          <Image className="brand-mark" src="/favicon.svg" alt="" width={22} height={22} priority />
+          <Image className="brand-mark" src="/zana-mark.svg" alt="" width={22} height={22} priority />
           <span className="brand-full">Zana Command Center</span>
           <span className="brand-short">Zana</span>
         </Link>
@@ -153,7 +153,7 @@ export function Footer() {
         <div className="foot-top">
           <div>
             <span className="foot-brand">
-              <Image className="brand-mark" src="/favicon.svg" alt="" width={22} height={22} />
+              <Image className="brand-mark" src="/zana-mark.svg" alt="" width={22} height={22} />
               Zana Command Center
             </span>
             <p className="foot-blurb">

@@ -270,6 +270,13 @@ describe('host command dispatch', () => {
     }) as { content: string; encoding: string };
     expect(image.encoding).toBe('base64');
     expect(Buffer.from(image.content, 'base64')).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]));
+    const ranged = await dispatchHostCommand(runtime, {
+      type: 'host.read_file', root, relPath: 'shot.png', byteRange: { offset: 1, length: 3 }
+    });
+    expect(ranged).toEqual({ content: Buffer.from([0x50, 0x4e, 0x47]).toString('base64'), encoding: 'base64', totalBytes: 6 });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'host.read_file', root, relPath: '../outside.mp4', byteRange: { offset: 0, length: 1 }
+    })).rejects.toBeInstanceOf(HostCommandError);
   });
 
   it('lists a single directory and skips denied names', async () => {

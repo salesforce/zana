@@ -19,6 +19,31 @@ vi.mock('../../../plugins/plugin-slots.js', async () => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
 
 describe('file opener host preview lifetime', () => {
+  it('plays videos without reading them as text and resets errors when the file changes', async () => {
+    mocks.readFile.mockClear();
+    const view = render(<ThreadFilePreviewTab path="clips/demo.MP4" threadId="t1" lineNumber={10} />);
+    const player = view.getByLabelText('Video preview: demo.MP4') as HTMLVideoElement;
+    expect(player.getAttribute('src')).toBe('/api/v1/file-preview/video?path=clips%2Fdemo.MP4&source=workspace&threadId=t1');
+    expect(player.controls).toBe(true);
+    expect(player.autoplay).toBe(false);
+    expect(player.preload).toBe('metadata');
+    expect(mocks.readFile).not.toHaveBeenCalled();
+    fireEvent.error(player);
+    expect(view.getByRole('status').textContent).toContain('Could not play this video');
+    fireEvent.loadedMetadata(player);
+    expect(view.queryByRole('status')).toBeNull();
+    fireEvent.error(player);
+    view.rerender(<ThreadFilePreviewTab path="clip.webm" threadId="t1" storage />);
+    const storagePlayer = view.getByLabelText('Video preview: clip.webm');
+    expect(storagePlayer.getAttribute('src')).toContain('source=thread-storage');
+    expect(view.queryByRole('status')).toBeNull();
+    expect(storagePlayer).not.toBe(player);
+    view.rerender(<ThreadFilePreviewTab path="/project/clip.mov" projectId="p1" />);
+    expect(view.getByLabelText('Video preview: clip.mov').getAttribute('src')).not.toContain('threadId');
+    expect(view.getByLabelText('Video preview: clip.mov').getAttribute('src')).toContain('projectId=p1');
+    expect(mocks.readFile).not.toHaveBeenCalled();
+  });
+
   it('preserves the document DOM and scroll through unrelated parent updates', async () => {
     mocks.readFile.mockResolvedValue({ ok: true, content: '# Document\n\nRead this independently.' });
     const view = render(<ThreadFilePreviewTab path="guide.md" threadId="t1" />);

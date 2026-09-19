@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  FILE_RANGE_MAX_BYTES,
   discoveredWorkspacePropertiesSchema,
   environmentStatusSchema,
   gitHostPullRequestMergeMethodSchema,
@@ -60,8 +61,9 @@ import {
  * 26: desktop.browser.* commands and desktop.browser.changed host event.
  * Conversation thread ids travel in the event payload, not envelope.threadId
  * (ZCC ids are not always UUIDs).
+ * 27: bounded byte ranges on host.read_file for streaming video previews.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 26;
+export const HOST_RPC_PROTOCOL_VERSION = 27;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -503,7 +505,11 @@ export const HostListDirCommandSchema = z.object({
 export const HostReadFileCommandSchema = z.object({
   type: z.literal('host.read_file'),
   root: PathSchema,
-  relPath: RelPathSchema
+  relPath: RelPathSchema,
+  byteRange: z.object({
+    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    length: z.number().int().min(0).max(FILE_RANGE_MAX_BYTES)
+  }).strict().optional()
 }).strict();
 
 export const HostWriteFileCommandSchema = z.object({
@@ -1063,7 +1069,8 @@ export type HostListDirResult = z.infer<typeof HostListDirResultSchema>;
 
 export const HostReadFileResultSchema = z.object({
   content: z.string(),
-  encoding: z.enum(['utf8', 'base64'])
+  encoding: z.enum(['utf8', 'base64']),
+  totalBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()
 }).strict();
 export type HostReadFileResult = z.infer<typeof HostReadFileResultSchema>;
 

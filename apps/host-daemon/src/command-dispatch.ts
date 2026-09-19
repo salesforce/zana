@@ -46,6 +46,7 @@ import { probeExtraAcpAgents } from './extra-acp-agent-probes.js';
 import { verifyHarnesses } from './harness/harness-verify.js';
 import { registrationFor } from './harness/registry.js';
 import { HostCommandError } from './host-command-error.js';
+import { readConfinedFileRange } from './read-file-range.js';
 import { watchWorkspacePath } from './workspace-fs-watch.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
 import { completeCodexInference } from './codex-inference-complete.js';
@@ -952,6 +953,13 @@ export async function dispatchHostCommand(
       return { entries: listDirShallow(contained) };
     }
     case 'host.read_file': {
+      if (command.byteRange) {
+        try {
+          return await readConfinedFileRange(command.root, command.relPath, command.byteRange.offset, command.byteRange.length);
+        } catch (error) {
+          mapWorkspaceError(error);
+        }
+      }
       const contained = await resolveContainedReal(command.root, command.relPath);
       if (!contained) {
         throw new HostCommandError('path_not_found', 'path is outside the authorized root');

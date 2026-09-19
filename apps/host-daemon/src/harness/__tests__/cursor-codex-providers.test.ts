@@ -408,14 +408,23 @@ describe('CodexProvider — the three -c bridges (exact argv + TOML escaping)', 
       ]);
     });
 
-    it('maps notify → PermissionRequest(/blocked) + UserPromptSubmit(/unblocked)', () => {
+    it('maps pending approval and its completion with native hook identities', () => {
       const notify = 'http://h/hook/notify/p/s';
       const args = p.hookArgs('codex', { notify });
       expect(args[0]).toBe('--dangerously-bypass-hook-trust');
       // PermissionRequest → /blocked (agent waiting on the user).
       expect(args).toContain(
-        `hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"${notify}/blocked\\""}]}]`
+        `hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"${notify}/blocked\\""}]}]`
       );
+      // PreToolUse → /blocked (request_user_input matcher).
+      expect(args).toContain(
+        `hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"${notify}/blocked\\""}]}]`
+      );
+      for (const event of ['PostToolUse', 'Interrupt']) {
+        const hook = args.find((arg) => arg.startsWith(`hooks.${event}=`));
+        expect(hook).toContain('--data-binary @-');
+        expect(hook).toContain(`${notify}/unblocked`);
+      }
       // UserPromptSubmit → /unblocked (a new turn cleared the wait).
       expect(args).toContain(
         `hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"${notify}/unblocked\\""}]}]`

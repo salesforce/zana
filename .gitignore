@@ -65,8 +65,14 @@ resources/scheduled-supervisor
 # menubar-popover dev preview screenshots
 .mbp-live.png
 
+# Generated product/demo video artifacts; keep local copies out of Git.
+/artifacts/demo-video-*/
+/artifacts/demo-voice-cache/
+/artifacts/zana-product-demo/
+/artifacts/zana-simulated-demo/
+/artifacts/zana-simulated-demo-fast/
+
 # Docker remote-machine join secrets / loopback-proxy pid (local play only)
 docker/remote-machine/.env
 docker/remote-machine/.proxy-state
 docker/remote-machine/.proxy.pid
-

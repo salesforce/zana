@@ -6902,7 +6902,16 @@ async function bootstrapNormal() {
     // Notification/UserPromptSubmit callback → live "blocked — needs you"
     // status. The agent is waiting on the user on `blocked`, and resumed (or
     // the user answered) on `unblocked`.
-    onNotifyHook: (_projectId: string, sessionId: string, action) => {
+    onNotifyHook: (projectId: string, sessionId: string, action, body) => {
+      const session = ptys.getSession(sessionId);
+      if (!session || session.projectId !== projectId || session.status === 'exited') return;
+      if (body) {
+        const event = providerFor(session.profile as LaunchProfileId).adapter.status?.interactionHook?.(body);
+        if (event?.kind === 'requested') agentStatus.inputRequested(sessionId, event.key);
+        else if (event?.kind === 'resolved') agentStatus.inputResolved(sessionId, event.keys);
+        else if (event?.kind === 'interrupted') agentStatus.turnFinished(sessionId);
+        return;
+      }
       if (action === 'blocked') agentStatus.markBlocked(sessionId);
       else agentStatus.turnStarted(sessionId);
       // Diagnostic: confirms the hook reached the main process. The emit to the

@@ -13,6 +13,8 @@ import {
 } from '../../../plugins/plugin-slot-resolvers.js';
 import type { PluginFileOpenerRegistration } from '@zana-ai/zcc-plugin-sdk';
 import type { ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
+import { videoContentType } from '@zana-ai/zcc-domain';
+import { ThreadVideoPreview, videoPreviewUrl } from './ThreadVideoPreview.js';
 import {
   applyPreviewResult,
   copyText,
@@ -211,6 +213,7 @@ export function ThreadFilePreviewTab({
   const opener = resolveFileOpener(path, openers, override);
   const OpenerComponent = opener?.component;
   const matches = matchingFileOpeners(path, openers);
+  const videoSrc = videoContentType(path) ? videoPreviewUrl(path, threadId, storage, projectId) : null;
 
   const liveDocument = livePlan
     ? (planDocument ?? {
@@ -231,7 +234,7 @@ export function ThreadFilePreviewTab({
     : null;
 
   useEffect(() => {
-    if (livePlan) return;
+    if (livePlan || videoSrc) return;
     let cancelled = false;
     const hostReader = storage
       ? product.threads.storageContent
@@ -253,7 +256,7 @@ export function ThreadFilePreviewTab({
       applyPreviewResult(cancelled, result, setError, setContent);
     });
     return () => { cancelled = true; };
-  }, [path, storage, threadId, livePlan]);
+  }, [path, storage, threadId, livePlan, videoSrc]);
 
   const chrome = (
     <ThreadFilePreviewChrome
@@ -281,7 +284,9 @@ export function ThreadFilePreviewTab({
       </div>
     );
   }
-  const hostPreview = (
+  const hostPreview = videoSrc ? (
+    <ThreadVideoPreview key={videoSrc} src={videoSrc} path={path} />
+  ) : (
     <ThreadFilePreviewView
       path={path}
       content={content}

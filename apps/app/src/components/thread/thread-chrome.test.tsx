@@ -264,7 +264,7 @@ describe('diff hunk helper', () => {
     expect(source).toContain('ThreadDiffHunkView');
     expect(source).not.toContain('from \'../DiffViewer.js\'');
     expect(source).toContain('Expand all files');
-    expect(source).toContain('Search files');
+    expect(source).toContain('ThreadDiffFileNavigator');
     expect(source).toContain('Wrap diff lines');
     expect(source).toContain('Split diff view');
     expect(source).toContain('title={label}');
