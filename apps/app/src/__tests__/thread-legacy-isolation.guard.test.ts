@@ -39,12 +39,12 @@ describe('thread / legacy isolation', () => {
     expect(modePicker).not.toContain('createTerminal');
     expect(hook).not.toContain('LauncherModelPicker');
     expect(hook).not.toContain('AgentLauncher');
-    expect(hook).toContain('setThreadModelCatalogScope');
-    expect(hook).toContain('ensureThreadProviderModels');
+    expect(hook).toContain('threadModelCatalogForHost');
+    expect(hook).toContain('hostCatalog.ensureProvider');
     expect(hook).toContain('reconcileReasoningLevel');
     expect(catalog).toContain('executionOptions');
     expect(catalog).toContain('catalogHostId');
-    expect(catalog).toContain('setThreadModelCatalogScope');
+    expect(catalog).toContain('threadModelCatalogForHost');
     expect(stripComments(readFileSync(join(appRoot, 'lib/product-client.ts'), 'utf8'))).toContain(
       "if (query?.hostId) params.set('hostId', query.hostId)"
     );
@@ -110,7 +110,7 @@ describe('thread / legacy isolation', () => {
     expect(legacy).toContain('buildLaunchArgs');
     expect(legacy).toContain("from './legacy-agent-home.js'");
     expect(legacy).toContain('cliAgentModelOptions');
-    expect(legacy).toContain('ensureThreadProviderModels');
+    expect(legacy).toContain('hostCatalog.ensureProvider');
     expect(legacy).toContain('useComposerPromptField');
     expect(legacy).toContain("kind: 'cli'");
     expect(legacy).toContain('ComposerModePicker');
