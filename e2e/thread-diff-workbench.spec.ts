@@ -1,12 +1,28 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import type { Locator } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 
-test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
+
+async function expectReadableControl(control: Locator) {
+  const { foreground, background } = await control.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { foreground: style.color, background: style.backgroundColor };
+  });
+  expect(background).not.toBe('rgba(0, 0, 0, 0)');
+  expect(foreground).not.toBe(background);
+}
 
 test('Changes workbench renders real Git diffs, navigates files and commits from the side panel', async ({ app }, testInfo) => {
   const { window, home } = app;
+  await app.electron.evaluate(({ BrowserWindow }) => {
+    const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.webContents.getURL().startsWith('devtools:'))!;
+    main.webContents.setZoomFactor(1);
+    main.setContentSize(1280, 900);
+  });
+  await expect.poll(() => window.evaluate(() => innerWidth)).toBe(1280);
   const projectPath = join(home, 'changes-project');
   mkdirSync(projectPath);
   const git = (...args: string[]) => execFileSync('git', args, { cwd: projectPath, encoding: 'utf8' });
@@ -53,9 +69,22 @@ test('Changes workbench renders real Git diffs, navigates files and commits from
   const panel = window.getByTestId('thread-diff-panel');
   await expect(panel.getByTestId('thread-diff-card')).toHaveCount(5);
   await expect(panel.getByTitle('On branch feature/changes-workbench')).toBeVisible();
+  const checkThemeSurfaces = async (theme: string) => {
+    const commit = panel.getByRole('button', { name: 'Commit', exact: true });
+    await expectReadableControl(commit);
+    await commit.click();
+    await expectReadableControl(panel.getByRole('form', { name: 'Commit changes' }));
+    await expectReadableControl(panel.getByLabel('Commit message'));
+    await panel.screenshot({ path: testInfo.outputPath(`changes-commit-${theme}.png`), animations: 'disabled' });
+    await panel.getByRole('button', { name: 'Cancel commit' }).click();
+    await panel.getByLabel('Diff display options').click();
+    await expectReadableControl(panel.locator('.thread-diff-options-menu'));
+    await panel.getByLabel('Diff display options').press('Escape');
+  };
   await window.getByTestId('thread-secondary-maximize').click();
   await window.evaluate(() => window.cc.config.set({ theme: 'light' }));
   await expect(window.locator('html')).toHaveAttribute('data-theme', 'light');
+  await checkThemeSurfaces('light');
   await panel.screenshot({ path: testInfo.outputPath('changes-full-light.png'), animations: 'disabled' });
   await panel.getByRole('button', { name: 'Show changed files' }).click();
   const nav = panel.getByRole('navigation', { name: 'Changed files' });
@@ -85,6 +114,7 @@ test('Changes workbench renders real Git diffs, navigates files and commits from
   await panel.getByLabel('Diff display options').press('Escape');
   await window.evaluate(() => window.cc.config.set({ theme: 'dark' }));
   await expect(window.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await checkThemeSurfaces('dark');
   await panel.screenshot({ path: testInfo.outputPath('changes-tree-dark.png'), animations: 'disabled' });
 
   await window.getByTestId('thread-secondary-maximize').click();
@@ -98,6 +128,17 @@ test('Changes workbench renders real Git diffs, navigates files and commits from
   await expect.poll(() => panel.evaluate((node) => node.clientWidth)).toBeLessThan(481);
   expect(await panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
   expect(await panel.getByTestId('thread-diff-toolbar').evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+  expect(await panel.evaluate((node) => {
+    const bounds = node.getBoundingClientRect();
+    return bounds.left >= 0 && bounds.right <= innerWidth;
+  })).toBe(true);
+  expect(await panel.getByTestId('thread-diff-toolbar').evaluate((node) => {
+    const bounds = node.getBoundingClientRect();
+    return [...node.querySelectorAll('button')].filter((button) => button.checkVisibility()).every((button) => {
+      const rect = button.getBoundingClientRect();
+      return rect.left >= bounds.left && rect.right <= bounds.right;
+    });
+  })).toBe(true);
   await panel.screenshot({ path: testInfo.outputPath('changes-narrow-dark.png'), animations: 'disabled' });
   await panel.getByRole('button', { name: 'Hide changed files' }).click();
   await expect(nav).toHaveCount(0);

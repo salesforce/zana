@@ -3,12 +3,17 @@
 
 .inbox-detail {
   max-width: 760px;
-  padding: 18px 28px 48px;
+  padding: 0 28px 48px;
 }
 
 .inbox-detail .inbox-detail-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-base);
   gap: 8px;
-  margin-bottom: 18px;
+  margin: 0 -28px;
+  padding: 18px 28px;
 }
 
 .inbox-detail .inbox-detail-overview-back {

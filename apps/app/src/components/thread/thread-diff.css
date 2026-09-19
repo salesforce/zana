@@ -8,7 +8,7 @@
   gap: 6px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-panel, var(--bg));
+  background: var(--bg-panel, var(--bg-base));
   z-index: 3;
 }
 
@@ -17,7 +17,7 @@
   align-items: center;
   gap: 4px;
   flex: 0 1 auto;
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 
 .thread-diff-panel .thread-diff-scope-trigger {
@@ -39,7 +39,7 @@
   flex: 1 1 90px;
   min-width: 0;
   margin-left: 8px;
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 12px;
 }
 .thread-diff-branch svg { flex-shrink: 0; }
@@ -54,7 +54,7 @@
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg-panel, var(--bg));
+  background: var(--bg-panel, var(--bg-base));
   box-shadow: 0 8px 24px #0002;
 }
 .thread-diff-options-menu button {
@@ -66,7 +66,7 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--text);
+  color: var(--text-primary);
   font: inherit;
   font-size: 12px;
   text-align: left;
@@ -83,8 +83,8 @@
   padding: 4px 10px;
   border: 0;
   border-radius: 7px;
-  background: var(--text);
-  color: var(--bg);
+  background: var(--text-primary);
+  color: var(--bg-base);
   font: inherit;
   font-size: 12px;
   white-space: nowrap;
@@ -99,12 +99,12 @@
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg-panel, var(--bg));
+  background: var(--bg-panel, var(--bg-base));
   box-shadow: 0 8px 24px #0002;
   box-sizing: border-box;
 }
 .thread-diff-commit-heading { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
-.thread-diff-commit-form p { font-size: 12px; color: var(--text-dim); margin: 6px 0 10px; }
+.thread-diff-commit-form p { font-size: 12px; color: var(--text-muted); margin: 6px 0 10px; }
 .thread-diff-commit-form p[role='alert'] { color: var(--danger); }
 .thread-diff-commit-form textarea {
   display: block;
@@ -116,8 +116,8 @@
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--bg-base);
+  color: var(--text-primary);
   font: inherit;
   font-size: 12px;
 }
@@ -125,7 +125,7 @@
 .thread-diff-workbench { display: flex; flex: 1; min-height: 0; min-width: 0; }
 .thread-diff-panel .thread-diff-cards { gap: 0; padding: 0 0 24px; min-width: 0; scroll-padding-top: 0; }
 .thread-diff-panel .thread-diff-card { flex: 0 0 auto; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
-.thread-diff-panel .thread-diff-card-header { min-height: 39px; padding: 2px 12px 2px 4px; gap: 8px; background: var(--bg-panel, var(--bg)); }
+.thread-diff-panel .thread-diff-card-header { min-height: 39px; padding: 2px 12px 2px 4px; gap: 8px; background: var(--bg-panel, var(--bg-base)); }
 .thread-diff-panel .thread-diff-card:not(.is-collapsed) .thread-diff-card-header { border-radius: 0; }
 .thread-diff-panel .thread-diff-card-toggle { flex-basis: 22px; width: 22px; }
 .thread-diff-panel .thread-diff-card-path { flex: 0 1 auto; justify-content: flex-start; padding: 0; font-family: inherit; font-size: 13px; font-weight: 400; }
@@ -152,7 +152,7 @@
 .thread-diff-panel .thread-diff-hunk-line.is-del .thread-diff-hunk-gutter { color: var(--danger); box-shadow: inset 3px 0 color-mix(in srgb, var(--danger) 60%, transparent); }
 .thread-diff-panel .thread-diff-hunk-table.is-split .thread-diff-hunk-code { width: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
 
-.thread-diff-file-icon { flex: 0 0 16px; width: 16px; color: var(--text-dim); font: 10px var(--font-sans, sans-serif); text-align: center; }
+.thread-diff-file-icon { flex: 0 0 16px; width: 16px; color: var(--text-muted); font: 10px var(--font-sans, sans-serif); text-align: center; }
 .thread-diff-file-icon.is-react { color: #2196a6; }
 .thread-diff-file-icon.is-script { color: #de722b; }
 .thread-diff-file-icon.is-style { color: #b25bb8; }
@@ -163,12 +163,12 @@
   max-width: 300px;
   overflow: auto;
   border-left: 1px solid var(--border);
-  background: var(--bg-panel, var(--bg));
+  background: var(--bg-panel, var(--bg-base));
   padding: 10px 0;
 }
 .thread-diff-nav-tools { display: flex; gap: 4px; align-items: center; padding: 0 10px; }
 .thread-diff-nav-tools .thread-diff-toolbar-btn { flex-shrink: 0; }
-.thread-diff-nav-count { margin: 14px 12px 10px; color: var(--text-dim); font-size: 12px; }
+.thread-diff-nav-count { margin: 14px 12px 10px; color: var(--text-muted); font-size: 12px; }
 .thread-diff-navigator ul { margin: 0; padding: 0; list-style: none; }
 .thread-diff-nav-directory,
 .thread-diff-nav-file {
@@ -180,18 +180,18 @@
   padding: 5px 10px;
   border: 0;
   background: transparent;
-  color: var(--text);
+  color: var(--text-primary);
   text-align: left;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
-.thread-diff-nav-directory { color: var(--text-dim); }
+.thread-diff-nav-directory { color: var(--text-muted); }
 .thread-diff-nav-directory svg { flex-shrink: 0; }
 .thread-diff-nav-directory .is-open { transform: rotate(90deg); }
 .thread-diff-nav-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-diff-nav-file .thread-diff-stat { font-size: 11px; }
-.thread-diff-nav-status { font-size: 9px; line-height: 13px; width: 13px; text-align: center; border: 1px solid currentColor; border-radius: 3px; color: var(--text-dim); flex-shrink: 0; }
+.thread-diff-nav-status { font-size: 9px; line-height: 13px; width: 13px; text-align: center; border: 1px solid currentColor; border-radius: 3px; color: var(--text-muted); flex-shrink: 0; }
 .thread-diff-nav-status.is-modified,
 .thread-diff-nav-status.is-renamed { color: #de722b; }
 .thread-diff-nav-status.is-added { color: var(--success); }
