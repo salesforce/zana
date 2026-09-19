@@ -1,6 +1,10 @@
 # Zana
 
 <p align="center">
+  <img src="resources/icon.svg" alt="Zana, the AI fairy" width="128" height="128">
+</p>
+
+<p align="center">
   <a href="https://zana-ide.com/">
     <img alt="Website and docs" src="https://img.shields.io/badge/Website-zana--ide.com-2f81f7?style=for-the-badge">
   </a>
