@@ -35,6 +35,8 @@ import { useRouteState } from '../hooks/useRouteState.js';
 import {
   getInboxRoutePath,
   getProjectModeRoutePath,
+  getProjectSettingsRoutePath,
+  getSettingsRoutePath,
   getSuggestionsRoutePath
 } from '../lib/route-paths.js';
 import {
@@ -134,9 +136,12 @@ export function ProjectScopedNav({
   }, [mode, goalsEnabled, followUpsEnabled, project.id, setProjectView]);
 
   const handleBack = () => {
-    useUi.getState().exitProjectFocus(routeMemory.projectBackRoutePath);
+    useUi.getState().exitProjectFocus(
+      route.isProjectSettings ? getSettingsRoutePath() : routeMemory.projectBackRoutePath
+    );
     onBack?.();
   };
+  const backLabel = route.isProjectSettings ? 'Back to Global settings' : 'Back to all projects';
 
   const items: SidebarRailItem[] = [
     {
@@ -289,13 +294,14 @@ export function ProjectScopedNav({
       pinnedIds={PINNED_PROJECT_NAV_IDS}
       trailingIds={TRAILING_PROJECT_NAV_IDS}
       items={items}
+      settingsRoutePath={getProjectSettingsRoutePath(project.id)}
       header={
         isFocus ? (
           <button
             type="button"
             className="settings-app-back"
             onClick={handleBack}
-            aria-label="Back to all projects"
+            aria-label={backLabel}
           >
             <ArrowLeft size={17} aria-hidden="true" />
             Back

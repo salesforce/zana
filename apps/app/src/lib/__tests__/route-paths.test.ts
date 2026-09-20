@@ -168,7 +168,7 @@ describe('route path helpers', () => {
     expect(getMcpRoutePath()).toBe('/extensions/mcp');
     expect(getSkillsRoutePath()).toBe('/extensions/skills');
     expect(getSettingsRoutePath('')).toBe('/settings');
-    expect(getSettingsTabRoutePath('project')).toBe('/settings');
+    expect(getSettingsTabRoutePath('project')).toBe('/settings/project');
     expect(getSettingsTabRoutePath('project', 'p1')).toBe('/projects/p1/settings');
     expect(getSettingsTabRoutePath('terminal')).toBe('/settings/terminal');
     expect(

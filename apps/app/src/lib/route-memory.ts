@@ -81,7 +81,8 @@ export function visibleRouteMemory(
   const kind = shellRouteKind(location.pathname);
   const onProject = isProjectRoutePath(location.pathname);
   return {
-    appRoutePath: kind === 'settings' ? stored.lastAppRoutePath : current,
+    appRoutePath:
+      kind === 'settings' ? resolveProjectBackPath(stored.lastAppRoutePath) : current,
     settingsRoutePath: kind === 'settings' ? current : stored.lastSettingsRoutePath,
     toolsRoutePath: kind === 'extensions' ? current : stored.lastToolsRoutePath,
     toolsBackRoutePath:
