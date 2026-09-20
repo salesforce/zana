@@ -3,7 +3,7 @@
   "productName": "Zana",
   "version": "2.2.1",
   "private": true,
-  "description": "Zana Command Center \u2014 multi-project terminal hub for Claude Code sessions",
+  "description": "Zana Command Center — multi-project terminal hub for Claude Code sessions",
   "author": "grebmann",
   "homepage": "https://github.com/salesforce/zana",
   "main": "out/main/index.js",
