@@ -1,4 +1,5 @@
 import type { AgentScriptDialect } from './types.js';
+import type { AgentAction } from './agent-action-model.js';
 
 export type AgentGraphNodeKind = 'start' | 'topic' | 'action';
 
@@ -6,6 +7,7 @@ export interface AgentGraphNode {
   id: string;
   kind: AgentGraphNodeKind;
   label: string;
+  actionId?: string;
 }
 
 export interface AgentGraphEdge {
@@ -29,6 +31,7 @@ export interface AgentScriptParseResult {
   dialect: AgentScriptDialect;
   hasErrors: boolean;
   diagnostics: AgentScriptDiagnostic[];
+  actions: AgentAction[];
   graph: { nodes: AgentGraphNode[]; edges: AgentGraphEdge[] };
 }
 
@@ -39,7 +42,7 @@ export interface AgentScriptExample {
   source: string;
 }
 
-const TOPIC_HEADER = /^(?:[ \t]*)topic[ \t]+([A-Za-z_][\w]*)/gm;
+const TOPIC_HEADER = /^(?:[ \t]*)(?:topic|subagent)[ \t]+([A-Za-z_][\w]*)/gm;
 const START_HEADER = /^(?:[ \t]*)start_agent\b/gm;
 const TRANSITION = /transition[ \t]+to[ \t]+@(topic|subagent|actions)\.([A-Za-z_][\w]*)/g;
 const RUN_ACTION = /run[ \t]+@actions\.([A-Za-z_][\w]*)/g;
@@ -67,35 +70,23 @@ export function graphFromAgentSource(source: string): { nodes: AgentGraphNode[];
     addNode(`topic:${name}`, 'topic', name);
   }
 
-  TRANSITION.lastIndex = 0;
-  let from = nodes.has('start') ? 'start' : null;
-  for (const match of source.matchAll(TRANSITION)) {
-    const kind = match[1]!;
-    const name = match[2]!;
-    const target = kind === 'actions' ? `action:${name}` : `topic:${name}`;
-    addNode(target, kind === 'actions' ? 'action' : 'topic', name);
-    const sourceId = from ?? target;
-    edges.push({
-      id: `${sourceId}->${target}:${edges.length}`,
-      source: sourceId,
-      target,
-      label: kind === 'actions' ? 'run' : 'transition'
-    });
-    if (kind !== 'actions') from = target;
-  }
-
-  RUN_ACTION.lastIndex = 0;
-  for (const match of source.matchAll(RUN_ACTION)) {
-    const name = match[1]!;
-    const target = `action:${name}`;
-    addNode(target, 'action', name);
-    const sourceId = from ?? (nodes.has('start') ? 'start' : target);
-    edges.push({
-      id: `${sourceId}->${target}:${edges.length}`,
-      source: sourceId,
-      target,
-      label: 'run'
-    });
+  // Edges belong to the enclosing agent block, not the previous transition.
+  // Two routes from the start agent are siblings, never an invented chain.
+  let from: string | null = null;
+  for (const line of source.split(/\r?\n/)) {
+    const header = /^(start_agent|topic|subagent)(?:[ \t]+([A-Za-z_][\w]*))?[ \t]*:/.exec(line);
+    if (header) from = header[1] === 'start_agent' ? 'start' : `topic:${header[2]}`;
+    else if (/^[A-Za-z_]/.test(line)) from = null;
+    if (!from || line.trimStart().startsWith('#')) continue;
+    const addEdge = (target: string, kind: AgentGraphNodeKind, name: string, label: string) => {
+      addNode(target, kind, name);
+      edges.push({ id: `${from}->${target}:${edges.length}`, source: from!, target, label });
+    };
+    for (const match of line.matchAll(TRANSITION)) {
+      const action = match[1] === 'actions';
+      addEdge(`${action ? 'action' : 'topic'}:${match[2]}`, action ? 'action' : 'topic', match[2]!, action ? 'run' : 'transition');
+    }
+    for (const match of line.matchAll(RUN_ACTION)) addEdge(`action:${match[1]}`, 'action', match[1]!, 'run');
   }
 
   if (nodes.size === 0) {
@@ -106,88 +97,89 @@ export function graphFromAgentSource(source: string): { nodes: AgentGraphNode[];
 
 export const AGENT_SCRIPT_EXAMPLES: readonly AgentScriptExample[] = [
   {
-    id: 'support-bot',
-    title: 'Support bot',
-    dialect: 'agentforce',
+    id: 'support-bot', title: 'Support concierge', dialect: 'agentforce',
     source: `# @dialect:agentforce
 config:
-    agent_name: "Support Bot"
-    default_locale: "en_US"
+    agent_name: "Support_Concierge"
 
-variables:
-    case_id: mutable string = ""
-        description: "The current support case ID"
-    is_verified: mutable boolean = False
+language:
+    default_locale: "en_US"
 
 system:
     instructions: |
-        You are a helpful support agent.
-        Always verify the customer before discussing account details.
+        You help customers with orders and returns.
+        Be warm, concise, and ask one question at a time.
+        Never invent customer data or claim an action was completed.
 
-start_agent:
+start_agent welcome:
+    description: "Understand the request and guide the customer"
     reasoning:
         instructions: ->
-            | Greet the user and ask for their case ID.
-            if @variables.is_verified:
-                | You may discuss account details.
-            | Always be concise and professional.
-    after_reasoning:
-        if not @variables.is_verified:
-            transition to @topic.identity_verification
-        else:
-            transition to @topic.billing
+            | Welcome the customer. Explain that you can help with orders or returns.
+            | Ask what they need help with. For anything else, explain your scope.
+        actions:
+            orders: @utils.transition to @subagent.orders
+                description: "Help with an order or delivery question"
+            returns: @utils.transition to @subagent.returns
+                description: "Help the customer understand how to request a return"
 
-topic identity_verification:
-    description: "Verify the customer before account work"
+subagent orders:
+    description: "Gather the details needed to track an order"
     reasoning:
         instructions: ->
-            | Ask for the email on the account, then confirm the case ID.
+            | Ask for the order number. If it is missing, ask for it politely.
+            | Explain that an order lookup action must be connected to retrieve status.
+            | Do not make up a delivery date.
 
-topic billing:
-    description: "Handle billing inquiries"
+subagent returns:
+    description: "Guide a customer through a return request"
     reasoning:
         instructions: ->
-            | Look up the case and explain the latest invoice in plain language.
+            | Ask for the order number and the reason for the return.
+            | Summarize the request and explain that a support representative will review it.
+            | Do not promise eligibility, a refund, or a completed return.
 `
   },
   {
-    id: 'minimal',
-    title: 'Minimal agent',
-    dialect: 'agentscript',
-    source: `# @dialect:agentscript
+    id: 'minimal', title: 'Hello world', dialect: 'agentforce',
+    source: `# @dialect:agentforce
 config:
-    agent_name: "Minimal"
+    agent_name: "Hello_World"
 
 system:
-    instructions: "You are a concise assistant."
+    instructions: "You are a friendly, concise assistant."
 
-start_agent:
+start_agent hello:
+    description: "Welcome the user and learn what they need"
     reasoning:
-        instructions: "Greet the user and wait for a task."
+        instructions: ->
+            | Greet the user. Ask how you can help, then listen.
 `
   },
   {
-    id: 'fabric-router',
-    title: 'Fabric router',
-    dialect: 'agentfabric',
-    source: `# @dialect:agentfabric
+    id: 'fabric-router', title: 'Support handoff', dialect: 'agentforce',
+    source: `# @dialect:agentforce
 config:
-    agent_name: "Fabric Router"
+    agent_name: "Support_Handoff"
 
 system:
-    instructions: "Route the user to the right specialist."
+    instructions: "Help customers explain an issue clearly. Never claim a human has joined."
 
-start_agent:
+start_agent intake:
+    description: "Collect the customer request"
     reasoning:
         instructions: ->
-            | Ask what the user needs, then transition.
-    after_reasoning:
-        transition to @topic.handoff
+            | Ask the customer to describe the issue and what they have already tried.
+        actions:
+            handoff: @utils.transition to @subagent.handoff
+                description: "Prepare a summary when the customer needs a human"
 
-topic handoff:
-    description: "Hand the conversation to a specialist"
+subagent handoff:
+    description: "Prepare a useful handoff summary"
     reasoning:
-        instructions: "Summarize the request and pick a specialist."
+        instructions: ->
+            | Summarize the issue, steps tried, and desired outcome.
+            | Ask the customer to confirm the summary before they contact support.
 `
   }
 ];

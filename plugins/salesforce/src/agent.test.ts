@@ -63,6 +63,13 @@ const agentFs = memFs(
 );
 
 describe('sf_agent parse and inspect', () => {
+  it('preserves realistic multi-message previews with a bounded full response', () => {
+    const response = 'Complete Salesforce response. '.repeat(700);
+    expect(compactPreviewDigest({ sessionId: 's1', messages: [{ message: response }, { type: 'Text', message: 'END' }] })).toMatchObject({ sessionId: 's1', response: `${response}\nEND` });
+    expect(compactPreviewDigest({ messages: [{ message: 'x'.repeat(40_000) }] }).response).toHaveLength(32_000);
+    expect(compactPreviewDigest({ messages: [null, {}, { message: 1 }] }).response).toBe('');
+  });
+
   it('rejects unknown actions and missing required fields', () => {
     expect(parseAgentInput({ action: 'mutate' }).ok).toBe(false);
     expect(parseAgentInput({ action: 'compile' }).ok).toBe(false);

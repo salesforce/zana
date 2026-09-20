@@ -22,6 +22,13 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
 8. **New or modified code needs at least 80% test coverage.** Cover meaningful branches and failure paths, not only line count. For Electron main/renderer seams, unit coverage alone is insufficient: add or update the relevant built-Electron E2E test. Before completion, run the focused tests and the production-boundary E2E required by any affected coupling note.
 9. **PR monitoring means diagnose and repair, not only report.** After pushing a PR, watch its checks until complete. On failure, fetch job logs with `gh run view <run-id> --job <job-id> --log-failed`; for external checks, query `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` then `gh api repos/<owner>/<repo>/check-runs/<id>/annotations` to get file, line, rule, and remediation. Fix actionable failures, run focused local verification, push, and repeat until every required check passes. Do not stop at an external failure summary when annotations are available.
 
+## Native runtime and test isolation
+
+- Never flip the installed SQLite addon between Node and Electron. `pnpm rebuild:electron` prepares the Electron ABI cache without replacing Node's binary. Product database connections use `createSqliteDatabase` (or `sqliteNativeBinding` for an existing constructor) from `@zana-ai/zcc-db`.
+- Use `pnpm build` for production output and `pnpm test:e2e -- <spec>` for a private build. `pnpm test:e2e:only -- <spec>` snapshots an existing build. Direct Playwright uses the same isolation setup. Do not run `electron-vite build` directly or manually copy native binaries into the installed package.
+- Dev output is `out-dev/`; production output is `out/`. The shared build lock protects preparation and snapshots, not running tests. Each Playwright invocation owns `e2e/.artifacts/runs/<id>`; never clear another run's files.
+- E2E homes are already isolated by bootstrap. Never write or restore the real user's config from a fixture. See `docs/native-runtime-isolation.md` for the regression checks.
+
 ## Product Design Rules
 
 - **Choose a layout per feature; do not expose the choice as a user preference.** A new panel is either a centered reading/configuration surface or a full-width workbench. Make that decision from the feature's task and information density, encode it in the panel's layout classes, and do not add a global "Centered / Full width" control to Settings.
@@ -38,8 +45,8 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
   `e2e/modern-owner-job-team-run.spec.ts`). All three titles contain "Job Team".
   The Modern spec exercises the real `/internal/hosts/tool-call` → forwarder →
   loopback `execution.start` chain (the path that broke live while unit tests
-  passed). The `test:e2e:jobteam` script builds, flips the better-sqlite3 ABI to
-  Electron, runs the three, and restores the Node ABI. Full run instructions are
+  passed). The `test:e2e:jobteam` script builds a private app copy and runs the
+  deterministic specs with isolated native packages and result folders. Full run instructions are
   in `docs/job-team-e2e.md`. Run the deterministic three on any owner-launch
   change. (A real-model end-to-end check exists outside this tree, owned by the
   integration — core stays unaware of it by design.)

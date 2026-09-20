@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { createCommandRuntime, dispatchHostCommand } from './command-dispatch.js';
 import { HostCommandError } from './host-command-error.js';
 import { handleHostRpcRequest } from './command-router.js';
@@ -676,6 +676,10 @@ describe('host command dispatch', () => {
     const target = mkdtempSync(join(tmpdir(), 'zcc-unmanaged-keep-'));
     const child = spawn('sleep', ['300'], { cwd: target, detached: true, stdio: 'ignore' });
     child.unref();
+    onTestFinished(() => {
+      child.kill('SIGKILL');
+      rmSync(target, { recursive: true, force: true });
+    });
     const pid = child.pid ?? 0;
     const runtime = createCommandRuntime({ verifyProviders: async () => installedClaude });
     await dispatchHostCommand(runtime, {
@@ -700,10 +704,9 @@ describe('host command dispatch', () => {
       pids: [pid]
     }) as { killed: Array<{ pid: number }> };
     expect(killed.killed.map((row) => row.pid)).toContain(pid);
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {}
-  }, 15_000);
+    // macOS runs several whole-machine lsof scans here. A busy full-suite run
+    // needs more headroom than the isolated test; retain every confinement assertion.
+  }, process.platform === 'darwin' ? 60_000 : 15_000);
 
   it('fails PR actions closed when gh is missing', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'zcc-no-gh-'));

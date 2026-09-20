@@ -6,7 +6,6 @@ import { AgentforcePreviewPanel } from './src/app/AgentforcePreviewPanel.js';
 import { OrgPicker } from './src/app/OrgPicker.js';
 import { SalesforceOrgsPanel } from './src/app/SalesforceOrgsPanel.js';
 import { SalesforceProjectTab } from './src/app/SalesforceProjectTab.js';
-import { SoqlExplorerPanel } from './src/app/soql/SoqlExplorerPanel.js';
 import { openAgentforcePlayground, openAgentforcePreview } from './src/app/agentforce-panel-params.js';
 
 function hostReact() {
@@ -337,24 +336,6 @@ export default definePluginApp((app) => {
     global: false,
     component: SalesforceProjectTab
   });
-  app.slots.projectTab({
-    id: 'soql',
-    label: 'SOQL',
-    icon: 'Database',
-    order: 82,
-    global: false,
-    component: SoqlExplorerPanel
-  });
-  app.slots.experimental_projectMenuAction({
-    id: 'open-soql',
-    title: 'SOQL',
-    icon: 'Database',
-    placement: 'project',
-    run: (ctx) => {
-      if (!ctx.projectId) return;
-      ctx.toProject(ctx.projectId, { tabId: 'soql' });
-    }
-  });
   app.slots.threadPanelAction({
     id: 'playground',
     title: 'Playground',
@@ -415,15 +396,6 @@ export default definePluginApp((app) => {
       openAgentforcePreview({
         openThreadPanel: (options) => ctx.openPanel({ actionId: options.actionId, title: options.title, params: options.params })
       });
-    }
-  });
-  app.slots.commandPaletteAction({
-    id: 'open-soql',
-    title: 'Open SOQL Explorer',
-    isAvailable: (ctx) => Boolean(ctx.projectId),
-    run: (ctx) => {
-      if (!ctx.projectId) return;
-      ctx.toProject(ctx.projectId, { tabId: 'soql' });
     }
   });
 });

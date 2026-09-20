@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { migrate } from './migrate.js';
+import { createSqliteDatabase } from './sqlite.js';
 
 export type SqliteDatabase = InstanceType<typeof Database>;
 
@@ -16,7 +17,7 @@ export function openDatabase(file: string): ZccDatabase {
   const directory = dirname(file);
   if (!existsSync(directory)) mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
-  const sqlite = new Database(file);
+  const sqlite = createSqliteDatabase(file);
   chmodSync(file, 0o600);
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');

@@ -1,0 +1,154 @@
+<style>
+#af-action-concept { --ac-bg:light-dark(#fff,#1b1b21); --ac-rail:light-dark(#f6f7f9,#222229); --ac-line:light-dark(#e3e5e9,#383940); --ac-text:light-dark(#222831,#e8e9ee); --ac-muted:light-dark(#626975,#a2a6b1); --ac-blue:light-dark(#155fc0,#86b6ff); --ac-soft:light-dark(#eaf1fd,#27364d); --ac-green:light-dark(#236d4d,#90ceb0); --ac-warn:light-dark(#8a5c10,#dfb971); --ac-string:light-dark(#a63e37,#df9c8b); font:12px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color:var(--ac-text); background:var(--ac-bg); border:1px solid var(--ac-line); border-radius:9px; overflow:hidden; }
+#af-action-concept * { box-sizing:border-box; }
+#af-action-concept [hidden] { display:none!important; }
+#af-action-concept button { font:inherit; color:inherit; cursor:pointer; background:none; border:0; padding:7px 10px; border-radius:5px; text-align:left; }
+#af-action-concept button:hover { background:var(--ac-soft); }
+#af-action-concept button[aria-pressed=true] { color:var(--ac-blue); background:var(--ac-soft); }
+#af-action-concept .ac-window { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:8px 13px; background:var(--ac-rail); border-bottom:1px solid var(--ac-line); }
+#af-action-concept .ac-muted { color:var(--ac-muted); }
+#af-action-concept .ac-grow { flex:1; }
+#af-action-concept .ac-layout { display:grid; grid-template-columns:112px minmax(0,1fr); }
+#af-action-concept .ac-nav { background:var(--ac-rail); padding:15px 8px; border-right:1px solid var(--ac-line); }
+#af-action-concept .ac-nav div { padding:8px; margin-bottom:3px; }
+#af-action-concept .ac-nav .ac-current { background:var(--ac-soft); border-radius:5px; color:var(--ac-blue); }
+#af-action-concept .ac-main { min-width:0; }
+#af-action-concept .ac-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:14px; padding:14px; border-bottom:1px solid var(--ac-line); }
+#af-action-concept .ac-toolbar strong { font-size:14px; font-weight:600; }
+#af-action-concept .ac-workflows { display:flex; gap:15px; color:var(--ac-muted); }
+#af-action-concept .ac-workflows span:first-child { color:var(--ac-blue); }
+#af-action-concept .ac-body { display:grid; grid-template-columns:165px minmax(0,1fr); }
+#af-action-concept .ac-tree { padding:12px 7px; background:var(--ac-rail); border-right:1px solid var(--ac-line); }
+#af-action-concept .ac-label { color:var(--ac-muted); font-size:11px; letter-spacing:.05em; text-transform:uppercase; padding:8px 7px; }
+#af-action-concept .ac-tree button { display:block; width:100%; margin:3px 0; overflow-wrap:anywhere; }
+#af-action-concept .ac-tree small { display:block; color:var(--ac-muted); font-size:11px; }
+#af-action-concept .ac-editor { min-width:0; }
+#af-action-concept .ac-tabs { display:flex; flex-wrap:wrap; border-bottom:1px solid var(--ac-line); padding:0 5px; }
+#af-action-concept .ac-tabs button { border-radius:0; padding:10px; border-bottom:2px solid transparent; }
+#af-action-concept .ac-tabs button[aria-pressed=true] { background:none; border-bottom-color:var(--ac-blue); }
+#af-action-concept .ac-detail { padding:16px 18px; }
+#af-action-concept .ac-breadcrumb { color:var(--ac-muted); font-size:11px; overflow-wrap:anywhere; }
+#af-action-concept .ac-heading { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0 4px; }
+#af-action-concept h3 { font-size:17px; font-weight:600; margin:0; }
+#af-action-concept .ac-kind { color:var(--ac-blue); border:1px solid var(--ac-line); padding:1px 6px; border-radius:4px; font-size:11px; }
+#af-action-concept .ac-target { font:11px/1.5 ui-monospace,SFMono-Regular,monospace; color:var(--ac-muted); overflow-wrap:anywhere; }
+#af-action-concept .ac-source { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:12px 0; }
+#af-action-concept .ac-source button { border:1px solid var(--ac-line); padding:4px 8px; }
+#af-action-concept .ac-version { font-size:11px; color:var(--ac-warn); }
+#af-action-concept .ac-subtabs { display:flex; flex-wrap:wrap; gap:4px; border-bottom:1px solid var(--ac-line); padding:0 0 8px; margin:0 0 12px; }
+#af-action-concept .ac-subtabs button { padding:5px 8px; }
+#af-action-concept pre { font:12px/1.85 ui-monospace,SFMono-Regular,monospace; margin:0; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--ac-text); }
+#af-action-concept pre b { font-weight:500; color:var(--ac-blue); }
+#af-action-concept pre em { font-style:normal; color:var(--ac-string); }
+#af-action-concept .ac-code { display:grid; grid-template-columns:25px minmax(0,1fr); padding:10px 0; }
+#af-action-concept .ac-numbers { color:var(--ac-muted); user-select:none; }
+#af-action-concept table { border-collapse:collapse; width:100%; font:inherit; }
+#af-action-concept th { font-weight:500; text-align:left; color:var(--ac-muted); }
+#af-action-concept td,#af-action-concept th { padding:9px 7px; border-bottom:1px solid var(--ac-line); vertical-align:top; overflow-wrap:anywhere; }
+#af-action-concept code { font:11px/1.6 ui-monospace,SFMono-Regular,monospace; overflow-wrap:anywhere; }
+#af-action-concept .ac-flow { display:flex; flex-direction:column; align-items:center; padding:8px 0; gap:7px; }
+#af-action-concept .ac-node { width:min(100%,245px); border:1px solid var(--ac-line); border-radius:6px; padding:8px 12px; background:var(--ac-bg); }
+#af-action-concept .ac-node small { display:block; color:var(--ac-muted); font-size:11px; }
+#af-action-concept .ac-branch { display:flex; align-items:stretch; width:100%; gap:15px; }
+#af-action-concept .ac-branch>div { flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; gap:7px; }
+#af-action-concept .ac-arrow { color:var(--ac-muted); font-size:12px; }
+#af-action-concept .ac-footer { border-top:1px solid var(--ac-line); padding:7px 13px; display:flex; flex-wrap:wrap; gap:12px; color:var(--ac-muted); font-size:11px; }
+#af-action-concept .ac-trace { padding:10px 0; border-bottom:1px solid var(--ac-line); }
+#af-action-concept .ac-trace small { display:block; margin-top:4px; color:var(--ac-muted); }
+#af-action-concept .ac-empty { padding:20px 0; color:var(--ac-muted); }
+#af-action-concept .ac-caption { color:var(--ac-muted); margin:10px 0; }
+#af-action-concept .ac-success { color:var(--ac-green); }
+@media(max-width:760px) { #af-action-concept .ac-layout { grid-template-columns:1fr; } #af-action-concept .ac-nav { display:none; } #af-action-concept .ac-body { grid-template-columns:145px minmax(0,1fr); } }
+@media(max-width:520px) { #af-action-concept .ac-body { display:block; } #af-action-concept .ac-tree { display:flex; flex-wrap:wrap; gap:4px; border-right:0; border-bottom:1px solid var(--ac-line); } #af-action-concept .ac-tree .ac-label,#af-action-concept .ac-tree .ac-file { display:none; } #af-action-concept .ac-tree button { flex:1; width:auto; margin:0; } #af-action-concept .ac-detail { padding:13px; } #af-action-concept .ac-branch { gap:6px; } }
+@media(pointer:coarse) { #af-action-concept button { min-height:44px; } }
+</style>
+<div id="af-action-concept" aria-label="Agentforce action explorer design concept">
+  <div class="ac-window"><strong>Zana</strong><span class="ac-muted">/ Customer support</span><span class="ac-grow"></span><span class="ac-muted">Design concept · sample data</span></div>
+  <div class="ac-layout">
+    <aside class="ac-nav" aria-label="App navigation"><div>Agents</div><div>Explorer</div><div>Library</div><div class="ac-current">Salesforce</div></aside>
+    <main class="ac-main">
+      <div class="ac-toolbar"><strong>Agentforce</strong><div class="ac-workflows"><span>01 Build</span><span>02 Rehearse</span><span>03 Test</span></div><span class="ac-grow"></span><span class="ac-muted">support-dev</span></div>
+      <div class="ac-body">
+        <aside class="ac-tree" aria-label="Agent actions">
+          <div class="ac-label">Agent</div><button class="ac-file" data-document="script">Support.agent</button>
+          <div class="ac-label">Actions · 2</div>
+          <button data-action="apex" aria-pressed="true">Look up order<small>Apex · orders</small></button>
+          <button data-action="flow" aria-pressed="false">Issue refund<small>Flow · returns</small></button>
+        </aside>
+        <section class="ac-editor" aria-label="Related editor tabs">
+          <div class="ac-tabs"><button data-document="script" aria-pressed="false">Support.agent</button><button data-document="action" aria-pressed="true" id="ac-action-tab">OrderLookup.cls</button></div>
+          <div class="ac-detail">
+            <div class="ac-breadcrumb" id="ac-breadcrumb">Support.agent / orders / look_up_order</div>
+            <div class="ac-heading"><h3 id="ac-title">Look up order</h3><span class="ac-kind" id="ac-kind">Apex</span></div>
+            <div class="ac-target" id="ac-target">apex://OrderLookup</div>
+            <div class="ac-source" id="ac-source"><button data-source="project" aria-pressed="true">Project source</button><button data-source="org" aria-pressed="false">Org version</button><span class="ac-version" id="ac-version">Local changes · deployed version available</span></div>
+            <div class="ac-subtabs" id="ac-subtabs" aria-label="Action details"><button data-view="implementation" aria-pressed="true">Implementation</button><button data-view="contract" aria-pressed="false">Inputs &amp; outputs</button><button data-view="usage" aria-pressed="false">Used by</button><button data-view="trace" aria-pressed="false">Last preview</button></div>
+            <div id="ac-content" aria-live="polite"></div>
+          </div>
+        </section>
+      </div>
+      <footer class="ac-footer"><span id="ac-provenance">Project source · read only</span><span class="ac-grow"></span><span>Inspecting an action does not run it</span></footer>
+    </main>
+  </div>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('af-action-concept');
+  const state = { action:'apex', document:'action', source:'project', view:'implementation', compactContract:true };
+  const byId = id => root.querySelector('#'+id);
+  const actions = {
+    apex:{title:'Look up order', kind:'Apex', file:'OrderLookup.cls', path:'orders / look_up_order', target:'apex://OrderLookup'},
+    flow:{title:'Issue refund', kind:'Flow', file:'Issue_Refund.flow', path:'returns / issue_refund', target:'flow://Issue_Refund'}
+  };
+  function code(lines) { return '<div class="ac-code"><pre class="ac-numbers" aria-hidden="true">'+lines.map((_,i)=>i+1).join('\n')+'</pre><pre>'+lines.join('\n')+'</pre></div>'; }
+  function render() {
+    const action=actions[state.action], isScript=state.document==='script', org=state.source==='org';
+    root.querySelectorAll('[data-action]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.action===state.action&&!isScript)));
+    root.querySelectorAll('[data-document]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.document===state.document)));
+    root.querySelectorAll('[data-source]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.source===state.source)));
+    root.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.view===state.view)));
+    byId('ac-action-tab').textContent=action.file;
+    byId('ac-breadcrumb').textContent=isScript?'Project / agents / Support.agent':'Support.agent / '+action.path;
+    byId('ac-title').textContent=isScript?'Support concierge':action.title;
+    byId('ac-kind').textContent=isScript?'Agent Script':action.kind;
+    byId('ac-target').textContent=isScript?'Current draft · 2 linked actions':action.target;
+    byId('ac-source').hidden=isScript;
+    byId('ac-subtabs').hidden=isScript;
+    byId('ac-version').textContent=state.action==='flow'?(org?'Active version 7':'Draft changes · org active version 7'):(org?'Deployed Apex class':'Local changes · deployed version available');
+    byId('ac-provenance').textContent=isScript?'Project draft':(org?'support-dev · '+(state.action==='flow'?'active v7':'deployed source'):'Project source')+' · read only';
+    const content=byId('ac-content');
+    if (isScript) {
+      content.innerHTML=code(['<b>subagent</b> orders:', '    <b>description:</b> <em>"Help customers track orders"</em>', '    <b>actions:</b>', '        look_up_order:', '            <b>target:</b> <em>"apex://OrderLookup"</em>', '', '<b>subagent</b> returns:', '    <b>description:</b> <em>"Handle eligible returns"</em>', '    <b>actions:</b>', '        issue_refund:', '            <b>target:</b> <em>"flow://Issue_Refund"</em>']);
+    } else if(state.view==='implementation'&&state.action==='apex') {
+      content.innerHTML='<div class="ac-caption">OrderLookup.cls · invocable method</div>'+code(['<b>public with sharing class</b> OrderLookup {', '    <b>@InvocableMethod</b>(label=<em>\'Look up order\'</em>)', '    <b>public static</b> List&lt;Result&gt; lookup(', '        List&lt;Request&gt; requests', '    ) {', '        <b>return</b> OrderService.findByNumber(requests);', '    }', '', '    <b>public class</b> Request {', '        <b>@InvocableVariable</b>(required=true)', '        <b>public String</b> orderNumber;', '    }', '    <span class="ac-muted">// Result and service definitions collapsed</span>', '}']);
+    } else if(state.view==='implementation') {
+      content.innerHTML='<div class="ac-caption">Issue_Refund · '+(org?'active v7':'project draft')+'</div><div class="ac-flow" aria-label="Refund Flow: get order, check eligibility, then create refund or return ineligible"><div class="ac-node"><small>Get records</small>Find order</div><span class="ac-arrow">↓</span><div class="ac-node"><small>Decision</small>Eligible for refund?</div><div class="ac-branch"><div><span class="ac-arrow">Eligible ↓</span><div class="ac-node"><small>Create records</small>Create refund</div><span class="ac-arrow">↓</span><div class="ac-node"><small>Output</small>refundId</div></div><div><span class="ac-arrow">Otherwise ↓</span><div class="ac-node"><small>Assignment</small>Set reason</div><span class="ac-arrow">↓</span><div class="ac-node"><small>Output</small>ineligibleReason</div></div></div></div><details><summary>View Flow XML</summary>'+code(['&lt;Flow&gt;', '  &lt;label&gt;Issue refund&lt;/label&gt;', '  &lt;status&gt;'+(org?'Active':'Draft')+'&lt;/status&gt;', '  <span class="ac-muted">&lt;!-- Flow elements shown above --&gt;</span>', '&lt;/Flow&gt;'])+'</details>';
+    } else if(state.view==='contract') {
+      const flow=state.action==='flow';
+      content.innerHTML='<table><thead><tr><th>Direction</th><th>Action field → target field</th><th>Type</th></tr></thead><tbody><tr><td>Input</td><td><code>'+(flow?'order_id → orderId':'order_number → orderNumber')+'</code><div class="ac-muted">'+(flow?'@variables.order_id':'Collected by the agent')+' · required</div></td><td>String</td></tr><tr><td>Output</td><td><code>'+(flow?'refund_id ← refundId':'status ← status')+'</code><div class="ac-muted">'+(flow?'@variables.refund_id':'Available to the agent')+'</div></td><td>String</td></tr></tbody></table><p class="ac-success">Sample contract: both fields resolved</p>'+(state.compactContract?'':'<div class="ac-caption">The action definition, its call-site bindings and the target’s registered parameters are shown together.</div>');
+    } else if(state.view==='usage') {
+      content.innerHTML='<div class="ac-trace"><strong>'+action.path.split(' / ')[0]+'</strong><small>Support.agent · action declaration and reasoning reference</small></div><p class="ac-caption">'+(state.action==='apex'?'Available for the agent to choose during reasoning.':'Called explicitly after the customer confirms the refund.')+'</p><button data-jump="script">Go to Agent Script →</button>';
+    } else if(state.action==='apex') {
+      content.innerHTML='<div class="ac-trace"><strong>Look up order</strong> <span class="ac-kind">Simulated</span><small>Preview turn 2 · illustrative run</small></div><table><tbody><tr><th>Input</th><td><code>orderNumber: "ORD-1042"</code></td></tr><tr><th>Simulated output</th><td><code>status: "Shipped"</code></td></tr></tbody></table><p class="ac-caption">The Apex implementation was not executed.</p><button data-jump="implementation">Inspect implementation →</button>';
+    } else {
+      content.innerHTML='<div class="ac-empty">No call to Issue refund in this preview.</div><div class="ac-caption">No runtime result is inferred from the Flow definition.</div>';
+    }
+  }
+  root.addEventListener('click',event=>{
+    const button=event.target.closest('button');
+    if(!button||!root.contains(button)) return;
+    if(button.dataset.action) {state.action=button.dataset.action;state.document='action';state.view='implementation';}
+    if(button.dataset.document) state.document=button.dataset.document;
+    if(button.dataset.source) state.source=button.dataset.source;
+    if(button.dataset.view) state.view=button.dataset.view;
+    if(button.dataset.jump==='script') state.document='script';
+    if(button.dataset.jump==='implementation') state.view='implementation';
+    render();
+  });
+  render();
+  if(globalThis.Tweak) {
+    const tweak=new Tweak({container:root,onChange:render});
+    tweak.addToggle(state,'compactContract',{label:'Compact input/output details'});
+  }
+})();
+</script>

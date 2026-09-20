@@ -33,7 +33,7 @@ import { SoqlExplorerPanel } from "./soql/SoqlExplorerPanel.js";
 import { SalesforceProjectTab } from "./SalesforceProjectTab.js";
 
 vi.mock("./AgentScriptPanel.js", () => ({
-  AgentforcePlaygroundPanel: () => <div>Agentforce script</div>,
+  AgentforcePlaygroundPanel: ({ headerActions }: { headerActions?: React.ReactNode }) => <div>Agentforce script{headerActions}</div>,
 }));
 vi.mock("./AgentforcePreviewPanel.js", () => ({
   AgentforcePreviewPanel: () => <div>Agentforce conversation</div>,
@@ -209,7 +209,7 @@ describe("public Salesforce panels", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Agentforce" }));
     expect(screen.getByText("Agentforce script")).toBeTruthy();
     fireEvent.click(
-      screen.getByRole("button", { name: "Preview", exact: true }),
+      screen.getByRole("button", { name: "Org preview", exact: true }),
     );
     expect(screen.getByText("Agentforce conversation")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open beside agent" }));
@@ -218,7 +218,7 @@ describe("public Salesforce panels", () => {
       params: { projectId: "p", orgAlias: "dev" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: "Playground", exact: true }),
+      screen.getByRole("button", { name: "Back to studio", exact: true }),
     );
     expect(screen.getByText("Agentforce script")).toBeTruthy();
     expect(call).toHaveBeenCalledWith(

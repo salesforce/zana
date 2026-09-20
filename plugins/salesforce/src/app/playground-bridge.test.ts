@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { parseAgentScriptSource } from '../../lib/agent-script-parse.js';
+import { ACTION_AGENT } from '../action-fixtures.js';
 import {
   isHostToPlayground,
   isPlaygroundToHost,
@@ -39,5 +41,21 @@ describe('playground bridge', () => {
     scope.document = { documentElement: { getAttribute: () => 'dark' } };
     expect(readDocumentTheme()).toBe('dark');
     scope.document = previous;
+  });
+
+  it('bounds editor snapshots and rejects malformed analysis counts', () => {
+    const snapshot = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'snapshot', content: 'start_agent:', issues: 0 };
+    expect(isPlaygroundToHost(snapshot)).toBe(true);
+    expect(isPlaygroundToHost({ ...snapshot, content: 'x'.repeat(180_001) })).toBe(false);
+    expect(isPlaygroundToHost({ ...snapshot, issues: NaN })).toBe(false);
+    expect(isPlaygroundToHost({ ...snapshot, content: null })).toBe(false);
+    const actions = parseAgentScriptSource(ACTION_AGENT, 'agentforce').actions;
+    expect(isPlaygroundToHost({ ...snapshot, actions })).toBe(true);
+    for (const invalid of [null, [{}], [{ ...actions[0], inputs: null }], [{ ...actions[0], uses: [{ kind: 'run', line: 0, code: '' }] }], Array(251).fill(actions[0])]) expect(isPlaygroundToHost({ ...snapshot, actions: invalid })).toBe(false);
+    expect(isPlaygroundToHost({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'openAction', id: actions[0].id })).toBe(true);
+    expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'reference', content: 'x', language: 'apex' })).toBe(true);
+    expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'reference', content: 'x'.repeat(750001), language: 'apex' })).toBe(false);
+    expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'revealLine', line: -1 })).toBe(false);
+    expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'revealLine', line: 3 })).toBe(true);
   });
 });

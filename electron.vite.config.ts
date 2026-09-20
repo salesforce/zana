@@ -159,7 +159,10 @@ const mainOutput = {
   chunkFileNames: 'chunks/[name]-[hash].js'
 };
 
-export default defineConfig({
+export default defineConfig(({ command }) => {
+  // Dev watchers and production/E2E builds must never empty each other's output.
+  const out = process.env.ZCC_BUILD_OUT_DIR || resolve(__dirname, command === 'serve' ? 'out-dev' : 'out');
+  return {
   main: {
     // Official releases set ZCC_APP_URL + ZCC_RELAY_TOKEN + ZCC_POSTHOG_API_KEY
     // in the build env so packaged laptops can dial the Heroku pairing door and
@@ -181,7 +184,7 @@ export default defineConfig({
       // Pin this absolutely. Vite 8/rolldown has dumped named entries
       // (`server-runtime.js`) and hashed chunks (`main-*.js`) at repo root
       // when outDir is left implicit.
-      outDir: resolve(__dirname, 'out/main'),
+      outDir: resolve(out, 'main'),
       // In `dev`, watch app-module sources under `plugins/` as well as `src/`.
       // A module's main side (e.g. plugins/docs) is pulled into the main
       // bundle via the registry, but lives outside `src/`; without this the
@@ -208,6 +211,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     resolve: { alias: sdkAlias, conditions: ['source'] },
     build: {
+      outDir: resolve(out, 'preload'),
       watch: { include: ['src/**', 'plugins/**', 'packages/**', 'apps/**'] },
       rollupOptions: {
         input: { index: resolve(__dirname, 'apps/desktop/src/preload.ts') },
@@ -256,9 +260,11 @@ export default defineConfig({
     worker: { format: 'es' },
     optimizeDeps: { exclude: ['monaco-editor', '@monaco-editor/react'] },
     build: {
+      outDir: resolve(out, 'renderer'),
       rollupOptions: {
         input: resolve(__dirname, 'apps/app/index.html')
       }
     }
   }
+  };
 });

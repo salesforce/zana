@@ -1,0 +1,11 @@
+import type { SpawnOptions } from 'node:child_process';
+type Runner = (command: string, args: string[], options?: SpawnOptions) => Promise<number>;
+export const REPO_ROOT: string;
+export const runCommand: Runner;
+export function withBuildLock<T>(root: string, work: () => T | Promise<T>): Promise<T>;
+export function buildElectron(root: string, outDir: string, run?: Runner): Promise<number>;
+export function validateMainSyntax(outDir: string, run?: Runner): Promise<void>;
+export function assertCompleteBuild(outDir: string): void;
+export function copyNativePackage(source: string, destination: string): Promise<void>;
+export function populateRuntime(root: string, runtime: string, sqliteBinding: string): Promise<void>;
+export function prepareElectronRuntime(options?: { root?: string; build?: boolean; buildApp?: (root: string, outDir: string) => Promise<number> }): Promise<{ root: string; dispose(): void }>;

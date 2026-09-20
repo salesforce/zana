@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { dirname, join, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { createSqliteDatabase } from '@zana-ai/zcc-db';
 import type {
   PluginAgentConfigureContext,
   PluginAgentConfigureResult,
@@ -462,17 +463,7 @@ export function createPluginApi(
         assertLive();
         if (sharedDatabase) return sharedDatabase;
         const dbPath = join(kvDir, 'data.db');
-        // Lazy require keeps plugin-api importable in tests that never open a database.
-        const require = createRequire(import.meta.url);
-        const Database = require('better-sqlite3') as new (path: string) => {
-          prepare: (sql: string) => {
-            all: (...params: unknown[]) => unknown[];
-            get: (...params: unknown[]) => unknown;
-            run: (...params: unknown[]) => { changes: number };
-          };
-          close: () => void;
-        };
-        const db = new Database(dbPath);
+        const db = createSqliteDatabase(dbPath);
         sqliteHandles.push(db);
         const runBatch = Reflect.get(db, 'exec') as (source: string) => unknown;
         const beginTxn = Reflect.get(db, 'transaction') as <T>(fn: () => T) => () => T;

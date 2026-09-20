@@ -1,21 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import { defineConfig } from '@playwright/test';
 
-/**
- * End-to-end tests that launch the REAL built Electron app (out/main/index.js)
- * via Playwright's `_electron` driver and drive the real renderer + main + IPC.
- * Unit tests stay in vitest (`*.test.ts` under src/); these are the integration
- * layer that vitest can't reach — they need a booted app.
- *
- * Isolation: each test gets a throwaway HOME (see e2e/fixtures), so the suite
- * never reads or writes the developer's real ~/.zcc. Electron tests must NOT run
- * concurrently in one process (each launch is a full app), so workers = 1.
- *
- * Prereq: a build exists (`npm run build`). The webServer field is unused — we
- * launch the app ourselves inside the electronApp fixture.
- */
+// Set once in the coordinator, inherited by workers and subprocesses.
+const runId = process.env.ZCC_E2E_RUN_ID ||= `${Date.now()}-${process.pid}-${randomUUID().slice(0, 8)}`;
+
 export default defineConfig({
   testDir: './e2e',
-  outputDir: './e2e/.artifacts',
+  outputDir: `./e2e/.artifacts/runs/${runId}`,
+  globalSetup: './e2e/fixtures/runtime-setup.ts',
   // Marketplace specs stay in the suite so Plugins browse/install is covered.
   // install-from-git remains opt-in: leftover UI plus the modern `package.json`
   // `zcc` path.
@@ -30,7 +22,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never', outputFolder: `playwright-report/${runId}` }]] : 'list',
   use: {
     // Artifacts only on failure — a booted app is heavy to trace always-on.
     trace: 'retain-on-failure',

@@ -34,6 +34,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import Database from 'better-sqlite3';
+import { sqliteNativeBinding } from '@zana-ai/zcc-db/native-binding';
 import type {
   SessionStats,
   SessionFileTouch,
@@ -334,7 +335,7 @@ function sessionFilePath(path: string | undefined, cwd: string | undefined): str
 /** Open OpenCode's DB read-only, or null if it's missing/unreadable. Never throws. */
 function openReadonly(dbPath: string): InstanceType<typeof Database> | null {
   try {
-    return new Database(dbPath, { readonly: true, fileMustExist: true });
+    return new Database(dbPath, { readonly: true, fileMustExist: true, nativeBinding: sqliteNativeBinding() });
   } catch {
     return null;
   }

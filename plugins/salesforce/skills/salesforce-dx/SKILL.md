@@ -17,7 +17,7 @@ The Salesforce project tab lists every org the Salesforce CLI has authenticated 
 
 ## SOQL Explorer (human)
 
-The Salesforce plugin's per-project **SOQL** tab runs interactive REST/Tooling queries: schema rail, query editor (⌘/Ctrl+Enter), results grid, export, recent/saved queries, and BotVersion/BotDefinition examples. It does not perform DML. Open it from the project row menu or the Salesforce project tab.
+The Salesforce plugin's **Data** tab runs interactive REST/Tooling queries in SOQL Explorer: schema rail, query editor (⌘/Ctrl+Enter), results grid, export, recent/saved queries, and BotVersion/BotDefinition examples. It does not perform DML. Open **Salesforce → Data** in the project, or use the SOQL agent side panel.
 
 ## `sf_soql`
 

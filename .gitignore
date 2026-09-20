@@ -1,5 +1,6 @@
 node_modules
 out
+out-dev
 dist
 # node-gyp configure dump at repo root (not a source tree).
 /build/

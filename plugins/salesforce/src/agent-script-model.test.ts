@@ -3,6 +3,24 @@ import { AGENT_SCRIPT_EXAMPLES, graphFromAgentSource, isAgentScriptFile } from '
 import { normalizeAgentScriptDialect } from '../lib/types.js';
 
 describe('agent script model', () => {
+  it('maps sibling routes and action ownership to the enclosing block, including subagents', () => {
+    const graph = graphFromAgentSource(`start_agent welcome:
+    transition to @subagent.orders
+    transition to @subagent.returns
+subagent orders:
+    run @actions.lookup
+    # transition to @subagent.fake
+subagent returns:
+    transition to @subagent.orders
+system:
+    transition to @subagent.ignore
+`);
+    expect(graph.edges.map(e => [e.source, e.target])).toEqual([
+      ['start', 'topic:orders'], ['start', 'topic:returns'], ['topic:orders', 'action:lookup'], ['topic:returns', 'topic:orders']
+    ]);
+    expect(graph.nodes.filter(n => n.kind === 'topic')).toHaveLength(2);
+    expect(graphFromAgentSource('topic lone:\n    transition to @actions.one').edges[0]).toMatchObject({ source: 'topic:lone', target: 'action:one' });
+  });
   it('recognizes agent file extensions', () => {
     expect(isAgentScriptFile('force-app/bots/MyBot.agent')).toBe(true);
     expect(isAgentScriptFile('x.afscript')).toBe(true);
@@ -31,8 +49,8 @@ topic identity_verification:
   it('ships examples with dialect annotations', () => {
     expect(AGENT_SCRIPT_EXAMPLES.length).toBeGreaterThan(0);
     expect(AGENT_SCRIPT_EXAMPLES[0]?.source).toContain('@dialect:');
-    expect(AGENT_SCRIPT_EXAMPLES[0]?.source).toContain('start_agent:');
-    expect(AGENT_SCRIPT_EXAMPLES.some((row) => row.dialect === 'agentfabric')).toBe(true);
+    expect(AGENT_SCRIPT_EXAMPLES[0]?.source).toContain('start_agent welcome:');
+    expect(AGENT_SCRIPT_EXAMPLES.every((row) => row.dialect === 'agentforce')).toBe(true);
     expect(normalizeAgentScriptDialect('agentscript')).toBe('agentscript');
     expect(normalizeAgentScriptDialect('nope')).toBe('agentforce');
   });

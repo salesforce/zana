@@ -1,4 +1,5 @@
 export { openDatabase, type ZccDatabase, type SqliteDatabase } from './connection.js';
+export { createSqliteDatabase } from './sqlite.js';
 export { migrate } from './migrate.js';
 export {
   createHostId,

@@ -52,6 +52,7 @@ export interface ExecResult {
 export type SalesforceHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export interface SalesforceRequest {
+  maxResponseBytes?: number;
   method: SalesforceHttpMethod;
   path: string;
   query?: Record<string, string>;
@@ -134,6 +135,7 @@ export interface SalesforceDeps {
   exists(path: string): boolean;
   stat(path: string): 'file' | 'dir' | 'missing';
   readFile(path: string): string | null;
+  readFileBounded?(path: string, maxBytes: number): string | null;
   readdir(path: string): string[];
   realpath(path: string): string;
   writeFile(path: string, content: string): void;

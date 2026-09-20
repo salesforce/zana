@@ -203,18 +203,28 @@ describe('Core-extension separation guard', () => {
     expect(existsSync(join(pluginsRoot, 'zana-hub'))).toBe(false);
   });
 
-  it('seed-extensions.mjs runs in predev/prebuild, not inlined in dist scripts', () => {
+  it('seeds plugins through locked dev/build preparation, not inlined in dist scripts', () => {
     // First-party plugins under plugins/ compile via seed-extensions (app.js +
-    // static playground assets). prebuild must seed so electron-builder
-    // extraResources copies playground/dist. dist/release still call `build`,
-    // which runs prebuild — they must not duplicate the seed command.
+    // static playground assets). The locked wrappers must reach preparation
+    // before building/snapshotting. Release scripts delegate to build, so they
+    // must not duplicate seeding outside the build lock.
     const pkgPath = join(repoRoot, 'package.json');
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
     const { scripts } = pkg;
 
-    expect(scripts.predev).toContain('seed-extensions.mjs');
-    expect(scripts.prebuild).toContain('seed-extensions.mjs');
+    expect(scripts.predev).toBe('node scripts/prepare-dev.mjs');
+    expect(scripts['dev:prepare']).toContain('seed-extensions.mjs');
+    expect(scripts['build:prepare']).toContain('seed-extensions.mjs');
+    expect(scripts.prebuild).toBeUndefined();
     expect(scripts.prestart).toBeUndefined();
+    const devWrapper = readFileSync(join(repoRoot, 'scripts/prepare-dev.mjs'), 'utf8');
+    expect(devWrapper).toContain('withBuildLock(REPO_ROOT');
+    expect(devWrapper).toContain("['run', 'dev:prepare']");
+    const buildWrapper = readFileSync(join(repoRoot, 'scripts/build-electron.mjs'), 'utf8');
+    expect(buildWrapper).toContain('withBuildLock(REPO_ROOT');
+    expect(buildWrapper).toContain('buildElectron(REPO_ROOT');
+    const workspace = readFileSync(join(repoRoot, 'scripts/electron-build-workspace.mjs'), 'utf8');
+    expect(workspace).toContain("['run', 'build:prepare']");
 
     expect(scripts.build).not.toContain('seed-extensions');
     expect(scripts.dist).not.toContain('seed-extensions');
@@ -222,7 +232,7 @@ describe('Core-extension separation guard', () => {
     expect(scripts['release:mac']).not.toContain('seed-extensions');
     expect(scripts['release:static']).not.toContain('seed-extensions');
 
-    expect(scripts.build).toBe('electron-vite build');
+    expect(scripts.build).toBe('node scripts/build-electron.mjs');
   });
 
   it('tag-push CI publishes dual-arch macOS; local release:mac does not upload', () => {

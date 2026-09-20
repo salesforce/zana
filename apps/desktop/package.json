@@ -5,8 +5,8 @@
   "type": "module",
   "description": "ZCC Electron shell and native desktop integration.",
   "scripts": {
-    "dev": "pnpm --dir ../.. exec electron-vite dev",
-    "build": "pnpm --dir ../.. run prebuild && pnpm --dir ../.. exec electron-vite build",
+    "dev": "pnpm --dir ../.. exec electron-vite dev --entry out-dev/main/index.js",
+    "build": "pnpm --dir ../.. run build",
     "typecheck": "pnpm --dir ../.. exec tsc --noEmit -p apps/desktop/tsconfig.json",
     "test": "pnpm --dir ../.. exec vitest run --config apps/desktop/vitest.config.ts",
     "package": "pnpm --dir ../.. run check:release-notes && pnpm --dir ../.. run clean:dist && pnpm --dir ../.. run build:cli && pnpm --dir ../.. run fetch:opencode && pnpm --dir ../.. exec tsx scripts/build-plugin-hosts.mjs && pnpm --dir ../.. exec node apps/host-daemon/scripts/build-join.mjs && pnpm run build && pnpm --dir ../.. exec electron-builder --config apps/desktop/electron-builder.yml",

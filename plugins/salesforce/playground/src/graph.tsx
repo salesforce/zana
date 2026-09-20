@@ -40,10 +40,12 @@ function IconBadge({ kind }: { kind: AgentGraphNodeKind }) {
   );
 }
 
-function AgentNode({ data }: NodeProps<{ label: string; kind: AgentGraphNodeKind }>) {
+type GraphNode = Node<{ label: string; kind: AgentGraphNodeKind; openAction?: () => void }, 'agent'>;
+
+function AgentNode({ data }: NodeProps<GraphNode>) {
   const meta = KIND_META[data.kind];
   return (
-    <div className={`as-node as-node--${data.kind}`}>
+    <div className={`as-node as-node--${data.kind}`} role={data.openAction ? 'button' : undefined} tabIndex={data.openAction ? 0 : undefined} aria-label={data.openAction ? `Inspect ${data.label}` : undefined} onClick={data.openAction} onKeyDown={event => { if (data.openAction && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); data.openAction(); } }} style={data.openAction ? { cursor: 'pointer' } : undefined}>
       <Handle type="target" position={Position.Top} className="as-node-handle" />
       <span className="as-node-icon">
         <IconBadge kind={data.kind} />
@@ -59,7 +61,7 @@ function AgentNode({ data }: NodeProps<{ label: string; kind: AgentGraphNodeKind
 
 const nodeTypes = { agent: AgentNode };
 
-export function AgentGraph(props: { nodes: AgentGraphNode[]; edges: AgentGraphEdge[] }) {
+export function AgentGraph(props: { nodes: AgentGraphNode[]; edges: AgentGraphEdge[]; visible?: boolean; onOpenAction?: (id: string) => void }) {
   if (isPlaceholderAgentGraph(props.nodes)) {
     return (
       <div className="graph-empty" role="status">
@@ -67,11 +69,13 @@ export function AgentGraph(props: { nodes: AgentGraphNode[]; edges: AgentGraphEd
       </div>
     );
   }
-  const nodes: Node[] = layoutAgentGraph(props.nodes).map((node) => ({
+  const nodes: GraphNode[] = layoutAgentGraph(props.nodes).map((node) => ({
     id: node.id,
     type: 'agent',
+    selectable: Boolean(node.actionId),
+    focusable: false,
     position: { x: node.x, y: node.y },
-    data: { label: node.label, kind: node.kind },
+    data: { label: node.label, kind: node.kind, openAction: node.actionId && props.onOpenAction ? () => props.onOpenAction!(node.actionId!) : undefined },
     style: { width: AGENT_GRAPH_NODE_WIDTH, height: AGENT_GRAPH_NODE_HEIGHT },
     sourcePosition: Position.Bottom,
     targetPosition: Position.Top
@@ -87,6 +91,7 @@ export function AgentGraph(props: { nodes: AgentGraphNode[]; edges: AgentGraphEd
   }));
   return (
     <ReactFlow
+      key={props.visible === false ? 'hidden' : 'visible'}
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}

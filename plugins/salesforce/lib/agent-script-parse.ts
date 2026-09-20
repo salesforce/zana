@@ -1,4 +1,5 @@
 import { parse } from '@sf-agentscript/agentforce';
+import { actionsFromAst } from './agent-action-model.js';
 import type { AgentScriptDialect } from './types.js';
 import {
   graphFromAgentSource,
@@ -21,6 +22,21 @@ function withDialectAnnotation(source: string, dialect: AgentScriptDialect): str
 export function parseAgentScriptSource(source: string, dialect: AgentScriptDialect): AgentScriptParseResult {
   const annotated = withDialectAnnotation(source, dialect);
   const doc = parse(annotated);
+  const actions = actionsFromAst(doc.ast, source, annotated === source ? 0 : 1);
+  const graph = graphFromAgentSource(source);
+  if (actions.length) {
+    graph.nodes = graph.nodes.filter(node => node.kind !== 'action');
+    graph.edges = graph.edges.filter(edge => !edge.target.startsWith('action:'));
+    for (const action of actions) {
+      const id = `action:${action.id}`;
+      graph.nodes.push({ id, kind: 'action', label: action.name, actionId: action.id });
+      const owner = action.owner.startsWith('start_agent.') ? 'start' : `topic:${action.owner.split('.')[1]}`;
+      if (graph.nodes.some(node => node.id === owner)) {
+        const kinds = [...new Set(action.uses.map(use => use.kind))];
+        graph.edges.push({ id: `${owner}->${id}`, source: owner, target: id, label: kinds.length ? kinds.map(kind => kind === 'run' ? 'explicit run' : 'available').join(' · ') : 'declared' });
+      }
+    }
+  }
   const diagnostics: AgentScriptDiagnostic[] = doc.diagnostics.map((row) => ({
     message: row.message,
     severity: severityFromCode(row.severity),
@@ -34,6 +50,7 @@ export function parseAgentScriptSource(source: string, dialect: AgentScriptDiale
     dialect,
     hasErrors: doc.hasErrors,
     diagnostics,
-    graph: graphFromAgentSource(source)
+    actions,
+    graph
   };
 }
