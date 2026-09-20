@@ -72,7 +72,7 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### Thread
 
-- `threadPanelAction` — thread side-panel tabs; optional `scopes` include `"agent-session"` for the CLI-agent inspector
+- `threadPanelAction` — thread side-panel tabs; optional `scopes` include `"agent-session"` for the CLI-agent inspector. Both this slot and `experimental_newThreadPanelAction` accept an optional `category` label for the New Tab launcher. Omit it to group under the installed plugin’s display name. Categories are collapsible; search matches tool titles and category names across all groups. The optional `icon` is shown beside the tool.
 - `pendingInteraction` — custom in-thread prompt UI (`id` must match `zcc.ui.requestInput` `rendererId`)
 - `experimental_threadHeaderAction` — action in the thread detail header
 - `experimental_threadList` — replace the Agents list pane (exclusive; last registered wins Appearance pin)
