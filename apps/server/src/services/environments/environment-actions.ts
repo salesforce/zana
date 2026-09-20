@@ -183,10 +183,24 @@ export async function environmentDiffPatch(ctx: ProductHttpContext, id: string, 
 
 export async function environmentPullRequest(ctx: ProductHttpContext, id: string) {
   const environment = requireEnvironment(ctx, id);
-  return ctx.hostHub.callHostOnlineRpc({
-    hostId: environment.hostId,
-    command: { type: 'workspace.pull_request', ...workspaceContext(environment) }
-  });
+  if (environment.isGitRepo === false) return { pullRequest: null };
+  try {
+    return await ctx.hostHub.callHostOnlineRpc({
+      hostId: environment.hostId,
+      command: { type: 'workspace.pull_request', ...workspaceContext(environment) }
+    });
+  } catch (error) {
+    // PR metadata is optional: a missing or timed-out CLI is an unavailable
+    // lookup, not a server crash. Keep transport/authorization errors visible.
+    if (error && typeof error === 'object' && 'code' in error
+      && (error.code === 'gh_missing' || error.code === 'gh_failed')) {
+      return {
+        pullRequest: null,
+        unavailableReason: error instanceof Error ? error.message : String(error.code)
+      };
+    }
+    throw error;
+  }
 }
 
 export async function runEnvironmentAction(ctx: ProductHttpContext, id: string, body: unknown) {

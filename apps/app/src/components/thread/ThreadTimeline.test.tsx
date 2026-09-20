@@ -211,6 +211,26 @@ describe('thread timeline model', () => {
     expect(threadStatusToAgentState('error', false, { activeBackgroundCommandCount: 1 })).toBe('idle');
   });
 
+  it('treats pending system operations as progress, including inside a turn', () => {
+    const operation: TimelineRow = {
+      ...base, id: 'compact', kind: 'system', systemKind: 'operation',
+      operationKind: 'compaction', title: 'Compacting context', detail: null,
+      status: 'pending', completedAt: null
+    };
+    expect(timelineHasRunningWork([operation])).toBe(true);
+    expect(timelineHasRunningWork([{
+      ...base, id: 'turn', kind: 'turn', status: 'pending',
+      summaryCount: 1, completedAt: null, children: [operation]
+    }])).toBe(true);
+    for (const status of ['completed', 'error', 'interrupted'] as const) {
+      expect(timelineHasRunningWork([{ ...operation, status }])).toBe(false);
+    }
+    expect(timelineHasRunningWork([{
+      ...base, id: 'debug', kind: 'system', systemKind: 'debug',
+      title: 'Diagnostic', detail: null, status: 'pending'
+    }])).toBe(false);
+  });
+
   it('keeps an error tone distinct from Needs you', () => {
     expect(threadStatusTone('error')).toBe('error');
     expect(threadStatusTone('error', true)).toBe('error');

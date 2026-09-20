@@ -1,5 +1,5 @@
 import { type PointerEvent, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, ListTodo, Loader2, X } from 'lucide-react';
+import { ChevronDown, ListTodo, Loader2, X } from 'lucide-react';
 import type {
   ActiveThinking,
   ThreadTimelineGoal,
@@ -15,6 +15,7 @@ import {
   threadWorkingIndicatorLabel
 } from '../thread-timeline-model.js';
 import { useThreadWorkingPhrase } from '../useThreadWorkingPhrase.js';
+import { ThreadActivityLabel } from './ThreadActivityLabel.js';
 
 const TODO_STATUS_SORT_RANK: Record<ThreadTimelinePendingTodoItemStatus, number> = {
   in_progress: 0,
@@ -128,7 +129,7 @@ export function ThreadWorkingIndicator({
 }) {
   const ongoing = showOngoingThreadWork(status, waitingOnUser);
   const isThinking = thinking != null && ongoing;
-  // Running tools already communicate progress; keep reconnection copy.
+  // Tools and pending operations already communicate progress; keep reconnection copy.
   const visible = ongoing && (status === 'host-reconnecting' || !hasRunningWork);
   const phrase = useThreadWorkingPhrase(ongoing);
   if (!visible) return null;
@@ -140,9 +141,7 @@ export function ThreadWorkingIndicator({
     return (
       <details className="thread-working-indicator" data-testid="thread-thinking">
         <summary className="thread-working-indicator-header">
-          <ChevronRight size={12} className="thread-timeline-work-chevron" aria-hidden="true" />
-          <span className="thread-working-indicator-glyph-spacer" aria-hidden="true" />
-          <span className="is-shimmer">{label}</span>
+          <ThreadActivityLabel label={label} expandable />
         </summary>
         <div className="thread-thinking-details">{details}</div>
       </details>
@@ -150,8 +149,7 @@ export function ThreadWorkingIndicator({
   }
   return (
     <p className="thread-working-indicator thread-working-indicator-header" data-testid="thread-thinking">
-      <span className="thread-working-indicator-gutter" aria-hidden="true" />
-      <span className="is-shimmer">{label}</span>
+      <ThreadActivityLabel label={label} />
     </p>
   );
 }

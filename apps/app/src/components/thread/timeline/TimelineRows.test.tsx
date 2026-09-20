@@ -44,6 +44,25 @@ function assistantRow(id: string, text: string): TimelineRow {
 }
 
 describe('TimelineRows system errors', () => {
+  it.each(['compaction', 'thread-provisioning'] as const)('shows one activity indicator for pending %s', (operationKind) => {
+    const row: TimelineRow = {
+      ...base, id: 'operation', kind: 'system', systemKind: 'operation', operationKind,
+      title: operationKind === 'compaction' ? 'Compacting context' : 'Preparing agent',
+      detail: null, status: 'pending', completedAt: null
+    };
+    const html = renderToStaticMarkup(<ThreadTimeline rows={[row]} status="active" thinking={null} />);
+    expect(html).toContain(row.title);
+    expect(html.split('class="thread-activity-label"')).toHaveLength(2);
+    expect(html).toContain('role="status"');
+    expect(html).not.toContain('data-testid="thread-thinking"');
+    expect(html).not.toContain('Planning next move');
+
+    const completed = renderToStaticMarkup(<ThreadTimeline rows={[{ ...row, status: 'completed', completedAt: 2 }]}
+      status="idle" thinking={null} />);
+    expect(completed).toContain(row.title);
+    expect(completed).not.toContain('thread-activity-label');
+  });
+
   it('keeps a short error title on the row and the detail expandable', () => {
     const row: TimelineRow = {
       id: 'sys-err',

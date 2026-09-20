@@ -102,7 +102,7 @@ export const ConversationRow = memo(function ConversationRow({
     const items: ThreadLightboxItem[] = [];
     const seen = new Set<string>();
     for (const image of imageRefs) {
-      const src = conversationImageSrc(projectId, image.path);
+      const src = conversationImageSrc(projectId, image.path) ?? image.path;
       if (!src || seen.has(src)) continue;
       seen.add(src);
       items.push({ src, alt: image.name });
@@ -216,24 +216,13 @@ export const ConversationRow = memo(function ConversationRow({
                 const readySrc = conversationImageSrc(projectId, image.path);
                 return (
                   <div key={image.id} className="composer-image-thumb">
-                    {readySrc ? (
-                      <button
-                        type="button"
-                        className="composer-image-thumb-preview"
-                        title={image.name}
-                        onClick={() => setLightbox({ src: readySrc, name: image.name })}
-                      >
-                        <img src={readySrc} alt={image.name} loading="lazy" decoding="async" />
-                      </button>
-                    ) : (
                       <ThreadDisplayedImage
-                        path={image.path}
+                        path={readySrc ?? image.path}
                         threadId={threadId}
                         alt={image.name}
                         variant="thumb"
-                        onOpen={(src, name) => setLightbox({ src, name })}
+                        onOpen={(_src, name) => setLightbox({ src: readySrc ?? image.path, name })}
                       />
-                    )}
                   </div>
                 );
               })}
@@ -391,6 +380,7 @@ export const ConversationRow = memo(function ConversationRow({
         <ThreadImageLightbox
           src={lightbox.src}
           alt={lightbox.name}
+          threadId={threadId}
           items={mergeLightboxItems(galleryItems, { src: lightbox.src, alt: lightbox.name })}
           onClose={() => setLightbox(null)}
         />
