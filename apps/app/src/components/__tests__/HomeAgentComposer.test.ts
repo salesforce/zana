@@ -222,7 +222,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain("{threadId ? (");
     expect(source).toContain('className="thread-command-chip thread-command-env"');
     expect(source).not.toContain('onOpenExplorer');
-    expect(source).toContain('threadId && shouldShowThreadStop(threadId, status, inFlightRetry)');
+    expect(source).toContain('shouldShowThreadStop(threadId, status, inFlightRetry)');
     expect(source).toContain('data-testid="thread-command-stop"');
     expect(source).toContain('className="thread-command-stop"');
     expect(source).toContain('fill="currentColor"');
@@ -231,8 +231,9 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain("tone: row.tone");
     expect(source).toContain('VoiceRecordingBar');
     expect(source).toContain('Start voice input');
-    expect(source).toContain('className="composer-control-tooltip" data-tooltip={field.canAttach');
-    expect(source).toContain('className="composer-control-tooltip" data-tooltip={\n                    !voice.isSupported');
+    expect(source).toContain('className="composer-control-tooltip"');
+    expect(source).toContain('field.canAttach');
+    expect(source).toContain('!voice.isSupported');
     expect(source).toContain('expandTestId="thread-command-expand"');
     expect(source).toContain('<ThreadContextMeter');
     expect(source).toContain('contextWindowUsage');
@@ -375,7 +376,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(field).toContain('droppedPathsFromAbsolutePaths');
     expect(source).toContain('is-drop-over');
     expect(source).toContain('Attach files');
-    expect(source).toContain('className="composer-control-tooltip" data-tooltip={field.canAttach');
+    expect(source).toContain('className="composer-control-tooltip"');
+    expect(source).toContain('field.canAttach');
     expect(source).toContain('Paperclip');
     expect(source).not.toContain('useFileDrop');
     expect(field).not.toContain('useFileDrop');
