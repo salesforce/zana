@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -30,6 +30,10 @@ function fixture() {
 }
 
 describe('native preparation isolation', () => {
+  // A clean checkout can compile SQLite for Electron. Give setup the compiler's
+  // bounded budget; the concurrent-load test still has its own short deadline.
+  beforeAll(() => { ensureBetterSqlite3ForElectron(); }, 11 * 60_000);
+
   it('reuses a verified cache without writing the installed binary', () => {
     const f = fixture();
     writeFileSync(f.cachePath, 'electron');

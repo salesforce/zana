@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { assertCompleteBuild, buildElectron, prepareElectronRuntime, runCommand, validateMainSyntax, withBuildLock } from './electron-build-workspace.mjs';
+import { ensureBetterSqlite3ForElectron } from './ensure-better-sqlite3.mjs';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -38,6 +39,10 @@ function completeBuild(out: string) {
 }
 
 describe('Electron verification workspace', () => {
+  // Cold native compilation is setup, not part of the snapshot/concurrency
+  // deadline. Match the bounded compiler budget on clean CI machines.
+  beforeAll(() => { ensureBetterSqlite3ForElectron(); }, 11 * 60_000);
+
   it('serializes shared build preparation and releases on errors', async () => {
     const root = fixture();
     const order: string[] = [];
