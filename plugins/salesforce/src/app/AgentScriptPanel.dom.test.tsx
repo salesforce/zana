@@ -8,6 +8,8 @@ import { createRoot } from 'react-dom/client';
 import { AgentScriptPanel } from './AgentScriptPanel.js';
 import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
 import { queueAgentScriptOpen } from './agent-script-open.js';
+import { parseAgentScriptSource } from '../../lib/agent-script-parse.js';
+import { ACTION_AGENT } from '../action-fixtures.js';
 
 const rpc = vi.fn(async (_pluginId: string, method: string, args?: { path?: string; projectId?: string }) => {
   if (method === 'status') {
@@ -114,6 +116,7 @@ describe('AgentScriptPanel', () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: window.location.origin,
+          source: el.querySelector("iframe")!.contentWindow,
           data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'ready' }
         })
       );
@@ -132,6 +135,7 @@ describe('AgentScriptPanel', () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: window.location.origin,
+          source: el.querySelector("iframe")!.contentWindow,
           data: {
             source: PLAYGROUND_BRIDGE_SOURCE,
             type: 'persist',
@@ -162,6 +166,7 @@ describe('AgentScriptPanel', () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: window.location.origin,
+          source: el.querySelector("iframe")!.contentWindow,
           data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty', dirty: true }
         })
       );
@@ -184,11 +189,12 @@ describe('AgentScriptPanel', () => {
 
   it('opens a queued path after the playground is ready', async () => {
     queueAgentScriptOpen('proj-1', 'force-app/bots/QC.agent');
-    await mount();
+    const el = await mount();
     await act(async () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: window.location.origin,
+          source: el.querySelector("iframe")!.contentWindow,
           data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'ready' }
         })
       );
@@ -224,6 +230,54 @@ describe('AgentScriptPanel', () => {
       /Could not load the Agentforce playground/
     );
     expect(el.querySelector('iframe')).toBeNull();
+  });
+
+  it('accepts draft snapshots only from its iframe and preserves labs between workflow views', async () => {
+    const el = await mount();
+    const workflow = (name: string) => [...el.querySelectorAll<HTMLButtonElement>('.af-workflows button')].find(button => button.textContent?.endsWith(name))!;
+    await act(async () => workflow('Rehearse').click());
+    const start = el.querySelector<HTMLButtonElement>('.af-primary')!;
+    expect(start.disabled).toBe(true);
+    const data = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'snapshot', content: 'start_agent:\n', issues: 0 };
+    await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, data })); });
+    expect(start.disabled).toBe(true);
+    await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, source: el.querySelector('iframe')!.contentWindow, data })); });
+    expect(start.disabled).toBe(false);
+    await act(async () => workflow('Test').click());
+    const lab = el.querySelector<HTMLElement>('[data-testid="agentforce-lab"]:not([hidden])')!;
+    await act(async () => { [...lab.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Missing details')!.click(); });
+    const persona = lab.querySelector<HTMLTextAreaElement>('textarea')!.value;
+    expect(persona).toContain('distracted');
+    await act(async () => workflow('Build').click());
+    expect([...el.querySelectorAll<HTMLElement>('[data-testid="agentforce-lab"]')].every(node => node.hidden)).toBe(true);
+    await act(async () => workflow('Test').click());
+    expect(lab.hidden).toBe(false);
+    expect(lab.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe(persona);
+    expect(el.querySelectorAll('iframe')).toHaveLength(1);
+  });
+
+  it('opens related tabs from the explorer and graph, preserves the iframe, and removes deleted draft actions', async () => {
+    const el = await mount();
+    const frame = el.querySelector('iframe')!;
+    const post = vi.spyOn(frame.contentWindow!, 'postMessage').mockImplementation(() => undefined);
+    const actions = parseAgentScriptSource(ACTION_AGENT, 'agentforce').actions;
+    const dispatch = async (data: Record<string, unknown>) => act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: location.origin, source: frame.contentWindow, data: { source: PLAYGROUND_BRIDGE_SOURCE, ...data } })); });
+    await dispatch({ type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    await act(async () => el.querySelector<HTMLButtonElement>('[aria-label="Inspect lookup in start_agent.orders"]')!.click());
+    expect(frame.style.display).toBe('none');
+    expect(el.querySelector('[aria-label="Action lookup"]')).toBeTruthy();
+    await act(async () => [...el.querySelectorAll<HTMLButtonElement>('.af-action-nav button')].find(b => b.textContent === 'Used by')!.click());
+    await act(async () => [...el.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.includes('Go to action definition'))!.click());
+    expect(frame.style.display).toBe(''); expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'revealLine', line: actions[0].line }), location.origin);
+    await dispatch({ type: 'openAction', id: actions[1].id });
+    expect(el.querySelector('[aria-label="Action refund"]')).toBeTruthy();
+    await act(async () => el.querySelector<HTMLButtonElement>('[aria-label="Close refund"]')!.click());
+    expect(frame.style.display).toBe('');
+    await dispatch({ type: 'openAction', id: actions[0].id });
+    await dispatch({ type: 'snapshot', content: '', issues: 0, actions: [] });
+    expect(el.querySelector('[data-testid="agent-action-panel"]')).toBeNull();
+    expect(el.querySelector('iframe')).toBe(frame);
+    expect(el.querySelector('.af-related-tabs')).toBeNull();
   });
 
   it('ignores playground messages from other origins', async () => {

@@ -25,15 +25,70 @@ pick an org under **Plugins → Salesforce** or on the Salesforce tab (or set
 | Plugins → Salesforce | CLI-connected org list, default alias, API version, DX root |
 | Salesforce tab | Overview, Data, Apex & logs, Deployments, and Agentforce workbench |
 | New Project | Salesforce DX project (`sf project generate`) |
-| Data / SOQL tab | Schema, queries, saved history, retained drafts, and record inspectors |
+| Salesforce → Data | Schema, SOQL queries, saved history, retained drafts, and record inspectors |
 | Agent side panels | Org, SOQL, object, record, Apex/logs, deployments, and operation history |
-| Agentforce playground | `.agent` editor (script + graph) |
+| Agentforce playground | Build, Rehearse, and Test: `.agent` editor, conversation map, AI customer role-play |
 | Agentforce preview | Simulate or live Test against the selected org |
 | Agent tools | `sf_soql`, `sf_apex`, `sf_lwc`, `sf_agent` |
 | CLI | `zcc sf doctor`, `zcc sf org`, … |
 
-Frontend panels call this plugin’s RPC (`soql.*`, `org`, `agentPreview.*`). They
-do not hold tokens. The server SDK owns OAuth refresh and 401 retry.
+Frontend panels call this plugin’s RPC (`soql.*`, `org`, `agentPreview.*`, `agentLab.*`). They
+do not hold tokens. The server SDK owns org authentication.
+
+## Agentforce Studio
+
+Actions declared in an open script appear in the explorer, grouped by subagent.
+Select one to inspect its Apex source or Flow map in a related editor tab. The
+Project/Org switch distinguishes local source from deployed Apex or an active
+Flow version. Inputs & outputs compares parameter names; Used by reveals the
+call and its bindings. Rehearse/Test stays open while you inspect implementations.
+
+Open **Salesforce → Agentforce**, or the Agentforce playground beside
+a thread. **Build** provides the editor, live diagnostics and a conversation map.
+The divider between the editor and Rehearse/Test is draggable. Arrow keys resize
+it when focused, and double-click resets it. The width stays set across workflow
+changes. Monaco applies semantic syntax colors in both light and dark themes.
+The included starters pass the installed language server without diagnostics.
+
+**Rehearse** starts a conversation from an exact snapshot of the current editor,
+including unsaved changes. Choose an engine:
+
+- **Salesforce Preview** compiles the draft through Salesforce's Preview API and
+  uses the real planner with simulated actions. Requires an Agentforce-enabled
+  org and access to the named-user bootstrap/Preview endpoints. Nothing is
+  published or activated, and real actions are never enabled in the Studio.
+- **AI rehearsal** asks a Salesforce Models API model to interpret the script.
+  Actions are imaginary. It is useful for wording, scope and conversational
+  exploration; it does not validate compilation or Agentforce runtime behavior.
+
+**Test** runs an AI customer with a persona, goal, opening message, success
+criteria and a budget of 1–8 turns against either engine. Choose a preset or edit
+the scenario. The customer and evaluator use the selected org's Models API,
+which requires the relevant API scopes, model permissions and Einstein request
+capacity. The default model is `sfdc_ai__DefaultOpenAIGPT4OmniMini`; expand
+**AI model & usage** to use another model API name enabled in your org.
+
+Results include conversation text, response latency, Preview plan IDs, org and
+source fingerprint. An AI assessment includes evidence and is always advisory;
+it is never activation evidence. API errors, empty replies, evaluator failures,
+and stopped conversations cannot produce a passing assessment. **Export run**
+downloads the tested source, scenario, transcript and assessment as JSON.
+
+Switching Build/Rehearse/Test preserves the editor and each conversation while
+the playground stays open. Editing after a run shows a stale-snapshot notice.
+**Stop** cancels in-flight requests and prevents additional turns; closing the
+playground also closes its local handles. Draft Preview has no documented remote
+DELETE contract: Salesforce owns remote expiry. Server handles expire after
+30 minutes of inactivity and do not survive a plugin restart. Export evidence
+before leaving; saved scenario suites and cross-run comparison are future work.
+
+The separate **Org preview** panel retains the CLI workflow for saved authoring
+bundles and published agents. Published agents always execute live actions and
+therefore require the existing live-action confirmation, even when a caller
+omits the live flag. The Studio does not share that live-action path.
+
+See [the design and verification notes](./AGENTFORCE_STUDIO.md) for API boundaries,
+research sources and test commands.
 
 ## Reusable UI and side panels
 

@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   electronModulesAbi,
+  ensureBetterSqlite3ForElectron,
+  prepareSqliteBinding,
   isNativeAbiMismatch,
   probeBetterSqlite3InChild,
   replaceFileAtomic,
@@ -52,24 +54,12 @@ describe('ensure-better-sqlite3', () => {
     expect(probeBetterSqlite3InChild()).toEqual({ ok: true });
   });
 
-  it('never dlopens better-sqlite3 in the restore process, before or after rebuild', () => {
-    const src = readFileSync(join(repoRoot, 'scripts/ensure-better-sqlite3.mjs'), 'utf8');
-    expect(src).toMatch(/const loaded = probeBetterSqlite3InChild\(\);/);
-    expect(src).toMatch(/rebuildBetterSqlite3ForNode\(\);\s*saveSqliteAbiCache\(process\.versions\.modules\);\s*const retry = probeBetterSqlite3InChild\(\);/);
-    expect(src).toMatch(/restoreSqliteAbiCache\(process\.versions\.modules\)/);
-    expect(src).toMatch(/probeBetterSqlite3InElectronChild/);
-    expect(src).toMatch(/rebuildBetterSqlite3ForElectron\(\);\s*saveSqliteAbiCache\(abi\);/);
-    expect(src).toMatch(/npm_config_runtime: 'electron'/);
-    expect(src).not.toMatch(/ensureBetterSqlite3ForNode[\s\S]*tryLoadBetterSqlite3/);
-    expect(src).not.toMatch(/ensureBetterSqlite3ForElectron[\s\S]*tryLoadBetterSqlite3/);
-  });
-
   it('runs before local Node servers so Electron rebuilds cannot empty pnpm dev', () => {
     const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as {
       scripts: Record<string, string>;
     };
-    expect(pkg.scripts.predev).toContain('ensure-better-sqlite3.mjs');
-    expect(pkg.scripts.prebuild).toContain('ensure-better-sqlite3.mjs');
+    expect(pkg.scripts['dev:prepare']).toContain('ensure-better-sqlite3.mjs');
+    expect(pkg.scripts['build:prepare']).toContain('ensure-better-sqlite3.mjs');
     expect(pkg.scripts.prepare).toContain('ensure-better-sqlite3.mjs');
     expect(pkg.scripts.prestart).toBeUndefined();
     expect(pkg.scripts.rebuild).toBe(

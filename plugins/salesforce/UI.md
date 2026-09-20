@@ -128,10 +128,13 @@ it does not read the consumer plugin's settings.
 - Retrieve preview shows tracked changes supported by the CLI. Retrieve requires
   approval because it writes local source. Preview availability depends on the
   project's source-tracking support.
-- Production/unknown-org reads, unbounded SOQL, anonymous Apex, and writes keep
-  the existing server approval rules. Actions that need an approval-capable
-  thread fail closed and explain how to retry there. A project tab does not
-  manufacture an approval or implicitly launch an agent.
+- Standalone schema browsing, SOQL pages, record/log inspection, metadata lists,
+  and deployment reports work directly against the selected org, including
+  production. They use read-only endpoints and existing page/output caps;
+  loading all rows and exporting still have confirmation in the panel.
+  Agent tool calls retain their production/unknown-org and unbounded-query
+  approval rules. Anonymous Apex and writes retain their server approval rules.
+  A project tab never manufactures an agent or a thread approval.
 - The portable `/sdk` service remains available for lower-level integrations.
   Pass its explicit alias options when implementing a consumer's own project
   scoping; it does not infer a project from another plugin's renderer.
@@ -144,3 +147,9 @@ protection, keyboard navigation, drafts, and operation flows. The deterministic
 `e2e/salesforce-workbench.spec.ts` installs the plugin in built Electron, exercises
 real CLI output over 8 KiB, REST results, project targets and native panels, with
 no Salesforce credentials or model spend.
+
+Agentforce actions live inside its file explorer. Related implementation tabs
+share the script area and preserve the draft plus the resizable conversation.
+Apex is syntax-highlighted and read-only; Flow has a connector map, step details,
+Fit/zoom controls and raw source. Project and named-org snapshots are explicit.
+Graph nodes and Ctrl/Cmd-clicking a target line open the same scoped action tab.

@@ -239,7 +239,7 @@ describe('dev-local turbo TUI', () => {
 
     expect(app.scripts.dev).toBe('vite --config vite.dev.config.ts');
     expect(app.scripts.dev).not.toContain('run dev');
-    expect(desktop.scripts.dev).toBe('pnpm --dir ../.. exec electron-vite dev');
+    expect(desktop.scripts.dev).toBe('pnpm --dir ../.. exec electron-vite dev --entry out-dev/main/index.js');
     expect(desktop.scripts.dev).not.toContain('run predev');
     expect(server.scripts.dev).toBe(
       'pnpm --dir ../.. exec node --conditions=source --import tsx apps/server/src/http/listen.ts'

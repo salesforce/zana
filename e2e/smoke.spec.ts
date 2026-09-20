@@ -5,10 +5,8 @@
  * This is the ONE spec wired into `release.yml` as a REQUIRED gate (the `smoke`
  * job runs `npm run test:smoke:only` and `build` needs it): a build that can't
  * boot or whose main↔renderer IPC is dead must never reach signing/notarization.
- * Keep every assertion here a pure READ — on macOS the app resolves ~/.zcc via
- * app.getPath('home') (ignoring the sandbox HOME, see fixtures/app.ts), so a
- * mutating call would leak into the developer's real state and there's no
- * cleanup hook in this deliberately-minimal spec.
+ * Keep this minimal gate read-only. The shared fixture isolates both HOME and
+ * Electron's app.getPath('home') before loading the app, and owns teardown.
  */
 import { test, expect } from './fixtures/app.js';
 

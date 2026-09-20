@@ -322,22 +322,13 @@ export function SalesforceProjectTab(props: {
         )}
         {view === "agentforce" && (
           <>
-            <div className="sf-toolbar">
+            {agentTool === "preview" && <div className="sf-toolbar">
               <button
                 className="sf-btn"
                 type="button"
-                aria-pressed={agentTool === "playground"}
                 onClick={() => setAgentTool("playground")}
               >
-                Playground
-              </button>
-              <button
-                className="sf-btn"
-                type="button"
-                aria-pressed={agentTool === "preview"}
-                onClick={() => setAgentTool("preview")}
-              >
-                Preview
+                <span aria-hidden="true">← </span>Back to studio
               </button>
               {context.threadId && (
                 <button
@@ -353,9 +344,12 @@ export function SalesforceProjectTab(props: {
                   Open beside agent
                 </button>
               )}
-            </div>
+            </div>}
             {agentTool === "playground" ? (
-              <AgentforcePlaygroundPanel {...props} />
+              <AgentforcePlaygroundPanel {...props} headerActions={<>
+                <button className="sf-as-save" type="button" onClick={() => setAgentTool("preview")}>Org preview</button>
+                {context.threadId && <button className="sf-as-save" type="button" onClick={() => navigate.openThreadPanel({ actionId: 'playground', params: { projectId: props.projectId, orgAlias: alias } })}>Open beside agent</button>}
+              </>} />
             ) : (
               <AgentforcePreviewPanel {...scoped} />
             )}

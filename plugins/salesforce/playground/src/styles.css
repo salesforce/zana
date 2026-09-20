@@ -83,24 +83,23 @@ html, body, #root {
 }
 
 .split-handle {
-  flex: 0 0 7px;
+  /* Same divider and hit target as ZCC's split-divider. */
+  flex: 0 0 1px;
   position: relative;
-  z-index: 2;
+  z-index: 25;
   cursor: col-resize;
+  touch-action: none;
   background: var(--ide-border-subtle);
-  outline: none;
 }
 
 .split-handle::after {
   content: '';
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 3px;
-  height: 28px;
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-  background: var(--ide-border-strong);
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 11px;
+  touch-action: none;
 }
 
 .split-handle:hover,
@@ -109,10 +108,9 @@ body.is-resizing-split .split-handle {
   background: var(--ide-accent);
 }
 
-.split-handle:hover::after,
-.split-handle:focus-visible::after,
-body.is-resizing-split .split-handle::after {
-  background: var(--ide-accent);
+.split-handle:focus-visible {
+  outline: 2px solid var(--ide-accent);
+  outline-offset: 1px;
 }
 
 body.is-resizing-split {
@@ -347,3 +345,29 @@ body.is-resizing-split iframe {
 .react-flow__edge-textbg {
   fill: var(--ide-surface-sunken);
 }
+
+/* A quiet canvas keeps the script and route structure in the foreground. */
+.ide.dark {
+  --ide-surface:#19191f; --ide-surface-elevated:#1e1e25; --ide-surface-sunken:#17171d;
+  --ide-border-subtle:#303039; --ide-border-strong:#454550; --ide-text-primary:#ededf2;
+  --ide-text-muted:#a0a0af; --ide-accent:#a69aff;
+  --graph-node-bg:#22222b; --graph-node-border:#3b3b47; --graph-dot:#33333f;
+  --graph-edge:#727287; --graph-text-primary:#ededf2; --graph-text-secondary:#a0a0af;
+}
+.ide.light { --ide-accent:#7060d8; --graph-edge:#9591a8; --graph-dot:#dad8e3; }
+.pane.graph { background:var(--ide-surface-sunken); }
+.pane-header { height:38px; box-sizing:border-box; font-size:11px; font-weight:500; padding:0 16px; }
+.pane { grid-template-rows:38px 1fr; }
+.pane-header>span { display:flex; gap:9px; align-items:center; }
+.pane-file-icon { color:var(--ide-accent); font-size:15px; }
+.pane-kicker { font-size:10px; font-weight:400; color:var(--ide-text-muted); }
+.as-node { border-radius:10px; padding:12px 14px; gap:11px; box-shadow:0 4px 12px #00000012; }
+.as-node--start,.as-node--topic { background:var(--graph-node-bg); border-color:var(--graph-node-border); }
+.ide.light .as-node--start,.ide.light .as-node--topic { background:var(--graph-node-bg); border-color:var(--graph-node-border); }
+.as-node--start { border-top:2px solid #9f91e8; }.as-node--topic { border-top:2px solid #64a5c4; }.as-node--action { border-top:2px solid #72b69a; }
+.as-node-icon { width:32px; height:32px; border-radius:8px; }
+.as-node--start .as-node-icon { background:#9480f020; color:#b0a1ef; }.as-node--topic .as-node-icon { background:#64a5c420; color:#7eb6d1; }.as-node--action .as-node-icon { background:#72b69a20; color:#72b69a; }
+.as-node-label { font-size:12px; font-weight:550; }.as-node-kind { font-size:10px; margin-top:3px; }.as-node-handle { width:6px; height:6px; }
+.statusbar { font-size:10px; }
+@media (max-width:480px) { .pane-kicker { display:none!important; }.statusbar-right { max-width:55%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; } }
+@media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; } }

@@ -37,6 +37,8 @@ import { diagnoseApexSource, parseApexInput } from './apex.js';
 import { createKvArtifactStore, type ArtifactStore } from './artifacts.js';
 import { CONSTITUTION_INSTRUCTIONS, shouldContributeConstitution } from './constitution.js';
 import { ConnectionError, ConnectionManager } from './connection.js';
+import { AgentforceLab } from './agentforce-lab.js';
+import type { AgentforceTransport } from './agentforce-transport.js';
 import { formatDoctor } from './doctor.js';
 import { createSalesforceSdk } from './sdk.js';
 import { WorkbenchService } from './workbench-service.js';
@@ -51,6 +53,7 @@ import {
   writeAgentFile
 } from './agent-files.js';
 import { parseAgentScriptSource } from './agent-script-parse.js';
+import { readOrgAction, readProjectAction } from './action-source.js';
 import { isAgentScriptLspQuery, queryAgentScriptLsp } from './agent-script-lsp.js';
 import { AGENT_SCRIPT_EXAMPLES } from './agent-script-model.js';
 import { envelopeTitle, Guardrail } from './guardrail.js';
@@ -117,7 +120,7 @@ function dialectSetting(value: unknown): AgentScriptDialect {
   return normalizeAgentScriptDialect(value);
 }
 
-export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: SalesforceDeps = createNodeDeps()): Promise<void> {
+export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: SalesforceDeps = createNodeDeps(), labTransport?: AgentforceTransport): Promise<void> {
   const settings = zcc.settings.define(SETTINGS);
   const artifacts: ArtifactStore = createKvArtifactStore(zcc.storage.kv);
   const readSharedSettings = async (): Promise<PluginSettingsValues> => {
@@ -148,6 +151,15 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   };
   const guardrail = new Guardrail(async (envelope, threadId) => confirmEnvelope(zcc, envelope, threadId));
   const evalEvidence = new EvalEvidenceStore(zcc.storage.kv);
+  const lab = new AgentforceLab({
+    transport: labTransport,
+    connect: () => connections.connect(),
+    scope: () => contexts.current()?.projectId ?? contexts.current()?.settings.projectRoot ?? 'global'
+  });
+  zcc.onDispose(() => lab.dispose());
+  for (const method of ['start', 'send', 'next', 'evaluate', 'end'] as const) {
+    registerRpc(`agentLab.${method}`, async (args) => ({ ok: true, data: await lab[method](args) }));
+  }
   let lastDoctor: DoctorReport | null = null;
   const { sdk, emitOrgChange } = createSalesforceSdk({
     connections,
@@ -332,6 +344,32 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       path: generatedOutputPath(cli.result, parsed.outputDir, parsed.name)
     };
   });
+  let actionReads = 0;
+  registerRpc('agentActions.source', async (args) => {
+    if (actionReads >= 4) return { ok: false, error: 'Source previews are busy. Try again in a moment.' };
+    actionReads++;
+    try {
+      const target = rpcString(args, 'target');
+      const origin = rpcString(args, 'origin');
+      if (origin !== 'project' && origin !== 'org') throw Error('Choose project or org source.');
+      const snapshot = await readSettings();
+      let sourceRoot = snapshot.projectRoot;
+      if (origin === 'project' && sourceRoot && !contexts.current()?.projectId) {
+        // A settings string alone cannot grant filesystem access. Global views
+        // may use that folder only when it canonically matches a registered project.
+        const projects = await zcc.sdk.projects.list();
+        const registered = projects.some(project => {
+          try { return project.path && deps.realpath(project.path) === deps.realpath(sourceRoot); }
+          catch { return false; }
+        });
+        if (!registered) sourceRoot = '';
+      }
+      const data = origin === 'org'
+        ? await readOrgAction(await connections.connect(), target, deps)
+        : readProjectAction(sourceRoot, target, deps, rpcString(args, 'candidate') || undefined);
+      return { ok: true, data };
+    } finally { actionReads--; }
+  });
   registerRpc('agentFiles.list', async (args) => {
     try {
       const resolved = await resolveAgentFilesRoot(args);
@@ -431,21 +469,11 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     'history.remove': (args) => explorer.historyRemove(args)
   };
   for (const [name, handler] of Object.entries(soqlRpcs)) {
-    const guarded = async (args: unknown) => {
-      if (name !== 'abort' && !name.startsWith('history.')) {
-        const org = await sdk.connect();
-        const query = rpcString(args, 'soql');
-        const unbounded = name === 'query' && (!/\bLIMIT\s+\d+\s*$/i.test(query) || /\bALL\s+ROWS\b/i.test(query));
-        const decision = await sdk.confirm({ orgAlias: org.alias, orgId: org.orgId, orgKind: org.kind,
-          kind: unbounded ? 'soql.unbounded' : undefined, summary: `SOQL ${name} on ${org.alias}`, preview: query.slice(0, 400)
-        }, rpcString(args, 'threadId'));
-        if (!decision.approved) return fail('refused', 'This query needs approval in a thread. Open SOQL beside an agent and retry.');
-      }
-      return handler(args);
-    };
-    registerRpc(`soql.${name}`, guarded);
+    // The workbench exposes read-only, paginated Salesforce APIs. It is usable
+    // without an agent; agent tools independently mediate through runSoql.
+    registerRpc(`soql.${name}`, handler);
     // Older bundles used the sql prefix.
-    registerRpc(`sql.${name}`, guarded);
+    registerRpc(`sql.${name}`, handler);
   }
   zcc.onDispose(() => explorer.dispose());
   await applyStatus();
@@ -1128,7 +1156,6 @@ async function runUiPreview(
   readSettings: () => Promise<PluginSettingsValues>
 ): Promise<ToolResult> {
   const threadId = rpcString(args, 'threadId');
-  if (!threadId) return fail('refused', 'Preview requires an open thread.');
   const parsed = parseAgentInput({
     action,
     apiName: rpcString(args, 'apiName') || undefined,
@@ -1167,11 +1194,12 @@ async function runAgentPreview(
   const resolved = await resolvePreviewIdentity(plan, snapshot, deps, verb === 'start');
   if ('ok' in resolved) return resolved;
   const label = resolved.identity?.apiName ?? plan.sessionId ?? '';
+  const live = plan.live || resolved.identity?.flag === 'api-name';
   const { org, mediated } = await mediateOrgRead(
     ctx,
     sdk,
-    (connected) => `${plan.live ? 'Live ' : ''}${plan.action} ${label} on ${connected.alias} (${connected.kind})`,
-    plan.live ? 'agent.preview.live' : undefined,
+    (connected) => `${live ? 'Live ' : ''}${plan.action} ${label} on ${connected.alias} (${connected.kind})`,
+    live ? 'agent.preview.live' : undefined,
     { preview: label }
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} ${plan.action}.`);

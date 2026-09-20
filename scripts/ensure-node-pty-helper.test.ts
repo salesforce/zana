@@ -42,9 +42,9 @@ describe('ensure-node-pty-helper', () => {
 
   it('never dlopens node-pty in the ensure process', () => {
     const src = readFileSync(join(repoRoot, 'scripts/ensure-node-pty-helper.mjs'), 'utf8');
-    expect(src).toMatch(/const loaded = probeNodePtyInElectronChild\(\);/);
-    expect(src).toMatch(/rebuildNodePtyForElectron\(\);/);
-    expect(src).toMatch(/const retry = probeNodePtyInElectronChild\(\);/);
+    expect(src).toMatch(/const loaded = probeNodePtyInElectronChild\(root\);/);
+    expect(src).toMatch(/rebuildNodePtyForElectron\(moduleDir\);/);
+    expect(src).toMatch(/const retry = probeNodePtyInElectronChild\(root\);/);
     expect(src).not.toMatch(/ensureNodePtyForElectron[\s\S]*require\(['"]node-pty['"]\)/);
   });
 
@@ -60,7 +60,7 @@ describe('ensure-node-pty-helper', () => {
     expect(pkg.scripts['rebuild:electron']).toBe(
       'node scripts/ensure-node-pty-helper.mjs --electron && node scripts/ensure-better-sqlite3.mjs --electron'
     );
-    expect(pkg.scripts.predev).toContain('ensure-node-pty-helper.mjs');
-    expect(pkg.scripts.predev).not.toContain('ensure-node-pty-helper.mjs --electron');
+    expect(pkg.scripts['dev:prepare']).toContain('ensure-node-pty-helper.mjs');
+    expect(pkg.scripts['dev:prepare']).not.toContain('ensure-node-pty-helper.mjs --electron');
   });
 });

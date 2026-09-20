@@ -113,8 +113,8 @@ describe('salesforce plugin contract', () => {
     expect(set.settingsSections).toMatchObject([
       { id: 'orgs', title: 'Connected orgs', component: expect.any(Function) }
     ]);
-    expect(set.projectTabs.map((tab) => tab.id)).toEqual(['salesforce', 'soql']);
-    expect(set.projectTabs[1]).toMatchObject({ label: 'SOQL', icon: 'Database', global: false });
+    expect(set.projectTabs.map((tab) => tab.id)).toEqual(['salesforce']);
+    expect(set.projectTabs[0]).toMatchObject({ label: 'Salesforce', icon: 'Cloud', global: false });
     expect(set.threadPanelActions.map((row) => row.id)).toEqual(['sf-org', 'sf-soql', 'sf-object', 'sf-record', 'sf-logs', 'sf-deployments', 'sf-operations', 'playground', 'preview']);
     expect(set.threadPanelActions.find(row => row.id === 'playground')).toMatchObject({ title: 'Playground', layout: 'flush' });
     expect(set.threadPanelActions.find(row => row.id === 'preview')).toMatchObject({ title: 'Preview', layout: 'flush' });
@@ -126,16 +126,7 @@ describe('salesforce plugin contract', () => {
     const footerToPanel = vi.fn();
     set.sidebarFooterActions[0]?.run({ openSettings: vi.fn(), toPluginPanel: footerToPanel });
     expect(footerToPanel).toHaveBeenCalledWith('orgs');
-    expect(set.projectMenuActions[0]).toMatchObject({
-      id: 'open-soql',
-      title: 'SOQL',
-      icon: 'Database',
-      placement: 'project'
-    });
-    const toProject = vi.fn();
-    set.projectMenuActions[0]?.run({ projectId: 'proj-1', toProject });
-    expect(toProject).toHaveBeenCalledWith('proj-1', { tabId: 'soql' });
-    const palette = set.commandPaletteActions.find((row) => row.id === 'open-soql');
+    expect(set.projectMenuActions).toEqual([]);
     const paletteCtx = {
       threadId: null,
       projectId: 'proj-1',
@@ -143,10 +134,6 @@ describe('salesforce plugin contract', () => {
       toPluginPanel: vi.fn(),
       toProject: vi.fn()
     };
-    expect(palette?.isAvailable?.({ ...paletteCtx, projectId: null })).toBe(false);
-    expect(palette?.isAvailable?.(paletteCtx)).toBe(true);
-    palette?.run(paletteCtx);
-    expect(paletteCtx.toProject).toHaveBeenCalledWith('proj-1', { tabId: 'soql' });
     const openOrgs = set.commandPaletteActions.find((row) => row.id === 'open-orgs');
     openOrgs?.run(paletteCtx);
     expect(paletteCtx.toPluginPanel).toHaveBeenCalledWith('orgs');
@@ -157,8 +144,7 @@ describe('salesforce plugin contract', () => {
     expect(set.commandPaletteActions.filter(row => !row.id.startsWith('sf-')).map((row) => row.id)).toEqual([
       'open-orgs',
       'open-playground',
-      'open-preview',
-      'open-soql'
+      'open-preview'
     ]);
     expect(set.createProjectActions[0]).toMatchObject({
       id: 'dx-project',

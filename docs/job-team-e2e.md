@@ -21,23 +21,21 @@ and the Modern owner thread uses the fake `opencode` ACP fixture.
 ### Run
 
 ```bash
-# Builds, flips better-sqlite3 to the Electron ABI, runs all three, restores the
-# Node ABI afterward (so `pnpm test` / vitest keep working).
+# Builds an isolated app and runs the deterministic owner-launch specs.
+# Node/Vitest and other Electron runs can continue alongside it.
 pnpm run test:e2e:jobteam
 
-# Already built + on the Electron ABI? Just run the three:
+# Already built? Snapshot the existing app and run the specs:
 pnpm run test:e2e:jobteam:only
 ```
 
 The `-g "Job Team"` grep also matches all three test titles if you prefer
-`playwright test -g "Job Team"` (after a build + `pnpm run rebuild:electron`).
+`playwright test -g "Job Team"` (after a build).
 
-> **ABI note:** built-Electron Playwright needs `better-sqlite3` compiled for the
-> Electron ABI (`pnpm run rebuild:electron`); vitest needs the Node ABI
-> (`node scripts/ensure-better-sqlite3.mjs`, which `pnpm run rebuild` also does).
-> After the first compile of each sqlite ABI, those scripts copy a cached `.node`
-> instead of running node-gyp again. `node-pty` is probed and skipped when Electron
-> can already load it. `test:e2e:jobteam` handles both flips for you.
+Node and Electron use independent, verified SQLite binaries. The shared Playwright
+global setup prepares private app/native copies and unique artifacts, including
+for direct `playwright test` calls. No shared ABI switching or restore is needed.
+See [native runtime isolation](native-runtime-isolation.md).
 
 ## Live coverage
 

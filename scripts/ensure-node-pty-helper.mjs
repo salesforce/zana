@@ -44,14 +44,14 @@ export function ensureNodePtySpawnHelperExecutable(root = nodePtyPackageRoot()) 
   return found;
 }
 
-export function probeNodePtyInElectronChild() {
+export function probeNodePtyInElectronChild(root = nodePtyPackageRoot()) {
   const script = `
     const { createRequire } = require('node:module');
     const requireFrom = createRequire(${JSON.stringify(import.meta.url)});
-    requireFrom('node-pty');
+    requireFrom(${JSON.stringify(root)});
   `;
   const result = spawnSync(require('electron'), ['-e', script], {
-    encoding: 'utf8',
+    encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
   });
   if (result.status === 0) return { ok: true };
@@ -64,11 +64,11 @@ export function probeNodePtyInElectronChild() {
   return { ok: false, error };
 }
 
-export function rebuildNodePtyForElectron() {
+export function rebuildNodePtyForElectron(moduleDir = process.cwd()) {
   const rebuildCli = require.resolve('@electron/rebuild/lib/cli.js');
   process.stderr.write('[ensure-node-pty] rebuilding for Electron (probe failed)\n');
-  const result = spawnSync(process.execPath, [rebuildCli, '-f', '-w', 'node-pty'], {
-    stdio: 'inherit',
+  const result = spawnSync(process.execPath, [rebuildCli, '-f', '-w', 'node-pty', '--module-dir', moduleDir, '--version', require('electron/package.json').version], {
+    stdio: 'inherit', timeout: 10 * 60_000,
     env: process.env
   });
   if (result.status !== 0) {
@@ -76,16 +76,16 @@ export function rebuildNodePtyForElectron() {
   }
 }
 
-export function ensureNodePtyForElectron() {
-  ensureNodePtySpawnHelperExecutable();
-  const loaded = probeNodePtyInElectronChild();
+export function ensureNodePtyForElectron(root = nodePtyPackageRoot(), moduleDir = process.cwd()) {
+  ensureNodePtySpawnHelperExecutable(root);
+  const loaded = probeNodePtyInElectronChild(root);
   if (loaded.ok) {
     process.stderr.write('[ensure-node-pty] Electron can already load node-pty; skip rebuild\n');
     return;
   }
-  rebuildNodePtyForElectron();
-  ensureNodePtySpawnHelperExecutable();
-  const retry = probeNodePtyInElectronChild();
+  rebuildNodePtyForElectron(moduleDir);
+  ensureNodePtySpawnHelperExecutable(root);
+  const retry = probeNodePtyInElectronChild(root);
   if (!retry.ok) throw retry.error;
 }
 

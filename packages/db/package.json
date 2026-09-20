@@ -8,6 +8,10 @@
       "types": "./src/index.ts",
       "source": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./native-binding": {
+      "types": "./src/native-binding.d.mts",
+      "default": "./src/native-binding.mjs"
     }
   },
   "scripts": {

@@ -137,7 +137,6 @@ export class WorkbenchService {
     const recordId = inputText(input, "recordId");
     if (!NAME.test(objectName) || !/^[a-zA-Z0-9]{15,18}$/.test(recordId))
       throw new Error("Choose a valid object and Salesforce record id.");
-    await this.readGate(input);
     const { org, response } = await this.deps.sdk.request(
       `/sobjects/${objectName}/${recordId}`,
     );
@@ -157,7 +156,6 @@ export class WorkbenchService {
     const id = inputText(input, "logId");
     if (!/^[a-zA-Z0-9]{15,18}$/.test(id))
       throw new Error("Choose a valid debug log.");
-    await this.readGate(input);
     const { org, response } = await this.deps.sdk.request(
       `/tooling/sobjects/ApexLog/${id}/Body`,
     );
@@ -186,7 +184,7 @@ export class WorkbenchService {
       ].includes(type)
     )
       throw new Error("Choose a supported metadata type.");
-    const org = await this.readGate(input);
+    const org = await this.deps.sdk.connect();
     const result = await this.deps.sdk.execSf([
       "org",
       "list",
@@ -205,24 +203,6 @@ export class WorkbenchService {
       records: publicEvidence(records),
       truncated: records.length > 200,
     };
-  }
-
-  private async readGate(input: unknown) {
-    const org = await this.deps.sdk.connect();
-    const decision = await this.deps.sdk.confirm(
-      {
-        orgAlias: org.alias,
-        orgId: org.orgId,
-        orgKind: org.kind,
-        summary: `Read Salesforce evidence from ${org.alias}`,
-      },
-      inputText(input, "threadId"),
-    );
-    if (!decision.approved)
-      throw new Error(
-        "Org access needs approval in a thread. Open this tool beside an agent and retry.",
-      );
-    return org;
   }
 
   async start(input: unknown) {
@@ -408,17 +388,6 @@ export class WorkbenchService {
     );
     if (!row?.jobId || !/^[a-zA-Z0-9]{15,18}$/.test(row.jobId))
       throw new Error("No Salesforce job is available for this operation.");
-    const decision = await this.deps.sdk.confirm(
-      {
-        orgAlias: row.org.alias,
-        orgId: row.org.orgId,
-        orgKind: row.org.kind,
-        summary: `Read deployment report from ${row.org.alias}`,
-      },
-      inputText(input, "threadId"),
-    );
-    if (!decision.approved)
-      throw new Error("Org access needs approval in a thread.");
     const data = this.parseCli(
       await this.deps.sdk.execSf([
         "project",

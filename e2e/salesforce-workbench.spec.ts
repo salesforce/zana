@@ -76,14 +76,14 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.SF_E2E_TRACE, JSON.stringify({ args, cwd: process.cwd(), home: process.env.HOME }) + '\\n');
 const alias = args[args.indexOf('--target-org') + 1] || 'dev';
-const org = { alias, username: alias + '@example.com', orgId: '00D000000000001', instanceUrl: process.env.SF_E2E_URL, isSandbox: true, accessToken: 'FAKE_PRIVATE_TOKEN', apiVersion: '62.0' };
+const org = { alias, username: alias + '@example.com', orgId: '00D000000000001', instanceUrl: process.env.SF_E2E_URL, isSandbox: alias !== 'org-158', isScratchOrg: false, isScratch: false, accessToken: 'FAKE_PRIVATE_TOKEN', apiVersion: '62.0' };
 let result = {};
 if (args[0] === '--version') { console.log('@salesforce/cli/2.fixture'); process.exit(0); }
 if (args.includes('display')) result = org;
 else if (args[0] === 'org' && args[1] === 'list' && args[2] === 'metadata') {
   if (args.includes('Flow')) { console.log(JSON.stringify({ status:1, message:'Fixture metadata denied' })); process.exitCode = 1; return; }
   result = Array.from({length:180}, (_, i) => ({ fullName:'Class' + i, type:'ApexClass', fileName:'classes/' + 'x'.repeat(120) + i + '.cls' }));
-} else if (args[0] === 'org' && args[1] === 'list') result = { sandboxes: Array.from({length:160}, (_, i) => ({...org, alias:i === 0 ? 'dev' : 'org-' + i, username: 'developer' + i + '@example.com', isDefaultUsername:i === 0 })) };
+} else if (args[0] === 'org' && args[1] === 'list') result = { nonScratchOrgs: Array.from({length:160}, (_, i) => ({...org, alias:i === 0 ? 'dev' : 'org-' + i, username: 'developer' + i + '@example.com', isSandbox:i !== 158, isDefaultUsername:i === 0 })) };
 else if (args[0] === 'project') result = args.includes('--async') ? {id:'0Af000000000001'} : args.includes('report') ? {
   done:true, success:false, status:'Failed', numberComponentsDeployed:0, numberComponentsTotal:2, numberComponentErrors:1,
   details:{componentFailures:[{componentType:'ApexClass', fullName:'Class0', fileName:'classes/Class0.cls', lineNumber:7, columnNumber:3, problem:'Variable does not exist: invoice'}]}
@@ -173,6 +173,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
     .click();
   const workbench = window.getByTestId("salesforce-workbench");
   await expect(workbench).toBeVisible();
+  await expect(window.getByRole("navigation", { name: "dx navigation" }).getByRole("button", { name: "SOQL", exact: true })).toHaveCount(0);
   await expect(workbench.getByRole("tab")).toHaveCount(5);
   await workbench.getByTestId("salesforce-org-picker").selectOption("org-159");
   await expect(workbench.locator(".sf-footer")).toContainText(
@@ -194,6 +195,19 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
     .click();
   await expect(workbench.locator(".sf-soql-record")).toContainText("Read only");
   await window.screenshot({ path: testInfo.outputPath("salesforce-data.png") });
+  // Standalone production browsing must not ask for an agent thread, including
+  // schema loading, queries without LIMIT, and record inspection.
+  await workbench.getByTestId("salesforce-org-picker").selectOption("org-158");
+  await expect(workbench.locator(".sf-footer")).toContainText("production");
+  await expect(workbench.getByRole("alert")).toHaveCount(0);
+  await workbench.getByTestId("soql-editor").fill("SELECT Id, Name FROM Account");
+  await workbench.getByTestId("soql-run").click();
+  await expect(workbench.getByTestId("soql-results")).toContainText("Customer 159");
+  await workbench.getByRole("button", { name: "Customer 0", exact: true }).click();
+  await expect(workbench.locator(".sf-soql-record")).toContainText("Read only");
+  await expect(workbench.getByRole("alert")).toHaveCount(0);
+  await workbench.getByTestId("salesforce-org-picker").selectOption("org-159");
+  await expect(workbench.locator(".sf-footer")).toContainText("Project target · org-159");
   await workbench
     .getByRole("tab", { name: "Deployments", exact: true })
     .click();
@@ -240,7 +254,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   );
   await workbench.getByRole("tab", { name: "Data", exact: true }).click();
   await expect(workbench.getByTestId("soql-editor")).toHaveValue(
-    "SELECT Id, Name, Description FROM Account LIMIT 200",
+    "SELECT Id, Name FROM Account",
   );
 
   const threadId = await window.evaluate(async (projectId) => {

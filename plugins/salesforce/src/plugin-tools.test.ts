@@ -362,6 +362,26 @@ describe('salesforce family tools', () => {
     await expect(denied).resolves.toMatchObject({ code: 'refused' });
   });
 
+  it('serves standalone production browsing without a thread while agent reads still require approval', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
+    await createSalesforcePlugin(zcc, mockDeps({ kind: 'production' }));
+    harness.setSettings({ defaultOrg: 'dev' });
+    const scope = { projectId: 'p1' };
+    for (const method of ['soql.describeGlobal', 'sql.describeGlobal', 'soql.limits']) {
+      await expect(harness.callRpc(method, scope)).resolves.toMatchObject({ ok: true, org: { kind: 'production' } });
+    }
+    await expect(harness.callRpc('soql.describeSObject', { ...scope, sobject: 'Account' })).resolves.toMatchObject({ ok: true });
+    for (const soql of ['SELECT Id FROM Account', 'SELECT Id FROM Account LIMIT 5']) {
+      await expect(harness.callRpc('soql.query', { ...scope, soql })).resolves.toMatchObject({ ok: true });
+      await expect(harness.callRpc('soql.explain', { ...scope, soql })).resolves.toMatchObject({ ok: true });
+    }
+    await expect(harness.callRpc('soql.queryMore', { ...scope, nextRecordsUrl: '/services/data/v62.0/query/01g000000000001-2000' })).resolves.toMatchObject({ ok: true });
+    await expect(harness.callRpc('soql.query', { ...scope, soql: 'DELETE FROM Account' })).resolves.toMatchObject({ ok: false, code: 'invalid_input' });
+    await expect(harness.callRpc('soql.queryMore', { ...scope, nextRecordsUrl: 'https://evil.example/records' })).resolves.toMatchObject({ ok: false });
+    const tool = harness.agentTools.find(row => row.name === 'sf_soql')!;
+    await expect(tool.execute({ action: 'query.sample', query: 'SELECT Id FROM Account LIMIT 5' }, { ...ctx, threadId: '' })).resolves.toMatchObject({ ok: false, code: 'refused' });
+  });
+
   it('fails closed when requestInput throws and when the CLI org lookup fails', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     await createSalesforcePlugin(zcc, mockDeps({ kind: 'production' }));
@@ -711,7 +731,8 @@ describe('salesforce family tools', () => {
     expect(seen).toContain('--use-live-actions');
     await expect(
       harness.callRpc('agentPreview.start', { path: 'force-app/main/default/agents/MyBot.agent' })
-    ).resolves.toMatchObject({ code: 'refused' });
+    ).resolves.toMatchObject({ ok: true });
+    await expect(harness.callRpc('agentPreview.start', { apiName: 'PublishedBot' })).resolves.toMatchObject({ code: 'refused' });
   });
 
   it('gates activate on eval evidence and still confirms untested intent', async () => {
@@ -817,12 +838,14 @@ describe('salesforce family tools', () => {
     await createSalesforcePlugin(zcc, deps);
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
-    await expect(agent.execute({ action: 'preview.start', apiName: 'PublishedBot' }, ctx)).resolves.toMatchObject({
-      ok: true
-    });
-    await expect(
-      agent.execute({ action: 'preview.start', apiName: 'MyBot', published: true }, ctx)
-    ).resolves.toMatchObject({ ok: true });
+    const published = agent.execute({ action: 'preview.start', apiName: 'PublishedBot' }, ctx);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    harness.submitInteraction({ approved: true });
+    await expect(published).resolves.toMatchObject({ ok: true });
+    const explicit = agent.execute({ action: 'preview.start', apiName: 'MyBot', published: true }, ctx);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    harness.submitInteraction({ approved: true });
+    await expect(explicit).resolves.toMatchObject({ ok: true });
     expect(seen.filter((flag) => flag === '--api-name').length).toBeGreaterThanOrEqual(2);
     expect(seen).toContain('--api-name');
     expect(seen).toContain('PublishedBot');

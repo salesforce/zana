@@ -6,16 +6,24 @@ This is the integration layer vitest can't reach: vitest unit-tests pure modules
 with injected I/O; these prove the wiring works when the whole app is booted.
 
 ```sh
-npm run test:e2e          # build, rebuild Electron native addons, then run suite
-npm run test:e2e:only     # existing out/ build; manages native-addon ABI
+npm run test:e2e          # private build + isolated app + unique results
+npm run test:e2e:only     # snapshot of existing out/; no ABI switching
 npm run test:e2e:headed   # build + run with a visible window (debugging)
-npm run test:e2e:only -- smoke # a single spec; manages native-addon ABI
-npx playwright show-trace e2e/.artifacts/<…>/trace.zip   # post-mortem a failure
+npm run test:e2e:only -- smoke # a single spec
+npx playwright show-trace e2e/.artifacts/runs/<run>/<…>/trace.zip   # post-mortem a failure
 ```
 
-Do not invoke `playwright` directly for Electron tests. Electron and Node use
-different native-addon ABIs; supported scripts rebuild for Electron before
-test, then restore Node ABI afterward for Vitest and development commands.
+Each run gets a private app snapshot, private native packages, and a unique results
+folder. Direct `playwright test` uses the same global setup. Node and Electron
+load separate verified SQLite binaries; there is no switch or restore step.
+`test:e2e` builds straight into the private copy. `test:e2e:only` snapshots the
+existing build under the same lock used by `pnpm build`, so a concurrent build
+cannot remove a running test's renderer or chunks. Dev writes to `out-dev/`.
+
+The fixture sets `ZCC_E2E_HOME` before app modules load. Tests never snapshot,
+seed, or restore the developer's real config. Native packages and app copies
+are removed at teardown; the most recent 20 completed result folders are kept.
+See [native runtime isolation](../docs/native-runtime-isolation.md).
 
 ## Optional Linux CI reproduction
 
