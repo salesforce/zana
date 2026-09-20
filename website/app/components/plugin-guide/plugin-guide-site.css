@@ -5,3 +5,6 @@
   min-height: 0;
   overflow: visible;
 }
+
+/* The website uses pale Fairy blue on dark surfaces. */
+.plugin-guide-send { color: var(--accent-ink); }

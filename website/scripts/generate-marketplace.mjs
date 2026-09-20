@@ -5,14 +5,21 @@
  * stay stable. Entry authorship lives under repo-root `marketplace/`.
  */
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..');
 const BUILD_SCRIPT = join(REPO_ROOT, 'marketplace', 'scripts', 'build.mjs');
+const COMMITTED_CATALOG = join(HERE, '..', 'content', 'marketplace', 'marketplace.json');
 
 export function runOfficialMarketplaceBuild() {
+  // The Docker context contains only website/, with its already-generated feed.
+  // Match the docs and plugin-guide sync hooks by preserving that committed copy.
+  if (!existsSync(BUILD_SCRIPT) && existsSync(COMMITTED_CATALOG)) {
+    return 'generate-marketplace: repo marketplace not reachable; keeping committed content/marketplace/';
+  }
   const result = spawnSync(process.execPath, [BUILD_SCRIPT], {
     cwd: REPO_ROOT,
     encoding: 'utf8'

@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Features — Zana Command Center',
     description:
-      'See New Chat, the Agents board, Thread, CLI agent, Inbox, Plugins, and Remote as HTML product surfaces.',
+      'Explore the Agents board, Threads, CLI Agents, Inbox, Plugins, and remote Projects.',
     url: '/features/',
     type: 'website',
     images: ['/opengraph-image']
@@ -25,10 +25,9 @@ export default function FeaturesPage() {
         <AuroraGrid beams={false} />
         <div className="wrap">
           <p className="zcc-kicker">Features</p>
-          <h1 id="features-heading">Every surface, in one scroll.</h1>
+          <h1 id="features-heading">A clear view of the work.</h1>
           <p>
-            New Chat, the Agents board, Thread, CLI agent, Inbox, Plugins, and Remote — the same fake UI as the
-            homepage, stacked instead of paged.
+            Start a task, follow your agents, and bring the results together. Explore the views that keep your projects moving.
           </p>
         </div>
       </section>
@@ -41,8 +40,7 @@ export default function FeaturesPage() {
             <p className="zcc-kicker">Zana Command Center</p>
             <h2 id="features-cta-heading">Keep every agent, project, and decision in view.</h2>
             <p>
-              Download the free desktop app and turn the terminals you already trust into an operating system for
-              agent work.
+              Bring your coding agents and your first project. Keep the work, decisions, and results together.
             </p>
             <div className="zcc-actions">
               <Link className="zcc-btn zcc-btn-primary" href="/download/">
