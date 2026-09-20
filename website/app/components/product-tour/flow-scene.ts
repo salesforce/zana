@@ -89,8 +89,8 @@ function captionFor(now: number): string {
   if (now >= T_LOADING) return 'Starting Cursor…';
   if (now >= T.typeHome) return 'Describe the work.';
   if (now >= T.cursorSelected) return 'Use Cursor.';
-  if (now >= T.pickerOpen) return 'Choose a harness.';
-  return 'Start a Modern thread. Pick a harness and describe the work.';
+  if (now >= T.pickerOpen) return 'Choose your coding agent.';
+  return 'Start a Thread. Pick an agent and describe the work.';
 }
 
 export function sceneForElapsed(ms: number): FlowScene {

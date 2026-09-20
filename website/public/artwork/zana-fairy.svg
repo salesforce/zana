@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="850 0 590 580" width="590" height="580" fill="none">
+<!-- Fairy geometry from resources/icon.svg; constellation from docs/assets/zana-readme-hero.svg. -->
+<defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1440" y2="580" gradientUnits="userSpaceOnUse"><stop stop-color="#182b48"/><stop offset=".55" stop-color="#101c33"/><stop offset="1" stop-color="#0d152b"/></linearGradient>
+    <radialGradient id="halo"><stop stop-color="#6889d7" stop-opacity=".24"/><stop offset="1" stop-color="#6889d7" stop-opacity="0"/></radialGradient>
+    <linearGradient id="line" x1="68" y1="473" x2="751" y2="473" gradientUnits="userSpaceOnUse"><stop stop-color="#93dfff"/><stop offset=".65" stop-color="#c0b9ff"/><stop offset="1" stop-color="#ffdb9e"/></linearGradient>
+
+    <linearGradient id="tile" x1="160" y1="80" x2="820" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#26385c"/>
+      <stop offset=".5" stop-color="#15233f"/>
+      <stop offset="1" stop-color="#0d152b"/>
+    </linearGradient>
+    <radialGradient id="aura" cx="0" cy="0" r="1" gradientTransform="translate(495 436) rotate(90) scale(474 427)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#537ccf" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#537ccf" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="272" y1="64" x2="711" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b8dbff" stop-opacity=".52"/>
+      <stop offset=".5" stop-color="#8ea8ee" stop-opacity=".05"/>
+      <stop offset="1" stop-color="#8ea8ee" stop-opacity=".2"/>
+    </linearGradient>
+    <linearGradient id="left-wing" x1="229" y1="290" x2="462" y2="617" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e0fcff"/>
+      <stop offset=".44" stop-color="#93dfff"/>
+      <stop offset="1" stop-color="#5e8df5"/>
+    </linearGradient>
+    <linearGradient id="right-wing" x1="750" y1="295" x2="576" y2="595" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#eee9ff"/>
+      <stop offset=".5" stop-color="#c0b9ff"/>
+      <stop offset="1" stop-color="#7389ee"/>
+    </linearGradient>
+    <linearGradient id="lower-wing" x1="344" y1="533" x2="659" y2="741" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#79cafa"/>
+      <stop offset="1" stop-color="#887cd7"/>
+    </linearGradient>
+    <linearGradient id="fairy" x1="472" y1="327" x2="576" y2="770" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset=".58" stop-color="#e9f6ff"/>
+      <stop offset="1" stop-color="#b3ccf5"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="732" y1="198" x2="779" y2="321" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff7d6"/>
+      <stop offset="1" stop-color="#ffc878"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+    <filter id="spark-glow" x="655" y="145" width="215" height="230" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+
+  </defs>  <ellipse cx="1130" cy="275" rx="350" ry="330" fill="url(#halo)"/>
+  <g stroke="#8eb6ef" stroke-opacity=".12">
+    <circle cx="1130" cy="280" r="216"/>
+    <circle cx="1130" cy="280" r="262"/>
+    <path d="M878 184L938 118L1052 74M1287 66L1355 151L1385 290M926 446L1031 510L1186 536"/>
+  </g>
+  <g fill="#b8dafa">
+    <circle cx="878" cy="184" r="3" opacity=".55"/><circle cx="1052" cy="74" r="3" opacity=".7"/>
+    <circle cx="1355" cy="151" r="3" opacity=".6"/><circle cx="1385" cy="290" r="3" opacity=".4"/>
+    <circle cx="926" cy="446" r="3" opacity=".7"/><circle cx="1186" cy="536" r="3" opacity=".45"/>
+  </g>
+<svg x="909" y="68" width="460" height="426" viewBox="200 170 660 610">
+  <path d="M459 561C344 555 234 473 229 291C355 310 437 392 459 561Z" fill="url(#left-wing)"/>
+  <path d="M567 561C681 547 762 448 750 294C638 330 577 419 567 561Z" fill="url(#right-wing)"/>
+  <path d="M450 584C348 545 276 578 267 704C357 717 420 669 450 584Z" fill="url(#lower-wing)"/>
+  <path d="M575 584C677 547 748 579 757 702C668 717 605 670 575 584Z" fill="url(#lower-wing)"/>
+  <path d="M252 315C279 409 340 476 417 516M727 321C704 407 657 474 610 516" stroke="#fff" stroke-opacity=".35" stroke-width="4" stroke-linecap="round"/>
+  <g stroke="#254f94" stroke-opacity=".27" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M304 379L333 445L397 481"/>
+    <path d="M333 445L328 488"/>
+    <path d="M686 385L660 447L623 472"/>
+  </g>
+  <g fill="#edfaff">
+    <circle cx="304" cy="379" r="7"/>
+    <circle cx="333" cy="445" r="7"/>
+    <circle cx="328" cy="488" r="7"/>
+    <circle cx="686" cy="385" r="7"/>
+    <circle cx="660" cy="447" r="7"/>
+  </g>
+
+  <!-- A floating head and flowing dress form the fairy silhouette. -->
+  <circle cx="512" cy="367" r="47" fill="url(#fairy)"/>
+  <path d="M512 446C539 479 546 523 551 566C558 632 592 689 625 723C554 762 472 762 399 723C436 680 466 627 473 566C478 523 485 479 512 446Z" fill="url(#fairy)"/>
+  <path d="M518 474C563 510 601 502 639 460" stroke="#f2f7ff" stroke-width="21" stroke-linecap="round"/>
+  <path d="M630 470L726 325" stroke="#f5d59c" stroke-width="13" stroke-linecap="round"/>
+
+  <!-- A single warm spark is the focal point. -->
+  <path d="M758 203C765 245 777 258 816 267C777 276 765 289 758 331C749 289 737 276 698 267C737 258 749 245 758 203Z" fill="#ffd48d" opacity=".55" filter="url(#spark-glow)"/>
+  <path d="M758 203C765 245 777 258 816 267C777 276 765 289 758 331C749 289 737 276 698 267C737 258 749 245 758 203Z" fill="url(#spark)"/>
+  <circle cx="682" cy="224" r="7" fill="#fff0d1" opacity=".8"/>
+  <circle cx="820" cy="342" r="5" fill="#d3ddff" opacity=".65"/>
+</svg></svg>

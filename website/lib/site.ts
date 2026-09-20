@@ -1,7 +1,7 @@
 /** Central site config — copy + env-driven endpoints, all in one place. */
 export const site = {
   name: 'Zana Command Center',
-  tagline: 'Run and orchestrate Claude Code, Cursor, OpenCode, Codex, and Pi sessions across every project from one window.',
+  tagline: 'Run your favorite coding agents, keep work moving across projects, and answer when your judgment is needed.',
   repo: 'https://github.com/salesforce/zana',
   /** PUBLIC release feed (github.com) — where the notarized artifacts +
    *  latest-mac.yml live and the auto-updater reads anonymously. */
@@ -17,7 +17,7 @@ export const site = {
   updateFeedUrl: process.env.NEXT_PUBLIC_UPDATE_FEED_URL,
   /** Latest published app version (fallback when the feed is unreachable).
    *  Keep in sync with the current release when the update feed can't be read. */
-  latestVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? '2.2.0',
+  latestVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? '2.2.1',
   /** Base URL this deployment is served from (`PUBLIC_BASE_URL`). Used by the
    *  dashboard publish snippet, the marketplace `zcc marketplace add` command,
    *  canonical URLs, robots, and sitemap. Server-only — pass into client

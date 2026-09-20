@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ProductMap } from '@/lib/plugin-guide/product-map';
+import { ProductMap } from '../../../lib/plugin-guide/product-map';
 import { slideIdFromHash, writeSlideHash } from './slide-hash';
 
 export function PluginGuideMap(): ReactNode {

@@ -11,43 +11,43 @@ export interface TourSlide {
 export const SLIDES: readonly TourSlide[] = [
   {
     id: 'features',
-    title: 'Features',
+    title: 'Start with the task',
     blurb:
-      'New Chat is the cockpit. Start a Modern thread or a CLI agent, pick the harness, and keep every project on the same rail.'
+      'Start a Thread or a CLI Agent, choose your coding tool, and keep the task connected to its Project.'
   },
   {
     id: 'kanban',
-    title: 'Kanban',
+    title: 'See what needs your attention',
     blurb:
       'Every session in a lane. Cards flow Needs you → Working → Idle → Done as the agent works — you never drag them. Threads and CLI agents share the board.'
   },
   {
     id: 'thread',
-    title: 'Thread',
+    title: 'Follow the conversation',
     blurb:
-      'The Modern conversation: a timeline of turns, tools, and files, with a composer that can pause on a question until you reply.'
+      'A timeline of messages, tools, and files keeps the work in context. Answer when the agent needs your judgment.'
   },
   {
     id: 'cli',
-    title: 'CLI agent',
+    title: 'Keep your native coding tools',
     blurb:
-      'The live PTY for Claude Code, Cursor, Codex, and the rest. Same board card, same inspector split — terminal on the left, facts and diffs on the right.'
+      'Run Claude Code, Cursor, Codex, and other coding tools in real terminal sessions. Follow their progress and review changes alongside the terminal.'
   },
   {
     id: 'inbox',
-    title: 'Inbox',
+    title: 'Be there for the decisions',
     blurb:
       'Questions pin at the top until you answer. Reports and ideas stay inline. Routine noise and agent-closed runs fold so they cannot bury the signal.'
   },
   {
     id: 'plugins',
-    title: 'Plugins',
+    title: 'Make room for your workflow',
     blurb:
       'Installed plugins sit beside Browse. Confirm full trust, then a marketplace panel or a plugin you asked the app to build runs in-process.'
   },
   {
     id: 'remote',
-    title: 'Remote',
+    title: 'Work across your machines',
     blurb:
       'Pilot an agent over SSH from the same board. Local and remote sessions look the same — the SSH chip is the only tell.'
   }
