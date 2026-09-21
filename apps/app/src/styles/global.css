@@ -34894,35 +34894,72 @@ textarea.thread-command-editor {
 
 .thread-working-indicator {
   margin: 0;
-  min-height: 1.75rem;
   box-sizing: border-box;
-  padding: 6px 8px;
-  color: var(--text-muted, var(--ink-muted));
-  font-size: 14px;
-  line-height: 1.4;
+  padding: 8px 0;
+  color: var(--ink-muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .thread-working-indicator-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 1.75rem;
 }
 
-.thread-working-indicator-gutter {
-  flex: 0 0 32px;
-  width: 32px;
+.thread-activity-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  color: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
 }
 
-.thread-working-indicator-glyph-spacer {
-  flex: 0 0 14px;
-  width: 14px;
-  height: 14px;
+.thread-activity-label > [role='status'] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.thread-activity-dot {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: thread-activity-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes thread-activity-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-activity-dot { animation: none; }
 }
 
 .thread-working-indicator > summary.thread-working-indicator-header {
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 16px;
   cursor: pointer;
   list-style: none;
+}
+
+.thread-working-indicator > summary.thread-working-indicator-header:hover .thread-activity-label {
+  background: var(--bg-hover);
+}
+
+.thread-working-indicator > summary.thread-working-indicator-header:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .thread-working-indicator > summary.thread-working-indicator-header::-webkit-details-marker {
@@ -35280,12 +35317,13 @@ textarea.thread-command-editor {
 }
 
 .thread-thinking-details {
-  margin: 6px 0 0 38px;
+  margin: 8px 0 0 14px;
+  padding: 2px 12px;
+  border-left: 1px solid var(--border);
   max-height: 18rem;
   overflow: auto;
   white-space: pre-wrap;
   font-size: 13px;
-  font-style: italic;
   line-height: 1.55;
   color: var(--text-muted, var(--ink-muted));
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Modal } from '../../Modal.js';
+import { ThreadDisplayedImage } from './ThreadDisplayedImage.js';
 import {
   resolveLightboxSelection,
   type ThreadLightboxItem
@@ -10,11 +11,13 @@ export function ThreadImageLightbox({
   src,
   alt,
   items,
+  threadId,
   onClose
 }: {
   src: string;
   alt: string;
   items?: readonly ThreadLightboxItem[];
+  threadId?: string;
   onClose: () => void;
 }) {
   const gallery = items && items.length > 0 ? items : [{ src, alt }];
@@ -60,7 +63,7 @@ export function ThreadImageLightbox({
             <ChevronLeft size={18} />
           </button>
         ) : null}
-        <img src={current.src} alt={title} />
+        <ThreadDisplayedImage key={current.src} path={current.src} alt={title} threadId={threadId} variant="lightbox" />
         {showNav ? (
           <button
             type="button"

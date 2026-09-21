@@ -84,4 +84,9 @@ describe('apiJson', () => {
 
     await expect(apiJson('/threads')).rejects.toThrow('503');
   });
+
+  it.each([{ error: 'revision_conflict' }, { code: 'revision_conflict' }])('retains machine-readable conflict details', async (body) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(body, { status: 409 })));
+    await expect(apiJson('/threads/t1/tabs')).rejects.toMatchObject({ status: 409, code: 'revision_conflict' });
+  });
 });

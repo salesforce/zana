@@ -63,7 +63,7 @@ export function showOngoingThreadWork(
 
 const USER_WAIT_WORK_KINDS = new Set(['question', 'approval']);
 
-/** True when a visible work row is still running — tools already say that. */
+/** Tools and explicit operations (e.g. compaction) replace generic busy copy. */
 export function timelineHasRunningWork(rows: readonly TimelineRow[] | null | undefined): boolean {
   if (!rows?.length) return false;
   for (const row of rows) {
@@ -71,6 +71,7 @@ export function timelineHasRunningWork(rows: readonly TimelineRow[] | null | und
       if (timelineHasRunningWork(row.children)) return true;
       continue;
     }
+    if (row.kind === 'system' && row.systemKind === 'operation' && row.status === 'pending') return true;
     if (row.kind !== 'work') continue;
     if (USER_WAIT_WORK_KINDS.has(row.workKind)) continue;
     if (row.status === 'pending') return true;

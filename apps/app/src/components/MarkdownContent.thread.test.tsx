@@ -45,6 +45,13 @@ describe('MarkdownContent thread extras', () => {
     );
     expect(html).toContain('file:///workspace/README.md');
     expect(html).not.toContain('target="_blank"');
+    expect(html).not.toContain('node=');
+  });
+
+  it('does not spread Markdown syntax nodes onto DOM elements', () => {
+    const html = renderToStaticMarkup(<MarkdownContent text={'[Link](https://example.com)\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n```\ntext\n```'} />);
+    expect(html).not.toContain('node=');
+    expect(html).not.toContain('[object Object]');
   });
 
   it('renders mdx through the markdown pipeline', () => {

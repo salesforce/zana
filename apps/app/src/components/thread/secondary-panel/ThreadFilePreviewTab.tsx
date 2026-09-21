@@ -43,6 +43,7 @@ export function ThreadFilePreviewView({
   error,
   threadId,
   projectId,
+  storage = false,
   lineNumber = null
 }: {
   path: string;
@@ -50,6 +51,7 @@ export function ThreadFilePreviewView({
   error: string | null;
   threadId?: string;
   projectId?: string | null;
+  storage?: boolean;
   lineNumber?: number | null;
 }) {
   if (error) return <p className="thread-detail-empty">{error}</p>;
@@ -78,6 +80,7 @@ export function ThreadFilePreviewView({
         exportable
         threadId={threadId}
         projectId={projectId}
+        storage={storage}
       />
     </div>
   );
@@ -293,6 +296,7 @@ export function ThreadFilePreviewTab({
       error={error}
       threadId={threadId}
       projectId={projectId}
+      storage={storage}
       lineNumber={lineNumber}
     />
   );
