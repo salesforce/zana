@@ -1,3 +1,4 @@
+import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import type { HubRow } from './installed-plugins.js';
 
 export interface PluginEnabledApi {
@@ -34,4 +35,16 @@ export async function setHubRowEnabled(
     code: 'UNAVAILABLE' as const,
     message: 'This plugin cannot be toggled'
   };
+}
+
+export async function refreshPluginAppsAfterToggle(
+  list: () => Promise<PluginAppEntry[]>,
+  reconcile: (entries: readonly PluginAppEntry[]) => Promise<void>
+): Promise<void> {
+  try {
+    await reconcile(await list());
+  } catch {
+    // Toggle already succeeded. Lifecycle events or a later refresh can repair
+    // renderer state without misreporting the enable operation as failed.
+  }
 }

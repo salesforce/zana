@@ -9,16 +9,17 @@ function mod(id: string, extra: Partial<AppModule> & { loadError?: string } = {}
 }
 
 afterEach(() => {
-  usePluginAppModules.getState().setModules([]);
+  usePluginAppModules.getState().setSnapshot([], new Set());
   useExtensionModules.getState().setModules([]);
 });
 
 describe('mergeModules', () => {
   it('does not let a failed plugin app hide a working legacy extension module', () => {
     const Working = () => null;
-    usePluginAppModules.getState().setModules([
-      mod('gus', { loadError: 'Bundle did not default-export a plugin app.' })
-    ]);
+    usePluginAppModules.getState().setSnapshot(
+      [mod('gus', { loadError: 'Bundle did not default-export a plugin app.' })],
+      new Set()
+    );
     useExtensionModules.getState().setModules([mod('gus', { panel: Working })]);
 
     const merged = getMergedModule('gus');
@@ -28,9 +29,45 @@ describe('mergeModules', () => {
 
   it('keeps a successful plugin app over a disk extension of the same id', () => {
     const PluginPanel = () => null;
-    usePluginAppModules.getState().setModules([mod('tasks', { panel: PluginPanel })]);
+    usePluginAppModules.getState().setSnapshot(
+      [mod('tasks', { panel: PluginPanel })],
+      new Set(['tasks'])
+    );
     useExtensionModules.getState().setModules([mod('tasks')]);
 
     expect(getMergedModule('tasks')?.panel).toBe(PluginPanel);
+  });
+
+  it('hides compiled companions until their plugin app loads successfully', () => {
+    expect(getMergedModule('docs')).toBeUndefined();
+
+    usePluginAppModules.getState().setSnapshot([], new Set(['docs']));
+
+    expect(getMergedModule('docs')?.title).toBe('Docs');
+  });
+
+  it('does not let a failed matching plugin app authorize a compiled companion', () => {
+    usePluginAppModules.getState().setSnapshot(
+      [mod('docs', { loadError: 'bundle exploded' })],
+      new Set()
+    );
+
+    expect(getMergedModule('docs')).toMatchObject({ loadError: 'bundle exploded' });
+  });
+
+  it('keeps the compiled companion over a successful matching runtime module', () => {
+    const RuntimePanel = () => null;
+    usePluginAppModules.getState().setSnapshot(
+      [mod('docs', { panel: RuntimePanel })],
+      new Set(['docs'])
+    );
+
+    expect(getMergedModule('docs')?.panel).not.toBe(RuntimePanel);
+  });
+
+  it('does not authorize a compiled companion from an unrelated loaded id', () => {
+    usePluginAppModules.getState().setSnapshot([], new Set(['tasks']));
+
+    expect(getMergedModule('docs')).toBeUndefined();
   });
 });

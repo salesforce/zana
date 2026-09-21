@@ -259,10 +259,10 @@ export function App() {
   // extension filesystem bridge.
   useEffect(() => {
     let cancelled = false;
-    void initPluginApps();
     const off = product.pluginApps.onChanged((entries) => {
       if (!cancelled) void reconcilePluginApps(entries);
     });
+    void initPluginApps();
     return () => {
       cancelled = true;
       off();
