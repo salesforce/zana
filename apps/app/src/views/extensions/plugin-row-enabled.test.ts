@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { ExtensionEntry, PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import {
+  refreshPluginAppsAfterToggle,
   reportPluginEnabledFailure,
   setHubRowEnabled,
   type PluginEnabledApi
@@ -95,5 +96,38 @@ describe('reportPluginEnabledFailure', () => {
     const toast = vi.fn();
     reportPluginEnabledFailure({ ok: false }, toast);
     expect(toast).toHaveBeenCalledWith('Failed to update plugin', 'error');
+  });
+});
+
+describe('refreshPluginAppsAfterToggle', () => {
+  it('reconciles the latest PluginService snapshot', async () => {
+    const snapshot = [plugin('docs')];
+    const reconcile = vi.fn(async () => undefined);
+
+    await refreshPluginAppsAfterToggle(async () => snapshot, reconcile);
+
+    expect(reconcile).toHaveBeenCalledWith(snapshot);
+  });
+
+  it('does not reject when the post-toggle snapshot refresh fails', async () => {
+    await expect(
+      refreshPluginAppsAfterToggle(
+        async () => {
+          throw new Error('runtime offline');
+        },
+        vi.fn(async () => undefined)
+      )
+    ).resolves.toBeUndefined();
+  });
+
+  it('does not reject when renderer reconciliation fails', async () => {
+    await expect(
+      refreshPluginAppsAfterToggle(
+        async () => [plugin('docs')],
+        async () => {
+          throw new Error('bundle import failed');
+        }
+      )
+    ).resolves.toBeUndefined();
   });
 });

@@ -69,7 +69,11 @@ import {
   type HubRow,
   type InstalledPublisherFilter
 } from './installed-plugins.js';
-import { reportPluginEnabledFailure, setHubRowEnabled } from './plugin-row-enabled.js';
+import {
+  refreshPluginAppsAfterToggle,
+  reportPluginEnabledFailure,
+  setHubRowEnabled
+} from './plugin-row-enabled.js';
 import { reportHubInstallFailure } from './hub-install.js';
 import { uninstallHubRow } from './plugin-row-uninstall.js';
 import {
@@ -556,9 +560,11 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
     if (!canToggle) return;
     setPending(next);
     void setHubRowEnabled(row, next, product)
-      .then(async (res) => {
+      .then((res) => {
         reportPluginEnabledFailure(res, useUi.getState().pushToast);
-        if (res.ok) await reconcilePluginApps(await product.pluginApps.list());
+        if (res.ok) {
+          void refreshPluginAppsAfterToggle(() => product.pluginApps.list(), reconcilePluginApps);
+        }
       })
       .catch((err) => {
         reportPluginEnabledFailure(
