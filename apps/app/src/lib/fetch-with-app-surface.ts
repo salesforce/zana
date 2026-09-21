@@ -1,3 +1,4 @@
+import { getNativeShell } from './native-shell.js';
 import { getAppSurface } from './app-surface.js';
 
 export const APP_SURFACE_HEADER = 'x-zcc-app-surface';
@@ -8,7 +9,9 @@ export async function fetchWithAppSurface(
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set(APP_SURFACE_HEADER, getAppSurface());
-  return fetch(input, { ...init, headers });
+  const response = await fetch(input, { ...init, headers });
+  if (response.status === 401) getNativeShell()?.post({ type: 'auth-required' });
+  return response;
 }
 
 export async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {

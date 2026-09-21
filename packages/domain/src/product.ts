@@ -2187,6 +2187,15 @@ export interface AppConfig {
    */
   feedNoiseClassifierEnabled?: boolean;
   /**
+   * Enable the Zana Mobile gateway — the authenticated network edge in front of
+   * the loopback product server that a paired phone connects through
+   * (Settings → Phone). Default OFF: it opens a network listener (bound to this
+   * machine's private LAN IP so a phone on the same network can reach it, else
+   * loopback). Pairing codes, per-device credentials, session cookies, origin
+   * checks and rate limiting all live in the gateway; enabling only starts it.
+   */
+  mobileGatewayEnabled?: boolean;
+  /**
    * Keep agent-opened shells inside ZCC (EXPERIMENTAL). When ON, new sessions
    * receive a `run_in_terminal` host tool and skill so agents open a visible
    * ZCC shell instead of Terminal.app / iTerm / Cursor. Off by default.

@@ -4,6 +4,7 @@ import { useData, useSaved, useSavedSelection } from '../store.js';
 import type { SavedRecord } from '@zana-ai/zcc-domain/product';
 import { mdToPlainText } from '../lib/plainText.js';
 import { DelayedStencilList } from './ui/Skeleton.js';
+import { useCompactLayout } from '../hooks/useCompactLayout.js';
 
 /**
  * Saved-reports list — the "Saved" tab twin of {@link InboxSidebar}. Renders the
@@ -28,6 +29,7 @@ export function SavedSidebar({
   const select = useSavedSelection((s) => s.selectSaved);
   const projects = useData((s) => s.projects);
   const scoped = !!scopeProjectId;
+  const compact = useCompactLayout();
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -62,9 +64,9 @@ export function SavedSidebar({
   // `filtered` change (the only thing that can invalidate a selection here).
   useEffect(() => {
     if (selectedId && filtered.some((r) => r.id === selectedId)) return;
-    select(filtered[0]?.id ?? null);
+    select(compact ? null : filtered[0]?.id ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered]);
+  }, [filtered, compact]);
 
   if (loading && records.length === 0) {
     return <DelayedStencilList label="Loading saved reports" className="zcc-stencil-padded" />;

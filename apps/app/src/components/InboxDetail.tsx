@@ -49,6 +49,7 @@ interface InboxDetailProps {
    * intercepts when it's actually visible.
    */
   visible: boolean;
+  onBack?: () => void;
 }
 
 /**
@@ -62,7 +63,7 @@ interface InboxDetailProps {
  * whatever is selected. Delete is owned here because it needs the full
  * entry list to advance selection after removal.
  */
-export function InboxDetail({ visible }: InboxDetailProps) {
+export function InboxDetail({ visible, onBack }: InboxDetailProps) {
   const entries = useInbox((s) => s.entries);
   const loading = useInbox((s) => s.loading);
   const selectedId = useInboxSelection((s) => s.selectedEntryId);
@@ -117,7 +118,7 @@ export function InboxDetail({ visible }: InboxDetailProps) {
   if (entries.length === 0 || !selected) {
     return <div className="inbox-detail-empty">Select an entry from the sidebar.</div>;
   }
-  return <Detail entry={selected} onDelete={() => handleDelete(selected.id)} />;
+  return <Detail entry={selected} onDelete={() => handleDelete(selected.id)} onBack={onBack} />;
 }
 
 // Cumulative byte budget for a single PDF export / Save. Each doc is capped at
@@ -127,7 +128,7 @@ export function InboxDetail({ visible }: InboxDetailProps) {
 // as skipped (visible in the output, per "no silent caps"), not read.
 const EXPORT_TOTAL_BYTES_CAP = 32 * 1024 * 1024; // 32 MB of source markdown
 
-function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }) {
+function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () => void; onBack?: () => void }) {
   const navigate = useNavigate();
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
@@ -531,7 +532,7 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
         <button
           type="button"
           className="inbox-detail-overview-back"
-          onClick={() => clearSelection(null)}
+          onClick={onBack ?? (() => clearSelection(null))}
           title="Back to inbox"
         >
           <ArrowLeft size={13} aria-hidden />

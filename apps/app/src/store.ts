@@ -194,6 +194,7 @@ export type SettingsTab =
   | 'about'
   | 'machines'
   | 'connectivity'
+  | 'phone'
   | 'inbox'
   | 'browser'
   | (string & {});

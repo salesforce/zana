@@ -49,6 +49,12 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      - name: Mobile typecheck
+        run: pnpm --filter @zana-ai/zcc-mobile typecheck
+
+      - name: Export mobile bundles
+        run: pnpm --filter @zana-ai/zcc-mobile export
+
       - name: Unit tests
         run: pnpm test
 

@@ -178,6 +178,18 @@ describe('store.setConfig — harness routing reset', () => {
   });
 });
 
+describe('normalizeConfig — mobile gateway flag', () => {
+  it('passes through a boolean mobileGatewayEnabled', () => {
+    expect(normalizeConfig({ mobileGatewayEnabled: true }).mobileGatewayEnabled).toBe(true);
+    expect(normalizeConfig({ mobileGatewayEnabled: false }).mobileGatewayEnabled).toBe(false);
+  });
+
+  it('drops a non-boolean mobileGatewayEnabled', () => {
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ mobileGatewayEnabled: 'yes' }).mobileGatewayEnabled).toBeUndefined();
+  });
+});
+
 describe('normalizeConfig — auto-close-idle flags', () => {
   it('passes through a boolean autoCloseIdleEnabled', () => {
     expect(normalizeConfig({ autoCloseIdleEnabled: true }).autoCloseIdleEnabled).toBe(true);
