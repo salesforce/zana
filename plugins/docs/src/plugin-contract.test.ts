@@ -36,6 +36,7 @@ describe('docs plugin contract', () => {
 
   it('registers file opener, doc directive, and document panel without a navPanel', () => {
     const set = collectTestPluginApp(app, 'docs');
+    expect(app.__zccPluginApp).toBe(true);
     expect(set.navPanels).toHaveLength(0);
     expect(set.threadPanelActions).toHaveLength(1);
     expect(set.threadPanelActions[0]?.id).toBe('document');

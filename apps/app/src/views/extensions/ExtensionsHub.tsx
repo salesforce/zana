@@ -34,6 +34,7 @@ import { EXTENSION_PERMISSIONS } from '@zana-ai/zcc-extension-sdk';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { ExtensionEntry, MarketplaceEntry, PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { useMergedModules } from '@/modules';
+import { reconcilePluginApps } from '@/plugins/plugin-app-loader';
 import { getHost } from '@/modules/ModulePanelHost';
 import { resolveIcon } from '@/lib/resolveIcon';
 import { appNavigate } from '@/lib/app-navigate';
@@ -555,7 +556,10 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
     if (!canToggle) return;
     setPending(next);
     void setHubRowEnabled(row, next, product)
-      .then((res) => reportPluginEnabledFailure(res, useUi.getState().pushToast))
+      .then(async (res) => {
+        reportPluginEnabledFailure(res, useUi.getState().pushToast);
+        if (res.ok) await reconcilePluginApps(await product.pluginApps.list());
+      })
       .catch((err) => {
         reportPluginEnabledFailure(
           {
