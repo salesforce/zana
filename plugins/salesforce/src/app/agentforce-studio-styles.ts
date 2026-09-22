@@ -11,7 +11,7 @@ export const AGENTFORCE_STUDIO_STYLES = `
 .af-document-bar .sf-as-crumb { font-size:12px; flex:1; }.af-document-bar .sf-as-tabs { margin:0; border:0; background:var(--af-soft); border-radius:6px; }.af-document-bar .sf-as-tab { border-radius:4px; padding:4px 9px; font-size:11px; }
 .af-draft-state { color:var(--af-muted); font-size:10px; display:flex; gap:5px; align-items:center; }.af-draft-state i { display:block; width:5px; height:5px; border-radius:50%; background:var(--af-accent); }
 .sf-as .sf-as-explorer { width:190px; background:color-mix(in srgb,var(--af-surface) 94%,var(--af-muted)); }.sf-as .sf-as-explorer.is-collapsed { width:34px; }.sf-as .sf-as-explorer-head { padding:14px 10px 10px; }.sf-as .sf-as-tree-btn { padding-top:7px; padding-bottom:7px; }.sf-as .sf-as-section-label { padding:10px 6px 6px; }.sf-as .sf-as-explorer-search { background:var(--af-surface); }
-.sf-as .sf-as-sunken { background:var(--af-surface); }.sf-as .sf-as-save { border-radius:6px; }.sf-as .sf-as-save.is-dirty { background:var(--af-accent); color:var(--bg-panel,#17171c); }.sf-as .sf-as-stage { overflow:hidden; }
+.sf-as .sf-as-sunken { background:var(--af-surface); }.sf-as .sf-as-save { border-radius:6px; }.sf-as .sf-as-save.is-dirty { background:var(--af-accent); color:var(--text-on-accent,#fff); }.sf-as .sf-as-stage { overflow:hidden; }
 .af-lab { width:410px; max-width:48%; min-width:300px; min-height:0; display:flex; flex-direction:column; border-left:1px solid var(--af-line); background:var(--af-surface); font-size:12px; }
 .af-lab[hidden] { display:none; }
 .af-workspace { display:flex; flex:1; min-width:0; min-height:0; }

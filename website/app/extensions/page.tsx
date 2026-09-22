@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { AuroraGrid } from '../components/AuroraGrid';
+import { PluginOverview } from '../components/BrandStories';
 import { PluginGuideMap } from '../components/plugin-guide/PluginGuideMap';
 
 export const metadata: Metadata = {
@@ -28,7 +29,7 @@ const PATHS = [
   {
     label: 'Author',
     title: 'Build your first panel',
-    body: 'Start with a TypeScript plugin that registers a nav panel. Plugins are full-trust after a loud install confirm.',
+    body: 'Start with a TypeScript plugin that registers a nav panel. Review and confirm full trust before installing.',
     href: '/extensions/getting-started/',
     action: 'Start the quickstart'
   },
@@ -45,21 +46,19 @@ export default function ExtensionsPage() {
   return (
     <div className="zcc-page aurora-host">
       <AuroraGrid beams={false} />
-      <section className="hub-hero" style={{ paddingBottom: 12 }}>
-        <div className="wrap">
-          <div data-reveal>
-            <span className="zcc-kicker">Plugins</span>
-            <h1>Shape the cockpit around your work.</h1>
-            <p>
-              Add panels, project tabs, skills, and MCP servers without modifying Zana core. Start with the
-              marketplace, then build only as much as your workflow needs. Plugins run in-process after a
-              loud full-trust confirm.
-            </p>
+      <section className="plugin-brand-intro">
+        <div className="wrap fairy-split">
+          <div className="fairy-story-copy">
+            <p className="fairy-kicker lavender">Built to become yours</p>
+            <h1>Your workflow.<br /><span>Your kind of magic.</span></h1>
+            <p>Add tools, views, and skills that fit the way you work. Find a plugin in the marketplace, or bring your own idea to life with the Zana SDK.</p>
             <div className="zcc-actions">
-              <Link className="zcc-btn zcc-btn-primary" href="/extensions/getting-started/">Build your first plugin</Link>
-              <Link className="zcc-btn zcc-btn-ghost" href="/marketplace/">Browse marketplace</Link>
+              <Link className="zcc-btn zcc-btn-primary zcc-btn-lg" href="/marketplace/">Find a plugin ↗</Link>
+              <Link className="zcc-btn zcc-btn-ghost zcc-btn-lg" href="/extensions/getting-started/">Build a plugin →</Link>
             </div>
+            <a className="text-link plugin-art-link" href="/artwork/zana-plugins.svg" target="_blank" rel="noopener noreferrer">Explore how plugins work ↗</a>
           </div>
+          <PluginOverview />
         </div>
       </section>
 
@@ -69,7 +68,7 @@ export default function ExtensionsPage() {
             <span className="zcc-kicker">Plugin Guide</span>
             <h2>Every surface a plugin can own.</h2>
             <p className="section-lede">
-              The same annotated map as Plugins → Plugin Guide in the app: wireframes, numbered chips, and Copy for agent.
+              Explore where your plugin can appear. Each annotated view connects a product surface to its SDK contract.
             </p>
           </div>
           <PluginGuideMap />
@@ -100,7 +99,7 @@ export default function ExtensionsPage() {
         <div className="wrap">
           <div className="proof" data-reveal>
             <span className="zcc-kicker">Install with confidence</span>
-            <h2>Discover a capability, then confirm full trust.</h2>
+            <h2>Understand what you install.</h2>
             <p>
               Marketplace entries describe what a plugin contributes. Official catalogs install offline;
               community catalogs list npm/git pointers only. After install, plugins run in-process on the server.
@@ -118,7 +117,7 @@ export default function ExtensionsPage() {
       <section style={{ paddingTop: 8 }}>
         <div className="wrap">
           <div className="proof" data-reveal>
-            <span className="zcc-kicker">A safe authoring loop</span>
+            <span className="zcc-kicker">Your development loop</span>
             <h2>Build locally. Reload live. Keep core untouched.</h2>
             <p>
               A local plugin is an ordinary disk plugin with an editable source folder. Author{' '}

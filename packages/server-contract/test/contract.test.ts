@@ -1645,6 +1645,10 @@ describe("server-contract clients", () => {
         path: "/Users/me/notes/plan.md",
       }),
     ).toEqual({ path: "/Users/me/notes/plan.md" });
+    expect(contract.threadHostFileContentQuerySchema.parse({
+      path: ".zcc/report.md", projectId: "p1",
+    })).toEqual({ path: ".zcc/report.md", projectId: "p1" });
+    expect(() => contract.threadHostFileContentQuerySchema.parse({ path: "report.md", projectId: "" })).toThrow();
   });
 
   it("keeps project command catalog queries snapshot-only", () => {

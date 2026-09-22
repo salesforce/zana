@@ -17,6 +17,7 @@ import { useAiEnhanceSelection } from '@/components/AiEnhanceSelection';
 import { StencilLines } from '@/components/ui/Skeleton';
 import { parseFrontMatter } from '@zana-ai/zcc-extension-sdk/helpers';
 import { LibraryMarkdownEditor } from './LibraryMarkdownEditor.js';
+import { DocumentPdfButton } from '@/components/DocumentPdfButton';
 
 export interface DocPreviewProps {
   doc: LibraryDoc;
@@ -165,6 +166,11 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
     return (
       <div className="library-md-pane">
         <div className="library-edit-bar">
+          <DocumentPdfButton
+            path={doc.relPath}
+            title={doc.title}
+            content={editing ? draft : content}
+          />
           {editing ? (
             <>
               <button

@@ -13,11 +13,11 @@ export interface PlaygroundFileRef {
 
 export type PlaygroundToHost =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'ready' }
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'dirty'; dirty: boolean }
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'snapshot'; content: string; issues: number; actions?: AgentAction[] }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'dirty'; dirty: boolean; draftKey?: string; baseSha?: string; persisted?: boolean }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'snapshot'; draftKey?: string; content: string; issues: number; actions?: AgentAction[] }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'openAction'; id: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'requestOpen'; path: string }
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'persist'; path: string; content: string };
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'persist'; path: string; content: string; draftKey?: string; create?: boolean };
 
 export type HostToPlayground =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'revealLine'; line: number }
@@ -36,6 +36,7 @@ export type HostToPlayground =
   | {
       source: typeof PLAYGROUND_BRIDGE_SOURCE;
       type: 'setFile';
+      draftKey?: string;
       path: string | null;
       content: string;
       dialect: AgentScriptDialect;
@@ -47,8 +48,8 @@ export type HostToPlayground =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setView'; view: PlaygroundView }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setFiles'; files: PlaygroundFileRef[] }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setOrg'; org: PublicOrgView | null }
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'saved'; sha256: string }
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'flushSave' };
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'saved'; sha256: string; draftKey?: string; content?: string }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'flushSave'; path?: string; create?: boolean };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
@@ -58,6 +59,10 @@ export function isPlaygroundToHost(value: unknown): value is PlaygroundToHost {
   if (!isRecord(value) || value.source !== PLAYGROUND_BRIDGE_SOURCE || typeof value.type !== 'string') {
     return false;
   }
+  if (value.draftKey !== undefined && (typeof value.draftKey !== 'string' || value.draftKey.length > 2000)) return false;
+  if (value.baseSha !== undefined && typeof value.baseSha !== 'string') return false;
+  if (value.create !== undefined && typeof value.create !== 'boolean') return false;
+  if (value.persisted !== undefined && typeof value.persisted !== 'boolean') return false;
   if (value.type === 'ready') return true;
   if (value.type === 'openAction') return typeof value.id === 'string';
   if (value.type === 'dirty') return typeof value.dirty === 'boolean';

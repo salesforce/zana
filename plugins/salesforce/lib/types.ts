@@ -126,6 +126,7 @@ export interface GuardrailDecision {
 export interface ExecSfOptions {
   cwd?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface SalesforceDeps {
@@ -139,6 +140,8 @@ export interface SalesforceDeps {
   readdir(path: string): string[];
   realpath(path: string): string;
   writeFile(path: string, content: string): void;
+  /** Publish a complete new file atomically; must refuse an existing destination. */
+  createFile?(path: string, content: string): void;
   spawnContained(
     bin: string,
     argv: string[],

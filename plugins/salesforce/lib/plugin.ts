@@ -1,4 +1,5 @@
 import type { PluginAgentToolContext, PluginInteractionResult, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
+import { randomUUID } from 'node:crypto';
 import {
   activateArgs,
   agentCliOpts,
@@ -48,6 +49,7 @@ import { compactError, fingerprint, isDxProject, resolveUnderRoot } from './dx-p
 import { generatedOutputPath, parseGenerateInput } from './project-generate.js';
 import {
   AgentFilesError,
+  createAgentFile,
   listAgentFiles,
   readAgentFile,
   writeAgentFile
@@ -60,7 +62,8 @@ import { envelopeTitle, Guardrail } from './guardrail.js';
 import { diagnoseLwc, findLwcComponent, inspectLwc, parseLwcInput, resolveJestBin, scanLwcComponents } from './lwc.js';
 import { createNodeDeps } from './node-deps.js';
 import { formatOrgRoster, orgRosterInstructions } from './org-list.js';
-import { orgLoginArgs, parseOrgLoginInput, SF_ORG_LOGIN_TIMEOUT_MS } from './org-login.js';
+import { OrgLoginService } from './org-login-service.js';
+import { parseOrgLoginInput } from './org-login.js';
 import { applyLimit, parseSoqlInput, previewRecords } from './soql.js';
 import { SoqlExplorer } from './soql-explorer.js';
 import {
@@ -271,41 +274,48 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return { ok: false, error: message, code, orgs: [], selectedAlias: null };
     }
   });
-  registerRpc('orgs.login', async (args) => {
+  const orgLogin = new OrgLoginService({
+    execSf: deps.execSf,
+    listOrgs: () => sdk.listOrgs(),
+    invalidate: () => connections.invalidate(),
+  });
+  zcc.onDispose(() => orgLogin.dispose());
+  const runOrgLogin = async (args: unknown) => {
+    const context = contexts.current()!;
+    let projectSelected: string | null = null;
+    const result = await orgLogin.run(args, {
+      cwd: context.settings.projectRoot || undefined,
+      onConnected: context.projectId ? async (alias, orgs) => {
+        await contexts.select({ projectId: context.projectId, selectedAlias: alias }, orgs.flatMap(org => [org.alias, org.username]));
+        projectSelected = alias;
+        zcc.realtime.publish('context.changed', { projectId: context.projectId });
+      } : undefined,
+    });
+    if (!result.ok) return result;
+    return { ...result, selectedAlias: projectSelected ?? await sdk.resolveAlias(), targetSource: projectSelected ? 'project' : context.targetSource };
+  };
+  registerRpc('orgs.login', runOrgLogin);
+  // Human sign-in outlives the desktop RPC deadline. Keep only bounded, public
+  // results and poll with short requests; AsyncLocalStorage pins the owner scope.
+  const loginJobs = new Map<string, { projectId: string | null; result?: Awaited<ReturnType<typeof runOrgLogin>> }>();
+  zcc.onDispose(() => loginJobs.clear());
+  registerRpc('orgs.login.start', args => {
     const parsed = parseOrgLoginInput(args);
-    if (!parsed.ok) return { ok: false, code: parsed.code, error: parsed.error, orgs: [], selectedAlias: null };
-    const result = await deps.execSf(orgLoginArgs(parsed), { timeoutMs: SF_ORG_LOGIN_TIMEOUT_MS });
-    if (result.code === 127) {
-      return {
-        ok: false,
-        code: 'cli_missing',
-        error: result.stderr.trim() || result.stdout.trim() || 'Salesforce CLI missing. Install sf, then retry.',
-        orgs: [],
-        selectedAlias: null
-      };
-    }
-    if (result.code !== 0) {
-      return {
-        ok: false,
-        code: 'login_failed',
-        error:
-          result.stderr.trim() ||
-          result.stdout.trim() ||
-          'Salesforce CLI web login did not finish. Complete sign-in in the browser, then retry.',
-        orgs: [],
-        selectedAlias: null
-      };
-    }
-    connections.invalidate();
-    try {
-      const orgs = await sdk.listOrgs();
-      const selectedAlias = await sdk.resolveAlias();
-      return { ok: true, orgs, selectedAlias, targetSource: contexts.current()?.targetSource ?? 'shared' };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const code = error instanceof ConnectionError ? error.code : 'orgs_failed';
-      return { ok: false, error: message, code, orgs: [], selectedAlias: null };
-    }
+    if (!parsed.ok) return parsed;
+    if ([...loginJobs.values()].some(job => !job.result)) return { ok: false, code: 'login_busy', error: 'Another org sign-in is in progress. Complete it in your browser, then retry.' };
+    if (loginJobs.size >= 12) loginJobs.delete(loginJobs.keys().next().value!);
+    const loginId = randomUUID();
+    const job: { projectId: string | null; result?: Awaited<ReturnType<typeof runOrgLogin>> } = { projectId: contexts.current()!.projectId };
+    loginJobs.set(loginId, job);
+    void runOrgLogin(args).then(result => { job.result = result; }, () => {
+      job.result = { ok: false, code: 'login_failed', error: 'Sign-in could not finish. Refresh the org list, then retry.' };
+    });
+    return { ok: true, loginId };
+  });
+  registerRpc('orgs.login.status', args => {
+    const job = loginJobs.get(rpcString(args, 'loginId'));
+    if (!job || job.projectId !== contexts.current()!.projectId) return { ok: false, error: 'This sign-in is no longer available. Refresh your orgs, then retry.' };
+    return job.result ? { ok: true, done: true, result: job.result } : { ok: true, done: false };
   });
   registerRpc('project.generate', async (args) => {
     const parsed = parseGenerateInput(args);
@@ -373,7 +383,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   registerRpc('agentFiles.list', async (args) => {
     try {
       const resolved = await resolveAgentFilesRoot(args);
-      return { ok: true, files: listAgentFiles(resolved.root, deps, resolved.options) };
+      return { ok: true, files: listAgentFiles(resolved.root, deps, { ...resolved.options, bundlesOnly: rpcString(args, 'purpose') === 'preview' }) };
     } catch (error) {
       return agentFilesFailure(error);
     }
@@ -387,6 +397,15 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     } catch (error) {
       return agentFilesFailure(error);
     }
+  });
+  registerRpc('agentFiles.create', async (args) => {
+    const path = rpcString(args, 'path');
+    const content = args && typeof args === 'object' ? (args as { content?: unknown }).content : undefined;
+    if (!path || typeof content !== 'string') return { ok: false, code: 'invalid_input', error: 'Create requires a path and source.' };
+    try {
+      const resolved = await resolveAgentFilesRoot(args);
+      return { ok: true, file: createAgentFile(resolved.root, path, content, deps, resolved.options) };
+    } catch (error) { return agentFilesFailure(error); }
   });
   registerRpc('agentFiles.write', async (args) => {
     const path = rpcString(args, 'path');

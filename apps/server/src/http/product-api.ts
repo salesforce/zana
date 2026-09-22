@@ -1304,7 +1304,8 @@ export async function handleProductHttp(
     if (threadHostFile && method === 'GET') {
       try {
         const pathParam = requestUrl.searchParams.get('path') ?? '';
-        sendJson(response, 200, await readThreadHostFile(ctx, threadHostFile.id, pathParam));
+        const projectId = requestUrl.searchParams.get('projectId') ?? undefined;
+        sendJson(response, 200, await readThreadHostFile(ctx, threadHostFile.id, pathParam, projectId));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { error: error.code, message: error.message });

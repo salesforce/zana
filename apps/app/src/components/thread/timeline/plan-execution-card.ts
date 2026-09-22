@@ -27,3 +27,34 @@ export function planExecutionCurrentIndex(tasks: readonly PlanExecutionTask[]): 
   }
   return 0;
 }
+
+/** Canonical visual bucket for a task status, so pending/in-progress/done/blocked read differently. */
+export type PlanTaskVisual = 'completed' | 'in_progress' | 'blocked' | 'cancelled' | 'pending';
+
+export function planTaskVisual(status: string): PlanTaskVisual {
+  if (status === 'completed') return 'completed';
+  if (status === 'in_progress' || status === 'active') return 'in_progress';
+  if (status === 'blocked') return 'blocked';
+  if (status === 'cancelled' || status === 'canceled') return 'cancelled';
+  return 'pending';
+}
+
+export function planTaskStatusLabel(status: string): string {
+  switch (planTaskVisual(status)) {
+    case 'completed':
+      return 'Completed';
+    case 'in_progress':
+      return 'In progress';
+    case 'blocked':
+      return 'Blocked';
+    case 'cancelled':
+      return 'Cancelled';
+    default:
+      return 'Pending';
+  }
+}
+
+/** How many tasks are done — the numerator of the progress counter. */
+export function planCompletedCount(tasks: readonly PlanExecutionTask[]): number {
+  return tasks.reduce((count, task) => (planTaskVisual(task.status) === 'completed' ? count + 1 : count), 0);
+}

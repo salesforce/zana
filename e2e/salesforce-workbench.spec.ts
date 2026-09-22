@@ -9,8 +9,14 @@ import { makeFakeGenericHoldBinary } from "./sdk/harness.js";
 // path with large deterministic payloads. No Salesforce credentials or model spend.
 const test = base.extend({
   launchEnv: async ({ home }, use) => {
+    let logReads = 0;
     const server = createServer((req, res) => {
       const url = new URL(req.url!, "http://localhost");
+      if (url.pathname.includes('/tooling/sobjects/ApexLog/') && url.pathname.endsWith('/Body')) {
+        res.setHeader('content-type', 'text/plain');
+        res.end('10:00:00 USER_DEBUG [42] | Order lookup started\n' + '10:00:01 METHOD_ENTRY | OrderService.lookup\n'.repeat(700) + '10:00:02 EXCEPTION_THROWN [71] | Missing order number\n10:00:03 EXECUTION_FINISHED');
+        return;
+      }
       let data: unknown = {};
       if (url.pathname.endsWith("/sobjects"))
         data = {
@@ -28,6 +34,8 @@ const test = base.extend({
         };
       else if (url.pathname.endsWith("/limits"))
         data = { DailyApiRequests: { Max: 15000, Remaining: 14000 } };
+      else if (url.pathname.includes('/query') && url.searchParams.get('q')?.includes('FROM ApexLog'))
+        data = { records: ++logReads === 1 ? [] : [{ Id: '07L000000000001', Operation: 'Refresh proof', Status: 'Success', StartTime: 'Today' }] };
       else if (url.pathname.includes("/query"))
         data = {
           records: Array.from({ length: 160 }, (_, i) => ({
@@ -77,13 +85,22 @@ const args = process.argv.slice(2);
 fs.appendFileSync(process.env.SF_E2E_TRACE, JSON.stringify({ args, cwd: process.cwd(), home: process.env.HOME }) + '\\n');
 const alias = args[args.indexOf('--target-org') + 1] || 'dev';
 const org = { alias, username: alias + '@example.com', orgId: '00D000000000001', instanceUrl: process.env.SF_E2E_URL, isSandbox: alias !== 'org-158', isScratchOrg: false, isScratch: false, accessToken: 'FAKE_PRIVATE_TOKEN', apiVersion: '62.0' };
+const authFile = process.env.SF_E2E_TRACE + '.auth.json';
+if (args[0] === 'org' && args[1] === 'login') {
+  const loginAlias = args[args.indexOf('--alias') + 1];
+  if (loginAlias === 'fail-login') { console.error('FAKE_PRIVATE_TOKEN'); process.exitCode = 1; return; }
+  const connected = { ...org, alias: loginAlias, username: loginAlias + '@example.com', isDefaultUsername: false };
+  fs.writeFileSync(authFile, JSON.stringify(connected));
+  setTimeout(() => console.log(JSON.stringify({ status:0, result:{ padding:'x'.repeat(24000), ...connected, refreshToken:'FAKE_REFRESH_TOKEN' } })), loginAlias === 'browser-dev' ? 21_000 : 800);
+  return;
+}
 let result = {};
 if (args[0] === '--version') { console.log('@salesforce/cli/2.fixture'); process.exit(0); }
 if (args.includes('display')) result = org;
 else if (args[0] === 'org' && args[1] === 'list' && args[2] === 'metadata') {
   if (args.includes('Flow')) { console.log(JSON.stringify({ status:1, message:'Fixture metadata denied' })); process.exitCode = 1; return; }
   result = Array.from({length:180}, (_, i) => ({ fullName:'Class' + i, type:'ApexClass', fileName:'classes/' + 'x'.repeat(120) + i + '.cls' }));
-} else if (args[0] === 'org' && args[1] === 'list') result = { nonScratchOrgs: Array.from({length:160}, (_, i) => ({...org, alias:i === 0 ? 'dev' : 'org-' + i, username: 'developer' + i + '@example.com', isSandbox:i !== 158, isDefaultUsername:i === 0 })) };
+} else if (args[0] === 'org' && args[1] === 'list') result = { nonScratchOrgs: [...Array.from({length:160}, (_, i) => ({...org, alias:i === 0 ? 'dev' : 'org-' + i, username: 'developer' + i + '@example.com', isSandbox:i !== 158, isDefaultUsername:i === 0 })), ...(fs.existsSync(authFile) ? [JSON.parse(fs.readFileSync(authFile, 'utf8'))] : [])] };
 else if (args[0] === 'project') result = args.includes('--async') ? {id:'0Af000000000001'} : args.includes('report') ? {
   done:true, success:false, status:'Failed', numberComponentsDeployed:0, numberComponentsTotal:2, numberComponentErrors:1,
   details:{componentFailures:[{componentType:'ApexClass', fullName:'Class0', fileName:'classes/Class0.cls', lineNumber:7, columnNumber:3, problem:'Variable does not exist: invoice'}]}
@@ -182,7 +199,86 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   expect(
     await window.evaluate(() => window.cc.pluginApps.getSettings("salesforce")),
   ).toMatchObject({ values: { defaultOrg: "dev" } });
+  // The native top layer must contain focus and restore it on Escape. The
+  // header action opens only connection setup, without expanding the org list.
+  const connectButton = workbench.locator('.sf-header').getByRole('button', { name: 'Connect org', exact: true });
+  await connectButton.click();
+  const connectionDialog = workbench.getByRole('dialog', { name: 'Connect an org' });
+  await expect(connectionDialog).toBeVisible();
+  await expect(workbench.getByTestId('salesforce-org-list')).toHaveCount(0);
+  await expect(connectionDialog.getByRole('radio', { name: 'Production', exact: true })).toBeFocused();
+  for (let tab = 0; tab < 9; tab++) {
+    await window.keyboard.press('Tab');
+    expect(await connectionDialog.evaluate(el => el.contains(document.activeElement))).toBe(true);
+  }
+  await window.keyboard.press('Escape');
+  await expect(connectionDialog).toHaveCount(0);
+  await expect(connectButton).toBeFocused();
+  await connectButton.click();
+  for (const theme of ['light', 'dark']) {
+    await window.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    await window.screenshot({ path: testInfo.outputPath(`salesforce-connect-${theme}.png`), animations: 'disabled' });
+    const colors = await connectionDialog.getByRole('button', { name: 'Sign in with browser' }).evaluate(el => ({
+      fg: getComputedStyle(el).color, bg: getComputedStyle(el).backgroundColor,
+    }));
+    expect(colors.fg).toBe('rgb(255, 255, 255)');
+    expect(colors.bg).not.toBe(colors.fg);
+  }
+  await window.setViewportSize({ width: 480, height: 700 });
+  await connectionDialog.getByRole('radio', { name: 'My Domain', exact: true }).check();
+  await expect(connectionDialog.getByRole('button', { name: 'Sign in with browser' })).toBeInViewport();
+  expect(await connectionDialog.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await window.screenshot({ path: testInfo.outputPath('salesforce-connect-narrow.png') });
+  await window.setViewportSize({ width: 1440, height: 900 });
+  await connectionDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  // Browser authentication travels through the real plugin RPC and sf child.
+  // The identity is deliberately beyond 24 KiB of output, after potential secrets.
+  for (const [instance, loginAlias, expectedUrl] of [
+    ['production', 'browser-dev', 'https://login.salesforce.com'],
+    ['sandbox', 'browser-sandbox', 'https://test.salesforce.com'],
+    ['custom', 'browser-sso', 'https://company.my.salesforce.com'],
+  ]) {
+    await workbench.locator('.sf-header').getByRole('button', { name: 'Connect org', exact: true }).click();
+    const form = workbench.getByTestId('salesforce-org-login');
+    await expect(form).toBeVisible();
+    await form.getByRole('radio', { name: instance === 'production' ? 'Production' : instance === 'sandbox' ? 'Sandbox' : 'My Domain', exact: true }).check();
+    if (instance === 'custom') await form.getByLabel('My Domain URL').fill('company.my.salesforce.com');
+    await form.getByLabel('Org alias').fill(loginAlias);
+    await expect(form.getByRole('button', { name: 'Sign in with browser' })).toBeInViewport();
+    if (instance === 'custom') await window.screenshot({ path: testInfo.outputPath('salesforce-my-domain-login.png') });
+    await form.getByRole('button', { name: 'Sign in with browser' }).click();
+    await expect(form.getByRole('button', { name: 'Waiting for sign-in…' })).toBeDisabled();
+    if (instance === 'production') {
+      await window.screenshot({ path: testInfo.outputPath('salesforce-connect-waiting.png') });
+      await form.getByRole('button', { name: 'Close', exact: true }).click();
+      await connectButton.click();
+      await expect(form.getByRole('button', { name: 'Waiting for sign-in…' })).toBeDisabled();
+    }
+    await expect(workbench.locator('.sf-footer')).toContainText(`Project target · ${loginAlias}`, { timeout: 35_000 });
+    await expect(workbench.getByTestId('salesforce-org-picker')).toHaveValue(loginAlias);
+    await expect(workbench.getByRole('status')).toContainText('selected it for this project');
+    const loginTrace = readFileSync(join(home, 'sf-trace.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).find(row => row.args.includes(loginAlias));
+    expect(loginTrace).toMatchObject({ home, cwd: realpathSync(join(home, 'dx')) });
+    expect(loginTrace.args).toEqual(['org', 'login', 'web', '--json', '--instance-url', expectedUrl, '--alias', loginAlias]);
+    await expect(workbench.getByRole('dialog')).toHaveCount(0);
+  }
+  expect(await window.evaluate(() => window.cc.pluginApps.getSettings('salesforce'))).toMatchObject({ values: { defaultOrg: 'dev' } });
+  await workbench.locator('.sf-header').getByRole('button', { name: 'Connect org', exact: true }).click();
+  await workbench.getByLabel('Org alias').fill('fail-login');
+  await workbench.getByRole('button', { name: 'Sign in with browser' }).click();
+  await expect(workbench.getByRole('alert')).toContainText('Sign-in did not finish');
+  await expect(workbench.getByTestId('salesforce-org-picker')).toHaveValue('browser-sso');
+  await expect(workbench).not.toContainText('FAKE_PRIVATE_TOKEN');
+  const postLogin = await window.evaluate((projectId) => window.cc.pluginApps.callRpc('salesforce', 'orgs', { projectId }), projectId);
+  expect(JSON.stringify(postLogin)).not.toMatch(/FAKE_PRIVATE_TOKEN|FAKE_REFRESH_TOKEN/);
+  await window.screenshot({ path: testInfo.outputPath('salesforce-login.png') });
+  await workbench.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await workbench.getByTestId('salesforce-org-picker').selectOption('org-159');
+  await expect(workbench.locator('.sf-footer')).toContainText('Project target · org-159');
   await workbench.getByRole("tab", { name: "Data", exact: true }).click();
+  await window.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  expect(await workbench.getByTestId('soql-run').evaluate(el => getComputedStyle(el).color)).toBe('rgb(255, 255, 255)');
+  await window.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await workbench
     .getByTestId("soql-editor")
     .fill("SELECT Id, Name, Description FROM Account LIMIT 200");
@@ -190,11 +286,26 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   await expect(workbench.getByTestId("soql-results")).toContainText(
     "Customer 159",
   );
+  const queryDivider = workbench.getByRole('separator', { name: 'Resize query editor' });
+  await queryDivider.focus();
+  await window.keyboard.press('ArrowDown');
+  await expect(queryDivider).toHaveAttribute('aria-valuenow', '204');
+  await queryDivider.dblclick();
+  await expect(queryDivider).toHaveAttribute('aria-valuenow', '180');
+  await expect(workbench.getByLabel('Export results')).toBeEnabled();
   await workbench
     .getByRole("button", { name: "Customer 0", exact: true })
     .click();
   await expect(workbench.locator(".sf-soql-record")).toContainText("Read only");
   await window.screenshot({ path: testInfo.outputPath("salesforce-data.png") });
+  await window.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  await window.screenshot({ path: testInfo.outputPath('salesforce-data-light.png') });
+  await workbench.locator('.sf-soql-record').getByRole('button', { name: 'Close', exact: true }).click();
+  await window.setViewportSize({ width: 720, height: 900 });
+  expect(await workbench.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await window.screenshot({ path: testInfo.outputPath('salesforce-data-narrow.png') });
+  await window.setViewportSize({ width: 1440, height: 900 });
+  await window.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   // Standalone production browsing must not ask for an agent thread, including
   // schema loading, queries without LIMIT, and record inspection.
   await workbench.getByTestId("salesforce-org-picker").selectOption("org-158");
@@ -212,12 +323,23 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
     .getByRole("tab", { name: "Deployments", exact: true })
     .click();
   await workbench.getByRole("button", { name: "Browse org metadata" }).click();
-  await expect(
-    workbench.getByLabel("Select Class179", { exact: true }),
-  ).toBeVisible();
+  await workbench.getByLabel('Search metadata').fill('Class179');
+  await expect(workbench.getByLabel('Select Class179', { exact: true })).toBeVisible();
+  await workbench.getByLabel('Search metadata').fill('Class');
   await workbench.getByLabel("Select Class0", { exact: true }).check();
   await workbench.getByLabel("Select Class1", { exact: true }).check();
   await workbench.getByLabel("Targeted Apex tests").fill("OneTest");
+  const configBox = await workbench.locator('.sf-workspace-config').boundingBox();
+  const activityBox = await workbench.getByTestId('salesforce-operations').boundingBox();
+  expect(activityBox!.x).toBeGreaterThan(configBox!.x + 250);
+  await window.screenshot({ path: testInfo.outputPath('salesforce-deployment-setup-dark.png') });
+  await window.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  await window.screenshot({ path: testInfo.outputPath('salesforce-deployment-setup-light.png') });
+  await window.setViewportSize({ width: 720, height: 900 });
+  expect(await workbench.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await window.screenshot({ path: testInfo.outputPath('salesforce-deployment-setup-narrow.png') });
+  await window.setViewportSize({ width: 1440, height: 900 });
+  await window.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await workbench.getByRole("button", { name: "Preview deployment" }).click();
   await expect(workbench.getByTestId("salesforce-operations")).toContainText(
     "succeeded",
@@ -455,10 +577,44 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
       await window.evaluate((id) => window.cc.terminals.close(id), sessionId);
     agent.cleanup();
   }
+  await route(window, `/projects/${projectId}`);
+  await window.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await expect(workbench.locator('.sf-footer')).toContainText('Project target · org-159');
+  await workbench.getByRole('tab', { name: 'Apex & logs', exact: true }).click();
+  await workbench.getByRole('tab', { name: 'Debug logs', exact: true }).click();
+  await expect(workbench.getByText('No debug logs returned')).toBeVisible();
+  await workbench.getByRole('button', { name: 'Refresh logs' }).click();
+  await expect(workbench.getByText('Refresh proof')).toBeVisible();
+  await expect(workbench.getByRole('button', { name: 'Refresh logs' })).toBeEnabled();
+  await workbench.getByRole('button', { name: /Refresh proof.*Success/ }).click();
+  await workbench.getByLabel('Find in log').fill('EXCEPTION_THROWN');
+  await expect(workbench.getByText('1 match')).toBeVisible();
+  await workbench.getByRole('button', { name: 'Next match' }).click();
+  await expect(workbench.locator('.sf-log-code mark')).toBeInViewport();
+  await window.screenshot({ path: testInfo.outputPath('salesforce-log-reader.png') });
+  await window.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  await window.setViewportSize({ width: 720, height: 900 });
+  await workbench.getByRole('button', { name: 'Next match' }).click();
+  await expect(workbench.locator('.sf-log-code mark')).toBeInViewport();
+  expect(await workbench.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await window.screenshot({ path: testInfo.outputPath('salesforce-log-reader-narrow.png') });
+  await window.setViewportSize({ width: 1440, height: 900 });
+  await window.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+  await workbench.getByRole('tab', { name: 'Anonymous Apex', exact: true }).click();
+  await workbench.getByRole('textbox', { name: 'Anonymous Apex', exact: true }).fill('System.debug(42);');
+  await workbench.getByRole('button', { name: 'Continue in a thread' }).click();
+  await expect.poll(() => new URL(window.url()).searchParams.get('prompt')).toContain('System.debug(42);');
+  const stagedPrompt = new URL(window.url()).searchParams.get('prompt')!;
+  expect(stagedPrompt).toContain('org-159');
+  expect(stagedPrompt).toContain('do not execute automatically');
+  await expect(window.locator('[contenteditable="true"]').first()).toContainText('System.debug(42);');
+  await window.screenshot({ path: testInfo.outputPath('salesforce-action-review.png') });
   const trace = readFileSync(join(home, "sf-trace.jsonl"), "utf8")
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line));
+  expect(trace.some(row => row.args[0] === 'apex' && row.args[1] === 'run')).toBe(false);
+  expect(rendererErrors).toEqual([]);
   const deployment = trace.find((row) => row.args.includes("--dry-run"));
   expect(deployment).toMatchObject({
     home,

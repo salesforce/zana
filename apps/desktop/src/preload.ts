@@ -405,6 +405,12 @@ const api: CcApi = {
       }
     }
   },
+  mobile: {
+    status: () => ipcRenderer.invoke(IPC.mobile.status),
+    pair: () => ipcRenderer.invoke(IPC.mobile.pair),
+    devices: () => ipcRenderer.invoke(IPC.mobile.devices),
+    revoke: (id) => ipcRenderer.invoke(IPC.mobile.revoke, id)
+  },
   relay: {
     status: async () => ({ state: 'unconfigured' as const }),
     renewJoinWindow: async () => ({ state: 'unconfigured' as const }),

@@ -67,7 +67,7 @@ export function AgentforcePreviewPanel(props: {
 
   useEffect(() => {
     let cancelled = false;
-    void callPluginRpc(pluginId, 'agentFiles.list', rpcProject(projectId))
+    void callPluginRpc(pluginId, 'agentFiles.list', rpcProject(projectId, { purpose: 'preview' }))
       .then((listed) => {
         if (cancelled) return;
         const next = listed as { ok?: boolean; files?: PlaygroundFileRef[] };

@@ -1067,7 +1067,7 @@ button.product-tour-card {
   margin-left: 4px;
   border-radius: 50%;
   background: var(--accent-blue, #007aff);
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 .product-tour-send.is-pulse {
@@ -1441,7 +1441,7 @@ button.product-tour-card {
 .product-tour-btn.is-primary {
   background: var(--accent-blue, #007aff);
   border-color: transparent;
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 .product-tour-thread-dock {

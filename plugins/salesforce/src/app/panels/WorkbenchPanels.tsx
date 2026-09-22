@@ -1,8 +1,7 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import type { PublicOrgView } from "../../../lib/types.js";
 import type {
   SalesforceResource,
-  SalesforceOperation,
   WorkbenchStatus,
   OperationKind,
 } from "../../../lib/workbench-contract.js";
@@ -16,12 +15,16 @@ import {
   ObjectInspector,
   OrgBadge,
   RecordInspector,
-  RunSummary,
   SalesforcePanelFrame,
 } from "../components/ui.js";
 import { SalesforceTabs } from "../components/Tabs.js";
 import { useSalesforceDraft } from "../components/drafts.js";
 import { OrgPicker } from "../OrgPicker.js";
+import { DebugLogsPanel } from "./DebugLogsPanel.js";
+import { OperationsPanel } from "./OperationsPanel.js";
+export { OperationsPanel } from "./OperationsPanel.js";
+export { DeploymentsPanel } from "./DeploymentsPanel.js";
+import { needsOperationThread, operationReviewDraft } from "../operation-review.js";
 
 export interface SalesforcePanelProps extends SalesforceResource {
   pluginId: string;
@@ -187,100 +190,6 @@ export function ObjectPanel(props: SalesforcePanelProps) {
   );
 }
 
-export function OperationsPanel(
-  props: SalesforcePanelProps & { revision?: number },
-) {
-  const call = useSalesforceCall(props.pluginId, props, props.threadId);
-  const state = useResource<{ operations: SalesforceOperation[] }>(
-    call,
-    "operations.list",
-  );
-  const [selected, setSelected] = useState(props.operationId ?? "");
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    void state.refresh();
-  }, [props.revision, state.refresh]);
-  const running = state.data?.operations.some((row) => row.state === "running");
-  useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(() => void state.refresh(), 2000);
-    return () => clearInterval(timer);
-  }, [running, state.refresh]);
-  const operation =
-    state.data?.operations.find((row) => row.id === selected) ??
-    state.data?.operations[0];
-  return (
-    <div className="sf-scroll" data-testid="salesforce-operations">
-      {(state.error || error) && (
-        <ErrorState
-          message={state.error || error!}
-          retry={() => void state.refresh()}
-        />
-      )}
-      <div className="sf-toolbar">
-        <strong>Recent operations</strong>
-        <span className="sf-grow" />
-        <button
-          className="sf-btn quiet"
-          type="button"
-          onClick={() => void state.refresh()}
-        >
-          Refresh
-        </button>
-      </div>
-      {state.data?.operations.length ? (
-        <>
-          <div className="sf-content">
-            {state.data.operations.map((row) => (
-              <div className="sf-row" key={row.id}>
-                <button
-                  className="sf-link sf-row-main"
-                  type="button"
-                  onClick={() => setSelected(row.id)}
-                >
-                  {row.title}
-                  <small>
-                    {row.kind} · {row.org.alias}
-                  </small>
-                </button>
-                <span
-                  className={`sf-badge ${row.state === "failed" ? "sf-error" : ""}`}
-                >
-                  {row.state}
-                </span>
-              </div>
-            ))}
-          </div>
-          {operation && (
-            <RunSummary
-              operation={operation}
-              onAddToPrompt={props.onAddToPrompt}
-              onRefresh={
-                operation.jobId
-                  ? () => {
-                      setError(null);
-                      void call("operations.report", {
-                        operationId: operation.id,
-                      })
-                        .then(requireResult)
-                        .then(() => state.refresh())
-                        .catch((err) => setError(String(err)));
-                    }
-                  : undefined
-              }
-            />
-          )}
-        </>
-      ) : (
-        <EmptyState title="No operations yet">
-          Test and deployment results appear here. Closing a view keeps its
-          operation available.
-        </EmptyState>
-      )}
-    </div>
-  );
-}
-
 export function ApexPanel(props: SalesforcePanelProps) {
   const panelId = useId();
   const draftKey = `${props.projectId ?? "global"}:${props.threadId ?? "project"}:apex`;
@@ -293,20 +202,15 @@ export function ApexPanel(props: SalesforcePanelProps) {
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [logId, setLogId] = useState(props.logId ?? "");
-  const logs = useResource<{
-    data?: { records?: Record<string, unknown>[]; bodyPreview?: string };
-  }>(call, tab === "logs" ? "apex.logs" : null);
-  const log = useResource<{ body: string; truncated?: boolean }>(
-    call,
-    logId ? "logs.get" : null,
-    { logId },
-  );
   const lwc = useResource<{ data: Array<{ name: string }> }>(
     call,
     tab === "lwc" ? "lwc.scan" : null,
   );
   async function start(kind: OperationKind) {
+    if (!props.threadId && needsOperationThread(kind)) {
+      props.onAddToPrompt?.(operationReviewDraft(kind, props.orgAlias, { body }));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -326,7 +230,7 @@ export function ApexPanel(props: SalesforcePanelProps) {
     }
   }
   return (
-    <SalesforcePanelFrame title="Apex & logs">
+    <SalesforcePanelFrame>
       <SalesforceTabs
         label="Code tools"
         panelId={panelId}
@@ -343,68 +247,19 @@ export function ApexPanel(props: SalesforcePanelProps) {
         ]}
       />
       <div
-        className="sf-scroll"
+        className="sf-apex-content"
         id={panelId}
         role="tabpanel"
         aria-labelledby={`${panelId}-${tab}`}
       >
         {error && <ErrorState message={error} />}
-        {tab === "logs" ? (
-          <div className="sf-content">
-            {logs.error && (
-              <ErrorState
-                message={logs.error}
-                retry={() => void logs.refresh()}
-              />
-            )}
-            {logs.busy && <LoadingState />}
-            {logs.data?.data?.records?.map((row) => (
-              <div className="sf-row" key={String(row.Id)}>
-                <button
-                  className="sf-link sf-row-main"
-                  type="button"
-                  onClick={() => setLogId(String(row.Id))}
-                >
-                  {String(row.Operation)}
-                  <small>{String(row.StartTime)}</small>
-                </button>
-                <span className="sf-badge">{String(row.Status)}</span>
-              </div>
-            ))}
-            {logs.data && !logs.data.data?.records?.length && (
-              <EmptyState title="No debug logs returned">
-                Generate a log in the org and refresh.
-              </EmptyState>
-            )}
-            {log.error && <ErrorState message={log.error} />}
-            {log.data && (
-              <>
-                <pre className="sf-code">{log.data.body}</pre>
-                {log.data.truncated && (
-                  <p className="sf-muted">
-                    Showing the first 64,000 characters.
-                  </p>
-                )}
-                {props.onAddToPrompt && (
-                  <button
-                    className="sf-btn"
-                    type="button"
-                    onClick={() =>
-                      props.onAddToPrompt?.(
-                        `Apex log ${logId}\n${log.data!.body.slice(0, 8000)}`,
-                      )
-                    }
-                  >
-                    Add log excerpt to prompt
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="sf-content">
+        {tab === "logs" ? <DebugLogsPanel {...props} /> : (
+          <div className="sf-workspace sf-apex-workspace">
+          <div className="sf-workspace-config">
+            <div className="sf-workspace-heading"><div><span className="sf-eyebrow">{tab === 'anonymous' ? 'Apex execution' : 'Targeted testing'}</span><h2>{tab === 'anonymous' ? 'Run anonymous Apex' : tab === 'lwc' ? 'Test a component' : 'Run Apex tests'}</h2></div></div>
+            <div className="sf-target-strip"><span>Target org</span><strong>{props.orgAlias || 'Project default'}</strong></div>
             <form
-              className="sf-form"
+              className="sf-form sf-apex-form"
               onSubmit={(event) => {
                 event.preventDefault();
                 void start(
@@ -451,224 +306,27 @@ export function ApexPanel(props: SalesforcePanelProps) {
                 <button
                   className="sf-btn primary"
                   disabled={
-                    busy ||
+                    busy || (tab === "anonymous" && !props.threadId && !props.onAddToPrompt) ||
                     !(tab === "anonymous" ? body.trim() : className.trim())
                   }
                 >
                   {busy
                     ? "Starting…"
                     : tab === "anonymous"
-                      ? "Review and run"
+                      ? props.threadId ? "Review and run" : "Continue in a thread"
                       : "Run targeted tests"}
                 </button>
               </div>
               <p className="sf-muted sf-small">
                 {tab === "anonymous"
-                  ? "Anonymous Apex requires approval in a thread."
-                  : "Run only the selected class or component. Results remain available below."}
+                  ? "Anonymous Apex requires approval in a thread. Your code and selected org will be carried into the review."
+                  : "Run only the selected class or component. Results stay in this panel's history."}
               </p>
             </form>
           </div>
+          <OperationsPanel {...props} revision={revision} scope="apex" />
+          </div>
         )}
-        {tab !== "logs" && <OperationsPanel {...props} revision={revision} />}
-      </div>
-    </SalesforcePanelFrame>
-  );
-}
-
-export function DeploymentsPanel(props: SalesforcePanelProps) {
-  const draftKey = `${props.projectId ?? "global"}:${props.threadId ?? "project"}:deploy`;
-  const call = useSalesforceCall(props.pluginId, props, props.threadId);
-  const [components, setComponents] = useSalesforceDraft(
-    `${draftKey}:components`,
-  );
-  const [tests, setTests] = useSalesforceDraft(`${draftKey}:tests`);
-  const [type, setType] = useState("ApexClass");
-  const [browseType, setBrowseType] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const metadata = useResource<{
-    records: Array<{ fullName: string }>;
-    truncated?: boolean;
-  }>(call, browseType ? "metadata.list" : null, { metadataType: browseType });
-  const selected = components
-    .split(/[\n,]+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  async function run(kind: OperationKind) {
-    setBusy(true);
-    setError(null);
-    try {
-      requireResult(
-        await call("operations.start", {
-          kind,
-          components: selected,
-          tests: tests.split(/[\s,]+/).filter(Boolean),
-        }),
-      );
-      setRevision((value) => value + 1);
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <SalesforcePanelFrame title="Deployments">
-      <div className="sf-scroll">
-        <div className="sf-content">
-          <h2>Review the change. Keep the context.</h2>
-          <p className="sf-muted">
-            Select explicit metadata, preview the changes, then validate or
-            deploy.
-          </p>
-          {error && <ErrorState message={error} />}
-          <div className="sf-toolbar">
-            <select
-              className="sf-select"
-              aria-label="Metadata type"
-              value={type}
-              onChange={(event) => setType(event.target.value)}
-            >
-              {[
-                "ApexClass",
-                "ApexTrigger",
-                "LightningComponentBundle",
-                "CustomObject",
-                "PermissionSet",
-                "Flow",
-              ].map((name) => (
-                <option key={name}>{name}</option>
-              ))}
-            </select>
-            <button
-              className="sf-btn"
-              type="button"
-              disabled={metadata.busy}
-              onClick={() => {
-                if (browseType === type) void metadata.refresh();
-                else setBrowseType(type);
-              }}
-            >
-              Browse org metadata
-            </button>
-          </div>
-          {metadata.error && <ErrorState message={metadata.error} />}
-          {metadata.data && (
-            <div className="sf-table-wrap">
-              <table className="sf-table">
-                <thead>
-                  <tr>
-                    <th>Select</th>
-                    <th>Component</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {metadata.data.records.map((row) => (
-                    <tr key={row.fullName}>
-                      <td>
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${row.fullName}`}
-                          checked={selected.includes(
-                            `${browseType}:${row.fullName}`,
-                          )}
-                          onChange={(event) => {
-                            const key = `${browseType}:${row.fullName}`;
-                            setComponents(
-                              (event.target.checked
-                                ? [...selected, key]
-                                : selected.filter((value) => value !== key)
-                              ).join("\n"),
-                            );
-                          }}
-                        />
-                      </td>
-                      <td>{row.fullName}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {metadata.data.truncated && (
-                <p className="sf-muted">Showing the first 200 components.</p>
-              )}
-            </div>
-          )}
-          <div className="sf-form">
-            <label>
-              Selected components
-              <textarea
-                className="sf-input"
-                placeholder="ApexClass:OrderService"
-                value={components}
-                onChange={(event) => setComponents(event.target.value)}
-              />
-            </label>
-            <label>
-              Targeted Apex tests
-              <input
-                className="sf-input"
-                placeholder="OrderServiceTest"
-                value={tests}
-                onChange={(event) => setTests(event.target.value)}
-              />
-            </label>
-            <div className="sf-row">
-              <button
-                className="sf-btn"
-                type="button"
-                disabled={busy || !selected.length}
-                onClick={() => void run("deploy.preview")}
-              >
-                Preview deployment
-              </button>
-              <button
-                className="sf-btn"
-                type="button"
-                disabled={busy || !selected.length || !tests.trim()}
-                onClick={() => void run("deploy.validate")}
-              >
-                Validate
-              </button>
-              <button
-                className="sf-btn primary"
-                type="button"
-                disabled={busy || !selected.length || !tests.trim()}
-                onClick={() => void run("deploy.start")}
-              >
-                Review and deploy
-              </button>
-            </div>
-            <details>
-              <summary>Retrieve from org</summary>
-              <p className="sf-muted">
-                Preview shows all tracked changes and conflicts. Retrieval
-                writes the selected components into this project and requires
-                approval in a thread.
-              </p>
-              <div className="sf-row">
-                <button
-                  className="sf-btn"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void run("retrieve.preview")}
-                >
-                  Preview tracked changes
-                </button>
-                <button
-                  className="sf-btn"
-                  type="button"
-                  disabled={busy || !selected.length}
-                  onClick={() => void run("retrieve.start")}
-                >
-                  Review and retrieve selected
-                </button>
-              </div>
-            </details>
-          </div>
-        </div>
-        <OperationsPanel {...props} revision={revision} />
       </div>
     </SalesforcePanelFrame>
   );

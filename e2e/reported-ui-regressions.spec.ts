@@ -40,11 +40,13 @@ test('agent inspector exits fullscreen and keeps its window controls clickable (
   await window.locator('.agent-card[data-kind="thread"]').filter({ hasText: 'Fullscreen regression' }).click();
   const modal = window.getByTestId('thread-modal');
   await expect(modal).toBeVisible();
+  await expect(modal.getByTestId('inspector-resize-se')).toBeVisible();
   const nativeFullScreen = () => window.evaluate(() => window.cc.app.isFullScreen());
   await expect.poll(nativeFullScreen).toBe(false);
   await modal.getByRole('button', { name: 'Full screen', exact: true }).click();
   await expect.poll(nativeFullScreen).toBe(true);
   await expect(modal).toHaveClass(/is-fullscreen/);
+  await expect(modal.getByTestId('inspector-resize-se')).toHaveCount(0);
   // CDP clicks alone bypass native drag hit-testing. Check the actual exclusion
   // as well, so controls cannot sit in the shell's underlying draggable titlebar.
   expect(await modal.evaluate((node) => getComputedStyle(node).getPropertyValue('-webkit-app-region'))).toBe('no-drag');

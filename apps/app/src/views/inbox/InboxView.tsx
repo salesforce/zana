@@ -1,5 +1,7 @@
-import { useMemo } from 'react';
-import { useInbox, useInboxScopeProjectId, useInboxSelection, useUi } from '@/store';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
+import { useInbox, useInboxScopeProjectId, useInboxSelection, useSavedSelection, useSaved, useUi } from '@/store';
+import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { InboxDetail } from '@/components/InboxDetail';
 import { InboxOverview } from '@/components/InboxOverview';
 import { InboxPane } from '@/components/listpane/InboxPane';
@@ -25,6 +27,14 @@ export function InboxView() {
   const active = nav === 'inbox';
   const showingSaved = inboxTab === 'saved';
   const selectedId = useInboxSelection((s) => s.selectedEntryId);
+  const select = useInboxSelection((s) => s.select);
+  const savedId = useSavedSelection((s) => s.selectedSavedId);
+  const selectSaved = useSavedSelection((s) => s.selectSaved);
+  const savedRecords = useSaved((s) => s.records);
+  const compact = useCompactLayout();
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const root = useRef<HTMLElement>(null);
+  const listFocus = useRef<HTMLElement | null>(null);
 
   // Same scoped slice the list column computes, so the landing's questions and
   // AI summary agree with what the feed shows (home = all projects, drilled-in
@@ -35,15 +45,45 @@ export function InboxView() {
     () => (scopeProjectId ? allEntries.filter((e) => e.projectId === scopeProjectId) : allEntries),
     [allEntries, scopeProjectId]
   );
+  const detailOpen = showingSaved
+    ? savedRecords.some((record) => record.id === savedId && (!scopeProjectId || record.projectId === scopeProjectId))
+    : entries.some((entry) => entry.id === selectedId) || overviewOpen;
+  const detailVisible = active && (!compact || detailOpen);
+  const detailKey = showingSaved ? savedId : selectedId;
+
+  useLayoutEffect(() => {
+    if (!compact || !active) return;
+    if (detailOpen) {
+      const detail = root.current?.querySelector('.inbox-view-detail');
+      if (detail) detail.scrollTop = 0;
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused.closest('.inbox-list-pane')) listFocus.current = focused;
+      root.current?.querySelector<HTMLButtonElement>('.inbox-mobile-back, .inbox-detail-overview-back')?.focus();
+    } else if (listFocus.current?.isConnected) {
+      listFocus.current.focus();
+    }
+  }, [compact, active, detailOpen, detailKey]);
+
+  function backToList() {
+    setOverviewOpen(false);
+    if (showingSaved) selectSaved(null);
+    else select(null);
+  }
 
   return (
-    <section className="inbox-view panel-body--full">
-      <InboxPane />
+    <section ref={root} className="inbox-view panel-body--full" data-compact={compact} data-detail-open={detailOpen}>
+      <InboxPane onShowOverview={compact ? () => { select(null); setOverviewOpen(true); } : undefined} />
       <div className="inbox-view-detail">
+        {compact && (showingSaved || !selectedId) && (
+          <button type="button" className="inbox-mobile-back" onClick={backToList}>
+            <ArrowLeft size={16} aria-hidden />
+            {showingSaved ? 'Saved reports' : 'Inbox'}
+          </button>
+        )}
         {showingSaved ? (
-          <SavedDetail visible={active} />
+          <SavedDetail visible={detailVisible} />
         ) : selectedId ? (
-          <InboxDetail visible={active} />
+          <InboxDetail visible={detailVisible} onBack={compact ? backToList : undefined} />
         ) : (
           <InboxOverview scopeProjectId={scopeProjectId} entries={entries} />
         )}

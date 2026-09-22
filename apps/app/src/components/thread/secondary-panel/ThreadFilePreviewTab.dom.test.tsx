@@ -3,9 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { ThreadFilePreviewTab } from './ThreadFilePreviewTab.js';
 
-const mocks = vi.hoisted(() => ({ readFile: vi.fn() }));
+const mocks = vi.hoisted(() => ({ readFile: vi.fn(), hostFileContent: vi.fn(), storageContent: vi.fn() }));
 vi.mock('../../../lib/product-client.js', () => ({
-  product: { fs: { readFile: mocks.readFile }, threads: {} }
+  product: {
+    fs: { readFile: mocks.readFile },
+    threads: { hostFileContent: mocks.hostFileContent, storageContent: mocks.storageContent }
+  }
 }));
 vi.mock('../../../plugins/plugin-slots.js', async () => {
   const { DocsOpener } = await import('../../../../../../plugins/docs/src/app/DocsOpener.js');
@@ -16,9 +19,44 @@ vi.mock('../../../plugins/plugin-slots.js', async () => {
   return { listFileOpeners: () => openers, subscribePluginSlots: () => () => undefined };
 });
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); localStorage.clear(); });
 
 describe('file opener host preview lifetime', () => {
+  it('passes the CLI panel project scope when a relative workspace file needs the host reader', async () => {
+    mocks.readFile.mockResolvedValue({ ok: false, message: 'Path is not inside a known project' });
+    mocks.hostFileContent.mockImplementation(async (_id, _path, projectId) => ({ content: `# ${projectId}`, encoding: 'utf8' }));
+    const view = render(<ThreadFilePreviewTab path=".zcc/report.md" threadId="cli-session" projectId="p1" />);
+    await view.findByRole('heading', { name: 'p1' });
+    expect(mocks.hostFileContent).toHaveBeenCalledWith('cli-session', '.zcc/report.md', 'p1');
+    view.rerender(<ThreadFilePreviewTab path=".zcc/report.md" threadId="cli-session" projectId="p2" />);
+    await view.findByRole('heading', { name: 'p2' });
+    expect(mocks.hostFileContent).toHaveBeenLastCalledWith('cli-session', '.zcc/report.md', 'p2');
+  });
+
+  it('loads CLI workspace images using the same project scope', async () => {
+    mocks.hostFileContent.mockResolvedValue({ content: 'iVBORw0KGgo=', encoding: 'base64', contentType: 'image/png' });
+    const view = render(<ThreadFilePreviewTab path="shot.png" threadId="cli-session" projectId="p1" />);
+    expect((await view.findByRole('img', { name: 'shot.png' })).getAttribute('src')).toBe('data:image/png;base64,iVBORw0KGgo=');
+    expect(mocks.hostFileContent).toHaveBeenCalledWith('cli-session', 'shot.png', 'p1');
+  });
+
+  it('keeps thread-storage files on the storage reader even when a project is supplied', async () => {
+    mocks.storageContent.mockResolvedValue({ content: '# Stored', encoding: 'utf8' });
+    const view = render(<ThreadFilePreviewTab path="stored.md" threadId="t1" projectId="p1" storage />);
+    await view.findByRole('heading', { name: 'Stored' });
+    expect(mocks.storageContent).toHaveBeenCalledWith('t1', 'stored.md');
+    expect(mocks.hostFileContent).not.toHaveBeenCalled();
+    expect(mocks.readFile).not.toHaveBeenCalled();
+  });
+
+  it('preserves conversation previews without a project and displays read errors', async () => {
+    mocks.readFile.mockResolvedValue({ ok: false });
+    mocks.hostFileContent.mockRejectedValue(new Error('file not found'));
+    const view = render(<ThreadFilePreviewTab path="missing.md" threadId="t1" />);
+    await view.findByText('file not found');
+    expect(mocks.hostFileContent).toHaveBeenCalledWith('t1', 'missing.md', undefined);
+  });
+
   it('plays videos without reading them as text and resets errors when the file changes', async () => {
     mocks.readFile.mockClear();
     const view = render(<ThreadFilePreviewTab path="clips/demo.MP4" threadId="t1" lineNumber={10} />);

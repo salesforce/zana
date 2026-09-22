@@ -1,0 +1,467 @@
+/* Mobile is a host layout, not a preference. Desktop geometry stays independent. */
+.thread-command-options,
+.thread-command-option,
+.thread-command-model,
+.thread-command-secondary-actions {
+  display: contents;
+}
+.thread-command-option-label,
+.thread-command-action-label,
+.thread-command-toolbar .thread-command-options-toggle {
+  display: none;
+}
+/* The disclosure uses one set of controls; retain their desktop order. */
+.thread-command-toolbar .thread-command-model > * {
+  order: 1;
+}
+.thread-command-option--reasoning > * {
+  order: 2;
+}
+.thread-command-option--send-mode > * {
+  order: 3;
+}
+.app-shell[data-mobile='true'] {
+  --titlebar-h: 48px;
+  --col-nav: 0px;
+  width: 100%;
+  height: var(--mobile-viewport-height, 100dvh);
+  min-width: 0;
+  grid-template-columns: 0 minmax(0, 1fr);
+  overflow: hidden;
+}
+.app-shell[data-mobile='true'] .titlebar {
+  -webkit-app-region: no-drag;
+}
+.app-shell[data-mobile='true'] .titlebar-title {
+  max-width: 32vw;
+}
+.app-shell[data-mobile='true'] .titlebar-fav {
+  display: none;
+}
+.app-shell[data-mobile='true'] .titlebar-bell {
+  min-width: 44px;
+  min-height: 44px;
+}
+.app-shell[data-mobile='true'] .sidebar-trigger-overlay {
+  height: 48px;
+  padding-left: 4px;
+}
+.app-shell[data-mobile='true'] .sidebar-expand-control {
+  min-width: 44px;
+  min-height: 44px;
+}
+.app-shell[data-mobile='true'] .sidebar-history-controls,
+.app-shell[data-mobile='true'] .sidebar-trigger-actions {
+  display: none;
+}
+.mobile-nav-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 110;
+  border: 0;
+  background: rgb(0 0 0 / 0.45);
+}
+.mobile-nav-dialog {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: min(340px, calc(100% - 48px));
+  z-index: 111;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  box-shadow: 8px 0 32px rgb(0 0 0 / 0.2);
+}
+.mobile-nav-dialog > :is(aside, .list-pane) {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+.mobile-nav-dialog .sidebar {
+  padding-top: 0;
+}
+.mobile-nav-close {
+  min-height: 48px;
+  padding: 12px 16px;
+  text-align: right;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  background: var(--bg-base);
+  font: inherit;
+}
+.app-shell[data-mobile='true'] .thread-detail-view {
+  min-width: 0;
+  padding: 0;
+}
+.app-shell[data-mobile='true'] .thread-detail-header {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.app-shell[data-mobile='true'] .thread-detail-view.is-secondary-open .thread-secondary-panel {
+  width: 100%;
+  max-width: 100%;
+}
+.app-shell[data-mobile='true'] .thread-secondary-resizer {
+  display: none;
+}
+.app-shell[data-mobile='true'] :is(.thread-composer, .thread-timeline, .thread-detail-main) {
+  min-width: 0;
+  max-width: 100%;
+}
+/* Flip the mention/command typeahead above the new-thread prompt on mobile so the
+   on-screen keyboard doesn't cover it — parity with the follow-up composer, which
+   already flips via `.thread-detail-view .mention-popover`. */
+.app-shell[data-mobile='true'] .home-agent-composer .mention-popover {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+.app-shell[data-mobile='true'] :is(input, textarea, [contenteditable='true']) {
+  font-size: 16px;
+}
+.app-shell[data-mobile='true'] .thread-command-composer .thread-command-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 4px;
+  padding: 0 8px 8px;
+}
+.app-shell[data-mobile='true']
+  .thread-command-toolbar
+  :is(.thread-command-footer-start, .thread-command-footer-end) {
+  display: contents;
+}
+.app-shell[data-mobile='true'] .thread-command-model {
+  display: block;
+  min-width: 0;
+  grid-row: 1;
+  grid-column: 1;
+}
+.app-shell[data-mobile='true'] .thread-command-model .model-reasoning-picker-trigger {
+  width: 100%;
+  height: 44px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+.app-shell[data-mobile='true'] .thread-command-model .model-reasoning-picker-trigger-model {
+  flex: 1;
+  text-align: left;
+}
+.app-shell[data-mobile='true'] .thread-command-composer .ui-command-icon-button {
+  width: 44px;
+  height: 44px;
+}
+.app-shell[data-mobile='true'] .thread-command-options-toggle {
+  display: inline-flex;
+  grid-row: 1;
+  grid-column: 2;
+}
+.app-shell[data-mobile='true'] .thread-command-options-toggle[aria-expanded='true'] {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.app-shell[data-mobile='true'] .thread-command-toolbar .thread-command-stop {
+  grid-row: 1;
+  grid-column: 3;
+}
+.app-shell[data-mobile='true'] .thread-command-toolbar .thread-command-send {
+  grid-row: 1;
+  grid-column: 4;
+  margin-left: 0;
+}
+.app-shell[data-mobile='true'] :is(.thread-command-options, .thread-command-secondary-actions) {
+  display: none;
+  grid-column: 1 / -1;
+}
+.app-shell[data-mobile='true']
+  .thread-command-toolbar[data-options-expanded='true']
+  .thread-command-options {
+  display: flex;
+  grid-row: 2;
+  flex-direction: column;
+  max-height: min(240px, 40dvh);
+  overflow-y: auto;
+  padding: 4px;
+  border-top: 1px solid var(--border);
+}
+.app-shell[data-mobile='true'] .thread-command-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+.app-shell[data-mobile='true'] .thread-command-option:not(:has(button)) {
+  display: none;
+}
+.app-shell[data-mobile='true'] .thread-command-option-label {
+  display: inline;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.app-shell[data-mobile='true'] .thread-command-option button {
+  flex: 0 1 auto;
+  min-height: 44px;
+  max-width: 70%;
+  font-size: 13px;
+}
+.app-shell[data-mobile='true']
+  .thread-command-toolbar[data-options-expanded='true']
+  .thread-command-secondary-actions:has(button:not(:disabled)) {
+  display: flex;
+  grid-row: 3;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0 4px;
+}
+.app-shell[data-mobile='true']
+  .thread-command-secondary-actions
+  .composer-control-tooltip:has(button:disabled) {
+  display: none;
+}
+.app-shell[data-mobile='true'] .thread-command-secondary-actions .composer-control-tooltip {
+  display: inline-flex;
+  align-items: center;
+}
+.app-shell[data-mobile='true'] .thread-command-secondary-actions .composer-control-tooltip::after {
+  display: none;
+}
+.app-shell[data-mobile='true'] .thread-command-secondary-actions .ui-command-icon-button {
+  width: auto;
+  padding: 0 12px;
+  gap: 8px;
+  border-radius: 8px;
+}
+.app-shell[data-mobile='true'] .thread-command-action-label {
+  display: inline;
+  font-size: 12px;
+}
+.app-shell[data-mobile='true'] .thread-command-editor-slot {
+  padding: 10px 52px 0 12px;
+}
+.app-shell[data-mobile='true'] .thread-command-editor {
+  min-height: 40px;
+  max-height: min(132px, 24dvh);
+  line-height: 1.5;
+}
+/* Keep the editor instance/draft stable when the viewport changes. */
+.app-shell[data-mobile='true'] .thread-command-editor p.is-editor-empty:first-child::before {
+  content: 'Message…';
+}
+.app-shell[data-mobile='true'] .thread-command-composer.is-expanded .thread-command-editor {
+  min-height: min(120px, 24dvh);
+  max-height: min(240px, 40dvh);
+}
+.app-shell[data-mobile='true'] .thread-command-composer-meta {
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.app-shell[data-mobile='true'] .thread-command-composer-meta-start {
+  flex-wrap: wrap;
+}
+/* Keep this space stable when focus moves from the editor to a touch control. */
+body:has(.app-shell[data-mobile='true'] .thread-command-composer) .sponsor-nudge {
+  display: none;
+}
+body:has(.app-shell[data-mobile='true'])
+  :is(.model-reasoning-picker-row, .reasoning-effort-pill, .launch-model-picker-option) {
+  min-height: 44px;
+}
+body:has(.app-shell[data-mobile='true']) .model-reasoning-picker-tab {
+  min-width: 44px;
+  min-height: 44px;
+}
+body:has(.app-shell[data-mobile='true'])
+  :is(.model-reasoning-picker-search, .launch-model-picker-search)
+  input {
+  font-size: 16px;
+}
+.app-shell[data-mobile='true']
+  :is(.settings-page, .settings-content, .project-slot, .module-panel-slot) {
+  min-width: 0;
+  max-width: 100%;
+}
+@media (max-width: 1024px) {
+  body:has(.app-shell[data-mobile='true']) {
+    overscroll-behavior: none;
+  }
+  body:has(.app-shell[data-mobile='true']) :is(.modal, .modal-dialog, .agent-modal, .thread-modal) {
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+}
+
+.inbox-view[data-compact='true'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.inbox-view[data-compact='true'][data-detail-open='true'] > .inbox-list-pane,
+.inbox-view[data-compact='true'][data-detail-open='false'] > .inbox-view-detail,
+.inbox-view[data-compact='true'] .list-pane-resizer {
+  display: none;
+}
+.inbox-view[data-compact='true'] .inbox-list-pane {
+  width: 100%;
+  min-width: 0;
+  border-right: 0;
+}
+.inbox-mobile-back,
+.inbox-mobile-overview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.inbox-mobile-back {
+  align-self: flex-start;
+  margin: 4px 12px;
+}
+.inbox-mobile-overview {
+  flex: 0 0 44px;
+  justify-content: center;
+  padding: 8px;
+}
+.inbox-mobile-back:hover,
+.inbox-mobile-overview:hover {
+  background: var(--bg-hover);
+}
+.app-shell[data-mobile='true'] .inbox-filter-row {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.app-shell[data-mobile='true'] .inbox-filter-search {
+  flex-basis: 100%;
+}
+.app-shell[data-mobile='true'] .inbox-filter-input {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+}
+.app-shell[data-mobile='true'] :is(.inbox-tab, .inbox-filter-chip, .inbox-actions-more .icon-btn, .inbox-filter-clear, .inbox-docs-fileitem, .inbox-detail-overview-back, .inbox-detail-open, .inbox-reply-composer, .inbox-question-option, .inbox-reply-send) {
+  min-height: 44px;
+}
+.app-shell[data-mobile='true'] :is(.inbox-actions-more .icon-btn, .inbox-filter-clear, .inbox-detail-header button, .inbox-doc-open) {
+  min-width: 44px;
+  min-height: 44px;
+}
+.app-shell[data-mobile='true'] .inbox-row {
+  min-height: 56px;
+}
+.app-shell[data-mobile='true'] .inbox-detail {
+  padding: 0 16px 32px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.app-shell[data-mobile='true'] .inbox-detail .inbox-detail-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin: 0 -16px 16px;
+  padding: 8px 16px;
+  gap: 4px 8px;
+}
+.app-shell[data-mobile='true'] .inbox-detail-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-shell[data-mobile='true'] .inbox-detail-ts {
+  grid-column: 1 / -1;
+  margin-left: 0;
+}
+.app-shell[data-mobile='true'] .inbox-detail-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+.app-shell[data-mobile='true'] .inbox-detail:has(.saved-detail-title) .inbox-detail-header {
+  display: flex;
+}
+.app-shell[data-mobile='true'] .inbox-detail:has(.saved-detail-title) .inbox-detail-label {
+  flex: 1;
+}
+.app-shell[data-mobile='true'] .inbox-detail:has(.saved-detail-title) .inbox-detail-header > .inbox-detail-ts-sep {
+  display: none;
+}
+.app-shell[data-mobile='true'] .inbox-detail:has(.saved-detail-title) .inbox-detail-ts {
+  flex-basis: 100%;
+}
+.app-shell[data-mobile='true'] .inbox-detail-dock {
+  flex-direction: column;
+  align-items: stretch;
+}
+.app-shell[data-mobile='true'] .inbox-docs-explorer.is-multi {
+  grid-template-columns: minmax(0, 1fr);
+}
+.app-shell[data-mobile='true'] .inbox-docs-filelist {
+  border-right: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 0 8px;
+}
+.app-shell[data-mobile='true'] .inbox-doc-header {
+  flex-wrap: wrap;
+}
+.app-shell[data-mobile='true'] .inbox-doc-path {
+  min-width: 0;
+}
+.app-shell[data-mobile='true'] .inbox-overview {
+  padding: 12px 16px;
+}
+.app-shell[data-mobile='true'] .settings-inner {
+  padding: 20px 16px 32px;
+}
+.app-shell[data-mobile='true'] :is(.scheduler-header, .scheduler-header-actions) {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.app-shell[data-mobile='true'] .scheduler-list-search {
+  min-width: 0;
+  flex-basis: 100%;
+  min-height: 44px;
+}
+.app-shell[data-mobile='true'] .scheduler-scope-picker {
+  grid-template-columns: minmax(0, 1fr);
+}
+.app-shell[data-mobile='true'] .scheduler-scope-option {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.app-shell[data-mobile='true'] :is(.settings-btn, .agents-view-toggle-btn, .agents-board-toolbar .btn) {
+  min-height: 44px;
+}
+.app-shell[data-mobile='true'] .agents-view-toggle-btn {
+  min-width: 44px;
+}
+.app-shell[data-mobile='true'] .agents-board-toolbar {
+  padding-left: 12px;
+}
+.app-shell[data-mobile='true'] .agent-monitor {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(140px, 28%) minmax(0, 1fr);
+}
+.app-shell[data-mobile='true'] .agent-monitor-list {
+  border-right: 0;
+  border-bottom: 1px solid var(--border);
+}
+.app-shell[data-mobile='true'] .agent-monitor-row {
+  min-height: 56px;
+}
+.app-shell[data-mobile='true'] .agents-board .zcc-kanban-col:not(.is-collapsed) {
+  min-width: min(300px, calc(100vw - 36px));
+}
+.app-shell[data-mobile='true'] .ext-installed-row-head {
+  flex-wrap: wrap;
+}
+.app-shell[data-mobile='true'] .ext-installed-row-title {
+  flex: 1 0 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

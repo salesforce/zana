@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1390" viewBox="0 0 1440 1390" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">How Zana fits together</title>
+  <desc id="desc">A logical view of the packaged desktop. The React UI, zcc CLI and Control SDK, and agent tools submit intent to trusted product services. The product server owns policy, projects, durable state, and full-trust installed plugins. Electron owns native integration, runtime supervision, and IPC and MCP adapters. Threads run through signed host commands, the host daemon, agent runtime, and provider bridges. CLI Agents still launch through desktop compatibility adapters into host harness modules and real PTYs. Events and replies return to product services. Zana supports local projects, enrolled machines, and SSH projects.</desc>
+  <!-- Logical responsibilities, not a promise that all execution already crosses host RPC.
+       In particular, CLI Agents retain the Electron compatibility launch path.
+       Sources and export instructions: docs/assets/README.md. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1440" y2="1390" gradientUnits="userSpaceOnUse"><stop stop-color="#172641"/><stop offset=".45" stop-color="#101c33"/><stop offset="1" stop-color="#0d152b"/></linearGradient>
+    <linearGradient id="accent" x1="64" y1="171" x2="1376" y2="171" gradientUnits="userSpaceOnUse"><stop stop-color="#93dfff"/><stop offset=".6" stop-color="#c0b9ff"/><stop offset="1" stop-color="#ffdb9e"/></linearGradient>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L7 4L1 7" stroke="#93dfff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="gold-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L7 4L1 7" stroke="#ffdb9e" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  </defs>
+  <rect width="1440" height="1390" rx="28" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1438" height="1388" rx="27" stroke="#34496b"/>
+  <path d="M64 171H1376" stroke="url(#accent)" stroke-opacity=".55"/>
+  <svg xmlns="http://www.w3.org/2000/svg" x="1270" y="35" width="110" height="110" viewBox="0 0 1024 1024" fill="none">
+  <title>Zana — the AI fairy</title>
+  <defs>
+    <linearGradient id="tile" x1="160" y1="80" x2="820" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#26385c"/>
+      <stop offset=".5" stop-color="#15233f"/>
+      <stop offset="1" stop-color="#0d152b"/>
+    </linearGradient>
+    <radialGradient id="aura" cx="0" cy="0" r="1" gradientTransform="translate(495 436) rotate(90) scale(474 427)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#537ccf" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#537ccf" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="272" y1="64" x2="711" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b8dbff" stop-opacity=".52"/>
+      <stop offset=".5" stop-color="#8ea8ee" stop-opacity=".05"/>
+      <stop offset="1" stop-color="#8ea8ee" stop-opacity=".2"/>
+    </linearGradient>
+    <linearGradient id="left-wing" x1="229" y1="290" x2="462" y2="617" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e0fcff"/>
+      <stop offset=".44" stop-color="#93dfff"/>
+      <stop offset="1" stop-color="#5e8df5"/>
+    </linearGradient>
+    <linearGradient id="right-wing" x1="750" y1="295" x2="576" y2="595" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#eee9ff"/>
+      <stop offset=".5" stop-color="#c0b9ff"/>
+      <stop offset="1" stop-color="#7389ee"/>
+    </linearGradient>
+    <linearGradient id="lower-wing" x1="344" y1="533" x2="659" y2="741" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#79cafa"/>
+      <stop offset="1" stop-color="#887cd7"/>
+    </linearGradient>
+    <linearGradient id="fairy" x1="472" y1="327" x2="576" y2="770" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset=".58" stop-color="#e9f6ff"/>
+      <stop offset="1" stop-color="#b3ccf5"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="732" y1="198" x2="779" y2="321" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff7d6"/>
+      <stop offset="1" stop-color="#ffc878"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+    <filter id="spark-glow" x="655" y="145" width="215" height="230" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+  </defs>
+
+  <!-- Inset tile, with transparent margins for the macOS Dock. -->
+  <rect x="66" y="81" width="892" height="892" rx="200" fill="#040c1c" opacity=".28" filter="url(#shadow)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#tile)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#aura)"/>
+  <rect x="66" y="66" width="892" height="892" rx="198" stroke="url(#edge)" stroke-width="3"/>
+
+  <!-- Broad wings remain legible when the constellation details disappear. -->
+  <path d="M459 561C344 555 234 473 229 291C355 310 437 392 459 561Z" fill="url(#left-wing)"/>
+  <path d="M567 561C681 547 762 448 750 294C638 330 577 419 567 561Z" fill="url(#right-wing)"/>
+  <path d="M450 584C348 545 276 578 267 704C357 717 420 669 450 584Z" fill="url(#lower-wing)"/>
+  <path d="M575 584C677 547 748 579 757 702C668 717 605 670 575 584Z" fill="url(#lower-wing)"/>
+  <path d="M252 315C279 409 340 476 417 516M727 321C704 407 657 474 610 516" stroke="#fff" stroke-opacity=".35" stroke-width="4" stroke-linecap="round"/>
+  <g stroke="#254f94" stroke-opacity=".27" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M304 379L333 445L397 481"/>
+    <path d="M333 445L328 488"/>
+    <path d="M686 385L660 447L623 472"/>
+  </g>
+  <g fill="#edfaff">
+    <circle cx="304" cy="379" r="7"/>
+    <circle cx="333" cy="445" r="7"/>
+    <circle cx="328" cy="488" r="7"/>
+    <circle cx="686" cy="385" r="7"/>
+    <circle cx="660" cy="447" r="7"/>
+  </g>
+
+  <!-- A floating head and flowing dress form the fairy silhouette. -->
+  <circle cx="512" cy="367" r="47" fill="url(#fairy)"/>
+  <path d="M512 446C539 479 546 523 551 566C558 632 592 689 625 723C554 762 472 762 399 723C436 680 466 627 473 566C478 523 485 479 512 446Z" fill="url(#fairy)"/>
+  <path d="M518 474C563 510 601 502 639 460" stroke="#f2f7ff" stroke-width="21" stroke-linecap="round"/>
+  <path d="M630 470L726 325" stroke="#f5d59c" stroke-width="13" stroke-linecap="round"/>
+
+  <!-- A single warm spark is the focal point. -->
+  <path d="M758 203C765 245 777 258 816 267C777 276 765 289 758 331C749 289 737 276 698 267C737 258 749 245 758 203Z" fill="#ffd48d" opacity=".55" filter="url(#spark-glow)"/>
+  <path d="M758 203C765 245 777 258 816 267C777 276 765 289 758 331C749 289 737 276 698 267C737 258 749 245 758 203Z" fill="url(#spark)"/>
+  <circle cx="682" cy="224" r="7" fill="#fff0d1" opacity=".8"/>
+  <circle cx="820" cy="342" r="5" fill="#d3ddff" opacity=".65"/>
+</svg>
+
+  <g font-family="Arial, Helvetica, sans-serif">
+  <text x="64" y="62" font-size="17" fill="#ffdb9e" font-weight="700" letter-spacing="2">ZANA / ARCHITECTURE</text>
+  <text x="64" y="117" font-size="44" fill="#f0f7ff" font-weight="700" letter-spacing="-1">One control plane. Two ways to run.</text>
+  <text x="64" y="150" font-size="22" fill="#b6c9e0" font-weight="400" >A logical view of the packaged desktop and its execution paths.</text>
+  <text x="64" y="212" font-size="17" fill="#93dfff" font-weight="700" letter-spacing="2">01 / SUBMIT INTENT</text>
+  <rect x="64" y="236" width="420" height="106" rx="20" fill="#14223c" stroke="#2c4366"/>
+  <text x="88" y="280" font-size="28" fill="#f0f7ff" font-weight="700" >Desktop UI</text>
+  <text x="88" y="316" font-size="21" fill="#b6c9e0" font-weight="400" >React · projects &amp; conversations</text>
+  <rect x="510" y="236" width="420" height="106" rx="20" fill="#14223c" stroke="#2c4366"/>
+  <text x="534" y="280" font-size="28" fill="#f0f7ff" font-weight="700" >CLI + Control SDK</text>
+  <text x="534" y="316" font-size="21" fill="#b6c9e0" font-weight="400" >Terminal &amp; programmatic control</text>
+  <rect x="956" y="236" width="420" height="106" rx="20" fill="#14223c" stroke="#2c4366"/>
+  <text x="980" y="280" font-size="28" fill="#f0f7ff" font-weight="700" >Agent tools</text>
+  <text x="980" y="316" font-size="21" fill="#b6c9e0" font-weight="400" >Questions, reports &amp; actions</text>
+  <path d="M274 342V367H1166V342" stroke="#587ea6" stroke-width="2" fill="none" />
+  <path d="M720 342V416" stroke="#93dfff" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <rect x="278" y="382" width="352" height="35" rx="5" fill="#101c33" stroke="none"/>
+  <text x="290" y="406" font-size="20" fill="#bcefff" font-weight="400" >Product HTTP / WebSocket</text>
+  <rect x="798" y="382" width="434" height="35" rx="5" fill="#101c33" stroke="none"/>
+  <text x="810" y="406" font-size="20" fill="#bcefff" font-weight="400" >Desktop IPC / MCP adapters</text>
+  <rect x="64" y="432" width="1312" height="368" rx="24" fill="#111f37" stroke="#52658b"/>
+  <text x="88" y="470" font-size="17" fill="#c0b9ff" font-weight="700" letter-spacing="2">02 / AUTHORIZE &amp; COORDINATE</text>
+  <rect x="88" y="494" width="792" height="282" rx="20" fill="#192c48" stroke="#496b91"/>
+  <text x="114" y="539" font-size="31" fill="#f0f7ff" font-weight="700" >Product server</text>
+  <text x="114" y="573" font-size="23" fill="#b6c9e0" font-weight="400" >Policy · project identity · path confinement</text>
+  <text x="114" y="610" font-size="23" fill="#b6c9e0" font-weight="400" >Durable state · SQLite + files · thread events</text>
+  <rect x="112" y="633" width="744" height="119" rx="14" fill="#15243e" stroke="#61668f"/>
+  <text x="134" y="664" font-size="17" fill="#c0b9ff" font-weight="700" letter-spacing="2">INSTALLED PLUGINS</text>
+  <text x="134" y="699" font-size="24" fill="#e0ddff" font-weight="600" >Full-trust server code + UI contributions</text>
+  <text x="134" y="730" font-size="20" fill="#b6c9e0" font-weight="400" >package.json → zcc · trust granted at install / enable</text>
+  <rect x="904" y="494" width="448" height="282" rx="20" fill="#20283e" stroke="#70644f"/>
+  <text x="930" y="539" font-size="30" fill="#f0f7ff" font-weight="700" >Electron desktop</text>
+  <text x="930" y="580" font-size="23" fill="#b6c9e0" font-weight="400" >Windows &amp; native APIs</text>
+  <text x="930" y="620" font-size="23" fill="#b6c9e0" font-weight="400" >Local runtime supervision</text>
+  <text x="930" y="660" font-size="23" fill="#b6c9e0" font-weight="400" >IPC / MCP compatibility</text>
+  <path d="M930 686H1326" stroke="#635e59" stroke-width="2" fill="none" />
+  <text x="930" y="720" font-size="21" fill="#e7d7b8" font-weight="400" >Supervises the local server</text>
+  <text x="930" y="748" font-size="21" fill="#e7d7b8" font-weight="400" >and host daemon.</text>
+  <path d="M370 800V907" stroke="#93dfff" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M405 907V800" stroke="#728ead" stroke-width="2" fill="none" stroke-dasharray="4 6" marker-end="url(#arrow)"/>
+  <rect x="102" y="831" width="253" height="42" rx="5" fill="#101c33" stroke="none"/>
+  <text x="111" y="858" font-size="20" fill="#bcefff" font-weight="400" >Signed host commands</text>
+  <path d="M1056 800V907" stroke="#ffdb9e" stroke-width="2" fill="none" marker-end="url(#gold-arrow)"/>
+  <path d="M1091 907V800" stroke="#8f887d" stroke-width="2" fill="none" stroke-dasharray="4 6" marker-end="url(#gold-arrow)"/>
+  <rect x="746" y="831" width="295" height="42" rx="5" fill="#101c33" stroke="none"/>
+  <text x="755" y="858" font-size="20" fill="#ffdb9e" font-weight="400" >Desktop compatibility path</text>
+  <rect x="64" y="916" width="642" height="241" rx="20" fill="#142a43" stroke="#457e9c"/>
+  <text x="90" y="952" font-size="17" fill="#93dfff" font-weight="700" letter-spacing="2">03 / EXECUTE</text>
+  <text x="90" y="995" font-size="34" fill="#f0f7ff" font-weight="700" >Threads</text>
+  <text x="90" y="1034" font-size="25" fill="#bcefff" font-weight="600" >Host daemon → agent runtime</text>
+  <text x="90" y="1071" font-size="23" fill="#b6c9e0" font-weight="400" >Provider bridges · structured conversations</text>
+  <path d="M90 1091H680" stroke="#375773" stroke-width="2" fill="none" />
+  <text x="90" y="1128" font-size="22" fill="#d0dcf0" font-weight="400" >Claude Agent SDK · Codex · Pi · ACP</text>
+  <rect x="734" y="916" width="642" height="241" rx="20" fill="#1d253b" stroke="#81704f"/>
+  <text x="760" y="952" font-size="17" fill="#ffdb9e" font-weight="700" letter-spacing="2">03 / EXECUTE</text>
+  <text x="760" y="995" font-size="34" fill="#f0f7ff" font-weight="700" >CLI Agents</text>
+  <text x="760" y="1034" font-size="25" fill="#ffdb9e" font-weight="600" >Desktop → host harness modules</text>
+  <text x="760" y="1071" font-size="23" fill="#b6c9e0" font-weight="400" >Native coding CLIs · real PTY sessions</text>
+  <path d="M760 1091H1350" stroke="#5e584e" stroke-width="2" fill="none" />
+  <text x="760" y="1128" font-size="22" fill="#d0dcf0" font-weight="400" >Launch providers · argv / env · terminal I/O</text>
+  <rect x="64" y="1193" width="1312" height="92" rx="18" fill="#17243b" stroke="#354d6e"/>
+  <text x="90" y="1230" font-size="17" fill="#c0b9ff" font-weight="700" letter-spacing="2">YOUR PROJECTS</text>
+  <text x="90" y="1263" font-size="25" fill="#f0f7ff" font-weight="600" >Local repositories</text>
+  <text x="493" y="1263" font-size="25" fill="#f0f7ff" font-weight="600" >Enrolled machines</text>
+  <text x="1000" y="1263" font-size="25" fill="#f0f7ff" font-weight="600" >SSH projects</text>
+  <circle cx="444" cy="1255" r="3" fill="#ffdb9e"/><circle cx="951" cy="1255" r="3" fill="#ffdb9e"/>
+  <path d="M64 1330H105" stroke="#93dfff" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <text x="118" y="1337" font-size="20" fill="#b6c9e0" font-weight="400" >Commands</text>
+  <path d="M283 1330H324" stroke="#728ead" stroke-width="2" fill="none" stroke-dasharray="4 6" marker-end="url(#arrow)"/>
+  <text x="337" y="1337" font-size="20" fill="#b6c9e0" font-weight="400" >Events &amp; replies</text>
+  <text x="1376" y="1337" font-size="20" fill="#c0cde0" font-weight="400" text-anchor="end">Callers propose. Trusted services authorize.</text>
+  </g>
+</svg>

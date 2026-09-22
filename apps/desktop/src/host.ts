@@ -194,6 +194,8 @@ import { LibraryStore, type ILibraryStore } from '@zana-ai/zcc-server/services/l
 import { createBoundsStateController, restoreWindowState } from './window/bounds-state.js';
 import type { LibraryDoc, LibraryAddInput, LibraryScope } from '@zana-ai/zcc-domain/product';
 import { startMcpServer, type McpServerHandle } from '@zana-ai/zcc-server/services/mcp/mcp-server';
+import { MobileGatewayManager } from '@zana-ai/zcc-server/mobile/manager';
+import { MobileDeviceStore } from '@zana-ai/zcc-server/mobile/device-store';
 import { readMcpPort, writeMcpPort } from '@zana-ai/zcc-server';
 import { startControlPlane, type ControlPlaneHandle } from './control/control-plane.js';
 import { controlCredentialForSession, verifySessionControlCredential } from '@zana-ai/zcc-host-daemon/control-credential';
@@ -2668,6 +2670,13 @@ let extensionsWatcher: FSWatcher | null = null;
 let extensionsChangeDebounce: NodeJS.Timeout | null = null;
 let mcpServer: McpServerHandle | null = null;
 let controlPlane: ControlPlaneHandle | null = null;
+// Zana Mobile gateway — one instance (Rule 3): started/stopped from the config
+// reactor, closed on quit. File-backed device store shares the `mobile:serve`
+// CLI's path convention so devices paired either way are visible to both.
+const mobileGateway = new MobileGatewayManager({
+  devices: new MobileDeviceStore(join(electronZccDataDir(), 'mobile', 'devices.json')),
+  upstream: productServerUrl()
+});
 let runtimeSupervisor: RuntimeSupervisor | null = null;
 /** Boot-injected, env-only. Never written to disk, never assigned onto process.env (PTY children inherit that). */
 let productServerCredential = '';
@@ -6132,6 +6141,7 @@ function registerIpc() {
     get mainWindow() { return mainWindow; },
     get menubar() { return menubar; },
     get menubarPopoverEnabled() { return menubarPopoverEnabled; },
+    get mobileGateway() { return mobileGateway; },
     get moduleRouter() { return moduleRouter; },
     get offLoudInboxAppended() { return offLoudInboxAppended; },
     set offLoudInboxAppended(value) { offLoudInboxAppended = value; },
@@ -7519,6 +7529,12 @@ async function bootstrapNormal() {
       }
     })
     .catch((err) => logMainError('startMcpServer', err));
+  // Start the Zana Mobile gateway if the user has enabled phone access. A start
+  // failure (e.g. port already held by `mobile:serve`) is recorded on the manager
+  // and surfaced through `mobile:status`; it must never abort boot.
+  if (store.getConfig().mobileGatewayEnabled === true) {
+    mobileGateway.start().catch((err) => logMainError('mobileGateway.start', err));
+  }
   // Bind the PTY/agent-status → renderer bridge ONCE for the process lifetime,
   // before the first window. Must not live in createWindow() (re-entrant on
   // macOS reactivate) or every reopen would double-send PTY output.
@@ -7985,6 +8001,7 @@ app.on('before-quit', (event) => {
     controlPlane = null;
     handle.close().catch((err) => logMainError('controlPlane.close', err));
   }
+  mobileGateway.close().catch((err) => logMainError('mobileGateway.close', err));
   if (runtimeSupervisor) {
     const runtime = runtimeSupervisor;
     runtimeSupervisor = null;

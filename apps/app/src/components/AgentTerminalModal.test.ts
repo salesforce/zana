@@ -11,6 +11,8 @@ describe('AgentTerminalModal secondary panel', () => {
     expect(source).toContain('data-testid="agent-terminal-modal"');
     expect(source).toContain('data-testid="agent-modal-header"');
     expect(source).toContain('className="agent-modal-window-controls"');
+    expect(source).toContain('<InspectorResizeHandles');
+    expect(source).toContain('useInspectorWindow');
     expect(source).not.toContain('agent-modal-title');
     expect(source).not.toContain('agent-modal-heading');
     expect(source).not.toContain('agent-modal-icon');

@@ -760,8 +760,8 @@ function httpProduct(): Pick<
           method: 'POST',
           body: JSON.stringify(body)
         }),
-      hostFileContent: async (threadId, path) =>
-        apiJson(`/threads/${encodeURIComponent(threadId)}/host-files/content?path=${encodeURIComponent(path)}`),
+      hostFileContent: async (threadId, path, projectId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/host-files/content?path=${encodeURIComponent(path)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`),
       storageFiles: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/thread-storage/files`),
       storageContent: async (threadId, path) =>
@@ -1229,6 +1229,18 @@ export const product: CcApi = new Proxy({} as CcApi, {
         });
       }
       return withStubs('marketplaces', http);
+    }
+    if (name === 'mobile') {
+      // Mobile gateway is a live main-process object — desktop only. In the
+      // browser build, status resolves to a stopped state (so the panel renders
+      // its "requires the desktop app" empty state) rather than throwing.
+      if (hasDesktopBridge()) return (window.cc as unknown as CcApi).mobile;
+      return {
+        status: async () => ({ running: false, publicUrl: null, host: null, port: null, boundLan: false, error: null }),
+        pair: async () => { throw new Error('mobile.pair requires the desktop app'); },
+        devices: async () => [],
+        revoke: async () => false
+      } satisfies CcApi['mobile'];
     }
     if (name === 'threads' || name === 'environments' || name === 'relay' || name === 'cliSkills') {
       const http = httpProduct() as unknown as Record<string, unknown>;

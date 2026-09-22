@@ -7,6 +7,7 @@ import rehypeKatex from 'rehype-katex';
 import 'highlight.js/styles/github-dark.css';
 import 'katex/dist/katex.min.css';
 import { MermaidDiagram } from './MermaidDiagram.js';
+import { DocumentImage } from './DocumentImage.js';
 import { extractMermaid } from './markdown-mermaid.js';
 import { unwrapBareFence } from '../lib/markdown.js';
 import { parseFrontMatter, type ParsedFrontMatter } from '@zana-ai/zcc-extension-sdk/helpers';
@@ -23,6 +24,7 @@ import { parseThreadMentionHref, remarkThreadMentions } from './markdown-thread-
 import { dispatchThreadOpenFile } from './thread/secondary-panel/useThreadOpenFileSignal.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { conversationImageSrc } from '../lib/prompt-attachments.js';
+import { ThreadDisplayedImage } from './thread/timeline/ThreadDisplayedImage.js';
 import {
   collectMarkdownLightboxItems,
   transformMarkdownMediaUrl
@@ -58,7 +60,8 @@ export function DocContent({
   mermaidTheme,
   exportable = false,
   threadId,
-  projectId
+  projectId,
+  storage = false
 }: {
   path: string;
   content: string;
@@ -66,6 +69,7 @@ export function DocContent({
   exportable?: boolean;
   threadId?: string;
   projectId?: string | null;
+  storage?: boolean;
 }) {
   const lower = path.toLowerCase();
   if (lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.mdx')) {
@@ -84,6 +88,8 @@ export function DocContent({
           exportable={exportable}
           threadId={threadId}
           projectId={projectId}
+          documentPath={path}
+          storage={storage}
         />
       </>
     );
@@ -154,6 +160,8 @@ export const MarkdownContent = memo(function MarkdownContent({
   threadMentions = false,
   threadId,
   projectId,
+  documentPath,
+  storage = false,
   filePathHints,
   lightboxItems: providedLightboxItems
 }: {
@@ -164,6 +172,8 @@ export const MarkdownContent = memo(function MarkdownContent({
   threadMentions?: boolean;
   threadId?: string;
   projectId?: string | null;
+  documentPath?: string;
+  storage?: boolean;
   filePathHints?: readonly string[];
   lightboxItems?: readonly { src: string; alt: string }[];
 }) {
@@ -175,8 +185,8 @@ export const MarkdownContent = memo(function MarkdownContent({
   const hostname = typeof window !== 'undefined' ? window.location.hostname : undefined;
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const collectedLightboxItems = useMemo(
-    () => collectMarkdownLightboxItems(body, projectId),
-    [body, projectId]
+    () => collectMarkdownLightboxItems(body, projectId, threadId),
+    [body, projectId, threadId]
   );
   const lightboxItems = providedLightboxItems ?? collectedLightboxItems;
   const remarkPlugins = useMemo(
@@ -192,7 +202,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   // is a new component type every pass, which remounts MermaidDiagram and
   // flashes "Rendering diagram…" while mermaid.render is cancelled.
   const renderFencedPre = useCallback(
-    (props: { children?: ReactNode }) => {
+    ({ node: _node, ...props }: { children?: ReactNode; node?: unknown }) => {
       const mermaid = extractMermaid(props.children);
       if (mermaid !== null) {
         return <MermaidDiagram code={mermaid} theme={mermaidTheme} exportable={exportable} />;
@@ -212,6 +222,19 @@ export const MarkdownContent = memo(function MarkdownContent({
     },
     [exportable, mermaidTheme]
   );
+  const renderImage = useCallback((props: { src?: string | Blob; alt?: string; title?: string }) => {
+    const raw = typeof props.src === 'string' ? props.src : '';
+    const alt = props.alt || 'Image';
+    if (documentPath !== undefined && !/^(https?:|data:image\/|blob:|\/\/)/iu.test(raw)) {
+      return <DocumentImage documentPath={documentPath} src={raw} alt={alt} title={props.title} threadId={threadId} storage={storage} />;
+    }
+    const src = threadId ? raw : conversationImageSrc(projectId, raw);
+    if (!src) return null;
+    return (
+      <ThreadDisplayedImage path={src} threadId={threadId} alt={alt} title={props.title} variant="markdown"
+        onOpen={exportable ? undefined : () => setLightbox({ src, alt })} />
+    );
+  }, [documentPath, threadId, storage, projectId, exportable]);
   return (
     <>
       <div className="inbox-md">
@@ -225,9 +248,8 @@ export const MarkdownContent = memo(function MarkdownContent({
         ]}
         components={{
           // Plain click opens the OS browser. Cmd/Ctrl-click opens the
-          // in-app side panel. Avoid destructuring `node` (deprecated in
-          // react-markdown v10).
-          a: (props) => {
+          // in-app side panel. The syntax-tree node is not a DOM attribute.
+          a: ({ node: _node, ...props }) => {
             const mentionId = parseThreadMentionHref(
               typeof props.href === 'string' ? props.href : undefined
             );
@@ -278,7 +300,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           },
           // GFM tables get a wrapper so horizontal overflow scrolls within
           // the comments block instead of stretching the whole panel.
-          table: ({ children, ...props }) => (
+          table: ({ node: _node, children, ...props }) => (
             <div className="inbox-md-table-wrap">
               <table {...props}>{Children.toArray(children)}</table>
             </div>
@@ -316,33 +338,7 @@ export const MarkdownContent = memo(function MarkdownContent({
             }
             return <code className={className || undefined}>{props.children}</code>;
           },
-          img: (props) => {
-            const raw = typeof props.src === 'string' ? props.src : '';
-            const src = conversationImageSrc(projectId, raw) ?? (/^(https?:|data:image\/|blob:)/iu.test(raw) ? raw : null);
-            if (!src) return null;
-            const alt = typeof props.alt === 'string' && props.alt.length > 0 ? props.alt : 'Image';
-            const image = (
-              <img
-                {...props}
-                src={src}
-                className="inbox-md-img"
-                alt={alt}
-                loading="lazy"
-                decoding="async"
-              />
-            );
-            if (exportable) return image;
-            return (
-              <button
-                type="button"
-                className="inbox-md-img-open"
-                aria-label={`View ${alt}`}
-                onClick={() => setLightbox({ src, alt })}
-              >
-                {image}
-              </button>
-            );
-          }
+          img: renderImage
         }}
       >
         {body}
@@ -352,6 +348,7 @@ export const MarkdownContent = memo(function MarkdownContent({
         <ThreadImageLightbox
           src={lightbox.src}
           alt={lightbox.alt}
+          threadId={threadId}
           items={mergeLightboxItems(lightboxItems, lightbox)}
           onClose={() => setLightbox(null)}
         />

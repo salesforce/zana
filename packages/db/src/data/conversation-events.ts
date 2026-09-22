@@ -175,3 +175,18 @@ export function listConversationThreadEventsWindow(
     .map(toEvent)
     .reverse();
 }
+
+/** Resolve turn ancestry independently of how much output followed its start. */
+export function getConversationTurnStart(
+  db: ZccDatabase,
+  threadId: string,
+  turnId: string
+): ConversationThreadEventRow | null {
+  const row = db.sqlite.prepare(
+    `SELECT * FROM thread_events
+      WHERE thread_id = ? AND type = 'turn/started'
+        AND COALESCE(json_extract(payload, '$.event.scope.turnId'), json_extract(payload, '$.scope.turnId')) = ?
+      ORDER BY sequence DESC LIMIT 1`
+  ).get(threadId, turnId) as ConversationThreadEventSqlRow | undefined;
+  return row ? toEvent(row) : null;
+}

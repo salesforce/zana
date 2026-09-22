@@ -38,10 +38,26 @@ describe('ThreadWorkingIndicator', () => {
   });
 
   it('keeps expandable thinking details while reasoning text is streaming', () => {
-    render(<ThreadWorkingIndicator status="active" thinking={thinkingWithText} />);
+    const { container } = render(<ThreadWorkingIndicator status="active" thinking={thinkingWithText} />);
     expect(screen.getByText('Thinking…')).toBeTruthy();
     expect(screen.getByText('Inspect nearby files.')).toBeTruthy();
     expect(screen.queryByText('Planning next move…')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('Thinking…');
+    expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite');
+    expect(container.querySelector('summary .thread-activity-dot')?.getAttribute('aria-hidden')).toBe('true');
+    expect(container.querySelector('summary .thread-timeline-work-chevron')).not.toBeNull();
+    expect(container.querySelector('details')?.open).toBe(false);
+    expect(container.querySelector('.is-shimmer')).toBeNull();
+  });
+
+  it('uses the same compact treatment without a disclosure for plain progress', () => {
+    const { container, rerender } = render(<ThreadWorkingIndicator status="active" thinking={null} />);
+    expect(screen.getByRole('status').textContent).toBe('Planning next move…');
+    expect(container.querySelectorAll('.thread-activity-dot')).toHaveLength(1);
+    expect(container.querySelector('summary')).toBeNull();
+    expect(container.querySelector('.thread-working-indicator-gutter')).toBeNull();
+    rerender(<ThreadWorkingIndicator status="active" thinking={null} waitingOnUser />);
+    expect(screen.queryByRole('status')).toBeNull();
   });
 
   it('advances the working phrase only after the indicator hides', () => {

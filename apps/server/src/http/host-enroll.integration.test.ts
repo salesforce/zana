@@ -505,6 +505,62 @@ describe('host enroll hub and thread create', () => {
     expect(listConversationThreadEvents(server!.ctx.db, spawned.value.id)).toHaveLength(before + 1);
   });
 
+  it.each(['completed', 'failed', 'interrupted'] as const)(
+    'keeps a parent active after a distant child %s event, including after host reconnect', async (status) => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+      const { enrollToken } = await startServer(projectRoot);
+      const instanceId = randomUUID();
+      const enrolled = await enrollHost(enrollToken, 'alpha', instanceId);
+      let socket = await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+      await waitForHost(enrolled.hostId);
+      const spawned = await fetch(`${server!.url}api/v1/threads`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['hi'] })
+      }).then((response) => response.json()) as { value: { id: string } };
+      const threadId = spawned.value.id;
+      const send = (events: unknown[]) => socket.send(JSON.stringify({
+        type: 'host.event', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostId: enrolled.hostId, instanceId, events
+      }));
+      const started = (turnId: string, parentToolCallId?: string) => ({
+        threadId, kind: 'thread.event', payload: {
+          type: 'turn/started', scope: { kind: 'turn', turnId }, parentToolCallId
+        }
+      });
+      send([started('root'), started('child', 'delegation-1')]);
+      const output = Array.from({ length: 350 }, (_, i) => ({
+        threadId, kind: 'thread.event', payload: {
+          type: 'item/agentMessage/delta', scope: { kind: 'turn', turnId: 'root' },
+          itemId: 'message', delta: `output ${i}`
+        }
+      }));
+      send(output.slice(0, 200));
+      send(output.slice(200));
+      await vi.waitFor(() => {
+        expect(listConversationThreadEvents(server!.ctx.db, threadId).length).toBeGreaterThanOrEqual(352);
+      });
+      socket.close();
+      await vi.waitFor(() => expect(server!.ctx.hostHub.connectedHostIds()).not.toContain(enrolled.hostId));
+      socket = await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+      await waitForHost(enrolled.hostId);
+      const completion = (turnId: string, completionStatus: string) => ({
+        threadId, kind: 'turn.completed', payload: {
+          type: 'turn/completed', scope: { kind: 'turn', turnId }, status: completionStatus
+        }
+      });
+      send([completion('child', status)]);
+      await vi.waitFor(() => {
+        expect(listConversationThreadEvents(server!.ctx.db, threadId).at(-1)?.payload).toMatchObject({
+          type: 'turn/completed', scope: { turnId: 'child' }
+        });
+      });
+      const response = await fetch(`${server!.url}api/v1/threads/${threadId}`).then((r) => r.json());
+      expect(response.thread.status).toBe('active');
+      send([completion('root', 'completed')]);
+      await waitForThreadStatus(threadId, 'idle');
+    }
+  );
+
   it('persists a later provider session identity from host events', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
     const { enrollToken } = await startServer(projectRoot);

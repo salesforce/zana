@@ -110,6 +110,93 @@ describe('readThreadHostFile', () => {
   });
 });
 
+describe('CLI session workspace previews', () => {
+  const read = vi.fn();
+  const resolveHostId = vi.fn();
+  const projects = vi.fn();
+  const ctx = {
+    db: {}, toProjects: projects,
+    hostHub: { resolveHostId, callHostOnlineRpc: read }
+  } as unknown as ProductHttpContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getConversationThread).mockReturnValue(null);
+    projects.mockReturnValue([{ id: 'p1', path: '/project', hostId: 'project-host' }]);
+    resolveHostId.mockReturnValue('project-host');
+    read.mockResolvedValue({ content: '# Preview', encoding: 'utf8' });
+  });
+
+  it.each(['.zcc/report.md', '/project/.zcc/report.md'])('reads %s from the registered project host', async (path) => {
+    expect(await readThreadHostFile(ctx, 'cli-session', path, 'p1')).toMatchObject({
+      path, relPath: '.zcc/report.md', content: '# Preview', encoding: 'utf8'
+    });
+    expect(resolveHostId).toHaveBeenCalledWith('project-host');
+    expect(read).toHaveBeenCalledWith({
+      hostId: 'project-host', command: { type: 'host.read_file', root: '/project', relPath: '.zcc/report.md' }
+    });
+  });
+
+  it('resolves the primary host for a local project and preserves image encoding', async () => {
+    projects.mockReturnValue([{ id: 'p1', path: '/project' }]);
+    read.mockResolvedValue({ content: 'iVBORw0KGgo=', encoding: 'base64' });
+    expect(await readThreadHostFile(ctx, 'cli-session', 'image.png', 'p1')).toMatchObject({
+      encoding: 'base64', contentType: 'image/png'
+    });
+    expect(resolveHostId).toHaveBeenCalledWith(undefined);
+  });
+
+  it.each([undefined, 'missing'])('rejects an unregistered project scope %s', async (projectId) => {
+    await expect(readThreadHostFile(ctx, 'cli-session', 'report.md', projectId))
+      .rejects.toMatchObject({ status: 404, code: 'unknown-thread' });
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each([{ path: '' }, { path: 'relative' }, { path: '/project', remote: { host: 'ssh-host' } }])(
+    'rejects an unavailable project root %j', async (project) => {
+      projects.mockReturnValue([{ id: 'p1', ...project }]);
+      await expect(readThreadHostFile(ctx, 'cli-session', 'report.md', 'p1'))
+        .rejects.toMatchObject({ status: 404 });
+      expect(read).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['../secret', '/other/secret', '/project-other/secret', '/project'])('rejects path escape %s', async (path) => {
+    await expect(readThreadHostFile(ctx, 'cli-session', path, 'p1'))
+      .rejects.toMatchObject({ status: 403, code: 'path-escape' });
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('keeps real conversations scoped to their environment regardless of the supplied project', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ environmentId: 'e1', hostId: 'thread-host' } as never);
+    vi.mocked(getEnvironment).mockReturnValue({ path: '/checkout' } as never);
+    await readThreadHostFile(ctx, 't1', 'report.md', 'p1');
+    expect(projects).not.toHaveBeenCalled();
+    expect(resolveHostId).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledWith({
+      hostId: 'thread-host', command: { type: 'host.read_file', root: '/checkout', relPath: 'report.md' }
+    });
+    await expect(readThreadHostFile(ctx, 't1', '/project/report.md', 'p1'))
+      .rejects.toMatchObject({ status: 403 });
+    vi.mocked(getEnvironment).mockReturnValue(null);
+    await expect(readThreadHostFile(ctx, 't1', 'report.md', 'p1'))
+      .rejects.toMatchObject({ status: 409, code: 'environment_not_ready' });
+  });
+
+  it.each([['path_not_found', 404], ['too_large', 413]])('preserves %s failures', async (code, status) => {
+    read.mockRejectedValue({ code });
+    await expect(readThreadHostFile(ctx, 'cli-session', 'report.md', 'p1'))
+      .rejects.toMatchObject({ status });
+  });
+
+  it('preserves host availability errors', async () => {
+    const error = new Error('host is offline');
+    resolveHostId.mockImplementationOnce(() => { throw error; });
+    await expect(readThreadHostFile(ctx, 'cli-session', 'report.md', 'p1')).rejects.toBe(error);
+    expect(read).not.toHaveBeenCalled();
+  });
+});
+
 describe('uploaded attachment previews', () => {
   let dataDir: string;
   let root: string;

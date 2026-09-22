@@ -1,24 +1,82 @@
 # Plugins
 
-Zana plugins are **full-trust TypeScript packages**, not sandboxed
-Electron guests.
+Give Zana new views, new tools, and new workflows. A plugin is a TypeScript
+package that can contribute interface elements, server logic, and agent
+capabilities independently. A task board might add a project tab, background
+sync, and tools that let an agent update tasks from a Thread.
 
-- Manifest: `package.json` → `zcc` (not `extension.json`)
-- Skills: `zcc.skills` directory roots (`skills/<name>/SKILL.md`), default `["skills"]`
-- MCP: `zcc.mcpServers` map (Claude CLI / PTY); host namespaces `plugin:<id>:<name>`. Conversation threads use `zcc.agents.registerTool` instead (bb-bridge). There is no runtime `registerMcpServer`.
-- Extra: `zcc.extra` opaque bag (not executed)
-- Server: `zcc.server` loads **in-process** on `apps/server` via `ZccPluginApi`
-- App: `zcc.app` registers **slots** with `definePluginApp`
-- Install sources: `path:` / `git:` / `npm:` / `builtin:` / marketplace pointers
-- Trust control is **install/enable**, exact version pinning, `engines.zcc`,
-  `npm --ignore-scripts`, native-addon rejection, UI error boundaries
+[![Zana plugin flow: choose and install a package; declare server, app, skills, and MCP contributions in package.json; run trusted server logic and React UI connected by RPC and events; extend agents with skills, Thread tools, and CLI MCP servers; develop with rebuild and reload.](https://raw.githubusercontent.com/salesforce/zana/main/docs/assets/zana-plugins.svg)](https://github.com/salesforce/zana/blob/main/docs/assets/zana-plugins.svg)
 
-Host-daemon tokens and signing keys never reach a plugin. Renderer input stays
-untrusted; the server still confines paths.
+[Download the PNG](https://raw.githubusercontent.com/salesforce/zana/main/docs/assets/zana-plugins.png) ·
+[Editable artwork and implementation references](https://github.com/salesforce/zana/blob/main/docs/assets/README.md#plugin-explainer-scope)
 
-The in-app **Plugins** hub (Installed + Browse) is ZCC's catalogue. It is not
-Claude Code's `~/.claude/plugins` folder — that remains a Claude Code
-compatibility surface and is not a competing Settings destination.
+## What lives in a plugin
+
+The `zcc` block in `package.json` declares what Zana should load. Include the
+contributions your plugin needs; a plugin does not have to provide a panel.
+
+| Contribution | Declaration | What it does |
+| :--- | :--- | :--- |
+| **Server logic** | `zcc.server` | Loads a factory inside the product server. `ZccPluginApi` provides RPC methods, storage, settings, CLI commands, agent tools, and background work. |
+| **Interface** | `zcc.app` | Loads a UI bundle. `definePluginApp` registers panels, project tabs, settings, composer actions, and other slots in Zana’s React interface. |
+| **Skills** | `zcc.skills` | Lists skill directory roots. Each `skills/<name>/SKILL.md` supplies reusable agent instructions. The default is `["skills"]`; `[]` opts out. |
+| **CLI MCP servers** | `zcc.mcpServers` | Declares MCP integrations for supported CLI / PTY sessions. The host namespaces each server as `plugin:<id>:<name>`. |
+
+Conversation **Threads** receive tools registered by server code with
+`zcc.agents.registerTool`; they do not read the `zcc.mcpServers` map. A plugin
+supporting both surfaces can provide both. Server code can also add session
+instructions with `agents.contributeInstructions` and extra skill roots with
+`agents.contributeSkills`.
+
+## How the pieces communicate
+
+When you click a button in a plugin panel, the UI can call a server method
+through `callPluginRpc`. The server handles the method registered with
+`zcc.rpc.method`, performs the operation, and returns a result. It can publish
+realtime events to refresh subscribed views. The interface remains a client;
+trusted services validate requests and confine paths.
+
+Plugins can also share services. A consumer declares `zcc.requires`, and the
+host loads its dependencies first. The experimental `zcc.services` API lets
+the consumer call a service another plugin provides. See the
+[service contract](extensions-sdk-reference.md#plugin-services-experimental)
+before building a dependency between plugins.
+
+## Installation and trust
+
+Install from **Plugins → Browse**, a marketplace entry, or a `path:`, `git:`,
+`npm:`, or `builtin:` source. Marketplace entries point to packages; browsing
+or refreshing the catalog does not execute plugin code. Install records the
+resolved npm version or Git commit, while a local path stays connected to its
+working directory.
+
+PluginService validates the manifest and compatible engine versions, then
+loads the enabled contributions. **Install and enable are trust decisions:**
+plugin server code runs full-trust, in-process on `apps/server`. It is not a
+sandboxed Electron guest. The host does not pass daemon tokens or signing keys
+through the plugin API.
+
+The installer uses `npm --ignore-scripts` for npm packages and rejects native
+addons. UI error boundaries contain rendering failures. These controls do not
+turn server plugins into a sandbox. The `zcc.extra` field holds opaque metadata;
+the host does not execute it. There is no runtime `registerMcpServer` API.
+
+## Development and lifecycle
+
+Use `zcc plugin dev` for the local edit → build → reload loop. It watches
+source changes, rebuilds the app bundle, and reloads the installed plugin.
+Path installs load their server entry from source; published packages declare
+their built entry points.
+
+| Action | What happens |
+| :--- | :--- |
+| **Enable** | Loads the server factory and makes the plugin’s declared contributions available. |
+| **Reload** | Loads a fresh server generation and refreshes the UI bundle. After a successful replacement, the old instance is disposed. |
+| **Disable** | Disposes the live instance and removes its active contributions; the package remains installed. |
+| **Needs configuration** | Keeps configuration UI available so you can finish setup. A missing required plugin can also cause this status. |
+
+Register cleanup with `zcc.onDispose` for timers, subscriptions, and resources
+your plugin owns. The SDK invokes those hooks when it disposes the instance.
 
 ## Docs
 

@@ -10,6 +10,15 @@ import {
 } from './playground-bridge.js';
 
 describe('playground bridge', () => {
+  it('validates draft identities and save-as flags before accepting editor messages', () => {
+    const persist = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'persist', path: 'New.agent', content: 'source', draftKey: 'p:example:one', create: true };
+    expect(isPlaygroundToHost(persist)).toBe(true);
+    for (const change of [{ draftKey: 42 }, { draftKey: 'x'.repeat(2001) }, { create: 'true' }, { baseSha: 42 }, { persisted: 'yes' }]) {
+      expect(isPlaygroundToHost({ ...persist, ...change })).toBe(false);
+    }
+    expect(isPlaygroundToHost({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty', dirty: true, draftKey: 'p:file:a.agent', baseSha: 'original', persisted: false })).toBe(true);
+  });
+
   it('accepts typed host and playground messages', () => {
     expect(PLAYGROUND_ASSET_SRC).toContain('/plugins/salesforce/assets/playground/');
     expect(

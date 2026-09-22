@@ -1,0 +1,59 @@
+name: Mobile Android
+
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/mobile-bridge/**'
+      - 'patches/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/mobile-android.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-android-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-build:
+    name: Android native build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate Android project
+        run: pnpm --filter @zana-ai/zcc-mobile exec expo prebuild --platform android --no-install
+      # A JS export cannot detect Gradle, manifest or native dependency failures.
+      # This APK uses Expo's local development key; no release credentials or
+      # push identities are required, and nothing is submitted to a store.
+      - name: Build standalone test APK
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=1024m'
+        env:
+          NODE_ENV: production
+      - name: Upload test APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: zana-android-test-apk
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 7

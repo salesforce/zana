@@ -215,3 +215,27 @@ test('Remove deletes paused queued messages, including the last one', async ({ a
     'delay:60000 keep running until stopped'
   ]);
 });
+
+test('a distant child completion keeps the parent Working and follow-ups queued', async ({ app }) => {
+  const { window } = app;
+  await window.getByTestId('nav-home').click();
+  const home = window.locator('.thread-command-composer').first();
+  await expect(home.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
+  await home.getByTestId('thread-command-input').fill('nested_turn delay:15000 finish the parent');
+  await home.getByTestId('thread-command-send').click();
+  const detail = window.getByTestId('thread-detail');
+  const timeline = detail.getByTestId('thread-timeline');
+  await expect(timeline).toContainText('Child finished; parent still running.', { timeout: 30_000 });
+  await expect(window.locator('.thread-status-badge.is-working')).toBeVisible();
+  await expect(window.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  const composer = detail.locator('.thread-command-composer');
+  await expect(composer.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Queue');
+  await composer.getByTestId('thread-command-input').fill('Follow-up after the parent');
+  await composer.getByTestId('thread-command-input').press('Enter');
+  await expect(detail.getByTestId('thread-queued-messages')).toContainText('Follow-up after the parent');
+  await expect(timeline.getByTestId('thread-user-text').filter({ hasText: 'Follow-up after the parent' })).toHaveCount(0);
+  await expect(timeline).toContainText('Response to: nested_turn delay:15000 finish the parent', { timeout: 30_000 });
+  await expect(timeline).toContainText('Response to: Follow-up after the parent', { timeout: 20_000 });
+  await expect(detail.getByTestId('thread-queued-messages')).toHaveCount(0);
+  await expect(composer.getByTestId('thread-command-send')).toHaveAttribute('aria-label', 'Send');
+});

@@ -94,6 +94,7 @@ describe('AgentforcePreviewPanel', () => {
 
   it('starts simulate preview, sends an utterance, and ends the session', async () => {
     const el = await mount();
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.list', { projectId: 'proj-1', purpose: 'preview' });
     expect(el.querySelector('[data-testid="salesforce-agentforce-preview"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="salesforce-preview-org"]')?.textContent).toBe('dev (sandbox)');
     expect((el.querySelector('[aria-label="Agentforce preview mode"]') as HTMLSelectElement).value).toBe('simulate');

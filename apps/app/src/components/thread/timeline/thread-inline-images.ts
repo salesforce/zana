@@ -95,7 +95,8 @@ export function extractInlineThreadImages(text: string): {
 
 export function collectMarkdownLightboxItems(
   text: string,
-  projectId?: string | null
+  projectId?: string | null,
+  threadId?: string
 ): ThreadLightboxItem[] {
   const items: ThreadLightboxItem[] = [];
   const seen = new Set<string>();
@@ -103,7 +104,7 @@ export function collectMarkdownLightboxItems(
     const alt = (match[1] ?? '').trim();
     const raw = (match[3] ?? '').trim();
     const decoded = decodeMarkdownImageSrc(raw);
-    const src = conversationImageSrc(projectId, decoded)
+    const src = (threadId ? decoded : conversationImageSrc(projectId, decoded))
       ?? (/^(https?:|data:image\/|blob:)/iu.test(decoded) ? decoded : null);
     if (!src || seen.has(src)) continue;
     seen.add(src);

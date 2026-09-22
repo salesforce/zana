@@ -75,6 +75,7 @@ export interface IpcCtx {
   mainWindow: any;
   menubar: any;
   menubarPopoverEnabled: any;
+  mobileGateway: any;
   moduleRouter: any;
   offLoudInboxAppended: any;
   openProjectWindow: any;

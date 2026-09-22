@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { definePluginApp } from "@zana-ai/zcc-plugin-sdk/app";
 import { collectTestPluginApp } from "@zana-ai/zcc-plugin-sdk/testing/app";
@@ -178,6 +179,116 @@ const mount = (element: React.ReactNode) =>
   );
 
 describe("public Salesforce panels", () => {
+  it('filters activity to its tool, exposes all activity and keeps the selected detail separate', async () => {
+    call.mockImplementation(async method => method === 'operations.list' ? { ok: true, operations: [operation, { ...operation, id: 'test', kind: 'apex.test', title: 'InvoiceTest', state: 'succeeded', jobId: undefined }] } : respond(method));
+    mount(<ApexPanel {...props} />);
+    const activity = screen.getByRole('region', { name: 'Operation history' });
+    await within(activity).findByRole('heading', { name: 'InvoiceTest' });
+    expect(within(activity).queryByText('Deploy One')).toBeNull();
+    fireEvent.click(within(activity).getByRole('button', { name: 'Show all activity' }));
+    fireEvent.click(within(activity).getByRole('button', { name: /Deployment.*Deploy One/ }));
+    await within(activity).findByRole('heading', { name: 'Deploy One' });
+    fireEvent.change(within(activity).getByLabelText('Search operations'), { target: { value: 'missing' } });
+    expect(within(activity).getByText('No matching activity')).toBeTruthy();
+    fireEvent.change(within(activity).getByLabelText('Search operations'), { target: { value: 'Invoice' } });
+    expect(within(activity).getByRole('heading', { name: 'InvoiceTest' })).toBeTruthy();
+  });
+
+  it('searches metadata, removes chips and retains selections when browsing another type', async () => {
+    call.mockImplementation(async (method, args) => method === 'metadata.list' ? { ok: true, records: [{ fullName: 'Ten' }, { fullName: 'One' }] } : respond(method, args));
+    mount(<DeploymentsPanel {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Browse org metadata' }));
+    await screen.findByLabelText('Select One');
+    fireEvent.change(screen.getByLabelText('Search metadata'), { target: { value: 'one' } });
+    expect(screen.queryByLabelText('Select Ten')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Select One'));
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Metadata type'), { target: { value: 'Flow' } });
+    expect(screen.getByRole('button', { name: 'Remove ApexClass:One' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Browse org metadata' }));
+    fireEvent.click(await screen.findByLabelText('Select Ten'));
+    expect(screen.getByText('2 selected')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove ApexClass:One' }));
+    fireEvent.click(screen.getByText('Enter component names'));
+    expect((screen.getByLabelText('Selected components') as HTMLTextAreaElement).value).toBe('Flow:Ten');
+    fireEvent.change(screen.getByLabelText('Selected components'), { target: { value: 'ApexClass:Manual\nApexClass:Manual' } });
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+    expect(screen.getByRole('button', { name: 'Preview deployment' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('filters logs and finds literal text in the selected log without changing its contents', async () => {
+    const scroll = vi.fn();
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    try {
+      call.mockImplementation(async method => method === 'logs.get' ? { ok: true, body: 'line [error] one\nline [ERROR] two', truncated: true } : respond(method));
+      mount(<ApexPanel {...props} onAddToPrompt={addQuote} />);
+      fireEvent.click(screen.getByRole('tab', { name: 'Debug logs' }));
+      await screen.findByRole('button', { name: /Apex test/ });
+      fireEvent.change(screen.getByLabelText('Search debug logs'), { target: { value: 'missing' } });
+      expect(screen.getByText('No matching logs')).toBeTruthy();
+      fireEvent.change(screen.getByLabelText('Search debug logs'), { target: { value: 'success' } });
+      fireEvent.click(screen.getByRole('button', { name: /Apex test/ }));
+      await waitFor(() => expect(document.querySelector('.sf-log-code')?.textContent).toBe('line [error] one\nline [ERROR] two'));
+      fireEvent.change(screen.getByLabelText('Find in log'), { target: { value: '[error]' } });
+      expect(screen.getByText('2 matches')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Next match' }));
+      fireEvent.keyDown(screen.getByLabelText('Find in log'), { key: 'Enter' });
+      expect(scroll).toHaveBeenCalledTimes(2);
+      expect(document.querySelectorAll('.sf-log-code mark')).toHaveLength(2);
+      fireEvent.click(screen.getByRole('button', { name: 'Add log excerpt to prompt' }));
+      expect(addQuote).toHaveBeenCalledWith(expect.stringContaining('line [error] one\nline [ERROR] two'));
+      fireEvent.change(screen.getByLabelText('Find in log'), { target: { value: 'absent' } });
+      expect(screen.getByRole('button', { name: 'Next match' }).hasAttribute('disabled')).toBe(true);
+    } finally { HTMLElement.prototype.scrollIntoView = original; }
+  });
+
+  it("hands off anonymous Apex with the exact org and code without executing", async () => {
+    mount(<ApexPanel {...props} threadId={undefined} onAddToPrompt={addQuote} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Anonymous Apex' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Anonymous Apex' }), { target: { value: 'System.debug(42);' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue in a thread' }));
+    expect(addQuote).toHaveBeenCalledOnce();
+    const draft = addQuote.mock.calls[0][0];
+    expect(draft).toContain('do not execute automatically');
+    expect(JSON.parse(draft.slice(draft.indexOf('{')))).toMatchObject({ operation: 'apex.anonymous', orgAlias: 'dev', body: 'System.debug(42);' });
+    expect(call.mock.calls.some(([method]) => method === 'operations.start')).toBe(false);
+  });
+
+  it("carries selected metadata and tests into deployment and retrieval review", async () => {
+    mount(<DeploymentsPanel {...props} threadId={undefined} onAddToPrompt={addQuote} />);
+    fireEvent.click(screen.getByText('Browse org metadata'));
+    fireEvent.click(await screen.findByLabelText('Select One'));
+    fireEvent.change(screen.getByLabelText('Targeted Apex tests'), { target: { value: 'OneTest, TwoTest' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review deployment in a thread' }));
+    fireEvent.click(screen.getByText('Retrieve from org'));
+    fireEvent.click(screen.getByRole('button', { name: 'Review retrieval in a thread' }));
+    expect(addQuote.mock.calls.map(([draft]) => JSON.parse(draft.slice(draft.indexOf('{'))))).toEqual([
+      { operation: 'deploy.start', orgAlias: 'dev', components: ['ApexClass:One'], tests: ['OneTest', 'TwoTest'] },
+      { operation: 'retrieve.start', orgAlias: 'dev', components: ['ApexClass:One'], tests: ['OneTest', 'TwoTest'] },
+    ]);
+    expect(call.mock.calls.some(([method]) => method === 'operations.start')).toBe(false);
+  });
+
+  it("disables standalone writes when no thread handoff is available", async () => {
+    mount(<ApexPanel {...props} threadId={undefined} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Anonymous Apex' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Anonymous Apex' }), { target: { value: 'System.debug(42);' } });
+    expect(screen.getByRole('button', { name: 'Continue in a thread' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it("refreshes an empty debug log list without leaving the panel", async () => {
+    call.mockImplementation(async method => method === 'apex.logs' ? { ok: true, data: { records: [] } } : respond(method));
+    mount(<ApexPanel {...props} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Debug logs' }));
+    await screen.findByText(/No debug logs/);
+    call.mockImplementation(async method => respond(method));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh logs' }));
+    await screen.findByText('Apex test');
+    expect(call.mock.calls.filter(([method]) => method === 'apex.logs')).toHaveLength(2);
+  });
+
   it("keeps project workflows scoped while staging evidence and navigating tools", async () => {
     call.mockImplementation(async (method, args) =>
       method === "doctor"
@@ -478,6 +589,10 @@ describe("public Salesforce panels", () => {
     );
     fireEvent.click(screen.getByText("Refresh report"));
     await screen.findByRole("alert");
+    call.mockImplementation(async method => respond(method));
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(call.mock.calls.filter(([method]) => method === 'operations.report')).toHaveLength(2);
   });
 
   it("supports keyboard navigation, targeted tests, logs, LWC and anonymous drafts", async () => {
@@ -496,7 +611,7 @@ describe("public Salesforce panels", () => {
       expect(call).toHaveBeenCalledWith("lwc.scan", expect.anything()),
     );
     fireEvent.keyDown(screen.getByRole("tab", { name: "LWC" }), { key: "End" });
-    fireEvent.change(screen.getByRole("textbox"), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Anonymous Apex' }), {
       target: { value: "System.debug(1);" },
     });
     fireEvent.click(screen.getByRole("button", { name: /Review and run/ }));
@@ -512,7 +627,7 @@ describe("public Salesforce panels", () => {
     fireEvent.keyDown(screen.getByRole("tab", { name: "Anonymous Apex" }), {
       key: "Home",
     });
-    fireEvent.change(screen.getByRole("textbox"), {
+    fireEvent.change(screen.getByLabelText("Apex test class"), {
       target: { value: "OneTest" },
     });
     fireEvent.click(screen.getByRole("button", { name: /Run targeted/ }));

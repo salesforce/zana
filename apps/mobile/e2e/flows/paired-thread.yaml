@@ -1,0 +1,94 @@
+appId: ai.zana.mobile
+name: Pair native shell and send to the production thread
+# Driven by e2e/mobile-shell.spec.ts with ZCC_MOBILE_MAESTRO set.
+---
+- launchApp
+- extendedWaitUntil:
+    visible: 'This device|Scan pairing QR'
+    timeout: 30000
+- openLink:
+    link: ${PAIR_LINK}
+- runFlow:
+    when:
+      platform: iOS
+      visible: Open
+    commands:
+      - tapOn: Open
+- tapOn:
+    id: connect-server
+- extendedWaitUntil:
+    visible: This device
+    timeout: 30000
+- openLink:
+    link: ${THREAD_LINK}
+- runFlow:
+    when:
+      platform: iOS
+      visible: Open
+    commands:
+      - tapOn: Open
+- extendedWaitUntil:
+    visible: Hello from the phone
+    timeout: 30000
+- tapOn: Composer options
+- extendedWaitUntil:
+    visible: Composer mode
+    timeout: 60000
+- assertVisible: Send mode
+- takeScreenshot: zana-native-composer-options
+- tapOn: Composer options
+- assertNotVisible: Composer mode
+- tapOn: Composer options
+- assertVisible: Composer mode
+- tapOn: Message
+- assertNotVisible: Composer mode
+- inputText: native mobile message
+- assertVisible: native mobile message
+- assertVisible: Send
+- waitForAnimationToEnd
+- takeScreenshot: zana-native-composer
+- tapOn: Send
+- extendedWaitUntil:
+    visible:
+      text: 'Response to: native mobile message'
+      below: Zana
+      above: Message
+    timeout: 30000
+- waitForAnimationToEnd
+- takeScreenshot: zana-native-thread
+- hideKeyboard
+# Android exposes clipped DOM text as zero-height accessibility nodes at the
+# WebView edge. Confine selectors between the web header and composer.
+- assertNotVisible:
+    text: 'Response to: Hello from the desktop delay:500'
+    below: Zana
+    above: Message
+- scrollUntilVisible:
+    element:
+      text: 'Response to: Hello from the desktop delay:500'
+      below: Zana
+      above: Message
+    direction: UP
+- assertNotVisible:
+    text: 'Response to: native mobile message'
+    below: Zana
+    above: Message
+- scrollUntilVisible:
+    element:
+      text: 'Response to: native mobile message'
+      below: Zana
+      above: Message
+    direction: DOWN
+- takeScreenshot: zana-native-scrolled-thread
+- tapOn: This device
+- assertVisible: Saved servers
+- scrollUntilVisible:
+    element: Add server
+    direction: DOWN
+- assertVisible: Add server
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - pressKey: back
+      - assertVisible: 'Response to: native mobile message'

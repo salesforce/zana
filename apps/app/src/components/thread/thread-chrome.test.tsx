@@ -848,16 +848,13 @@ describe('expandable row and chips', () => {
       css.indexOf('.thread-working-indicator {'),
       css.indexOf('.thread-working-indicator > summary.thread-working-indicator-header {')
     );
-    expect(workingIndicator).toContain('padding: 6px 8px;');
-    expect(workingIndicator).toContain('.thread-working-indicator-gutter');
-    expect(workingIndicator).toContain('width: 32px;');
-    expect(workingIndicator).toContain('.thread-working-indicator-glyph-spacer');
-    expect(workingIndicator).toContain('width: 14px;');
+    expect(workingIndicator).toContain('padding: 8px 0;');
+    expect(workingIndicator).not.toContain('.thread-working-indicator-gutter');
     const thinkingDetails = css.slice(
       css.indexOf('.thread-thinking-details {'),
       css.indexOf('.thread-file-hunk,')
     );
-    expect(thinkingDetails).toContain('margin: 6px 0 0 38px;');
+    expect(thinkingDetails).toContain('border-left: 1px solid var(--border);');
     const mentionPopover = css.slice(
       css.indexOf('.thread-detail-view .mention-popover {'),
       css.indexOf('.composer-typeahead-heading {')

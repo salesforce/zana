@@ -61,6 +61,15 @@ export function registerConfigIpc(): void {
         if (next.autoCloseIdleEnabled === true) ctx.autoCloseIdle.armAllIdle();
         else ctx.autoCloseIdle.cancelAll();
       }
+      // Start/stop the Zana Mobile gateway when its master toggle flips. Start
+      // is idempotent; a start failure (e.g. port in use) is recorded on the
+      // manager and surfaced through `mobile:status`, so the flag stays true and
+      // the panel shows the reason rather than silently reverting.
+      if (patch.mobileGatewayEnabled !== undefined) {
+        if (next.mobileGatewayEnabled === true)
+          void ctx.mobileGateway.start().catch(() => {});
+        else void ctx.mobileGateway.stop().catch(() => {});
+      }
       // Flip the menu-bar surface live: switching to the popover clears the
       // native context menu (so the click toggles the card); switching back
       // rebuilds the native menu and hides any open popover. No relaunch.
