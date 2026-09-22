@@ -47,19 +47,14 @@ function turnCompletionStatus(payload: unknown): 'completed' | 'failed' | 'inter
 
 export function isNestedConversationTurnCompletion(
   payload: unknown,
-  recentEvents: readonly { type: string; payload?: unknown }[]
+  findTurnStart: (turnId: string) => { payload?: unknown } | null
 ): boolean {
   if (parentToolCallIdOf(payload)) return true;
   const turnId = turnIdOf(payload);
   if (!turnId) return false;
-  for (const row of recentEvents) {
-    const record = payloadRecord(row.payload);
-    const type = typeof record?.type === 'string' ? record.type : row.type;
-    if (type !== 'turn/started') continue;
-    if (turnIdOf(row.payload) !== turnId) continue;
-    return parentToolCallIdOf(row.payload) !== null;
-  }
-  return false;
+  // Terminal events can omit the parent. Resolve the matching start by ID,
+  // rather than losing its ancestry when streaming output fills a recent window.
+  return parentToolCallIdOf(findTurnStart(turnId)?.payload) !== null;
 }
 
 /** Map a host event onto a lifecycle event. Retrying errors stay null

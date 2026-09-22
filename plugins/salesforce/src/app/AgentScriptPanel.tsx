@@ -43,6 +43,8 @@ import { Bot } from './components/icons.js';
 import type { AgentAction } from '../../lib/agent-action-model.js';
 import { AgentActionExplorer, AgentActionPanel } from './AgentActionPanel.js';
 import { AGENT_ACTION_STYLES } from './agent-action-styles.js';
+import { agentDraftKey, readAgentDraft, writeAgentDraft, clearAgentDraft, rememberAgentSelection, recalledAgentSelection } from './agent-script-drafts.js';
+import { SaveAgentDialog } from './SaveAgentDialog.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -60,7 +62,7 @@ export const AGENTFORCE_PANEL_STYLES = `
 .sf-as-dialect { font: inherit; font-size: 11px; font-weight: 500; color: var(--sf-as-muted); background: transparent; border: 0; }
 .sf-org-picker { font: inherit; font-size: 11px; font-weight: 500; color: var(--sf-as-muted); background: transparent; border: 1px solid var(--sf-as-border); border-radius: 6px; height: 28px; max-width: 240px; padding: 0 6px; }
 .sf-as-save { height: 28px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--sf-as-border); background: transparent; color: var(--sf-as-muted); font-size: 12px; font-weight: 600; cursor: pointer; }
-.sf-as-save.is-dirty { background: var(--sf-as-accent); border-color: transparent; color: #061121; }
+.sf-as-save.is-dirty { background: var(--sf-as-accent); border-color: transparent; color: var(--text-on-accent,#fff); }
 .sf-as-save:disabled { opacity: .45; cursor: default; }
 .sf-as-banner { padding: 6px 16px; font-size: 12px; color: var(--sf-as-muted); border-bottom: 1px solid var(--sf-as-border); }
 .sf-as-banner.is-error { color: var(--danger, #ff8a8a); }
@@ -163,13 +165,19 @@ function FileTree({
   );
 }
 
-export function AgentScriptPanel(props: {
+type AgentScriptPanelProps = {
   pluginId: string;
   projectId?: string;
   subPath?: string;
   params?: unknown;
   headerActions?: ReactNode;
-}) {
+};
+export function AgentScriptPanel(props: AgentScriptPanelProps) {
+  const context = useZccContext();
+  const projectId = props.projectId ?? context.projectId ?? undefined;
+  return <AgentScriptWorkspace key={projectId ?? 'shared'} {...props} projectId={projectId} />;
+}
+function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const pluginId = props.pluginId || PLUGIN_ID;
   const context = useZccContext();
   const projectId = props.projectId ?? context.projectId ?? undefined;
@@ -182,6 +190,14 @@ export function AgentScriptPanel(props: {
   const [exampleId, setExampleId] = useState(AGENT_SCRIPT_EXAMPLES[0]?.id ?? 'support-bot');
   const [sha256, setSha256] = useState<string | undefined>(undefined);
   const [dirty, setDirty] = useState(false);
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [draftWarning, setDraftWarning] = useState(false);
+  const draftScope = projectId ?? `root:${String(settings.values?.projectRoot ?? '')}`;
+  const activeDraft = useRef('');
+  const fileEpoch = useRef(0);
+  const alive = useRef(true);
+  const saving = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; fileEpoch.current++; }; }, []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [dialectOverride, setDialectOverride] = useState<AgentScriptDialect | null>(null);
@@ -268,6 +284,7 @@ export function AgentScriptPanel(props: {
 
   const openFile = useCallback(
     async (path: string | null, nextExampleId?: string) => {
+      const generation = ++fileEpoch.current;
       setError(null);
       setActionTabs([]);
       setSelectedActionId(null);
@@ -275,6 +292,9 @@ export function AgentScriptPanel(props: {
       if (!path) {
         const example =
           AGENT_SCRIPT_EXAMPLES.find((row) => row.id === nextExampleId) ?? AGENT_SCRIPT_EXAMPLES[0];
+        const identity = `example:${example?.id ?? 'support-bot'}`;
+        activeDraft.current = agentDraftKey(draftScope, identity);
+        rememberAgentSelection(draftScope, identity);
         setActivePath(null);
         setExampleId(example?.id ?? 'support-bot');
         setSha256(undefined);
@@ -282,6 +302,7 @@ export function AgentScriptPanel(props: {
         postToPlayground(frameRef.current, {
           source: PLAYGROUND_BRIDGE_SOURCE,
           type: 'setFile',
+          draftKey: activeDraft.current,
           path: null,
           content: example?.source ?? '',
           dialect: example?.dialect ?? dialect,
@@ -294,10 +315,14 @@ export function AgentScriptPanel(props: {
         error?: string;
         file?: { path: string; content: string; sha256: string };
       };
+      if (generation !== fileEpoch.current) return;
       if (!result?.ok || !result.file) {
         setError(result?.error || 'Could not read Agentforce file.');
         return;
       }
+      const identity = `file:${result.file.path}`;
+      activeDraft.current = agentDraftKey(draftScope, identity);
+      rememberAgentSelection(draftScope, identity);
       setActivePath(result.file.path);
       setExampleId('');
       setSha256(result.file.sha256);
@@ -305,6 +330,7 @@ export function AgentScriptPanel(props: {
       postToPlayground(frameRef.current, {
         source: PLAYGROUND_BRIDGE_SOURCE,
         type: 'setFile',
+        draftKey: activeDraft.current,
         path: result.file.path,
         content: result.file.content,
         dialect,
@@ -312,7 +338,7 @@ export function AgentScriptPanel(props: {
         sha256: result.file.sha256
       });
     },
-    [dialect, pluginId, rpcArgs]
+    [dialect, pluginId, rpcArgs, draftScope]
   );
 
   const save = useCallback(() => {
@@ -320,36 +346,40 @@ export function AgentScriptPanel(props: {
   }, []);
 
   const persistFromPlayground = useCallback(
-    async (path: string, content: string) => {
-      if (!saveEnabled || !path) {
-        setError('Open a project folder before saving.');
-        return;
-      }
-      setBusy(true);
-      setError(null);
+    async (path: string, content: string, key = activeDraft.current, create = false) => {
+      if (!saveEnabled || !path) { setError('Open a project folder before saving.'); setBusy(false); return; }
+      if (saving.current) return;
+      saving.current = true;
+      setBusy(true); setError(null);
       try {
-        const result = (await callPluginRpc(
-          pluginId,
-          'agentFiles.write',
-          rpcArgs({ path, content, expectedSha256: sha256 })
-        )) as { ok?: boolean; error?: string; file?: { sha256: string; path: string } };
-        if (!result?.ok || !result.file) {
-          setError(result?.error || 'Save failed.');
-          return;
+        const result = await callPluginRpc(pluginId, create ? 'agentFiles.create' : 'agentFiles.write',
+          rpcArgs({ path, content, ...(create ? {} : { expectedSha256: readAgentDraft(key)?.baseSha ?? sha256 }) })
+        ) as { ok?: boolean; error?: string; file?: { sha256: string; path: string } };
+        if (!alive.current) return;
+        if (!result?.ok || !result.file) { setError(result?.error || 'Save failed.'); return; }
+        const remaining = readAgentDraft(key);
+        if (remaining?.content === content) clearAgentDraft(key);
+        else if (remaining && !create) writeAgentDraft({ ...remaining, baseSha: result.file.sha256 });
+        if (key === activeDraft.current) {
+          if (create) {
+            if (remaining && remaining.content !== content) writeAgentDraft({ ...remaining, key: agentDraftKey(draftScope, `file:${result.file.path}`), baseSha: result.file.sha256 });
+            setSaveAsOpen(false);
+            await openFile(result.file.path);
+          } else {
+            setSha256(result.file.sha256);
+            setDirty(Boolean(remaining && remaining.content !== content));
+            postToPlayground(frameRef.current, { source: PLAYGROUND_BRIDGE_SOURCE, type: 'saved', draftKey: key, content, sha256: result.file.sha256 });
+          }
         }
-        setSha256(result.file.sha256);
-        setDirty(false);
-        postToPlayground(frameRef.current, {
-          source: PLAYGROUND_BRIDGE_SOURCE,
-          type: 'saved',
-          sha256: result.file.sha256
-        });
-        await refreshFiles();
+        if (alive.current) await refreshFiles();
+      } catch (err) {
+        if (alive.current) setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setBusy(false);
+        saving.current = false;
+        if (alive.current) setBusy(false);
       }
     },
-    [pluginId, refreshFiles, rpcArgs, saveEnabled, sha256]
+    [pluginId, refreshFiles, rpcArgs, saveEnabled, sha256, openFile, draftScope]
   );
 
   useEffect(() => {
@@ -358,6 +388,7 @@ export function AgentScriptPanel(props: {
       if (event.source !== frameRef.current?.contentWindow) return;
       if (!isPlaygroundToHost(event.data)) return;
       const message = event.data;
+      if ('draftKey' in message && message.draftKey && message.draftKey !== activeDraft.current) return;
       if (message.type === 'snapshot') {
         const nextActions = message.actions ?? [];
         setSource(message.content); setIssues(message.issues); setActions(nextActions);
@@ -387,11 +418,15 @@ export function AgentScriptPanel(props: {
         });
         void refreshOrg();
         const queued = projectId ? takeQueuedAgentScriptOpen(projectId) : null;
-        void openFile(initialPath || queued || null);
+        const last = recalledAgentSelection(draftScope);
+        const file = initialPath || queued || (last?.startsWith('file:') ? last.slice(5) : null);
+        void openFile(file, last?.startsWith('example:') ? last.slice(8) : undefined);
         return;
       }
       if (message.type === 'dirty') {
         setDirty(message.dirty);
+        if (message.draftKey) setSha256(message.baseSha);
+        setDraftWarning(message.persisted === false);
         return;
       }
       if (message.type === 'requestOpen') {
@@ -399,12 +434,12 @@ export function AgentScriptPanel(props: {
         return;
       }
       if (message.type === 'persist') {
-        void persistFromPlayground(message.path, message.content);
+        void persistFromPlayground(message.path, message.content, message.draftKey, message.create);
       }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [dialect, files, openFile, persistFromPlayground, projectId, initialPath, refreshOrg, saveEnabled, view, org, actions, openAction]);
+  }, [dialect, files, openFile, persistFromPlayground, projectId, initialPath, refreshOrg, saveEnabled, view, org, actions, openAction, draftScope]);
 
   useEffect(() => {
     if (!projectId || !playgroundReady) return;
@@ -539,11 +574,17 @@ export function AgentScriptPanel(props: {
           disabled={saveDisabled}
           onClick={() => void save()}
         >
-          {busy ? 'Saving…' : dirty ? 'Save' : 'Saved'}
+          {busy ? 'Saving…' : !activePath ? 'Example' : dirty ? 'Save' : 'Saved'}
         </button>
+        <button type="button" className="sf-as-save" disabled={!saveEnabled || busy || !playgroundReady} onClick={() => { setError(null); setSaveAsOpen(true); }}>Save as…</button>
       </div>
+      {saveAsOpen && <SaveAgentDialog busy={busy} error={error} onClose={() => setSaveAsOpen(false)} onSave={path => {
+        setBusy(true); setError(null);
+        postToPlayground(frameRef.current, { source: PLAYGROUND_BRIDGE_SOURCE, type: 'flushSave', path, create: true });
+      }} />}
+      {draftWarning && <div className="sf-as-banner is-error" role="alert">Local recovery is unavailable for this draft. Save it to a project file before leaving.</div>}
       {hint ? <div className="sf-as-banner">{hint}</div> : null}
-      {error ? <div className="sf-as-banner is-error">{error}</div> : null}
+      {error ? <div className="sf-as-banner is-error" role="alert">{error}</div> : null}
       <div className="sf-as-body">
         <aside
           className={`sf-as-explorer${explorerOpen ? '' : ' is-collapsed'}`}

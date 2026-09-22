@@ -613,7 +613,7 @@ export interface CcApi {
       model?: string;
       reasoningLevel?: string;
     }): Promise<{ ok: true; operationId: string; requestSequence: number }>;
-    hostFileContent(threadId: string, path: string): Promise<{
+    hostFileContent(threadId: string, path: string, projectId?: string): Promise<{
       path: string;
       relPath: string;
       content: string;

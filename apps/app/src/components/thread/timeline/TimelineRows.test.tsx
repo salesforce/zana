@@ -163,7 +163,7 @@ describe('TimelineRows plan-execution card', () => {
     expect(firstTurn).not.toContain('thread-plan-execution');
     expect(secondTurn).toContain('Latest ask');
     expect(secondTurn).toContain('thread-plan-execution');
-    expect(secondTurn).toContain('1/2');
+    expect(secondTurn).toContain('0/2');
     expect(secondTurn).toContain('Force host daemon');
   });
 

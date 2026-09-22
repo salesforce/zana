@@ -1,3 +1,4 @@
+import { readAgentDraft, writeAgentDraft, clearAgentDraft } from '../../src/app/agent-script-drafts.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { editor } from 'monaco-editor';
 import { parseAgentScriptSource } from '../../lib/agent-script-parse.js';
@@ -49,6 +50,17 @@ export default function App() {
   const splitRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
 
+  const draftRef = useRef<{ key?: string; baseSha?: string; baseline: string; applying: boolean }>({ baseline: '', applying: false });
+  const publishDraft = (content: string) => {
+    const draft = draftRef.current;
+    const dirty = content !== draft.baseline;
+    let persisted = true;
+    if (draft.key) {
+      if (dirty) persisted = writeAgentDraft({ key: draft.key, content, baseSha: draft.baseSha, dialect: dialectRef.current });
+      else clearAgentDraft(draft.key);
+    }
+    postToHost({ type: 'dirty', dirty, draftKey: draft.key, baseSha: draft.baseSha, persisted });
+  };
   const refreshAnalysis = useCallback((source: string, nextDialect: AgentScriptDialect) => {
     setAgentScriptLspDialect(nextDialect);
     const parsed = parseAgentScriptSource(source, nextDialect);
@@ -58,7 +70,7 @@ export default function App() {
     setGraph(parsed.graph.nodes.length > 0 ? parsed.graph : graphFromAgentSource(source));
     setIssueCount(diagnostics.length);
     setErrorCount(diagnostics.filter((row) => row.severity === 'error').length);
-    postToHost({ type: 'snapshot', content: source, issues: diagnostics.length, actions: parsed.actions });
+    postToHost({ type: 'snapshot', draftKey: draftRef.current.key, content: source, issues: diagnostics.length, actions: parsed.actions });
     if (modelRef.current) applyDiagnostics(modelRef.current, diagnostics);
   }, []);
 
@@ -93,7 +105,8 @@ export default function App() {
     });
     editorRef.current = instance;
     const sub = instance.onDidChangeModelContent(() => {
-      postToHost({ type: 'dirty', dirty: true });
+      if (draftRef.current.applying) return;
+      publishDraft(instance.getValue());
       refreshAnalysis(instance.getValue(), dialectRef.current);
     });
     const targetClick = instance.onMouseDown(event => {
@@ -155,22 +168,30 @@ export default function App() {
       }
       if (message.type === 'setFile') {
         pathRef.current = message.path;
-        setDialect(message.dialect);
-        const value = message.content;
+        const recovered = message.draftKey ? readAgentDraft(message.draftKey) : undefined;
+        const nextDialect = recovered?.dialect ?? message.dialect;
+        dialectRef.current = nextDialect;
+        setDialect(nextDialect);
+        draftRef.current = { key: message.draftKey, baseline: message.content, baseSha: recovered?.baseSha ?? message.sha256, applying: true };
+        const value = recovered?.content ?? message.content;
         const model = modelRef.current;
         if (model && model.getValue() !== value) model.setValue(value);
-        refreshAnalysis(value, message.dialect);
-        postToHost({ type: 'dirty', dirty: false });
+        draftRef.current.applying = false;
+        publishDraft(value);
+        refreshAnalysis(value, nextDialect);
         return;
       }
       if (message.type === 'saved') {
-        postToHost({ type: 'dirty', dirty: false });
+        if (message.draftKey && message.draftKey !== draftRef.current.key) return;
+        draftRef.current.baseSha = message.sha256;
+        draftRef.current.baseline = message.content ?? editorRef.current?.getValue() ?? '';
+        publishDraft(editorRef.current?.getValue() ?? '');
         return;
       }
       if (message.type === 'flushSave') {
-        const path = pathRef.current;
+        const path = message.path ?? pathRef.current;
         const content = editorRef.current?.getValue() ?? '';
-        if (path) postToHost({ type: 'persist', path, content });
+        if (path) postToHost({ type: 'persist', path, content, draftKey: draftRef.current.key, create: message.create });
       }
     },
     [refreshAnalysis]

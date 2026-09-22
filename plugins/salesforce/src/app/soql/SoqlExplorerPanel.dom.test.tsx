@@ -152,10 +152,24 @@ describe('SOQL workbench interactions', () => {
     expect(screen.queryByTestId('soql-history')).toBeNull();
   });
 
+  it.each(['button', 'keyboard'])('saves directly from the editor using the %s, and ignores empty queries', async source => {
+    await mount();
+    if (source === 'button') fireEvent.click(screen.getByRole('button', { name: 'Save query' }));
+    else fireEvent.keyDown(screen.getByTestId('soql-editor'), { key: 's', metaKey: true });
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Account review' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith('soql.history.save', expect.objectContaining({ name: 'Account review', soql: entry.soql, orgAlias: 'dev' })));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.change(screen.getByTestId('soql-editor'), { target: { value: ' ' } });
+    expect(screen.getByRole('button', { name: 'Save query' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.keyDown(screen.getByTestId('soql-editor'), { key: 's', ctrlKey: true });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it.each(['CSV', 'JSON', 'Excel'])('exports %s only after review', async kind => {
     await mount();
     await runQuery();
-    fireEvent.click(screen.getByRole('button', { name: kind, exact: true }));
+    fireEvent.change(screen.getByLabelText('Export results'), { target: { value: kind === 'Excel' ? 'copy-tsv' : kind.toLowerCase() } });
     expect(downloadText).not.toHaveBeenCalled();
     expect(copyText).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
@@ -167,7 +181,7 @@ describe('SOQL workbench interactions', () => {
     const view = await mount();
     await runQuery();
     vi.mocked(copyText).mockRejectedValueOnce(Error('Clipboard unavailable'));
-    fireEvent.click(screen.getByRole('button', { name: 'Excel', exact: true }));
+    fireEvent.change(screen.getByLabelText('Export results'), { target: { value: 'copy-tsv' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await screen.findByText(/Clipboard unavailable/);
     call.mockImplementation(async (method: string) => method === 'soql.query' ? { ok: false, error: 'Invalid field', line: 1, column: 8 } : respond(method));
@@ -200,4 +214,25 @@ describe('SOQL workbench interactions', () => {
     fireEvent.keyDown(screen.getByTestId('soql-editor'), { key: 'Enter', ctrlKey: true });
     await screen.findByRole('button', { name: 'Acme', exact: true });
   });
+  it.each(['soql.limits', 'soql.history.list'])('keeps queries available when %s fails and retries without dropping results', async failed => {
+    call.mockImplementation(async method => { if (method === failed) throw Error('Transport unavailable'); return respond(method); });
+    await mount();
+    await screen.findByText(/Queries are still available/);
+    await runQuery();
+    call.mockImplementation(async method => respond(method));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry details' }));
+    await waitFor(() => expect(screen.queryByText(/Queries are still available/)).toBeNull());
+    expect(screen.getByRole('button', { name: 'Acme', exact: true })).toBeTruthy();
+  });
+
+  it('does not wait for a slow usage request to load history, or apply stale optional results after an org switch', async () => {
+    const usage = deferred();
+    call.mockImplementation(async (method, args) => method === 'soql.limits' && args.orgAlias === 'dev' ? usage.promise : respond(method));
+    const view = await mount();
+    expect(call).toHaveBeenCalledWith('soql.history.list', expect.anything());
+    view.rerender(panel('second'));
+    await act(async () => usage.resolve({ ok: true, dailyApiRequests: { remaining: 123, max: 456 } }));
+    expect(screen.queryByText('API 123/456')).toBeNull();
+  });
+
 });

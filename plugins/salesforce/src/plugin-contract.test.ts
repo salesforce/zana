@@ -69,6 +69,24 @@ function mockDeps(kind: 'sandbox' | 'production' = 'sandbox', rest?: (req: Sales
 }
 
 describe('salesforce plugin contract', () => {
+  it('authorizes Save as against registered project roots and validates its inputs', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p', name: 'Project', path: '/project' }] });
+    const deps = mockDeps();
+    deps.stat = path => path === '/project' ? 'dir' : 'missing';
+    const create = vi.fn(); deps.createFile = create;
+    await createSalesforcePlugin(zcc, deps);
+    await expect(harness.callRpc('agentFiles.create', { projectId: 'p', path: 'Copy.agent', content: 'draft', projectRoot: '/untrusted' })).resolves.toMatchObject({ ok: true, file: { path: 'Copy.agent' } });
+    expect(create).toHaveBeenCalledWith('/project/Copy.agent', 'draft');
+    create.mockClear();
+    for (const args of [
+      { projectId: 'missing', path: 'Copy.agent', content: 'draft' },
+      { projectId: 'p', path: '../escape.agent', content: 'draft' },
+      { projectId: 'p', content: 'draft' },
+      { projectId: 'p', path: 'Copy.agent', content: 1 },
+    ]) await expect(harness.callRpc('agentFiles.create', args)).resolves.toMatchObject({ ok: false });
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('resolves composer status from the owning thread when the route has no project', async () => {
     const getThread = vi.fn(async ({ threadId }: { threadId: string }) => threadId === 't' ? { id: 't', projectId: 'p1' } as never : null);
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', getThread, listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
@@ -265,6 +283,7 @@ describe('salesforce plugin behavior', () => {
             'org',
             'login',
             'web',
+            '--json',
             '--instance-url',
             'https://test.salesforce.com',
             '--alias',
@@ -311,6 +330,27 @@ describe('salesforce plugin behavior', () => {
     });
   });
 
+  it('pins browser login to its registered project and leaves shared and other project targets alone', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/tmp/dx' }] });
+    const base = mockDeps();
+    await createSalesforcePlugin(zcc, { ...base, execSf: async (args, opts) => {
+      if (args[1] === 'login') {
+        expect(opts?.cwd).toBe('/tmp/dx');
+        return { code: 0, stdout: JSON.stringify({ result: { username: 'dev@example.com', accessToken: 'SECRET_TOKEN' } }), stderr: '' };
+      }
+      return base.execSf(args, opts);
+    } });
+    harness.setSettings({ defaultOrg: 'shared' });
+    await zcc.storage.kv.set('sf:project:p2:org', 'other');
+    const response = await harness.callRpc('orgs.login', { projectId: 'p1' });
+    expect(response).toMatchObject({ ok: true, selectedAlias: 'dev', connectedAlias: 'dev', targetSource: 'project' });
+    expect(JSON.stringify(response)).not.toContain('SECRET_TOKEN');
+    expect(await zcc.storage.kv.get('sf:project:p1:org')).toBe('dev');
+    expect(await zcc.storage.kv.get('sf:project:p2:org')).toBe('other');
+    expect(await harness.callRpc('status', {})).toMatchObject({ selectedAlias: 'shared' });
+    expect(await harness.callRpc('orgs.login', { projectId: 'unregistered' })).toMatchObject({ ok: false, code: 'invalid_context' });
+  });
+
   it('surfaces a failed Salesforce CLI web login', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, {
@@ -324,6 +364,39 @@ describe('salesforce plugin behavior', () => {
       ok: false,
       code: 'login_failed'
     });
+  });
+
+  it('starts browser auth without holding RPC open, confines status to the project, and bounds retained results', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => ['p1', 'p2'].map(id => ({ id, name: id, path: `/tmp/${id}` })) });
+    const base = mockDeps();
+    let finish!: () => void;
+    let pause = true;
+    await createSalesforcePlugin(zcc, { ...base, execSf: async (args, opts) => {
+      if (args[1] === 'login') {
+        if (pause) await new Promise<void>(resolve => { finish = resolve; });
+        return { code: 0, stdout: JSON.stringify({ result: { username: 'dev@example.com', refreshToken: 'SECRET_TOKEN' } }), stderr: '' };
+      }
+      return base.execSf(args, opts);
+    } });
+    harness.setSettings({ defaultOrg: 'dev' });
+    const started = await harness.callRpc('orgs.login.start', { projectId: 'p1' }) as { ok: boolean; loginId: string };
+    expect(started).toMatchObject({ ok: true, loginId: expect.any(String) });
+    expect(await harness.callRpc('orgs.login.status', { projectId: 'p1', loginId: started.loginId })).toEqual({ ok: true, done: false });
+    expect(await harness.callRpc('orgs.login.status', { projectId: 'p2', loginId: started.loginId })).toMatchObject({ ok: false });
+    expect(await harness.callRpc('orgs.login.start', { projectId: 'p2' })).toMatchObject({ code: 'login_busy' });
+    expect(await harness.callRpc('orgs.login.start', { projectId: 'p1', instance: 'invalid' })).toMatchObject({ code: 'invalid_input' });
+    pause = false;
+    finish();
+    await vi.waitFor(async () => {
+      const status = await harness.callRpc('orgs.login.status', { projectId: 'p1', loginId: started.loginId });
+      expect(status).toMatchObject({ done: true, result: { ok: true, selectedAlias: 'dev', targetSource: 'project' } });
+      expect(JSON.stringify(status)).not.toContain('SECRET_TOKEN');
+    });
+    for (let i = 0; i < 12; i++) {
+      const next = await harness.callRpc('orgs.login.start', { projectId: 'p1' }) as { loginId: string };
+      await vi.waitFor(async () => expect(await harness.callRpc('orgs.login.status', { projectId: 'p1', loginId: next.loginId })).toMatchObject({ done: true }));
+    }
+    expect(await harness.callRpc('orgs.login.status', { projectId: 'p1', loginId: started.loginId })).toMatchObject({ ok: false });
   });
 
   it('surfaces a missing Salesforce CLI when generating a project', async () => {

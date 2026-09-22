@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { conversationLifecycleEventForHostEvent, isNestedConversationTurnCompletion } from './conversation-host-event-status.js';
 
 describe('conversationLifecycleEventForHostEvent', () => {
@@ -84,31 +84,40 @@ describe('conversationLifecycleEventForHostEvent', () => {
     })).toBeNull();
   });
 
-  it('detects nested completions from parentToolCallId or the matching start', () => {
-    expect(isNestedConversationTurnCompletion({
-      type: 'turn/completed',
+  it('detects nested completions from the parent or a persistent turn lookup', () => {
+    const findStart = vi.fn(() => ({ payload: {
+      type: 'turn/started',
+      scope: { kind: 'turn', turnId: 'child' },
       parentToolCallId: 'tool-1'
-    }, [])).toBe(true);
+    } }));
     expect(isNestedConversationTurnCompletion({
-      type: 'turn/completed',
-      scope: { kind: 'turn', turnId: 'child' }
-    }, [{
-      type: 'turn/started',
-      payload: {
-        type: 'turn/started',
-        scope: { kind: 'turn', turnId: 'child' },
-        parentToolCallId: 'tool-1'
-      }
-    }])).toBe(true);
+      type: 'turn/completed', parentToolCallId: 'tool-1'
+    }, findStart)).toBe(true);
+    expect(findStart).not.toHaveBeenCalled();
     expect(isNestedConversationTurnCompletion({
-      type: 'turn/completed',
-      scope: { kind: 'turn', turnId: 'root' }
-    }, [{
-      type: 'turn/started',
-      payload: {
-        type: 'turn/started',
-        scope: { kind: 'turn', turnId: 'root' }
-      }
-    }])).toBe(false);
+      type: 'turn/completed', scope: { kind: 'turn', turnId: 'child' }
+    }, findStart)).toBe(true);
+    expect(findStart).toHaveBeenCalledExactlyOnceWith('child');
   });
+
+  it('supports wrapped terminal events and wrapped starts', () => {
+    expect(isNestedConversationTurnCompletion({ event: {
+      type: 'turn/completed', scope: { kind: 'turn', turnId: 'child' }
+    } }, () => ({ payload: { event: { parentToolCallId: 'tool-1' } } }))).toBe(true);
+  });
+
+  it('does not classify root or unknown turns as nested', () => {
+    const completion = { type: 'turn/completed', scope: { kind: 'turn', turnId: 'root' } };
+    expect(isNestedConversationTurnCompletion(completion, () => ({ payload: {} }))).toBe(false);
+    expect(isNestedConversationTurnCompletion(completion, () => null)).toBe(false);
+    expect(isNestedConversationTurnCompletion(completion, () => ({ payload: { parentToolCallId: '  ' } }))).toBe(false);
+  });
+
+  it.each([null, [], {}, { scope: { kind: 'thread' } }, { scope: { kind: 'turn', turnId: ' ' } }])(
+    'skips the lookup without a usable turn ID: %j', (payload) => {
+      const findStart = vi.fn(() => null);
+      expect(isNestedConversationTurnCompletion(payload, findStart)).toBe(false);
+      expect(findStart).not.toHaveBeenCalled();
+    }
+  );
 });

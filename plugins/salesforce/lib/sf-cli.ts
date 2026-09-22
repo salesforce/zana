@@ -25,6 +25,7 @@ export function createExecSf(): (args: string[], opts?: ExecSfOptions) => Promis
           timeout: opts?.timeoutMs ?? SF_CLI_TIMEOUT_MS,
           maxBuffer: MAX_BUFFER,
           windowsHide: true,
+          ...(opts?.signal ? { signal: opts.signal } : {}),
           ...(opts?.cwd ? { cwd: opts.cwd } : {})
         },
         (error, stdout, stderr) => {

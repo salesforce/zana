@@ -13,7 +13,14 @@ zcc sf org
 zcc sf lint [path]
 ```
 
-The Salesforce project tab lists every org the Salesforce CLI has authenticated (`sf org list`). Picking one saves `defaultOrg` for **SOQL**, Apex, LWC, Agentforce Preview, and the family tools. `zcc sf org` prints that same roster (no tokens) and the resolved target.
+The Salesforce project tab lists every org the Salesforce CLI has authenticated (`sf org list`). Picking one saves the project's target for **SOQL**, Apex, LWC, Agentforce Preview, and the family tools. The plugin settings' `defaultOrg` is the shared fallback. `zcc sf org` prints that same roster (no tokens) and the resolved target.
+
+For a new connection, use **Salesforce → Connect org → Sign in with browser**.
+Choose Production / Developer Edition, Sandbox, or My Domain / SSO (a Salesforce
+login URL); the alias is optional. The CLI saves authentication and the plugin
+selects the new org for that project, preserving shared and CLI defaults. Existing
+terminal logins can be loaded with **Refresh**. Never ask for a password or token
+in the agent chat.
 
 ## SOQL Explorer (human)
 

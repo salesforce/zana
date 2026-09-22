@@ -102,6 +102,7 @@ export {
   copyConversationThreadEvents,
   countConversationThreadEvents,
   deleteConversationThreadEventsAfter,
+  getConversationTurnStart,
   listConversationThreadEvents,
   listConversationThreadEventsWindow,
   maxConversationEventSequenceByThreadIds,

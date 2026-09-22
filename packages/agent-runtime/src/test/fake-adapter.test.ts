@@ -47,6 +47,19 @@ describe("fake adapter thread/delta", () => {
     );
   });
 
+  it("preserves child ancestry on starts while reproducing parentless completions", () => {
+    const events = createFakeAdapter().translateEvent({
+      jsonrpc: "2.0", method: THREAD_DELTA_NOTIFICATION_METHOD,
+      params: { threadId: "t1", deltas: [
+        { kind: "turn.open", providerTurnId: "child", parentRef: "delegation-1" },
+        { kind: "turn.boundary", providerTurnId: "child", status: "completed" },
+      ] },
+    });
+    expect(events[0]).toMatchObject({ type: "turn/started", parentToolCallId: "delegation-1" });
+    expect(events[1]).toMatchObject({ type: "turn/completed" });
+    expect(events[1]).not.toHaveProperty("parentToolCallId");
+  });
+
   it("keeps turn.open when a sibling input.accepted id fails the creq schema", () => {
     const adapter = createFakeAdapter();
     const events = adapter.translateEvent({

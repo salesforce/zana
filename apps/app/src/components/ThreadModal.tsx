@@ -1,43 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
 import { AppWindow, X } from 'lucide-react';
-import { product } from '../lib/product-client.js';
 import { useThreads } from '../thread-store.js';
 import { FavoriteStar } from './FavoriteStar.js';
+import { InspectorResizeHandles } from './InspectorResizeHandles.js';
+import { stopInspectorDialogClick } from './inspector-window.js';
+import { useInspectorWindow } from './useInspectorWindow.js';
 import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
 
 export function threadModalLabel(title: string | null | undefined): string {
   return title?.trim() || 'Agent';
 }
 
-export function inspectorModalClassName(fullScreen: boolean): string {
-  return `modal agent-terminal-modal${fullScreen ? ' is-fullscreen' : ''}`;
-}
-
-export function applyInspectorFullScreen(next: boolean): void {
-  void product.app.setFullScreen(next);
-}
-
-export function releaseInspectorFullScreen(wasFullScreen: boolean): void {
-  if (wasFullScreen) applyInspectorFullScreen(false);
-}
-
-export function focusInspectorDialog(node: { focus(): void } | null): void {
-  node?.focus();
-}
-
-export function stopInspectorDialogClick(event: { stopPropagation(): void }): void {
-  event.stopPropagation();
-}
-
-export function toggleInspectorFullScreen(
-  current: boolean,
-  setFullScreen: (next: boolean) => void
-): boolean {
-  const next = !current;
-  setFullScreen(next);
-  applyInspectorFullScreen(next);
-  return next;
-}
+export {
+  applyInspectorFullScreen,
+  focusInspectorDialog,
+  inspectorModalClassName,
+  releaseInspectorFullScreen,
+  stopInspectorDialogClick,
+  toggleInspectorFullScreen
+} from './inspector-window.js';
 
 /**
  * Thread-inspector modal: the same overlay chrome as the CLI agent
@@ -51,28 +31,17 @@ export function ThreadModal({
   threadId: string;
   onClose: () => void;
 }) {
-  const ref = useRef<HTMLDivElement | null>(null);
+  const windowState = useInspectorWindow();
   const thread = useThreads((s) => s.threads.find((item) => item.id === threadId));
   const title = threadModalLabel(thread?.title);
-
-  const [fullScreen, setFullScreen] = useState(false);
-  const fullScreenRef = useRef(false);
-  fullScreenRef.current = fullScreen;
-  useEffect(() => product.app.onFullScreenChanged(setFullScreen), []);
-  const toggleFullScreen = () => toggleInspectorFullScreen(fullScreen, setFullScreen);
-  useEffect(() => {
-    return () => releaseInspectorFullScreen(fullScreenRef.current);
-  }, []);
-  useEffect(() => {
-    focusInspectorDialog(ref.current);
-  }, []);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        ref={ref}
+        ref={windowState.ref}
         data-testid="thread-modal"
-        className={inspectorModalClassName(fullScreen)}
+        className={windowState.className}
+        style={windowState.style}
         onClick={stopInspectorDialogClick}
         role="dialog"
         aria-label={title}
@@ -84,13 +53,13 @@ export function ThreadModal({
             <button
               type="button"
               className="agent-modal-fullscreen-button"
-              onClick={toggleFullScreen}
-              aria-label={fullScreen ? 'Exit full screen' : 'Full screen'}
-              title={fullScreen ? 'Exit full screen for the agent window' : 'Show the entire agent window in full screen'}
+              onClick={windowState.toggleFullScreen}
+              aria-label={windowState.fullScreen ? 'Exit full screen' : 'Full screen'}
+              title={windowState.fullScreen ? 'Exit full screen for the agent window' : 'Show the entire agent window in full screen'}
               data-testid="thread-modal-fullscreen"
             >
               <AppWindow size={14} aria-hidden="true" />
-              <span>{fullScreen ? 'Exit full screen' : 'Full screen'}</span>
+              <span>{windowState.fullScreen ? 'Exit full screen' : 'Full screen'}</span>
             </button>
             <span className="agent-modal-window-divider" aria-hidden="true" />
             <button
@@ -108,6 +77,14 @@ export function ThreadModal({
         <div className="agent-modal-body">
           <ThreadDetail threadId={threadId} modal />
         </div>
+        <InspectorResizeHandles
+          hidden={windowState.fullScreen}
+          onBegin={windowState.beginResize}
+          onMove={windowState.moveResize}
+          onEnd={windowState.endResize}
+          onReset={windowState.resetFrame}
+          onKey={windowState.keyResize}
+        />
       </div>
     </div>
   );

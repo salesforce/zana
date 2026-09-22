@@ -4,6 +4,7 @@ import type { SoqlSObjectDescribe } from "../../../lib/soql-describe.js";
 import type { SalesforceOperation } from "../../../lib/workbench-contract.js";
 import { SALESFORCE_STYLES } from "./styles.js";
 import { OperationResults } from "./OperationResults.js";
+import { OPERATION_LABELS, displayTime } from '../panels/workbench-presentation.js';
 
 export function SalesforcePanelFrame({
   title,
@@ -255,28 +256,33 @@ export function RunSummary({
   operation,
   onRefresh,
   onAddToPrompt,
+  refreshBusy,
 }: {
   operation: SalesforceOperation;
   onRefresh?(): void;
   onAddToPrompt?(text: string): void;
+  refreshBusy?: boolean;
 }) {
   return (
-    <div className="sf-inspector">
+    <div className="sf-inspector sf-run-summary">
+      <div className="sf-run-heading"><span className="sf-eyebrow">{OPERATION_LABELS[operation.kind]}</span><span className="sf-grow" />
       <span
         className={`sf-badge ${operation.state === "failed" ? "sf-error" : operation.state === "succeeded" ? "sf-success" : ""}`}
       >
         {operation.state}
       </span>
+      </div>
       <h3>{operation.title}</h3>
       <OrgBadge org={operation.org} />
+      <span className="sf-muted sf-small"> · {displayTime(operation.at)}</span>
       <p>{operation.summary}</p>
       {operation.jobId && (
         <p className="sf-small sf-muted">Job {operation.jobId}</p>
       )}
       <div className="sf-toolbar">
         {onRefresh && (
-          <button className="sf-btn" type="button" onClick={onRefresh}>
-            Refresh report
+          <button className="sf-btn" type="button" disabled={refreshBusy} onClick={onRefresh}>
+            {refreshBusy ? 'Refreshing…' : 'Refresh report'}
           </button>
         )}
         {onAddToPrompt && (

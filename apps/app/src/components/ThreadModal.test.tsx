@@ -61,7 +61,8 @@ describe('ThreadModal', () => {
   it('hosts ThreadDetail in the agent-inspector overlay chrome', () => {
     expect(modalSource).toContain('data-testid="thread-modal"');
     expect(modalSource).toContain('data-testid="thread-modal-header"');
-    expect(modalSource).toContain('inspectorModalClassName(fullScreen)');
+    expect(modalSource).toContain('className={windowState.className}');
+    expect(modalSource).toContain('<InspectorResizeHandles');
     expect(modalSource).toContain('className="modal-backdrop"');
     expect(modalSource).toContain('className="modal-header agent-modal-header thread-modal-header"');
     expect(modalSource).not.toContain('agent-modal-title');
@@ -76,6 +77,8 @@ describe('ThreadModal', () => {
     expect(css).toContain('.thread-detail-split {');
     expect(css).toContain('.agent-terminal-modal > .modal-header');
     expect(css).toContain('.agent-modal-header.thread-modal-header');
+    expect(css).toContain('.inspector-resize-handle');
+    expect(css).toContain('.agent-terminal-modal.is-resizing');
     const inspectorModal = css.slice(
       css.indexOf('.agent-terminal-modal {'),
       css.indexOf('.agent-terminal-modal.is-fullscreen {')
@@ -113,6 +116,8 @@ describe('ThreadModal', () => {
     expect(html).toContain('data-modal="true"');
     expect(html).toContain('data-testid="thread-modal-close"');
     expect(html).toContain('data-testid="thread-modal-fullscreen"');
+    expect(html).toContain('data-testid="inspector-resize-se"');
+    expect(html).toContain('aria-label="Resize agent window"');
     expect(html).toContain('favorite-star');
     expect(html).toContain('agent-modal-fav');
     expect(html).toContain('Follow this agent');

@@ -125,6 +125,40 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await frame.locator('.view-lines').click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home');
   await page.keyboard.insertText('# unsaved studio draft\n');
+  // The last keystroke must survive parent-tab unmounts and file switches.
+  await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
+  await workbench.getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await expect(frame.locator('.view-lines')).toContainText('# unsaved studio draft');
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  await expect(frame.locator('.view-lines')).not.toContainText('# unsaved studio draft');
+  await studio.getByRole('button', { name: 'Support concierge', exact: true }).click();
+  await expect(frame.locator('.view-lines')).toContainText('# unsaved studio draft');
+  // Save as refuses a collision before publishing a complete new project file.
+  await studio.getByRole('button', { name: 'Save as…', exact: true }).click();
+  const saveDialog = page.getByRole('dialog', { name: 'Save agent to project' });
+  await saveDialog.getByLabel('File path').fill('force-app/Support.agent');
+  await saveDialog.getByRole('button', { name: 'Save new file' }).click();
+  await expect(saveDialog.getByRole('alert')).toContainText('already exists');
+  expect(readFileSync(join(home, 'dx/force-app/Support.agent'), 'utf8')).toBe(AGENT_SCRIPT_EXAMPLES[0].source);
+  await saveDialog.getByLabel('File path').fill('DraftCopy.afscript');
+  await saveDialog.getByRole('button', { name: 'Save new file' }).click();
+  await expect(saveDialog).toHaveCount(0);
+  await expect(studio.getByTestId('salesforce-agent-script-file:DraftCopy.afscript')).toBeVisible();
+  await expect(studio.getByTestId('salesforce-agent-script-save')).toHaveText('Saved');
+  expect(readFileSync(join(home, 'dx/DraftCopy.afscript'), 'utf8')).toContain('# unsaved studio draft');
+  await page.screenshot({ path: testInfo.outputPath('studio-saved-draft.png') });
+  // A recovered draft retains the original checksum, so external edits cannot be overwritten.
+  await frame.locator('.view-lines').click();
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home');
+  await page.keyboard.insertText('# recovered conflict draft\n');
+  const externalSource = '# external change\n' + AGENT_SCRIPT_EXAMPLES[0].source;
+  writeFileSync(join(home, 'dx/DraftCopy.afscript'), externalSource);
+  await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
+  await workbench.getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await expect(frame.locator('.view-lines')).toContainText('# recovered conflict draft');
+  await studio.getByTestId('salesforce-agent-script-save').click();
+  await expect(studio.getByRole('alert')).toContainText('changed on disk');
+  expect(readFileSync(join(home, 'dx/DraftCopy.afscript'), 'utf8')).toBe(externalSource);
   await studio.getByRole('button', { name: /02 Rehearse/ }).click();
   const lab = studio.locator('[data-testid="agentforce-lab"]:visible');
   const divider = studio.getByRole('separator', { name: 'Resize editor and conversation' });

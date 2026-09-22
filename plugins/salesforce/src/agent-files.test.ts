@@ -1,10 +1,11 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeDeps } from '../lib/node-deps.js';
 import {
   AgentFilesError,
+  createAgentFile,
   listAgentFiles,
   readAgentFile,
   sha256Hex,
@@ -37,6 +38,14 @@ function memFs(files: Record<string, string>, extraDirs: Record<string, string[]
 }
 
 describe('agent files confinement', () => {
+  it('lists saved drafts in the project root and afscript files alongside DX bundles', () => {
+    const deps = memFs({ '/proj/sfdx-project.json': '{"packageDirectories":[{"path":"force-app"}]}', '/proj/New.agent': 'start_agent:', '/proj/force-app/Draft.afscript': 'start_agent:' }, { '/proj': ['sfdx-project.json', 'New.agent', 'force-app'], '/proj/force-app': ['Draft.afscript'] });
+    expect(listAgentFiles('/proj', deps).map(row => ({ path: row.path, apiName: row.apiName }))).toEqual([
+      { path: 'force-app/Draft.afscript', apiName: 'Draft' }, { path: 'New.agent', apiName: 'New' },
+    ]);
+    expect(listAgentFiles('/proj', deps, { bundlesOnly: true })).toEqual([]);
+  });
+
   it('lists scanned bundles and refuses path escape', () => {
     const files = {
       '/proj/sfdx-project.json': '{"packageDirectories":[{"path":"force-app"}]}',
@@ -49,6 +58,7 @@ describe('agent files confinement', () => {
     const listed = listAgentFiles('/proj', deps);
     expect(listed).toHaveLength(1);
     expect(listed[0]).toMatchObject({ apiName: 'MyBot', path: 'force-app/MyBot.agent' });
+    expect(listAgentFiles('/proj', deps, { bundlesOnly: true })).toEqual(listed);
     expect(() => readAgentFile('/proj', '/etc/passwd', deps)).toThrow(AgentFilesError);
     expect(() => writeAgentFile('/proj', '../secret.agent', 'x', deps)).toThrow(/path_refused|inside/);
     expect(() => writeAgentFile('/proj', 'force-app/notes.txt', 'x', deps)).toThrow(/path_refused|inside/);
@@ -97,10 +107,39 @@ describe('agent files confinement', () => {
     });
     expect(() => listAgentFiles('/src', deps)).toThrow(/DX project root/);
     const listed = listAgentFiles('/src', deps, { allowNonDx: true });
+    expect(listAgentFiles('/src', deps, { allowNonDx: true, bundlesOnly: true })).toEqual([]);
     expect(listed).toEqual([
       expect.objectContaining({ apiName: 'QC', path: 'bots/QC/QC.agent' })
     ]);
     expect(readAgentFile('/src', 'bots/QC/QC.agent', deps, { allowNonDx: true }).content).toContain('QC');
     expect(() => readAgentFile('/src', '/etc/passwd', deps, { allowNonDx: true })).toThrow(AgentFilesError);
   });
+  it('creates a complete private file without overwriting files or following destination symlinks', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sf-create-')); dirs.push(root);
+    const deps = createNodeDeps();
+    const options = { allowNonDx: true };
+    const result = createAgentFile(root, 'New.agent', 'new source', deps, options);
+    expect(result).toEqual({ path: 'New.agent', sha256: sha256Hex('new source') });
+    expect(statSync(join(root, 'New.agent')).mode & 0o777).toBe(0o600);
+    expect(() => createAgentFile(root, 'New.agent', 'overwrite', deps, options)).toThrow('already exists');
+    symlinkSync(join(root, 'New.agent'), join(root, 'Link.agent'));
+    expect(() => createAgentFile(root, 'Link.agent', 'overwrite', deps, options)).toThrow('already exists');
+    expect(readFileSync(join(root, 'New.agent'), 'utf8')).toBe('new source');
+    expect(readdirSync(root).some(name => name.endsWith('.tmp'))).toBe(false);
+  });
+
+  it('confines new files through an existing parent and bounds source', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sf-confine-')); dirs.push(root);
+    const outside = mkdtempSync(join(tmpdir(), 'sf-outside-')); dirs.push(outside);
+    symlinkSync(outside, join(root, 'escape'));
+    const deps = createNodeDeps(); const options = { allowNonDx: true };
+    for (const path of ['../Outside.agent', '/tmp/Outside.agent', 'escape/Outside.agent', 'missing/New.agent', 'notes.txt', '']) {
+      expect(() => createAgentFile(root, path, 'source', deps, options)).toThrow();
+    }
+    expect(() => createAgentFile(root, 'New.agent', 'x'.repeat(180001), deps, options)).toThrow('180,000');
+    expect(() => createAgentFile(root, 'New.agent', 'source', { ...deps, createFile: undefined }, options)).toThrow('unavailable');
+    expect(() => createAgentFile(root, 'New.agent', 'source', { ...deps, createFile: () => { throw Error('disk full'); } }, options)).toThrow('disk full');
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
 });

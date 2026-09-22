@@ -397,6 +397,28 @@ function beginTurn(threadId: string, input: unknown, clientRequestId?: string): 
   sendDeltas(threadId, deltas);
   emitUserMessage(threadId, turnId, input);
 
+  if (/(?:^|\s)nested_turn(?:\s|$)/.test(inputText)) {
+    const childTurnId = `${turnId}-child`;
+    sendDeltas(threadId, [{ kind: "turn.open", providerTurnId: childTurnId, parentRef: "delegation-1" }]);
+    // More output than the former server ancestry window, before a terminal
+    // child event that omits the parent reference (as Codex does).
+    for (let i = 0; i < 160; i++) {
+      sendDeltas(threadId, [{
+        kind: "item.close", key: { providerItemId: `progress-${i}` },
+        item: { type: "agentMessage", text: `Progress ${i}` },
+        status: "completed", providerTurnId: turnId,
+      }]);
+    }
+    sendDeltas(threadId, [
+      { kind: "turn.boundary", providerTurnId: childTurnId, status: "completed" },
+      {
+        kind: "item.close", key: { providerItemId: "after-child" },
+        item: { type: "agentMessage", text: "Child finished; parent still running." },
+        status: "completed", providerTurnId: turnId,
+      },
+    ]);
+  }
+
   if (plan.questionRequested) {
     requestUserQuestion(threadId, turnId, plan.delayMs);
     return;

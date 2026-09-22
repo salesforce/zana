@@ -2407,6 +2407,27 @@ describe('product HTTP thread file preview', () => {
       projectId: 'proj-1',
       file: { source: 'workspace', path: 'README.md', lineNumber: null }
     });
+
+    vi.spyOn(server.ctx.hostHub, 'resolveHostId').mockReturnValue(host.id);
+    const read = vi.spyOn(server.ctx.hostHub, 'callHostOnlineRpc').mockResolvedValue({
+      content: '# CLI preview', encoding: 'utf8'
+    });
+    const content = await fetch(`${server.url}api/v1/threads/sess-pty/host-files/content?path=README.md&projectId=proj-1`);
+    expect(content.status).toBe(200);
+    await expect(content.json()).resolves.toMatchObject({ content: '# CLI preview', relPath: 'README.md' });
+    expect(read).toHaveBeenCalledWith({
+      hostId: host.id, command: { type: 'host.read_file', root: projectRoot, relPath: 'README.md' }
+    });
+    read.mockClear();
+    for (const [query, status] of [
+      ['path=README.md', 404],
+      ['path=README.md&projectId=missing', 404],
+      ['path=../secret&projectId=proj-1', 403]
+    ] as const) {
+      const denied = await fetch(`${server.url}api/v1/threads/sess-pty/host-files/content?${query}`);
+      expect(denied.status).toBe(status);
+    }
+    expect(read).not.toHaveBeenCalled();
   });
 });
 

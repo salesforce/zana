@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, fstatSync, openSync, readSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, linkSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { SalesforceDeps } from './types.js';
 import { createContainedSpawner, createExecSf, salesforceRestRequest } from './sf-cli.js';
@@ -51,6 +51,16 @@ export function createNodeDeps(): SalesforceDeps {
       renameSync(staging, path);
     },
     spawnContained: createContainedSpawner(),
+    createFile: (path, content) => {
+      const staging = `${path}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
+      const fd = openSync(staging, 'wx', 0o600);
+      try {
+        writeFileSync(fd, content, 'utf8');
+        linkSync(staging, path);
+      } finally {
+        try { closeSync(fd); } finally { unlinkSync(staging); }
+      }
+    },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   };
 }

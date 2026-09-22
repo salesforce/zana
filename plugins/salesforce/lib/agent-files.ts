@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { basename, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { isDxProject, listFilesRecursive, resolveUnderRoot } from './dx-project.js';
 import { inspectAgentSource, scanAgentBundles } from './agent.js';
 import { isAgentScriptFile } from './agent-script-model.js';
@@ -75,15 +75,15 @@ export function confineAgentPath(projectRoot: string, candidate: string, deps: S
   return confined;
 }
 
-function collectAgentFiles(root: string, deps: SalesforceDeps): AgentFileListItem[] {
-  const bundles = isDxProject(root, deps.exists)
-    ? scanAgentBundles(root, deps)
-    : listFilesRecursive(root, deps)
-        .filter((file) => file.toLowerCase().endsWith('.agent'))
+function collectAgentFiles(root: string, deps: SalesforceDeps, bundlesOnly = false): AgentFileListItem[] {
+  // Editing includes drafts outside a DX package and both supported extensions.
+  const bundles = bundlesOnly
+    ? (isDxProject(root, deps.exists) ? scanAgentBundles(root, deps) : [])
+    : listFilesRecursive(root, deps).filter(isAgentScriptFile)
         .map((file) => inspectAgentSource(file, deps.readFile(file) ?? ''));
   return bundles
     .map((row) => ({
-      apiName: row.apiName,
+      apiName: basename(row.path).replace(/\.(agent|afscript)$/i, ''),
       path: toPosixRelative(root, row.path),
       lines: row.lines
     }))
@@ -93,9 +93,9 @@ function collectAgentFiles(root: string, deps: SalesforceDeps): AgentFileListIte
 export function listAgentFiles(
   projectRoot: string,
   deps: SalesforceDeps,
-  options?: AgentFilesRootOptions
+  options?: AgentFilesRootOptions & { bundlesOnly?: boolean }
 ): AgentFileListItem[] {
-  return collectAgentFiles(resolveAgentRoot(projectRoot, deps, options), deps);
+  return collectAgentFiles(resolveAgentRoot(projectRoot, deps, options), deps, options?.bundlesOnly);
 }
 
 export function readAgentFile(
@@ -139,5 +139,24 @@ export function writeAgentFile(
     }
   }
   deps.writeFile(absolute, content);
+  return { path: toPosixRelative(root, absolute), sha256: sha256Hex(content) };
+}
+
+/** Save as never overwrites. The existing parent must resolve inside the authorized root. */
+export function createAgentFile(projectRoot: string, candidate: string, content: string, deps: SalesforceDeps, options?: AgentFilesRootOptions) {
+  if (typeof content !== 'string' || content.length > 180_000) throw new AgentFilesError('invalid_input', 'Agent source must be at most 180,000 characters.');
+  const root = resolveAgentRoot(projectRoot, deps, options);
+  if (!candidate.trim() || isAbsolute(candidate) || /^[A-Za-z]:/.test(candidate) || candidate.includes('\\') || candidate.includes('\0') || candidate.split('/').includes('..') || !isAgentScriptFile(candidate)) {
+    throw new AgentFilesError('path_refused', 'Choose a relative .agent or .afscript path inside this project.');
+  }
+  const parent = resolveUnderRoot(root, dirname(candidate), deps.realpath);
+  if (!parent || deps.stat(parent) !== 'dir') throw new AgentFilesError('path_refused', 'Choose an existing folder inside this project.');
+  if (!deps.createFile) throw new AgentFilesError('write_unavailable', 'Creating files is unavailable.');
+  const absolute = join(parent, basename(candidate));
+  try { deps.createFile(absolute, content); }
+  catch (error) {
+    if ((error as { code?: string }).code === 'EEXIST') throw new AgentFilesError('invalid_input', 'A file already exists at this path. Choose a different name.');
+    throw error;
+  }
   return { path: toPosixRelative(root, absolute), sha256: sha256Hex(content) };
 }

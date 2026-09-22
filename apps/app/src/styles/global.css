@@ -3277,7 +3277,8 @@ body.resizing-col {
   /* Override `.modal`'s --bg-elevated so the thread inspector is a white
      (panel) surface in light theme, not the gray page wash. */
   background: var(--bg-panel);
-  transition: width 0.15s ease, height 0.15s ease, max-height 0.15s ease, border-radius 0.15s ease;
+  position: relative;
+  transition: width 0.15s ease, height 0.15s ease, max-height 0.15s ease, border-radius 0.15s ease, left 0.15s ease, top 0.15s ease;
 }
 
 /* Full screen: stretch the modal to the whole viewport and drop the
@@ -3287,6 +3288,74 @@ body.resizing-col {
   height: 100vh;
   max-height: 100vh;
   border-radius: 0;
+}
+
+.agent-terminal-modal.is-resizing {
+  transition: none;
+  user-select: none;
+}
+.agent-terminal-modal.is-resizing iframe {
+  pointer-events: none;
+}
+
+.inspector-resize-handle {
+  position: absolute;
+  z-index: 7;
+  touch-action: none;
+}
+.inspector-resize-handle.is-e {
+  top: 36px;
+  right: 0;
+  bottom: 12px;
+  width: 6px;
+  cursor: ew-resize;
+}
+.inspector-resize-handle.is-w {
+  top: 36px;
+  left: 0;
+  bottom: 12px;
+  width: 6px;
+  cursor: ew-resize;
+}
+.inspector-resize-handle.is-s {
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+.inspector-resize-handle.is-se,
+.inspector-resize-handle.is-sw {
+  z-index: 9;
+  width: 16px;
+  height: 16px;
+  bottom: 0;
+}
+.inspector-resize-handle.is-se {
+  right: 0;
+  cursor: nwse-resize;
+}
+.inspector-resize-handle.is-sw {
+  left: 0;
+  cursor: nesw-resize;
+}
+.inspector-resize-handle.is-se::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  opacity: 0.75;
+}
+.inspector-resize-handle:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+.agent-terminal-modal.is-fullscreen .inspector-resize-handle {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -34610,12 +34679,35 @@ textarea.thread-command-editor {
 }
 
 .thread-plan-execution-item.is-done {
-  opacity: 0.55;
+  opacity: 0.7;
+}
+
+.thread-plan-execution-item.is-done .thread-plan-execution-item-text {
+  text-decoration: line-through;
+}
+
+.thread-plan-execution-item.is-current {
+  color: var(--ink, inherit);
+  font-weight: 500;
 }
 
 .thread-plan-execution-glyph {
   flex: 0 0 auto;
   margin-top: 1px;
+  color: var(--ink-muted);
+}
+
+.thread-plan-execution-item[data-status="completed"] .thread-plan-execution-glyph {
+  color: var(--success, var(--accent-green, #3a9));
+}
+
+.thread-plan-execution-item[data-status="in_progress"] .thread-plan-execution-glyph,
+.thread-plan-execution-item[data-status="active"] .thread-plan-execution-glyph {
+  color: var(--accent, var(--accent-blue));
+}
+
+.thread-plan-execution-item[data-status="blocked"] .thread-plan-execution-glyph {
+  color: var(--danger, var(--accent-red, #c44));
 }
 
 .thread-plan-execution-item-text {

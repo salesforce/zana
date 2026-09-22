@@ -14,9 +14,22 @@ project. A project without a selection inherits the shared default.
 zcc plugin install salesforce
 ```
 
-Requires the Salesforce CLI (`sf`) on PATH. Log in with `sf org login web`, then
-pick an org under **Plugins → Salesforce** or on the Salesforce tab (or set
-`defaultOrg` / `SF_TARGET_ORG`).
+Requires the Salesforce CLI (`sf`) on PATH. On a project's **Salesforce** tab,
+choose **Connect org**, select Production / Developer Edition, Sandbox, or
+My Domain / SSO, and choose **Sign in with browser**. An alias is optional.
+For My Domain, enter the Salesforce login host (for example,
+`https://company.my.salesforce.com` or `https://company--qa.sandbox.my.salesforce.com`).
+Finish sign-in in your browser; the new org is selected for this project automatically.
+The connection dialog can be closed while sign-in is pending; **Connect org**
+reopens its progress. **Org details** keeps the existing connections separate
+from sign-in, with search and explicit project-target selection.
+
+Authentication is saved by Salesforce CLI, so the same connection works in your
+terminal. Existing `sf org login web` connections appear in the org picker; use
+**Refresh** after signing in externally. Connecting from **Plugins → Salesforce**
+adds the connection and lets you choose whether to set it as the shared default.
+Project login preserves other project targets and the CLI/shared defaults.
+The browser and `sf` run on the Zana host; no password or token is entered in Zana.
 
 ## Using this plugin
 
@@ -35,6 +48,23 @@ pick an org under **Plugins → Salesforce** or on the Salesforce tab (or set
 Frontend panels call this plugin’s RPC (`soql.*`, `org`, `agentPreview.*`, `agentLab.*`). They
 do not hold tokens. The server SDK owns org authentication.
 
+From a project tab, deployment, retrieval and Anonymous Apex actions stage the
+selected org and exact inputs in a thread for review. Opening the draft does not
+run the action; approval still happens in the thread. **Debug logs → Refresh logs**
+fetches newly generated logs without leaving the view. Data queries remain usable
+if API usage or saved history cannot load; **Retry details** retries those requests.
+
+Deployments keeps component selection beside results and history. Search metadata,
+select components across types, and remove individual selections before previewing
+or validating. Apex and deployments show their own activity by default; switch to
+**All activity** to search other runs. On narrow panels, these sections stack.
+
+Data separates query actions from result search and export. Drag the divider below
+the editor to resize it, use the arrow keys when the divider is focused, or
+double-click to reset. **Save query** and `Cmd/Ctrl+S` save the current query.
+Debug logs has a filterable execution list and a text finder; **Next match** or
+Enter moves through highlighted matches without altering the log.
+
 ## Agentforce Studio
 
 Actions declared in an open script appear in the explorer, grouped by subagent.
@@ -49,6 +79,14 @@ The divider between the editor and Rehearse/Test is draggable. Arrow keys resize
 it when focused, and double-click resets it. The width stays set across workflow
 changes. Monaco applies semantic syntax colors in both light and dark themes.
 The included starters pass the installed language server without diagnostics.
+
+File and example edits recover when you switch files or leave and return to the
+project tab. Recovery keeps the 12 most recent drafts locally, up to 180,000
+characters each; a visible warning tells you if recovery cannot save a draft.
+Use **Save as…** to turn an example into a `.agent` or `.afscript` project file.
+Choose an existing folder and a new filename: existing files are never overwritten.
+Normal Save checks the original disk revision, including after draft recovery;
+if another tool changes the file, use Save as to preserve both versions.
 
 **Rehearse** starts a conversation from an exact snapshot of the current editor,
 including unsaved changes. Choose an engine:

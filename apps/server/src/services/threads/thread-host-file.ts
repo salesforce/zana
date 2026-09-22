@@ -29,16 +29,22 @@ export function imageContentType(path: string): string | null {
 export async function readThreadHostFile(
   ctx: ProductHttpContext,
   threadId: string,
-  candidate: string
+  candidate: string,
+  projectId?: string
 ): Promise<{ path: string; relPath: string; content: string; encoding: 'utf8' | 'base64'; contentType: string | null }> {
   const thread = getConversationThread(ctx.db, threadId);
-  if (!thread) {
+  // CLI preview tabs are owned by a PTY session, not a conversation row.
+  // Resolve their scope from the registered project, as preview_file does.
+  const project = !thread && projectId
+    ? ctx.toProjects().find((row) => row.id === projectId)
+    : null;
+  if (!thread && (!project?.path || !isAbsolute(project.path) || project.remote)) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
   // Uploaded images live on the server, outside the host checkout. Resolve only
   // this thread's project attachment root, derived from the authoritative row.
   // Relative paths keep their existing meaning: files in the environment.
-  if (thread.projectId && isAbsolute(candidate)) {
+  if (thread?.projectId && isAbsolute(candidate)) {
     const root = projectAttachmentDir(ctx.dataDir, thread.projectId);
     const attachmentPath = confinePathToRoot(root, candidate);
     if (attachmentPath && isSafeRelPath(attachmentPath)) {
@@ -71,20 +77,21 @@ export async function readThreadHostFile(
       }
     }
   }
-  const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
-  if (!environment?.path) {
+  const environment = thread?.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
+  const root = thread ? environment?.path : project?.path;
+  if (!root) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'environment is not provisioned');
   }
-  const relPath = confinePathToRoot(environment.path, candidate);
+  const relPath = confinePathToRoot(root, candidate);
   if (!relPath || !isSafeRelPath(relPath)) {
     throw new ProjectFsError(403, 'path-escape', 'path is not inside the thread environment');
   }
   try {
     const result = await ctx.hostHub.callHostOnlineRpc<HostReadFileResult>({
-      hostId: thread.hostId,
+      hostId: thread ? thread.hostId : ctx.hostHub.resolveHostId(project?.hostId),
       command: {
         type: 'host.read_file',
-        root: environment.path,
+        root,
         relPath
       }
     });
