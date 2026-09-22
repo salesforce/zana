@@ -4,6 +4,7 @@ Run persistent browser scripts from a thread on the desktop app or an enrolled h
 
 - Thread-owned desktop browser sessions (DevBrowser) and local headless sessions.
 - Capture, cookie import into the automation partition, and CDP access for the leased page.
+- A live inline preview of local headless sessions that expands into a lightbox.
 - The `zcc browser` command for the same lifecycle.
 
 ## How it works

@@ -1,0 +1,8 @@
+Meet Zana ✨
+A new, open-source IDE for your AI coding agents.
+
+Claude Code, Codex, Cursor & more. Run agents across projects, coordinate teams and review results—all in one place.
+
+https://zana-ide.com
+
+#AI #Salesforce #AgenticAI #DevTools #OpenSource

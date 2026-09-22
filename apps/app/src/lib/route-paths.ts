@@ -336,7 +336,7 @@ export function getNavRoutePath(nav: string): string {
 
 export function getSettingsTabRoutePath(tab: string, projectId?: string | null): string {
   if (tab === 'project') {
-    return projectId ? getProjectSettingsRoutePath(projectId) : SETTINGS_ROUTE_PATH;
+    return projectId ? getProjectSettingsRoutePath(projectId) : SETTINGS_PROJECT_ALIAS_ROUTE_PATH;
   }
   return getSettingsRoutePath(tab);
 }

@@ -107,6 +107,21 @@ describe('SidebarRail', () => {
     expect(markup).toContain('>Settings<');
   });
 
+  it('uses an explicit Settings route when a scoped rail provides one', () => {
+    const markup = renderRail(
+      <SidebarRail
+        className="sidebar"
+        navAriaLabel="Nav"
+        storageKey="zcc.testSidebarNavOrder"
+        pinnedIds={['inbox']}
+        items={items}
+        settingsRoutePath="/projects/proj-1/settings"
+      />
+    );
+
+    expect(markup).toContain('href="/projects/proj-1/settings"');
+  });
+
   it('pins configured ids and leaves the rest sortable', () => {
     const markup = renderRail(
       <SidebarRail

@@ -79,4 +79,11 @@ describe('route memory', () => {
     expect(visible.settingsRoutePath).toBe('/settings');
     expect(visible.toolsBackRoutePath).toBe('/inbox');
   });
+
+  it('does not send Settings Back to app into a project-scoped route', () => {
+    let stored = nextStoredRouteMemory(INITIAL_STORED_ROUTE_MEMORY, loc('/projects/p1/settings'));
+    stored = nextStoredRouteMemory(stored, loc('/settings'));
+
+    expect(visibleRouteMemory(stored, loc('/settings')).appRoutePath).toBe('/agents');
+  });
 });
