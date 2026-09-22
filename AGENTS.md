@@ -447,6 +447,19 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
   on a lone `` ` `` in code, so avoid stray backtick chars in that file's
   non-template-literal code (the guard test documents this).
 
+- **Plugin authoring must work outside the checkout and in live ZCC.** The CLI
+  package's `scripts/postbuild.mjs` includes esbuild's installed platform binaries
+  and the SDK app facade/types in `dist/`; `extraResources` copies that complete
+  tree. A repo-local CLI test can hide missing packaged dependencies. Keep the
+  standalone test in `packages/cli/src/__tests__/bundled-bin.test.ts` and run
+  `pnpm test:e2e -- e2e/plugin-authoring-live.spec.ts` for authoring-loop changes.
+  That spec copies the CLI outside the repo and verifies create/install, UI↔CLI,
+  reload/persistence, broken builds, and failed backend replacements in Electron.
+  `plugin dev --once` must return nonzero on failure; the reload HTTP acknowledgement
+  alone is insufficient because PluginService can preserve the last good generation.
+  Scaffolds teach this in `AGENTS.md`, `CLAUDE.md`, and `LIVE_TEST.md`; keep the
+  `zcc-plugin-authoring` / `extension-creator` skills aligned with that recipe.
+
 - **Bundled skills + per-project MCP config are the app's runtime capability
   artifacts — one roster, two triggers.** Product skills live in
   `apps/server/src/plugins/builtin-skills/` and are injected at thread spawn

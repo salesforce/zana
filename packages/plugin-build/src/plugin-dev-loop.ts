@@ -28,11 +28,15 @@ export interface PluginDevLoopDeps {
   now?: () => number;
 }
 
+export type PluginDevCycleResult =
+  | { ok: true }
+  | { ok: false; stage: 'server' | 'app' | 'reload'; message: string };
+
 export interface PluginDevLoop {
   handleChange: (relativePath: string) => void;
   settled: () => Promise<void>;
   /** Cancel debounce and run the pending cycle now. Used by `plugin dev --once`. */
-  flushNow: () => Promise<void>;
+  flushNow: () => Promise<PluginDevCycleResult | null>;
   dispose: () => void;
 }
 
@@ -46,10 +50,10 @@ export function createPluginDevLoop(deps: PluginDevLoopDeps): PluginDevLoop {
   const pending = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
-  let queueTail: Promise<void> = Promise.resolve();
+  let queueTail: Promise<PluginDevCycleResult | null> = Promise.resolve(null);
 
-  async function runCycle(files: readonly string[]): Promise<void> {
-    if (disposed) return;
+  async function runCycle(files: readonly string[]): Promise<PluginDevCycleResult | null> {
+    if (disposed) return null;
     const parts = [`${files.length} file${files.length === 1 ? '' : 's'} changed`];
     if (deps.hasServer) {
       const startedAt = now();
@@ -59,7 +63,7 @@ export function createPluginDevLoop(deps: PluginDevLoopDeps): PluginDevLoop {
       } catch (error) {
         parts.push(`server build failed: ${errorMessage(error)}`);
         deps.log(`${parts.join(' · ')} — fix and save to retry`);
-        return;
+        return { ok: false, stage: 'server', message: errorMessage(error) };
       }
     }
     if (deps.hasApp) {
@@ -70,7 +74,7 @@ export function createPluginDevLoop(deps: PluginDevLoopDeps): PluginDevLoop {
       } catch (error) {
         parts.push(`app build failed: ${errorMessage(error)}`);
         deps.log(`${parts.join(' · ')} — fix and save to retry`);
-        return;
+        return { ok: false, stage: 'app', message: errorMessage(error) };
       }
     }
     try {
@@ -78,8 +82,11 @@ export function createPluginDevLoop(deps: PluginDevLoopDeps): PluginDevLoop {
       parts.push(`reloaded ${deps.pluginId}`);
     } catch (error) {
       parts.push(`reload failed: ${errorMessage(error)}`);
+      deps.log(parts.join(' · '));
+      return { ok: false, stage: 'reload', message: errorMessage(error) };
     }
     deps.log(parts.join(' · '));
+    return { ok: true };
   }
 
   function flush(): void {
@@ -98,7 +105,7 @@ export function createPluginDevLoop(deps: PluginDevLoopDeps): PluginDevLoop {
       timer = setTimeout(flush, debounceMs);
     },
     settled() {
-      return queueTail;
+      return queueTail.then(() => undefined);
     },
     flushNow() {
       if (timer) {

@@ -139,6 +139,8 @@ function resolvePluginSdkAppEntry(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   const src = join(here, '../../plugin-sdk/src/app.ts');
   if (existsSync(src)) return src;
+  const packaged = join(here, '../runtime/plugin-sdk-app.js');
+  if (existsSync(packaged)) return packaged;
   return fileURLToPath(import.meta.resolve('@zana-ai/zcc-plugin-sdk/app'));
 }
 
@@ -294,6 +296,8 @@ function bundledSdkDts(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidate = join(here, '../../plugin-sdk/bundled-types/zcc-plugin-sdk.d.ts');
   if (existsSync(candidate)) return readFileSync(candidate, 'utf8');
+  const packaged = join(here, '../runtime/zcc-plugin-sdk.d.ts');
+  if (existsSync(packaged)) return readFileSync(packaged, 'utf8');
   return FALLBACK_BUNDLED_SDK_DTS;
 }
 

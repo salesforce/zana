@@ -7,7 +7,9 @@ import { runPluginCommand } from './plugin-commands.js';
 function okReloadFetch(seen: string[]): typeof fetch {
   return (async (input, init) => {
     seen.push(`${String(init?.method)} ${String(input)}`);
-    return new Response(JSON.stringify({ ok: true, value: true }), {
+    return new Response(JSON.stringify(init?.method === 'GET'
+      ? { apps: [{ id: 'gus', status: 'running', statusDetail: null }] }
+      : { ok: true, value: true }), {
       status: 200,
       headers: { 'content-type': 'application/json' }
     });
@@ -121,6 +123,89 @@ describe('plugin commands', () => {
     const result = await runPluginCommand(dest, 'dev', [dest, '--once'], false);
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/not installed as a plugin/);
+  });
+
+  function installedDevPlugin(app?: string): { dest: string; dataDir: string } {
+    const dest = mkdtempSync(join(tmpdir(), 'zcc-plugin-dev-check-'));
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-dev-check-data-'));
+    dirs.push(dest, dataDir);
+    writeFileSync(join(dest, 'package.json'), JSON.stringify({
+      name: 'zcc-plugin-gus', zcc: { name: 'Gus', server: './server.ts', app }
+    }));
+    mkdirSync(join(dataDir, 'plugins'));
+    writeFileSync(join(dataDir, 'plugins', 'installed.json'), JSON.stringify({
+      version: 1, plugins: [{ id: 'gus', source: `path:${dest}` }]
+    }));
+    return { dest, dataDir };
+  }
+
+  it('accepts --once without a directory and emits machine-readable success', async () => {
+    const { dest, dataDir } = installedDevPlugin();
+    const previous = process.cwd();
+    process.chdir(dest);
+    try {
+      const result = await runPluginCommand(dataDir, 'dev', ['--once'], true, {
+        fetchImpl: okReloadFetch([])
+      });
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ pluginId: 'gus', reloaded: true });
+    } finally {
+      process.chdir(previous);
+    }
+  });
+
+  it.each([['--bad'], ['one', 'two']])('rejects invalid dev arguments %j', async (...args) => {
+    const result = await runPluginCommand('', 'dev', args, false);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('Usage:');
+  });
+
+  it('returns failure and never reloads when the app cannot compile', async () => {
+    const { dest, dataDir } = installedDevPlugin('./app.tsx');
+    writeFileSync(join(dest, 'app.tsx'), 'export default <broken');
+    const seen: string[] = [];
+    const result = await runPluginCommand(dataDir, 'dev', ['--once', dest], false, {
+      fetchImpl: okReloadFetch(seen)
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('app failed:');
+    expect(result.stdout).not.toContain('Reloaded');
+    expect(seen).toEqual([]);
+  });
+
+  it('returns failure when the reload request fails', async () => {
+    const { dest, dataDir } = installedDevPlugin();
+    const result = await runPluginCommand(dataDir, 'dev', [dest, '--once'], false, {
+      fetchImpl: async () => new Response(JSON.stringify({ error: 'factory failed' }), { status: 400 })
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('factory failed');
+    expect(result.stdout).not.toContain('Reloaded');
+  });
+
+  it.each([
+    { id: 'gus', status: 'running', statusDetail: 'reload failed: broken factory' },
+    { id: 'gus', status: 'degraded', statusDetail: 'startup error' },
+    { id: 'gus', status: 'needs-configuration', statusDetail: 'Set an API key' },
+    { id: 'gus', status: 'disabled' },
+    { id: 'different', status: 'running' }
+  ])('does not report a verified reload for %j', async (plugin) => {
+    const result = await runPluginCommand('', 'reload', ['gus'], false, {
+      fetchImpl: async (_input, init) => new Response(JSON.stringify(init?.method === 'POST'
+        ? { ok: true, value: true } : { apps: [plugin] }))
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).not.toContain('Reloaded');
+  });
+
+  it('propagates an unavailable health snapshot after an acknowledged reload', async () => {
+    const result = await runPluginCommand('', 'reload', ['gus'], false, {
+      fetchImpl: async (_input, init) => init?.method === 'POST'
+        ? new Response(JSON.stringify({ ok: true, value: true }))
+        : new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 })
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('unavailable');
   });
 
   it('tails plugin logs from disk when the app is not running', async () => {

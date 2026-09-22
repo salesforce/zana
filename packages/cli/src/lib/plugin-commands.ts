@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, watch } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { PLUGIN_SDK_VERSION, derivePluginId } from '@zana-ai/zcc-plugin-sdk';
 import { clampPluginStarterKind, scaffoldPlugin } from '@zana-ai/zcc-plugin-templates';
 import {
@@ -114,6 +114,17 @@ async function reloadPluginViaHttp(
     { body: {}, deps: httpDeps }
   );
   if (!result.ok) return result.result;
+  // The reload endpoint acknowledges the request even when the host retains a
+  // previous generation after a failed factory. Verify the authoritative state.
+  const snapshot = await productRequest<{
+    apps: Array<{ id: string; status: string; statusDetail?: string | null }>;
+  }>('GET', '/api/v1/plugin-apps', { deps: httpDeps });
+  if (!snapshot.ok) return snapshot.result;
+  const plugin = snapshot.data.apps?.find((entry) => entry.id === id);
+  if (!plugin) return err(`Reload could not be verified: plugin ${id} is not listed`, 1);
+  if (plugin.status !== 'running' || plugin.statusDetail?.startsWith('reload failed:')) {
+    return err(`Plugin ${id}: ${plugin.statusDetail || plugin.status}`, 1);
+  }
   if (jsonOutput) return jsonResult(result.data);
   return textResult(`Reloaded ${id}`);
 }
@@ -135,8 +146,24 @@ export async function runPluginCommand(
     return { exitCode: 0, stdout: `${lines.join('\n')}\n` };
   }
   if (subcommand === 'install') {
-    const source = rest[0];
+    let source = rest[0];
     if (!source) return err('plugin install requires a source (path: | git: | npm: | builtin:)', 2);
+    const localPath = source.startsWith('path:') ? source.slice(5)
+      : source.startsWith('.') || isAbsolute(source) || existsSync(source) ? source : null;
+    if (localPath !== null) {
+      if (!localPath) return err('path source requires a directory', 2);
+      if (!isAppRunning(dataDir)) return err('APP_NOT_RUNNING: start Zana Command Center to mutate plugins', 1);
+      const rootDir = resolve(localPath);
+      try {
+        // Resolve in the caller's cwd, not the desktop's. Compile before install
+        // so a new UI plugin cannot silently appear as a background-only plugin.
+        const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'));
+        if (pkg.zcc?.app) await buildPluginApp(rootDir, '1.0.0');
+      } catch (error) {
+        return err(`Plugin preparation failed: ${error instanceof Error ? error.message : String(error)}`, 1);
+      }
+      source = `path:${rootDir}`;
+    }
     return live(dataDir, 'plugin.install', { source }, jsonOutput);
   }
   if (subcommand === 'reload') {
@@ -207,7 +234,11 @@ export async function runPluginCommand(
     };
   }
   if (subcommand === 'dev') {
-    const dir = resolve(rest[0] ?? process.cwd());
+    const paths = rest.filter((arg) => arg !== '--once');
+    if (paths.length > 1 || paths.some((arg) => arg.startsWith('-'))) {
+      return err('Usage: zcc plugin dev [dir] [--once]', 2);
+    }
+    const dir = resolve(paths[0] ?? process.cwd());
     if (!existsSync(join(dir, 'package.json'))) {
       return err('plugin dev requires a package.json in the directory', 2);
     }
@@ -218,7 +249,7 @@ export async function runPluginCommand(
     const id = findInstalledPathPluginId(dataDir, dir) ?? derivePluginId(pkg.name ?? `zcc-plugin-${dir}`);
     if (!findInstalledPathPluginId(dataDir, dir)) {
       return err(
-        `This directory is not installed as a plugin — run \`zcc plugin install ${rest[0] ?? '.'}\` first, then re-run \`zcc plugin dev\`.`,
+        `This directory is not installed as a plugin — run \`zcc plugin install ${paths[0] ?? '.'}\` first, then re-run \`zcc plugin dev\`.`,
         2
       );
     }
@@ -247,9 +278,16 @@ export async function runPluginCommand(
     });
     if (rest.includes('--once')) {
       loop.handleChange('package.json');
-      await loop.flushNow();
-      loop.dispose();
-      return { exitCode: 0, stdout: `Reloaded ${id}\n` };
+      try {
+        const result = await loop.flushNow();
+        if (!result) return err(`No reload was performed for ${id}`, 1);
+        if (!result.ok) return err(`${result.stage} failed: ${result.message}`, 1);
+        return jsonOutput
+          ? jsonResult({ pluginId: id, reloaded: true })
+          : textResult(`Reloaded ${id}`);
+      } finally {
+        loop.dispose();
+      }
     }
     const rebuild = [hasApp ? 'frontend' : null, hasServer ? 'server' : null].filter(Boolean).join(' + ');
     process.stderr.write(

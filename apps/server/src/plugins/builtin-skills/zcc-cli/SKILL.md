@@ -224,6 +224,12 @@ zcc marketplace ls|add|refresh|remove|install
 
 `plugin reload` and `plugin dev` use product HTTP (`ZCC_SERVER_URL`,
 `POST /api/v1/plugin-apps/:id/reload`) and do not need the control socket.
+They check the plugin's resulting health before reporting success.
+`zcc plugin dev --once` rebuilds and reloads once, exiting nonzero on failure.
+The authenticated plugin install/reload/dev authoring loop is available inside
+agent threads; do not remove session credentials. Keep `ZCC_SERVER_URL` and
+`ZCC_DATA_DIR` pointed at the same instance. Follow the scaffold's `LIVE_TEST.md`
+to exercise the plugin UI directly in ZCC before claiming live verification.
 
 Core command names always win over a plugin verb. `zcc <name>` and
 `zcc plugin run <id>` are equivalent for a contributed command.

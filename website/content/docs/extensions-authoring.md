@@ -11,6 +11,30 @@ zcc plugin dev
 Path installs load `./server.ts` from source. Published git/npm/builtin packages
 declare their JS entry (often under `dist`).
 
+## Verify in running ZCC
+
+New scaffolds include `AGENTS.md`, `CLAUDE.md`, and `LIVE_TEST.md` so each agent
+has the same build and verification instructions. For a single agent-driven
+iteration, use `zcc plugin dev --once` from the installed source directory.
+It rebuilds the UI, reloads the plugin, and returns nonzero if compilation or
+the resulting backend health fails. `plugin reload <id>` checks backend health
+too, including a rejected replacement that left the previous generation running.
+
+The CLI resolves `plugin install .` from your current directory and compiles
+the frontend before installing it. Its packaged build includes the build engine
+and SDK app facade. Third-party plugin dependencies and unit-test dependencies
+still need `npm install --include=dev`.
+
+Open the plugin in ZCC and exercise its primary action. For the todo starter,
+add and toggle an item, then confirm it with `zcc plugin run <id> list`. Edit
+the panel, reload, and verify the open panel updates while saved data survives.
+Agents can use their available computer-use tool to do this directly. A successful
+command does not prove the UI rendered; report any UI checks that could not run.
+
+Keep `ZCC_SERVER_URL` and `ZCC_DATA_DIR` on the same running instance: normally
+port 8780 and `~/.zcc`; dev uses port 8781 and `~/.zcc-dev`. Diagnose backend
+failures with `zcc plugin logs <id> -n 50`.
+
 ## package.json
 
 ```json

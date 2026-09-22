@@ -1,5 +1,5 @@
 export { createPluginDevLoop, isIgnoredPluginDevPath } from './plugin-dev-loop.js';
-export type { PluginDevLoop, PluginDevLoopDeps } from './plugin-dev-loop.js';
+export type { PluginDevLoop, PluginDevLoopDeps, PluginDevCycleResult } from './plugin-dev-loop.js';
 export {
   buildPlugin,
   buildPluginApp,

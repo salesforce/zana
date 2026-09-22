@@ -13,7 +13,7 @@ project thread. Stay in this directory; the **app** path-installs the source.
 ## The loop
 
 1. Read the scaffolded files: `package.json` (`zcc` block), `server.ts` /
-   `app.tsx`, `CLAUDE.md`.
+   `app.tsx`, `AGENTS.md`, `LIVE_TEST.md`.
 2. Ask the user what the plugin should do if that is not already clear.
 3. Implement it in the TypeScript sources. Keep `zcc.app` / `zcc.server` /
    `zcc.skills` / `zcc.mcpServers` in sync with what you add.
@@ -25,6 +25,13 @@ project thread. Stay in this directory; the **app** path-installs the source.
 From a shell (app running): `zcc plugin install .` then `zcc plugin dev .`
 watches, rebuilds, and reloads. A failed build or reload keeps the last good
 generation running.
+
+For one agent-driven iteration use `zcc plugin dev --once` from this directory.
+It returns nonzero on build or unhealthy reload. Follow `LIVE_TEST.md`: open the
+plugin in the running ZCC with the available computer-use tool, exercise its
+primary action, then verify a source edit updates the open panel after reload.
+Use `zcc plugin logs <id> -n 50` for backend errors. A successful reload alone
+does not prove the panel rendered; report any unverified UI checks explicitly.
 
 There is **no permission broker** for plugins. After install they run
 **in-process on the server** with full trust. Do not request host-daemon tokens.

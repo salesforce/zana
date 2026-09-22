@@ -31,7 +31,7 @@ Commands:
 - `zcc plugin types [dir]` — sync bundled SDK `.d.ts` (`--check` for CI). Look up the API here.
 - `zcc plugin install <source>` — `path:` | `git:` | `npm:` | `builtin:<name>`. Path installs load `server.ts` from source.
 - `zcc plugin reload <id>` — one-shot HTTP reload. Rebuild is not implied. Needs a running app.
-- `zcc plugin dev [dir]` — optional watch loop **after** a path install. On save, rebuilds the declared **app** (unminified), then reloads. Needs a running app. A failed build keeps the last good generation. `--once` skips watch.
+- `zcc plugin dev [dir]` — optional watch loop **after** a path install. On save, rebuilds the declared **app** (unminified), then reloads. Needs a running app. A failed build keeps the last good generation. `zcc plugin dev --once` performs one cycle, checks backend health, and returns nonzero on failure; prefer it for agent-driven iteration.
 - `zcc plugin build [dir]` — one-shot `dist/` compile. No running app. CI / publish. Minified.
 - `zcc plugin list` / `zcc plugin logs <id> [-n] [-f]` — inspect status and persisted JSONL logs.
 - `zcc plugin run <pluginId> <args…>` — explicit equivalent of a contributed command.
@@ -367,3 +367,35 @@ Live loop after `zcc plugin install .` (the plugin is already live):
 - Backend-only edit → `zcc plugin reload <id>` (`zcc plugin dev` optional)
 - UI (`zcc.app`) edit → `zcc plugin dev`, or `zcc plugin build` then `reload`
 - Compile check → `zcc plugin build` (no running app)
+
+### Verify directly in ZCC
+
+Read the scaffold's `AGENTS.md` and `LIVE_TEST.md`. Complete this loop before
+claiming a UI plugin works:
+
+1. Check `zcc status --json`. Keep `ZCC_SERVER_URL` and `ZCC_DATA_DIR` on the
+   same instance: normally `http://127.0.0.1:8780` + `~/.zcc`; dev uses
+   `http://127.0.0.1:8781` + `~/.zcc-dev`.
+2. Run `zcc plugin install .` from the source directory. Path installs compile
+   the frontend before installation. After edits, use `zcc plugin dev --once`.
+   The install/reload authoring commands are available to authenticated agents;
+   preserve the session credentials the app supplied.
+3. Use the available computer-use tool to open the plugin in the **running ZCC**
+   (for example, `cua.getApp("Zana")`). Exercise the actual slot: sidebar panel,
+   project tab, Settings, or thread action. Inspect the rendered content and
+   layout, perform the main action, and check the visible result.
+4. For the todo starter, add and toggle a uniquely named todo, then run
+   `zcc plugin run <id> list` and verify the CLI agrees with the UI.
+5. Make a visible source edit and reload. Observe the already-open panel update
+   without restarting ZCC; verify stored data survives. Inspect errors with
+   `zcc plugin logs <id> -n 50`. Remove only disposable probes/test data you made.
+
+A successful rebuild and backend health check do **not** establish that the UI
+mounted or its actions worked. Report the commands and observed behavior; if UI
+control is unavailable, say which check remains unverified. Headless plugins
+should exercise their real CLI/RPC and reload behavior instead.
+
+If `plugin new` reports an npm failure, repair dependencies with
+`npm install --include=dev` before running unit tests. The packaged CLI includes
+its build engine and SDK app facade; do not work around missing build tools by
+editing the installed app or its plugin registry.
