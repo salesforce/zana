@@ -143,6 +143,7 @@ import {
   copyConversationThreadEvents,
   createConversationThread,
   createDeferredThreadMessage,
+  countActiveConversationTurns,
   deleteDeferredThreadMessagesForThread,
   getConversationThread,
   getEnvironment,
@@ -223,6 +224,7 @@ beforeEach(() => {
   vi.mocked(getHost).mockReturnValue({ id: 'host-1', maxPermissionMode: 'full' } as never);
   vi.mocked(setConversationProviderThreadId).mockReset();
   vi.mocked(createDeferredThreadMessage).mockClear();
+  vi.mocked(countActiveConversationTurns).mockReturnValue(0);
   vi.mocked(pauseDeferredThreadMessagesForThread).mockClear();
   vi.mocked(deleteDeferredThreadMessagesForThread).mockClear();
 });
@@ -271,6 +273,22 @@ describe('thread permission persistence', () => {
 });
 
 describe('conversation lifecycle', () => {
+  it.each([8, 20])('starts an idle follow-up with %i unrelated active threads', async (activeCount) => {
+    vi.mocked(countActiveConversationTurns).mockReturnValue(activeCount);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, 'did you test it?', 'queue-if-active');
+
+    expect(createDeferredThreadMessage).not.toHaveBeenCalled();
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        mode: 'start',
+        input: [{ type: 'text', text: 'did you test it?', mentions: [] }]
+      })
+    }));
+  });
+
   it('sends a follow-up turn through turn.submit', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
     await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }], 'queue-if-active');

@@ -338,6 +338,13 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     sdk: {
+      hosts: {
+        async list(args) {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          return invokeSdk('hosts.list', undefined, args) as Promise<Array<{ id: string; name: string }>>;
+        }
+      },
       threads: {
         async spawn(args) {
           if (!options?.spawnThread) {

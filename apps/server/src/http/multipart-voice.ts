@@ -100,13 +100,14 @@ function stripLeadingCrlf(part: Buffer): Buffer {
   return part;
 }
 
-export async function readVoiceBody(request: IncomingMessage): Promise<Buffer> {
+/** Shared multipart reader; callers may supply a different bounded upload limit. */
+export async function readVoiceBody(request: IncomingMessage, maxBytes = VOICE_BODY_MAX_BYTES): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buf.length;
-    if (size > VOICE_BODY_MAX_BYTES) {
+    if (size > maxBytes) {
       throw Object.assign(new Error('request body too large'), { status: 413, code: 'too_large' });
     }
     chunks.push(buf);

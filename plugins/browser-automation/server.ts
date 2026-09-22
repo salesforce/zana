@@ -465,6 +465,19 @@ export default async function browserAutomationPlugin(zcc: ZccPluginApi) {
     async run(argv, context) {
       try {
         const parsed = parseCli(argv, context.threadId);
+        if (parsed.method === "open" && parsed.input.selection) {
+          const target = parsed.input.selection.hostId.trim();
+          const hosts = await zcc.sdk.hosts.list({ signal: context.signal });
+          const idMatch = hosts.find((candidate) => candidate.id === target);
+          const matches = idMatch
+            ? [idMatch]
+            : hosts.filter((candidate) => candidate.name === target);
+          if (matches.length === 0)
+            throw new Error(`Machine '${target}' was not found`);
+          if (matches.length > 1)
+            throw new Error(`Machine name '${target}' is ambiguous; use an exact host ID`);
+          parsed.input.selection = { ...parsed.input.selection, hostId: matches[0]!.id };
+        }
         if (parsed.scriptFile) {
           if (!parsed.scriptHost)
             throw new Error("Script file requires an explicit source host");

@@ -24,6 +24,7 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
   const [items, setItems] = useState<NextTurnItemView[]>([]);
   const [paused, setPaused] = useState(false);
   const [flushing, setFlushing] = useState(false);
+  const [sendingId, setSendingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [flushError, setFlushError] = useState<string | null>(null);
 
@@ -79,8 +80,9 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
             className="thread-queued-flush"
             data-testid="thread-queued-send-now"
             aria-busy={flushing}
+            disabled={sendingId !== null || deletingId !== null}
             onClick={() => {
-              if (flushing) return;
+              if (flushing || sendingId || deletingId) return;
               setFlushing(true);
               setFlushError(null);
               void product.threads.flushNextTurn(threadId, true)
@@ -92,12 +94,12 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
             }}
           >
             <Send size={12} aria-hidden="true" />
-            Send now
+            Send all
           </button>
         </header>
       ) : null}
       {flushError ? (
-        <p className="thread-queued-failure" data-testid="thread-queued-flush-error">{flushError}</p>
+        <p role="alert" className="thread-queued-failure" data-testid="thread-queued-flush-error">{flushError}</p>
       ) : null}
       <ul className="thread-queued-list">
         {items.map((item) => (
@@ -115,13 +117,38 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
             </div>
             <button
               type="button"
+              className="thread-queued-flush"
+              data-testid="thread-queued-item-send-now"
+              aria-busy={sendingId === item.id}
+              disabled={flushing || sendingId !== null || deletingId !== null || item.status === 'dispatching'}
+              onClick={() => {
+                if (flushing || sendingId || deletingId) return;
+                setSendingId(item.id);
+                setFlushError(null);
+                void product.threads.sendNextTurn(threadId, item.id)
+                  .then(() => {
+                    setItems((current) => current.filter((row) => row.id !== item.id));
+                    refresh();
+                  })
+                  .catch((err) => {
+                    setFlushError(err instanceof Error ? err.message : 'Failed to send queued message');
+                    refresh();
+                  })
+                  .finally(() => setSendingId(null));
+              }}
+            >
+              <Send size={12} aria-hidden="true" />
+              {sendingId === item.id ? 'Sending…' : 'Send now'}
+            </button>
+            <button
+              type="button"
               className="thread-queued-ghost-stop"
               data-testid="thread-queued-delete"
               aria-label="Remove queued message"
               title="Remove queued message"
-              disabled={deletingId === item.id}
+              disabled={flushing || sendingId !== null || deletingId !== null || item.status === 'dispatching'}
               onClick={() => {
-                if (deletingId) return;
+                if (flushing || sendingId || deletingId) return;
                 setDeletingId(item.id);
                 setFlushError(null);
                 void product.threads.deleteNextTurn(threadId, item.id)

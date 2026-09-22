@@ -544,6 +544,7 @@ export interface CcApi {
     updatePlan(threadId: string, markdown: string): Promise<{ ok: boolean; plan?: unknown }>;
     addPlanTask(threadId: string, text: string): Promise<{ ok: boolean; plan?: unknown }>;
     flushNextTurn(threadId: string, force?: boolean): Promise<{ ok: boolean }>;
+    sendNextTurn(threadId: string, itemId: string): Promise<{ ok: boolean }>;
     deleteNextTurn(threadId: string, itemId: string): Promise<{ ok: boolean }>;
     nextTurn(threadId: string): Promise<{ ok?: boolean; items?: unknown[] }>;
     compact(threadId: string): Promise<{ ok: boolean }>;

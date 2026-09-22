@@ -664,6 +664,11 @@ describe('conversation and banners', () => {
     expect(imagePreviewSrc({ contentType: 'text/plain', content: 'x', encoding: 'base64' })).toBeNull();
     expect(imagePreviewSrc({ contentType: 'image/png', content: '', encoding: 'base64' })).toBeNull();
     expect(imageContentTypeFromPath('shot.PNG')).toBe('image/png');
+    for (const [path, contentType] of [['photo.bmp', 'image/bmp'], ['photo.AVIF', 'image/avif']]) {
+      expect(imageContentTypeFromPath(path)).toBe(contentType);
+      expect(imagePreviewSrc({ contentType, content: 'YWJj', encoding: 'base64' }))
+        .toBe(`data:${contentType};base64,YWJj`);
+    }
     expect(imageContentTypeFromPath('docs/logo.svg')).toBe('image/svg+xml');
     expect(imageContentTypeFromPath('a.ts')).toBeNull();
     expect(resolveQuestionAnswer(' yes ', ['Continue?'])).toBe('yes');

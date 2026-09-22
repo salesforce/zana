@@ -119,6 +119,16 @@ export function listDeferredThreadMessages(
   ).all(threadId) as DeferredThreadMessageSqlRow[]).map(toRow);
 }
 
+export function getDeferredThreadMessage(
+  db: ZccDatabase,
+  args: { id: string; threadId: string }
+): DeferredThreadMessageRow | null {
+  const row = db.sqlite.prepare(
+    'SELECT * FROM deferred_thread_messages WHERE id = ? AND thread_id = ?'
+  ).get(args.id, args.threadId) as DeferredThreadMessageSqlRow | undefined;
+  return row ? toRow(row) : null;
+}
+
 export function listDueDeferredThreadMessages(
   db: ZccDatabase,
   args: { threadId?: string; now?: number } = {}
@@ -179,13 +189,13 @@ export function markDeferredThreadMessageFailed(
 
 export function markDeferredThreadMessageDispatching(
   db: ZccDatabase,
-  args: { id: string; threadId: string }
+  args: { id: string; threadId: string; retryFailed?: boolean }
 ): boolean {
   const result = db.sqlite.prepare(
     `UPDATE deferred_thread_messages
         SET status = 'dispatching', updated_at = ?
-      WHERE id = ? AND thread_id = ? AND status = 'queued'`
-  ).run(Date.now(), args.id, args.threadId);
+      WHERE id = ? AND thread_id = ? AND (status = 'queued' OR (? = 1 AND status = 'failed'))`
+  ).run(Date.now(), args.id, args.threadId, args.retryFailed ? 1 : 0);
   return Number(result.changes ?? 0) > 0;
 }
 

@@ -1,6 +1,5 @@
 import {
   archiveConversationThread,
-  countActiveConversationTurns,
   createConversationThread,
   getConversationThread,
   getEnvironment,
@@ -24,13 +23,13 @@ import {
   dropDeferredConversationMessages,
   flushDeferredConversationMessages,
   pauseConversationQueue,
-  resumeConversationQueue
+  resumeConversationQueue,
+  sendDeferredConversationMessage
 } from './conversation-deferred-messages.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import type { PermissionMode, ReasoningLevel, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import {
-  canDispatch,
   isHostOfflineError,
   isHostRpcTimeout,
   type ThreadSendMode
@@ -163,19 +162,14 @@ export async function sendConversationTurn(
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
+  // Direct follow-ups wait only on this thread. The global concurrency cap
+  // belongs to host-reconnect fan-out; queuing an idle thread here leaves it
+  // without a completion event to trigger its drain.
   const shouldQueue = options.drain !== true && (
     ghostQueue
     || pending
     || !hostOnline
     || (mode === 'queue-if-active' && threadActive)
-    || canDispatch({
-      archived: Boolean(live.archivedAt),
-      queuePaused: false,
-      pendingInteraction: pending,
-      hostOnline,
-      sendAfter: null,
-      liveActiveCount: countActiveConversationTurns(ctx.db)
-    }).kind === 'delay' && mode === 'queue-if-active'
   );
   if (shouldQueue) {
     deferConversationSend(ctx, { threadId: live.id, input, mode, execution });
@@ -639,6 +633,16 @@ export async function flushHeldConversationSends(
   await flushDeferredConversationMessages(ctx, threadId, async (payload) => {
     await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true });
   }, options);
+}
+
+export async function sendHeldConversationMessage(
+  ctx: ProductHttpContext,
+  threadId: string,
+  itemId: string
+): Promise<void> {
+  await sendDeferredConversationMessage(ctx, threadId, itemId, async (payload) => {
+    await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true });
+  });
 }
 
 /** Drain due next-turn rows for every thread on a host that just came online. */

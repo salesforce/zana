@@ -121,6 +121,15 @@ export function providerCliPresentation(status: ProviderCliStatus): ProviderCliP
       hint: null
     };
   }
+  if (status.latestVersion === null) {
+    return {
+      tone: 'warn',
+      badge: 'Latest unknown',
+      currentLabel,
+      latestLabel: null,
+      hint: null
+    };
+  }
   return {
     tone: 'ok',
     badge: 'Current',
@@ -137,6 +146,9 @@ export function machineCliInventorySummary(rows: MachineProviderCliRow[]): strin
   if (rows.length === 0) return null;
   const pending = rows.filter((row) => row.status.installAction).length;
   const blocked = rows.filter((row) => row.status.updateUnavailableReason && !row.status.installAction).length;
+  if (pending === 0 && rows.some((row) => row.status.installed && row.status.latestVersion === null)) {
+    return 'Latest unknown';
+  }
   if (pending === 0) return blocked > 0 ? null : 'Up to date';
   return pending === 1 ? '1 update' : `${pending} updates`;
 }

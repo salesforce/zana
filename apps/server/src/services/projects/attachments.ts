@@ -1,10 +1,11 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, normalize, resolve, win32 } from 'node:path';
 import { resolveContained } from '@zana-ai/zcc-path-confine';
-import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
+import { PROMPT_ATTACHMENT_MAX_BYTES, promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 
-export const IMAGE_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
-export const FILE_ATTACHMENT_LIMIT_BYTES = 25 * 1024 * 1024;
+// Preserve existing imports while sharing one limit for images and files.
+export const IMAGE_ATTACHMENT_LIMIT_BYTES = PROMPT_ATTACHMENT_MAX_BYTES;
+export const FILE_ATTACHMENT_LIMIT_BYTES = PROMPT_ATTACHMENT_MAX_BYTES;
 
 const HEIF_IMAGE_MIME_TYPES = new Set([
   'image/heic',
@@ -141,12 +142,11 @@ export async function storeAttachment(
     );
   }
   const isImage = (file.type || '').startsWith('image/') || Boolean(IMAGE_MIME_BY_EXT[extname(file.name).toLowerCase()]);
-  const sizeLimit = isImage ? IMAGE_ATTACHMENT_LIMIT_BYTES : FILE_ATTACHMENT_LIMIT_BYTES;
-  if (file.size > sizeLimit) {
+  if (file.size > PROMPT_ATTACHMENT_MAX_BYTES) {
     throw new ProjectAttachmentError(
       400,
       'invalid_request',
-      `Attachment exceeds ${Math.floor(sizeLimit / (1024 * 1024))}MB limit`
+      `${file.name} exceeds the ${PROMPT_ATTACHMENT_MAX_BYTES / (1024 * 1024)}MB attachment limit`
     );
   }
 

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { dirname, join, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { createSqliteDatabase } from '@zana-ai/zcc-db';
+import { createSqliteDatabase, listHosts } from '@zana-ai/zcc-db';
 import type {
   PluginAgentConfigureContext,
   PluginAgentConfigureResult,
@@ -541,6 +541,16 @@ export function createPluginApi(
       }
     },
     sdk: {
+      hosts: {
+        list: async (args) => {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          if (!options?.productContext) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return listHosts(options.productContext.db).map(({ id, name }) => ({ id, name }));
+        }
+      },
       threads: {
         spawn: async (args) => {
           assertLive();

@@ -450,6 +450,10 @@ export interface PluginSdkProjects {
 }
 
 export interface PluginSdk {
+  /** Enrolled machine identity only; no host credentials or connection metadata. */
+  hosts: {
+    list(args?: { signal?: AbortSignal }): Promise<Array<{ id: string; name: string }>>;
+  };
   threads: PluginSdkThreads;
   inbox: PluginSdkInbox;
   projects: PluginSdkProjects;

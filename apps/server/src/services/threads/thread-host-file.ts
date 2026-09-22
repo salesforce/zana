@@ -9,9 +9,10 @@ import { ProjectFsError } from '../../http/project-fs-via-host.js';
 import { isSafeRelPath } from '../../http/library-via-host.js';
 import { confinePathToRoot } from './thread-path-confine.js';
 import { projectAttachmentDir } from '../projects/attachments.js';
+import { PROMPT_ATTACHMENT_MAX_BYTES } from '@zana-ai/zcc-domain/thread-runtime';
 
-const IMAGE_EXT = new Set(['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp']);
-export const IMAGE_READ_MAX_BYTES = 10 * 1024 * 1024;
+const IMAGE_EXT = new Set(['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.avif']);
+export const IMAGE_READ_MAX_BYTES = PROMPT_ATTACHMENT_MAX_BYTES;
 
 export function imageContentType(path: string): string | null {
   const lower = path.toLowerCase();
@@ -23,6 +24,8 @@ export function imageContentType(path: string): string | null {
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
   if (ext === '.png') return 'image/png';
   if (ext === '.gif') return 'image/gif';
+  if (ext === '.bmp') return 'image/bmp';
+  if (ext === '.avif') return 'image/avif';
   return 'image/webp';
 }
 

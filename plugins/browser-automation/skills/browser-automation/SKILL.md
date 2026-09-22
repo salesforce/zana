@@ -94,3 +94,5 @@ there and verifies its provenance and digest; it needs npm, network access, and
 Chrome on that host, and can take a minute. Later opens reuse the verified
 install offline. The exact pin and Chrome setup are documented in the plugin
 README. Cloud browsers and arbitrary CDP endpoints are unsupported.
+
+`open --machine` accepts an exact host ID or a unique machine name (quote names with spaces). Exact IDs take precedence; ambiguous names require an ID.

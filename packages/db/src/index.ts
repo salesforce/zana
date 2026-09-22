@@ -138,6 +138,7 @@ export {
   createDeferredThreadMessage,
   deleteDeferredThreadMessage,
   deleteDeferredThreadMessagesForThread,
+  getDeferredThreadMessage,
   isThreadQueueAutoSendPaused,
   listDeferredThreadMessages,
   listDueDeferredThreadMessages,

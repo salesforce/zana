@@ -83,6 +83,7 @@ import { HashNavigationScroll } from './components/HashNavigationScroll.js';
 import { isSplitWorkspacePath } from './lib/split-layout/splitThreadNavigation.js';
 import { product } from './lib/product-client.js';
 import { useCliAgentTerminalSignal } from './components/thread/secondary-panel/useThreadOpenTerminalSignal.js';
+import { installAgentBoardMoves } from './stores/agent-board-moves.js';
 import {
   AGENTS_ROUTE_PATH,
   APP_ROOT_ROUTE_PATH,
@@ -200,6 +201,7 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
 
 export function App() {
   useRouteSync();
+  useEffect(installAgentBoardMoves, []);
   const init = useData((s) => s.init);
   const route = useRouteState();
   const location = useLocation();

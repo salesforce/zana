@@ -16,6 +16,16 @@ function ok(text: string): LlmRunResult {
 }
 
 describe('createThreadTitleNamer', () => {
+  it.each(['/weekly-report', '请帮我修复登录问题', 'ログインの問題を修正してください'])('already names short and unspaced prompts: %s', async (prompt) => {
+    const run = vi.fn(async () => ok('Named'));
+    const applyTitle = vi.fn();
+    const namer = createThreadTitleNamer({
+      autoRenameEnabled: () => true, getEntry: () => entry, run, applyTitle
+    });
+    namer.request('thr-1', prompt);
+    await vi.waitFor(() => expect(applyTitle).toHaveBeenCalledWith('thr-1', 'Named'));
+    expect(run).toHaveBeenCalledWith(entry, { prompt }, 'thr-1');
+  });
   it('persists a successful namer result', async () => {
     const applyTitle = vi.fn();
     const namer = createThreadTitleNamer({

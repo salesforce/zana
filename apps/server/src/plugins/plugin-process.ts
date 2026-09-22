@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const MARKETPLACE_MAX_BYTES = 1_048_576;
+export const MARKETPLACE_FETCH_TIMEOUT_MS = 15_000;
 
 export async function defaultSpawnNpm(
   args: string[],
@@ -32,13 +33,38 @@ export async function defaultCloneGit(
 
 export async function defaultFetchJson(url: string): Promise<unknown> {
   if (!url.startsWith('https://')) throw new Error('marketplace URL must be https');
-  const res = await fetch(url, { redirect: 'error' });
-  if (!res.ok) throw new Error(`marketplace fetch failed: ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.byteLength > MARKETPLACE_MAX_BYTES) {
-    throw new Error(`marketplace index exceeds ${MARKETPLACE_MAX_BYTES} bytes`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error('marketplace request timed out'));
+  }, MARKETPLACE_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { redirect: 'error', signal: controller.signal });
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`marketplace fetch failed: ${res.status}`);
+    }
+    if (!res.body) throw new Error('marketplace response is empty');
+    const reader = res.body.getReader();
+    try {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > MARKETPLACE_MAX_BYTES) {
+          throw new Error(`marketplace index exceeds ${MARKETPLACE_MAX_BYTES} bytes`);
+        }
+        chunks.push(Buffer.from(value));
+      }
+      return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+  } finally {
+    clearTimeout(timeout);
   }
-  return JSON.parse(buf.toString('utf8')) as unknown;
 }
 
 export function ensureDir(path: string): void {

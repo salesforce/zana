@@ -1,3 +1,5 @@
+import { PROMPT_ATTACHMENT_MAX_BYTES } from '@zana-ai/zcc-domain/thread-runtime';
+
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'];
 const HEIF_MIME_TYPES = new Set([
   'image/heic',
@@ -6,7 +8,7 @@ const HEIF_MIME_TYPES = new Set([
   'image/heif-sequence'
 ]);
 
-export const COMPOSER_IMAGE_LIMIT_BYTES = 10 * 1024 * 1024;
+export const COMPOSER_IMAGE_LIMIT_BYTES = PROMPT_ATTACHMENT_MAX_BYTES;
 export const COMPOSER_IMAGE_MAX_COUNT = 16;
 
 export interface ComposerImageAttachment {

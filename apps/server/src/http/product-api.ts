@@ -38,6 +38,7 @@ import {
   archiveConversation,
   cancelConversationPlan,
   flushHeldConversationSends,
+  sendHeldConversationMessage,
   forkConversation,
   resumeConversation,
   sendConversationTurn,
@@ -122,6 +123,7 @@ import { toPublicMarketplaceCatalog } from '../plugins/marketplace-store.js';
 import { presentAppConfig } from './public-app-url.js';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
+import { PROMPT_ATTACHMENT_MAX_BYTES } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   ProjectAttachmentError,
   readAttachment,
@@ -1718,6 +1720,24 @@ export async function handleProductHttp(
       return true;
     }
 
+    const nextTurnSend = routeParams(path, '/api/v1/threads/:id/next-turn/:itemId/send');
+    if (nextTurnSend && method === 'POST') {
+      try {
+        await sendHeldConversationMessage(ctx, nextTurnSend.id, nextTurnSend.itemId);
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+        } else {
+          sendHostFailure(response, error);
+        }
+      } finally {
+        const thread = getConversationThread(ctx.db, nextTurnSend.id);
+        if (thread) ctx.hub.emit('threads:updated', conversationThreadView(ctx, thread));
+      }
+      return true;
+    }
+
     const nextTurnItem = routeParams(path, '/api/v1/threads/:id/next-turn/:itemId');
     if (nextTurnItem && method === 'DELETE') {
       try {
@@ -2198,7 +2218,7 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        const body = await readVoiceBody(request);
+        const body = await readVoiceBody(request, PROMPT_ATTACHMENT_MAX_BYTES + 64 * 1024);
         const form = parseMultipartVoiceForm(body, contentType);
         if (!form.file) {
           sendJson(response, 400, { error: 'invalid_request', message: 'Attachment file is required' });

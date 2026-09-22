@@ -450,6 +450,7 @@ const api: CcApi = {
     updatePlan: async () => ({ ok: false }),
     addPlanTask: async () => ({ ok: false }),
     flushNextTurn: async () => ({ ok: false }),
+    sendNextTurn: async () => ({ ok: false }),
     nextTurn: async () => ({ items: [] }),
     compact: async () => ({ ok: false }),
     promptHistory: async () => ({ entries: [] }),

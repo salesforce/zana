@@ -19,6 +19,7 @@ Handed to `export default function plugin(zcc)`.
 | `ui.requestInput` | Host prompt |
 | `status.needsConfiguration` | Degraded-until-configured |
 | `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: hidden attributed spawn (`pluginMetadata` seed), `getPluginMetadata` / `updatePluginMetadata`, `output`/`stop`, confined host file read |
+| `sdk.hosts.list({ signal? })` | Read enrolled machine IDs and names; credentials and connection metadata are excluded. Use an exact ID when machine names are ambiguous. |
 | `services.provide` / `services.use` / `services.has` | Experimental plugin-to-plugin SDK (live proxy; `has` after `provide`; `service_unavailable` until provided) |
 | `onDispose` | LIFO teardown |
 

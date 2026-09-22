@@ -145,6 +145,19 @@ describe('machine provider CLI rows', () => {
     });
   });
 
+  it('does not claim a CLI is current when the latest version is unknown', () => {
+    const unknown = status({ latestVersion: null, needsUpdate: false, installAction: null });
+    expect(providerCliPresentation(unknown)).toMatchObject({ tone: 'warn', badge: 'Latest unknown' });
+    expect(providerCliPresentation({ ...unknown, versionUnsupported: true }).badge).toBe('Unsupported');
+    expect(providerCliPresentation({ ...unknown, installed: false }).badge).toBe('Not installed');
+    expect(providerCliPresentation({ ...unknown, needsUpdate: true }).badge).toBe('Update');
+    expect(machineCliInventorySummary([{ provider: 'codex', status: unknown }])).toBe('Latest unknown');
+    expect(machineCliInventorySummary([
+      { provider: 'codex', status: unknown },
+      { provider: 'pi', status: status({}) }
+    ])).toBe('1 update');
+  });
+
   it('summarizes inventory updates', () => {
     expect(machineCliInventorySummary([])).toBeNull();
     expect(machineCliInventorySummary([

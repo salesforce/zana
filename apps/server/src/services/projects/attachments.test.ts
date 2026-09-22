@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PROMPT_ATTACHMENT_MAX_BYTES } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   FILE_ATTACHMENT_LIMIT_BYTES,
   IMAGE_ATTACHMENT_LIMIT_BYTES,
@@ -27,6 +28,27 @@ afterEach(async () => {
 });
 
 describe('project attachments', () => {
+  it.each([
+    ['photo.png', 'image/png', 'localImage'],
+    ['report.pdf', 'application/pdf', 'localFile']
+  ])('accepts exactly 35MB for %s and rejects larger files before reading', async (name, type, kind) => {
+    const dataDir = await makeTempDir();
+    const bytes = new Uint8Array(PROMPT_ATTACHMENT_MAX_BYTES);
+    bytes[0] = 23;
+    bytes[bytes.length - 1] = 42;
+    const arrayBuffer = vi.fn(async () => bytes.buffer);
+    const stored = await storeAttachment(dataDir, 'proj-1', {
+      name, type, size: bytes.length, arrayBuffer
+    });
+    expect(stored).toMatchObject({ type: kind, sizeBytes: 35 * 1024 * 1024 });
+    const read = await readAttachment(dataDir, 'proj-1', stored.path);
+    expect(read.content.equals(Buffer.from(bytes))).toBe(true);
+    arrayBuffer.mockClear();
+    await expect(storeAttachment(dataDir, 'proj-1', {
+      name, type, size: bytes.length + 1, arrayBuffer
+    })).rejects.toMatchObject({ status: 400, message: `${name} exceeds the 35MB attachment limit` });
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
   it('stores an image upload and reads it back from the confined directory', async () => {
     const dataDir = await makeTempDir();
     const stored = await storeAttachment(dataDir, 'proj-1', {
@@ -171,14 +193,14 @@ describe('project attachments', () => {
       type: 'image/png',
       size: IMAGE_ATTACHMENT_LIMIT_BYTES + 1,
       arrayBuffer: async () => new Uint8Array([1]).buffer
-    })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/10MB/) });
+    })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/35MB/) });
 
     await expect(storeAttachment(dataDir, 'proj-1', {
       name: 'huge.bin',
       type: 'application/octet-stream',
       size: FILE_ATTACHMENT_LIMIT_BYTES + 1,
       arrayBuffer: async () => new Uint8Array([1]).buffer
-    })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/25MB/) });
+    })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/35MB/) });
 
     await expect(readAttachment(dataDir, 'proj-1', 'missing.png')).rejects.toMatchObject({ status: 404 });
     expect(pathLooksRuntimeReadable('file:///tmp/a.png')).toBe(true);

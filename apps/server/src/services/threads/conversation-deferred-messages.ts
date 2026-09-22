@@ -6,6 +6,7 @@ import {
   deleteDeferredThreadMessage,
   deleteDeferredThreadMessagesForThread,
   getConversationThread,
+  getDeferredThreadMessage,
   isThreadQueueAutoSendPaused,
   listDueDeferredThreadMessages,
   markDeferredThreadMessageDispatching,
@@ -162,6 +163,35 @@ function forceFlushError(reason: string): ThreadCreateError {
     return new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
   return new ThreadCreateError(409, reason.replace(/-/g, '_'), 'Could not send queued messages');
+}
+
+/** Explicitly send one row without resuming, regrouping, or retrying its neighbors. */
+export async function sendDeferredConversationMessage(
+  ctx: ProductHttpContext,
+  threadId: string,
+  itemId: string,
+  deliver: (payload: DeferredSendPayload) => Promise<void>
+): Promise<void> {
+  const thread = getConversationThread(ctx.db, threadId);
+  if (!thread) throw forceFlushError('unknown-thread');
+  if (thread.archivedAt) throw forceFlushError('thread-archived');
+  if (ctx.pendingInteractions.hasPendingThreadInteraction(threadId)) throw forceFlushError('pending-interaction');
+  if (!hostOnline(ctx, thread.hostId)) throw forceFlushError('host-offline');
+  const row = getDeferredThreadMessage(ctx.db, { id: itemId, threadId });
+  if (!row) throw new ThreadCreateError(404, 'unknown-queued-send', 'queued send was not found');
+  // Auto-drain and repeated clicks compete for the same atomic claim. Never
+  // reclaim an in-flight row: that can submit the same prompt twice.
+  if (!markDeferredThreadMessageDispatching(ctx.db, { id: itemId, threadId, retryFailed: true })) {
+    throw new ThreadCreateError(409, 'queued-send-dispatching', 'This message is already being sent');
+  }
+  try {
+    await deliver(parseDeferredSendPayload(row));
+    deleteDeferredThreadMessage(ctx.db, { id: itemId, threadId });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'dispatch-failed';
+    markDeferredThreadMessageFailed(ctx.db, { id: itemId, threadId, reason });
+    throw error instanceof ThreadCreateError ? error : new ThreadCreateError(502, 'dispatch-failed', reason);
+  }
 }
 
 /**

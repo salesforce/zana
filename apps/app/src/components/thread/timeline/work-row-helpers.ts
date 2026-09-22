@@ -3,7 +3,9 @@ const IMAGE_CONTENT_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/gif',
-  'image/webp'
+  'image/webp',
+  'image/bmp',
+  'image/avif'
 ]);
 
 export type HostImageFile = {
@@ -22,6 +24,8 @@ export function imageContentTypeFromPath(path: string): string | null {
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
   if (ext === '.gif') return 'image/gif';
   if (ext === '.webp') return 'image/webp';
+  if (ext === '.bmp') return 'image/bmp';
+  if (ext === '.avif') return 'image/avif';
   return null;
 }
 

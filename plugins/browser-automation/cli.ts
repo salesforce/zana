@@ -7,7 +7,7 @@ export const commands = [
     summary:
       "Open an isolated desktop or local headless session; --tab explicitly hands off an existing tab",
     usage:
-      "zcc browser-automation open --backend desktop --machine <host-id> --desktop <instance-id> [--tab <tab-id>] [--thread <id>] [--json] | open --backend local --headless --machine <host-id> [--thread <id>] [--json]",
+      "zcc browser-automation open --backend desktop --machine <id-or-name> --desktop <instance-id> [--tab <tab-id>] [--thread <id>] [--json] | open --backend local --headless --machine <id-or-name> [--thread <id>] [--json]",
   },
   {
     name: "list",
@@ -118,7 +118,7 @@ export function parseCli(argv: string[], contextThreadId?: string) {
   if (method === "open") {
     const hostId = flags.get("--machine");
     if (!hostId)
-      throw new Error("Select the browser host with --machine <host-id>");
+      throw new Error("Select the browser host with --machine <id-or-name>");
     const backend = flags.get("--backend");
     if (backend === "local") {
       if (

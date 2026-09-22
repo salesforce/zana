@@ -677,6 +677,10 @@ function httpProduct(): Pick<
           method: 'POST',
           body: JSON.stringify({ force })
         }),
+      sendNextTurn: async (threadId: string, itemId: string) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}/send`, {
+          method: 'POST', body: '{}'
+        }),
       deleteNextTurn: async (threadId: string, itemId: string) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/next-turn/${encodeURIComponent(itemId)}`, {
           method: 'DELETE'

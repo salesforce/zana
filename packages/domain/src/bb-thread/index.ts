@@ -71,3 +71,4 @@ export * from "./todo-plan-fold.js";
 export * from "./thread-visibility.js";
 export * from "./thread.js";
 export * from "./update-state.js";
+export { PROMPT_ATTACHMENT_MAX_BYTES } from "./prompt-attachment-limits.js";
