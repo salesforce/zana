@@ -133,7 +133,7 @@ describe('Settings subsection navigation', () => {
     expect(panel).toContain("tab === 'browser'");
   });
 
-  it('groups Machines and Connectivity under Remote', () => {
+  it('groups Machines, Connectivity, and Phone under Remote', () => {
     expect(SETTINGS_GROUPS.map((group) => group.id)).toEqual([
       'config',
       'remote',
@@ -144,10 +144,12 @@ describe('Settings subsection navigation', () => {
     ]);
     const machines = SETTINGS_SECTIONS.find((section) => section.id === 'machines');
     const connectivity = SETTINGS_SECTIONS.find((section) => section.id === 'connectivity');
+    const phone = SETTINGS_SECTIONS.find((section) => section.id === 'phone');
     expect(machines?.group).toBe('remote');
     expect(connectivity?.group).toBe('remote');
+    expect(phone?.group).toBe('remote');
     const remoteIds = SETTINGS_SECTIONS.filter((section) => section.group === 'remote').map((section) => section.id);
-    expect(remoteIds).toEqual(['machines', 'connectivity']);
+    expect(remoteIds).toEqual(['machines', 'connectivity', 'phone']);
     expect(SETTINGS_SUBSECTIONS.connectivity).toEqual([
       { id: 'connectivity-remote', label: 'Remote SSH' }
     ]);

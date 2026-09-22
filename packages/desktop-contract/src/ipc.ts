@@ -54,6 +54,12 @@ export const IPC = {
     pairingOnData: 'hosts:pairingOnData',
     pairingOnExit: 'hosts:pairingOnExit'
   },
+  mobile: {
+    status: 'mobile:status',
+    pair: 'mobile:pair',
+    devices: 'mobile:devices',
+    revoke: 'mobile:revoke'
+  },
   terminals: {
     list: 'terminals:list',
     verifyTmux: 'terminals:verifyTmux',

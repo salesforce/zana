@@ -33,3 +33,5 @@ allowBuilds:
   protobufjs: true
   sharp: true
 blockExoticSubdeps: false
+patchedDependencies:
+  '@react-native-cookies/cookies@6.2.1': patches/@react-native-cookies__cookies@6.2.1.patch

@@ -14,6 +14,7 @@ import {
   SquareArrowOutUpRight,
   Laptop,
   Network,
+  Smartphone,
   Inbox,
   Keyboard,
   PenLine,
@@ -34,6 +35,7 @@ import { ExperimentalTab } from '@/views/settings/ExperimentalView';
 import { AboutTab } from '@/views/settings/AboutView';
 import { MachinesTab } from '@/views/settings/MachinesSettingsView';
 import { ConnectivityTab } from '@/views/settings/ConnectivityView';
+import { PhoneTab } from '@/views/settings/PhoneSettingsView';
 import { InboxSettingsTab } from '@/views/settings/InboxSettingsView';
 import { KeyboardSettingsSection } from '@/views/settings/KeyboardSettingsSection';
 import { ComposerSettingsView } from '@/views/settings/ComposerSettingsView';
@@ -89,6 +91,7 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'prompts', label: 'Prompts', icon: Sparkles, desc: 'LLM micro-call prompts', group: 'config' },
   { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'remote' },
   { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Unpaired SSH fallback', group: 'remote' },
+  { id: 'phone', label: 'Phone', icon: Smartphone, desc: 'Pair a mobile device', group: 'remote' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
   { id: 'personas', label: 'Personas', icon: Drama, desc: 'Reusable launch profiles', group: 'agents' },
   { id: 'squads', label: 'Squads', icon: Users, desc: 'Reusable multi-agent squads', group: 'agents' },
@@ -162,6 +165,9 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   ],
   connectivity: [
     { id: 'connectivity-remote', label: 'Remote SSH' }
+  ],
+  phone: [
+    { id: 'phone', label: 'Phone' }
   ],
   inbox: [
     { id: 'inbox-general', label: 'Inbox' }
@@ -440,6 +446,12 @@ export function SettingsView() {
           />
         ) : tab === 'connectivity' ? (
           <ConnectivityTab
+            config={config}
+            onConfigDraft={setConfig}
+            onUpdate={update}
+          />
+        ) : tab === 'phone' ? (
+          <PhoneTab
             config={config}
             onConfigDraft={setConfig}
             onUpdate={update}

@@ -409,6 +409,26 @@ export interface CcApi {
     };
   };
   /**
+   * Zana Mobile gateway (a live main-process network listener, like
+   * `hosts.pairing`). Enable/disable rides the `mobileGatewayEnabled` AppConfig
+   * toggle; these calls read status and mint/read/revoke pairing state.
+   */
+  mobile: {
+    status(): Promise<{
+      running: boolean;
+      publicUrl: string | null;
+      host: string | null;
+      port: number | null;
+      /** True when bound to a reachable LAN IP — show the trusted-network caveat. */
+      boundLan: boolean;
+      /** Last start failure (e.g. port in use), else null. */
+      error: string | null;
+    }>;
+    pair(): Promise<{ version: number; serverUrl: string; code: string; expiresAt: number }>;
+    devices(): Promise<Array<{ id: string; label: string; createdAt: number; expiresAt: number }>>;
+    revoke(id: string): Promise<boolean>;
+  };
+  /**
    * Outbound pairing-relay tunnel to the public origin (Heroku front door).
    * Status only — the origin and token live in AppConfig / env.
    */

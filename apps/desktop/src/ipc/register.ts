@@ -20,6 +20,7 @@ import { registerPersonasIpc } from './personas.js';
 import { registerVoiceIpc } from './voice.js';
 import { registerModulesIpc } from './modules.js';
 import { registerHostsPairingIpc } from './hosts-pairing.js';
+import { registerMobileIpc } from './mobile.js';
 
 export function registerIpcFamilies(host: IpcCtx): void {
   bindIpcCtx(host);
@@ -44,5 +45,6 @@ export function registerIpcFamilies(host: IpcCtx): void {
   registerVoiceIpc();
   registerModulesIpc();
   registerHostsPairingIpc();
+  registerMobileIpc();
 }
 
