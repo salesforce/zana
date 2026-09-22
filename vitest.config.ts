@@ -39,6 +39,9 @@ export default defineConfig({
     // in-progress branches (git-ignored): their tests belong to THAT checkout
     // and may import symbols that don't exist on this branch — collect them and
     // `pnpm test` fails on unrelated code and masks real failures.
+    // .builtin-host-test-* are temporary directories created by builtin-host-artifacts.test.ts
+    // during host artifact builds. They copy plugin src/ directories (including test files)
+    // but those test files' relative imports break when run from the temp location.
     exclude: [
       ...configDefaults.exclude,
       'artifacts/**',
@@ -49,6 +52,7 @@ export default defineConfig({
       '.claude/worktrees/**',
       '.worktrees/**',
       '.zcc/**',
+      '.builtin-host-test-*/**',
       'salesforce-only/**',
       'marketplace/**',
       'packages/agent-runtime/src/integration*.test.ts',
