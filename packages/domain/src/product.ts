@@ -925,6 +925,26 @@ export function isRestfulAgentState(state: AgentState): boolean {
 }
 
 /**
+ * Map a RAW resolved agent state to the value shown in the UI for a session with
+ * NO reliable "done" channel (a headless ssh-remote worker whose status is only
+ * inferred from output-activity/screen-scan silence — see the host's
+ * `sessionHasUnreliableStatusChannel`). Its at-rest guesses (`idle`/`waiting`/
+ * `done`) can't be told apart from a slow remote round-trip, so they decay to a
+ * neutral `unknown` rather than assert a false "done" or a stale spinner.
+ * `working` (recent bytes = genuinely active) and `blocked` (text-detected
+ * prompt) are real, so they pass through unchanged. A no-op when
+ * `unreliableChannel` is false, so a local/OSC/hook-backed session is untouched.
+ *
+ * DISPLAY ONLY: callers apply this to the renderer-facing status stream, never
+ * to the raw state the idle-gated injector / auto-close / coordinator-wake read
+ * (there `unknown` means "busy", which would strand a remote worker's queue).
+ */
+export function decayUnreliableAgentState(state: AgentState, unreliableChannel: boolean): AgentState {
+  if (!unreliableChannel) return state;
+  return state === 'idle' || state === 'waiting' || state === 'done' ? 'unknown' : state;
+}
+
+/**
  * Why an agent (or an Agent-tool subagent) reached its terminal / idle state —
  * the STRUCTURED exit signal that turns a bare `idle_notification` into an
  * actionable completion event. This is the fix for "silent agent failure: no
@@ -1258,6 +1278,15 @@ export interface TerminalSession {
   profile: LaunchProfileId;
   cwd: string;
   pid?: number;
+  /**
+   * For a REMOTE agent spawn (`ssh -t … exec <cli>`): the PID of the remote CLI
+   * process, parsed from a one-shot boot sentinel the remote command emits
+   * (`$$` — the whole exec chain shares one PID). Local teardown only kills the
+   * local `ssh`; some CLIs (OpenCode) ignore the resulting SIGHUP and orphan on
+   * the box, so this PID lets main actively `ssh … kill -KILL` them on close and
+   * reap any survivors at next boot. Absent for local spawns and remote shells.
+   */
+  remotePid?: number;
   status: 'starting' | 'running' | 'exited';
   /** Command passed to `terminal.start` for a product PTY, when set. */
   launchCommand?: string;
@@ -4235,16 +4264,24 @@ export interface SquadFlowNode {
   /** True for the squad orchestrator: the node with the highest out-degree in
    *  the handoff graph, tie-broken by earliest `registeredAt`. Heuristic. */
   isOrchestrator: boolean;
-  /** Job execution status attached to an orchestrator node for attention display. */
-  job?: { executionId: string; blockerQuestion?: string; needsAttention: boolean };
-  /** Durable claim liveness when THIS node's session is the assigned slot of a
-   *  CLAIMED work unit — the lease the host renews from the worker's PTY output.
-   *  Absent for a node that isn't actively holding a unit. Drives the Flow view's
-   *  activity treatment: a valid lease (`leaseExpiresAt > builtAt`) means the
-   *  backend still considers the worker alive (it kept streaming output), so the
-   *  node is shown STREAMING (self-loop arc) — independent of the sometimes-stale
-   *  agent-state dot that misreports a live headless worker as idle/unknown. */
-  claim?: { claimedAt?: number; heartbeatAt?: number; leaseExpiresAt?: number };
+  /** Job execution status attached to an orchestrator node for attention display.
+   *  `blockerAudience` distinguishes a human "needs you" blocker from a
+   *  `'coordinator'` self-heal ask (rendered "coordinator deciding", not
+   *  actionable by the user). */
+  job?: { executionId: string; blockerQuestion?: string; needsAttention: boolean; blockerAudience?: 'human' | 'coordinator' };
+  /** Durable claim liveness when THIS node holds a CLAIMED work unit. Absent for a
+   *  node that isn't actively holding a unit. Drives the Flow view's activity
+   *  treatment: STREAMING is derived from a FRESH `progressAt` (last real worker
+   *  OUTPUT), not a bare `leaseExpiresAt` — so a seeded-but-silent lease is no
+   *  longer misread as streaming, and a genuinely emitting worker still lights up
+   *  independent of the sometimes-stale agent-state dot. */
+  claim?: { claimedAt?: number; heartbeatAt?: number; progressAt?: number; leaseExpiresAt?: number };
+  /** True when this node was SYNTHESIZED from the durable execution board's CLAIMED
+   *  assignment because no live local terminal session carries its slot — a worker
+   *  the backend considers alive/claimed but that the renderer has no session for
+   *  (CLI/headless resume, app restart mid-run, remote spawn). Grounds the Flow in
+   *  the board's own liveness truth so a real claim is never shown as "no workers". */
+  detached?: boolean;
 }
 
 /**
@@ -5562,12 +5599,24 @@ export interface ExecutionBoardProjection {
       result?: string;
       /** Claim liveness timestamps (epoch ms) for a CLAIMED unit — the durable
        *  lease the host renews from the worker's PTY output activity. Absent when
-       *  the unit was never claimed. The Flow view derives its "streaming / live"
-       *  node indicator from `leaseExpiresAt > now` (a valid lease = the backend
-       *  still considers the worker alive because it kept emitting output). */
+       *  the unit was never claimed. `progressAt` is the last time the worker
+       *  actually emitted OUTPUT (not advanced by the engine's agent-state lease
+       *  renewal), so the Flow view derives "streaming / live" from a FRESH
+       *  `progressAt` rather than a bare `leaseExpiresAt` — a seeded-but-silent
+       *  lease no longer misreads as streaming. */
       claimedAt?: number;
       heartbeatAt?: number;
+      progressAt?: number;
       leaseExpiresAt?: number;
+      /** Claim-churn diagnostics for the copied Job Details dump. `attempt` counts
+       *  full re-dispatches of the unit; `turnCount` counts worker turns within the
+       *  current claim; `claimGeneration`/`claimId` are the main-minted fence — a
+       *  gen that keeps bumping with no `progressAt` advance is the wedge signature
+       *  (re-claimed but never emitting output). Absent on a never-claimed unit. */
+      attempt?: number;
+      turnCount?: number;
+      claimId?: string;
+      claimGeneration?: number;
     }>;
     rosterSlotIds: string[];
   };
@@ -5622,6 +5671,11 @@ export interface ExecutionBoardProjection {
     slotId: string;
     question: string;
     options?: string[];
+    /** Who must answer. `'coordinator'` = a self-heal ask the coordinator owns
+     *  (NOT a human "needs you"); `'human'`/absent = the human answers via inbox
+     *  or Job Details. The renderer keys attention display off this (Rule 1: this
+     *  is metadata, never the answer text). */
+    audience?: 'human' | 'coordinator';
     response?: string;
     delivery?: {
       id: string;
@@ -5638,6 +5692,35 @@ export interface ExecutionBoardProjection {
     resolved: boolean;
     deliveryState?: 'PENDING' | 'LEASED' | 'DELIVERED' | 'FAILED';
   }>;
+  /** Bounded delivery-strand diagnostics (Rule 5) for the copied Job Details dump —
+   *  metadata ONLY, NEVER `payload.text` (Rule 1: worker/coordinator answer text
+   *  must not reach the renderer projection). A delivery stuck in FAILED/PENDING at
+   *  max attempts is the "answer never reached the worker" wedge signature. */
+  deliveries?: Array<{
+    id: string;
+    blockerId: string;
+    workUnitId: string;
+    slotId: string;
+    state: 'PENDING' | 'LEASED' | 'DELIVERED' | 'FAILED';
+    attempt: number;
+    maxAttempts: number;
+    manualRetryCount?: number;
+    updatedAt: number;
+    error?: string;
+  }>;
+  /** Bounded coordinator-wake diagnostics — a count plus a recent tail. A coordinator
+   *  woken repeatedly for the same cause/unit while nothing advances is the wedge
+   *  signature on the orchestrator side. `message` is a wake reason, not agent output. */
+  coordinatorWakes?: {
+    total: number;
+    recent: Array<{
+      id: string;
+      cause: 'HUMAN_BLOCKER' | 'SEMANTIC_CONFLICT' | 'POLICY_ESCALATION' | 'TYPED_OUTPUT_REPAIR' | 'TERMINAL_SYNTHESIS';
+      workUnitId?: string;
+      stateOrClaimGeneration: string;
+      createdAt: number;
+    }>;
+  };
   finalSummary?: string;
   eventCursor?: number;
   coordinator?: { status: 'live' | 'parked' | 'lost' | 'complete'; sessionId?: string };

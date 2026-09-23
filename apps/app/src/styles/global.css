@@ -13996,6 +13996,8 @@ body.resizing-col .explorer-resizer::after {
 }
 .execution-details > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .execution-details-close { flex: none; }
+.execution-details-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.execution-details-copy { display: flex; justify-content: flex-end; margin-top: 8px; }
 .execution-details-meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 14px 0; }
 .execution-details-meta dt { color: var(--text-muted); font-size: 12px; }
 .execution-details-meta dd { margin: 0; overflow-wrap: anywhere; }
@@ -39087,6 +39089,13 @@ textarea.thread-command-editor {
 .squad-flow-node--streaming {
   border-color: color-mix(in srgb, var(--accent-blue) 70%, var(--border-strong));
 }
+/* A durable claim with NO live signal (no fresh output, mesh not 'working'):
+   the run holds the slot but we can't confirm activity. Neutral ring — never
+   amber (amber is the orchestrator's language) — and NO self-arc motion, so a
+   stranded claim never fabricates a "working" flow. */
+.squad-flow-node--claimed {
+  border-color: color-mix(in srgb, var(--text-muted) 40%, var(--border-strong));
+}
 
 .squad-flow-self-loop {
   fill: none;
@@ -39094,8 +39103,18 @@ textarea.thread-command-editor {
   opacity: 0.85;
   stroke-width: 1.75;
 }
+/* Self-arc for a node that is working from the mesh signal but has no fresh
+   claim-lease output (the weaker "working" tier vs. "streaming"): same blue
+   motion, dimmed so the streaming tier still reads as the stronger signal. */
+.squad-flow-self-loop--working {
+  opacity: 0.5;
+  stroke-width: 1.5;
+}
 .squad-flow-chevron--self {
   fill: var(--accent-blue);
+}
+.squad-flow-chevron--self-working {
+  opacity: 0.6;
 }
 .squad-flow-arrowhead-self {
   fill: var(--accent-blue);
@@ -39121,6 +39140,23 @@ textarea.thread-command-editor {
   border-radius: 50%;
   background: var(--accent-blue);
   vertical-align: middle;
+}
+
+/* A worker with a durable claim but no confirmed activity (board-synthesized
+   detached worker, or a live node whose claim went quiet). NEUTRAL/muted — not
+   amber (amber is the orchestrator's colour, and this is deliberately NOT a
+   "working" signal): it reads as "claim held, activity unconfirmed", distinct
+   from the blue live badge and from the gold orchestrator tag. No motion. */
+.squad-flow-claimed {
+  align-self: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  padding: 1px 6px;
+  border-radius: 5px;
 }
 
 .squad-flow-node-top {
@@ -39169,6 +39205,15 @@ textarea.thread-command-editor {
   display: block;
   margin-top: 3px;
   color: var(--danger);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.squad-flow-node-coord {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-muted);
   font-size: 10.5px;
   white-space: nowrap;
   overflow: hidden;

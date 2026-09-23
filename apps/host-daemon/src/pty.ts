@@ -19,7 +19,8 @@ import { resolveHarnessCommand } from './harness/harness-verify.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName } from './tmux.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
-import type { HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
+import type { AgentLiveness, HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
+import { probeAgentLiveness as probeAgentLivenessImpl } from './harness/agent-liveness.js';
 import { getHarnessAuth } from './harness-auth.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from './harness/target-resolution.js';
 import {
@@ -108,6 +109,17 @@ interface Live {
   reattach?: RemoteReattach;
   /** Remote tmux teardown is awaiting SSH confirmation; suppress reconnect races. */
   remoteTerminationInFlight?: boolean;
+  /**
+   * Present for a REMOTE agent spawn (both tmux-backed and headless): the recipe
+   * to actively SIGKILL the remote CLI process on teardown. Local `proc.kill()`
+   * only drops the local `ssh`; a CLI that ignores the resulting SIGHUP
+   * (OpenCode) would otherwise orphan on the box. `pid` is filled once the boot
+   * sentinel is parsed off the output stream. See {@link PtyManager.reapRemoteProcess}.
+   */
+  remoteReap?: RemoteReap;
+  /** Set once {@link PtyManager.maybeReapRemote} has fired, so close→exit (and a
+   *  finalize with no explicit close) reap at most once. */
+  remoteReapFired?: boolean;
 }
 
 /**
@@ -138,6 +150,35 @@ interface RemoteReattach {
   tmuxName: string;
   /** Keepalive/-o opts to reuse on the probe ssh (a subset of sshArgs, no `-t`). */
   probeOpts: string[];
+}
+
+/**
+ * Recipe to actively reap a REMOTE agent process. Local teardown kills only the
+ * local `ssh` proxy, and a CLI that ignores the resulting SIGHUP (OpenCode) then
+ * orphans on the box, burning CPU indefinitely. With the remote PID (parsed from
+ * the spawn's boot sentinel) main can `ssh … kill -KILL` it on close, and a
+ * persisted copy lets the next boot reap survivors of a quit/hard-crash where the
+ * async graceful kill could not finish before the app exited. Populated for every
+ * remote AGENT spawn (tmux-backed and headless); a plain remote shell honors
+ * SIGHUP so it needs none.
+ */
+interface RemoteReap {
+  /** `ssh` target (`user@host` or `host`); rejected at reap if it starts with `-`. */
+  target: string;
+  /** Keepalive / `-J jump` opts to reach the box on the reap ssh (no `-t`). */
+  probeOpts: string[];
+  /** True when tmux-backed (the boot reaper spares one that re-attached on restore). */
+  tmux: boolean;
+  /** Remote CLI PID, parsed from the boot sentinel; absent until it streams.
+   *  NEVER fills for a tmux-backed remote — tmux SWALLOWS the OSC boot sentinel
+   *  (unknown OSC, no `allow-passthrough`), so the byte never reaches our pty. A
+   *  tmux-backed remote is reaped via {@link tmuxName} instead. */
+  pid?: number;
+  /** tmux session name (`cc-<id>`) when tmux-backed. This is the reap route for a
+   *  tmux-backed remote (see {@link pid}): main resolves the live `#{pane_pid}` on
+   *  the box at reap time and SIGKILLs it, then drops the session. Absent for a
+   *  headless remote (which captures {@link pid} from the sentinel instead). */
+  tmuxName?: string;
 }
 
 /**
@@ -199,6 +240,19 @@ class DeferredExecSession implements ExecutionSession {
  * (transient) so a genuinely dropped-but-recovering link still reconnects.
  */
 const REMOTE_PROBE_TIMEOUT_MS = 12_000;
+
+/**
+ * Boot sentinel a remote AGENT spawn emits so main can learn the remote CLI's
+ * PID. The whole `cd … && exec env … bash -lic 'exec <cli> …'` chain is one
+ * process (every step `exec`s in place), so the login shell's `$$` — captured
+ * BEFORE the first exec — is the CLI's own PID. It's wrapped in a private OSC
+ * escape (`ESC ] 6997 ; <pid> BEL`): terminals swallow OSC, so even an unstripped
+ * copy can't garble a TUI, and it never reads as meaningful agent output. We
+ * strip it from the stream on capture regardless. `printf` renders the octal
+ * escapes portably; `$$` is unquoted so the shell expands it.
+ */
+const REMOTE_PID_SENTINEL_EMIT = `printf '\\033]6997;zcc-remote-pid=%s\\007' $$ ; `;
+const REMOTE_PID_SENTINEL_RE = /\x1b\]6997;zcc-remote-pid=(\d+)\x07/;
 
 function remoteCommandExitCode(error: unknown): number | undefined {
   const code = (error as NodeJS.ErrnoException | null)?.code;
@@ -1877,6 +1931,13 @@ export class PtyManager extends EventEmitter {
     // listeners ignore them; the Team lifecycle integration consumes them.
     this.emit('exit', sessionId, exitCode, signal ?? null, explanation ?? null);
     this.rememberExited(live.session);
+    // A remote agent that ignores SIGHUP survives the local ssh proxy dying, so a
+    // DROPPED-LINK exit (no explicit close ran) would otherwise orphan it — the
+    // headless case that has no tmux to reattach and no close() to reap. Reap by
+    // PID here as the catch-all. Idempotent (the flag makes a prior close()/
+    // closeExpected() reap a no-op); a still-reattaching session never reaches
+    // finalize, so this only fires once the session is genuinely ending.
+    this.maybeReapRemote(live);
     this.live.delete(sessionId);
     // Release node-pty's master /dev/ptmx fd. On a normal `onExit`, node-pty's
     // own socket-close path already frees it — but reapDeadSessions() finalizes
@@ -2121,6 +2182,14 @@ export class PtyManager extends EventEmitter {
       remoteProvider.capabilities(remoteEffectiveProfile).supportsHooks &&
       !!this.mcpBaseUrl &&
       !opts.headless;
+    // Durable Team sessions require execution.* tools to close assigned work.
+    // Unlike optional inbox MCP for ordinary remote tabs, this capability is
+    // part of the host-stamped execution contract and must also reach headless
+    // workers. `executionId` is main-owned and appears only on durable cohorts.
+    const wantsRemoteExecutionMcp =
+      !!this.mcpBaseUrl &&
+      !!opts.cohort?.executionId &&
+      (opts.cohort.role === 'worker' || opts.cohort.role === 'orchestrator');
     let remoteForward: { remotePort: number; reverse: string } | null = null;
     let remoteHookUrls: ProviderHookUrls | undefined;
     // Opt-in MCP forwarding (`remoteMcpEnabled`): the reverse tunnel already
@@ -2129,7 +2198,7 @@ export class PtyManager extends EventEmitter {
     // it the zcc-inbox surface. Set below, inside the tunnel block, only when the
     // flag is on. Overseer stays excluded regardless.
     let remoteMcpUrl: string | undefined;
-    if (wantsRemoteHooks) {
+    if (wantsRemoteHooks || wantsRemoteExecutionMcp) {
       const localPort = this.localMcpPort();
       if (localPort !== null) {
         // Deterministic per-session remote loopback port so a reconnect reuses
@@ -2164,7 +2233,7 @@ export class PtyManager extends EventEmitter {
         // the route and the agent can't forge it. The provider embeds this URL
         // inline in `--mcp-config` (no remote file). Gated behind the config
         // flag; absent ⇒ the historical MCP-cut-off remote agent.
-        if (opts.config.remoteMcpEnabled) {
+        if (opts.config.remoteMcpEnabled || wantsRemoteExecutionMcp) {
           remoteMcpUrl = `${base}/mcp/${opts.projectId}/${sessionId}/${controlCredentialForSession(sessionId)}`;
         }
       }
@@ -2224,6 +2293,15 @@ export class PtyManager extends EventEmitter {
       mintClaudeSessionId: randomUUID
     });
     let remoteCmd = builtCmd;
+    // A remote AGENT (not a plain shell) may ignore the SIGHUP that local `ssh`
+    // teardown delivers and ORPHAN on the box, burning CPU (OpenCode does). Prepend
+    // the boot sentinel so main learns the remote CLI's PID and can actively
+    // SIGKILL it on close and at the next boot. Prepend BEFORE the tmux wrap so it
+    // fires inside the pane too — both remote variations are covered. A plain
+    // remote shell honors SIGHUP (no orphan) and its command may be empty, which
+    // the prefix would break, so it is excluded.
+    const wantsRemoteReap = opts.profile !== 'shell';
+    if (wantsRemoteReap) remoteCmd = `${REMOTE_PID_SENTINEL_EMIT}${remoteCmd}`;
     // tmux persistence on the REMOTE: survive a flaky `ssh -t` link by
     // re-attaching the live remote session. Gated on the scope covering REMOTE
     // sessions ('remote' or 'all'; missing matches Settings' "all sessions")
@@ -2359,7 +2437,29 @@ export class PtyManager extends EventEmitter {
           probeOpts: [...keepaliveOpts, ...jumpOpts]
         }
       : undefined;
-    this.bindRemoteProc(session, proc, reattach);
+    // Active-reap recipe (both variations): a remote agent that ignores SIGHUP
+    // survives local teardown, so main must reach the box and SIGKILL it by PID.
+    // Reuses the SAME keepalive + jump opts as the reattach probe (never `-t`),
+    // so the reap ssh traverses the same bastion hop. `tmux` records whether the
+    // remote is tmux-backed so the boot orphan-reap can spare a re-attached tmux
+    // session while still reaping a headless one.
+    //
+    // Reap route differs by variation: a HEADLESS remote fills `pid` from the boot
+    // sentinel (see `bindRemoteProc`) and is killed by pid. A TMUX-BACKED remote
+    // NEVER fills `pid` — tmux swallows the OSC sentinel — so we record the tmux
+    // session name (`cc-<tmuxId>`, the id we actually wrapped) and reap it by
+    // resolving the live pane pid on the box. Recorded at spawn time, so a
+    // tmux-backed remote is reapable immediately (no wait on a byte that never
+    // comes) — the fix for tmux-backed coordinators orphaning after a quit.
+    const remoteReap: RemoteReap | undefined = wantsRemoteReap
+      ? {
+          target,
+          probeOpts: [...keepaliveOpts, ...jumpOpts],
+          tmux: tmuxBacked,
+          tmuxName: tmuxBacked ? tmuxSessionName(tmuxId) : undefined
+        }
+      : undefined;
+    this.bindRemoteProc(session, proc, reattach, remoteReap);
     if (opts.openingPrompt && !opts.scheduled && !opts.resume) {
       this.scheduleStdinOpeningPrompt(session.id, opts.openingPrompt, proc, providerFor(session.profile).stdinReadyMarker);
     }
@@ -2374,13 +2474,37 @@ export class PtyManager extends EventEmitter {
    * the SAME session id (and its accumulated buffers/backlog) without going
    * through the full spawn/cap/env path again.
    */
-  private bindRemoteProc(session: TerminalSession, proc: pty.IPty, reattach?: RemoteReattach): void {
-    this.setLive(session.id, { session, proc, reattach });
-    proc.onData((data) => {
+  private bindRemoteProc(
+    session: TerminalSession,
+    proc: pty.IPty,
+    reattach?: RemoteReattach,
+    reap?: RemoteReap
+  ): void {
+    this.setLive(session.id, { session, proc, reattach, remoteReap: reap });
+    proc.onData((chunk) => {
+      let data = chunk;
       // Any streamed byte proves the (re-)attached link is stable — reset the
       // reconnect budget so a long, occasionally-flaky session isn't starved.
       const live = this.live.get(session.id);
       if (live?.reattach) live.reattach.attempts = 0;
+      // Capture the remote CLI's PID from the boot sentinel exactly once (the
+      // login shell's `$$`, printed before the first `exec`, so it equals the
+      // final agent PID across the exec chain). Record it on the reap recipe and
+      // the session (durably ledgered by main), then STRIP the escape sequence so
+      // it never renders in the terminal. Only on the first spawn — a reattach
+      // re-attaches the existing tmux pane and never re-runs the inner command.
+      if (live?.remoteReap && live.remoteReap.pid === undefined) {
+        const m = data.match(REMOTE_PID_SENTINEL_RE);
+        if (m) {
+          const pid = Number(m[1]);
+          if (Number.isInteger(pid) && pid > 1) {
+            live.remoteReap.pid = pid;
+            live.session.remotePid = pid;
+            this.emit('sessionUpdated', live.session);
+          }
+          data = data.replace(REMOTE_PID_SENTINEL_RE, '');
+        }
+      }
       // Honest tunnel posture: if a reverse forward was requested and still reads
       // as ok, watch the ssh output for OpenSSH's "remote port forwarding failed"
       // warning and downgrade the session so the UI stops implying the remote
@@ -2481,7 +2605,9 @@ export class PtyManager extends EventEmitter {
         // output stream will re-downgrade it if the bind fails again. Only when a
         // tunnel was in play (leave an absent posture absent).
         if (live2.session.remoteTunnel) live2.session.remoteTunnel = { ok: true };
-        this.bindRemoteProc(live2.session, proc, live2.reattach);
+        // Carry the already-captured reap recipe (its PID doesn't re-emit on a
+        // tmux re-attach) so a reconnected session stays reapable.
+        this.bindRemoteProc(live2.session, proc, live2.reattach, live2.remoteReap);
         this.emit('sessionUpdated', live2.session);
       });
     }, delay);
@@ -2520,6 +2646,36 @@ export class PtyManager extends EventEmitter {
         return resolve('gone');
       });
     });
+  }
+
+  /**
+   * Inner-agent liveness for a tmux-backed REMOTE worker — distinct from the
+   * pty/process liveness `probeRemoteSession` reports. A remote agent's ssh/tmux
+   * wrapper can stay `running` after the inner agent exits (the remote-opencode
+   * zombie); this asks tmux which command the pane is actually running and lets
+   * the provider classify it (`opencode`/`node` => alive, a bare login shell =>
+   * dead). Returns `unknown` — and NEVER probes — for a local session, a session
+   * whose provider does not report liveness, or any ssh failure/timeout, so a
+   * claim is only ever reclaimed on a POSITIVE `dead`. Never throws.
+   */
+  async probeAgentLiveness(sessionId: string): Promise<AgentLiveness> {
+    const live = this.live.get(sessionId);
+    if (!live?.reattach) return 'unknown'; // local, or non-tmux remote — can't distinguish
+    const provider = providerFor(live.session.profile);
+    if (!provider.reportsAgentLiveness || !provider.classifyPaneCommand) return 'unknown';
+    const classify = provider.classifyPaneCommand.bind(provider);
+    try {
+      return await probeAgentLivenessImpl({
+        execFile,
+        target: live.reattach.target,
+        tmuxName: live.reattach.tmuxName,
+        probeOpts: live.reattach.probeOpts,
+        timeoutMs: REMOTE_PROBE_TIMEOUT_MS,
+        classify
+      });
+    } catch {
+      return 'unknown'; // defensive — the impl already never rejects
+    }
   }
 
   /** Cancel a pending reconnect timer and clear the reattach recipe. */
@@ -2600,22 +2756,33 @@ export class PtyManager extends EventEmitter {
    * included) as literal text instead of submitting. That's why an inbox
    * reply would land in the prompt box but never run. Writing the CR on its
    * own, a tick later, makes the TUI register it as a discrete Enter keypress.
+   *
+   * A provider whose TUI lacks that burst-paste heuristic (OpenCode's Go TUI —
+   * {@link LaunchProvider.submitViaBracketedPaste}) needs the body wrapped in a
+   * BRACKETED-PASTE envelope (`ESC[200~` … `ESC[201~`) so a multi-line body's
+   * embedded `\n`s are buffered as one literal paste; without it each `\n` reads
+   * as a premature Enter and a worker assignment submits only its truncated
+   * first line (`turnCount: 0`). The deferred CR still submits the buffered
+   * paste. Gated by provider so the Claude path stays byte-identical.
    */
   reply(id: string, text: string): boolean {
     const live = this.live.get(id);
     if (!live) return false;
+    const bracketed = providerFor(live.session.profile).submitViaBracketedPaste;
+    const body = bracketed ? `\x1b[200~${text}\x1b[201~` : text;
     // Mid-reconnect gap: when a tmux-backed remote drops, the old proc may be
     // dead while the detached agent still runs in tmux. In this window
     // (`reattach` armed, no live pid yet), send input via out-of-band
     // `tmux send-keys` over one-shot ssh so inbox replies still reach the agent.
     if (live.reattach && !live.session.pid) {
-      this.sendKeysRemote(live.reattach, text);
+      this.sendKeysRemote(live.reattach, body);
       return true;
     }
-    live.proc.write(text);
+    live.proc.write(body);
     setTimeout(() => {
       // Re-resolve: the session may have exited during the delay.
-      this.live.get(id)?.proc.write('\r');
+      const stillLive = this.live.get(id);
+      stillLive?.proc.write('\r');
     }, 50);
     return true;
   }
@@ -2709,6 +2876,87 @@ export class PtyManager extends EventEmitter {
     }
   }
 
+  /**
+   * Best-effort active reap of the REMOTE agent process on close. Killing the
+   * local `ssh` proxy (below) only drops the link; that delivers SIGHUP to the
+   * remote pty session leader, which OpenCode IGNORES — so it orphans on the box.
+   * If we captured the remote PID from the boot sentinel, reach the box and
+   * SIGKILL it directly. Covers BOTH variations: a headless remote (no tmux to
+   * `kill-session`) AND a tmux-backed one (`tmux kill-session` also only SIGHUPs
+   * the pane, so a HUP-ignoring agent can orphan out of tmux too). Fire-and-
+   * forget: the app stays alive after a normal close, so the async ssh completes
+   * in the background; the QUIT/crash case is backstopped by the boot orphan-reap.
+   */
+  private maybeReapRemote(l: Live): void {
+    if (l.remoteReapFired) return;
+    const reap = l.remoteReap;
+    // Reapable when we have EITHER a captured pid (headless) OR a tmux session
+    // name (tmux-backed — pid never captured because tmux ate the sentinel).
+    if (!reap || (reap.pid === undefined && reap.tmuxName === undefined)) return;
+    l.remoteReapFired = true;
+    void this.reapRemoteProcess(reap);
+  }
+
+  /**
+   * SIGKILL a remote agent over a one-shot non-tty `ssh` (never `-t`), reusing the
+   * recorded keepalive + jump opts so it traverses any bastion hop. Used both on
+   * close ({@link maybeReapRemote}) and by main's boot orphan-reap over the durable
+   * ledger. Two routes, chosen by the recipe:
+   *
+   *  - TMUX-BACKED (`tmuxName` set): tmux swallows the boot PID sentinel, so `pid`
+   *    is never captured. Resolve the live pane pid ON THE BOX (`tmux list-panes
+   *    -F '#{pane_pid}'` — the login shell that `exec`'d the agent, so same pid),
+   *    SIGKILL its process GROUP then the bare pid (OpenCode ignores the SIGHUP
+   *    that `kill-session` alone delivers, so it would orphan OUT of tmux), then
+   *    drop the session. This is the fix for tmux-backed coordinators orphaning.
+   *  - HEADLESS (`pid` set): SIGKILL the captured pid directly. Negative-pid kills
+   *    the process GROUP first (the remote login shell is the pty session/pgroup
+   *    leader and its `$$` — captured pre-`exec` — equals the exec'd agent's pid),
+   *    then the bare pid as a fallback.
+   *
+   * `tmuxName` wins when both are present (it is strictly more thorough), though
+   * by construction they are mutually exclusive (tmux-backed excludes headless).
+   * SIGKILL because OpenCode ignores SIGHUP/SIGTERM; `; true` makes ssh exit 0
+   * whether or not anything was still alive (already-dead is not a failure).
+   * Validates target, pid, and tmux name so a malformed recipe can't build a bad argv.
+   */
+  reapRemoteProcess(reap: {
+    target: string;
+    probeOpts: readonly string[];
+    pid?: number;
+    tmuxName?: string;
+  }): Promise<boolean> {
+    const { target, probeOpts, pid, tmuxName } = reap;
+    if (target.startsWith('-')) return Promise.resolve(false);
+    let remoteCmd: string;
+    if (tmuxName !== undefined) {
+      // Confine the interpolated session name to our own `cc-<id>` shape so it
+      // can never smuggle shell metacharacters into the remote command.
+      if (!/^cc-[A-Za-z0-9._-]+$/.test(tmuxName)) return Promise.resolve(false);
+      remoteCmd =
+        `p=$(tmux list-panes -t ${tmuxName} -F '#{pane_pid}' 2>/dev/null | head -1); ` +
+        `[ -n "$p" ] && { kill -KILL -"$p" 2>/dev/null; kill -KILL "$p" 2>/dev/null; }; ` +
+        `tmux kill-session -t ${tmuxName} 2>/dev/null; true`;
+    } else {
+      if (pid === undefined || !Number.isInteger(pid) || pid <= 1) return Promise.resolve(false);
+      remoteCmd = `kill -KILL -${pid} 2>/dev/null; kill -KILL ${pid} 2>/dev/null; true`;
+    }
+    const args = [...probeOpts, '-o', 'BatchMode=yes', target, remoteCmd];
+    return new Promise((resolve) => {
+      execFile('ssh', args, { timeout: REMOTE_PROBE_TIMEOUT_MS }, (error) => resolve(!error));
+    });
+  }
+
+  /**
+   * The active-reap recipe for a live remote session — including the remote PID
+   * once the boot sentinel has arrived — or undefined for a local / plain-shell
+   * session. Read by main to durably ledger the recipe (Rule 1: main owns the
+   * on-disk record; the renderer never supplies these values).
+   */
+  getRemoteReap(id: string): RemoteReap | undefined {
+    return this.live.get(id)?.remoteReap;
+  }
+
   close(id: string) {
     this.stdinOpeningPromptCleanup.get(id)?.();
     const l = this.live.get(id);
@@ -2724,6 +2972,9 @@ export class PtyManager extends EventEmitter {
     } catch {
       /* ignore */
     }
+    // Killing the local ssh proxy only SIGHUPs the remote; actively SIGKILL a
+    // HUP-ignoring remote agent by its captured PID so it can't orphan.
+    this.maybeReapRemote(l);
     // If the kill lands during a reconnect backoff there's no live proc to fire
     // onExit, so finalize here — disarmReattach already ensured we won't loop.
     if (!l.session.pid) this.finalizeExit(id, 0);
@@ -2748,6 +2999,8 @@ export class PtyManager extends EventEmitter {
     } catch {
       /* already dead — the onExit (if any) will still clear the flag */
     }
+    // Same active reap as close(): drop a HUP-ignoring remote agent by PID.
+    this.maybeReapRemote(l);
     if (!l.session.pid) this.finalizeExit(id, 0);
     return true;
   }

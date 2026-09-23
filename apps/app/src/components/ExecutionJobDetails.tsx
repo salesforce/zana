@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store';
+import { copyText } from '../lib/copy-text.js';
 
 interface Props {
   projectId: string;
@@ -9,6 +10,146 @@ interface Props {
 }
 
 const terminal = new Set(['COMPLETED', 'FAILED', 'STOPPED']);
+
+function formatTimestamp(ms?: number): string {
+  return typeof ms === 'number' ? new Date(ms).toISOString() : '—';
+}
+
+function formatCost(usd?: number): string {
+  return usd === undefined ? '—' : `$${usd.toFixed(4)}`;
+}
+
+/** Events dumped are bounded to the newest N (Rule 5): a stuck run can have a long tail. */
+const JOB_DETAILS_EVENT_TAIL = 25;
+
+/**
+ * Readable, copy-paste-friendly plain-text dump of the job details shown in this view.
+ * Purpose is wedge diagnosis — dump every liveness / claim / usage / blocker signal the
+ * projection carries so a stalled run can be pasted for analysis. Bounded (Rule 5): events
+ * are a last-N tail; artifacts are name+mediaType+digest only (never bodies).
+ */
+export function buildJobDetailsText(projectId: string, snapshot: ExecutionBoardSnapshot): string {
+  const execution = snapshot.execution;
+  const lines: string[] = [];
+  lines.push(`Job: ${execution.jobTitle}`);
+  lines.push(`Execution ID: ${execution.executionId}`);
+  lines.push(`Project ID: ${projectId}`);
+  lines.push(`Team ID: ${execution.teamId ?? '—'}`);
+  lines.push(`Team name: ${execution.teamName ?? '—'}`);
+  lines.push(`Kind: ${execution.launchDisplay?.label ?? '—'}`);
+  lines.push(`State: ${execution.state} (attempt ${execution.attempt})`);
+  lines.push(`State version: ${execution.stateVersion ?? '—'}`);
+  lines.push(`Objective: ${execution.objective ?? '—'}`);
+  lines.push(`Summary: ${execution.summary ?? '—'}`);
+  lines.push(`Coordinator: ${execution.coordinator?.status ?? 'unknown'}${execution.coordinator?.sessionId ? ` (session ${execution.coordinator.sessionId})` : ''}`);
+  lines.push(`Recovery: ${execution.recovery?.status ?? '—'}${execution.recoveryAttention ? ' · attention required' : ''}`);
+  if (execution.resourceBlock) {
+    lines.push(`Resource block: ${execution.resourceBlock.kind} · ${execution.resourceBlock.reason} (at ${formatTimestamp(execution.resourceBlock.blockedAt)})`);
+  }
+  lines.push(`Telemetry gap count: ${execution.usage?.gapCount ?? 0}`);
+  lines.push('');
+
+  const work = execution.work;
+  lines.push(`Work units: ${work?.completed ?? 0}/${work?.total ?? 0} complete`);
+  if (work?.counts) lines.push(`  counts: ${Object.entries(work.counts).map(([state, count]) => `${state}=${count}`).join(' · ')}`);
+  const assignments = work?.assignments ?? [];
+  if (assignments.length === 0) lines.push('  (none)');
+  for (const assignment of assignments) {
+    lines.push(`  - ${assignment.title} [${assignment.workUnitId}]`);
+    lines.push(`      state: ${assignment.state} · assignedSlotId: ${assignment.slotId ?? 'unassigned'}${assignment.failureCode ? ` · failureCode: ${assignment.failureCode}` : ''}`);
+    lines.push(`      claimedAt: ${formatTimestamp(assignment.claimedAt)} · heartbeatAt: ${formatTimestamp(assignment.heartbeatAt)} · progressAt: ${formatTimestamp(assignment.progressAt)} · leaseExpiresAt: ${formatTimestamp(assignment.leaseExpiresAt)}`);
+    lines.push(`      attempt: ${assignment.attempt ?? '—'} · turnCount: ${assignment.turnCount ?? '—'} · claimGeneration: ${assignment.claimGeneration ?? '—'} · claimId: ${assignment.claimId ?? '—'}`);
+    if (assignment.dependencies?.length) lines.push(`      dependencies: ${assignment.dependencies.join(', ')}`);
+    if (assignment.result) lines.push(`      result: ${assignment.result}`);
+  }
+  lines.push('');
+
+  const usage = execution.usage;
+  lines.push('Usage:');
+  if (!usage) lines.push('  (unavailable)');
+  else {
+    lines.push(`  completeness: ${usage.completeness} · observations: ${usage.observationCount} · gaps: ${usage.gapCount}`);
+    lines.push(`  tokens: input ${usage.inputTokens ?? '—'} · output ${usage.outputTokens ?? '—'} · cacheRead ${usage.cacheReadTokens ?? '—'} · cacheWrite ${usage.cacheWriteTokens ?? '—'} · cost ${formatCost(usage.providerCostUsd)}`);
+    for (const role of usage.byRole) {
+      lines.push(`    ${role.role}: input ${role.inputTokens ?? '—'} · output ${role.outputTokens ?? '—'} · cacheRead ${role.cacheReadTokens ?? '—'} · cacheWrite ${role.cacheWriteTokens ?? '—'} · cost ${formatCost(role.providerCostUsd)}`);
+    }
+  }
+  lines.push('');
+
+  lines.push('Blockers:');
+  const blockers = execution.blockers ?? [];
+  if (blockers.length === 0 && !execution.currentBlocker) lines.push('  (none)');
+  for (const blocker of blockers) {
+    lines.push(`  - ${blocker.id} · resolved: ${blocker.resolved} · deliveryState: ${blocker.deliveryState ?? '—'}`);
+  }
+  const currentBlocker = execution.currentBlocker;
+  if (currentBlocker) {
+    lines.push(`  Current blocker [${currentBlocker.id}] unit ${currentBlocker.workUnitId} · slot ${currentBlocker.slotId}`);
+    lines.push(`      question: ${currentBlocker.question}`);
+    if (currentBlocker.options?.length) lines.push(`      options: ${currentBlocker.options.join(' · ')}`);
+    if (currentBlocker.response) lines.push(`      response: ${currentBlocker.response}`);
+    if (currentBlocker.delivery) {
+      lines.push(`      delivery: ${currentBlocker.delivery.state} · attempt ${currentBlocker.delivery.attempt}/${currentBlocker.delivery.maxAttempts}${currentBlocker.delivery.error ? ` · error: ${currentBlocker.delivery.error}` : ''} · retryEligible: ${currentBlocker.delivery.retryEligible}`);
+    }
+  }
+  lines.push('');
+
+  // Delivery strands (metadata only — payload text is never projected). A delivery
+  // stuck FAILED/PENDING at max attempts is the "answer never reached the worker" wedge.
+  const deliveries = execution.deliveries ?? [];
+  lines.push(`Deliveries (${deliveries.length}):`);
+  if (deliveries.length === 0) lines.push('  (none)');
+  for (const delivery of deliveries) {
+    lines.push(`  - ${delivery.id} · ${delivery.state} · attempt ${delivery.attempt}/${delivery.maxAttempts}${delivery.manualRetryCount ? ` · manualRetries ${delivery.manualRetryCount}` : ''}`);
+    lines.push(`      blocker ${delivery.blockerId} · unit ${delivery.workUnitId} · slot ${delivery.slotId} · updatedAt ${formatTimestamp(delivery.updatedAt)}${delivery.error ? ` · error: ${delivery.error}` : ''}`);
+  }
+  lines.push('');
+
+  // Coordinator wakes — a repeated same-cause wake with nothing advancing is the
+  // orchestrator-side wedge. Count plus a bounded newest-first tail.
+  const wakes = execution.coordinatorWakes;
+  lines.push(`Coordinator wakes (${wakes?.total ?? 0}):`);
+  if (!wakes || wakes.recent.length === 0) lines.push('  (none)');
+  else for (const wake of wakes.recent) {
+    lines.push(`  - ${wake.cause}${wake.workUnitId ? ` · unit ${wake.workUnitId}` : ''} · stateOrClaimGeneration ${wake.stateOrClaimGeneration} · ${formatTimestamp(wake.createdAt)}`);
+  }
+  lines.push('');
+
+  const assembled = execution.assembledResult;
+  lines.push('Assembled result:');
+  if (!assembled) lines.push('  (not assembled)');
+  else {
+    lines.push(`  outcome: ${assembled.outcome} · digest: ${assembled.digest}`);
+    lines.push(`  summary: ${assembled.summary}`);
+    for (const unit of assembled.units) lines.push(`    - ${unit.title} [${unit.id}] ${unit.state}${unit.failureCode ? ` · failureCode: ${unit.failureCode}` : ''}${unit.result ? ` · ${unit.result}` : ''}`);
+    for (const failure of assembled.failures) lines.push(`    failure: ${failure.workUnitId} · ${failure.code}`);
+    for (const check of assembled.verification) lines.push(`    verification: ${check.workUnitId} · ${check.checks.join(', ')}`);
+    if (assembled.policy) lines.push(`  policy: ${assembled.policy.status} · ${assembled.policy.summary}`);
+  }
+  lines.push('');
+
+  const routeFit = execution.routeFitProposal;
+  if (routeFit) lines.push(`Route fit: ${routeFit.fit} · ${routeFit.reason} (evaluator ${routeFit.evaluatorVersion}, samples ${routeFit.samples})`);
+  lines.push(`Final summary: ${execution.finalSummary ?? '—'}`);
+  lines.push('');
+
+  const events = snapshot.events ?? [];
+  const eventTail = events.slice(-JOB_DETAILS_EVENT_TAIL);
+  lines.push(`Events (last ${eventTail.length} of ${events.length}):`);
+  if (eventTail.length === 0) lines.push('  (none)');
+  for (const event of eventTail) {
+    const meta = [event.producerRole, event.slotId, event.eventType].filter(Boolean).join(' · ');
+    lines.push(`  - ${event.severity}: ${event.summary}${meta ? ` (${meta})` : ''}`);
+  }
+  lines.push('');
+
+  const artifacts = snapshot.artifacts ?? [];
+  lines.push(`Artifacts (${artifacts.length}):`);
+  if (artifacts.length === 0) lines.push('  (none)');
+  for (const artifact of artifacts) lines.push(`  - ${artifact.name} · ${artifact.mediaType} · ${artifact.contentDigest}`);
+
+  return lines.join('\n');
+}
 
 export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) {
   const [snapshot, setSnapshot] = useState<ExecutionBoardSnapshot | null>(null);
@@ -73,10 +214,16 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       useUi.getState().pushToast('Squad control failed: response status unknown', 'error');
     } finally { setBusy(false); }
   };
+  const copyJobDetails = () => {
+    void copyText(buildJobDetailsText(projectId, snapshot))
+      .then(() => useUi.getState().pushToast('Job details copied', 'info'))
+      .catch(() => useUi.getState().pushToast('Failed to copy job details', 'error'));
+  };
 
   return (
     <section className="execution-details" aria-label="Squad details">
       <header><strong>Squad · {execution.jobTitle}</strong><button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button></header>
+      <div className="execution-details-copy"><button className="btn" type="button" onClick={copyJobDetails}>Copy details</button></div>
       <dl className="execution-details-meta">
         <dt>Run ID</dt><dd><code>{execution.executionId}</code></dd>
         <dt>Kind</dt><dd>{execution.launchDisplay?.label ?? 'Squad execution'}</dd>
@@ -195,7 +342,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       <h4>Route fit</h4>
       {execution.routeFitProposal ? <p>{execution.routeFitProposal.fit} · {execution.routeFitProposal.reason} · inactive proposal ({execution.routeFitProposal.evaluatorVersion})</p> : <p>Not evaluated.</p>}
       <h4>Final summary</h4><p>{execution.finalSummary ?? 'Not completed.'}</p>
-      <div>
+      <div className="execution-details-actions">
         {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>}
         {execution.state === 'BLOCKED' && !execution.currentBlocker && !execution.resourceBlock && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>}
         {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover orchestrator</button>}

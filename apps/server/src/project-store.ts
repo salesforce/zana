@@ -29,7 +29,9 @@ export interface ProjectRecord {
   remote?: unknown;
 }
 
-export type ProjectMutationPatch = Partial<Pick<ProjectRecord, 'name' | 'color' | 'category'>>;
+export type ProjectMutationPatch = Partial<Pick<ProjectRecord, 'name' | 'color' | 'category'>> & {
+  remotePath?: string;
+};
 
 /** The 8-color project palette. First entry is the conventional default.
  *  Mirrors `packages/domain/src/project-colors.ts` byte-for-byte. */
@@ -188,6 +190,20 @@ function sanitizeProjectPatch(patch: ProjectMutationPatch): ProjectMutationPatch
   if ('color' in patch && patch.color !== undefined && (PROJECT_COLORS as readonly string[]).includes(patch.color)) {
     safePatch.color = patch.color;
   }
+  if ('remotePath' in patch && patch.remotePath !== undefined) {
+    if (typeof patch.remotePath !== 'string' || patch.remotePath.length > 256) {
+      throw new Error('remotePath too long (max 256)');
+    }
+    for (const char of patch.remotePath) {
+      const code = char.charCodeAt(0);
+      if (code < 0x20 || code === 0x7f) throw new Error('remotePath contains control characters');
+    }
+    const remotePath = patch.remotePath.trim();
+    if (remotePath && (!isAbsolute(remotePath) || remotePath.startsWith('-'))) {
+      throw new Error('remotePath must be an absolute path');
+    }
+    safePatch.remotePath = remotePath;
+  }
   return safePatch;
 }
 
@@ -309,7 +325,14 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
         // other value is dropped from the patch rather than applied.
         const safePatch = sanitizeProjectPatch(patch);
 
-        const next = { ...projects[index], ...safePatch };
+        const { remotePath, ...topLevelPatch } = safePatch;
+        const next = { ...projects[index], ...topLevelPatch };
+        if (remotePath !== undefined && next.remote && typeof next.remote === 'object') {
+          const remote = { ...next.remote } as Record<string, unknown>;
+          if (remotePath) remote.remotePath = remotePath;
+          else delete remote.remotePath;
+          next.remote = remote;
+        }
         const nextProjects = [...projects];
         nextProjects[index] = next;
         writeProjects(nextProjects, hash);

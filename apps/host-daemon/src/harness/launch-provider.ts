@@ -40,6 +40,19 @@ import type { TrustedHarnessAdapter } from './adapter-contract.js';
 import type { HarnessIntegrationAdapter } from '@zcc/harness-sdk';
 import type { ExecutionResolution, ModelResolution, RoleResolution } from './target-resolution.js';
 
+/**
+ * Inner-agent liveness verdict for a tmux-backed remote worker:
+ *  - `alive`   — the pane runs the agent binary => the inner agent is up.
+ *  - `dead`    — the pane runs a bare login shell => the agent exited but its
+ *                wrapper shell survives (the remote-opencode zombie); typed input
+ *                would be eaten as a shell command, never reaching an agent.
+ *  - `unknown` — undecidable (probe failed/timed out, unrecognized command, local
+ *                session, or a provider that can't distinguish the two). ALWAYS
+ *                fail safe here — never reclaim a claim on an undecidable verdict.
+ * Structurally identical to the execution service's `WorkerLiveness`.
+ */
+export type AgentLiveness = 'alive' | 'dead' | 'unknown';
+
 /** A resolved base launch: the executable and its base argv (pre-layers). */
 export interface ResolvedLaunch {
   command: string;
@@ -270,6 +283,40 @@ export interface LaunchProvider {
    * false; only OpenCode overrides. See CLAUDE.md OpenCode coupling note.
    */
   readonly nativeRolePinsModel?: boolean;
+
+  /**
+   * This provider launches an INNER agent binary distinguishable from its wrapper
+   * shell, so `PtyManager` can tell a live agent from a zombie (agent exited, its
+   * remote login-shell wrapper survives) by inspecting the tmux pane's current
+   * command. Default false; only providers whose remote pane runs a nameable
+   * agent binary (OpenCode) override. When false, `PtyManager.probeAgentLiveness`
+   * short-circuits to `unknown` (pre-existing behavior — the claim is only ever
+   * reclaimed on a POSITIVE `dead`). See {@link classifyPaneCommand}.
+   */
+  readonly reportsAgentLiveness?: boolean;
+
+  /**
+   * This provider's interactive TUI needs an injected reply wrapped in a
+   * BRACKETED-PASTE envelope (`ESC[200~` … `ESC[201~`) before the deferred CR,
+   * so a multi-line body (embedded `\n`) is buffered as one literal paste and
+   * submitted once on the discrete Enter — instead of each `\n` reading as a
+   * premature Enter. Default false: Claude Code's TUI auto-detects a fast input
+   * burst as a paste and buffers it, so it needs no envelope (and the Claude
+   * delivery path stays byte-identical). Only OpenCode — whose Go TUI has no
+   * burst-paste heuristic — overrides true; without it a worker assignment
+   * submits only its truncated first line and the unit never turns
+   * (`turnCount: 0`). See {@link PtyManager.reply}.
+   */
+  readonly submitViaBracketedPaste?: boolean;
+
+  /**
+   * Classify a tmux `#{pane_current_command}` into an {@link AgentLiveness}
+   * verdict for THIS provider — the agent binary => `alive`, a bare login shell
+   * => `dead`, anything else => `unknown` (fail safe). The concrete agent/shell
+   * command names live ONLY here (Rule 6). Only meaningful when
+   * {@link reportsAgentLiveness}; providers that don't report liveness omit it.
+   */
+  classifyPaneCommand?(command: string): AgentLiveness;
 
   /** Return the adapter-owned evidence identity for a discovered role target. */
   dynamicRoleEvidenceTarget?(target: import('@zana-ai/zcc-domain/harness-adapter').HarnessRoleTarget, installedVersion: string): import('@zana-ai/zcc-domain/harness-adapter').HarnessRoleTarget;

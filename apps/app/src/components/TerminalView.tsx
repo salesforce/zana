@@ -15,6 +15,8 @@ import { createResizeSettleScheduler, resyncXtermAndPty } from '../lib/terminalR
 import { perfCount, perfTime } from '../lib/perfMark.js';
 import { resolveTerminalTheme } from '../lib/terminalThemes.js';
 import { openXtermHttpLink } from '../lib/xterm-http-link.js';
+import { registerOsc52Clipboard } from '../lib/osc52-clipboard.js';
+import { copyText } from '../lib/copy-text.js';
 import { useData, useUi } from '../store.js';
 
 type Area = 'a' | 'b' | 'c' | 'd';
@@ -161,6 +163,18 @@ function TerminalViewImpl({ session, area }: Props) {
     termRef.current = term;
     fitRef.current = fit;
     disposedRef.current = false;
+
+    // OSC 52 clipboard bridge. An agent (esp. a REMOTE one over ssh, which has
+    // no other channel to the operator's clipboard) copies by emitting
+    // `ESC ] 52 ; c ; <base64> BEL`; xterm knows OSC 52 but has no handler, so
+    // without this the "copied!" never reaches the system clipboard. Decode and
+    // route to main's clipboard (Rule 1). Returning true claims the sequence so
+    // xterm won't fall back; a declined parse (read request / oversize / junk)
+    // is still swallowed rather than painted. A `?` read request is refused by
+    // parseOsc52 so a remote session can't exfiltrate the local clipboard.
+    const offOsc52 = registerOsc52Clipboard(term.parser, (text) => {
+      void copyText(text).catch(() => {});
+    });
 
     const offFinder = registerFinder(session.id, {
       findNext: (q, { caseSensitive }) => search.findNext(q, { caseSensitive }),
@@ -341,7 +355,7 @@ function TerminalViewImpl({ session, area }: Props) {
       const label = bad ? `[exited code ${code}]` : '[session exited]';
       term.write(`\r\n${sgr}${label}\x1b[0m\r\n`);
     });
-    offsRef.current = [offData, offExit, () => offScroll.dispose()];
+    offsRef.current = [offData, offExit, () => offScroll.dispose(), () => offOsc52.dispose()];
 
     const onInput = term.onData((data) => {
       void product.terminals.write(session.id, data).catch(() => {});

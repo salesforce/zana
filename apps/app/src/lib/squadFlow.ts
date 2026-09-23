@@ -88,6 +88,15 @@ function labelFor(handle: string | undefined, displayName: string | undefined, s
 }
 
 /**
+ * Label for a board-synthesized (detached) worker node — one that holds a CLAIMED
+ * work unit but has no live renderer session. The slot id is the only identity we
+ * have, so surface it directly rather than a generic "worker".
+ */
+function detachedSlotLabel(slotId: string): string {
+  return slotId;
+}
+
+/**
  * Fold Job Team durable work dependencies into worker→worker edges. Job dispatch
  * bypasses the agent message log, so a durable DAG would otherwise show no
  * handoffs. Mutates `edgeByKey`/`outDegree` in place; out-degree counts each
@@ -179,6 +188,7 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     const execution = (executionId ? executionByExecutionId.get(executionId) : undefined) ?? executionByOrchestrator.get(sessionId);
     const terminal = execution?.state === 'COMPLETED' || execution?.state === 'FAILED' || execution?.state === 'STOPPED';
     const needsAttention = !!execution?.currentBlocker && !terminal &&
+      execution.currentBlocker.audience !== 'coordinator' &&
       execution.currentBlocker.delivery?.state !== 'PENDING' && execution.currentBlocker.delivery?.state !== 'LEASED';
     // Durable claim liveness: when THIS node's session is the assigned slot of a
     // CLAIMED work unit, surface the lease the host renews from PTY output. The
@@ -192,6 +202,7 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
       ? {
           ...(claimAssignment.claimedAt !== undefined ? { claimedAt: claimAssignment.claimedAt } : {}),
           ...(claimAssignment.heartbeatAt !== undefined ? { heartbeatAt: claimAssignment.heartbeatAt } : {}),
+          ...(claimAssignment.progressAt !== undefined ? { progressAt: claimAssignment.progressAt } : {}),
           ...(claimAssignment.leaseExpiresAt !== undefined ? { leaseExpiresAt: claimAssignment.leaseExpiresAt } : {})
         }
       : undefined;
@@ -211,7 +222,10 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
       ...(execution ? { job: {
         executionId: execution.executionId,
         needsAttention,
-        ...(execution.currentBlocker ? { blockerQuestion: execution.currentBlocker.question } : {})
+        ...(execution.currentBlocker ? {
+          blockerQuestion: execution.currentBlocker.question,
+          blockerAudience: execution.currentBlocker.audience
+        } : {})
       } } : {}),
       ...(claim ? { claim } : {})
     };
@@ -245,6 +259,52 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     if (agentSessionIds.has(s.id)) continue; // a registry agent — handled (or scoped out) above
     if (!inScope(s.cohort?.cohortId)) continue;
     bySession.set(s.id, makeNode(s.id, s.cohort?.slotLabel, s.cohort?.slotLabel ?? s.title, undefined, undefined));
+  }
+
+  // Detached CLAIMED workers: the durable board is the liveness source of truth, but a live
+  // renderer session is what builds a worker node. When a run holds a CLAIMED unit for a slot
+  // that has NO live local session (CLI/headless resume, app restart mid-run, remote spawn), the
+  // Flow would show "no workers working" despite a live claim. Synthesize a node straight from the
+  // board so the claim surfaces. Gated to executions already represented by an in-scope node so a
+  // launch filter never re-admits another squad's workers.
+  const inScopeExecutionIds = new Set<string>();
+  for (const sessionId of bySession.keys()) {
+    const execId = executionIdBySession.get(sessionId) ?? executionByOrchestrator.get(sessionId)?.executionId;
+    if (execId) inScopeExecutionIds.add(execId);
+  }
+  for (const execution of input.executions ?? []) {
+    if (!inScopeExecutionIds.has(execution.executionId)) continue;
+    for (const assignment of execution.work?.assignments ?? []) {
+      if (assignment.state !== 'CLAIMED' || !assignment.slotId) continue;
+      if (sessionByExecutionSlot.has(`${execution.executionId}\0${assignment.slotId}`)) continue; // a live session already covers this slot
+      const syntheticId = `detached:${execution.executionId}:${assignment.slotId}`;
+      if (bySession.has(syntheticId)) continue;
+      const claim = assignment.claimedAt !== undefined || assignment.leaseExpiresAt !== undefined
+        ? {
+            ...(assignment.claimedAt !== undefined ? { claimedAt: assignment.claimedAt } : {}),
+            ...(assignment.heartbeatAt !== undefined ? { heartbeatAt: assignment.heartbeatAt } : {}),
+            ...(assignment.progressAt !== undefined ? { progressAt: assignment.progressAt } : {}),
+            ...(assignment.leaseExpiresAt !== undefined ? { leaseExpiresAt: assignment.leaseExpiresAt } : {})
+          }
+        : undefined;
+      bySession.set(syntheticId, {
+        sessionId: syntheticId,
+        label: detachedSlotLabel(assignment.slotId),
+        role: 'worker',
+        // A synthesized detached node has NO live signal of its own — its only
+        // liveness is the durable claim. Leave it 'unknown' so nodeActivity()
+        // shows motion (self-arc + streaming) ONLY when the claim carries a fresh
+        // progressAt; a stranded claim renders as a static "claimed" chip, never
+        // fabricated "working" activity.
+        state: 'unknown',
+        liveSubagents: 0,
+        exited: false,
+        isOrchestrator: false,
+        detached: true,
+        job: { executionId: execution.executionId, needsAttention: false },
+        ...(claim ? { claim } : {})
+      });
+    }
   }
 
   if (bySession.size === 0) return null;

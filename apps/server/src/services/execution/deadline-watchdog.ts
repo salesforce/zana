@@ -12,6 +12,30 @@ export interface ExecutionDeadlineWatchdogDeps {
   onDeadline: (executionId: string) => void | Promise<void>;
 }
 
+/**
+ * Idle-deadline anchor: the most recent GENUINE forward-progress timestamp for a
+ * run, floored at its creation time. A run's execution deadline is measured from
+ * THIS anchor, not from `createdAt` — so a healthy run that keeps making progress
+ * (every worker heartbeat / real output advances a unit's `progressAt`) re-arms the
+ * timer and is never guillotined mid-flight, while a run that makes no forward
+ * progress for a full `deadlineMs` window still times out and self-heals. This is
+ * the fix for a deep, slow, sequential plan being killed at a fixed 45-minute total
+ * cap while a worker was actively progressing.
+ *
+ * `progressAt` deliberately EXCLUDES silent agent-state lease renewal (see the store's
+ * `renewWorkerLease` with `advanceProgress: false`), so a silent-but-connected worker
+ * does NOT keep a stuck run alive forever — that is the claim-stall backstop's job, and
+ * here it correctly counts as "no progress". A run with no work units yet (freeform, or
+ * pre-plan) falls back to `createdAt`, i.e. the historical fixed cap from launch.
+ */
+export function executionProgressAnchor(record: ExecutionRecord): number {
+  let anchor = record.createdAt;
+  for (const unit of record.workUnits ?? []) {
+    if (typeof unit.progressAt === 'number' && unit.progressAt > anchor) anchor = unit.progressAt;
+  }
+  return anchor;
+}
+
 export class ExecutionDeadlineWatchdog {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private disposed = false;
@@ -23,7 +47,7 @@ export class ExecutionDeadlineWatchdog {
     if (this.disposed || TERMINAL_STATES.has(record.state)) return;
     const deadlineMs = record.request.policy?.deadlineMs;
     if (typeof deadlineMs !== 'number' || !Number.isFinite(deadlineMs) || deadlineMs <= 0) return;
-    this.arm(record.id, record.createdAt + deadlineMs, 1);
+    this.arm(record.id, executionProgressAnchor(record) + deadlineMs, 1);
   }
 
   restore(records: readonly ExecutionRecord[]): void {

@@ -14,6 +14,8 @@ const JOBTEAM_SPECS = [
   'e2e/cli-agent-job-team-run.spec.ts',
   'e2e/modern-owner-job-team-run.spec.ts',
   'e2e/job-team-stuck-worker-reclaim.spec.ts',
+  'e2e/job-team-kickoff-churn.spec.ts',
+  'e2e/job-team-wedge-recovery.spec.ts',
   'e2e/job-team-streaming-worker-no-reclaim.spec.ts',
   'e2e/job-team-flow-activity-indicator.spec.ts'
 ];
@@ -31,6 +33,16 @@ function main() {
     if (exitCode !== 0) return exitCode;
 
     exitCode = run('pnpm', ['run', 'rebuild:electron']);
+    if (exitCode !== 0) return exitCode;
+
+    // The built `out/main` bundle cannot `import.meta.resolve` the workspace
+    // package `@zana-ai/zcc-provider-bridge-protocol` from its chunk location,
+    // so a Modern ACP thread (modern-owner spec) needs the packed bridge worker
+    // on disk. `packedBridgeBundleDir()` finds it at
+    // `apps/host-daemon/dist/bb-provider-bridge-worker.mjs` (cwd fallback);
+    // `build:join` is what produces that artifact. Without this the acp-opencode
+    // owner thread dies at `thread.start` with "Cannot find package …".
+    exitCode = run('pnpm', ['--filter', '@zana-ai/zcc-host-daemon', 'build:join']);
     if (exitCode !== 0) return exitCode;
 
     exitCode = run('pnpm', ['exec', 'playwright', 'test', ...JOBTEAM_SPECS]);

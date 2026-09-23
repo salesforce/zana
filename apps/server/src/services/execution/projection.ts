@@ -50,7 +50,12 @@ function workProjection(record: ExecutionRecord): WorkProjection {
       ...(unit.result !== undefined ? { result: resultPreview(unit.result) } : {}),
       ...(unit.claimedAt !== undefined ? { claimedAt: unit.claimedAt } : {}),
       ...(unit.heartbeatAt !== undefined ? { heartbeatAt: unit.heartbeatAt } : {}),
-      ...(unit.leaseExpiresAt !== undefined ? { leaseExpiresAt: unit.leaseExpiresAt } : {})
+      ...(unit.progressAt !== undefined ? { progressAt: unit.progressAt } : {}),
+      ...(unit.leaseExpiresAt !== undefined ? { leaseExpiresAt: unit.leaseExpiresAt } : {}),
+      ...(unit.attempt !== undefined ? { attempt: unit.attempt } : {}),
+      ...(unit.turnCount !== undefined ? { turnCount: unit.turnCount } : {}),
+      ...(unit.claimId !== undefined ? { claimId: unit.claimId } : {}),
+      ...(unit.claimGeneration !== undefined ? { claimGeneration: unit.claimGeneration } : {})
     })),
     rosterSlotIds: record.authorizationContext?.slots.map((slot) => slot.slotId) ?? []
   };
@@ -95,6 +100,7 @@ function blockerProjection(record: ExecutionRecord): Pick<ExecutionBoardProjecti
     ...(currentBlocker ? { currentBlocker: {
       id: currentBlocker.id, workUnitId: currentBlocker.workUnitId, slotId: currentBlocker.slotId,
       question: currentBlocker.question, ...(currentBlocker.options ? { options: currentBlocker.options } : {}),
+      ...(currentBlocker.audience ? { audience: currentBlocker.audience } : {}),
       ...(currentBlocker.response ? { response: currentBlocker.response } : {}),
       ...(currentDelivery ? { delivery: {
         id: currentDelivery.id, state: currentDelivery.state, attempt: currentDelivery.attempt,
@@ -107,6 +113,52 @@ function blockerProjection(record: ExecutionRecord): Pick<ExecutionBoardProjecti
       id: blocker.id, resolved: blocker.resolved,
       ...(deliveryStateByBlocker.has(blocker.id) ? { deliveryState: deliveryStateByBlocker.get(blocker.id) } : {})
     }))
+  };
+}
+
+/** Newest-first tail caps so a churny job can't unbound the projection (Rule 5). */
+const MAX_DELIVERIES_PROJECTED = 50;
+const MAX_COORDINATOR_WAKES_PROJECTED = 25;
+
+/**
+ * Delivery-strand diagnostics: METADATA ONLY. `payload.text` (worker/coordinator
+ * answer body) is deliberately dropped — it must never reach the renderer (Rule 1);
+ * only the id/state/attempt/error-line survive. Newest-first, bounded tail (Rule 5).
+ */
+function deliveriesProjection(record: ExecutionRecord): ExecutionBoardProjection['deliveries'] {
+  const deliveries = record.deliveries ?? [];
+  if (deliveries.length === 0) return undefined;
+  return [...deliveries]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, MAX_DELIVERIES_PROJECTED)
+    .map((delivery) => ({
+      id: delivery.id, blockerId: delivery.blockerId, workUnitId: delivery.workUnitId,
+      slotId: delivery.slotId, state: delivery.state, attempt: delivery.attempt,
+      maxAttempts: MAX_DELIVERY_ATTEMPTS,
+      ...(delivery.manualRetryCount !== undefined ? { manualRetryCount: delivery.manualRetryCount } : {}),
+      updatedAt: delivery.updatedAt,
+      ...(delivery.lastError ? { error: firstErrorLine(delivery.lastError) } : {})
+    }));
+}
+
+/**
+ * Coordinator-wake diagnostics: a total plus a newest-first bounded tail (Rule 5).
+ * `message` is intentionally omitted — the tail carries only cause/unit/fence/time,
+ * enough to spot a repeated same-cause wake without projecting a free-text body.
+ */
+function coordinatorWakesProjection(record: ExecutionRecord): ExecutionBoardProjection['coordinatorWakes'] {
+  const wakes = record.coordinatorWakes ?? [];
+  if (wakes.length === 0) return undefined;
+  return {
+    total: wakes.length,
+    recent: [...wakes]
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, MAX_COORDINATOR_WAKES_PROJECTED)
+      .map((wake) => ({
+        id: wake.id, cause: wake.cause,
+        ...(wake.workUnitId !== undefined ? { workUnitId: wake.workUnitId } : {}),
+        stateOrClaimGeneration: wake.stateOrClaimGeneration, createdAt: wake.createdAt
+      }))
   };
 }
 
@@ -159,6 +211,8 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     : undefined;
   const usage = publicUsage(usageRollup(record.usageObservations ?? [], record.usageBaseline));
   const assembledResult = assembledResultProjection(record);
+  const deliveries = deliveriesProjection(record);
+  const coordinatorWakes = coordinatorWakesProjection(record);
   return {
     executionId: record.id,
     projectId: record.projectId,
@@ -183,6 +237,8 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     baselineMetrics: baselineMetrics(record, work.counts, terminalDuration),
     usage,
     ...blockerProjection(record),
+    ...(deliveries ? { deliveries } : {}),
+    ...(coordinatorWakes ? { coordinatorWakes } : {}),
     ...(record.finalSummary ? { finalSummary: record.finalSummary } : {}),
     ...(assembledResult ? { assembledResult } : {}),
     ...(record.resourceBlock ? { resourceBlock: record.resourceBlock } : {}),

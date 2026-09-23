@@ -6,6 +6,7 @@ import {
   isReclaimableIdle,
   closeableLaneAgents,
   cardNeedsAttention,
+  executionNeedsAttention,
   LANES,
   visibleAgentLanes,
   groupCardsByProject,
@@ -466,6 +467,49 @@ describe('partitionExecutionMembers', () => {
     expect(top).toHaveLength(1);
     expect(top[0].session.title).toBe('Named job spec');
     expect(top[0].session.cohort?.executionJobTitle).toBe('Named job spec');
+  });
+});
+
+describe('executionNeedsAttention', () => {
+  function blockedExecution(over: Partial<ExecutionBoardProjection> = {}): ExecutionBoardProjection {
+    return {
+      executionId: 'execution-1',
+      projectId: 'p1',
+      teamId: 't1',
+      teamName: 'Squad',
+      jobTitle: 'Job',
+      state: 'BLOCKED',
+      attempt: 1,
+      createdAt: 1,
+      updatedAt: 2,
+      currentBlocker: { id: 'b1', workUnitId: 'w1', slotId: 's1', question: 'q?' },
+      ...over
+    };
+  }
+
+  it('executionNeedsAttention is true for a human-audience blocker', () => {
+    const execution = blockedExecution({ currentBlocker: { id: 'b1', workUnitId: 'w1', slotId: 's1', question: 'q?', audience: 'human' } });
+    expect(executionNeedsAttention(execution)).toBe(true);
+  });
+
+  it('executionNeedsAttention is true when audience is absent (defaults to human)', () => {
+    expect(executionNeedsAttention(blockedExecution())).toBe(true);
+  });
+
+  it('executionNeedsAttention is false for a coordinator-audience blocker', () => {
+    const execution = blockedExecution({ currentBlocker: { id: 'b1', workUnitId: 'w1', slotId: 's1', question: 'q?', audience: 'coordinator' } });
+    expect(executionNeedsAttention(execution)).toBe(false);
+  });
+
+  it('executionNeedsAttention is false while delivery is PENDING/LEASED, regardless of audience', () => {
+    const pending = blockedExecution({
+      currentBlocker: { id: 'b1', workUnitId: 'w1', slotId: 's1', question: 'q?', audience: 'human', delivery: { id: 'd1', state: 'PENDING', attempt: 1, maxAttempts: 3, retryEligible: true } }
+    });
+    expect(executionNeedsAttention(pending)).toBe(false);
+  });
+
+  it('executionNeedsAttention is false for a terminal execution state', () => {
+    expect(executionNeedsAttention(blockedExecution({ state: 'COMPLETED' }))).toBe(false);
   });
 });
 

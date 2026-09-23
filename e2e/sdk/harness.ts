@@ -264,10 +264,11 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export function makeJobTeamCoordinatorBinary(options: { scenario?: 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' } = {}): FakeAgentBinary {
+export function makeJobTeamCoordinatorBinary(options: { scenario?: 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' } = {}): FakeAgentBinary {
   const failedDag = options.scenario === 'failed-dag';
   const stalled = options.scenario === 'stalled-worker';
   const streaming = options.scenario === 'streaming-worker';
+  const churn = options.scenario === 'kickoff-churn';
   const script = String.raw`#!/usr/bin/env node
 'use strict';
 const fs = require('fs');
@@ -308,6 +309,15 @@ const STALLED = ${JSON.stringify(stalled)};
 // reclaim this live worker. This is the discriminator vs STALLED (silent → reclaimed):
 // a streaming worker is healthy-long, not hung, so lease expiry must not fire.
 const STREAMING = ${JSON.stringify(streaming)};
+// Kickoff-churn repro (WS1 reassign + WS3 human block): a two-WORKER team whose
+// sole unit lands on a worker that CLAIMS but never turns (turnCount stays 0,
+// identical stall behavior to STALLED). Each wall-clock reclaim bumps the unit's
+// kickoffFailures; at the threshold the engine SELF-HEALS by reassigning to the
+// untried peer slot (WS1), then — after that slot also exhausts — surfaces a
+// HUMAN_BLOCKER + inbox entry (WS3) instead of re-dispatching down the broken
+// path forever. Reuses stalledWorker(); the only differences from STALLED are the
+// 2-worker slot count (so a fresh peer exists) and the distinct jobTitle.
+const CHURN = ${JSON.stringify(churn)};
 
 const ROLE = IS_ORCHESTRATOR ? 'ORCH' : IS_WORKER ? 'WORK' : IS_OWNER ? 'OWNR' : 'UNKN';
 // Progress goes to stderr (Playwright captures it on failure) and a per-process
@@ -389,7 +399,7 @@ const STALLED_PLAN = [
 const STREAMING_PLAN = [
   { id: 'stream-unit', title: 'Stream Unit', task: 'Claim this unit and emit output forever (never completes) to exercise the output-activity lease heartbeat', dependencies: [], readOnly: true, verification: ['claim NOT reclaimed while streaming'] }
 ];
-const PLAN = FAILED_DAG ? FAILED_DAG_PLAN : STALLED ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : SUCCESS_PLAN;
+const PLAN = FAILED_DAG ? FAILED_DAG_PLAN : (STALLED || CHURN) ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : SUCCESS_PLAN;
 
 async function owner() {
   log('owner start');
@@ -397,7 +407,7 @@ async function owner() {
     version: 1,
     teamId: 'e2e-job-team',
     launchRequestId: 'e2e-cli-agent-job-' + process.pid,
-    jobTitle: STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : 'CLI Agent durable job',
+    jobTitle: CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : 'CLI Agent durable job',
     summary: 'Full Job Team route started by a CLI Agent owner.',
     workUnits: PLAN,
     // Stalled repro shrinks the wall-clock ceiling so the backstop reclaims the
@@ -408,7 +418,9 @@ async function owner() {
     // NOTE: streaming deliberately sets NO maxClaimWallClockMs — the whole point is
     // that the output-activity lease heartbeat keeps a live worker from being reclaimed,
     // so no wall-clock ceiling may pre-empt it during the test window.
-    ...(STALLED ? { maxClaimWallClockMs: 1000 } : {}),
+    ...((STALLED || CHURN) ? { maxClaimWallClockMs: 1000 } : {}),
+    // CHURN deliberately falls to the else branch below (1 coordinator + 2 WORKER
+    // slots): the second worker slot is the untried peer WS1 reassigns onto.
     slots: STALLED || STREAMING
       ? [
           { initialTask: 'Coordinate the durable execution.' },
@@ -448,7 +460,7 @@ async function orchestrator() {
   // Stalled repro: the sole unit's worker never completes, so there is nothing to
   // finalize. Hand off to the engine's reclaim sweep and hold — the E2E asserts
   // the wall-clock backstop reclaims + re-dispatches (claimGeneration climbs).
-  if (STALLED) { log('stalled: dispatched, holding for reclaim'); await hold(); }
+  if (STALLED || CHURN) { log((CHURN ? 'churn' : 'stalled') + ': dispatched, holding for reclaim/escalation'); await hold(); }
   if (STREAMING) { log('streaming: dispatched, holding while worker streams'); await hold(); }
   // Deliberately do NOT call execution.complete. This models a real orchestrator
   // (e.g. an external skill-driven coordinator) that dispatches the DAG but never
@@ -614,7 +626,7 @@ async function streamingWorker() {
 }
 
 async function worker() {
-  if (STALLED) return stalledWorker();
+  if (STALLED || CHURN) return stalledWorker();
   if (STREAMING) return streamingWorker();
   log('worker start', EXECUTION_ID);
   // Engine-cascade model: the engine claims a unit to this slot and PUSHES the

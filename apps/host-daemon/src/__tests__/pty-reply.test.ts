@@ -73,6 +73,17 @@ function makeSession(mgr: PtyManager) {
   });
 }
 
+function makeOpenCodeSession(mgr: PtyManager) {
+  return mgr.create({
+    projectId: 'p1',
+    profile: 'opencode',
+    cwd: '/tmp',
+    cols: 80,
+    rows: 24,
+    config: CONFIG
+  });
+}
+
 describe('PtyManager.reply', () => {
   beforeEach(() => {
     spawned.length = 0;
@@ -110,6 +121,45 @@ describe('PtyManager.reply', () => {
       vi.runAllTimers();
 
       expect(proc.writes).toEqual(['line one\nline two', '\r']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('wraps an OpenCode reply body in a bracketed-paste envelope before the deferred CR', () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = new PtyManager();
+      const session = makeOpenCodeSession(mgr);
+      const proc = spawned[0];
+      const startWrites = proc.writes.length; // ignore any spawn-time opening prompt
+
+      mgr.reply(session.id, 'do the work');
+      // Body arrives wrapped; embedded newlines (none here) would be buffered as
+      // a literal paste rather than each acting as a premature Enter.
+      expect(proc.writes.slice(startWrites)).toEqual(['\x1b[200~do the work\x1b[201~']);
+
+      vi.runAllTimers();
+      expect(proc.writes.slice(startWrites)).toEqual(['\x1b[200~do the work\x1b[201~', '\r']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a multi-line OpenCode assignment intact inside one bracketed paste', () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = new PtyManager();
+      const session = makeOpenCodeSession(mgr);
+      const proc = spawned[0];
+      const startWrites = proc.writes.length;
+
+      const assignment = 'You are assigned work unit `x`.\nTask: do it\n\nClose the unit.';
+      mgr.reply(session.id, assignment);
+      vi.runAllTimers();
+
+      // The whole multi-line body is one paste; a single trailing CR submits it.
+      expect(proc.writes.slice(startWrites)).toEqual([`\x1b[200~${assignment}\x1b[201~`, '\r']);
     } finally {
       vi.useRealTimers();
     }

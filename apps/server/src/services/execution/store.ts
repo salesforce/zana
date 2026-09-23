@@ -68,7 +68,29 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   claimedAt?: number;
   leaseExpiresAt?: number;
   heartbeatAt?: number;
+  /** Last main-observed OUTPUT progress (epoch ms): set at claim, advanced by
+   *  byte-output lease renewal (and a worker turn heartbeat), NEVER by the
+   *  agent-state lease renewal in `reconcileActive`. So while `leaseExpiresAt`
+   *  answers "is the worker considered alive" (kept fresh by output OR agent
+   *  state), `progressAt` answers "when did the worker last actually emit
+   *  output" — the signal the stall ceiling (`maxClaimStallMs`) uses to reclaim
+   *  a silent-but-'working' worker before the blunt wall-clock backstop. */
+  progressAt?: number;
   turnCount?: number;
+  /**
+   * Count of successive claim reclaims where the worker NEVER reported a completed
+   * turn (`turnCount` stayed 0) — the kickoff-churn signature. A bare interactive
+   * worker (e.g. OpenCode) whose injected first-prompt never submits gets claimed,
+   * echoes the paste, produces no turn, and is stall-reclaimed with `turnCount: 0`
+   * every cycle; without a cap the engine re-dispatches it forever down the same
+   * broken delivery path (live run 47823553). Incremented in {@link
+   * reclaimExpiredClaims} for a never-turned unit, RESET to 0 the moment the worker
+   * heartbeats a real turn (so a slow-but-eventually-working kickoff never
+   * accumulates a false block). Deliberately survives `clearClaim` — it counts
+   * ACROSS reclaims. At {@link KICKOFF_FAILURE_BLOCK_THRESHOLD} the unit is blocked
+   * to a human ({@link blockKickoffFailure}) instead of silently re-dispatched.
+   */
+  kickoffFailures?: number;
   attempt: number;
   failureCode?: ExecutionFailureCode;
   failure?: string;
@@ -108,6 +130,14 @@ export interface ExecutionBlocker {
    * coordinator answers it via `execution.work.answer` (no owner involvement).
    */
   audience?: 'human' | 'coordinator';
+  /**
+   * Set when a stuck `'coordinator'` blocker is auto-escalated to a human: the
+   * coordinator was given a chance to self-heal (its wake retries on every idle
+   * edge) but the blocker sat unanswered past `COORDINATOR_BLOCKER_ESCALATE_MS`,
+   * so the sweep flips `audience` → `'human'` and appends a human inbox entry.
+   * Stamped once; its presence guards against re-escalating the same blocker.
+   */
+  escalatedAt?: number;
   response?: string;
   resolved: boolean;
   createdAt: number;
@@ -210,6 +240,12 @@ export interface ExecutionRequestSnapshotV1 {
 export interface ExecutionPolicyV1 extends NonNullable<TeamLaunchRequestInput['policy']> {
   maxTurnsPerClaim?: number;
   maxClaimWallClockMs?: number;
+  /** Reclaim a CLAIMED unit whose worker is alive/non-restful but has produced no
+   *  OUTPUT progress (see {@link ExecutionWorkUnit.progressAt}) for this long —
+   *  a tighter, progress-aware ceiling than the blunt {@link maxClaimWallClockMs}
+   *  wall-clock backstop. Reclaimed only from a lease already expired (a streaming
+   *  worker keeps its lease fresh and never reaches this branch). */
+  maxClaimStallMs?: number;
   usageBudget?: { maxTokens?: number; maxUsd?: number };
 }
 
@@ -338,6 +374,18 @@ export const MAX_ROUTING_DECISIONS_PER_EXECUTION = 256;
 const MAX_DELIVERY_TEXT_BYTES = 16 * 1024;
 const MAX_DELIVERY_ERROR_BYTES = 1024;
 export const MAX_DELIVERY_ATTEMPTS = 8;
+/**
+ * How many times a work unit may be reclaimed while its worker never once
+ * reported a completed turn (see {@link ExecutionWorkUnit.kickoffFailures})
+ * before {@link blockKickoffFailure} blocks it to a human instead of the engine
+ * re-dispatching it forever. Each reclaim of a never-turned unit means a FULL
+ * output-stall window (`maxClaimStallMs`, ~10 min) of total silence, so this is
+ * already strong evidence of a broken kickoff, not a slow-but-working first turn
+ * (which streams output, keeps its lease fresh, and is never stall-reclaimed).
+ * Three confirmations before surfacing balances fast recovery against a false
+ * block of a genuinely slow worker.
+ */
+export const KICKOFF_FAILURE_BLOCK_THRESHOLD = 3;
 const DELIVERY_LEASE_MS = 60_000;
 // Claim lease TTL. The host renews this from the worker's PTY output activity
 // (Part B), so a streaming worker never hits it — only a SILENT worker does. A
@@ -434,7 +482,9 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.claimedAt === undefined || typeof unit.claimedAt === 'number' && Number.isFinite(unit.claimedAt))
     && (unit.leaseExpiresAt === undefined || typeof unit.leaseExpiresAt === 'number' && Number.isFinite(unit.leaseExpiresAt))
     && (unit.heartbeatAt === undefined || typeof unit.heartbeatAt === 'number' && Number.isFinite(unit.heartbeatAt))
+    && (unit.progressAt === undefined || typeof unit.progressAt === 'number' && Number.isFinite(unit.progressAt))
     && (unit.turnCount === undefined || validNonNegativeInteger(unit.turnCount))
+    && (unit.kickoffFailures === undefined || validNonNegativeInteger(unit.kickoffFailures))
     && (unit.failureCode === undefined || failureCodes.has(unit.failureCode))
     && (unit.failure === undefined || validString(unit.failure)) && (unit.result === undefined || validString(unit.result))
     && (unit.structuredResult === undefined || validStructuredJson(unit.structuredResult))
@@ -448,6 +498,7 @@ function clearClaim(unit: ExecutionWorkUnit): void {
   unit.claimedAt = undefined;
   unit.leaseExpiresAt = undefined;
   unit.heartbeatAt = undefined;
+  unit.progressAt = undefined;
   unit.turnCount = undefined;
 }
 
@@ -662,10 +713,11 @@ function validSourceBundle(value: unknown): boolean {
 
 function validExecutionPolicy(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
-  const policy = value as { maxTurnsPerClaim?: unknown; maxClaimWallClockMs?: unknown; usageBudget?: { maxTokens?: unknown; maxUsd?: unknown } | null };
+  const policy = value as { maxTurnsPerClaim?: unknown; maxClaimWallClockMs?: unknown; maxClaimStallMs?: unknown; usageBudget?: { maxTokens?: unknown; maxUsd?: unknown } | null };
   const positiveInteger = (input: unknown, max: number) => Number.isInteger(input) && (input as number) > 0 && (input as number) <= max;
   return (policy.maxTurnsPerClaim === undefined || positiveInteger(policy.maxTurnsPerClaim, 10_000))
     && (policy.maxClaimWallClockMs === undefined || positiveInteger(policy.maxClaimWallClockMs, 24 * 60 * 60 * 1_000))
+    && (policy.maxClaimStallMs === undefined || positiveInteger(policy.maxClaimStallMs, 24 * 60 * 60 * 1_000))
     && (policy.usageBudget === undefined || policy.usageBudget !== null && typeof policy.usageBudget === 'object'
       && (policy.usageBudget.maxTokens === undefined || positiveInteger(policy.usageBudget.maxTokens, Number.MAX_SAFE_INTEGER))
       && (policy.usageBudget.maxUsd === undefined || typeof policy.usageBudget.maxUsd === 'number' && Number.isFinite(policy.usageBudget.maxUsd) && policy.usageBudget.maxUsd > 0));
@@ -1231,6 +1283,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
        unit.claimedAt = timestamp;
        unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
        unit.heartbeatAt = timestamp;
+       unit.progressAt = timestamp;
        unit.turnCount = 0;
       unit.attempt += 1;
       unit.failureCode = undefined;
@@ -1377,6 +1430,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
            unit.claimedAt = timestamp;
            unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
            unit.heartbeatAt = timestamp;
+           unit.progressAt = timestamp;
            unit.turnCount = 0;
           unit.attempt += 1;
           unit.failureCode = undefined;
@@ -1520,12 +1574,19 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         const nextTurnCount = Math.max(unit.turnCount ?? 0, claim.turnCount);
         changed ||= nextTurnCount !== unit.turnCount;
         unit.turnCount = nextTurnCount;
+        // A real completed turn proves the kickoff succeeded — clear the churn
+        // counter so a later mid-work stall/reclaim is never mislabeled as a
+        // never-started kickoff and cannot trip the block escape hatch.
+        if (nextTurnCount > 0 && unit.kickoffFailures !== undefined) { unit.kickoffFailures = undefined; changed = true; }
       }
       if ((unit.leaseExpiresAt ?? 0) - timestamp <= HEARTBEAT_PERSIST_REMAINING_MS) {
         unit.heartbeatAt = timestamp;
         unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
         changed = true;
       }
+      // A cohort-authenticated worker heartbeat is genuine progress (unlike raw
+      // byte output), so advance the stall clock whenever this call mutates.
+      if (changed) unit.progressAt = timestamp;
       if (changed) {
         record.stateVersion += 1;
         record.updatedAt = timestamp;
@@ -1545,7 +1606,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
    * stateVersion fence (this is not a principal mutation) and NO event append (output is
    * far too frequent to log). Cheap: only persists when the lease is within
    * {@link HEARTBEAT_PERSIST_REMAINING_MS} of expiry, so a hot output stream is a no-op. */
-  async function renewWorkerLease(executionId: string, slotId: string): Promise<ExecutionRecord | undefined> {
+  async function renewWorkerLease(executionId: string, slotId: string, options?: { advanceProgress?: boolean }): Promise<ExecutionRecord | undefined> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
@@ -1557,6 +1618,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if ((unit.leaseExpiresAt ?? 0) - timestamp > HEARTBEAT_PERSIST_REMAINING_MS) return clone(record);
       unit.heartbeatAt = timestamp;
       unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
+      // Only real worker OUTPUT advances the stall clock. The agent-state renewal
+      // in `reconcileActive` passes `advanceProgress: false` so a silent-but-alive
+      // worker can still be stall-reclaimed even though its lease is kept fresh.
+      if (options?.advanceProgress) unit.progressAt = timestamp;
       record.stateVersion += 1;
       record.updatedAt = timestamp;
       persist(snapshot.state, snapshot.hash);
@@ -1605,6 +1670,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         if (!unit || unit.state !== 'CLAIMED' || unit.claimId !== claim.claimId
           || unit.claimGeneration !== claim.claimGeneration
           || ((unit.leaseExpiresAt ?? Infinity) > timestamp && !claim.force)) continue;
+        // Count a reclaim of a NEVER-TURNED claim as a kickoff failure (captured
+        // BEFORE clearClaim wipes turnCount). This is the churn signature the
+        // engine must eventually escape via blockKickoffFailure — a worker that
+        // repeatedly accepts the unit but never starts a turn is not making
+        // progress, it is stuck at delivery.
+        if ((unit.turnCount ?? 0) === 0) unit.kickoffFailures = (unit.kickoffFailures ?? 0) + 1;
         unit.state = 'READY';
         unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(claim.reason, 'claim recovery reason') });
         clearClaim(unit);
@@ -1620,6 +1691,74 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       }
       return clone(record);
     });
+  }
+
+  /**
+   * Kickoff-churn escape hatch. A unit reclaimed {@link
+   * KICKOFF_FAILURE_BLOCK_THRESHOLD} times while its worker never reported a
+   * completed turn (`kickoffFailures`) is stuck at delivery, not making progress —
+   * so instead of the engine re-dispatching it forever down the same broken path
+   * ({@link dispatchReady} only ever picks READY units), transition it to BLOCKED
+   * with a HUMAN-audience blocker so the run surfaces on the board / inbox as
+   * needing attention (a human then fixes the worker and `retryWork`s the unit).
+   * Store-initiated (no cohort authority / claim fence — a background recovery
+   * decision, not a principal action) and background-swept (undefined version →
+   * skips the CAS). THROWS on every no-op guard so a non-qualifying call never
+   * spuriously bumps the version / appends an event / re-cascades (mirrors {@link
+   * escalateBlockerToHuman}); the service caller catches and ignores.
+   */
+  async function blockKickoffFailure(executionId: string, workUnitId: string): Promise<ExecutionRecord> {
+    return mutateRecord(executionId, undefined, (record, timestamp) => {
+      const unit = findUnit(record, workUnitId);
+      if (unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED') throw new Error('work unit is not blockable for kickoff failure');
+      if ((unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new Error('kickoff failures below block threshold');
+      const blockerId = `kickoff:${unit.id}:${unit.attempt}`;
+      if (record.blockers?.some((blocker) => blocker.id === blockerId)) throw new Error('duplicate kickoff blocker');
+      const slotId = unit.assignedSlotId ?? 'engine';
+      unit.state = 'BLOCKED';
+      unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: 'kickoff delivery produced no worker turn' });
+      clearClaim(unit);
+      unit.assignedSlotId = undefined;
+      record.blockers ??= [];
+      record.blockers.push({
+        id: blockerId, workUnitId: unit.id, slotId,
+        question: `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} was dispatched ${unit.kickoffFailures} times but its worker never started a turn — the assignment likely never reached or submitted in the worker. Check the worker terminal, then retry the unit or restart the run.`,
+        audience: 'human', resolved: false, createdAt: timestamp
+      });
+      record.state = 'BLOCKED';
+    }, `Work unit blocked after repeated kickoff failure: ${workUnitId}`);
+  }
+
+  /**
+   * Kickoff-churn SELF-HEAL, tried BEFORE {@link blockKickoffFailure}. A unit that
+   * has churned {@link KICKOFF_FAILURE_BLOCK_THRESHOLD} times on one worker slot is
+   * re-homed onto a DIFFERENT authorized worker slot it has not been dispatched to
+   * yet — a slot-specific delivery failure (a wedged/broken worker) may simply not
+   * recur on a fresh peer, so the engine reassigns before ever asking a human. The
+   * "already tried" set is read from the unit's own `claimed` history (the durable
+   * record of which slots it has run on). The fresh slot gets a FRESH kickoff budget
+   * (`kickoffFailures` reset) so the prior slot's failures don't immediately re-block
+   * it. Store-initiated (no cohort authority — a background recovery decision, like
+   * {@link blockKickoffFailure}) and background-swept (undefined version → no CAS).
+   * THROWS on every no-op guard (not READY / below threshold / NO untried slot left)
+   * so the service caller falls through to the human block; a single-worker team or
+   * a unit that has already tried every slot always throws here and blocks.
+   */
+  async function reassignKickoffToFreshSlot(executionId: string, workUnitId: string): Promise<ExecutionRecord> {
+    return mutateRecord(executionId, undefined, (record, timestamp) => {
+      const unit = findUnit(record, workUnitId);
+      if (unit.state !== 'READY') throw new Error('work unit is not reassignable for kickoff failure');
+      if ((unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new Error('kickoff failures below block threshold');
+      const workerSlots = (record.authorizationContext?.slots ?? []).filter(
+        (slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:')
+      );
+      const tried = new Set(unit.history.filter((entry) => entry.action === 'claimed' && entry.slotId).map((entry) => entry.slotId!));
+      const fresh = workerSlots.find((slot) => !tried.has(slot.slotId));
+      if (!fresh) throw new Error('no untried worker slot for kickoff reassignment');
+      unit.assignedSlotId = fresh.slotId;
+      unit.kickoffFailures = undefined;
+      unit.history.push({ action: 'retried', slotId: fresh.slotId, attempt: unit.attempt, at: timestamp, detail: 'kickoff reassigned to fresh worker slot' });
+    }, `Work unit reassigned to fresh slot after kickoff failure: ${workUnitId}`);
   }
 
   async function retryWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, assignedSlotId?: string): Promise<ExecutionRecord> {
@@ -1646,6 +1785,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       unit.assignedSlotId = assignedSlotId ? string(assignedSlotId, 'assigned slot id') : undefined;
       unit.failureCode = undefined;
       unit.failure = undefined;
+      // A human retry gives a fresh kickoff budget: they have (or will) fix the
+      // worker, so a prior kickoff-churn block must not immediately re-block.
+      unit.kickoffFailures = undefined;
       unit.history.push({ action: 'retried', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
       for (const blocker of record.blockers ?? []) {
         if (blocker.workUnitId === unit.id && !blocker.resolved) {
@@ -1683,6 +1825,24 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       record.blockers.push({ id: string(input.id, 'blocker id'), workUnitId: unit.id, slotId: authority.slotId, question: string(input.question, 'blocker question'), ...(input.options ? { options: input.options.map((option) => string(option, 'blocker option')) } : {}), ...(input.audience === 'coordinator' ? { audience: 'coordinator' as const } : {}), resolved: false, createdAt: timestamp });
       record.state = 'BLOCKED';
     }, `Work unit blocked: ${workUnitId}`);
+  }
+
+  /**
+   * Flip a stuck `'coordinator'` self-heal blocker to `'human'` and stamp
+   * `escalatedAt`. Background-swept (no caller stateVersion → mutateRecord's
+   * `undefined` version skips the CAS). Idempotent by guard: throws if the
+   * blocker is missing/resolved/already-escalated or was never coordinator-audience,
+   * so the sweep only ever escalates a genuinely stuck coordinator ask exactly once.
+   */
+  async function escalateBlockerToHuman(executionId: string, blockerId: string): Promise<ExecutionRecord> {
+    return mutateRecord(executionId, undefined, (record) => {
+      const blocker = findBlocker(record, blockerId);
+      if (blocker.resolved) throw new Error('execution blocker is resolved');
+      if (blocker.audience !== 'coordinator') throw new Error('only a coordinator-audience blocker escalates to human');
+      if (blocker.escalatedAt !== undefined) throw new Error('execution blocker already escalated');
+      blocker.audience = 'human';
+      blocker.escalatedAt = now();
+    }, `Coordinator blocker escalated to human: ${blockerId}`);
   }
 
   async function enqueueBlockerDelivery(
@@ -2215,7 +2375,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, retryWork, reassignWork, blockWork, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, beginRetry, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {
@@ -2291,7 +2451,7 @@ function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false
 }
 
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
-  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, turnCount: _turnCount, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, repairDigests: _repairDigests, history: _history, ...input } = unit;
+  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, turnCount: _turnCount, kickoffFailures: _kickoffFailures, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, repairDigests: _repairDigests, history: _history, ...input } = unit;
   return input;
 }
 

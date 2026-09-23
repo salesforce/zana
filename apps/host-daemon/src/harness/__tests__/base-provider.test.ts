@@ -80,6 +80,12 @@ describe('BaseLaunchProvider defaults — a minimal subclass is substitutable', 
     expect(p.baseArgsPinSession('shell')).toBe(false);
   });
 
+  it('injected replies are not bracketed-paste wrapped by default', () => {
+    // Claude's TUI buffers a fast burst as a paste on its own; only OpenCode
+    // overrides this true. A minimal subclass inherits false.
+    expect(p.submitViaBracketedPaste).toBe(false);
+  });
+
   it('capabilities delegate to the shared profile accessor', () => {
     // Delegates to providerCapabilities(profile) — a shell profile yields the
     // all-false shell caps regardless of the provider identity.

@@ -65,7 +65,15 @@ export function evaluateSlotEligibility(routing: WorkUnitRoutingV1 | undefined, 
   }
   if (slot.health !== undefined) {
     const fresh = slot.observedAt !== undefined && slot.maxAgeMs !== undefined && now >= slot.observedAt && now - slot.observedAt <= slot.maxAgeMs;
-    require(!fresh || slot.health === 'unknown' ? undefined : slot.health === 'available', 'slot health unavailable');
+    // Health is ADVISORY: only fresh, positive evidence of unavailability blocks
+    // dispatch. A stale reading (observedAt past maxAgeMs) or an 'unknown'/
+    // unresolved health is absence of information, NOT evidence of a down worker
+    // — it must never gate an already-spawned worker. Gating on it wedged runs
+    // permanently: the snapshot's 30s TTL would lapse between the edge-driven
+    // route-fact refreshes, flip every slot to UNKNOWN, block dispatch, and (with
+    // no work in flight) leave no completion edge to re-attempt. Positive,
+    // in-window 'unavailable' still fails closed.
+    if (fresh && slot.health === 'unavailable') reasons.push('slot health unavailable');
   }
   const estimatedInputUsd = slot.provider && slot.model && routing?.estimatedContextBytes !== undefined
     ? estimateModelInputUsd(slot.provider, slot.model, routing.estimatedContextBytes) : undefined;

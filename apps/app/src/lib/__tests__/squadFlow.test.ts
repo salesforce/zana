@@ -416,6 +416,102 @@ describe('buildSquadFlow — claim liveness', () => {
   });
 });
 
+// ---- detached (board-synthesized) worker nodes ------------------------------
+
+describe('buildSquadFlow — detached CLAIMED workers', () => {
+  // An execution with a live orchestrator session (so the execution is in-scope) plus
+  // a CLAIMED worker unit whose slot has NO live terminal session.
+  function detachedExecution(assignmentOver: Record<string, unknown>): ExecutionBoardProjection {
+    return {
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Job', state: 'RUNNING', attempt: 1,
+      createdAt: 1_000, updatedAt: 4_000, orchestratorSessionId: 'orch',
+      work: {
+        total: 1, completed: 0,
+        counts: { PENDING: 0, READY: 0, CLAIMED: 1, BLOCKED: 0, COMPLETED: 0, FAILED: 0, SKIPPED: 0 },
+        assignments: [
+          { workUnitId: 'u1', title: 'Unit', dependencies: [], slotId: 'slot-w', state: 'CLAIMED', ...assignmentOver }
+        ],
+        rosterSlotIds: ['slot-w']
+      }
+    } satisfies ExecutionBoardProjection;
+  }
+
+  const orchSession = () =>
+    session({ id: 'orch', cohort: { cohortId: 'launch-1', role: 'orchestrator', executionId: 'execution-1', slotId: 'orchestrator' } });
+
+  it('synthesizes a detached node for a CLAIMED slot with no live session', () => {
+    const execution = detachedExecution({ claimedAt: 2_000, heartbeatAt: 3_000, progressAt: 3_500, leaseExpiresAt: 6_000 });
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'orch', handle: 'orch', role: 'orchestrator' })],
+      sessions: [orchSession()],
+      executions: [execution]
+    }));
+    const detached = nodeMap(g!).get('detached:execution-1:slot-w');
+    expect(detached).toBeDefined();
+    expect(detached!.detached).toBe(true);
+    expect(detached!.role).toBe('worker');
+    // A synthesized node has NO live signal of its own: its state stays 'unknown'
+    // so the view's nodeActivity() only shows motion when the CARRIED claim has a
+    // fresh progressAt — a stranded claim never renders phantom "working".
+    expect(detached!.state).toBe('unknown');
+    expect(detached!.claim).toEqual({ claimedAt: 2_000, heartbeatAt: 3_000, progressAt: 3_500, leaseExpiresAt: 6_000 });
+    expect(detached!.job).toEqual({ executionId: 'execution-1', needsAttention: false });
+  });
+
+  it('does NOT inflate summary.working for a synthesized node — the summary tracks mesh state, liveness rides the claim', () => {
+    const execution = detachedExecution({ claimedAt: 2_000, leaseExpiresAt: 6_000 });
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'orch', handle: 'orch', role: 'orchestrator' })],
+      sessions: [orchSession()],
+      executions: [execution]
+    }));
+    // orchestrator (idle/unknown) + one synthesized worker (state 'unknown').
+    expect(g!.summary.total).toBe(2);
+    // Neither node reports a live 'working' mesh dot, so summary.working is 0.
+    // The worker's liveness is NOT lost — it is carried on its claim for the view.
+    expect(g!.summary.working).toBe(0);
+    const detached = nodeMap(g!).get('detached:execution-1:slot-w');
+    expect(detached!.claim).toEqual({ claimedAt: 2_000, leaseExpiresAt: 6_000 });
+  });
+
+  it('does NOT synthesize when a live session already covers the CLAIMED slot', () => {
+    const execution = detachedExecution({ claimedAt: 2_000, leaseExpiresAt: 6_000 });
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'orch', handle: 'orch', role: 'orchestrator' })],
+      sessions: [
+        orchSession(),
+        session({ id: 'w', cohort: { cohortId: 'launch-1', role: 'worker', executionId: 'execution-1', slotId: 'slot-w' } })
+      ],
+      executions: [execution]
+    }));
+    expect(nodeMap(g!).has('detached:execution-1:slot-w')).toBe(false);
+    // the live session carries the claim instead.
+    expect(nodeMap(g!).get('w')!.claim).toBeDefined();
+  });
+
+  it('does NOT synthesize for an execution with no in-scope node (scope gate)', () => {
+    // No orchestrator/worker session ties this execution to any in-scope node, so
+    // its CLAIMED slot must not leak in as a phantom worker.
+    const execution = detachedExecution({ claimedAt: 2_000, leaseExpiresAt: 6_000 });
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'solo', handle: 'solo' })],
+      sessions: [session({ id: 'solo' })],
+      executions: [execution]
+    }));
+    expect(nodeMap(g!).has('detached:execution-1:slot-w')).toBe(false);
+  });
+
+  it('does NOT synthesize for a non-CLAIMED assignment', () => {
+    const execution = detachedExecution({ state: 'COMPLETED', claimedAt: 2_000, leaseExpiresAt: 6_000 });
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'orch', handle: 'orch', role: 'orchestrator' })],
+      sessions: [orchSession()],
+      executions: [execution]
+    }));
+    expect(nodeMap(g!).has('detached:execution-1:slot-w')).toBe(false);
+  });
+});
+
 // ---- orchestrator detection -------------------------------------------------
 
 describe('buildSquadFlow — orchestrator', () => {

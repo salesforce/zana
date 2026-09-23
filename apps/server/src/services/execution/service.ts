@@ -1,7 +1,7 @@
 import { isDurableCoordination, isRestfulAgentState, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, WORK_CLAIM_LEASE_MS, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, WORK_CLAIM_LEASE_MS, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -9,7 +9,7 @@ import { isResumeGrantTerminal, type createResumeGrantStore } from './resume-gra
 import type { createExecutionSourceRegistry } from './source-registry.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
 import type { InboxInput } from '../inbox/inbox-store.js';
-import { ExecutionDeadlineWatchdog } from './deadline-watchdog.js';
+import { ExecutionDeadlineWatchdog, executionProgressAnchor } from './deadline-watchdog.js';
 import { PlanReadinessWatchdog } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
 import { evaluateSlotEligibility } from './routing-policy.js';
@@ -25,9 +25,36 @@ const ROUTE_FACTS_TIMEOUT_MS = 15_000;
 const ROUTE_FACTS_CIRCUIT_RESET_MS = 30_000;
 const ACTIVE_CLAIM_PAGE_SIZE = 50;
 const PROVEN_DEAD_CLAIM_REASON = 'Claim lease expired and assigned Team worker is proven dead';
+/**
+ * How long a `'coordinator'` self-heal blocker may sit unanswered before the
+ * sweep escalates it to a human (inbox + `audience` flip). Generous on purpose:
+ * the coordinator wake retries on EVERY idle edge (drainCoordinatorWake), so a
+ * coordinator that can self-heal answers well inside this window; only a
+ * genuinely stuck/parked coordinator reaches the escalation.
+ */
+const COORDINATOR_BLOCKER_ESCALATE_MS = 5 * 60_000;
+/**
+ * How long a coordinator wake may sit unqueued against an `unknown`-state
+ * coordinator before it is delivered anyway. A remote/opencode coordinator with
+ * no mesh dot resolves to `unknown` permanently, so a hard "wait for restful"
+ * block would strand the wake forever; a modest bound clears a transient startup
+ * `unknown` first (below the reconcile cadence so the next tick delivers). See
+ * {@link SquadExecutionService.drainCoordinatorWake}.
+ */
+const COORDINATOR_WAKE_UNKNOWN_STALE_MS = 20_000;
+const AGENT_DEAD_CLAIM_REASON = 'Claim reclaimed: worker shell/wrapper is alive but its inner agent is dead';
 const SILENT_WORKER_CLAIM_REASON = 'Claim lease expired with no worker output for a full lease window';
+const STALLED_WORKER_CLAIM_REASON = 'Claim reclaimed: worker alive but produced no output progress within the stall limit';
 const DEAD_WORKER_PROCESSES = new Set(['exited', 'spawn-failed', 'canceled']);
 const TELEMETRY_GAP_GRACE_SAMPLES = 3;
+
+/**
+ * Inner-agent liveness verdict, distinct from the outer `worker.process` shell state.
+ * `'dead'` = the wrapper survives but the agent process is gone (a remote-opencode
+ * zombie); `'alive'` = the agent is confirmed running; `'unknown'` = no probe / the
+ * provider cannot report it, treated as the pre-existing renew-from-state behaviour.
+ */
+export type WorkerLiveness = 'alive' | 'dead' | 'unknown';
 
 /**
  * Default wall-clock ceiling for a single durable work-unit claim (~20 min, generous).
@@ -42,25 +69,42 @@ const TELEMETRY_GAP_GRACE_SAMPLES = 3;
  * unless `maxClaimWallClockMs` is set — no host/server default, and the coordinator prompt never
  * sets it. This default revives it so a stuck claim is force-reclaimed regardless of state.
  *
- * Blunt by design: because workers never heartbeat, a genuinely long single healthy turn is also
- * reclaimed at this ceiling. Follow-up (deferred): wire worker heartbeat + loosen the restful
- * gate so healthy long turns are distinguished from stuck ones.
+ * Blunt by design: it fires on wall-clock-since-claim regardless of whether the worker ever
+ * emitted output, so it is only the LAST resort. The progress-aware {@link
+ * DEFAULT_DURABLE_CLAIM_STALL_MS} ceiling below reclaims a silent-but-'working' worker sooner
+ * without endangering a streaming one (whose output keeps its lease — and stall clock — fresh).
  */
 const DEFAULT_DURABLE_CLAIM_WALL_CLOCK_MS = 20 * 60_000;
 
 /**
- * Inject the durable-claim wall-clock backstop default into a launch policy for a durable
- * worker-DAG coordination mode (job-team / structured / freeform) when the caller left
- * `maxClaimWallClockMs` unset. Pure: returns the policy unchanged for non-durable (interactive/
- * autonomous chat) modes or when a value is already present, so a caller-set ceiling wins.
+ * Default OUTPUT-stall ceiling for a durable work-unit claim (~10 min), tighter than the blunt
+ * wall-clock backstop above. Reached only after a claim's lease has ALREADY expired (a full lease
+ * window with no worker output) AND the worker is still alive + non-restful — the exact case
+ * `reconcileActive` used to renew forever from agent-state, freezing a run behind a stuck worker
+ * until the 20-min wall-clock hit (live run b1bd2906: a lone CLAIMED unit, worker alive but not
+ * progressing). Measured from `progressAt` (last real output), NOT `claimedAt`, so a worker that
+ * streamed then hung is caught 10 min after it went silent, and a still-streaming worker (fresh
+ * `progressAt`) is never reclaimed here.
+ */
+const DEFAULT_DURABLE_CLAIM_STALL_MS = 10 * 60_000;
+
+/**
+ * Inject the durable-claim reclaim ceilings (wall-clock backstop + progress-aware stall) into a
+ * launch policy for a durable worker-DAG coordination mode (job-team / structured / freeform)
+ * when the caller left them unset. Pure: returns the policy unchanged for non-durable
+ * (interactive / autonomous chat) modes or when BOTH ceilings are already present, so a
+ * caller-set ceiling always wins.
  */
 export function withDurableClaimWallClockBackstop(
   mode: TeamCoordinationMode | undefined,
   policy: ExecutionPolicyV1 | undefined
 ): ExecutionPolicyV1 | undefined {
   if (!isDurableCoordination(mode)) return policy;
-  if (policy?.maxClaimWallClockMs !== undefined) return policy;
-  return { ...(policy ?? {}), maxClaimWallClockMs: DEFAULT_DURABLE_CLAIM_WALL_CLOCK_MS };
+  if (policy?.maxClaimWallClockMs !== undefined && policy.maxClaimStallMs !== undefined) return policy;
+  const next = { ...(policy ?? {}) };
+  if (next.maxClaimWallClockMs === undefined) next.maxClaimWallClockMs = DEFAULT_DURABLE_CLAIM_WALL_CLOCK_MS;
+  if (next.maxClaimStallMs === undefined) next.maxClaimStallMs = DEFAULT_DURABLE_CLAIM_STALL_MS;
+  return next;
 }
 
 function sessionUsageCounters(stats: SessionStats | null): ExecutionUsageObservationV1['cumulative'] {
@@ -183,6 +227,35 @@ export interface ExecutionServiceDeps {
   planStartupGraceMs?: () => number;
   /** Main-owned agent status used to detect a live process whose assigned turn ended silently. */
   getAgentState?: (sessionId: string) => AgentState;
+  /**
+   * Main-owned INNER-agent liveness, distinct from the outer `worker.process` (the
+   * shell/tmux wrapper) and from {@link getAgentState} (the OSC/screen status). A
+   * remote worker's outer ssh/tmux wrapper stays `process:'running'` after the inner
+   * agent (e.g. opencode) exits, and a hook-less/OSC-less harness then reads
+   * `getAgentState` as `'unknown'` forever — so `reconcileActive` would RENEW the
+   * claim into a zombie while every redispatch re-types the assignment into the
+   * surviving bash shell (infinite redeliver-into-dead-shell loop; the remote-opencode
+   * stall). This is the ONLY signal that can distinguish "shell alive, agent dead":
+   * a provider that can probe its own agent liveness (opencode session list) reports
+   * `'dead'`; providers that cannot report `'unknown'`, which is treated exactly like
+   * the pre-existing behaviour (renew from state / stall ceilings). Rule 6: the
+   * concrete probe lives in the provider + host; core only consumes the verdict.
+   */
+  getWorkerLiveness?: (sessionId: string) => WorkerLiveness;
+  /**
+   * Main-owned close of a worker session whose INNER agent is proven `dead` (see
+   * {@link getWorkerLiveness}). Reclaiming/releasing the dead claim alone leaves
+   * the worker's surviving OUTER shell/tmux wrapper LIVE on the (remote) box — a
+   * zombie that burns CPU until app quit→boot. The captured-PID reap and the boot
+   * orphan-reap CANNOT catch it: the sentinel PID is the inner agent's and has
+   * already exited, while the surviving wrapper shell has a DIFFERENT pid. Only
+   * `tmux kill-session` reaps it — routed via the host's `closeExpected`, whose
+   * `killRemoteTmux` SIGHUPs the pane (honored by a bare login shell, unlike
+   * opencode). Best-effort + main-authoritative: the host maps the id to
+   * `PtyManager.closeExpected(sessionId)`; core only asks. Absent in tests /
+   * mesh-less — a no-op there keeps existing behaviour.
+   */
+  closeWorkerSession?: (sessionId: string) => void;
   routeFitObserveEnabled?: () => boolean;
   /** Main-owned TranscriptSource bridge. Renderer and agents cannot submit usage. */
   readSessionStats?: (sessionId: string, options?: { fresh?: boolean }) => Promise<SessionStats | null>;
@@ -194,6 +267,15 @@ export interface ExecutionServiceDeps {
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => NodeJS.Timeout;
   clearTimer?: (timer: NodeJS.Timeout) => void;
+  /**
+   * E2E-only transient dispatch fault injector. When it returns `true` for an
+   * execution, the current assignment batch is released undelivered instead of
+   * pushed — reproducing the 0-CLAIMED / all-READY wedge so the
+   * {@link redispatchStalled} recovery sweep is exercised end-to-end. Home-gated
+   * in host (`ZCC_E2E_STALL_FIRST_DISPATCH` under `ZCC_E2E_HOME`); ABSENT in
+   * production, so real dispatch behaviour is byte-unchanged.
+   */
+  stallFirstDispatch?: (executionId: string) => boolean;
 }
 
 function withoutDefaultLaunchKind(request: ExecutionRequestV1): ExecutionRequestV1 {
@@ -398,7 +480,7 @@ export class ExecutionService {
       now: deps.now ?? Date.now,
       setTimer: deps.setTimer ?? setTimeout,
       clearTimer: deps.clearTimer ?? clearTimeout,
-      onDeadline: async (executionId) => { await this.timeoutExecution(executionId); }
+      onDeadline: async (executionId) => { await this.enforceDeadline(executionId); }
     });
     this.planReadinessWatchdog = new PlanReadinessWatchdog({
       now: deps.now ?? Date.now,
@@ -683,12 +765,21 @@ export class ExecutionService {
         const renewSlots: string[] = [];
         for (const unit of record.workUnits ?? []) {
           if (unit.state !== 'CLAIMED' || !unit.claimId || unit.claimGeneration === undefined || !unit.assignedSlotId) continue;
+          // State-agnostic FORCE backstop for a worker that never reports an outcome (run
+          // df216947). `force` bypasses the store's lease-expiry floor and the agent-state
+          // renewal below, so a worker stuck non-restful with NO progress is reclaimed
+          // regardless of state. Measured from the last real OUTPUT progress (`progressAt`,
+          // advanced ONLY by host-observed worker output — the agent-state renewal below
+          // passes advanceProgress:false), NOT raw `claimedAt`: a worker still emitting output
+          // is by definition not stuck. Keying it to claimedAt force-reclaimed a demonstrably-
+          // live, streaming worker mid-work the instant it outlived the ceiling and re-
+          // dispatched it from zero — so ANY unit that legitimately runs past the ceiling while
+          // progressing (verify-upstream: >20min, output bursts every ~4min) churned forever
+          // and could never complete (live run 928ff675). A stuck-at-turn-0 worker keeps
+          // progressAt==claimedAt, so it still fires here exactly as before (df216947 intact).
           const maxWallClock = record.request.policy?.maxClaimWallClockMs;
-          if (maxWallClock !== undefined && unit.claimedAt !== undefined && now - unit.claimedAt >= maxWallClock) {
-            // State-agnostic ceiling: `force` bypasses the store's lease-expiry floor and the
-            // agent-state renewal below, so a worker that stays 'working' forever — whether it
-            // streams output or is genuinely hung — is still reclaimed at the wall-clock limit.
-            // This is the definitive backstop for run df216947 (a stuck non-restful worker).
+          const lastWallClockProgressAt = unit.progressAt ?? unit.claimedAt;
+          if (maxWallClock !== undefined && lastWallClockProgressAt !== undefined && now - lastWallClockProgressAt >= maxWallClock) {
             claims.push({ workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, reason: 'Work claim exceeded main-observable wall-clock limit', force: true });
             continue;
           }
@@ -705,6 +796,22 @@ export class ExecutionService {
             claims.push({ workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, reason: PROVEN_DEAD_CLAIM_REASON });
             continue;
           }
+          // Outer shell/tmux wrapper is alive, but the INNER agent may already be dead
+          // (a remote-opencode zombie: `process:'running'`, agent-state stuck 'unknown').
+          // A provider that can probe its own agent liveness proves this; reclaim NOW —
+          // BEFORE the state/stall/renew logic below — so a dead-agent claim is not
+          // renewed into a zombie and its assignment is never re-typed into the surviving
+          // shell. `'unknown'`/`'alive'`/unwired ⇒ fall through to the existing behaviour,
+          // so the claude-family path is byte-unchanged.
+          if (worker.sessionId !== undefined && this.deps.getWorkerLiveness?.(worker.sessionId) === 'dead') {
+            claims.push({ workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, reason: AGENT_DEAD_CLAIM_REASON });
+            // Reclaiming the claim frees the WORK, but the dead worker's outer
+            // shell/tmux wrapper survives as a remote zombie — reap it via the
+            // host's tmux-killing close (captured-PID/boot reap can't: that pid
+            // is the exited inner agent, not the surviving wrapper).
+            this.deps.closeWorkerSession?.(worker.sessionId);
+            continue;
+          }
           // Worker process alive. Reclaim ONLY if it has gone to REST (idle/done/waiting)
           // without reporting an outcome — it abandoned the claim. If it is non-restful
           // ('working'/'blocked'/'unknown') or its state is unresolved, treat it as alive and
@@ -717,6 +824,18 @@ export class ExecutionService {
             claims.push({ workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, reason: SILENT_WORKER_CLAIM_REASON });
             continue;
           }
+          // Worker alive + non-restful, but its lease has expired (a full window with no output).
+          // Progress-aware stall ceiling: if it has produced no OUTPUT progress (`progressAt`,
+          // never advanced by this agent-state renewal) for `maxClaimStallMs`, reclaim it now
+          // instead of renewing forever toward the blunt wall-clock ceiling. A streaming worker
+          // keeps its lease fresh and never reaches this branch, so only a truly stuck-but-'working'
+          // worker is caught (live run b1bd2906). Falls back to `claimedAt` for a pre-field claim.
+          const maxStall = record.request.policy?.maxClaimStallMs;
+          const lastProgressAt = unit.progressAt ?? unit.claimedAt;
+          if (maxStall !== undefined && lastProgressAt !== undefined && now - lastProgressAt >= maxStall) {
+            claims.push({ workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, reason: STALLED_WORKER_CLAIM_REASON });
+            continue;
+          }
           renewSlots.push(unit.assignedSlotId);
         }
         if (!claims.length && !renewSlots.length) continue;
@@ -725,18 +844,180 @@ export class ExecutionService {
           continue;
         }
         for (const slotId of renewSlots) {
-          try { await this.deps.store.renewWorkerLease(record.id, slotId); }
+          // Keep the lease alive from agent-state liveness, but do NOT advance the stall clock —
+          // only real worker output (the host path below) counts as progress.
+          try { await this.deps.store.renewWorkerLease(record.id, slotId, { advanceProgress: false }); }
           catch (error) { this.deps.logError?.(`Execution claim lease renew from agent state failed for ${record.id}`, error); }
         }
         if (claims.length) {
           const reclaimed = await this.deps.store.reclaimExpiredClaims(record.id, claims);
-          if (reclaimed.stateVersion !== record.stateVersion) await this.cascadeDispatch(reclaimed.id);
+          const changed = await this.escalateKickoffFailures(reclaimed);
+          if (reclaimed.stateVersion !== record.stateVersion || changed) await this.cascadeDispatch(reclaimed.id);
         }
       }
       if (!page.next) this.activeClaimCursor = undefined;
     } finally {
       this.activeReconcileRunning = false;
     }
+  }
+
+  /**
+   * Recover a wedged durable run. `cascadeDispatch` only fires on work edges
+   * (completion / fail / release / reclaim), so a run that dispatched ZERO units
+   * on its first attempt — e.g. a transient slot-health UNKNOWN, a lapsed route-
+   * fact TTL, or a delivery that all released — has no edge left to re-attempt and
+   * parks permanently (observed: run 1aa3cf47, 0 deliveries, coordinator PARKED
+   * forever). `PlanReadinessWatchdog` only covers the planless case (it self-
+   * removes once units exist), so a fully-planned run has no safety net.
+   *
+   * This periodic sweep (same cadence as {@link reconcileActive}) re-runs
+   * `cascadeDispatch` for any active durable execution that has dispatchable READY
+   * units but NOTHING in flight — the wedge signature. "Nothing in flight" is NOT
+   * merely "0 CLAIMED": a claim whose worker produced no OUTPUT (`progressAt` never
+   * moved past `claimedAt`) for the run's stall window while the coordinator is
+   * PARKED is a stranded / never-delivered assignment, not live work (run
+   * c33a6715). Those wedged claims are force-reclaimed to READY here (gated behind
+   * the claim-recovery flags, same as reconcileActive) and then re-dispatched. A
+   * healthy run always has a PROGRESSING claim and is skipped, so the
+   * refresh/inventory cost is paid only on genuinely stalled runs; `cascadeDispatch`
+   * re-refreshes route facts before dispatching, so the run self-heals as soon as
+   * health recovers.
+   */
+  async redispatchStalled(): Promise<void> {
+    let records: ExecutionRecord[];
+    try { records = await this.deps.store.listActive(); }
+    catch (error) { this.deps.logError?.('Execution stalled-redispatch list failed', error); return; }
+    const enforce = this.deps.claimRecoveryObserveEnabled?.() === true
+      && this.deps.claimRecoveryEnforceEnabled?.() === true;
+    const now = (this.deps.now ?? Date.now)();
+    for (const record of records) {
+      if (record.state !== 'RUNNING' && record.state !== 'STARTING') continue;
+      if (!isDurableCoordination(record.coordinationMode)) continue;
+      const units = record.workUnits ?? [];
+      if (!units.length) continue; // planless → PlanReadinessWatchdog owns it
+      // A CLAIMED unit normally means work is in flight and the run is healthy. But a
+      // claim whose worker has produced no OUTPUT — `progressAt` (stamped on claim,
+      // advanced ONLY by real worker output, never by agent-state lease renewal) is
+      // more than the run's stall window stale — is a stranded / never-delivered (or
+      // dead-since-a-single-echo) assignment, NOT work in flight (live run c33a6715: a
+      // remote worker sat in standby, board CLAIMED, `deliveries: []`, coordinator
+      // PARKED, telemetry gap climbing, so reconcileActive kept renewing the lease from
+      // agent-state and only the blunt 10-min stall ceiling could break it — which
+      // then re-handed the SAME undelivered slot and re-wedged). Treat the run as busy
+      // ONLY when a claim's output is RECENT; otherwise force-reclaim the wedged
+      // claims so the unit returns to READY and re-dispatches. Gated behind the same
+      // claim-recovery flags as reconcileActive, and only when the coordinator has
+      // PARKED (an active coordinator manages its own claims; reconcileActive owns
+      // lease-expiry reclaim for the coordinator-active case).
+      const stallMs = record.request.policy?.maxClaimStallMs;
+      const wedgedClaims: { workUnitId: string; claimId: string; claimGeneration: number; reason: string; force: true }[] = [];
+      let liveClaim = false;
+      for (const unit of units) {
+        if (unit.state !== 'CLAIMED') continue;
+        // Liveness is RECENCY of output, not "ever output past claim". The old
+        // `progressed = progressAt > claimedAt` short-circuit treated ANY output
+        // as live — but a bare interactive worker (OpenCode) that only ECHOES the
+        // injected assignment paste advances `progressAt` ONCE then goes silent, so
+        // `progressed` stayed true forever and this backstop was permanently masked
+        // (the dead claim was skipped as "live" every sweep — live run 47823553).
+        // Match `reconcileActive`: a claim is live ONLY while its last output is
+        // within the stall window; a stale single blip is caught exactly like a
+        // never-progressed claim.
+        const lastProgressAt = unit.progressAt ?? unit.claimedAt;
+        const stalled = stallMs !== undefined && lastProgressAt !== undefined
+          && now - lastProgressAt >= stallMs;
+        if (enforce && record.coordinatorState === 'PARKED' && stalled
+          && unit.claimId !== undefined && unit.claimGeneration !== undefined) {
+          wedgedClaims.push({
+            workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration,
+            reason: STALLED_WORKER_CLAIM_REASON, force: true
+          });
+        } else {
+          liveClaim = true;
+        }
+      }
+      if (liveClaim) continue; // genuinely progressing work in flight
+      if (wedgedClaims.length) {
+        try {
+          const reclaimed = await this.deps.store.reclaimExpiredClaims(record.id, wedgedClaims);
+          const changed = await this.escalateKickoffFailures(reclaimed);
+          if (reclaimed.stateVersion !== record.stateVersion || changed) await this.cascadeDispatch(reclaimed.id);
+        } catch (error) {
+          this.deps.logError?.(`Execution stalled-claim reclaim failed for ${record.id}`, error);
+        }
+        continue;
+      }
+      if (!units.some((unit) => unit.state === 'READY')) continue; // nothing to dispatch
+      await this.cascadeDispatch(record.id);
+    }
+  }
+
+  /**
+   * Kickoff-churn escape hatch. After a reclaim, block any unit that has been
+   * reclaimed {@link KICKOFF_FAILURE_BLOCK_THRESHOLD}+ times while its worker never
+   * once reported a completed turn (`kickoffFailures`) — otherwise the un-masked
+   * backstops above would just keep re-dispatching it down the same broken delivery
+   * path forever (a silently-broken run that never completes, which violates the
+   * "teams must self-heal, never sit wedged" mandate). Blocking surfaces it on the
+   * board / inbox with an actionable HUMAN_BLOCKER instead. Best-effort: the store
+   * method throws on every no-op guard (below threshold / already blocked / dup),
+   * which is expected and swallowed. Returns true if it blocked ≥1 unit so the
+   * caller still cascades (dispatching the run's OTHER ready units; the blocked one
+   * is no longer READY so it is skipped).
+   */
+  private async escalateKickoffFailures(reclaimed: ExecutionRecord): Promise<boolean> {
+    let changed = false;
+    for (const unit of reclaimed.workUnits ?? []) {
+      if ((unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) continue;
+      if (unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED') continue;
+      // SELF-HEAL FIRST (the "coordinator reassigns before it asks a person" half of
+      // the mandate): try re-homing the churning unit onto a DIFFERENT worker slot it
+      // has not been dispatched to yet. A slot-specific delivery failure (a wedged /
+      // mis-wired worker) may simply not recur on a fresh peer. Harness-agnostic — the
+      // churn signal (`kickoffFailures`, from a never-turned `turnCount`) and the
+      // reassignment are core execution state, identical for every harness. Only when
+      // EVERY distinct worker slot has been exhausted (or a single-worker team) does
+      // the store throw here and we fall through to the human block below.
+      try {
+        await this.deps.store.reassignKickoffToFreshSlot(reclaimed.id, unit.id);
+        changed = true;
+        continue; // reassigned to a fresh slot — the caller's cascadeDispatch redispatches it
+      } catch (error) {
+        // No untried slot / not reassignable → block to a human below.
+        this.deps.logError?.(`Execution kickoff-failure reassignment skipped for ${reclaimed.id}/${unit.id}`, error);
+      }
+      try {
+        const updated = await this.deps.store.blockKickoffFailure(reclaimed.id, unit.id);
+        changed = true;
+        await this.wakeCoordinator(updated, {
+          cause: 'HUMAN_BLOCKER',
+          message: `HUMAN_BLOCKER: work unit ${unit.id} never started after ${unit.kickoffFailures} dispatch attempts across every worker slot — check the worker terminal or restart the run.`,
+          workUnitId: unit.id, stateOrClaimGeneration: updated.state
+        });
+        // Surface the human blocker on the Inbox too. A HUMAN_BLOCKER that only woke
+        // the (parked) coordinator left the user with a "needs you" run and NO inbox
+        // message — the exact gap reported live. Mirror the blockWork /
+        // escalateStaleCoordinatorBlockers human path so a human-decision blocker
+        // ALWAYS produces an actionable inbox entry (a comment-bearing SIGNAL row that
+        // links back to the execution + blocker for board resolution).
+        const blocker = updated.blockers?.find((candidate) => candidate.workUnitId === unit.id && candidate.audience === 'human' && !candidate.resolved);
+        if (blocker) {
+          void this.deps.inbox?.append({
+            projectId: updated.projectId,
+            subject: updated.jobTitle || 'Job Execution Blocked',
+            comments: blocker.question,
+            executionId: updated.id,
+            blockerId: blocker.id
+          }).catch((err) => {
+            (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))('Failed to append inbox entry for kickoff-failure block', err);
+          });
+        }
+      } catch (error) {
+        // Below threshold / already blocked / duplicate → store threw; not an error.
+        this.deps.logError?.(`Execution kickoff-failure block skipped for ${reclaimed.id}/${unit.id}`, error);
+      }
+    }
+    return changed;
   }
 
   dispose(): void {
@@ -882,7 +1163,8 @@ export class ExecutionService {
    * store matches the unit currently CLAIMED by `slotId`. */
   async renewWorkerLease(executionId: string, slotId: string): Promise<void> {
     try {
-      await this.deps.store.renewWorkerLease(executionId, slotId);
+      // Host-observed worker OUTPUT: advances both the lease and the stall clock (`progressAt`).
+      await this.deps.store.renewWorkerLease(executionId, slotId, { advanceProgress: true });
     } catch (error) {
       this.deps.logError?.(`execution worker lease renew failed (execution=${executionId}, slot=${slotId})`, error);
     }
@@ -1169,6 +1451,12 @@ export class ExecutionService {
    */
   private async pushAssignments(record: ExecutionRecord, assignments: ExecutionDispatchAssignment[]): Promise<void> {
     if (!assignments.length) return;
+    // E2E-only transient fault: release this batch undelivered to reproduce the
+    // 0-CLAIMED wedge. Home-gated in host; a no-op in production.
+    if (this.deps.stallFirstDispatch?.(record.id) === true) {
+      await this.releaseUndeliveredAssignments(record.id, assignments);
+      return;
+    }
     let lifecycle: ExtractedLifecycle | undefined;
     try {
       lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
@@ -1179,6 +1467,32 @@ export class ExecutionService {
     for (const assignment of assignments) {
       const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === assignment.slotId && candidate.projectId === record.projectId);
       if (!worker?.sessionId) {
+        await this.releaseUndeliveredAssignments(record.id, [assignment]);
+        continue;
+      }
+      // Never DISPATCH to a worker whose process has already terminated. A restart
+      // reconciles a prior-run worker to a terminal `process` (`exited`/`spawn-failed`/
+      // `canceled`) but RETAINS its `sessionId` (team-lifecycle-store reconcileStartup),
+      // so a recovered board can re-dispatch a completed unit to that stale sessionId.
+      // The dead session's `reply()` may still be accepted by the surviving PTY (or the
+      // agent-state sits at a stale busy value), so the assignment is counted delivered,
+      // the worker never heartbeats, and the claim churns dispatch↔lease-reclaim to the
+      // run timeout (live run f0f44413: 5/6 units done, 6th reclaimed 3× then timed out).
+      // Release instead → coordinator parks (HUMAN_BLOCKER). Deterministic, not a
+      // liveness heuristic — a terminal process is authoritative.
+      if (worker.process && DEAD_WORKER_PROCESSES.has(worker.process)) {
+        await this.releaseUndeliveredAssignments(record.id, [assignment]);
+        continue;
+      }
+      // Never TYPE an assignment into a dead-agent's surviving shell (remote-opencode
+      // zombie: outer wrapper alive, inner agent gone — a raw stdin write would be
+      // eval'd by the bash prompt). Release instead; the next dispatch/reconcile cycle
+      // re-delivers once a healthy worker exists or parks the coordinator. `'unknown'`/
+      // `'alive'`/unwired ⇒ deliver as before (claude-family path byte-unchanged).
+      if (this.deps.getWorkerLiveness?.(worker.sessionId) === 'dead') {
+        // Same dead-agent zombie as the reconcile path: release the assignment
+        // AND reap the surviving outer shell/tmux wrapper (host tmux-kill close).
+        this.deps.closeWorkerSession?.(worker.sessionId);
         await this.releaseUndeliveredAssignments(record.id, [assignment]);
         continue;
       }
@@ -1207,7 +1521,8 @@ export class ExecutionService {
         // cascade fires from the worker's own completion, so it is busy). Falls
         // back to the raw reply when the host doesn't wire the idle-gated dep.
         const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
-        if (deliver(worker.sessionId, text)) {
+        const delivered = deliver(worker.sessionId, text);
+        if (delivered) {
           try { this.deps.triggerDeliveryDrain?.(worker.sessionId); } catch { /* nudge best-effort */ }
         } else {
           await this.releaseUndeliveredAssignments(record.id, [assignment]);
@@ -1268,7 +1583,12 @@ export class ExecutionService {
         await this.wakeCoordinator(record, { cause: 'SEMANTIC_CONFLICT', message: `SEMANTIC_CONFLICT: work unit ${workUnitId} needs a coordinator decision (blockerId=${blocker.id}). Answer with execution.work.answer. Worker asks: ${blocker.question}`, workUnitId, stateOrClaimGeneration: String(claim?.claimGeneration ?? record.state) });
       } else {
         await this.wakeCoordinator(record, { cause: 'HUMAN_BLOCKER', message: `HUMAN_BLOCKER: work unit ${workUnitId} requires human input.`, workUnitId, stateOrClaimGeneration: String(claim?.claimGeneration ?? record.state) });
-        const questionData = blocker.options ? buildInboxQuestion({ options: blocker.options }, true) : {};
+        // Human blockers must always accept a concrete typed value. Workers may
+        // provide useful quick choices, but labels such as "Provide path" are
+        // actions rather than answers and cannot resolve the blocker by themselves.
+        const questionData = blocker.options
+          ? buildInboxQuestion({ options: blocker.options, allowOther: true }, true)
+          : {};
         void this.deps.inbox?.append({
           projectId: binding.projectId,
           subject: record.jobTitle || 'Job Execution Blocked',
@@ -1312,6 +1632,58 @@ export class ExecutionService {
     // of the same answer replays; a re-block mints a fresh blocker id.
     const clientRequestId = `${record.id}:${blocker.id}:coordinator-answer`;
     return this.enqueueOwnedBlocker(record, record.stateVersion, blocker, clientRequestId, answer, true);
+  }
+
+  /**
+   * Background sweep: escalate stuck coordinator self-heal blockers to a human.
+   * A `'coordinator'` blocker the coordinator never answered — unresolved, no
+   * in-flight delivery, older than {@link COORDINATOR_BLOCKER_ESCALATE_MS}, not
+   * already escalated — is flipped to `'human'` (store.escalateBlockerToHuman)
+   * and surfaced via the SAME human-blocker inbox append as {@link blockWork}.
+   * This is the fallback for a parked/stuck coordinator so a run never wedges
+   * silently on a self-heal ask the coordinator can't answer. Best-effort and
+   * per-blocker isolated (one failure never blocks the rest); idempotent via the
+   * store's `escalatedAt` guard. Runs on the same reconcile cadence as
+   * {@link reconcileActive}/{@link redispatchStalled} (host.ts reconcile tick).
+   */
+  async escalateStaleCoordinatorBlockers(): Promise<void> {
+    const now = (this.deps.now ?? Date.now)();
+    let active: ExecutionRecord[];
+    try {
+      active = await this.deps.store.listActive();
+    } catch (error) {
+      this.deps.logError?.('execution.escalateStaleCoordinatorBlockers list failed', error);
+      return;
+    }
+    for (const record of active) {
+      for (const blocker of record.blockers ?? []) {
+        if (blocker.resolved || blocker.audience !== 'coordinator' || blocker.escalatedAt !== undefined) continue;
+        if (now - blocker.createdAt < COORDINATOR_BLOCKER_ESCALATE_MS) continue;
+        // A coordinator answer already in flight → let it land; not stuck.
+        if ((record.deliveries ?? []).some((delivery) => delivery.blockerId === blocker.id && (delivery.state === 'PENDING' || delivery.state === 'LEASED'))) continue;
+        try {
+          await this.deps.store.escalateBlockerToHuman(record.id, blocker.id);
+        } catch {
+          // Lost a race (resolved / escalated / answered concurrently) — skip.
+          continue;
+        }
+        // Human blockers always accept a concrete typed value; quick choices are
+        // an optional add-on. Same shape as blockWork's human path.
+        const questionData = blocker.options
+          ? buildInboxQuestion({ options: blocker.options, allowOther: true }, true)
+          : {};
+        void this.deps.inbox?.append({
+          projectId: record.projectId,
+          subject: record.jobTitle || 'Job Execution Blocked',
+          comments: blocker.question,
+          executionId: record.id,
+          blockerId: blocker.id,
+          ...questionData
+        }).catch((err) => {
+          (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))('Failed to append inbox entry for escalated coordinator blocker', err);
+        });
+      }
+    }
   }
 
   async releaseWork(binding: ExecutionCohortBinding, workUnitId: string, claim?: { claimId: string; claimGeneration: number }, requireClaim = false) {
@@ -1600,14 +1972,19 @@ export class ExecutionService {
     }
   }
 
-  /** Main idle-edge hook retries a durable coordinator wake after busy/restart loss. */
+  /**
+   * Retries a durable coordinator wake after busy/restart loss. Driven by BOTH the
+   * host idle-edge hook AND the reconcile-tick poll ({@link drainPendingCoordinatorWakes})
+   * — the poll is load-bearing for a remote coordinator that never emits a raw idle edge.
+   */
   async drainCoordinatorWake(projectId: string, executionId: string, sessionId: string): Promise<void> {
     try {
       // RISK-1 fix: never wedge a wake into a busy coordinator TUI and ack it away.
-      // If the coordinator session's state is known AND not restful, leave the wake
-      // queued (do not reply, do not ack) so the idle-edge retry (host.ts) delivers
-      // it on the coordinator's next at-rest edge. When getAgentState is unwired
-      // (tests / meshless hosts) the state is undefined → deliver as before.
+      // A definitively-busy state (working/blocked) keeps the wake queued (no reply,
+      // no ack) until the coordinator's next at-rest edge. An ambiguous `unknown`
+      // state (a meshless remote coordinator, or startup) is delivered once the wake
+      // has aged past COORDINATOR_WAKE_UNKNOWN_STALE_MS. When getAgentState is unwired
+      // (tests / meshless hosts) the state is undefined → deliver immediately.
       for (let delivered = 0; delivered < 100; delivered += 1) {
         const record = await this.deps.store.getInProject(projectId, executionId);
         const wake = record?.coordinatorWakes?.[0];
@@ -1615,12 +1992,51 @@ export class ExecutionService {
         const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
         if (lifecycle?.orchestratorSessionId !== sessionId) return;
         const state = this.deps.getAgentState?.(sessionId);
-        if (state !== undefined && !isRestfulAgentState(state)) return;
+        if (state !== undefined && !isRestfulAgentState(state)) {
+          // Non-restful. `unknown` is ambiguous — an untracked remote/opencode
+          // coordinator (no mesh dot) sits here permanently, so a hard block would
+          // strand the wake. Deliver once it has been queued past a short staleness
+          // bound (a transient startup `unknown` clears first). Any OTHER non-restful
+          // state (working/blocked, or a future busy state) is a live turn: always
+          // wait for the at-rest edge so a wake never wedges mid-output.
+          if (state !== 'unknown') return;
+          if ((this.deps.now ?? Date.now)() - wake.createdAt < COORDINATOR_WAKE_UNKNOWN_STALE_MS) return;
+        }
         if (!this.deps.replyToSession(sessionId, wake.message)) return;
         await this.deps.store.acknowledgeCoordinatorWake(record.id, wake.id);
       }
     } catch (error) {
       (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(`execution coordinator wake drain failed for ${executionId}`, error);
+    }
+  }
+
+  /**
+   * Reconcile-driven backstop: re-drain queued coordinator wakes for every active
+   * execution. The host idle-edge retry fires only on a raw `idle` edge, which an
+   * untracked remote/opencode coordinator (no mesh telemetry) never emits — so
+   * without this poll its wake would sit queued forever and the coordinator would
+   * park on an unanswered self-heal ask, the exact root cause the escalation
+   * fallback only masks. Runs on the same reconcile cadence as
+   * {@link escalateStaleCoordinatorBlockers}; delivery stays gated by
+   * {@link drainCoordinatorWake} (working/blocked hard-block, `unknown` after the
+   * staleness bound). Best-effort and per-record isolated; never throws.
+   */
+  async drainPendingCoordinatorWakes(): Promise<void> {
+    let active: ExecutionRecord[];
+    try {
+      active = await this.deps.store.listActive();
+    } catch (error) {
+      this.deps.logError?.('execution.drainPendingCoordinatorWakes list failed', error);
+      return;
+    }
+    for (const record of active) {
+      if (!record.coordinatorWakes?.length) continue;
+      try {
+        const sessionId = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId))?.orchestratorSessionId;
+        if (sessionId) await this.drainCoordinatorWake(record.projectId, record.id, sessionId);
+      } catch (error) {
+        this.deps.logError?.(`execution.drainPendingCoordinatorWakes failed for ${record.id}`, error);
+      }
     }
   }
 
@@ -2087,7 +2503,7 @@ export class ExecutionService {
   private async reconcile(callerPrincipalId: string, projectId: string, record: ExecutionRecord): Promise<ExecutionRecord> {
     if (record.state === 'READY') return record;
     const deadlineMs = record.request.policy?.deadlineMs;
-    if (deadlineMs && (this.deps.now ?? Date.now)() >= record.createdAt + deadlineMs
+    if (deadlineMs && (this.deps.now ?? Date.now)() >= executionProgressAnchor(record) + deadlineMs
       && record.state !== 'COMPLETED' && record.state !== 'FAILED' && record.state !== 'STOPPED') {
       return this.timeoutExecution(record.id);
     }
@@ -2277,6 +2693,30 @@ export class ExecutionService {
     }
   }
 
+  /**
+   * Watchdog fire handler. The timer was armed for a FIXED point, but the deadline
+   * is measured from the run's last forward progress ({@link executionProgressAnchor}),
+   * so re-read the live record before acting: if the run has progressed since the
+   * timer armed (idle window not yet elapsed), RE-ARM to the fresh anchor and let it
+   * keep running; only when it has genuinely made no progress for a full `deadlineMs`
+   * window do we time it out. This is what lets a healthy but slow deep plan complete
+   * instead of being guillotined at a fixed total cap. A throw propagates so the
+   * watchdog's bounded retry still covers a transient cancel-transport failure.
+   */
+  private async enforceDeadline(executionId: string): Promise<void> {
+    const record = await this.deps.store.get(executionId);
+    if (!record) return;
+    if (!isResumeGrantTerminal(record.state)) {
+      const deadlineMs = record.request.policy?.deadlineMs;
+      if (typeof deadlineMs === 'number' && Number.isFinite(deadlineMs) && deadlineMs > 0
+        && (this.deps.now ?? Date.now)() < executionProgressAnchor(record) + deadlineMs) {
+        this.deadlineWatchdog.schedule(record);
+        return;
+      }
+    }
+    await this.timeoutExecution(executionId);
+  }
+
   private async timeoutExecution(executionId: string): Promise<ExecutionRecord> {
     const record = await this.deps.store.get(executionId);
     if (!record) throw new Error('execution not found');
@@ -2343,7 +2783,7 @@ export class ExecutionService {
     const expired = typeof deadlineMs === 'number'
       && Number.isFinite(deadlineMs)
       && deadlineMs > 0
-      && (this.deps.now ?? Date.now)() >= current.createdAt + deadlineMs;
+      && (this.deps.now ?? Date.now)() >= executionProgressAnchor(current) + deadlineMs;
     if (!isResumeGrantTerminal(current.state) && !expired) return true;
     if (expired || current.state === 'STOPPED') {
       try {

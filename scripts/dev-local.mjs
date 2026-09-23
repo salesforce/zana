@@ -18,8 +18,13 @@ export const DESKTOP_PACKAGE = '@zana-ai/zcc-desktop';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-export function createDevTurboCommand(skipDesktop) {
+export function createDevTurboCommand(skipDesktop, env = process.env) {
   const uiPackage = skipDesktop ? APP_UI_PACKAGE : DESKTOP_PACKAGE;
+  // ZCC_DEV_STREAM swaps Turbo's interactive TUI for plain streamed lines so the
+  // combined server/host-daemon console can be piped/tee'd to a greppable file
+  // (`ZCC_DEV_STREAM=1 pnpm run dev 2>&1 | tee ~/zcc-dev.log`). The TUI captures
+  // nothing usable through a pipe; stream mode is line-oriented.
+  const ui = env.ZCC_DEV_STREAM ? 'stream' : 'tui';
   return {
     command: 'pnpm',
     args: [
@@ -31,7 +36,7 @@ export function createDevTurboCommand(skipDesktop) {
       `--filter=${SERVER_PACKAGE}`,
       `--filter=${HOST_DAEMON_PACKAGE}`,
       '--ui',
-      'tui',
+      ui,
       '--concurrency',
       '20',
       '--no-update-notifier'

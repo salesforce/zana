@@ -60,6 +60,7 @@ import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfil
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
+import { AgentLivenessCache } from '@zana-ai/zcc-host-daemon/harness/agent-liveness';
 import { sshPairingSession } from '@zana-ai/zcc-host-daemon/ssh-pairing-pty';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
 import { projectIdentityDigest, projectsForStoreRevision, revalidateLaunchCommit as revalidateCommonLaunchCommit } from '@zana-ai/zcc-server/services/launch/commit-revalidation';
@@ -73,6 +74,7 @@ import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
+import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
 import { createExecutionStore, WORK_CLAIM_LEASE_MS } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
@@ -183,7 +185,7 @@ import { exportInboxPdf } from './native/inbox-pdf.js';
 import { createSavedStore, type ISavedStore } from '@zana-ai/zcc-server';
 import { ABOUT_CREDITS, REPORT_BUG_URL, isDurableCoordination, type SavedRecord, type SavedRecordInput } from '@zana-ai/zcc-domain/product';
 import type { ExecutionBoardProjection, ExecutionBoardSnapshot, ExecutionSourceSnapshot } from '@zana-ai/zcc-domain/product';
-import { isRestfulAgentState } from '@zana-ai/zcc-domain/product';
+import { isRestfulAgentState, decayUnreliableAgentState } from '@zana-ai/zcc-domain/product';
 import type { TeamJobLaunchInput, TeamJobLaunchResult } from '@zana-ai/zcc-domain/product';
 import type { ConversationHistorySnapshot } from '@zana-ai/zcc-domain/product';
 import type { CancelTeamLaunchResult, LaunchTeamResult, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput, TeamFailedWorkerSlot, TeamLaunchedWorker } from '@zana-ai/zcc-domain/product';
@@ -885,6 +887,18 @@ const launchLedger = createLaunchLedgerStore({
   filePath: join(app.getPath('userData'), 'launch-ledger.json')
 });
 const launchLedgerEntriesBySession = new Map<string, string>();
+// Durable ledger of remote-agent reap recipes (Rule 1: main owns it, never the
+// renderer). A remote CLI that ignores SIGHUP (OpenCode) outlives the local ssh
+// proxy that a normal close kills; the pty layer SIGKILLs it by PID on close, but
+// a QUIT/hard-crash can't complete that async ssh before the app dies. This
+// ledger backstops that case — the next boot SIGKILLs any ledgered remote agent
+// not recovered as a live re-attached session (see the boot orphan-reap below).
+const remoteReapLedger = createRemoteReapLedger({
+  filePath: join(app.getPath('userData'), 'remote-reap-ledger.json')
+});
+// In-memory mirror of what we've ledgered: dedupes the per-`sessionUpdated` write
+// (that event fires often) and provides the recipe for the confirmed exit reap.
+const remoteReapBySession = new Map<string, RemoteReapEntry>();
 const teamLifecycle = createTeamLifecycleStore({
   filePath: join(app.getPath('userData'), 'team-lifecycle.json')
 });
@@ -1282,7 +1296,68 @@ const LIVE_SESSION_STATS_NEGATIVE_TTL_MS = 1_000;
 const LIVE_SESSION_STATS_MAX = 200;
 const liveSessionStats = new Map<string, { value?: SessionStats | null; expiresAt?: number; pending?: Promise<SessionStats | null>; generation?: number }>();
 
+/**
+ * True when a session runs its harness on a remote host over `ssh -t` (NOT the
+ * local-agent + remote-tools proxy, whose CLI + stores are local). Anchored to
+ * the session's registered project's `remote` config and gated on
+ * `!remoteToolProxy`. Shared by {@link transcriptRefForSession} (remote stats
+ * over ssh) and {@link sessionHasUnreliableStatusChannel}.
+ */
+function isTrueSshRemoteSession(session: TerminalSession): boolean {
+  if (session.remoteToolProxy) return false;
+  const project = session.projectId
+    ? store.listProjects().find((candidate) => candidate.id === session.projectId)
+    : undefined;
+  return Boolean(project?.remote);
+}
+
+/**
+ * A session whose live status is derived ONLY from the output-activity /
+ * screen-scan heuristics (no OSC glyph, no lifecycle hook) AND runs on a true
+ * ssh-remote host has no reliable "done" channel: its output reaches us over an
+ * ssh pipe, so silence can't be told apart from a slow remote round-trip.
+ * `working` (recent bytes) and `blocked` (text-detected prompt) are still real,
+ * but a resting `idle`/`waiting`/`done` is a guess. See {@link displayAgentState}.
+ */
+function sessionHasUnreliableStatusChannel(session: TerminalSession): boolean {
+  if (!isTrueSshRemoteSession(session)) return false;
+  const mode = providerFor(session.profile as LaunchProfileId).adapter.status?.mode;
+  return mode === 'output-activity' || mode === 'screen-scan';
+}
+
+/**
+ * Map a RAW resolved agent state to the value SHOWN in the renderer for a
+ * session. For a session with no reliable done-channel
+ * ({@link sessionHasUnreliableStatusChannel}) the can't-confirm resting states
+ * (`idle`/`waiting`/`done`) decay to a neutral `unknown`, so the Agents/Flow
+ * chip never asserts a false "done" (or a stale "working") for a headless remote
+ * squad worker. DISPLAY ONLY — the raw `agentStatus` stream the idle-gated
+ * injector, coordinator-wake, usage-capture and auto-close key off is untouched
+ * (a remote worker still delivers its next cascade unit on the real `idle` edge,
+ * where `unknown` would be treated as busy and strand the queue).
+ */
+function displayAgentState(sessionId: string, state: AgentState): AgentState {
+  if (state !== 'idle' && state !== 'waiting' && state !== 'done') return state;
+  const session = ptys.getSession(sessionId);
+  return decayUnreliableAgentState(state, Boolean(session && sessionHasUnreliableStatusChannel(session)));
+}
+
 function transcriptRefForSession(session: TerminalSession) {
+  // A true SSH-remote session (spawned via `ssh -t`, NOT the local-agent +
+  // remote-tools proxy) keeps its harness store on the remote host, so its
+  // transcript adapter must run its native CLI there. `remoteToolProxy` marks
+  // the local-agent case, whose opencode.db is local — leave `remote` unset for
+  // it so it reads locally as before.
+  const project = session.projectId
+    ? store.listProjects().find((candidate) => candidate.id === session.projectId)
+    : undefined;
+  const remote = project?.remote && !session.remoteToolProxy
+    ? {
+        host: project.remote.host,
+        ...(project.remote.user ? { user: project.remote.user } : {}),
+        ...(project.remote.proxyJump ? { proxyJump: project.remote.proxyJump } : {})
+      }
+    : undefined;
   return {
     id: session.id,
     profile: session.profile,
@@ -1290,7 +1365,8 @@ function transcriptRefForSession(session: TerminalSession) {
     claudeSessionId: session.claudeSessionId,
     codexSessionId: session.codexSessionId,
     openCodeSessionId: session.openCodeSessionId,
-    createdAt: session.createdAt
+    createdAt: session.createdAt,
+    ...(remote ? { remote } : {})
   };
 }
 
@@ -5191,8 +5267,45 @@ export async function getTeamLaunch(callerPrincipalId: string, launchRequestId: 
 // worker's next idle edge (driven from the `agentStatus` 'status' subscription).
 const workerInjector = new IdleGatedInjector({
   getState: (sessionId) => agentStatus.get(sessionId),
-  reply: (sessionId, text) => ptys.reply(sessionId, text)
+  reply: (sessionId, text) => ptys.reply(sessionId, text),
+  // A headless worker at rest reports `waiting` (output-activity onSilence with no
+  // first output) or `unknown` (a lifecycle-recovered remote worker that never
+  // emits a byte) — both busy under the interactive contract, which stranded the
+  // assignment until the 45s force-flush (live run f0f44413). It has no human to
+  // wait on and no interactive TUI to clobber, so silence = deliverable. Same
+  // headless-worker predicate as the blocked-overlay suppression above.
+  deliverableWhenSilent: (sessionId) => suppressesInteractiveBlocked(ptys.getSession(sessionId))
 });
+// Escape hatch for a queued assignment whose worker never fires a deliverable idle
+// edge — a REMOTE worker with an agent-state telemetry gap sits in `unknown` and
+// strands the assignment (board CLAIMED, `deliveries: []`, worker idle in standby;
+// live run c33a6715). The periodic sweep force-flushes an item queued longer than
+// this bound. Generous on purpose: a genuinely working worker emits output → state
+// transitions → onState flushes first, so only a non-signalling worker reaches it.
+const WORKER_INJECT_STALE_MS = 45_000;
+function flushStaleWorkerInjections(): void {
+  try {
+    const flushed = workerInjector.flushStale(WORKER_INJECT_STALE_MS);
+    if (flushed.length) {
+      console.log(`[execution] force-flushed ${flushed.length} stranded worker assignment(s): ${flushed.join(', ')}`);
+    }
+  } catch (err) {
+    logMainError('execution.flushStaleWorkerInjections', err);
+  }
+}
+
+// Inner-agent liveness for the claim-reconcile loop. A tmux-backed REMOTE worker
+// whose inner agent exits but whose ssh/tmux wrapper survives (the
+// remote-opencode zombie) keeps `worker.process:'running'` and its agent-state
+// decays to `unknown`, so reconcile would renew the claim forever and each
+// redispatch types the assignment into the surviving login shell (`command not
+// found`). This cache reads a background ssh probe (`PtyManager.probeAgentLiveness`)
+// that inspects the tmux pane's current command; `getWorkerLiveness` (below) reads
+// it synchronously so reconcile can reclaim a positively-`dead` worker. Returns
+// `unknown` — the pre-existing behavior — for local sessions, providers that don't
+// report liveness, and any probe failure, so a claim is reclaimed only on a
+// POSITIVE `dead`.
+const workerLivenessCache = new AgentLivenessCache((sessionId) => ptys.probeAgentLiveness(sessionId));
 
 const squadExecutionService = new SquadExecutionService({
   store: executionStore,
@@ -5225,11 +5338,33 @@ const squadExecutionService = new SquadExecutionService({
     return team ? preflightWorkflowProfile(workflow, team, personas.list()) : { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile Team is unavailable' };
   }
   , resolveTeamModelSnapshots
+  // E2E-ONLY transient dispatch fault: forces the FIRST assignment batch per
+  // execution to release undelivered, reproducing the 0-CLAIMED wedge so the
+  // periodic redispatchStalled() recovery sweep is proven end-to-end. Honored
+  // ONLY under an E2E temp HOME (ZCC_E2E_HOME) with the opt-in env set;
+  // undefined (and thus byte-unchanged dispatch) in production.
+  , stallFirstDispatch: E2E_LAUNCH && process.env.ZCC_E2E_STALL_FIRST_DISPATCH
+    ? (() => {
+        const stalled = new Set<string>();
+        return (executionId: string) => {
+          if (stalled.has(executionId)) return false;
+          stalled.add(executionId);
+          return true;
+        };
+      })()
+    : undefined
   , routingEnforcementEnabled: () => store.getConfig().teamRoutingEnforcementEnabled === true
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
   , planStartupGraceMs: () => store.getConfig().executionPlanStartupGraceMs ?? 0
   , getAgentState: (sessionId) => agentStatus.get(sessionId)
+  , getWorkerLiveness: (sessionId) => workerLivenessCache.get(sessionId)
+  // Reap a proven-dead worker's surviving outer shell/tmux wrapper. closeExpected
+  // marks a clean exit, is idempotent (no-op if already gone), and for a
+  // tmux-backed remote runs killRemoteTmux — the ONLY thing that kills the
+  // dead-agent zombie (the captured-PID reap targets the exited inner agent's
+  // pid, not the wrapper's). Fire-and-forget; the pty layer owns the teardown.
+  , closeWorkerSession: (sessionId) => { ptys.closeExpected(sessionId); }
   , routeFitObserveEnabled: () => store.getConfig().executionRouteFitObserveEnabled === true
   , readSessionStats: async (sessionId, options) => {
     const session = ptys.getSession(sessionId);
@@ -5882,12 +6017,29 @@ function wireBridgeListeners() {
       retainExitedSessionStats(exitedSession, finalRead, cachedEntry?.value, cachedEntry?.pending);
       refreshRestoreCapability(exitedSession);
     }
+    // Remote-agent reap bookkeeping. The pty layer already best-effort SIGKILLs
+    // the captured remote PID on its close/exit paths; here we CONFIRM the kill
+    // and only then drop the durable ledger entry. A failed reap (box
+    // unreachable at exit) deliberately LEAVES the entry on disk so the boot
+    // orphan-reap retries it next launch. The recipe comes from main's own pty
+    // layer, never the renderer (Rule 1).
+    const reapEntry = remoteReapBySession.get(sessionId);
+    if (reapEntry) {
+      remoteReapBySession.delete(sessionId);
+      void ptys
+        .reapRemoteProcess(reapEntry)
+        .then((ok) => (ok ? remoteReapLedger.remove(sessionId) : undefined))
+        .catch((error) => logMainError(`remote reap on exit ${sessionId}`, error));
+    }
     agentStatus.remove(sessionId);
     outputActivity.remove(sessionId);
     screenScanBlocked.remove(sessionId);
     // Drop any engine-cascade assignment queued for a worker that exited before
     // idling — it never received the task and won't now (Rule 3).
     workerInjector.forget(sessionId);
+    // Drop this session's cached liveness verdict — a later session id reuse must
+    // never inherit a stale `dead`/`alive` (Rule 3).
+    workerLivenessCache.evict(sessionId);
     idleTriage.remove(sessionId);
     // Drop any question held for this session — an agent that finished and closed
     // without ever idling never wanted the answer (a deliberate self-resolve on
@@ -5978,6 +6130,34 @@ function wireBridgeListeners() {
   ptys.on('sessionUpdated', (session) => {
     refreshRestoreCapability(session);
     safeSend(IPC.terminals.onUpdated, session);
+    // Durably ledger a remote agent's reap recipe as soon as it is REAPABLE, so a
+    // quit/crash before the graceful close reap is backstopped by the boot
+    // orphan-reap. Recorded once per session (this event fires repeatedly); main
+    // reads the recipe from the pty layer, never the renderer (Rule 1).
+    //
+    // Two arm times by variation: a TMUX-BACKED remote is reapable immediately
+    // (its `tmuxName` is set at spawn — tmux swallows the boot sentinel so its
+    // `pid` never arrives, and waiting on `remotePid` here left tmux-backed
+    // coordinators unledgered and orphaning on quit). A HEADLESS remote becomes
+    // reapable on the later sessionUpdated that carries its captured `pid`.
+    if (!remoteReapBySession.has(session.id)) {
+      const reap = ptys.getRemoteReap(session.id);
+      if (reap && (reap.pid !== undefined || reap.tmuxName !== undefined)) {
+        const entry: RemoteReapEntry = {
+          sessionId: session.id,
+          target: reap.target,
+          probeOpts: reap.probeOpts,
+          pid: reap.pid,
+          tmuxName: reap.tmuxName,
+          tmux: reap.tmux,
+          createdAt: Date.now()
+        };
+        remoteReapBySession.set(session.id, entry);
+        void remoteReapLedger.record(entry).catch((error) =>
+          logMainError(`remote reap ledger record ${session.id}`, error)
+        );
+      }
+    }
     // Auto-seed the discovery registry so a transcript-bearing agent session is
     // discoverable by peers even if its agent never calls register_agent. Gated
     // on the `hasTranscript` capability (an agent with a resumable conversation,
@@ -6018,7 +6198,9 @@ function wireBridgeListeners() {
     void localExtensionWatcher.onSessionMaybeLocal(session.id, session.cwd);
   });
   agentStatus.on('status', (sessionId: string, state, seq) => {
-    safeSend(IPC.terminals.onAgentStatus, sessionId, state, seq);
+    // Renderer sees the DISPLAY state (a remote worker's unreliable resting
+    // guess decays to `unknown`); everything below keys off the RAW `state`.
+    safeSend(IPC.terminals.onAgentStatus, sessionId, displayAgentState(sessionId, state), seq);
     // Flush any engine-cascade assignment queued while this worker was mid-turn
     // (see `workerInjector`): the moment it lands on idle its next unit's task is
     // safe to inject. Cheap no-op for non-idle states or an empty queue.
@@ -6209,6 +6391,7 @@ function registerIpc() {
     get agentMessageLog() { return agentMessageLog; },
     get agentRegistry() { return agentRegistry; },
     get agentStatus() { return agentStatus; },
+    get displayAgentState() { return displayAgentState; },
     get autoCloseIdle() { return autoCloseIdle; },
     get autonomousRuns() { return autonomousRuns; },
     get boundsControllers() { return boundsControllers; },
@@ -7711,10 +7894,42 @@ async function bootstrapNormal() {
       const recovered = new Set(
         ptys.listAll().filter((session) => session.status !== 'exited').map((session) => session.id)
       );
+      // Boot orphan-reap backstop (runs UNCONDITIONALLY, independent of tmuxScope).
+      // A quit or hard crash cannot complete the async graceful reap before the
+      // process exits, so any ledgered remote agent NOT re-attached this run
+      // (`recovered`) is an orphan burning remote CPU — SIGKILL it by the PID we
+      // captured at spawn. A headless remote can never re-attach, so it is always
+      // an orphan; a tmux-backed remote the renderer re-attached is in `recovered`
+      // and correctly spared. Only entries whose reap is CONFIRMED are pruned;
+      // an unreachable box stays on disk to retry next boot.
+      try {
+        const orphans = remoteReapOrphans(await remoteReapLedger.list(), recovered);
+        const reapedRemote: string[] = [];
+        for (const orphan of orphans) {
+          if (await ptys.reapRemoteProcess(orphan)) reapedRemote.push(orphan.sessionId);
+        }
+        if (reapedRemote.length > 0) {
+          await remoteReapLedger.removeMany(reapedRemote);
+          console.log(`[remote-reap] killed ${reapedRemote.length} orphan remote agent(s): ${reapedRemote.join(', ')}`);
+        }
+      } catch (err) {
+        logMainError('remoteReap.bootOrphanReap', err);
+      }
       await teamLifecycleIntegration.reconcileStartup([...recovered]);
       await squadExecutionService.reconcileActive();
+      await squadExecutionService.redispatchStalled();
+      await squadExecutionService.drainPendingCoordinatorWakes();
+      flushStaleWorkerInjections();
       executionClaimReconcileTimer ??= setInterval(() => {
         void squadExecutionService.reconcileActive().catch((err) => logMainError('execution.reconcileActive', err));
+        void squadExecutionService.redispatchStalled().catch((err) => logMainError('execution.redispatchStalled', err));
+        // Deliver a queued coordinator wake BEFORE escalating its blocker: a remote
+        // coordinator never emits a raw idle edge, so this poll is the only path that
+        // gets the self-heal ask in front of it. Escalation is the fallback if it
+        // still stays stuck past COORDINATOR_BLOCKER_ESCALATE_MS.
+        void squadExecutionService.drainPendingCoordinatorWakes().catch((err) => logMainError('execution.drainPendingCoordinatorWakes', err));
+        void squadExecutionService.escalateStaleCoordinatorBlockers().catch((err) => logMainError('execution.escalateStaleCoordinatorBlockers', err));
+        flushStaleWorkerInjections();
       }, EXECUTION_CLAIM_RECONCILE_INTERVAL_MS);
       await squadExecutionService.pruneRetainedSources();
     })().catch((err) => logMainError('teamLifecycle.reconcileStartup', err));
