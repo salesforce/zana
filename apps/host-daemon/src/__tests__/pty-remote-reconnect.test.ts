@@ -229,9 +229,11 @@ describe('PtyManager remote auto-reconnect', () => {
       mgr.close(session.id); // user closes the tab during the backoff
       await vi.advanceTimersByTimeAsync(60_000);
 
-      // No re-attach spawned (not even a probe), and the session is gone.
+      // No re-attach spawned. Close still kills the remote tmux session.
       expect(spawned).toHaveLength(1);
-      expect(probeCalls).toHaveLength(0);
+      expect(probeCalls).toEqual([
+        expect.arrayContaining(['tmux', 'kill-session', '-t', `cc-${session.id}`])
+      ]);
       expect(mgr.list('p1').find((s) => s.id === session.id)).toBeUndefined();
     } finally {
       vi.useRealTimers();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "./compat/testing";
-import plugin, { TASKS_PLUGIN_VERSION } from "./server";
+import plugin, { TASKS_PLUGIN_VERSION } from "./server.ts";
 
 describe("Tasks plugin scaffold", () => {
   it("registers the CLI and RPC surfaces after opening plugin storage", async () => {

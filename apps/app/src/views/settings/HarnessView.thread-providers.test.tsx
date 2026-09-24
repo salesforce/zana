@@ -145,7 +145,7 @@ describe('ThreadProviderCatalog', () => {
         providers={[{ id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' }]}
       />
     );
-    expect(screen.getByText('No models available (timeout)')).toBeTruthy();
+    expect(screen.getByText('Timed out loading models (timeout)')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Load' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Models for Cursor' }));

@@ -2727,6 +2727,7 @@ export class PtyManager extends EventEmitter {
     const l = this.live.get(id);
     if (!l) return false;
     if (l.reattach) {
+      const localAlreadyGone = l.session.pid === undefined;
       void this.killRemoteTmux(id).then((terminated) => {
         const live = this.live.get(id);
         if (!live || !terminated) return;
@@ -2741,6 +2742,13 @@ export class PtyManager extends EventEmitter {
         }
         if (!live.session.pid) this.finalizeExit(id, 0);
       });
+      // SSH can already be gone when tmux teardown closes the proxy. Drop the
+      // local session now; the remote kill above still runs to completion.
+      if (localAlreadyGone) {
+        this.expectedClose.add(id);
+        this.disarmReattach(l);
+        this.finalizeExit(id, 0);
+      }
       return true;
     }
     this.expectedClose.add(id);

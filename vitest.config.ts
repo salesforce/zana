@@ -1,5 +1,11 @@
 import { defineConfig, configDefaults } from 'vitest/config';
+import { readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+const tippyDir = readdirSync(resolve(__dirname, 'node_modules/.pnpm')).find((name) => name.startsWith('tippy.js@'));
+const tippyEsm = tippyDir
+  ? resolve(__dirname, 'node_modules/.pnpm', tippyDir, 'node_modules/tippy.js/dist/tippy.esm.js')
+  : 'tippy.js';
 
 // Vitest doesn't read electron.vite.config.ts, so the extension-SDK alias is
 // declared here too. Keeps `@zana-ai/zcc-extension-sdk[/subpath]` resolving in tests
@@ -24,6 +30,13 @@ export default defineConfig({
     // esbuild-bound plugin-service hot-reload test.)
     testTimeout: 20_000,
     hookTimeout: 20_000,
+    // Root runs plugins/tasks tests without that package's vitest config.
+    // Inline the bubble menu so its tippy.js import uses the ESM alias above.
+    server: {
+      deps: {
+        inline: ['@tiptap/extension-bubble-menu']
+      }
+    },
     // Runs once per worker before any test file — scrubs inherited GIT_* vars
     // so a git-spawning test can never operate on the OUTER repo under the
     // pre-push hook (see vitest.setup.ts for the full rationale).
@@ -98,11 +111,21 @@ export default defineConfig({
       // The leftover BB `server.test.ts` is covered by src/plugin-contract.test.ts.
       'plugins/provider-pi/server.test.ts',
       'plugins/provider-pi/src/bridge/**',
-      'plugins/provider-pi/src/delta-translation.test.ts'
+      'plugins/provider-pi/src/delta-translation.test.ts',
+      // Tasks tests need plugins/tasks/vitest.config.ts (tippy alias, setup,
+      // worker limits). The pre-push hook runs that package script separately.
+      'plugins/tasks/**/*.test.ts',
+      'plugins/tasks/**/*.test.tsx'
     ]
   },
   resolve: {
     alias: [
+      // Root `pnpm test` does not load plugins/tasks/vitest.config.ts, where
+      // this alias lives. Bubble-menu calls tippy() and the CJS entry is not a function.
+      {
+        find: /^tippy\.js$/,
+        replacement: tippyEsm
+      },
       {
         find: /^@zana-ai\/zcc-llm$/,
         replacement: resolve(__dirname, 'packages/llm/src/index.ts')

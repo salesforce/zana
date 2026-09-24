@@ -17,7 +17,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import { createStore } from "../api";
-import plugin from "../server";
+import plugin from "../server.ts";
 import { registerTasksCli } from "./index";
 
 vi.mock("../attachments", async (importOriginal) => {

@@ -3,19 +3,27 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, stat } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encodeProjectCwd } from '@zana-ai/zcc-domain/path-encoding';
-import { NativeConversationIndex, parseNativeTranscript } from './native-conversation-index.js';
+import { NativeConversationIndex } from './native-conversation-index.js';
+import { claudeHistoryFormat } from './harness/claude/history.js';
+import { codexHistoryFormat } from './harness/codex/history.js';
 
-let home: string; let project: string; let indexPath: string; let index: NativeConversationIndex;
+let home: string; let project: string;
+let claudeIndexPath: string; let codexIndexPath: string;
+let claudeIndex: NativeConversationIndex; let codexIndex: NativeConversationIndex;
 const id = '12345678-1234-1234-1234-123456789012';
 const otherId = '12345678-1234-1234-1234-123456789013';
-const lines = (...rows: unknown[]) => rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
+const lines = (...rows: unknown[]) => rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), 'native-history-')); project = join(home, 'project');
-  await mkdir(project); indexPath = join(home, '.zcc', 'history.json'); index = new NativeConversationIndex(home, indexPath);
+  await mkdir(project);
+  claudeIndexPath = join(home, '.zcc', 'claude.json');
+  codexIndexPath = join(home, '.zcc', 'codex.json');
+  claudeIndex = new NativeConversationIndex(claudeHistoryFormat(home), claudeIndexPath);
+  codexIndex = new NativeConversationIndex(codexHistoryFormat(home), codexIndexPath);
 });
 afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 async function claude(cwd = project, uuid = id, extra = '') {
-  const path = join(home, '.claude', 'projects', encodeProjectCwd(project), `${uuid}.jsonl`);
+  const path = join(home, '.claude', 'projects', encodeProjectCwd(cwd), `${uuid}.jsonl`);
   await mkdir(join(path, '..'), { recursive: true });
   await writeFile(path, lines({ cwd, message: { role: 'user', content: 'Find the history' } }, { message: { role: 'assistant', content: [{ type: 'text', text: 'Here it is' }, { type: 'tool_use', input: 'secret tool payload' }] } }, { type: 'custom-title', customTitle: 'Saved title' }) + extra);
   return path;
@@ -29,58 +37,59 @@ async function codex(cwd = project, uuid = id) {
 
 it('indexes native stores across a restart, preserves titles and reads text without tool/system payloads', async () => {
   await claude(); await codex();
-  expect((await index.list('claude', project, 40))[0]).toMatchObject({ id, title: 'Saved title' });
-  expect((await index.list('codex', project, 40))[0].title).toBe('Continue my Codex work');
-  expect((await index.transcript('claude', project, id)).messages).toEqual([{ role: 'user', text: 'Find the history' }, { role: 'assistant', text: 'Here it is' }]);
-  const restarted = new NativeConversationIndex(home, indexPath);
-  expect((await restarted.list('codex', project, 40))[0].id).toBe(id);
-  expect((await restarted.transcript('codex', project, id)).messages[1].text).toBe('Saved answer');
-  expect((await stat(indexPath)).mode & 0o777).toBe(0o600);
-  expect(await readFile(indexPath, 'utf8')).not.toContain('Saved answer');
+  expect((await claudeIndex.list(project, 40))[0]).toMatchObject({ id, title: 'Saved title' });
+  expect((await codexIndex.list(project, 40))[0].title).toBe('Continue my Codex work');
+  expect((await claudeIndex.transcript(project, id)).messages).toEqual([{ role: 'user', text: 'Find the history' }, { role: 'assistant', text: 'Here it is' }]);
+  const restarted = new NativeConversationIndex(codexHistoryFormat(home), codexIndexPath);
+  expect((await restarted.list(project, 40))[0].id).toBe(id);
+  expect((await restarted.transcript(project, id)).messages[1].text).toBe('Saved answer');
+  expect((await stat(codexIndexPath)).mode & 0o777).toBe(0o600);
+  expect(await readFile(codexIndexPath, 'utf8')).not.toContain('Saved answer');
 });
 
 it('rejects cross-project transcripts, changed identities, missing files and native-store escapes', async () => {
   const other = join(home, 'other'); await mkdir(other);
   const path = await claude(other);
-  expect(await index.list('claude', project, 40)).toEqual([]);
+  expect(await claudeIndex.list(project, 40)).toEqual([]);
   const codexPath = await codex();
-  await index.list('codex', project, 40);
-  expect((await index.transcript('codex', other, id)).unavailableReason).toBeTruthy();
+  await codexIndex.list(project, 40);
+  expect((await codexIndex.transcript(other, id)).unavailableReason).toBeTruthy();
   await codex(other);
-  expect((await index.transcript('codex', project, id)).unavailableReason).toBeTruthy();
+  expect((await codexIndex.transcript(project, id)).unavailableReason).toBeTruthy();
   await rm(codexPath);
-  expect((await index.transcript('codex', project, id)).unavailableReason).toBeTruthy();
+  expect((await codexIndex.transcript(project, id)).unavailableReason).toBeTruthy();
   await symlink(path, codexPath);
-  expect((await index.transcript('codex', project, id)).unavailableReason).toBeTruthy();
+  expect((await codexIndex.transcript(project, id)).unavailableReason).toBeTruthy();
 });
 
 it('ignores symlink entries, malformed metadata and corrupt indexes, and handles absent native stores', async () => {
-  expect(await index.list('codex', project, 40)).toEqual([]);
-  await writeFile(indexPath, 'broken');
+  expect(await codexIndex.list(project, 40)).toEqual([]);
+  await writeFile(claudeIndexPath, 'broken');
   const path = await claude();
   await symlink(path, path.replace(id, otherId));
   await writeFile(path.replace(id, 'bad-id'), '{bad json}\n');
-  const rebuilt = new NativeConversationIndex(home, indexPath);
-  expect(await rebuilt.list('claude', project, 40)).toHaveLength(1);
-  expect((await rebuilt.transcript('claude', project, 'missing')).unavailableReason).toBeTruthy();
+  const rebuilt = new NativeConversationIndex(claudeHistoryFormat(home), claudeIndexPath);
+  expect(await rebuilt.list(project, 40)).toHaveLength(1);
+  expect((await rebuilt.transcript(project, 'missing')).unavailableReason).toBeTruthy();
 });
 
 it('serializes concurrent indexing, applies limits and reuses a fresh scan', async () => {
   await claude(); await claude(project, otherId); await codex();
-  const [a, b] = await Promise.all([index.list('claude', project, 1), index.list('codex', project, 40)]);
-  expect(a).toHaveLength(1); expect(b).toHaveLength(1);
-  expect(await index.list('claude', project, 40)).toHaveLength(2);
-  expect(JSON.parse(await readFile(indexPath, 'utf8'))).toHaveLength(3);
+  const [claudeRows, codexRows] = await Promise.all([claudeIndex.list(project, 1), codexIndex.list(project, 40)]);
+  expect(claudeRows).toHaveLength(1); expect(codexRows).toHaveLength(1);
+  expect(await claudeIndex.list(project, 40)).toHaveLength(2);
+  expect(JSON.parse(await readFile(claudeIndexPath, 'utf8'))).toHaveLength(2);
+  expect(JSON.parse(await readFile(codexIndexPath, 'utf8'))).toHaveLength(1);
 });
 
 it('bounds large previews, skips malformed lines and caps message text', async () => {
   const path = await claude(project, id, lines({ message: { role: 'assistant', content: 'x'.repeat(80_000) } }) + lines({ unused: 'x'.repeat(4 * 1024 * 1024) }));
-  await index.list('claude', project, 40);
-  const preview = await index.transcript('claude', project, id);
+  await claudeIndex.list(project, 40);
+  const preview = await claudeIndex.transcript(project, id);
   expect(preview.truncated).toBe(true); expect(preview.messages[2].text.length).toBe(64_000);
   expect(preview.messages[0].text).toBe('Find the history');
-  expect(parseNativeTranscript('codex', 'broken\n' + lines({ type: 'event_msg', payload: { message: 'duplicate' } }, { type: 'response_item', payload: { type: 'message', role: 'system', content: 'hidden' } }))).toEqual({ messages: [], truncated: false });
-  expect(parseNativeTranscript('claude', Array.from({ length: 501 }, () => lines({ message: { role: 'user', content: 'text' } })).join('')).messages).toHaveLength(500);
+  expect(codexHistoryFormat(home).parse('broken\n' + lines({ type: 'event_msg', payload: { message: 'duplicate' } }, { type: 'response_item', payload: { type: 'message', role: 'system', content: 'hidden' } }))).toEqual({ messages: [], truncated: false });
+  expect(claudeHistoryFormat(home).parse(Array.from({ length: 501 }, () => lines({ message: { role: 'user', content: 'text' } })).join('')).messages).toHaveLength(500);
   await rm(path);
 });
 
@@ -91,7 +100,7 @@ it('uses human Codex input once and omits injected context from conversation tit
     { type: 'event_msg', payload: { type: 'user_message', message: 'Actual request' } },
     { type: 'response_item', payload: { type: 'message', role: 'assistant', content: 'Answer' } }
   );
-  expect(parseNativeTranscript('codex', transcript).messages).toEqual([{ role: 'user', text: 'Actual request' }, { role: 'assistant', text: 'Answer' }]);
-  expect(parseNativeTranscript('codex', lines({ type: 'response_item', payload: { type: 'message', role: 'user', content: '# AGENTS.md instructions for project' } })).messages).toEqual([]);
-  expect(parseNativeTranscript('claude', lines({ isMeta: true, message: { role: 'user', content: 'injected context' } })).messages).toEqual([]);
+  expect(codexHistoryFormat(home).parse(transcript).messages).toEqual([{ role: 'user', text: 'Actual request' }, { role: 'assistant', text: 'Answer' }]);
+  expect(codexHistoryFormat(home).parse(lines({ type: 'response_item', payload: { type: 'message', role: 'user', content: '# AGENTS.md instructions for project' } })).messages).toEqual([]);
+  expect(claudeHistoryFormat(home).parse(lines({ isMeta: true, message: { role: 'user', content: 'injected context' } })).messages).toEqual([]);
 });
