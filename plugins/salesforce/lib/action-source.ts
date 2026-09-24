@@ -2,6 +2,7 @@ import { join, relative } from 'node:path';
 import { parsePackageDirectories, resolveUnderRoot } from './dx-project.js';
 import { parseActionTarget, type ActionParameter } from './agent-action-model.js';
 import type { ResolvedOrg, SalesforceDeps } from './types.js';
+import type { FlowVisualization } from './flow-visualizer.js';
 
 export const ACTION_SOURCE_CAP = 750_000;
 export interface ActionSource {
@@ -18,6 +19,8 @@ export interface ActionSource {
   inputs?: ActionParameter[];
   outputs?: ActionParameter[];
   contractMessage?: string;
+  visualization?: FlowVisualization;
+  visualizationError?: string;
 }
 function boundedRead(deps: SalesforceDeps, path: string): string {
   const content = deps.readFileBounded ? deps.readFileBounded(path, ACTION_SOURCE_CAP) : deps.readFile(path);

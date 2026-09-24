@@ -14,7 +14,13 @@ project. A project without a selection inherits the shared default.
 zcc plugin install salesforce
 ```
 
-Requires the Salesforce CLI (`sf`) on PATH. On a project's **Salesforce** tab,
+Local Agentforce authoring works without Salesforce CLI or a connected org. The
+plugin stays running; the project overview distinguishes local readiness from org
+setup, missing CLI and connections that need attention. **Build an agent** opens
+the local editor. **Check again** refreshes connection readiness after fixing CLI
+or signing in externally, without changing any project's target.
+
+Org operations require the Salesforce CLI (`sf`) on PATH. On a project's **Salesforce** tab,
 choose **Connect org**, select Production / Developer Edition, Sandbox, or
 My Domain / SSO, and choose **Sign in with browser**. An alias is optional.
 For My Domain, enter the Salesforce login host (for example,
@@ -23,6 +29,9 @@ Finish sign-in in your browser; the new org is selected for this project automat
 The connection dialog can be closed while sign-in is pending; **Connect org**
 reopens its progress. **Org details** keeps the existing connections separate
 from sign-in, with search and explicit project-target selection.
+The picker shows **Select org** until an actual target is resolved; it does not
+silently choose the first listed connection. Selecting an existing org or signing
+in from the project changes only that project's target. A shared default is optional.
 
 Authentication is saved by Salesforce CLI, so the same connection works in your
 terminal. Existing `sf org login web` connections appear in the org picker; use
@@ -40,7 +49,7 @@ The browser and `sf` run on the Zana host; no password or token is entered in Za
 | New Project | Salesforce DX project (`sf project generate`) |
 | Salesforce → Data | Schema, SOQL queries, saved history, retained drafts, and record inspectors |
 | Agent side panels | Org, SOQL, object, record, Apex/logs, deployments, and operation history |
-| Agentforce playground | Build, Rehearse, and Test: `.agent` editor, conversation map, AI customer role-play |
+| Agentforce workspace | Salesforce AgentScript editor with configurable tool tabs on the right |
 | Agentforce preview | Simulate or live Test against the selected org |
 | Agent tools | `sf_soql`, `sf_apex`, `sf_lwc`, `sf_agent` |
 | CLI | `zcc sf doctor`, `zcc sf org`, … |
@@ -67,11 +76,40 @@ Enter moves through highlighted matches without altering the log.
 
 ## Agentforce Studio
 
-Actions declared in an open script appear in the explorer, grouped by subagent.
-Select one to inspect its Apex source or Flow map in a related editor tab. The
-Project/Org switch distinguishes local source from deployed Apex or an active
-Flow version. Inputs & outputs compares parameter names; Used by reveals the
-call and its bindings. Rehearse/Test stays open while you inspect implementations.
+The Salesforce AgentScript editor stays in the center. The right side panel starts
+with **File explorer**; use **+** to add **Agents**, **Graph view**, **Preview**, **Tests**,
+**Actions**, or **Org preview**. Close individual tabs, hide the panel, or resize
+it with the divider (drag, arrow keys, double-click to reset). On narrow surfaces,
+tools stack below the editor. The tab layout is remembered per project.
+
+**Agents** browses Agent Script authoring bundles in the selected org. The bot
+button beside the filename opens it directly. Search for an agent, choose its
+source version, then **Retrieve & open**. Source versions are authoring bundle
+versions and can differ from published BotVersion numbers. Sources are retrieved
+in an isolated temporary DX project and copied into
+`agentforce/<org-id>/<bundle-name>/` in the current project. Existing local copies
+and draft recovery are preserved; retrieval never overwrites local edits or
+publishes changes to the org. Legacy agents without an authoring bundle are not
+listed. Org changes refresh the catalog and cancel pending retrievals.
+
+**Graph view** follows the current draft. **Preview** tries that draft in a
+conversation; **Tests** runs scenarios and AI customer role-play. Switching tabs
+or hiding the panel keeps conversations and test setup in place. Closing a tool
+ends its session. **Org preview** selects a saved authoring bundle separately.
+
+**Actions** groups declarations by subagent and opens Apex source or Flow maps
+beside the editor. The Project/Org switch distinguishes local source from
+deployed Apex or an active Flow version. Inputs & outputs compares parameter
+names; Used by reveals the call and its bindings. Click an action in the graph
+or Cmd/Ctrl-click its target in the editor to inspect it. The editor stays
+visible, and previews remain available in their tabs.
+
+Flow maps use Salesforce’s official Metadata Visualizer, with pan/zoom, collapsible
+branches and clickable element details. **Expand Flow** opens a larger canvas;
+close it or press Escape to return to the editor. It follows the app theme and
+shows the selected project source or named-org version. The viewer is read-only
+and runs locally. If it cannot render a Flow, the basic map and **Source** remain
+available.
 
 Open **Salesforce → Agentforce**, or the Agentforce playground beside
 a thread. **Build** provides the editor, live diagnostics and a conversation map.
@@ -224,3 +262,29 @@ This plugin is the first consumer of its own SDK:
 
 A later plugin (GUS, Data Cloud, …) should look like the example above — not
 like a second copy of `ConnectionManager`.
+
+### New agents and agent control
+
+Use **Agentforce → Agents → New agent**. Enter a name, API name and optional purpose; the editor opens a complete local draft with its companion metadata. Creation works without an org connection. Existing DX projects use their default package; other projects get an `agentforce-drafts` DX child folder. Existing names are never overwritten. Local agents appear above the org inventory; **Review publish…** carries the draft into a thread for validation and confirmed inactive publication.
+
+The UI and automation share the same operations. `sf_workbench` with `action: capabilities` lists them. The CLI equivalent is `zcc sf action <action> --input '<JSON>' --json`; family tools are also available through `zcc sf tool <sf_agent|sf_soql|sf_apex|sf_lwc> --input '<JSON>' --json`. Commands use the current registered project context. Tool-origin approval rules still apply.
+
+File paths, including evaluation `specPath`, are relative to the registered project. For drafts in `agentforce-drafts`, compile, preview, evaluation and publication resolve that confined DX child as the CLI working directory. `zcc sf lint [path]` also works from the parent project. An explicit source path must identify that exact bundle; a different file with the same name is never substituted. Retrieved versioned sources must first be copied with `draft.create` before publication.
+
+Workbench controls use explicit, short-lived view IDs. List `ui.views`, submit `ui.command`, and poll `ui.result` for the renderer acknowledgement and committed `viewState`. Controls cover workbench tabs, Agentforce files/panels, Data queries/records, Apex forms/logs and deployment selections/history. Dirty source and changed query/form values refuse conflicting replacements. No active view means no claimed UI success. `query.execute` returns a server-owned result ID that the Data view can display with `query.show`.
+
+
+| Workflow | Agent / CLI operation | Policy |
+| --- | --- | --- |
+| Org selection, browser login, project setup, health | `sf_workbench context.*`, `org.*`, `project.create`, `doctor` | Registered project; browser owns sign-in |
+| Local new/edit/copy, org source retrieval | `sf_agent draft.*`, `files.*`, `source.*` | Confined files, revision checks; org reads mediated |
+| Parse, graph data, Apex/Flow action source | `sf_agent source.parse`, `source.query`, `actions.source` | Local by default; org action source mediated |
+| Preview, role-play, scenarios, evaluation | `sf_agent studio.*`, `preview.*`, `eval.*` | Existing org/runtime policy |
+| Compile, publish, activate | `sf_agent compile`, `lifecycle.*` | Publication confirmation; activation is separate |
+| Schema, queries, history, explain, records, export | `sf_soql` family; `sf_workbench query.*`, `records.get` | Bounded queries; sensitive reads/exports mediated |
+| Apex tests, anonymous Apex, log inspection | `sf_apex`; `sf_workbench operations.*`, `logs.get` | Targeted tests and existing mutation confirmation |
+| LWC source and Jest | `sf_lwc` | Confined local project |
+| Metadata preview, validation, retrieve, deploy, job results | `sf_workbench metadata.list`, `operations.*` | Explicit components/tests and existing write confirmation |
+| Show a view/file/query/record/log/job, manage Agentforce tools | `sf_workbench ui.views`, `ui.command`, `ui.result` | Explicit mounted view; project and org must match; acknowledgement required |
+
+These are semantic workflow controls. Pixel-level gestures such as dragging graph nodes or resizing panes remain manual, and a closed workbench must be opened before it can acknowledge display commands. A view that targets another org is refused; align it with the project's selected org first. Existing running conversations may need a fresh turn/session to receive new tools.

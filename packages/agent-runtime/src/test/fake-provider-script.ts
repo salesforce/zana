@@ -366,7 +366,7 @@ function requestUserQuestion(
   });
 }
 
-function beginTurn(threadId: string, input: unknown, clientRequestId?: string): void {
+function beginTurn(threadId: string, input: unknown, clientRequestId?: string, options?: unknown): void {
   const thread = getThreadState(threadId);
   if (!thread) {
     return;
@@ -378,6 +378,12 @@ function beginTurn(threadId: string, input: unknown, clientRequestId?: string): 
   const turnId = `${thread.turnIdPrefix}-${thread.turnCount}`;
   const inputText = parseInputText(input);
   const plan = parseTurnPlan(inputText);
+  if (inputText.includes('report_execution_options')) {
+    plan.responseText = `serviceTier=${isJsonRecord(options) ? options.serviceTier ?? 'unset' : 'unset'}; ${inputText}`;
+  }
+  if (inputText.includes('report_execution_snapshot')) {
+    plan.responseText = `Execution snapshot: ${JSON.stringify(options)}`;
+  }
 
   thread.activeTurn = {
     turnId,
@@ -396,6 +402,25 @@ function beginTurn(threadId: string, input: unknown, clientRequestId?: string): 
   }
   sendDeltas(threadId, deltas);
   emitUserMessage(threadId, turnId, input);
+
+  // Deterministic provider snapshots for the built-app Plan regression test.
+  const plainPlan = /plain_plan:(initial|revised)/.exec(inputText)?.[1];
+  if (plainPlan) {
+    plan.responseText = inputText.startsWith('Implement the following reviewed plan')
+      ? `Implemented reviewed document. Execution: ${JSON.stringify(options)}`
+      : `# Converter plan\n\n1. Implement Celsius and Fahrenheit conversions.\n2. ${plainPlan === 'revised' ? 'Add Kelvin and reject values below absolute zero.' : 'Test round trips.'}\n3. Run node:test.\n\nFixture: plain_plan:${plainPlan}`;
+  }
+
+  const planSnapshot = /(?:^|\s)plan_snapshot:(initial|revised|empty)(?:\s|$)/.exec(inputText)?.[1];
+  if (planSnapshot) {
+    const steps = planSnapshot === 'initial'
+      ? [{ step: 'Inspect implementation', status: 'active' }, { step: 'Obsolete step', status: 'pending' }]
+      : planSnapshot === 'revised' ? [{ step: 'Inspect implementation', status: 'completed' }, { step: 'Verify behavior', status: 'active' }] : [];
+    sendDeltas(threadId, [{
+      kind: 'item.close', key: { providerItemId: `plan-${turnId}` },
+      item: { type: 'planSteps', steps }, status: 'completed', providerTurnId: turnId,
+    }]);
+  }
 
   if (/(?:^|\s)nested_turn(?:\s|$)/.test(inputText)) {
     const childTurnId = `${turnId}-child`;
@@ -468,7 +493,7 @@ function startTurn(message: JsonRecord): void {
     id: getJsonRpcId(message.id) ?? 0,
     result: { ok: true },
   });
-  beginTurn(threadId, params.input, getString(params.clientRequestId) || undefined);
+  beginTurn(threadId, params.input, getString(params.clientRequestId) || undefined, params.options);
 }
 
 function startOrResumeThread(
@@ -509,7 +534,7 @@ function startOrResumeThread(
       params: { threadId, providerThreadId },
     });
     if (Array.isArray(params.input) && params.input.length > 0) {
-      beginTurn(threadId, params.input);
+      beginTurn(threadId, params.input, undefined, params.options);
     }
   }
 }

@@ -23,6 +23,8 @@ export const BRIDGE_JSON_RPC_ERRORS = {
   SESSION_NOT_RESTORABLE: -32002,
   /** thread/fork with a checkpoint on a bridge that only forks at the tip. */
   FORK_CHECKPOINT_UNSUPPORTED: -32003,
+  /** model/list could not spawn the provider CLI (ENOENT / not installed). */
+  MISSING_EXECUTABLE: -32004,
 } as const;
 
 /**

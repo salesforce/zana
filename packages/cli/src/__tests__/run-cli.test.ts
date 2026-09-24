@@ -473,7 +473,7 @@ describe('cc CLI', () => {
       dataDir: fixtureDir,
       fetchImpl: async (input, init) => {
         seen.push(`${String(init?.method)} ${String(input)}`);
-        return new Response(JSON.stringify({ ok: true, value: true }), {
+        return new Response(JSON.stringify(init?.method === 'GET' ? { apps: [{ id: 'gus', status: 'running' }] } : { ok: true, value: true }), {
           status: 200,
           headers: { 'content-type': 'application/json' }
         });

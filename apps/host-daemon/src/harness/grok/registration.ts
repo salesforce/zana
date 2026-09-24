@@ -1,3 +1,4 @@
+import { createGrokHistory } from './history.js';
 import type { HarnessRegistration } from '../registration.js';
 import { GrokProvider } from './provider.js';
 import { stripSessionResumeFlags } from '../argv-utils.js';
@@ -6,6 +7,8 @@ const implementation = new GrokProvider();
 
 export const grokHarness: HarnessRegistration = {
   id: 'grok',
+  createHistoryAdapter: createGrokHistory,
+  historyIconId: 'acp-grok',
   label: 'Grok Build',
   profiles: [
     { id: 'grok', posture: 'default' },

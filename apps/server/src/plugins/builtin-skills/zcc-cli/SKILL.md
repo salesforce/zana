@@ -29,7 +29,7 @@ operational playbook.
 > Do not author JSON into `~/.zcc/schedules` as the happy path (`zcc-center` is
 > a file-format appendix only).
 >
-> Project tasks live in the **tasks** plugin skill (`zcc tasks list|add|done`).
+> Project tasks live in the **tasks** plugin skill (`zcc tasks list|show|create|update|comment|attach|dispatch`).
 
 ---
 

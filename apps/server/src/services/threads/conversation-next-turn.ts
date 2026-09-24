@@ -49,6 +49,8 @@ export function conversationNextTurnItemView(row: DeferredThreadMessageRow) {
     paused: row.paused,
     sendAfter: row.sendAfter,
     failureReason: row.failureReason,
+    retryAt: row.retryAt ?? null,
+    failureCount: row.failureCount ?? 0,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     text: textFromDeferredPayload(row.payload),
@@ -58,7 +60,6 @@ export function conversationNextTurnItemView(row: DeferredThreadMessageRow) {
 
 export function conversationNextTurnView(ctx: Pick<ProductHttpContext, 'db'>, threadId: string) {
   const items = listDeferredThreadMessages(ctx.db, threadId)
-    .filter((row) => row.status === 'queued' || row.status === 'failed')
     .map(conversationNextTurnItemView);
   return {
     paused: isThreadQueueAutoSendPaused(ctx.db, threadId),

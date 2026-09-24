@@ -320,6 +320,7 @@ export interface PluginServiceOptions {
   loadProviderModels?: (args: {
     pluginId: string;
     environmentId?: string;
+    hostId?: string;
     providerId: string;
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkModelCatalog>;
   archiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;

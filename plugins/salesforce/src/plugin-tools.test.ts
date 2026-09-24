@@ -541,8 +541,8 @@ describe('salesforce family tools', () => {
     });
     await expect(agent.execute({ action: 'compile', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({ ok: true });
     harness.setSettings({ defaultOrg: '', projectRoot: '/proj' });
-    // The project now resolves the shared CLI fallback before compiling.
-    await expect(agent.execute({ action: 'compile', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({ ok: true });
+    // A listed org without an explicit default is not an implicit target.
+    await expect(agent.execute({ action: 'compile', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({ ok: false, code: 'not_configured' });
     await expect(agent.execute({ action: 'nope' }, ctx)).resolves.toMatchObject({ code: 'invalid_input' });
   });
 

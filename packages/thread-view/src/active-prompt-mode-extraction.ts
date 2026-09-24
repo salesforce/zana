@@ -1,4 +1,5 @@
 import {
+  isPlanExecutionMode,
   promptInputHasCommandMention,
   requireThreadEventScopeTurnId,
   removeCommandMentionsFromPromptInput,
@@ -15,6 +16,9 @@ import { parsePromptInput } from "./user-message-parsing.js";
  * used to be a `providerId === "claude-code" || providerId === "codex"` gate
  * plus a hardcoded `{ trigger: "/", name: "plan" }` selector, which no plugin
  * provider could ever join.
+ *
+ * ACP providers (Cursor, OpenCode) select Plan via `execution.acpMode` instead
+ * of a slash command; those turns are eligible even when `planCommand` is null.
  */
 export type PlanCommand = Pick<ProviderComposerCommand, "trigger" | "name">;
 
@@ -34,13 +38,29 @@ export interface ThreadTimelineActivePlanTurn {
 
 function promptTextWithoutPlanCommand(
   request: ActiveTurnInput["request"],
-  planCommand: PlanCommand,
+  planCommand: PlanCommand | null | undefined,
 ): string {
+  if (!planCommand) {
+    return parsePromptInput(request.input)?.text.trim() ?? "";
+  }
   const cleanedInput = removeCommandMentionsFromPromptInput(
     request.input,
     planCommand,
   );
   return parsePromptInput(cleanedInput)?.text.trim() ?? "";
+}
+
+function turnRequestedPlanMode(
+  request: ActiveTurnInput["request"],
+  planCommand: PlanCommand | null | undefined,
+): boolean {
+  if (
+    planCommand &&
+    promptInputHasCommandMention(request.input, planCommand)
+  ) {
+    return true;
+  }
+  return isPlanExecutionMode(request.execution?.acpMode);
 }
 
 function extractActiveTurnInputs(
@@ -105,20 +125,13 @@ export function extractThreadTimelineActivePlanTurn({
   providerId: string | undefined;
   threadStatus: Thread["status"];
 }): ThreadTimelineActivePlanTurn | null {
-  if (
-    threadStatus !== "active" ||
-    providerId === undefined ||
-    planCommand === null ||
-    planCommand === undefined
-  ) {
+  if (threadStatus !== "active" || providerId === undefined) {
     return null;
   }
 
   let latestPlanTurn: ActiveTurnInput | null = null;
   for (const activeTurn of extractActiveTurnInputs(events)) {
-    if (
-      !promptInputHasCommandMention(activeTurn.request.input, planCommand)
-    ) {
+    if (!turnRequestedPlanMode(activeTurn.request, planCommand)) {
       continue;
     }
     if (!latestPlanTurn || activeTurn.seq > latestPlanTurn.seq) {

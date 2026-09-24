@@ -133,6 +133,7 @@ export {
 } from './data/pending-interactions.js';
 export {
   DEFERRED_THREAD_MESSAGE_CAP,
+  DEFERRED_RETRY_DELAYS_MS,
   countActiveConversationTurns,
   countDeferredThreadMessages,
   createDeferredThreadMessage,
@@ -142,6 +143,10 @@ export {
   isThreadQueueAutoSendPaused,
   listDeferredThreadMessages,
   listDueDeferredThreadMessages,
+  listRetryableDeferredThreadMessages,
+  retryDeferredThreadMessage,
+  postponeDeferredThreadRetry,
+  recoverInterruptedDeferredThreadMessages,
   markDeferredThreadMessageDispatching,
   markDeferredThreadMessageFailed,
   pauseDeferredThreadMessagesForThread,
@@ -155,6 +160,7 @@ export {
   appendThreadPlanRevision,
   createThreadPlan,
   createThreadPlanTask,
+  deleteProviderThreadPlanTask,
   getThreadExecutionState,
   getThreadPlan,
   getThreadPlanByRootThread,

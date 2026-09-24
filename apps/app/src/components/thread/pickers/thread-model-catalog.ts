@@ -11,6 +11,7 @@ export type ThreadModelCatalogEntry = {
   models: AvailableModel[];
   selectedOnlyModels: AvailableModel[];
   modelLoadError: string | null;
+  modelLoadErrorDetail?: string | null;
   acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
 };
 
@@ -94,6 +95,7 @@ function createCatalog(
     const models = (body?.models ?? []) as AvailableModel[];
     const selectedOnlyModels = (body?.selectedOnlyModels ?? []) as AvailableModel[];
     const modelLoadError = body?.modelLoadError?.code ?? (body ? null : 'failed');
+    const modelLoadErrorDetail = body?.modelLoadError?.detail ?? null;
     const useFallbacks = modelLoadError == null;
     return {
       models: models.length > 0 ? models : (useFallbacks ? fallbackModelsForProvider(providerId) : []),
@@ -102,6 +104,7 @@ function createCatalog(
           ? selectedOnlyModels
           : (useFallbacks ? fallbackMoreModelsForProvider(providerId) : []),
       modelLoadError,
+      modelLoadErrorDetail,
       ...(body?.acpMode ? { acpMode: body.acpMode } : {})
     };
   }

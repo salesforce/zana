@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { AlertTriangle, Bot, FolderX, Inbox, Unplug } from 'lucide-react';
 
-export type PaneEmptyArt = 'ended' | 'missing' | 'agents' | 'error' | 'inbox';
+export type PaneEmptyArt = 'ended' | 'missing' | 'agents' | 'error' | 'inbox' | 'loading';
 
 /**
  * Centered full-pane empty / gone / crash layout. Arts are CSS-only
@@ -24,7 +24,7 @@ export function PaneEmptyState({
 }) {
   const rootClass = className ? `pane-empty ${className}` : 'pane-empty';
   return (
-    <div className={rootClass} data-testid={testId} data-art={art}>
+    <div className={rootClass} data-testid={testId} data-art={art} role={art === 'loading' ? 'status' : undefined}>
       <div className="pane-empty-art" aria-hidden="true">
         <PaneEmptyArtVisual art={art} />
       </div>
@@ -36,6 +36,24 @@ export function PaneEmptyState({
 }
 
 function PaneEmptyArtVisual({ art }: { art: PaneEmptyArt }) {
+  if (art === 'loading') {
+    return (
+      <>
+        <div className="pane-empty-term pane-empty-term--loading">
+          <div className="pane-empty-term-bar">
+            <span /><span /><span />
+          </div>
+          <div className="pane-empty-loading-lines">
+            <span /><span /><span />
+          </div>
+        </div>
+        <span className="pane-empty-well pane-empty-well--loading">
+          <Bot size={22} strokeWidth={1.75} />
+        </span>
+      </>
+    );
+  }
+
   if (art === 'ended') {
     return (
       <>

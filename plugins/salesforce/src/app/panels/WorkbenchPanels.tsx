@@ -1,3 +1,4 @@
+import { useSalesforceControl, controlText } from '../useSalesforceControl.js';
 import { useId, useState } from "react";
 import type { PublicOrgView } from "../../../lib/types.js";
 import type {
@@ -138,7 +139,7 @@ export function RecordPanel(props: SalesforcePanelProps) {
         ) : (
           !state.busy &&
           !state.error && (
-            <EmptyState title="Inspect a Salesforce record">
+            <EmptyState art="data" title="Inspect a Salesforce record">
               Open a record from query results, or enter its object and id.
             </EmptyState>
           )
@@ -202,6 +203,18 @@ export function ApexPanel(props: SalesforcePanelProps) {
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useSalesforceControl({ pluginId: props.pluginId, projectId: props.projectId, orgAlias: props.orgAlias, threadId: props.threadId, surface: 'apex',
+    commands: ['state', 'view.open', 'form.set'], state: () => ({ tab, className, body, busy }),
+    execute: ({ command, input }) => {
+      if (command === 'view.open') { if (!['tests', 'logs', 'lwc', 'anonymous'].includes(String(input.tab))) throw Error('Choose tests, logs, lwc or anonymous.'); setTab(input.tab as typeof tab); }
+      if (command === 'form.set') {
+        if (busy || input.expectedBody !== body || input.expectedClassName !== className) throw Error('Read current form state before replacing it.');
+        if (input.body !== undefined) setBody(controlText(input, 'body', 20_000));
+        if (input.className !== undefined) setClass(controlText(input, 'className', 160));
+      }
+    },
+  });
+
   const lwc = useResource<{ data: Array<{ name: string }> }>(
     call,
     tab === "lwc" ? "lwc.scan" : null,

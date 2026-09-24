@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostTerminalManager, type PtyHandle } from './terminal-manager.js';
 import { TERMINAL_HOST_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/terminal-execution';
 
@@ -14,6 +14,11 @@ function command() {
 }
 
 describe('HostTerminalManager', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it('owns local terminal handles and orders output before exit', () => {
     let onData: ((data: string) => void) | undefined;
     let onExit: ((event: { exitCode: number }) => void) | undefined;
@@ -101,5 +106,37 @@ describe('HostTerminalManager', () => {
     manager.revokeBinding(binding);
 
     expect(killed).toBe(1);
+  });
+
+  it('terminates the PTY process group and escalates stubborn descendants', () => {
+    vi.useFakeTimers();
+    const processKill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const handleSignals: string[] = [];
+    const manager = new HostTerminalManager({
+      spawn: () => ({
+        pid: 123,
+        onData: () => {},
+        onExit: () => {},
+        write: () => {},
+        resize: () => {},
+        kill: (signal?: string) => { handleSignals.push(signal ?? 'default'); }
+      }),
+      emit: () => {}
+    });
+    const start = command();
+    manager.handle(start);
+    const { projectId: _projectId, launch: _launch, ...base } = start;
+
+    manager.handle({
+      ...base,
+      kind: 'terminate',
+      commandId: randomUUID(),
+      expected: false
+    });
+
+    expect(processKill).toHaveBeenCalledWith(-123, 'SIGTERM');
+    expect(handleSignals).toEqual(['SIGTERM']);
+    vi.advanceTimersByTime(2_000);
+    expect(processKill).toHaveBeenCalledWith(-123, 'SIGKILL');
   });
 });

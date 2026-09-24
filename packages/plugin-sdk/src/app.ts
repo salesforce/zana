@@ -77,6 +77,8 @@ export type {
   PluginThreadHeaderActionProps,
   PluginThreadHeaderActionRegistration,
   PluginThreadListProps,
+  PluginSidebarThread,
+  PluginSidebarThreadActions,
   PluginThreadListRegistration,
   PluginThreadPanelActionContext,
   PluginThreadPanelActionRegistration,
@@ -195,11 +197,17 @@ export function experimental_useSidebarThreads() {
   return pluginRuntime().experimental_useSidebarThreads?.() ?? { status: 'loading' as const, threads: [], projects: [] };
 }
 
-export function experimental_useSidebarThreadActions() {
+export function experimental_useSidebarThreadActions(): ReturnType<PluginSdkApp['experimental_useSidebarThreadActions']> {
   return (
     pluginRuntime().experimental_useSidebarThreadActions?.() ?? {
       open: () => undefined,
-      openNewThread: () => undefined
+      openNewThread: () => undefined,
+      setPinned: async () => missing('setPinned'),
+      setRead: async () => missing('setRead'),
+      rename: async () => missing('rename'),
+      archive: async () => missing('archive'),
+      stop: async () => missing('stop'),
+      closeFollowup: async () => missing('closeFollowup')
     }
   );
 }

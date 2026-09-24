@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { callPluginRpc, useZccContext } from '@zana-ai/zcc-plugin-sdk/app';
 import { parseAgentforcePanelApiName, parseAgentforcePanelPath } from './agentforce-panel-params.js';
 import type { PlaygroundFileRef } from './playground-bridge.js';
@@ -59,6 +59,12 @@ export function AgentforcePreviewPanel(props: {
   const apiName = parseAgentforcePanelApiName(props.params);
   const targetPath = path || (apiName ? null : files[0]?.path ?? null);
   const hasTarget = Boolean(targetPath || apiName);
+  const lifecycle = useRef<{ generation: number; release?: () => void }>({ generation: 0 });
+  useEffect(() => () => {
+    lifecycle.current.generation++;
+    lifecycle.current.release?.();
+    lifecycle.current.release = undefined;
+  }, [pluginId, projectId, threadId]);
 
   const refreshOrg = useCallback(async () => {
     const payload = await fetchConnectedOrg(pluginId, projectId, pinnedOrg);
@@ -86,18 +92,27 @@ export function AgentforcePreviewPanel(props: {
     async (action: 'agentPreview.start' | 'agentPreview.send' | 'agentPreview.end', extra?: Record<string, unknown>) => {
       setBusy(true);
       setError(null);
+      const generation = lifecycle.current.generation;
+      const args = rpcProject(projectId, {
+        threadId, orgAlias: org?.alias ?? pinnedOrg,
+        path: targetPath || undefined, apiName: apiName || undefined,
+        live: mode === 'live', ...extra
+      });
       try {
         const result = (await callPluginRpc(
           pluginId,
           action,
-          rpcProject(projectId, {
-            threadId, orgAlias: org?.alias ?? pinnedOrg,
-            path: targetPath || undefined,
-            apiName: apiName || undefined,
-            live: mode === 'live',
-            ...extra
-          })
+          args
         )) as PreviewResult;
+        if (result?.ok && action === 'agentPreview.start' && result.data?.sessionId) {
+          const sessionId = result.data.sessionId;
+          const release = () => { void callPluginRpc(pluginId, 'agentPreview.end', { ...args, sessionId }).catch(() => undefined); };
+          // A tab can close while start is in flight. Release that late session too.
+          if (generation !== lifecycle.current.generation) release();
+          else lifecycle.current.release = release;
+        }
+        if (generation !== lifecycle.current.generation) return { ok: false };
+        if (result?.ok && action === 'agentPreview.end') lifecycle.current.release = undefined;
         if (!result?.ok) {
           setError(previewErrorMessage(result));
           return result;
@@ -105,10 +120,10 @@ export function AgentforcePreviewPanel(props: {
         return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        setError(message);
+        if (generation === lifecycle.current.generation) setError(message);
         return { ok: false, error: message };
       } finally {
-        setBusy(false);
+        if (generation === lifecycle.current.generation) setBusy(false);
       }
     },
     [apiName, mode, pluginId, projectId, targetPath, threadId, org?.alias, pinnedOrg]

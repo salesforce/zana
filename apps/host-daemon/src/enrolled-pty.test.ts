@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEnrolledPty, type EnrolledPtyHandle } from './enrolled-pty.js';
 import type { HostEventEnvelope } from '@zana-ai/zcc-contracts/host-rpc';
 
@@ -6,6 +6,7 @@ function fakeHandle(): EnrolledPtyHandle & {
   writes: string[];
   resizes: Array<{ cols: number; rows: number }>;
   killed: boolean;
+  signals: string[];
   data?: (chunk: string) => void;
   exit?: (event: { exitCode: number }) => void;
 } {
@@ -14,11 +15,15 @@ function fakeHandle(): EnrolledPtyHandle & {
     writes: [] as string[],
     resizes: [] as Array<{ cols: number; rows: number }>,
     killed: false,
+    signals: [] as string[],
     data: undefined as ((chunk: string) => void) | undefined,
     exit: undefined as ((event: { exitCode: number }) => void) | undefined,
     write(data: string) { handle.writes.push(data); },
     resize(cols: number, rows: number) { handle.resizes.push({ cols, rows }); },
-    kill() { handle.killed = true; },
+    kill(signal?: string) {
+      handle.killed = true;
+      handle.signals.push(signal ?? 'default');
+    },
     onData(listener: (data: string) => void) { handle.data = listener; },
     onExit(listener: (event: { exitCode: number }) => void) { handle.exit = listener; }
   };
@@ -26,6 +31,11 @@ function fakeHandle(): EnrolledPtyHandle & {
 }
 
 describe('enrolled pty', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
   it('starts, writes, resizes, and emits output plus exit', async () => {
     const events: HostEventEnvelope[] = [];
     const handle = fakeHandle();
@@ -85,5 +95,25 @@ describe('enrolled pty', () => {
       rows: 24
     });
     expect(spawned[1]).toEqual({ args: ['-l'] });
+  });
+
+  it('stops the whole PTY process group before dropping the session', async () => {
+    const processKill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const handle = fakeHandle();
+    const pty = createEnrolledPty({
+      emit: () => {},
+      spawn: () => handle
+    });
+    await pty.startTerminal({
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      cwd: '/tmp',
+      cols: 80,
+      rows: 24
+    });
+
+    await pty.stopTerminal({ sessionId: '11111111-1111-4111-8111-111111111111' });
+
+    expect(processKill).toHaveBeenCalledWith(-7, 'SIGTERM');
+    expect(handle.signals).toEqual(['SIGTERM']);
   });
 });

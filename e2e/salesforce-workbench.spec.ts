@@ -193,15 +193,14 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   await expect(window.getByRole("navigation", { name: "dx navigation" }).getByRole("button", { name: "SOQL", exact: true })).toHaveCount(0);
   await expect(workbench.getByRole("tab")).toHaveCount(5);
   await workbench.getByTestId("salesforce-org-picker").selectOption("org-159");
-  await expect(workbench.locator(".sf-footer")).toContainText(
-    "Project target · org-159",
-  );
+  await expect(workbench.getByTestId("salesforce-org-picker")).toHaveValue("org-159");
+  await expect(workbench.locator(".sf-summary")).toContainText("Project target");
   expect(
     await window.evaluate(() => window.cc.pluginApps.getSettings("salesforce")),
   ).toMatchObject({ values: { defaultOrg: "dev" } });
   // The native top layer must contain focus and restore it on Escape. The
   // header action opens only connection setup, without expanding the org list.
-  const connectButton = workbench.locator('.sf-header').getByRole('button', { name: 'Connect org', exact: true });
+  const connectButton = workbench.locator('.sf-workbench-toolbar').getByRole('button', { name: 'Connect org', exact: true });
   await connectButton.click();
   const connectionDialog = workbench.getByRole('dialog', { name: 'Connect an org' });
   await expect(connectionDialog).toBeVisible();
@@ -238,7 +237,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
     ['sandbox', 'browser-sandbox', 'https://test.salesforce.com'],
     ['custom', 'browser-sso', 'https://company.my.salesforce.com'],
   ]) {
-    await workbench.locator('.sf-header').getByRole('button', { name: 'Connect org', exact: true }).click();
+    await workbench.locator('.sf-workbench-toolbar').getByRole('button', { name: 'Connect org', exact: true }).click();
     const form = workbench.getByTestId('salesforce-org-login');
     await expect(form).toBeVisible();
     await form.getByRole('radio', { name: instance === 'production' ? 'Production' : instance === 'sandbox' ? 'Sandbox' : 'My Domain', exact: true }).check();
@@ -254,7 +253,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
       await connectButton.click();
       await expect(form.getByRole('button', { name: 'Waiting for sign-in…' })).toBeDisabled();
     }
-    await expect(workbench.locator('.sf-footer')).toContainText(`Project target · ${loginAlias}`, { timeout: 35_000 });
+    await expect(workbench.locator('.sf-org-switcher-name')).toHaveText(loginAlias, { timeout: 35_000 });
     await expect(workbench.getByTestId('salesforce-org-picker')).toHaveValue(loginAlias);
     await expect(workbench.getByRole('status')).toContainText('selected it for this project');
     const loginTrace = readFileSync(join(home, 'sf-trace.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).find(row => row.args.includes(loginAlias));
@@ -263,7 +262,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
     await expect(workbench.getByRole('dialog')).toHaveCount(0);
   }
   expect(await window.evaluate(() => window.cc.pluginApps.getSettings('salesforce'))).toMatchObject({ values: { defaultOrg: 'dev' } });
-  await workbench.locator('.sf-header').getByRole('button', { name: 'Connect org', exact: true }).click();
+  await workbench.locator('.sf-workbench-toolbar').getByRole('button', { name: 'Connect org', exact: true }).click();
   await workbench.getByLabel('Org alias').fill('fail-login');
   await workbench.getByRole('button', { name: 'Sign in with browser' }).click();
   await expect(workbench.getByRole('alert')).toContainText('Sign-in did not finish');
@@ -274,7 +273,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   await window.screenshot({ path: testInfo.outputPath('salesforce-login.png') });
   await workbench.getByRole('button', { name: 'Cancel', exact: true }).click();
   await workbench.getByTestId('salesforce-org-picker').selectOption('org-159');
-  await expect(workbench.locator('.sf-footer')).toContainText('Project target · org-159');
+  await expect(workbench.getByTestId('salesforce-org-picker')).toHaveValue('org-159');
   await workbench.getByRole("tab", { name: "Data", exact: true }).click();
   await window.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   expect(await workbench.getByTestId('soql-run').evaluate(el => getComputedStyle(el).color)).toBe('rgb(255, 255, 255)');
@@ -309,7 +308,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   // Standalone production browsing must not ask for an agent thread, including
   // schema loading, queries without LIMIT, and record inspection.
   await workbench.getByTestId("salesforce-org-picker").selectOption("org-158");
-  await expect(workbench.locator(".sf-footer")).toContainText("production");
+  await expect(workbench.locator(".sf-org-switcher-kind")).toHaveText("production");
   await expect(workbench.getByRole("alert")).toHaveCount(0);
   await workbench.getByTestId("soql-editor").fill("SELECT Id, Name FROM Account");
   await workbench.getByTestId("soql-run").click();
@@ -318,7 +317,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   await expect(workbench.locator(".sf-soql-record")).toContainText("Read only");
   await expect(workbench.getByRole("alert")).toHaveCount(0);
   await workbench.getByTestId("salesforce-org-picker").selectOption("org-159");
-  await expect(workbench.locator(".sf-footer")).toContainText("Project target · org-159");
+  await expect(workbench.getByTestId("salesforce-org-picker")).toHaveValue("org-159");
   await workbench
     .getByRole("tab", { name: "Deployments", exact: true })
     .click();
@@ -579,7 +578,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   }
   await route(window, `/projects/${projectId}`);
   await window.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await expect(workbench.locator('.sf-footer')).toContainText('Project target · org-159');
+  await expect(workbench.getByTestId('salesforce-org-picker')).toHaveValue('org-159');
   await workbench.getByRole('tab', { name: 'Apex & logs', exact: true }).click();
   await workbench.getByRole('tab', { name: 'Debug logs', exact: true }).click();
   await expect(workbench.getByText('No debug logs returned')).toBeVisible();

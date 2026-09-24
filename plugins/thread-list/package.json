@@ -1,0 +1,16 @@
+{
+  "name": "@zcc-ext/thread-list",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Live thread navigation with projects, pins, search, and thread actions.",
+  "engines": { "zcc": ">=2.2.2", "zccPluginSdk": ">=0.1.0" },
+  "scripts": { "build": "node ../../packages/plugin-build/scripts/build-app.mjs ." },
+  "zcc": {
+    "name": "Thread list",
+    "description": "Live thread navigation with projects, pins, search, and thread actions.",
+    "branding": { "icon": "List" },
+    "server": "./server.mjs",
+    "app": "./app.tsx"
+  }
+}

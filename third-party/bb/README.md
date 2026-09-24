@@ -12,3 +12,13 @@ The September 22, 2026 update reviewed BB through commit
 
 Other behavioral adaptations and their ZCC-specific implementations are recorded
 in [the update report](../../docs/bb-upstream-update-2026-09-22.md).
+
+## Tasks and plans parity (2026-09-22)
+
+`plugins/tasks` ports the Tasks source and tests from the local BB checkout at
+`9e16411141788c67954bceb753bb64ac1dc7057f`. Its `vendor/shared-ui` directory contains
+the transitive UI components consumed by that plugin. The MIT license in this
+directory applies to these copied files. `compat/` adapts Zana's public plugin SDK,
+including opaque host ids, binary HTTP, navigation, model selection, and thread lifecycle.
+Zana additionally migrates its former KV board and retains its durable Plan document
+and revision UI; provider checklist snapshots now reconcile rather than accumulate.

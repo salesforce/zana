@@ -58,9 +58,17 @@ vi.mock('../../store', () => ({
 }));
 vi.mock('../../modules', () => ({ useMergedModules: () => h.modules }));
 vi.mock('../listpane/ProjectsList', () => ({
-  ProjectsList: () => <div data-testid="sidebar-projects" />
+  ProjectsList: ({ hideThreads }: { hideThreads?: boolean }) => (
+    <div data-testid="sidebar-projects" data-threads-hidden={hideThreads === true} />
+  )
+}));
+// A registered thread-list plugin must not replace the project session tree.
+vi.mock('../../plugins/PluginExclusiveThreadList', () => ({
+  useActiveThreadList: () => ({ id: 'test-list' }),
+  PluginExclusiveThreadList: () => <div data-testid="detached-thread-list" />
 }));
 vi.mock('../../plugins/plugin-slots', () => ({
+  listThreadLists: () => [],
   subscribePluginSlots: (listener: () => void) => {
     listener();
     return () => undefined;
@@ -81,6 +89,13 @@ function renderSidebar() {
 }
 
 describe('Sidebar structure and compact accessibility', () => {
+  it('keeps threads inside Projects when a thread-list plugin is active', () => {
+    h.state.sidebarCollapsed = false;
+    const markup = renderSidebar();
+    expect(markup).toContain('data-threads-hidden="false"');
+    expect(markup).not.toContain('data-testid="detached-thread-list"');
+  });
+
   it('renders a labelled navigation region that owns the scrollable destinations', () => {
     h.state.sidebarCollapsed = false;
     h.modules = [];

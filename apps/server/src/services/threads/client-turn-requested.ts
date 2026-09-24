@@ -37,6 +37,7 @@ export function appendClientTurnRequested(
     permissionMode?: PermissionMode;
     model?: string;
     reasoningLevel?: ReasoningLevel;
+    serviceTier?: 'default' | 'fast';
     acpMode?: string;
   }
 ): string | undefined {
@@ -65,7 +66,7 @@ export function appendClientTurnRequested(
     },
     execution: {
       model: args.model?.trim() || 'default',
-      serviceTier: 'default',
+      serviceTier: args.serviceTier ?? 'default',
       reasoningLevel: args.reasoningLevel ?? 'medium',
       permissionMode: args.permissionMode ?? 'accept-edits',
       source: 'client/turn/requested',

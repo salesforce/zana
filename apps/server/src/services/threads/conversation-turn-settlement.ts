@@ -183,6 +183,7 @@ export function settleLiveTurnCommandFailure(
         message: failure.message
       });
     }
+    if (failure.reason === 'send_cancelled') return;
     if (hasLatestRootTurnCompleted(ctx, live.id)) {
       return;
     }

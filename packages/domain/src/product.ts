@@ -3273,7 +3273,34 @@ export interface OpenCodeSessionSummary {
   lastActiveAt: number;
 }
 
-export type ConversationHistorySource = 'claude' | 'opencode';
+/** Trusted registration id; history is not limited to a fixed set of harnesses. */
+export type ConversationHistorySource = string;
+export interface ConversationTranscript {
+  messages: Array<{ role: 'user' | 'assistant'; text: string }>;
+  truncated: boolean;
+  unavailableReason?: string;
+}
+
+export interface ThreadHistoryQuery {
+  projectId?: string;
+  query?: string;
+  archived?: 'all' | 'active' | 'archived';
+  offset?: number;
+}
+export interface ThreadHistoryRow {
+  id: string;
+  projectId: string;
+  providerId: string;
+  providerLabel?: string;
+  title: string | null;
+  updatedAt: number;
+  archivedAt: number | null;
+  unavailableReason?: string;
+}
+export interface ThreadHistoryPage {
+  rows: ThreadHistoryRow[];
+  nextOffset?: number;
+}
 export type ConversationHistoryProviderState =
   | 'loading'
   | 'fresh'
@@ -3287,6 +3314,10 @@ export type ConversationHistoryProviderState =
 export interface ConversationHistoryRow {
   historyId: string;
   source: ConversationHistorySource;
+  sourceLabel: string;
+  iconId: string;
+  supportsTranscript: boolean;
+  supportsExactResume: boolean;
   title: string;
   lastActiveAt: number | null;
   projectName: string;
@@ -3297,6 +3328,9 @@ export interface ConversationHistoryRow {
 
 export interface ConversationHistoryCoverage {
   source: ConversationHistorySource;
+  sourceLabel: string;
+  supportsTranscript: boolean;
+  supportsExactResume: boolean;
   description: string;
   state: ConversationHistoryProviderState;
 }
@@ -3307,13 +3341,15 @@ export interface ConversationHistorySnapshot {
   rows: ConversationHistoryRow[];
   coverage: ConversationHistoryCoverage[];
   snapshotAt?: number;
-  hasNextPage: false;
+  hasNextPage: boolean;
+  nextPageCursor?: string;
 }
 
 export interface ConversationHistoryStartInput {
-  /** Native conversations retain cwd-specific assumptions, so only project scope is supported. */
+  /** Every result retains its original registered project when resumed. */
   projectId?: string;
-  filter: 'project';
+  filter: 'project' | 'all';
+  query?: string;
 }
 
 export interface GitDiscardResult {

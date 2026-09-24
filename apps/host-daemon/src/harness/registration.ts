@@ -6,7 +6,7 @@
  * boundary while leaving each harness folder responsible for its registration.
  */
 
-import type { HarnessRegistration as SdkHarnessRegistration, HarnessVerificationDefinition } from '@zcc/harness-sdk';
+import type { HarnessRegistration as SdkHarnessRegistration, HarnessVerificationDefinition, HarnessHistoryAdapter } from '@zcc/harness-sdk';
 import type { AppConfig, CreateTerminalRequest, HarnessFamily, LaunchProfileId, TerminalSession } from '@zana-ai/zcc-domain/product';
 import type { HarnessAgentDiscoveryResult } from '@zana-ai/zcc-domain/harness-adapter';
 import type { LaunchProvider, RemoteCommandInput, RemoteCommandResult } from './launch-provider.js';
@@ -32,6 +32,11 @@ export interface HarnessRegistration extends SdkHarnessRegistration<LaunchProfil
   }) => Promise<void>;
   /** Main-owned transcript/session bridge. Created once by TranscriptSource. */
   readonly createTranscriptAdapter?: (input: { openCodeBinary: () => string }) => HarnessTranscriptAdapter;
+  /** Optional native history, instantiated once with host-owned storage roots. */
+  readonly createHistoryAdapter?: (input: { home: string; dataDir: string }) => HarnessHistoryAdapter;
+  readonly historyUnavailableReason?: string;
+  /** Provider icon identity shared by the thread and native-history surfaces. */
+  readonly historyIconId?: string;
   /** Harness-owned exact native resume projection for trusted native ids. */
   readonly nativeConversationResume?: (nativeConversationId: string) => NativeConversationResume | undefined;
   /** Read this registration's native conversation identity from a trusted session. */

@@ -112,6 +112,7 @@ export type ThreadResumeInput = {
   permissionMode?: ThreadStartFields['permissionMode'];
   model?: string;
   reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+  serviceTier?: 'default' | 'fast';
   acpMode?: string;
   claudeCodePermissionMode?: 'plan';
   providerOptions?: Record<string, unknown>;
@@ -164,6 +165,7 @@ export interface CommandRuntime {
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+    serviceTier?: 'default' | 'fast';
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
@@ -176,6 +178,7 @@ export interface CommandRuntime {
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
+  cancelPlan?: (input: { threadId: string; expectedTurnId: string }) => Promise<boolean>;
   deliverInteractiveResolve?: (input: {
     threadId: string;
     interactionId: string;
@@ -221,6 +224,7 @@ export function createCommandRuntime(options: {
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+    serviceTier?: 'default' | 'fast';
     acpMode?: string;
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
@@ -233,6 +237,7 @@ export function createCommandRuntime(options: {
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
+  cancelPlan?: (input: { threadId: string; expectedTurnId: string }) => Promise<boolean>;
   deliverInteractiveResolve?: (input: {
     threadId: string;
     interactionId: string;
@@ -281,6 +286,7 @@ export function createCommandRuntime(options: {
     resizeWork: options.resizeWork,
     writeWork: options.writeWork,
     stopWork: options.stopWork,
+    cancelPlan: options.cancelPlan,
     deliverInteractiveResolve: options.deliverInteractiveResolve,
     prepareRewind: options.prepareRewind,
     discardRewind: options.discardRewind,
@@ -319,13 +325,14 @@ async function withEnvironmentLane<T>(runtime: CommandRuntime, environmentId: st
   const current = new Promise<void>((resolve) => {
     release = resolve;
   });
-  runtime.lanes.set(environmentId, previous.then(() => current));
+  const tail = previous.then(() => current);
+  runtime.lanes.set(environmentId, tail);
   await previous;
   try {
     return await run();
   } finally {
     release();
-    if (runtime.lanes.get(environmentId) === current) runtime.lanes.delete(environmentId);
+    if (runtime.lanes.get(environmentId) === tail) runtime.lanes.delete(environmentId);
   }
 }
 
@@ -394,6 +401,7 @@ async function applyThreadResume(
       permissionMode: command.permissionMode,
       model: command.model,
       reasoningLevel: command.reasoningLevel,
+      serviceTier: command.serviceTier,
       acpMode: command.acpMode,
       claudeCodePermissionMode: command.claudeCodePermissionMode,
       providerOptions: command.providerOptions,
@@ -435,6 +443,7 @@ async function resumeThreadRuntimeIfMissing(
     // agents validate their model during session/load, before turn.submit.
     model: command.model ?? command.resume.model,
     reasoningLevel: command.reasoningLevel ?? command.resume.reasoningLevel,
+    serviceTier: command.serviceTier ?? command.resume.serviceTier,
     acpMode: command.acpMode ?? command.resume.acpMode,
     claudeCodePermissionMode: command.claudeCodePermissionMode ?? command.resume.claudeCodePermissionMode,
     providerOptions: command.providerOptions
@@ -772,13 +781,11 @@ export async function dispatchHostCommand(
       return { threadId: command.threadId, stopped: true as const };
     }
     case 'thread.plan.cancel': {
-      if (!runtime.threads.has(command.threadId)) {
-        return { threadId: command.threadId, cancelled: false as const };
-      }
-      if (runtime.stopWork) {
-        await runtime.stopWork({ threadId: command.threadId });
-      }
-      return { threadId: command.threadId, cancelled: true as const };
+      if (!runtime.threads.has(command.threadId)) return { threadId: command.threadId, cancelled: false };
+      const cancelled = await runtime.cancelPlan?.({ threadId: command.threadId, expectedTurnId: command.expectedTurnId }) ?? false;
+      // stopThread releases its provider session. The next turn must resume it.
+      if (cancelled) runtime.threads.delete(command.threadId);
+      return { threadId: command.threadId, cancelled };
     }
     case 'thread.resume':
       return applyThreadResume(runtime, command);
@@ -873,6 +880,7 @@ export async function dispatchHostCommand(
           mode: command.mode,
           model: command.model,
           reasoningLevel: command.reasoningLevel,
+      serviceTier: command.serviceTier,
           acpMode: command.acpMode,
           claudeCodePermissionMode: command.claudeCodePermissionMode,
           providerOptions: command.providerOptions,

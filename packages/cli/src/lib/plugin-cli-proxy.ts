@@ -47,7 +47,7 @@ function pluginCliContextFromEnv(cwd = process.cwd()): {
 } {
   const projectId = process.env.ZCC_PROJECT_ID ?? process.env.BB_PROJECT_ID;
   const threadId =
-    process.env.ZCC_THREAD_ID ?? process.env.ZCC_SESSION_ID ?? process.env.BB_THREAD_ID;
+    process.env.ZCC_THREAD_ID ?? process.env.BB_THREAD_ID ?? process.env.ZCC_SESSION_ID;
   return {
     cwd,
     ...(projectId ? { projectId } : {}),
@@ -116,12 +116,12 @@ export async function proxyPluginCliCommand(
   const ran = await callControlPlane({
     dataDir,
     op: 'plugin.cli',
-    args: { id: match.pluginId, argv, ...pluginCliContextFromEnv() }
+    args: { id: match.pluginId, argv: jsonOutput ? [...argv, '--json'] : argv, ...pluginCliContextFromEnv() }
   });
   if (!ran.ok) {
     return err(ran.message ?? ran.code ?? 'plugin CLI failed', 1);
   }
-  return renderCliResult(ran.value, jsonOutput);
+  return renderCliResult(ran.value, false);
 }
 
 export async function runExplicitPluginCli(

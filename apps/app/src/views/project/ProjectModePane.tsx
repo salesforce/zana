@@ -149,7 +149,7 @@ export function ProjectModePane({
 
   return (
     <div className="project-mode-pane" data-testid="project-mode-pane" data-mode={viewMode}>
-      {!isAgents && (
+      {!isAgents && slotTab?.header !== 'custom' && (
         <div className="project-topbar">
           <div className="project-topbar-tabs">
             {isTerminals ? (
@@ -252,7 +252,7 @@ export function ProjectModePane({
             <PluginSlotBoundary pluginId={slotTab.pluginId} generation={slotTab.generation}>
               {(() => {
                 const Component = slotTab.component;
-                return <Component pluginId={slotTab.pluginId} projectId={project.id} />;
+                return <Component pluginId={slotTab.pluginId} projectId={project.id} headerActions={slotTab.header === 'custom' ? <SplitPaneHeaderActions /> : undefined} />;
               })()}
             </PluginSlotBoundary>
           </div>

@@ -15,7 +15,7 @@ interface CatalogModel {
 interface ModelCatalog {
   models: CatalogModel[];
   selectedOnlyModels: CatalogModel[];
-  modelLoadError: { providerId: string; code: string } | null;
+  modelLoadError: { providerId: string; code: string; detail?: string | null } | null;
 }
 
 export interface WorkflowCatalogDependencies {

@@ -48,7 +48,7 @@ export function conversationThreadView(
     ? extras.lastReadSeq ?? null
     : peekThreadReadSeq(ctx.dataDir, thread.id);
   const maxSeq = extras?.maxSeq ?? Math.max(0, nextConversationEventSequence(ctx.db, thread.id) - 1);
-  const activity = extras?.activity ?? threadActivityForConversation(ctx, thread.id, maxSeq);
+  const activity = extras?.activity ?? threadActivityForConversation(ctx, thread, maxSeq);
   return {
     ...thread,
     cwd: environment?.path ?? null,
@@ -73,7 +73,7 @@ export function conversationThreadViews(
     return conversationThreadView(ctx, thread, {
       lastReadSeq: Object.prototype.hasOwnProperty.call(reads, thread.id) ? reads[thread.id]! : null,
       maxSeq,
-      activity: threadActivityForConversation(ctx, thread.id, maxSeq)
+      activity: threadActivityForConversation(ctx, thread, maxSeq)
     });
   });
 }

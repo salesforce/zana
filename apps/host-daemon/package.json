@@ -48,11 +48,12 @@
     "@zana-ai/zcc-host-watcher": "workspace:*",
     "@zana-ai/zcc-llm": "workspace:*",
     "@zana-ai/zcc-path-confine": "workspace:*",
+    "@zana-ai/zcc-provider-bridge-protocol": "workspace:*",
     "@zana-ai/zcc-process-utils": "workspace:*",
     "@zana-ai/zcc-spawn-plan": "workspace:*",
     "@zcc/harness-sdk": "workspace:*",
     "esbuild": "^0.25.0",
-    "node-pty": "^1.0.0",
+    "node-pty": "1.2.0-beta.15",
     "ws": "^8.21.3",
     "@zana-ai/zcc-db": "workspace:*"
   },

@@ -9,16 +9,29 @@ vi.mock('@zana-ai/zcc-db', () => ({
   listConversationThreadEvents: (...args: unknown[]) => listConversationThreadEvents(...args)
 }));
 
+vi.mock('./thread-provider-catalog.js', () => ({
+  planCommandForProvider: (providerId: string) =>
+    providerId === 'codex' || providerId === 'claude-code'
+      ? { trigger: '/', name: 'plan' }
+      : null
+}));
+
 afterEach(() => {
   resetThreadActivityCache();
   listConversationThreadEvents.mockReset();
 });
 
+const thread = {
+  id: 'thr-1',
+  providerId: 'codex',
+  status: 'active' as const
+};
+
 describe('threadActivityForConversation', () => {
   const ctx = { db: {} } as import('../../http/product-context.js').ProductHttpContext;
 
   it('returns zeros without scanning when maxSeq is 0', () => {
-    expect(threadActivityForConversation(ctx, 'thr-1', 0)).toEqual(EMPTY_THREAD_ACTIVITY);
+    expect(threadActivityForConversation(ctx, thread, 0)).toEqual(EMPTY_THREAD_ACTIVITY);
     expect(listConversationThreadEvents).not.toHaveBeenCalled();
   });
 
@@ -47,8 +60,8 @@ describe('threadActivityForConversation', () => {
         }
       }
     ]);
-    const first = threadActivityForConversation(ctx, 'thr-1', 1);
-    const second = threadActivityForConversation(ctx, 'thr-1', 1);
+    const first = threadActivityForConversation(ctx, thread, 1);
+    const second = threadActivityForConversation(ctx, thread, 1);
     expect(first).toEqual({
       ...EMPTY_THREAD_ACTIVITY,
       activeBackgroundCommandCount: 1
@@ -59,7 +72,7 @@ describe('threadActivityForConversation', () => {
 
   it('rescans when maxSeq advances', () => {
     listConversationThreadEvents.mockReturnValueOnce([]);
-    expect(threadActivityForConversation(ctx, 'thr-1', 1)).toEqual(EMPTY_THREAD_ACTIVITY);
+    expect(threadActivityForConversation(ctx, thread, 1)).toEqual(EMPTY_THREAD_ACTIVITY);
     listConversationThreadEvents.mockReturnValueOnce([
       {
         id: 'e2',
@@ -80,10 +93,63 @@ describe('threadActivityForConversation', () => {
         }
       }
     ]);
-    expect(threadActivityForConversation(ctx, 'thr-1', 2)).toEqual({
+    expect(threadActivityForConversation(ctx, thread, 2)).toEqual({
       ...EMPTY_THREAD_ACTIVITY,
       activeGoalCount: 1
     });
     expect(listConversationThreadEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts an ACP plan session mode as active Plan mode without a slash command', () => {
+    listConversationThreadEvents.mockReturnValue([
+      {
+        id: 'req',
+        threadId: 'thr-1',
+        sequence: 1,
+        type: 'client/turn/requested',
+        createdAt: 1,
+        payload: {
+          type: 'client/turn/requested',
+          threadId: 'thr-1',
+          scope: threadScope(),
+          direction: 'outbound',
+          requestId: 'creq_acppanxxyz',
+          source: 'tell',
+          initiator: 'user',
+          senderThreadId: null,
+          input: [{ type: 'text', text: 'Draft the plan', mentions: [] }],
+          target: { kind: 'new-turn' },
+          request: { method: 'turn/start', params: {} },
+          execution: {
+            model: 'gpt-5',
+            serviceTier: 'default',
+            reasoningLevel: 'medium',
+            permissionMode: 'accept-edits',
+            source: 'client/turn/requested',
+            acpMode: 'plan'
+          }
+        }
+      },
+      {
+        id: 'accepted',
+        threadId: 'thr-1',
+        sequence: 2,
+        type: 'turn/input/accepted',
+        createdAt: 2,
+        payload: {
+          type: 'turn/input/accepted',
+          threadId: 'thr-1',
+          providerThreadId: 'p1',
+          scope: turnScope('turn-plan'),
+          clientRequestId: 'creq_acppanxxyz'
+        }
+      }
+    ]);
+    expect(
+      threadActivityForConversation(ctx, { id: 'thr-1', providerId: 'acp-cursor', status: 'active' }, 2)
+    ).toEqual({
+      ...EMPTY_THREAD_ACTIVITY,
+      activePlanModeCount: 1
+    });
   });
 });

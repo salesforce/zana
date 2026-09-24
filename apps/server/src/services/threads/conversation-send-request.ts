@@ -26,7 +26,7 @@ export function resolveConversationSendMode(
   }
   if (requestedMode === 'steer' || requestedMode === 'steer-if-active') {
     if (thread.status === 'active') return 'steer';
-    if (thread.status === 'idle') return 'start';
+    if (thread.status === 'idle' || (requestedMode === 'steer-if-active' && thread.status === 'error')) return 'start';
     throw new ThreadCreateError(409, 'not_active', 'Thread is not active');
   }
   if (requestedMode === 'queue-if-active') {

@@ -190,12 +190,37 @@ describe('salesforce plugin contract', () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await plugin(zcc);
     expect(harness.cli?.name).toBe('sf');
-    expect(harness.agentTools.map((tool) => tool.name).sort()).toEqual(['sf_agent', 'sf_apex', 'sf_lwc', 'sf_soql']);
-    expect(harness.needsConfiguration).toMatch(/default org/i);
+    expect(harness.agentTools.map((tool) => tool.name).sort()).toEqual(['sf_agent', 'sf_apex', 'sf_lwc', 'sf_soql', 'sf_workbench']);
+    expect(harness.needsConfiguration).toBeNull();
   });
 });
 
 describe('salesforce plugin behavior', () => {
+  it('keeps local authoring available and reports org readiness in the owning project', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
+    const deps = mockDeps();
+    let mode = 'empty';
+    const exec = deps.execSf;
+    deps.execSf = async (args, opts) => args[0] === 'org' && args[1] === 'list'
+      ? mode === 'missing' ? { code: 127, stdout: '', stderr: '' }
+      : mode === 'failed' ? { code: 1, stdout: '', stderr: 'PRIVATE_ERROR' }
+      : mode === 'empty' ? { code: 0, stdout: '{"status":0,"result":{"sandboxes":[]}}', stderr: '' }
+      : exec(args, opts)
+      : exec(args, opts);
+    await createSalesforcePlugin(zcc, deps);
+    expect(harness.needsConfiguration).toBeNull();
+    await expect(harness.callRpc('status', { projectId: 'p1' })).resolves.toMatchObject({ selectedAlias: null, orgs: [], orgsError: null });
+    mode = 'missing';
+    await expect(harness.callRpc('status', { projectId: 'p1' })).resolves.toMatchObject({ orgs: [], orgsError: expect.stringContaining('not found on PATH') });
+    mode = 'failed';
+    await expect(harness.callRpc('status', { projectId: 'p1' })).resolves.toMatchObject({ orgsError: 'Could not read Salesforce CLI connections. Check the CLI, then try again.' });
+    mode = 'connected';
+    await harness.callRpc('context.select', { projectId: 'p1', selectedAlias: 'dev' });
+    await expect(harness.callRpc('status', { projectId: 'p1' })).resolves.toMatchObject({ targetSource: 'project', selectedAlias: 'dev', orgsError: null });
+    expect(await zcc.storage.kv.get('sf:project:p1:org')).toBe('dev');
+    expect(harness.needsConfiguration).toBeNull();
+  });
+
   it('injects constitution only after an org is configured', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX project', path: '/tmp/dx' }] });
     await createSalesforcePlugin(zcc, mockDeps());
@@ -205,7 +230,7 @@ describe('salesforce plugin behavior', () => {
     expect(configured?.instructions).toContain(CONSTITUTION_INSTRUCTIONS);
     expect(configured?.instructions).toContain('Connected Salesforce CLI orgs');
     expect(configured?.instructions).toContain('dev');
-    expect(configured?.tools).toEqual(['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent']);
+    expect(configured?.tools).toEqual(['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent', 'sf_workbench']);
     expect(configured?.skills).toEqual(['salesforce-constitution', 'salesforce-dx']);
     harness.setSettings({ defaultOrg: '', projectRoot: '/proj' });
     expect((await harness.agentConfigurers[0]?.({}))?.instructions).toContain(CONSTITUTION_INSTRUCTIONS);
@@ -305,7 +330,9 @@ describe('salesforce plugin behavior', () => {
     });
     await expect(harness.callRpc('orgs.login', { instance: 'sandbox', alias: 'qa' })).resolves.toMatchObject({
       ok: true,
-      selectedAlias: 'qa',
+      selectedAlias: null,
+      connectedAlias: null,
+      warning: 'Signed in. Refresh the list and select the org to use.',
       orgs: [expect.objectContaining({ alias: 'qa' })]
     });
     expect(seen.some((args) => args[0] === 'org' && args[1] === 'login')).toBe(true);

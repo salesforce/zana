@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs';
+import { createSkillSnapshotStore } from './skill-snapshots.js';
 import { join } from 'node:path';
 import { resolveZccDataDir } from './host-config.js';
 import type { HostBridgeLaunch, HostEventEnvelope, ProviderHealthResult, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
@@ -115,6 +116,7 @@ export function threadExecutionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
   reasoningLevel?: ReasoningLevel;
+  serviceTier?: 'default' | 'fast';
   permissionEscalation?: 'ask' | 'deny' | null;
 }): RuntimeThreadExecutionOptions {
   const mode = input.permissionMode ?? DEFAULT_THREAD_EXECUTION_OPTIONS.permissionMode;
@@ -130,6 +132,7 @@ export function threadExecutionOptions(input: {
     ...policy,
     permissionEscalation,
     ...(input.model ? { model: input.model } : {}),
+    ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {})
   } as RuntimeThreadExecutionOptions;
 }
@@ -142,6 +145,7 @@ function executionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
   reasoningLevel?: ReasoningLevel;
+  serviceTier?: 'default' | 'fast';
   acpMode?: string;
   claudeCodePermissionMode?: 'plan';
   providerOptions?: Record<string, unknown>;
@@ -285,6 +289,7 @@ export function createAgentRuntimeAdapter(options: {
   const storageRoot = join(options.dataDir ?? '/tmp/zcc-thread-runtime', 'thread-storage');
   mkdirSync(storageRoot, { recursive: true });
   const skillDataDir = options.dataDir ?? storageRoot;
+  const skillSnapshots = createSkillSnapshotStore(skillDataDir);
   const daemonDataDir = options.dataDir ?? '/tmp/zcc-thread-runtime';
 
   function syncProviderBridgeRecording(): void {
@@ -363,7 +368,7 @@ export function createAgentRuntimeAdapter(options: {
       if (environmentHasThreads(environmentId) || existing.hasOpenBackgroundWork()) {
         return existing;
       }
-      void existing.shutdown();
+      void existing.shutdown().then(() => skillSnapshots.release(existing)).catch(() => undefined);
       runtimes.delete(environmentId);
     }
     const runtime = createEnvironmentRuntime(cwd);
@@ -434,6 +439,7 @@ export function createAgentRuntimeAdapter(options: {
         remoteProxyByThread.delete(input.threadId);
       }
       const result = await runtime.startThread({
+        skillRoots: await skillSnapshots.capture(runtime),
         environmentId: input.environmentId,
         threadId: input.threadId,
         projectId: input.projectId,
@@ -444,6 +450,7 @@ export function createAgentRuntimeAdapter(options: {
           permissionMode: input.permissionMode,
           model: input.model,
           reasoningLevel: input.reasoningLevel,
+          serviceTier: input.serviceTier,
           acpMode: input.acpMode,
           claudeCodePermissionMode: input.claudeCodePermissionMode,
           providerOptions: input.providerOptions
@@ -476,6 +483,7 @@ export function createAgentRuntimeAdapter(options: {
           permissionMode: input.permissionMode,
           model: input.model,
           reasoningLevel: input.reasoningLevel,
+          serviceTier: input.serviceTier,
           acpMode: input.acpMode,
           claudeCodePermissionMode: input.claudeCodePermissionMode,
           providerOptions: input.providerOptions,
@@ -514,6 +522,7 @@ export function createAgentRuntimeAdapter(options: {
       const runtime = runtimeFor(input.environmentId, input.cwd);
       threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd });
       const result = await runtime.resumeThread({
+        skillRoots: await skillSnapshots.capture(runtime),
         environmentId: input.environmentId,
         threadId: input.threadId,
         projectId: input.projectId,
@@ -523,6 +532,7 @@ export function createAgentRuntimeAdapter(options: {
           permissionMode: input.permissionMode,
           model: input.model,
           reasoningLevel: input.reasoningLevel,
+          serviceTier: input.serviceTier,
           acpMode: input.acpMode,
           claudeCodePermissionMode: input.claudeCodePermissionMode,
           providerOptions: input.providerOptions
@@ -551,9 +561,22 @@ export function createAgentRuntimeAdapter(options: {
       threadLocation.delete(input.threadId);
       remoteProxyByThread.delete(input.threadId);
     },
+    async cancelPlan(input) {
+      if (!threadLocation.has(input.threadId)) return false;
+      const runtime = runtimeForThread(input.threadId);
+      if (runtime.getActiveTurnId(input.threadId) !== input.expectedTurnId) return false;
+      await runtime.stopThread({ threadId: input.threadId });
+      const cancelled = runtime.getActiveTurnId(input.threadId) !== input.expectedTurnId;
+      if (cancelled) {
+        threadLocation.delete(input.threadId);
+        remoteProxyByThread.delete(input.threadId);
+      }
+      return cancelled;
+    },
     async prepareRewind(input: ThreadRewindPrepareInput) {
       const runtime = runtimeFor(input.environmentId, input.cwd);
       const result = await runtime.prepareThreadRewind({
+        skillRoots: await skillSnapshots.capture(runtime),
         environmentId: input.environmentId,
         threadId: input.threadId,
         leaseId: input.leaseId,
@@ -564,7 +587,7 @@ export function createAgentRuntimeAdapter(options: {
         options: executionOptions({
           permissionMode: input.permissionMode,
           model: input.model,
-          reasoningLevel: input.reasoningLevel
+          reasoningLevel: input.reasoningLevel,
         }),
         ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {})
       });
@@ -620,6 +643,7 @@ export function createAgentRuntimeAdapter(options: {
         if (!meta || meta.catalogHash === catalogHash) continue;
         if (environmentHasThreads(environmentId) || runtime.hasOpenBackgroundWork()) continue;
         await runtime.shutdown();
+        await skillSnapshots.release(runtime);
         runtimes.delete(environmentId);
         runtimeMeta.delete(environmentId);
       }
@@ -628,9 +652,8 @@ export function createAgentRuntimeAdapter(options: {
       return [...runtimes.keys()];
     },
     dispose() {
-      for (const runtime of runtimes.values()) {
-        void runtime.shutdown();
-      }
+      void Promise.allSettled([...runtimes.values()].map(runtime => runtime.shutdown()))
+        .then(() => skillSnapshots.dispose()).catch(() => undefined);
       runtimes.clear();
       runtimeMeta.clear();
       threadLocation.clear();

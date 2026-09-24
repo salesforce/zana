@@ -1,3 +1,4 @@
+import { createCodexHistory } from './history.js';
 import type { HarnessRegistration } from '../registration.js';
 import { CodexProvider } from './provider.js';
 import { discoverCodexModels } from '../codex-model-catalog.js';
@@ -7,6 +8,8 @@ const implementation = new CodexProvider();
 
 export const codexHarness: HarnessRegistration = {
   id: 'codex',
+  createHistoryAdapter: createCodexHistory,
+  historyIconId: 'codex',
   label: 'Codex',
   profiles: [
     { id: 'codex', posture: 'default' },

@@ -16,6 +16,7 @@ interface NextTurnItemView {
   id: string;
   text: string;
   failureReason: string | null;
+  retryAt: number | null;
   status: string;
   senderThreadId: string | null;
 }
@@ -40,6 +41,7 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
           input?: unknown;
           text?: unknown;
           failureReason?: unknown;
+          retryAt?: unknown;
           status?: unknown;
           senderThreadId?: unknown;
         };
@@ -51,6 +53,7 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
           text,
           failureReason: typeof record.failureReason === 'string' ? record.failureReason : null,
           status: typeof record.status === 'string' ? record.status : 'queued',
+          retryAt: typeof record.retryAt === 'number' ? record.retryAt : null,
           senderThreadId: typeof record.senderThreadId === 'string' && record.senderThreadId.trim()
             ? record.senderThreadId.trim()
             : null
@@ -111,6 +114,8 @@ export function QueuedMessagesCard({ threadId }: { threadId: string }) {
                   From {item.senderThreadId}
                 </p>
               ) : null}
+              {item.status === 'dispatching' ? <p role="status">Sending…</p> : null}
+              {item.retryAt && !paused ? <p data-testid="thread-queued-retry">Retry scheduled for {new Date(item.retryAt).toLocaleTimeString()}</p> : null}
               {item.failureReason ? (
                 <p className="thread-queued-failure" data-testid="thread-queued-failure">{item.failureReason}</p>
               ) : null}

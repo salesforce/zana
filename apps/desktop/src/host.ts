@@ -1,3 +1,4 @@
+import { createHistoryProviders } from '@zana-ai/zcc-host-daemon/harness/registry';
 /**
  * Compatibility IPC host. Window/tray/updater/preload live alongside this file
  * in `apps/desktop`; Electron-free helpers live in workspace packages and
@@ -112,7 +113,6 @@ import {
 } from '@zana-ai/zcc-host-daemon/harness/initial-task';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { listClaudeSessions } from '@zana-ai/zcc-server/services/projects/claude';
-import { listOpenCodeSessions } from '@zana-ai/zcc-server/services/projects/opencode-sessions';
 import { ConversationHistoryService } from '@zana-ai/zcc-host-daemon/conversation-history';
 import { listDir, readFile as fsReadFile, writeFile as fsWriteFile, walkFiles, searchFiles, readDataUrl, createFile as fsCreateFile, createDir as fsCreateDir, renamePath as fsRename, deletePath as fsDelete, resolveDoc as fsResolveDoc, confine } from '@zana-ai/zcc-server/services/projects/fs';
 import {
@@ -864,8 +864,7 @@ const desktopBrowserBrokerClient = createDesktopBrowserBrokerClient({
 setBrowserAutomationHost(createDesktopBrowserAutomationHost(desktopBrowserBroker));
 const conversationHistory = new ConversationHistoryService({
   projects: () => store.listProjects(),
-  claude: (project, limit) => listClaudeSessions(project.path, limit),
-  opencode: (project, limit) => listOpenCodeSessions(project.path, { binary: store.getConfig().opencodeBinary, limit })
+  providers: createHistoryProviders({ home: app.getPath('home'), dataDir: electronZccDataDir() })
 });
 // One serialized durable ledger for every coordinator-owned terminal launch.
 const launchLedger = createLaunchLedgerStore({

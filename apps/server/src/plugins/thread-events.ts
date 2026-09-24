@@ -6,7 +6,7 @@ import {
 import type { PluginSdkThreadSummary, PluginThreadEvent } from '@zana-ai/zcc-plugin-sdk/server';
 import type { ProductHttpContext } from '../http/product-context.js';
 
-function threadSummary(row: ConversationThreadRow): PluginSdkThreadSummary {
+export function threadSummary(row: ConversationThreadRow): PluginSdkThreadSummary {
   return {
     id: row.id,
     projectId: row.projectId,
@@ -19,7 +19,11 @@ function threadSummary(row: ConversationThreadRow): PluginSdkThreadSummary {
     visibility: row.visibility,
     archivedAt: row.archivedAt,
     createdAt: row.createdAt,
-    parentThreadId: row.parentThreadId
+    parentThreadId: row.parentThreadId,
+    title: row.title,
+    titleFallback: null,
+    updatedAt: row.updatedAt,
+    deletedAt: null
   };
 }
 
@@ -131,4 +135,10 @@ export function emitPluginThreadEvent(ctx: ProductHttpContext, event: PluginThre
   void ctx.plugins?.emitThreadEvent(enriched).catch((error) => {
     console.error('[plugins] emitThreadEvent failed', error);
   });
+}
+
+/** Applied root-turn transitions from the host must reach the same plugin bus as UI actions. */
+export function emitPluginThreadStatus(ctx: ProductHttpContext, thread: Pick<ConversationThreadRow, 'id' | 'projectId' | 'status'>): void {
+  const name = thread.status === 'idle' ? 'thread.idle' : thread.status === 'error' ? 'thread.failed' : thread.status === 'active' ? 'thread.active' : null;
+  if (name) emitPluginThreadEvent(ctx, { name, threadId: thread.id, projectId: thread.projectId });
 }

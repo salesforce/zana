@@ -39,6 +39,7 @@ import {
 } from './thread-provider-catalog.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
+import { withConversationSend, type ConversationSendLease } from './conversation-send-guard.js';
 import { startLiveTurnCommand } from './conversation-live-turn.js';
 import {
   boundRemoteHostId,
@@ -88,6 +89,7 @@ export interface CreateConversationInput {
   permissionMode?: 'accept-edits' | 'auto' | 'full';
   model?: string;
   reasoningLevel?: ReasoningLevel;
+  serviceTier?: 'default' | 'fast';
   acpMode?: string;
   parentThreadId?: string;
   visibility?: 'visible' | 'hidden';
@@ -152,6 +154,7 @@ export function requestAutoThreadTitle(
 async function startConversationOnHost(
   ctx: ProductHttpContext,
   args: {
+    lease: ConversationSendLease;
     hostId: string;
     project: Project;
     thread: ConversationThreadRow;
@@ -167,6 +170,11 @@ async function startConversationOnHost(
   if (!getThreadProvider(providerId)) {
     throw new ThreadCreateError(400, 'invalid-provider', `unknown thread provider: ${args.input.providerId}`);
   }
+  const sessionTooling = await packConversationSessionTooling(ctx, {
+    threadId: args.thread.id,
+    projectId: args.project.id
+  });
+  args.lease.assertCurrent();
   const requestedMode = requestedExecutionModeFromTurn({
     acpMode: args.input.acpMode,
     input: args.hostPrompt
@@ -196,70 +204,79 @@ async function startConversationOnHost(
     permissionMode,
     model: args.input.model,
     reasoningLevel: args.input.reasoningLevel,
+    serviceTier: args.input.serviceTier,
     acpMode: args.input.acpMode
-  });
-  const sessionTooling = await packConversationSessionTooling(ctx, {
-    threadId: args.thread.id,
-    projectId: args.project.id
   });
   const checkpoint = getThreadProvider(providerId)?.capabilities.fork === 'checkpoint'
     ? latestProviderCheckpoint(listConversationThreadEvents(ctx.db, args.thread.id))?.checkpoint
     : undefined;
-  startLiveTurnCommand(ctx, {
-    hostId: args.hostId,
-    command: {
-      type: 'thread.start',
-      threadId: args.thread.id,
-      environmentId: args.environmentId,
-      projectId: args.project.id,
-      providerId,
-      input: args.hostPrompt,
-      cwd: args.dropCwd
-        ? undefined
-        : (args.remoteToolProxy || !args.project.remote ? args.input.cwd : undefined),
-      title: args.thread.title ?? undefined,
-      bridgeLaunch: bridgeLaunchForProvider(providerId, ctx.pluginHostArtifacts),
-      permissionMode,
-      ...(args.input.model ? { model: args.input.model } : {}),
-      ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {}),
-      ...(args.input.acpMode ? { acpMode: args.input.acpMode } : {}),
-      ...(claudeCodePermissionMode ? { claudeCodePermissionMode } : {}),
-      ...(providerOptions ? { providerOptions } : {}),
-      ...(clientRequestId ? { clientRequestId } : {}),
-      ...(checkpoint ? { providerCheckpointId: checkpoint } : {}),
-      ...sessionTooling,
-      ...(args.remoteToolProxy ? {
-        remote: threadLaunchRemote(
-          args.project,
-          remoteWorkspacePath(
+  const release = args.lease.retain();
+  try {
+    startLiveTurnCommand(ctx, {
+      hostId: args.hostId,
+      command: {
+        type: 'thread.start',
+        threadId: args.thread.id,
+        environmentId: args.environmentId,
+        projectId: args.project.id,
+        providerId,
+        input: args.hostPrompt,
+        cwd: args.dropCwd
+          ? undefined
+          : (args.remoteToolProxy || !args.project.remote ? args.input.cwd : undefined),
+        title: args.thread.title ?? undefined,
+        bridgeLaunch: bridgeLaunchForProvider(providerId, ctx.pluginHostArtifacts),
+        permissionMode,
+        ...(args.input.model ? { model: args.input.model } : {}),
+        ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {}),
+        ...(args.input.serviceTier ? { serviceTier: args.input.serviceTier } : {}),
+        ...(args.input.acpMode ? { acpMode: args.input.acpMode } : {}),
+        ...(claudeCodePermissionMode ? { claudeCodePermissionMode } : {}),
+        ...(providerOptions ? { providerOptions } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
+        ...(checkpoint ? { providerCheckpointId: checkpoint } : {}),
+        ...sessionTooling,
+        ...(args.remoteToolProxy ? {
+          remote: threadLaunchRemote(
             args.project,
-            args.remoteToolProxy,
-            ctx.config.getConfig().remoteDefaultPath,
-            listHosts(ctx.db).map(toRemoteStartPathHost)
-          )
-        ),
-        remoteToolProxy: true
-      } : {})
-    },
-    onSuccess: (result) => {
-      const started = result as ThreadStartResult;
-      if (started?.providerThreadId) {
-        setConversationProviderThreadId(ctx.db, args.thread.id, started.providerThreadId);
+            remoteWorkspacePath(
+              args.project,
+              args.remoteToolProxy,
+              ctx.config.getConfig().remoteDefaultPath,
+              listHosts(ctx.db).map(toRemoteStartPathHost)
+            )
+          ),
+          remoteToolProxy: true
+        } : {})
+      },
+      onSuccess: (result) => {
+        try {
+          const started = result as ThreadStartResult;
+          if (!args.lease.cancelled && started?.providerThreadId) {
+            setConversationProviderThreadId(ctx.db, args.thread.id, started.providerThreadId);
+          }
+        } finally { release(); }
+      },
+      onError: (error) => {
+        void import('./conversation-turn-settlement.js')
+          .then(({ settleLiveTurnCommandFailure }) => {
+            settleLiveTurnCommandFailure(ctx, {
+              thread: args.thread,
+              commandType: 'thread.start',
+              clientRequestId,
+              error: args.lease.cancelled
+                ? new ThreadCreateError(409, 'send_cancelled', 'Send cancelled by Stop or Archive')
+                : error
+            });
+          })
+          .catch(() => undefined)
+          .finally(release);
       }
-    },
-    onError: (error) => {
-      void import('./conversation-turn-settlement.js')
-        .then(({ settleLiveTurnCommandFailure }) => {
-          settleLiveTurnCommandFailure(ctx, {
-            thread: args.thread,
-            commandType: 'thread.start',
-            clientRequestId,
-            error
-          });
-        })
-        .catch(() => undefined);
-    }
-  });
+    });
+  } catch (error) {
+    release();
+    throw error;
+  }
   // permissionMode is the closest server-computed signal for "plan vs an actual
   // agent run" (PORTABLE_EXECUTION_STATES in AgentLauncher.tsx) available at this
   // seam — surfaced to plugins as PluginThreadEvent.executionState.
@@ -420,52 +437,57 @@ export async function createConversationFromRequest(
       ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
       hadAttachments
     });
-    try {
-      if (needsHostAttach) {
-        const provisioned = await ctx.hostHub.callHostOnlineRpc<EnvironmentProvisionResult>({
-          hostId,
-          command: {
-            ...provisionCommandFor(existing, project, { kind: 'unmanaged' }, input.checkout, workspacePath),
-            initiator: { threadId: thread.id, provisioningId: existing.id }
-          }
+    return withConversationSend(ctx.db, thread.id, async lease => {
+      try {
+        if (needsHostAttach) {
+          const provisioned = await ctx.hostHub.callHostOnlineRpc<EnvironmentProvisionResult>({
+            hostId,
+            command: {
+              ...provisionCommandFor(existing, project, { kind: 'unmanaged' }, input.checkout, workspacePath),
+              initiator: { threadId: thread.id, provisioningId: existing.id }
+            }
+          });
+          updateEnvironmentDiscovery(ctx.db, existing.id, {
+            status: 'ready',
+            path: provisioned.path,
+            isGitRepo: provisioned.isGitRepo,
+            isWorktree: provisioned.isWorktree,
+            branchName: provisioned.branchName,
+            defaultBranch: provisioned.defaultBranch,
+            mergeBaseBranch: provisioned.defaultBranch
+          });
+        }
+        lease.assertCurrent();
+        const launch = await startConversationOnHost(ctx, {
+          lease, hostId, project, thread, prompt: textPrompt, hostPrompt: prompt, environmentId: existing.id, input: { ...input, promptInput: resolvedPromptInput }, remoteToolProxy, dropCwd
         });
-        updateEnvironmentDiscovery(ctx.db, existing.id, {
-          status: 'ready',
-          path: provisioned.path,
-          isGitRepo: provisioned.isGitRepo,
-          isWorktree: provisioned.isWorktree,
-          branchName: provisioned.branchName,
-          defaultBranch: provisioned.defaultBranch,
-          mergeBaseBranch: provisioned.defaultBranch
+        lease.assertCurrent();
+        const running = applyLoggedConversationLifecycleEvent(ctx, {
+          threadId: thread.id,
+          event: { type: 'run.started' }
+        }).applied
+          ? (getConversationThread(ctx.db, thread.id) ?? thread)
+          : thread;
+        ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
+        requestAutoThreadTitle(ctx, input, running.id, textPrompt);
+        emitPluginThreadEvent(ctx, {
+          name: 'thread.active',
+          threadId: running.id,
+          projectId: running.projectId,
+          providerId: running.providerId,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
+          executionState: launch.permissionMode
         });
+        return running;
+      } catch (error) {
+        lease.assertCurrent();
+        failConversationStart(ctx, thread);
+        if (!canReuseReady) updateEnvironmentStatus(ctx.db, existing.id, 'failed');
+        if (error instanceof ThreadCreateError) throw error;
+        throw mapHostError(error);
       }
-      const launch = await startConversationOnHost(ctx, {
-        hostId, project, thread, prompt: textPrompt, hostPrompt: prompt, environmentId: existing.id, input: { ...input, promptInput: resolvedPromptInput }, remoteToolProxy, dropCwd
-      });
-      const running = applyLoggedConversationLifecycleEvent(ctx, {
-        threadId: thread.id,
-        event: { type: 'run.started' }
-      }).applied
-        ? (getConversationThread(ctx.db, thread.id) ?? thread)
-        : thread;
-      ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
-      requestAutoThreadTitle(ctx, input, running.id, textPrompt);
-      emitPluginThreadEvent(ctx, {
-        name: 'thread.active',
-        threadId: running.id,
-        projectId: running.projectId,
-        providerId: running.providerId,
-        ...(input.model ? { model: input.model } : {}),
-        ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
-        executionState: launch.permissionMode
-      });
-      return running;
-    } catch (error) {
-      failConversationStart(ctx, thread);
-      if (!canReuseReady) updateEnvironmentStatus(ctx.db, existing.id, 'failed');
-      if (error instanceof ThreadCreateError) throw error;
-      throw mapHostError(error);
-    }
+    });
   }
 
   let created: { environment: EnvironmentRow; thread: ConversationThreadRow };
@@ -553,58 +575,64 @@ export async function createConversationFromRequest(
     created = { environment: existing, thread };
   }
 
-  try {
-    const provisioned = await ctx.hostHub.callHostOnlineRpc<EnvironmentProvisionResult>({
-      hostId,
-      command: {
-        ...provisionCommandFor(created.environment, project, choice, input.checkout, workspacePath),
-        initiator: { threadId: created.thread.id, provisioningId: created.environment.id }
-      }
-    });
-    updateEnvironmentDiscovery(ctx.db, created.environment.id, {
-      status: 'ready',
-      path: provisioned.path,
-      isGitRepo: provisioned.isGitRepo,
-      isWorktree: provisioned.isWorktree,
-      branchName: provisioned.branchName,
-      defaultBranch: provisioned.defaultBranch,
-      mergeBaseBranch: provisioned.defaultBranch
-    });
-    const launch = await startConversationOnHost(ctx, {
-      hostId,
-      project,
-      thread: created.thread,
-      prompt: textPrompt,
-      hostPrompt: prompt,
-      environmentId: created.environment.id,
-      input: { ...input, promptInput: resolvedPromptInput },
-      remoteToolProxy,
-      dropCwd
-    });
-    const running = applyLoggedConversationLifecycleEvent(ctx, {
-      threadId: created.thread.id,
-      event: { type: 'run.started' }
-    }).applied
-      ? (getConversationThread(ctx.db, created.thread.id) ?? created.thread)
-      : created.thread;
-    ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
-    requestAutoThreadTitle(ctx, input, running.id, textPrompt);
-    emitPluginThreadEvent(ctx, {
-      name: 'thread.active',
-      threadId: running.id,
-      projectId: running.projectId,
-      providerId: running.providerId,
-      ...(input.model ? { model: input.model } : {}),
-      ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
-      executionState: launch.permissionMode
-    });
-    return running;
-  } catch (error) {
-    failConversationStart(ctx, created.thread);
-    updateEnvironmentStatus(ctx.db, created.environment.id, 'failed');
-    if (error instanceof ThreadCreateError) throw error;
-    throw mapHostError(error);
-  }
+  return withConversationSend(ctx.db, created.thread.id, async lease => {
+    try {
+      const provisioned = await ctx.hostHub.callHostOnlineRpc<EnvironmentProvisionResult>({
+        hostId,
+        command: {
+          ...provisionCommandFor(created.environment, project, choice, input.checkout, workspacePath),
+          initiator: { threadId: created.thread.id, provisioningId: created.environment.id }
+        }
+      });
+      updateEnvironmentDiscovery(ctx.db, created.environment.id, {
+        status: 'ready',
+        path: provisioned.path,
+        isGitRepo: provisioned.isGitRepo,
+        isWorktree: provisioned.isWorktree,
+        branchName: provisioned.branchName,
+        defaultBranch: provisioned.defaultBranch,
+        mergeBaseBranch: provisioned.defaultBranch
+      });
+      lease.assertCurrent();
+      const launch = await startConversationOnHost(ctx, {
+        lease,
+        hostId,
+        project,
+        thread: created.thread,
+        prompt: textPrompt,
+        hostPrompt: prompt,
+        environmentId: created.environment.id,
+        input: { ...input, promptInput: resolvedPromptInput },
+        remoteToolProxy,
+        dropCwd
+      });
+      lease.assertCurrent();
+      const running = applyLoggedConversationLifecycleEvent(ctx, {
+        threadId: created.thread.id,
+        event: { type: 'run.started' }
+      }).applied
+        ? (getConversationThread(ctx.db, created.thread.id) ?? created.thread)
+        : created.thread;
+      ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
+      requestAutoThreadTitle(ctx, input, running.id, textPrompt);
+      emitPluginThreadEvent(ctx, {
+        name: 'thread.active',
+        threadId: running.id,
+        projectId: running.projectId,
+        providerId: running.providerId,
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}),
+        executionState: launch.permissionMode
+      });
+      return running;
+    } catch (error) {
+      lease.assertCurrent();
+      failConversationStart(ctx, created.thread);
+      updateEnvironmentStatus(ctx.db, created.environment.id, 'failed');
+      if (error instanceof ThreadCreateError) throw error;
+      throw mapHostError(error);
+    }
+  });
 }
 
 function failConversationStart(ctx: ProductHttpContext, thread: ConversationThreadRow): void {

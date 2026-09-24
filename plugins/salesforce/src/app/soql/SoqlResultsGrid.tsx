@@ -1,4 +1,5 @@
 import { cellDisplay, discoverColumns, flattenRecords } from './soql-flatten.js';
+import { EmptyState, LoadingState } from '../components/SalesforceState.js';
 
 export function SoqlResultsGrid(props: {
   hasRun?: boolean;
@@ -22,8 +23,11 @@ export function SoqlResultsGrid(props: {
     : flat;
   if (props.records.length === 0) {
     return (
-      <div className="sf-soql-empty" data-testid="soql-results-empty">
-        {props.hasRun ? 'No records matched this query.' : 'Run a query to see records.'}
+      <div data-testid="soql-results-empty">
+        {props.busy ? <LoadingState art="data" label="Running your query…" hint="Fetching records from the selected org." /> :
+          <EmptyState art="data" title={props.hasRun ? 'No records matched this query.' : 'Run a query to see records.'}>
+            {props.hasRun ? 'Try adjusting the filters or choosing another object.' : 'Choose an object, select your fields, and explore the results here.'}
+          </EmptyState>}
       </div>
     );
   }
@@ -46,6 +50,7 @@ export function SoqlResultsGrid(props: {
           </span>
         ) : null}
       </div>
+      {rows.length === 0 && <EmptyState compact art="search" title="No matching rows">Try a different search. Your loaded records are still here.</EmptyState>}
       <div className="sf-soql-table-wrap">
         <table className="sf-soql-table">
           <thead>

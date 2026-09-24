@@ -135,7 +135,7 @@ describe('ThreadProviderCatalog', () => {
       models: [],
       selectedOnlyModels: [],
       permissionCeiling: 'full',
-      modelLoadError: { providerId: 'acp-cursor', code: 'timeout' }
+      modelLoadError: { providerId: 'acp-cursor', code: 'timeout' , detail: null }
     });
     resetThreadModelCatalog(fetcher);
     await prefetchThreadModelCatalog();
@@ -173,7 +173,7 @@ describe('ThreadProviderCatalog', () => {
       models: [],
       selectedOnlyModels: [],
       permissionCeiling: 'full',
-      modelLoadError: { providerId: 'acp-opencode', code: 'auth_required' }
+      modelLoadError: { providerId: 'acp-opencode', code: 'auth_required' , detail: null }
     });
     resetThreadModelCatalog(fetcher);
     await prefetchThreadModelCatalog();

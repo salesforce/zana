@@ -187,7 +187,7 @@ describe('thread plan document', () => {
     ];
     expect(planReferenceSummary(refs)).toBe('Referenced by 1 Agent');
     expect(planReferenceDetail(refs[0]!)).toBe('Pipe prefix in instructions · Author · 3 todos assigned');
-    expect(planReferenceDetail({ threadId: 't-2', taskId: null })).toBe('Untitled agent · Agent · 0 todos assigned');
+    expect(planReferenceDetail({ threadId: 't-2', taskId: null })).toBe('Untitled agent · Agent');
     expect(planReferenceSummary([
       { threadId: 'a', taskId: null },
       { threadId: 'b', taskId: null }

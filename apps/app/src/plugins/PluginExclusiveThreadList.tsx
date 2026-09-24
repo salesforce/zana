@@ -1,7 +1,14 @@
+import { useIsCompactViewport } from '../hooks/useIsCompactViewport.js';
 import { useSyncExternalStore, type ReactNode } from 'react';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 import { listThreadLists, subscribePluginSlots } from './plugin-slots.js';
-import { resolveActiveThreadList } from './plugin-slot-resolvers.js';
+import { resolveActiveThreadList, readThreadListPin, subscribeThreadListPin } from './plugin-slot-resolvers.js';
+
+export function useActiveThreadList() {
+  useSyncExternalStore(subscribeThreadListPin, readThreadListPin, () => null);
+  const registrations = useSyncExternalStore(subscribePluginSlots, listThreadLists, listThreadLists);
+  return resolveActiveThreadList(registrations);
+}
 
 export function PluginExclusiveThreadList({
   activeThreadId,
@@ -14,18 +21,18 @@ export function PluginExclusiveThreadList({
   searchQuery?: string;
   children: ReactNode;
 }) {
-  const registrations = useSyncExternalStore(subscribePluginSlots, listThreadLists, listThreadLists);
-  const exclusive = resolveActiveThreadList(registrations);
+  const exclusive = useActiveThreadList();
+  const compact = useIsCompactViewport();
   if (!exclusive) return <>{children}</>;
   const Component = exclusive.component;
   const Original = () => <>{children}</>;
   return (
-    <PluginSlotBoundary pluginId={exclusive.pluginId} generation={exclusive.generation}>
+    <PluginSlotBoundary key={`${exclusive.pluginId}:${exclusive.generation}`} pluginId={exclusive.pluginId} generation={exclusive.generation}>
       <Component
         pluginId={exclusive.pluginId}
         activeThreadId={activeThreadId}
         activeProjectId={activeProjectId}
-        isCompactViewport={false}
+        isCompactViewport={compact}
         onNavigate={() => undefined}
         searchQuery={searchQuery}
         experimental_Original={Original}

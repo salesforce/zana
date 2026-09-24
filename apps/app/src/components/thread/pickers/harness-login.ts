@@ -25,10 +25,27 @@ export function loginCommandForProvider(providerId: string): string | null {
   return null;
 }
 
-export function emptyModelsHint(providerId: string, modelLoadError: string | null | undefined): string {
+export function emptyModelsHint(
+  providerId: string,
+  modelLoadError: string | null | undefined,
+  detail?: string | null
+): string {
   if (modelLoadError === 'auth_required') {
     const command = loginCommandForProvider(providerId);
     return command ? `Sign in with ${command}` : 'Sign in to load models';
+  }
+  if (modelLoadError === 'missing_executable') {
+    return 'CLI not found';
+  }
+  if (modelLoadError === 'timeout') {
+    return 'Timed out loading models';
+  }
+  if (modelLoadError === 'provider_unavailable') {
+    return 'Provider plugin failed to load';
+  }
+  if (modelLoadError === 'failed') {
+    const trimmed = detail?.trim();
+    return trimmed || 'Could not load models';
   }
   // Pi has no static fallback catalog. An empty list after a successful
   // `model/list` means no provider credentials in ~/.pi (or env keys the

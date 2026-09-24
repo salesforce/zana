@@ -546,19 +546,45 @@ describe('ThreadTimeline', () => {
       <ThreadTimeline rows={[]} status="idle" thinking={null} />
     );
     expect(html).toContain('Waiting for the first turn…');
+    expect(html).not.toContain('data-testid="thread-loading"');
   });
 
-  it('surfaces a retryable load error above the empty waiting copy', () => {
+  it('shows an illustrated loading state instead of waiting or agent activity during hydration', () => {
+    const html = renderToStaticMarkup(
+      <ThreadTimeline rows={[]} status="starting" thinking={null} loading />
+    );
+    expect(html).toContain('data-testid="thread-loading"');
+    expect(html).toContain('Loading conversation…');
+    expect(html).toContain('aria-busy="true"');
+    expect(html).not.toContain('Waiting for the first turn…');
+    expect(html).not.toContain(workingCopy);
+  });
+
+  it('keeps existing messages visible while refreshing', () => {
+    const html = renderToStaticMarkup(
+      <ThreadTimeline rows={[{
+        ...base, id: 'loaded-message', kind: 'conversation', role: 'assistant',
+        text: 'Already loaded.', attachments: null, turnRequest: null
+      }]} status="idle" thinking={null} loading />
+    );
+    expect(html).toContain('Already loaded.');
+    expect(html).not.toContain('data-testid="thread-loading"');
+    expect(html).toContain('aria-busy="false"');
+  });
+
+  it.each([false, true])('prioritizes a retryable error over loading and empty copy (loading=%s)', (loading) => {
     const html = renderToStaticMarkup(
       <ThreadTimeline
         rows={[]}
         status="starting"
         thinking={null}
+        loading={loading}
         loadError="timeline-failed"
         onRetryLoad={() => {}}
       />
     );
-    expect(html).toContain('Waiting for the first turn…');
+    expect(html).not.toContain('Waiting for the first turn…');
+    expect(html).not.toContain('data-testid="thread-loading"');
     expect(html).toContain('timeline-failed');
     expect(html).toContain('Retry');
     expect(html).toContain('data-testid="thread-timeline-load-error"');

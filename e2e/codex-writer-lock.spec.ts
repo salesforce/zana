@@ -33,6 +33,17 @@ import(${JSON.stringify(new URL('../plugins/provider-codex/src/bridge/fake-codex
   }
 });
 
+test.afterEach(async ({ app }, info) => {
+  if (info.status === info.expectedStatus) return;
+  const data = await app.window.evaluate(async () => {
+    const { threads } = await (await fetch('/api/v1/threads')).json();
+    return Promise.all((threads ?? []).slice(0, 5).map(async (thread: { id: string }) => ({ thread,
+      events: await (await fetch(`/api/v1/threads/${thread.id}/events?limit=30`)).json()
+    })));
+  }).catch(() => null);
+  await info.attach('thread-state', { body: JSON.stringify(data, null, 2), contentType: 'application/json' });
+});
+
 test('Codex writer contention retries through the built provider and composer', async ({ app }) => {
   test.setTimeout(120_000);
   const { window, home } = app;
@@ -80,4 +91,43 @@ test('Codex writer contention retries through the built provider and composer', 
   } finally {
     if (existsSync(lock)) unlinkSync(lock);
   }
+});
+
+
+test('fresh skill snapshots reach the built Codex bridge without changing existing sessions', async ({ app }) => {
+  const { window, home } = app;
+  const projectPath = join(home, 'skill-snapshot-project');
+  const source = join(home, '.zcc', 'skills-generated', 'snapshot-probe');
+  mkdirSync(projectPath);
+  mkdirSync(source, { recursive: true });
+  const skill = join(source, 'SKILL.md');
+  writeFileSync(skill, '---\nname: snapshot-probe\ndescription: stable description\n---\nfirst revision');
+  const projectId = await window.evaluate(async path => {
+    const result = await window.cc.projects.add(path);
+    if (!result.ok) throw new Error(result.message);
+    return result.value.id;
+  }, projectPath);
+  const start = () => window.evaluate(async id => {
+    const response = await fetch('/api/v1/threads', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: id, providerId: 'codex', input: 'Snapshot probe', permissionMode: 'full' }) });
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()).thread.id as string;
+  }, projectId);
+  const roots = () => {
+    const file = join(home, 'codex-requests.log');
+    if (!existsSync(file)) return [] as string[];
+    return readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+      .filter(row => row.method === 'skills/extraRoots/set').flatMap(row => row.params.extraRoots as string[])
+      .filter(path => path.includes('runtime-skill-snapshots') && existsSync(join(path, 'snapshot-probe', 'SKILL.md')));
+  };
+  await start();
+  await expect.poll(() => roots().length).toBeGreaterThan(0);
+  const first = roots()[0];
+  expect(first).toContain('runtime-skill-snapshots');
+  writeFileSync(skill, '---\nname: snapshot-probe\ndescription: stable description\n---\nsecond revision');
+  await start();
+  await expect.poll(() => new Set(roots()).size).toBe(2);
+  const last = roots().at(-1)!;
+  expect(readFileSync(join(first, 'snapshot-probe', 'SKILL.md'), 'utf8')).toContain('first revision');
+  expect(readFileSync(join(last, 'snapshot-probe', 'SKILL.md'), 'utf8')).toContain('second revision');
 });

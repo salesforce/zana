@@ -17,6 +17,7 @@ import {
   providerCliInstallOutcome,
   providerCliInstallOutputSnippet,
   providerCliKeyForFamily,
+  providerCliKeyForProviderId,
   providerCliPresentation,
   providerCliStartLog
 } from './machine-provider-clis.js';
@@ -215,6 +216,10 @@ describe('machine provider CLI rows', () => {
     expect(providerCliKeyForFamily('claude')).toBe('claudeCode');
     expect(providerCliKeyForFamily('codex')).toBe('codex');
     expect(providerCliKeyForFamily('grok')).toBeNull();
+    expect(providerCliKeyForProviderId('claude-code')).toBe('claudeCode');
+    expect(providerCliKeyForProviderId('acp-cursor')).toBe('cursor');
+    expect(providerCliKeyForProviderId('acp-opencode')).toBe('opencode');
+    expect(providerCliKeyForProviderId('fake')).toBeNull();
     expect(providerCliBusyLabel('update')).toBe('Updating…');
     expect(providerCliBusyLabel('install')).toBe('Installing…');
     expect(providerCliStartLog('codex update')).toBe(

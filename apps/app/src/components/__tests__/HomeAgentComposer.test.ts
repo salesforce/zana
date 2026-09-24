@@ -306,6 +306,16 @@ describe('ThreadCommandComposer submit path', () => {
     expect(css.slice(compactStart, css.indexOf('}', compactStart))).toContain('font-size: 12px;');
   });
 
+  it('shows an Install banner when the selected provider CLI is missing', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('ProviderCliBanner');
+    expect(source).toContain('useComposerProviderCli');
+    expect(source).toContain('providerCliBlocked');
+    expect(source).toContain('provider-cli-install-error');
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(css).toContain('.provider-cli-banner');
+  });
+
   it('shows a sending spinner and freezes the editor while submit is in flight', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
     const field = readFileSync(new URL('../composer/use-composer-prompt-field.ts', import.meta.url), 'utf8');

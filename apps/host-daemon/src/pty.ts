@@ -16,7 +16,7 @@ import { cliPlanIntentForLaunch } from './harness/cli-plan-files.js';
 import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync } from './mcp-config.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
-import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName } from './tmux.js';
+import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName, killLocalTmuxSession } from './tmux.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
 import type { HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
@@ -46,6 +46,7 @@ import {
   REMOTE_TOOL_PROXY_DISALLOWED_TOOLS
 } from './remote-tool-proxy.js';
 import { REMOTE_FS_TOOL_NAMES } from './remote-fs-mcp-tools.js';
+import { terminatePtyProcessTree } from './pty-termination.js';
 
 // Electron-Vite emits an ESM `require` shim for the main bundle. Keep this
 // module-local resolver distinct so the bundled declarations cannot collide.
@@ -2684,14 +2685,29 @@ export class PtyManager extends EventEmitter {
     this.stdinOpeningPromptCleanup.get(id)?.();
     const l = this.live.get(id);
     if (!l) return;
+    if (l.reattach) {
+      void this.killRemoteTmux(id).then((terminated) => {
+        const live = this.live.get(id);
+        if (!live || !terminated) return;
+        this.disarmReattach(live);
+        try {
+          terminatePtyProcessTree(live.proc, { signal: 'SIGTERM' });
+        } catch {
+          /* ignore */
+        }
+        if (!live.session.pid) this.finalizeExit(id, 0);
+      });
+      return;
+    }
+    if (l.localTmuxBacked) void killLocalTmuxSession(id);
     // A user/host close must win over a pending remote reconnect: disarm the
     // reattach recipe (and any scheduled timer) BEFORE killing, so the pty's
     // onExit finalizes the session instead of scheduling another re-attach.
     this.disarmReattach(l);
     try {
-      // Scheduled supervisor traps this and performs target-group cleanup before
-      // exiting. Other process types retain node-pty's historical SIGHUP close.
-      l.proc.kill(l.session.scheduled ? 'SIGTERM' : undefined);
+      // The PTY child is a process-group leader; terminate the whole group so
+      // agent CLIs and their descendants cannot survive as orphaned spawns.
+      terminatePtyProcessTree(l.proc, { signal: 'SIGTERM' });
     } catch {
       /* ignore */
     }
@@ -2710,12 +2726,30 @@ export class PtyManager extends EventEmitter {
     this.stdinOpeningPromptCleanup.get(id)?.();
     const l = this.live.get(id);
     if (!l) return false;
+    if (l.reattach) {
+      void this.killRemoteTmux(id).then((terminated) => {
+        const live = this.live.get(id);
+        if (!live || !terminated) return;
+        this.expectedClose.add(id);
+        this.disarmReattach(live);
+        try {
+          const expectedTermination = live.proc as ExecutionSession & { terminateExpected?: () => void };
+          if (expectedTermination.terminateExpected) expectedTermination.terminateExpected();
+          else terminatePtyProcessTree(live.proc, { signal: 'SIGTERM' });
+        } catch {
+          /* already dead — the onExit (if any) will still clear the flag */
+        }
+        if (!live.session.pid) this.finalizeExit(id, 0);
+      });
+      return true;
+    }
     this.expectedClose.add(id);
+    if (l.localTmuxBacked) void killLocalTmuxSession(id);
     this.disarmReattach(l);
     try {
       const expectedTermination = l.proc as ExecutionSession & { terminateExpected?: () => void };
       if (expectedTermination.terminateExpected) expectedTermination.terminateExpected();
-      else l.proc.kill(l.session.scheduled ? 'SIGTERM' : undefined);
+      else terminatePtyProcessTree(l.proc, { signal: 'SIGTERM' });
     } catch {
       /* already dead — the onExit (if any) will still clear the flag */
     }

@@ -18,13 +18,28 @@ Handed to `export default function plugin(zcc)`.
 | `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata` |
 | `ui.requestInput` | Host prompt |
 | `status.needsConfiguration` | Degraded-until-configured |
-| `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: hidden attributed spawn (`pluginMetadata` seed), `getPluginMetadata` / `updatePluginMetadata`, `output`/`stop`, confined host file read |
+| `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: attributed spawn with host, environment and service tier; thread metadata; confined host file read/write; environment PR lookup; provider models discovered on the selected host |
+| `sdk.system.defaultHost()` | Primary enrolled host ID, or `null` when none is configured |
+| `http.route` | Authenticated plugin HTTP routes; request `headers` and bounded `rawBody` preserve uploaded bytes; response `body` accepts a string or `Uint8Array` |
 | `sdk.hosts.list({ signal? })` | Read enrolled machine IDs and names; credentials and connection metadata are excluded. Use an exact ID when machine names are ambiguous. |
 | `services.provide` / `services.use` / `services.has` | Experimental plugin-to-plugin SDK (live proxy; `has` after `provide`; `service_unavailable` until provided) |
 | `onDispose` | LIFO teardown |
 
 Plugins do not get `ctx.exec` permission tokens. They are full-trust in the
 server process and must not be given host-daemon tokens.
+
+`sdk.threads.spawn` accepts `hostId`, `serviceTier: "default" | "fast"` and
+`environment: { kind: "unmanaged" | "personal" | "worktree" | "reuse", ... }`.
+The server validates environment choices and authorizes host/project access.
+Omit the environment to use the project's default. Provider model discovery
+accepts `hostId` and returns `modelLoadError` when discovery fails.
+
+`sdk.files.read` and `sdk.files.write` resolve an omitted `hostId` to the
+primary host and retain the host file service's path confinement.
+`sdk.environments.pullRequest({ environmentId })` returns `pullRequest` or
+`unavailableReason`. Thread summaries include titles and update timestamps.
+Plugin HTTP bodies are capped at 25 MiB; JSON routes also receive parsed
+`body`, while attachment routes can consume the exact `rawBody` bytes.
 
 ### Plugin services (experimental)
 
@@ -57,7 +72,7 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### Project shell
 
-- `projectTab` — per-project rail tab (`global: false` hides the sidebar entry)
+- `projectTab` — per-project rail tab (`global: false` hides the sidebar entry). Use `header: 'custom'` when the component supplies its own toolbar; render its `headerActions` prop there to retain the host split-pane controls without an extra title row.
 - `experimental_agentsBoardAction` — toolbar control on the Agents board (`projectId` is `null` on the cross-project Agents nav)
 - `experimental_agentCardAction` — right-click item on an Agents board card
 - `projectStatusbarItem` — project statusbar chip (`align` left/right; `run` may `toProject` / `toPluginPanel` / `openDialog` / `openMenu`)

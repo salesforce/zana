@@ -2,6 +2,7 @@ import type { ZccDatabase } from '../connection.js';
 import { createDeferredThreadMessageId } from '../ids.js';
 
 export const DEFERRED_THREAD_MESSAGE_CAP = 50;
+export const DEFERRED_RETRY_DELAYS_MS = [15_000, 60_000, 300_000] as const;
 
 export type NextTurnSendStatus = 'queued' | 'dispatching' | 'failed';
 
@@ -15,6 +16,8 @@ export interface DeferredThreadMessageRow {
   paused: boolean;
   sendAfter: number | null;
   failureReason: string | null;
+  failureCount: number;
+  retryAt: number | null;
   groupBoundaryId: string | null;
   updatedAt: number;
 }
@@ -29,6 +32,8 @@ interface DeferredThreadMessageSqlRow {
   paused?: number | null;
   send_after?: number | null;
   failure_reason?: string | null;
+  failure_count?: number;
+  retry_at?: number | null;
   group_boundary_id?: string | null;
   updated_at?: number | null;
 }
@@ -49,6 +54,8 @@ function toRow(row: DeferredThreadMessageSqlRow): DeferredThreadMessageRow {
     paused: Number(row.paused ?? 0) === 1,
     sendAfter: row.send_after ?? null,
     failureReason: row.failure_reason ?? null,
+    failureCount: row.failure_count ?? 0,
+    retryAt: row.retry_at ?? null,
     groupBoundaryId: row.group_boundary_id ?? null,
     updatedAt: row.updated_at ?? row.created_at
   };
@@ -76,6 +83,8 @@ export function createDeferredThreadMessage(
     paused: input.paused === true,
     sendAfter: input.sendAfter ?? null,
     failureReason: null,
+    failureCount: 0,
+    retryAt: null,
     groupBoundaryId: input.groupBoundaryId ?? null,
     updatedAt: now
   };
@@ -102,7 +111,7 @@ export function createDeferredThreadMessage(
 export function countDeferredThreadMessages(db: ZccDatabase, threadId: string): number {
   const row = db.sqlite.prepare(
     `SELECT COUNT(*) AS count FROM deferred_thread_messages
-      WHERE thread_id = ? AND status IN ('queued', 'dispatching')`
+      WHERE thread_id = ?`
   ).get(threadId) as { count: number };
   return row.count;
 }
@@ -152,7 +161,7 @@ export function listDueDeferredThreadMessages(
 export function isThreadQueueAutoSendPaused(db: ZccDatabase, threadId: string): boolean {
   const row = db.sqlite.prepare(
     `SELECT COUNT(*) AS count FROM deferred_thread_messages
-      WHERE thread_id = ? AND status = 'queued' AND paused = 1`
+      WHERE thread_id = ? AND paused = 1`
   ).get(threadId) as { count: number };
   return row.count > 0;
 }
@@ -161,7 +170,7 @@ export function pauseDeferredThreadMessagesForThread(db: ZccDatabase, threadId: 
   const result = db.sqlite.prepare(
     `UPDATE deferred_thread_messages
         SET paused = 1, updated_at = ?
-      WHERE thread_id = ? AND status = 'queued'`
+      WHERE thread_id = ?`
   ).run(Date.now(), threadId);
   return Number(result.changes ?? 0);
 }
@@ -170,20 +179,25 @@ export function resumeDeferredThreadMessagesForThread(db: ZccDatabase, threadId:
   const result = db.sqlite.prepare(
     `UPDATE deferred_thread_messages
         SET paused = 0, updated_at = ?
-      WHERE thread_id = ? AND status = 'queued'`
+      WHERE thread_id = ?`
   ).run(Date.now(), threadId);
   return Number(result.changes ?? 0);
 }
 
 export function markDeferredThreadMessageFailed(
   db: ZccDatabase,
-  args: { id: string; threadId: string; reason: string }
+  args: { id: string; threadId: string; reason: string; retryable?: boolean; now?: number }
 ): boolean {
+  const now = args.now ?? Date.now();
   const result = db.sqlite.prepare(
     `UPDATE deferred_thread_messages
-        SET status = 'failed', failure_reason = ?, updated_at = ?
+        SET status = 'failed', failure_reason = ?, updated_at = ?,
+            retry_at = CASE WHEN ? = 1 THEN CASE failure_count
+              WHEN 0 THEN ? WHEN 1 THEN ? WHEN 2 THEN ? ELSE NULL END ELSE NULL END,
+            failure_count = failure_count + 1
       WHERE id = ? AND thread_id = ?`
-  ).run(args.reason, Date.now(), args.id, args.threadId);
+  ).run(args.reason, now, args.retryable ? 1 : 0,
+    ...DEFERRED_RETRY_DELAYS_MS.map((delay) => now + delay), args.id, args.threadId);
   return Number(result.changes ?? 0) > 0;
 }
 
@@ -216,12 +230,12 @@ export function deleteDeferredThreadMessagesForThread(db: ZccDatabase, threadId:
   return Number(result.changes ?? 0);
 }
 
-/** Send now / force flush: revive failed and stuck dispatching rows. */
+/** Explicit recovery never steals a row from an in-flight dispatcher. */
 export function requeueDeferredThreadMessagesForThread(db: ZccDatabase, threadId: string): number {
   const result = db.sqlite.prepare(
     `UPDATE deferred_thread_messages
-        SET status = 'queued', paused = 0, failure_reason = NULL, updated_at = ?
-      WHERE thread_id = ? AND status IN ('failed', 'dispatching')`
+        SET status = 'queued', paused = 0, failure_reason = NULL, failure_count = 0, retry_at = NULL, updated_at = ?
+      WHERE thread_id = ? AND status = 'failed'`
   ).run(Date.now(), threadId);
   return Number(result.changes ?? 0);
 }
@@ -232,4 +246,33 @@ export function countActiveConversationTurns(db: ZccDatabase): number {
       WHERE archived_at IS NULL AND status IN ('starting', 'active')`
   ).get() as { count: number };
   return row.count;
+}
+
+/** Bounded retry sweep; ordinary queue drains never revive failures. */
+export function listRetryableDeferredThreadMessages(db: ZccDatabase, now = Date.now()): DeferredThreadMessageRow[] {
+  return (db.sqlite.prepare(`SELECT * FROM deferred_thread_messages
+    WHERE status = 'failed' AND paused = 0 AND retry_at <= ?
+    ORDER BY retry_at, created_at LIMIT 100`).all(now) as DeferredThreadMessageSqlRow[]).map(toRow);
+}
+
+export function retryDeferredThreadMessage(db: ZccDatabase, row: DeferredThreadMessageRow, now = Date.now()): boolean {
+  return db.sqlite.prepare(`UPDATE deferred_thread_messages
+    SET status = 'queued', failure_reason = NULL, retry_at = NULL, updated_at = ?
+    WHERE id = ? AND thread_id = ? AND status = 'failed' AND paused = 0 AND retry_at <= ?`)
+    .run(now, row.id, row.threadId, now).changes > 0;
+}
+
+/** Rotate blocked candidates behind other due work without spending a retry attempt. */
+export function postponeDeferredThreadRetry(db: ZccDatabase, row: DeferredThreadMessageRow, now: number): void {
+  db.sqlite.prepare(`UPDATE deferred_thread_messages SET retry_at = ?
+    WHERE id = ? AND thread_id = ? AND status = 'failed' AND retry_at <= ?`)
+    .run(now + 5_000, row.id, row.threadId, now);
+}
+
+/** A restarted server cannot know whether an interrupted RPC reached the host. */
+export function recoverInterruptedDeferredThreadMessages(db: ZccDatabase): number {
+  return db.sqlite.prepare(`UPDATE deferred_thread_messages
+    SET status = 'failed', retry_at = NULL, updated_at = ?,
+        failure_reason = 'Server restarted during send. Check the conversation before retrying.'
+    WHERE status = 'dispatching'`).run(Date.now()).changes;
 }

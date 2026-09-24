@@ -1,3 +1,4 @@
+import { ConversationHistoryDialog } from './components/history/ConversationHistoryDialog.js';
 import '@/lib/monacoSetup';
 import { useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
@@ -799,6 +800,7 @@ export function App() {
       <CommandPaletteHost />
       <QuickOpenHost />
       <ResumePickerHost />
+      <ConversationHistoryDialog />
       <SearchPanelHost />
       <ShortcutsHelpHost />
       <AgentModalHost />

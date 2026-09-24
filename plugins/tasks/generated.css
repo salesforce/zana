@@ -1,0 +1,2858 @@
+/*! tailwindcss v4.3.3 | MIT License | https://tailwindcss.com */
+@layer properties;
+.bb-tasks, [data-bb-plugin="tasks"] {
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+  --color-black: #000;
+  --color-white: #fff;
+  --spacing: 0.25rem;
+  --container-sm: 24rem;
+  --container-md: 28rem;
+  --container-lg: 32rem;
+  --container-xl: 36rem;
+  --container-3xl: 48rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: calc(1 / 0.75);
+  --text-sm: 0.875rem;
+  --text-sm--line-height: calc(1.25 / 0.875);
+  --text-base: 1rem;
+  --text-base--line-height: calc(1.5 / 1);
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: calc(2 / 1.5);
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --font-weight-extrabold: 800;
+  --tracking-tight: -0.025em;
+  --tracking-widest: 0.1em;
+  --leading-tight: 1.25;
+  --leading-snug: 1.375;
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --animate-spin: spin 1s linear infinite;
+  --animate-pulse: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --default-transition-duration: 150ms;
+  --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  --radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\@container {
+  container-type: inline-size;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pointer-events-auto {
+  pointer-events: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pointer-events-none {
+  pointer-events: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .collapse {
+  visibility: collapse;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .invisible {
+  visibility: hidden;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .visible {
+  visibility: visible;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border-width: 0;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .not-sr-only {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .absolute {
+  position: absolute;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .fixed {
+  position: fixed;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .relative {
+  position: relative;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .static {
+  position: static;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .sticky {
+  position: sticky;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .inset-0 {
+  inset: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .inset-x-0 {
+  inset-inline: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .top-0 {
+  top: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .top-1 {
+  top: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .top-3 {
+  top: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .top-4 {
+  top: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .top-\[50\%\] {
+  top: 50%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .right-1 {
+  right: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .right-2 {
+  right: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .right-3 {
+  right: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .right-4 {
+  right: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bottom-0 {
+  bottom: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bottom-3 {
+  bottom: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bottom-4 {
+  bottom: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .left-1 {
+  left: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .left-1\/2 {
+  left: calc(1 / 2 * 100%);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .left-2 {
+  left: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .left-\[50\%\] {
+  left: 50%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .isolate {
+  isolation: isolate;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .isolation-auto {
+  isolation: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .z-10 {
+  z-index: 10;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .z-20 {
+  z-index: 20;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .z-50 {
+  z-index: 50;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .z-\[1\] {
+  z-index: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .z-\[70\] {
+  z-index: 70;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .col-span-2 {
+  grid-column: span 2 / span 2;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .col-start-1 {
+  grid-column-start: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .col-start-2 {
+  grid-column-start: 2;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .col-start-3 {
+  grid-column-start: 3;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .row-start-1 {
+  grid-row-start: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .row-start-2 {
+  grid-row-start: 2;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .container {
+  width: 100%;
+  @media (width >= 40rem) {
+    max-width: 40rem;
+  }
+  @media (width >= 48rem) {
+    max-width: 48rem;
+  }
+  @media (width >= 64rem) {
+    max-width: 64rem;
+  }
+  @media (width >= 80rem) {
+    max-width: 80rem;
+  }
+  @media (width >= 96rem) {
+    max-width: 96rem;
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .m-0 {
+  margin: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .-mx-1 {
+  margin-inline: calc(var(--spacing) * -1);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .-mx-1\.5 {
+  margin-inline: calc(var(--spacing) * -1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mx-\[7px\] {
+  margin-inline: 7px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mx-auto {
+  margin-inline: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .my-1 {
+  margin-block: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .my-2 {
+  margin-block: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .my-3 {
+  margin-block: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-0 {
+  margin-top: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-0\.5 {
+  margin-top: calc(var(--spacing) * 0.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-1 {
+  margin-top: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-1\.5 {
+  margin-top: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-2 {
+  margin-top: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-2\.5 {
+  margin-top: calc(var(--spacing) * 2.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-3 {
+  margin-top: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-3\.5 {
+  margin-top: calc(var(--spacing) * 3.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-4 {
+  margin-top: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-5 {
+  margin-top: calc(var(--spacing) * 5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-6 {
+  margin-top: calc(var(--spacing) * 6);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-24 {
+  margin-top: calc(var(--spacing) * 24);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mt-px {
+  margin-top: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mr-2 {
+  margin-right: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mr-auto {
+  margin-right: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mb-0 {
+  margin-bottom: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mb-0\.5 {
+  margin-bottom: calc(var(--spacing) * 0.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mb-1 {
+  margin-bottom: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mb-1\.5 {
+  margin-bottom: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mb-2 {
+  margin-bottom: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mb-2\.5 {
+  margin-bottom: calc(var(--spacing) * 2.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mb-3 {
+  margin-bottom: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mb-3\.5 {
+  margin-bottom: calc(var(--spacing) * 3.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mb-4 {
+  margin-bottom: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .ml-auto {
+  margin-left: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .line-clamp-2 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .block {
+  display: block;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .contents {
+  display: contents;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .flex {
+  display: flex;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .flow-root {
+  display: flow-root;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .grid {
+  display: grid;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .hidden {
+  display: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .inline {
+  display: inline;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .inline\! {
+  display: inline !important;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .inline-block {
+  display: inline-block;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .inline-flex {
+  display: inline-flex;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .inline-grid {
+  display: inline-grid;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .inline-table {
+  display: inline-table;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .list-item {
+  display: list-item;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .table {
+  display: table;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .table-caption {
+  display: table-caption;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .table-cell {
+  display: table-cell;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .table-column {
+  display: table-column;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .table-column-group {
+  display: table-column-group;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .table-footer-group {
+  display: table-footer-group;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .table-header-group {
+  display: table-header-group;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .table-row {
+  display: table-row;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .table-row-group {
+  display: table-row-group;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-1 {
+  width: var(--spacing);
+  height: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-1\.5 {
+  width: calc(var(--spacing) * 1.5);
+  height: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-2 {
+  width: calc(var(--spacing) * 2);
+  height: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-2\.5 {
+  width: calc(var(--spacing) * 2.5);
+  height: calc(var(--spacing) * 2.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-3 {
+  width: calc(var(--spacing) * 3);
+  height: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-3\.5 {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-4 {
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-5 {
+  width: calc(var(--spacing) * 5);
+  height: calc(var(--spacing) * 5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-6 {
+  width: calc(var(--spacing) * 6);
+  height: calc(var(--spacing) * 6);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-6\.5 {
+  width: calc(var(--spacing) * 6.5);
+  height: calc(var(--spacing) * 6.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-7 {
+  width: calc(var(--spacing) * 7);
+  height: calc(var(--spacing) * 7);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-8 {
+  width: calc(var(--spacing) * 8);
+  height: calc(var(--spacing) * 8);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-10 {
+  width: calc(var(--spacing) * 10);
+  height: calc(var(--spacing) * 10);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-\[22px\] {
+  width: 22px;
+  height: 22px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-auto {
+  width: auto;
+  height: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .size-full {
+  width: 100%;
+  height: 100%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-0 {
+  height: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-0\.5 {
+  height: calc(var(--spacing) * 0.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-1 {
+  height: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-2 {
+  height: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-3 {
+  height: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-3\.5 {
+  height: calc(var(--spacing) * 3.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-4 {
+  height: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-5 {
+  height: calc(var(--spacing) * 5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-6 {
+  height: calc(var(--spacing) * 6);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-7 {
+  height: calc(var(--spacing) * 7);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-8 {
+  height: calc(var(--spacing) * 8);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-9 {
+  height: calc(var(--spacing) * 9);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-10 {
+  height: calc(var(--spacing) * 10);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-11 {
+  height: calc(var(--spacing) * 11);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-14 {
+  height: calc(var(--spacing) * 14);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-20 {
+  height: calc(var(--spacing) * 20);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-24 {
+  height: calc(var(--spacing) * 24);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-\[28px\] {
+  height: 28px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-\[34px\] {
+  height: 34px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-\[var\(--bb-sidebar-row-height\)\] {
+  height: var(--bb-sidebar-row-height);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-\[var\(--radix-select-trigger-height\)\] {
+  height: var(--radix-select-trigger-height);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-full {
+  height: 100%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .h-px {
+  height: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-h-64 {
+  max-height: calc(var(--spacing) * 64);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-h-96 {
+  max-height: calc(var(--spacing) * 96);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-h-\[300px\] {
+  max-height: 300px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-h-\[calc\(92dvh-var\(--bb-drawer-keyboard-inset\,0px\)\)\] {
+  max-height: calc(92dvh - var(--bb-drawer-keyboard-inset,0px));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-h-full {
+  max-height: 100%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-h-0 {
+  min-height: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-h-11 {
+  min-height: calc(var(--spacing) * 11);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-h-16 {
+  min-height: calc(var(--spacing) * 16);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-h-20 {
+  min-height: calc(var(--spacing) * 20);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-h-24 {
+  min-height: calc(var(--spacing) * 24);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-h-32 {
+  min-height: calc(var(--spacing) * 32);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-h-\[60px\] {
+  min-height: 60px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-h-full {
+  min-height: 100%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-0 {
+  width: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-1 {
+  width: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-1\/2 {
+  width: calc(1 / 2 * 100%);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-2 {
+  width: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-2\/3 {
+  width: calc(2 / 3 * 100%);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-3 {
+  width: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-3\.5 {
+  width: calc(var(--spacing) * 3.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-3\/4 {
+  width: calc(3 / 4 * 100%);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-3\/5 {
+  width: calc(3 / 5 * 100%);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-4 {
+  width: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-4\/5 {
+  width: calc(4 / 5 * 100%);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-5 {
+  width: calc(var(--spacing) * 5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-5\/6 {
+  width: calc(5 / 6 * 100%);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-6 {
+  width: calc(var(--spacing) * 6);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-7 {
+  width: calc(var(--spacing) * 7);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-8 {
+  width: calc(var(--spacing) * 8);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-9 {
+  width: calc(var(--spacing) * 9);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-10 {
+  width: calc(var(--spacing) * 10);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-12 {
+  width: calc(var(--spacing) * 12);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-16 {
+  width: calc(var(--spacing) * 16);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-24 {
+  width: calc(var(--spacing) * 24);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-28 {
+  width: calc(var(--spacing) * 28);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-32 {
+  width: calc(var(--spacing) * 32);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-36 {
+  width: calc(var(--spacing) * 36);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-40 {
+  width: calc(var(--spacing) * 40);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-44 {
+  width: calc(var(--spacing) * 44);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-52 {
+  width: calc(var(--spacing) * 52);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-56 {
+  width: calc(var(--spacing) * 56);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-64 {
+  width: calc(var(--spacing) * 64);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-72 {
+  width: calc(var(--spacing) * 72);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-96 {
+  width: calc(var(--spacing) * 96);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-\[28px\] {
+  width: 28px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-\[230px\] {
+  width: 230px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-\[calc\(100\%\+0\.75rem\)\] {
+  width: calc(100% + 0.75rem);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-auto {
+  width: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .w-full {
+  width: 100%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-3xl {
+  max-width: var(--container-3xl);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-32 {
+  max-width: calc(var(--spacing) * 32);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-40 {
+  max-width: calc(var(--spacing) * 40);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-44 {
+  max-width: calc(var(--spacing) * 44);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-48 {
+  max-width: calc(var(--spacing) * 48);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-56 {
+  max-width: calc(var(--spacing) * 56);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-60 {
+  max-width: calc(var(--spacing) * 60);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-72 {
+  max-width: calc(var(--spacing) * 72);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-\[55rem\] {
+  max-width: 55rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-\[211px\] {
+  max-width: 211px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-\[min\(20rem\,var\(--radix-tooltip-content-available-width\)\)\] {
+  max-width: min(20rem, var(--radix-tooltip-content-available-width));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-full {
+  max-width: 100%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-lg {
+  max-width: var(--container-lg);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-md {
+  max-width: var(--container-md);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-none {
+  max-width: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-sm {
+  max-width: var(--container-sm);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .max-w-xl {
+  max-width: var(--container-xl);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-w-0 {
+  min-width: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-w-15 {
+  min-width: calc(var(--spacing) * 15);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-w-28 {
+  min-width: calc(var(--spacing) * 28);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-w-44 {
+  min-width: calc(var(--spacing) * 44);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-w-48 {
+  min-width: calc(var(--spacing) * 48);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-w-52 {
+  min-width: calc(var(--spacing) * 52);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-w-56 {
+  min-width: calc(var(--spacing) * 56);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-w-\[8rem\] {
+  min-width: 8rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-w-\[var\(--radix-select-trigger-width\)\] {
+  min-width: var(--radix-select-trigger-width);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .min-w-full {
+  min-width: 100%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .flex-1 {
+  flex: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .flex-shrink {
+  flex-shrink: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .shrink {
+  flex-shrink: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .shrink-0 {
+  flex-shrink: 0;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .flex-grow {
+  flex-grow: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .grow {
+  flex-grow: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-collapse {
+  border-collapse: collapse;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .-translate-x-1 {
+  --tw-translate-x: calc(var(--spacing) * -1);
+  translate: var(--tw-translate-x) var(--tw-translate-y);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .-translate-x-1\/2 {
+  --tw-translate-x: calc(calc(1 / 2 * 100%) * -1);
+  translate: var(--tw-translate-x) var(--tw-translate-y);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .translate-x-\[-50\%\] {
+  --tw-translate-x: -50%;
+  translate: var(--tw-translate-x) var(--tw-translate-y);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .translate-y-\[-50\%\] {
+  --tw-translate-y: -50%;
+  translate: var(--tw-translate-x) var(--tw-translate-y);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .translate-none {
+  translate: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .scale-3d {
+  scale: var(--tw-scale-x) var(--tw-scale-y) var(--tw-scale-z);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .-rotate-90 {
+  rotate: calc(90deg * -1);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rotate-2 {
+  rotate: 2deg;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .transform {
+  transform: var(--tw-rotate-x,) var(--tw-rotate-y,) var(--tw-rotate-z,) var(--tw-skew-x,) var(--tw-skew-y,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .transform\! {
+  transform: var(--tw-rotate-x,) var(--tw-rotate-y,) var(--tw-rotate-z,) var(--tw-skew-x,) var(--tw-skew-y,) !important;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .animate-pulse {
+  animation: var(--animate-pulse);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .animate-spin {
+  animation: var(--animate-spin);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .cursor-default {
+  cursor: default;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .cursor-grab {
+  cursor: grab;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .cursor-grabbing {
+  cursor: grabbing;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .cursor-not-allowed {
+  cursor: not-allowed;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .cursor-pointer {
+  cursor: pointer;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .cursor-zoom-in {
+  cursor: zoom-in;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .touch-pinch-zoom {
+  --tw-pinch-zoom: pinch-zoom;
+  touch-action: var(--tw-pan-x,) var(--tw-pan-y,) var(--tw-pinch-zoom,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .touch-none {
+  touch-action: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .resize {
+  resize: both;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .grid-cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .grid-cols-\[auto_auto_minmax\(0\,1fr\)\] {
+  grid-template-columns: auto auto minmax(0,1fr);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .grid-cols-\[minmax\(0\,1fr\)\] {
+  grid-template-columns: minmax(0,1fr);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .flex-col {
+  flex-direction: column;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .flex-col-reverse {
+  flex-direction: column-reverse;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .flex-row {
+  flex-direction: row;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .flex-wrap {
+  flex-wrap: wrap;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .items-baseline {
+  align-items: baseline;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .items-center {
+  align-items: center;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .items-start {
+  align-items: flex-start;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .items-stretch {
+  align-items: stretch;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .justify-between {
+  justify-content: space-between;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .justify-center {
+  justify-content: center;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .justify-end {
+  justify-content: flex-end;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-0 {
+  gap: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-0\.5 {
+  gap: calc(var(--spacing) * 0.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-1 {
+  gap: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-1\.5 {
+  gap: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-2 {
+  gap: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-2\.5 {
+  gap: calc(var(--spacing) * 2.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-3 {
+  gap: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-4 {
+  gap: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.space-y-1 > :not(:last-child)) {
+  --tw-space-y-reverse: 0;
+  margin-block-start: calc(var(--spacing) * var(--tw-space-y-reverse));
+  margin-block-end: calc(var(--spacing) * calc(1 - var(--tw-space-y-reverse)));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.space-y-1\.5 > :not(:last-child)) {
+  --tw-space-y-reverse: 0;
+  margin-block-start: calc(calc(var(--spacing) * 1.5) * var(--tw-space-y-reverse));
+  margin-block-end: calc(calc(var(--spacing) * 1.5) * calc(1 - var(--tw-space-y-reverse)));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.space-y-2 > :not(:last-child)) {
+  --tw-space-y-reverse: 0;
+  margin-block-start: calc(calc(var(--spacing) * 2) * var(--tw-space-y-reverse));
+  margin-block-end: calc(calc(var(--spacing) * 2) * calc(1 - var(--tw-space-y-reverse)));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.space-y-3 > :not(:last-child)) {
+  --tw-space-y-reverse: 0;
+  margin-block-start: calc(calc(var(--spacing) * 3) * var(--tw-space-y-reverse));
+  margin-block-end: calc(calc(var(--spacing) * 3) * calc(1 - var(--tw-space-y-reverse)));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.space-y-4 > :not(:last-child)) {
+  --tw-space-y-reverse: 0;
+  margin-block-start: calc(calc(var(--spacing) * 4) * var(--tw-space-y-reverse));
+  margin-block-end: calc(calc(var(--spacing) * 4) * calc(1 - var(--tw-space-y-reverse)));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.space-y-px > :not(:last-child)) {
+  --tw-space-y-reverse: 0;
+  margin-block-start: calc(1px * var(--tw-space-y-reverse));
+  margin-block-end: calc(1px * calc(1 - var(--tw-space-y-reverse)));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.space-y-reverse > :not(:last-child)) {
+  --tw-space-y-reverse: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-x-2 {
+  column-gap: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-x-2\.5 {
+  column-gap: calc(var(--spacing) * 2.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.space-x-reverse > :not(:last-child)) {
+  --tw-space-x-reverse: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-y-1 {
+  row-gap: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .gap-y-2 {
+  row-gap: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.divide-x > :not(:last-child)) {
+  --tw-divide-x-reverse: 0;
+  border-inline-style: var(--tw-border-style);
+  border-inline-start-width: calc(1px * var(--tw-divide-x-reverse));
+  border-inline-end-width: calc(1px * calc(1 - var(--tw-divide-x-reverse)));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.divide-y > :not(:last-child)) {
+  --tw-divide-y-reverse: 0;
+  border-bottom-style: var(--tw-border-style);
+  border-top-style: var(--tw-border-style);
+  border-top-width: calc(1px * var(--tw-divide-y-reverse));
+  border-bottom-width: calc(1px * calc(1 - var(--tw-divide-y-reverse)));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.divide-y-reverse > :not(:last-child)) {
+  --tw-divide-y-reverse: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.divide-border-hairline > :not(:last-child)) {
+  border-color: var(--border);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .justify-self-end {
+  justify-self: flex-end;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .overflow-auto {
+  overflow: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .overflow-hidden {
+  overflow: hidden;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .overflow-x-auto {
+  overflow-x: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .overflow-x-hidden {
+  overflow-x: hidden;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .overflow-y-auto {
+  overflow-y: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded {
+  border-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-full {
+  border-radius: calc(infinity * 1px);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-lg {
+  border-radius: var(--radius-lg);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-md {
+  border-radius: var(--radius-md);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-none {
+  border-radius: 0;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-sm {
+  border-radius: var(--radius-sm);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-xs {
+  border-radius: var(--radius-xs);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-s {
+  border-start-start-radius: 0.5rem;
+  border-end-start-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-ss {
+  border-start-start-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-e {
+  border-start-end-radius: 0.5rem;
+  border-end-end-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-se {
+  border-start-end-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-ee {
+  border-end-end-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-es {
+  border-end-start-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-t {
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-t-xl {
+  border-top-left-radius: var(--radius-xl);
+  border-top-right-radius: var(--radius-xl);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-l {
+  border-top-left-radius: 0.5rem;
+  border-bottom-left-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-l-none {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-tl {
+  border-top-left-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-r {
+  border-top-right-radius: 0.5rem;
+  border-bottom-right-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-r-none {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-tr {
+  border-top-right-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-b {
+  border-bottom-right-radius: 0.5rem;
+  border-bottom-left-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-br {
+  border-bottom-right-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .rounded-bl {
+  border-bottom-left-radius: 0.5rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border {
+  border-style: var(--tw-border-style);
+  border-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-0 {
+  border-style: var(--tw-border-style);
+  border-width: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-2 {
+  border-style: var(--tw-border-style);
+  border-width: 2px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-x {
+  border-inline-style: var(--tw-border-style);
+  border-inline-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-y {
+  border-block-style: var(--tw-border-style);
+  border-block-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-s {
+  border-inline-start-style: var(--tw-border-style);
+  border-inline-start-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-e {
+  border-inline-end-style: var(--tw-border-style);
+  border-inline-end-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-bs {
+  border-block-start-style: var(--tw-border-style);
+  border-block-start-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-be {
+  border-block-end-style: var(--tw-border-style);
+  border-block-end-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-t {
+  border-top-style: var(--tw-border-style);
+  border-top-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-r {
+  border-right-style: var(--tw-border-style);
+  border-right-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-b {
+  border-bottom-style: var(--tw-border-style);
+  border-bottom-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-l {
+  border-left-style: var(--tw-border-style);
+  border-left-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-dashed {
+  --tw-border-style: dashed;
+  border-style: dashed;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-border {
+  border-color: var(--border);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-border-hairline {
+  border-color: var(--border);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-current {
+  border-color: currentcolor;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-destructive {
+  border-color: var(--danger);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-destructive\/40 {
+  border-color: var(--danger);
+  @supports (color: color-mix(in lab, red, red)) {
+    border-color: color-mix(in oklab, var(--danger) 40%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-destructive\/50 {
+  border-color: var(--danger);
+  @supports (color: color-mix(in lab, red, red)) {
+    border-color: color-mix(in oklab, var(--danger) 50%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-input {
+  border-color: var(--border);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-muted {
+  border-color: var(--bg-hover);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-primary {
+  border-color: var(--accent);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-primary-foreground {
+  border-color: white;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-primary-foreground\/25 {
+  border-color: color-mix(in oklab, white 25%, transparent);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-t-transparent {
+  border-top-color: transparent;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-l-primary-foreground {
+  border-left-color: white;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .border-l-primary-foreground\/20 {
+  border-left-color: color-mix(in oklab, white 20%, transparent);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-accent {
+  background-color: var(--bg-hover);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-attention {
+  background-color: var(--warning, #d4a72c);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-background {
+  background-color: var(--bg-panel);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-black {
+  background-color: var(--color-black);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-black\/40 {
+  background-color: color-mix(in srgb, #000 40%, transparent);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--color-black) 40%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-black\/55 {
+  background-color: color-mix(in srgb, #000 55%, transparent);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--color-black) 55%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-border {
+  background-color: var(--border);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-card {
+  background-color: var(--bg-panel);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-destructive {
+  background-color: var(--danger);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-destructive\/5 {
+  background-color: var(--danger);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--danger) 5%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-destructive\/10 {
+  background-color: var(--danger);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--danger) 10%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-foreground {
+  background-color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-muted {
+  background-color: var(--bg-hover);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-muted-foreground {
+  background-color: var(--text-muted);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-muted-foreground\/20 {
+  background-color: var(--text-muted);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--text-muted) 20%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-muted-foreground\/40 {
+  background-color: var(--text-muted);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--text-muted) 40%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-popover {
+  background-color: var(--bg-elevated);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-popover\/90 {
+  background-color: var(--bg-elevated);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--bg-elevated) 90%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-primary {
+  background-color: var(--accent);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-secondary {
+  background-color: var(--bg-elevated);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-success {
+  background-color: var(--success, #3fb950);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-surface-recessed-solid {
+  background-color: var(--bg-input, var(--bg-panel));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-surface-selected {
+  background-color: var(--accent);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-transparent {
+  background-color: transparent;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .bg-repeat {
+  background-repeat: repeat;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mask-no-clip {
+  mask-clip: no-clip;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .mask-repeat {
+  mask-repeat: repeat;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .fill-current {
+  fill: currentcolor;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .fill-muted {
+  fill: var(--bg-hover);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .fill-muted-foreground {
+  fill: var(--text-muted);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .object-cover {
+  object-fit: cover;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .p-0 {
+  padding: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .p-0\.5 {
+  padding: calc(var(--spacing) * 0.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .p-1 {
+  padding: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .p-2 {
+  padding: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .p-3 {
+  padding: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .p-4 {
+  padding: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .p-6 {
+  padding: calc(var(--spacing) * 6);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .p-8 {
+  padding: calc(var(--spacing) * 8);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-0 {
+  padding-inline: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-0\.5 {
+  padding-inline: calc(var(--spacing) * 0.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-1 {
+  padding-inline: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-1\.5 {
+  padding-inline: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-2 {
+  padding-inline: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-2\.5 {
+  padding-inline: calc(var(--spacing) * 2.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-3 {
+  padding-inline: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-3\.5 {
+  padding-inline: calc(var(--spacing) * 3.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-4 {
+  padding-inline: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-7 {
+  padding-inline: calc(var(--spacing) * 7);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .px-8 {
+  padding-inline: calc(var(--spacing) * 8);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-0 {
+  padding-block: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-0\.5 {
+  padding-block: calc(var(--spacing) * 0.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-1 {
+  padding-block: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-1\.5 {
+  padding-block: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-2 {
+  padding-block: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-3 {
+  padding-block: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-6 {
+  padding-block: calc(var(--spacing) * 6);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-10 {
+  padding-block: calc(var(--spacing) * 10);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-12 {
+  padding-block: calc(var(--spacing) * 12);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-\[0\.3125rem\] {
+  padding-block: 0.3125rem;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .py-px {
+  padding-block: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pt-1 {
+  padding-top: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pt-1\.5 {
+  padding-top: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pt-2 {
+  padding-top: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pt-2\.5 {
+  padding-top: calc(var(--spacing) * 2.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pt-3 {
+  padding-top: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pt-4 {
+  padding-top: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pt-8 {
+  padding-top: calc(var(--spacing) * 8);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pr-2 {
+  padding-right: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pr-3 {
+  padding-right: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pr-6 {
+  padding-right: calc(var(--spacing) * 6);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pr-8 {
+  padding-right: calc(var(--spacing) * 8);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-0 {
+  padding-bottom: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-0\.5 {
+  padding-bottom: calc(var(--spacing) * 0.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-1 {
+  padding-bottom: var(--spacing);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-1\.5 {
+  padding-bottom: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-2 {
+  padding-bottom: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-2\.5 {
+  padding-bottom: calc(var(--spacing) * 2.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-3 {
+  padding-bottom: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-4 {
+  padding-bottom: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-16 {
+  padding-bottom: calc(var(--spacing) * 16);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-\[max\(0\.5rem\,env\(safe-area-inset-bottom\)\)\] {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pb-\[max\(1rem\,env\(safe-area-inset-bottom\)\)\] {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pl-2 {
+  padding-left: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pl-3 {
+  padding-left: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .pl-8 {
+  padding-left: calc(var(--spacing) * 8);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-center {
+  text-align: center;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-left {
+  text-align: left;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-right {
+  text-align: right;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .font-mono {
+  font-family: var(--font-mono);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-2xl {
+  font-size: var(--text-2xl);
+  line-height: var(--tw-leading, var(--text-2xl--line-height));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-base {
+  font-size: var(--text-base);
+  line-height: var(--tw-leading, var(--text-base--line-height));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-sm {
+  font-size: var(--text-sm);
+  line-height: var(--tw-leading, var(--text-sm--line-height));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-xs {
+  font-size: var(--text-xs);
+  line-height: var(--tw-leading, var(--text-xs--line-height));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .leading-none {
+  --tw-leading: 1;
+  line-height: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .leading-snug {
+  --tw-leading: var(--leading-snug);
+  line-height: var(--leading-snug);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .leading-tight {
+  --tw-leading: var(--leading-tight);
+  line-height: var(--leading-tight);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .font-bold {
+  --tw-font-weight: var(--font-weight-bold);
+  font-weight: var(--font-weight-bold);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .font-extrabold {
+  --tw-font-weight: var(--font-weight-extrabold);
+  font-weight: var(--font-weight-extrabold);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .font-medium {
+  --tw-font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-medium);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .font-normal {
+  --tw-font-weight: var(--font-weight-normal);
+  font-weight: var(--font-weight-normal);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .font-semibold {
+  --tw-font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-semibold);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .tracking-tight {
+  --tw-tracking: var(--tracking-tight);
+  letter-spacing: var(--tracking-tight);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .tracking-widest {
+  --tw-tracking: var(--tracking-widest);
+  letter-spacing: var(--tracking-widest);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-wrap {
+  text-wrap: wrap;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .break-words {
+  overflow-wrap: break-word;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-clip {
+  text-overflow: clip;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-ellipsis {
+  text-overflow: ellipsis;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .whitespace-nowrap {
+  white-space: nowrap;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-accent-foreground {
+  color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-attention {
+  color: var(--warning, #d4a72c);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-background {
+  color: var(--bg-panel);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-destructive {
+  color: var(--danger);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-destructive-foreground {
+  color: white;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-destructive\/80 {
+  color: var(--danger);
+  @supports (color: color-mix(in lab, red, red)) {
+    color: color-mix(in oklab, var(--danger) 80%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-foreground {
+  color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-foreground\/80 {
+  color: var(--text-primary);
+  @supports (color: color-mix(in lab, red, red)) {
+    color: color-mix(in oklab, var(--text-primary) 80%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-muted-foreground {
+  color: var(--text-muted);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-muted-foreground\/70 {
+  color: var(--text-muted);
+  @supports (color: color-mix(in lab, red, red)) {
+    color: color-mix(in oklab, var(--text-muted) 70%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-popover-foreground {
+  color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-pr-merged {
+  color: #a371f7;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-primary {
+  color: var(--accent);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-primary-foreground {
+  color: white;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-secondary-foreground {
+  color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-subtle-foreground {
+  color: var(--text-muted);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-success {
+  color: var(--success, #3fb950);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .text-white {
+  color: var(--color-white);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .capitalize {
+  text-transform: capitalize;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .lowercase {
+  text-transform: lowercase;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .normal-case {
+  text-transform: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .uppercase {
+  text-transform: uppercase;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .italic {
+  font-style: italic;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .italic\! {
+  font-style: italic !important;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .not-italic {
+  font-style: normal;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .diagonal-fractions {
+  --tw-numeric-fraction: diagonal-fractions;
+  font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .lining-nums {
+  --tw-numeric-figure: lining-nums;
+  font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .oldstyle-nums {
+  --tw-numeric-figure: oldstyle-nums;
+  font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .ordinal {
+  --tw-ordinal: ordinal;
+  font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .proportional-nums {
+  --tw-numeric-spacing: proportional-nums;
+  font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .slashed-zero {
+  --tw-slashed-zero: slashed-zero;
+  font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .stacked-fractions {
+  --tw-numeric-fraction: stacked-fractions;
+  font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .tabular-nums {
+  --tw-numeric-spacing: tabular-nums;
+  font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .normal-nums {
+  font-variant-numeric: normal;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .line-through {
+  text-decoration-line: line-through;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .no-underline {
+  text-decoration-line: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .overline {
+  text-decoration-line: overline;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .underline {
+  text-decoration-line: underline;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .decoration-input {
+  text-decoration-color: var(--border);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .underline-offset-2 {
+  text-underline-offset: 2px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .underline-offset-4 {
+  text-underline-offset: 4px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .antialiased {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .subpixel-antialiased {
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .opacity-0 {
+  opacity: 0%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .opacity-40 {
+  opacity: 40%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .opacity-50 {
+  opacity: 50%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .opacity-60 {
+  opacity: 60%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .opacity-70 {
+  opacity: 70%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .shadow {
+  --tw-shadow: 0 1px 3px 0 var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 1px 2px -1px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .shadow-2xs {
+  --tw-shadow: 0 1px var(--tw-shadow-color, rgb(0 0 0 / 0.05));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .shadow-md {
+  --tw-shadow: 0 4px 6px -1px var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 2px 4px -2px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .shadow-none {
+  --tw-shadow: 0 0 #0000;
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .shadow-sm {
+  --tw-shadow: 0 1px 3px 0 var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 1px 2px -1px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .ring {
+  --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .ring-2 {
+  --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .inset-ring {
+  --tw-inset-ring-shadow: inset 0 0 0 1px var(--tw-inset-ring-color, currentcolor);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .ring-ring {
+  --tw-ring-color: var(--accent);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .ring-offset-2 {
+  --tw-ring-offset-width: 2px;
+  --tw-ring-offset-shadow: var(--tw-ring-inset,) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .ring-offset-background {
+  --tw-ring-offset-color: var(--bg-panel);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .outline {
+  outline-style: var(--tw-outline-style);
+  outline-width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .outline-2 {
+  outline-style: var(--tw-outline-style);
+  outline-width: 2px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .outline-background {
+  outline-color: var(--bg-panel);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .outline-input {
+  outline-color: var(--border);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .blur {
+  --tw-blur: blur(8px);
+  filter: var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .drop-shadow {
+  --tw-drop-shadow-size: drop-shadow(0 1px 2px var(--tw-drop-shadow-color, rgb(0 0 0 / 0.1))) drop-shadow(0 1px 1px var(--tw-drop-shadow-color, rgb(0 0 0 / 0.06)));
+  --tw-drop-shadow: drop-shadow(0 1px 2px rgb(0 0 0 / 0.1)) drop-shadow( 0 1px 1px rgb(0 0 0 / 0.06));
+  filter: var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .filter {
+  filter: var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .filter\! {
+  filter: var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,) !important;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .backdrop-blur {
+  --tw-backdrop-blur: blur(8px);
+  -webkit-backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+  backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .backdrop-grayscale {
+  --tw-backdrop-grayscale: grayscale(100%);
+  -webkit-backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+  backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .backdrop-invert {
+  --tw-backdrop-invert: invert(100%);
+  -webkit-backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+  backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .backdrop-sepia {
+  --tw-backdrop-sepia: sepia(100%);
+  -webkit-backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+  backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .backdrop-filter {
+  -webkit-backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+  backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .transition {
+  transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to, opacity, box-shadow, transform, translate, scale, rotate, filter, -webkit-backdrop-filter, backdrop-filter, display, content-visibility, overlay, pointer-events;
+  transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+  transition-duration: var(--tw-duration, var(--default-transition-duration));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .transition-all {
+  transition-property: all;
+  transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+  transition-duration: var(--tw-duration, var(--default-transition-duration));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .transition-colors {
+  transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
+  transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+  transition-duration: var(--tw-duration, var(--default-transition-duration));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .transition-opacity {
+  transition-property: opacity;
+  transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+  transition-duration: var(--tw-duration, var(--default-transition-duration));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .transition-transform {
+  transition-property: transform, translate, scale, rotate;
+  transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+  transition-duration: var(--tw-duration, var(--default-transition-duration));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .transition-none {
+  transition-property: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .duration-150 {
+  --tw-duration: 150ms;
+  transition-duration: 150ms;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .duration-200 {
+  --tw-duration: 200ms;
+  transition-duration: 200ms;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .outline-dashed {
+  --tw-outline-style: dashed;
+  outline-style: dashed;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .outline-none {
+  --tw-outline-style: none;
+  outline-style: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .select-none {
+  -webkit-user-select: none;
+  user-select: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.divide-x-reverse > :not(:last-child)) {
+  --tw-divide-x-reverse: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .ring-inset {
+  --tw-ring-inset: inset;
+}
+@media (hover: hover) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .group-hover\:opacity-90:is(:where(.group):hover *) {
+    opacity: 90%;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .group-hover\:opacity-100:is(:where(.group):hover *) {
+    opacity: 100%;
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .file\:border-0::file-selector-button {
+  border-style: var(--tw-border-style);
+  border-width: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .file\:bg-transparent::file-selector-button {
+  background-color: transparent;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .file\:text-sm::file-selector-button {
+  font-size: var(--text-sm);
+  line-height: var(--tw-leading, var(--text-sm--line-height));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .file\:font-medium::file-selector-button {
+  --tw-font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-medium);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .file\:text-foreground::file-selector-button {
+  color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .placeholder\:text-muted-foreground::placeholder {
+  color: var(--text-muted);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .before\:absolute::before {
+  content: var(--tw-content);
+  position: absolute;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .before\:top-1\.5::before {
+  content: var(--tw-content);
+  top: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .before\:bottom-1\.5::before {
+  content: var(--tw-content);
+  bottom: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .before\:left-\[11px\]::before {
+  content: var(--tw-content);
+  left: 11px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .before\:w-px::before {
+  content: var(--tw-content);
+  width: 1px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .before\:bg-border-hairline::before {
+  content: var(--tw-content);
+  background-color: var(--border);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus-within\:border-input:focus-within {
+  border-color: var(--border);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus-within\:ring-1:focus-within {
+  --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus-within\:ring-ring:focus-within {
+  --tw-ring-color: var(--accent);
+}
+@media (hover: hover) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:border-input:hover {
+    border-color: var(--border);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:border-l-primary-foreground\/30:hover {
+    border-left-color: color-mix(in oklab, white 30%, transparent);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-accent:hover {
+    background-color: var(--bg-hover);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-black\/70:hover {
+    background-color: color-mix(in srgb, #000 70%, transparent);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-black\/70:hover {
+      background-color: color-mix(in oklab, var(--color-black) 70%, transparent);
+    }
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-destructive\/90:hover {
+    background-color: var(--danger);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-destructive\/90:hover {
+      background-color: color-mix(in oklab, var(--danger) 90%, transparent);
+    }
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-foreground\/90:hover {
+    background-color: var(--text-primary);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-foreground\/90:hover {
+      background-color: color-mix(in oklab, var(--text-primary) 90%, transparent);
+    }
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-popover:hover {
+    background-color: var(--bg-elevated);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-primary\/90:hover {
+    background-color: var(--accent);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-primary\/90:hover {
+      background-color: color-mix(in oklab, var(--accent) 90%, transparent);
+    }
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-secondary\/80:hover {
+    background-color: var(--bg-elevated);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-secondary\/80:hover {
+      background-color: color-mix(in oklab, var(--bg-elevated) 80%, transparent);
+    }
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-state-active:hover {
+    background-color: var(--bg-elevated);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-state-hover:hover {
+    background-color: var(--bg-hover);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:bg-transparent:hover {
+    background-color: transparent;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:text-accent-foreground:hover {
+    color: var(--text-primary);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:text-destructive:hover {
+    color: var(--danger);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:text-foreground:hover {
+    color: var(--text-primary);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:text-muted-foreground:hover {
+    color: var(--text-muted);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:underline:hover {
+    text-decoration-line: underline;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:decoration-current:hover {
+    text-decoration-color: currentcolor;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:opacity-100:hover {
+    opacity: 100%;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .hover\:duration-0:hover {
+    --tw-duration: 0ms;
+    transition-duration: 0ms;
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus\:bg-destructive\/15:focus {
+  background-color: var(--danger);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--danger) 15%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus\:bg-state-hover:focus {
+  background-color: var(--bg-hover);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus\:text-destructive:focus {
+  color: var(--danger);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus\:text-foreground:focus {
+  color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus\:ring-1:focus {
+  --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus\:ring-2:focus {
+  --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus\:ring-ring:focus {
+  --tw-ring-color: var(--accent);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus\:ring-offset-2:focus {
+  --tw-ring-offset-width: 2px;
+  --tw-ring-offset-shadow: var(--tw-ring-inset,) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus\:outline-none:focus {
+  --tw-outline-style: none;
+  outline-style: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus-visible\:ring-1:focus-visible {
+  --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus-visible\:ring-2:focus-visible {
+  --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus-visible\:ring-destructive:focus-visible {
+  --tw-ring-color: var(--danger);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus-visible\:ring-ring:focus-visible {
+  --tw-ring-color: var(--accent);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus-visible\:ring-offset-2:focus-visible {
+  --tw-ring-offset-width: 2px;
+  --tw-ring-offset-shadow: var(--tw-ring-inset,) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus-visible\:outline-none:focus-visible {
+  --tw-outline-style: none;
+  outline-style: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .focus-visible\:ring-inset:focus-visible {
+  --tw-ring-inset: inset;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .active\:cursor-grabbing:active {
+  cursor: grabbing;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .active\:bg-destructive\/20:active {
+  background-color: var(--danger);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--danger) 20%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .active\:bg-state-active:active {
+  background-color: var(--bg-elevated);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .active\:text-destructive:active {
+  color: var(--danger);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .active\:text-foreground:active {
+  color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .disabled\:pointer-events-none:disabled {
+  pointer-events: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .disabled\:cursor-not-allowed:disabled {
+  cursor: not-allowed;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .disabled\:opacity-50:disabled {
+  opacity: 50%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .disabled\:opacity-60:disabled {
+  opacity: 60%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .disabled\:opacity-70:disabled {
+  opacity: 70%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .aria-pressed\:bg-state-active[aria-pressed="true"] {
+  background-color: var(--bg-elevated);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .aria-pressed\:text-foreground[aria-pressed="true"] {
+  color: var(--text-primary);
+}
+@media (hover: hover) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .aria-pressed\:hover\:bg-state-active[aria-pressed="true"]:hover {
+    background-color: var(--bg-elevated);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[disabled\]\:pointer-events-none[data-disabled] {
+  pointer-events: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[disabled\]\:opacity-50[data-disabled] {
+  opacity: 50%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[disabled\=true\]\:pointer-events-none[data-disabled="true"] {
+  pointer-events: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[disabled\=true\]\:opacity-50[data-disabled="true"] {
+  opacity: 50%;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[last-hovered\]\:bg-destructive\/15[data-last-hovered] {
+  background-color: var(--danger);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--danger) 15%, transparent);
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[last-hovered\]\:bg-state-hover[data-last-hovered] {
+  background-color: var(--bg-hover);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[last-hovered\]\:text-foreground[data-last-hovered] {
+  color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[selected\=true\]\:bg-accent[data-selected="true"] {
+  background-color: var(--bg-hover);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[selected\=true\]\:text-accent-foreground[data-selected="true"] {
+  color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[side\=bottom\]\:translate-y-1[data-side="bottom"] {
+  --tw-translate-y: var(--spacing);
+  translate: var(--tw-translate-x) var(--tw-translate-y);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[side\=left\]\:-translate-x-1[data-side="left"] {
+  --tw-translate-x: calc(var(--spacing) * -1);
+  translate: var(--tw-translate-x) var(--tw-translate-y);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[side\=right\]\:translate-x-1[data-side="right"] {
+  --tw-translate-x: var(--spacing);
+  translate: var(--tw-translate-x) var(--tw-translate-y);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[side\=top\]\:-translate-y-1[data-side="top"] {
+  --tw-translate-y: calc(var(--spacing) * -1);
+  translate: var(--tw-translate-x) var(--tw-translate-y);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[state\=active\]\:bg-background[data-state="active"] {
+  background-color: var(--bg-panel);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[state\=active\]\:text-foreground[data-state="active"] {
+  color: var(--text-primary);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[state\=active\]\:shadow-xs[data-state="active"] {
+  --tw-shadow: 0 1px 2px 0 var(--tw-shadow-color, rgb(0 0 0 / 0.05));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[state\=open\]\:bg-state-active[data-state="open"] {
+  background-color: var(--bg-elevated);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[state\=open\]\:text-foreground[data-state="open"] {
+  color: var(--text-primary);
+}
+@media (hover: hover) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .data-\[state\=open\]\:hover\:bg-state-active[data-state="open"]:hover {
+    background-color: var(--bg-elevated);
+  }
+}
+@media (width < 48rem) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:h-12 {
+    height: calc(var(--spacing) * 12);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pl-12 {
+    padding-left: calc(var(--spacing) * 12);
+  }
+}
+@media (width >= 40rem) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .sm\:flex-row {
+    flex-direction: row;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .sm\:justify-between {
+    justify-content: space-between;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .sm\:justify-end {
+    justify-content: flex-end;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) :where(.sm\:space-x-2 > :not(:last-child)) {
+    --tw-space-x-reverse: 0;
+    margin-inline-start: calc(calc(var(--spacing) * 2) * var(--tw-space-x-reverse));
+    margin-inline-end: calc(calc(var(--spacing) * 2) * calc(1 - var(--tw-space-x-reverse)));
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .sm\:rounded-lg {
+    border-radius: var(--radius-lg);
+  }
+}
+@container (width < 28rem) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@max-md\:max-w-24 {
+    max-width: calc(var(--spacing) * 24);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@max-md\:max-w-32 {
+    max-width: calc(var(--spacing) * 32);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@max-md\:overflow-hidden {
+    overflow: hidden;
+  }
+}
+@container (width >= 24rem) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@sm\:flex {
+    display: flex;
+  }
+}
+@container (width >= 28rem) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@md\:block {
+    display: block;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@md\:flex {
+    display: flex;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@md\:inline {
+    display: inline;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@md\:h-\[34px\] {
+    height: 34px;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@md\:w-14 {
+    width: calc(var(--spacing) * 14);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@md\:flex-1 {
+    flex: 1;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@md\:shrink-0 {
+    flex-shrink: 0;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@md\:py-0 {
+    padding-block: 0px;
+  }
+}
+@container (width >= 32rem) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@lg\:inline {
+    display: inline;
+  }
+}
+@container (width >= 36rem) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@xl\:flex {
+    display: flex;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@xl\:hidden {
+    display: none;
+  }
+}
+@container (width >= 42rem) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@2xl\:h-32 {
+    height: calc(var(--spacing) * 32);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@2xl\:max-w-\[282px\] {
+    max-width: 282px;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@2xl\:min-w-20 {
+    min-width: calc(var(--spacing) * 20);
+  }
+}
+@container (width >= 45rem) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@\[45rem\]\:block {
+    display: block;
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@\[45rem\]\:hidden {
+    display: none;
+  }
+}
+@container (width >= 48rem) {
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@3xl\:px-13 {
+    padding-inline: calc(var(--spacing) * 13);
+  }
+  :where(.bb-tasks, [data-bb-plugin="tasks"]) .\@3xl\:pt-11 {
+    padding-top: calc(var(--spacing) * 11);
+  }
+}
+@media (width < 48rem) {
+  @media (pointer: coarse) {
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:size-2 {
+      width: calc(var(--spacing) * 2);
+      height: calc(var(--spacing) * 2);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:size-5 {
+      width: calc(var(--spacing) * 5);
+      height: calc(var(--spacing) * 5);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:size-8 {
+      width: calc(var(--spacing) * 8);
+      height: calc(var(--spacing) * 8);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:size-9 {
+      width: calc(var(--spacing) * 9);
+      height: calc(var(--spacing) * 9);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:h-5 {
+      height: calc(var(--spacing) * 5);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:h-8 {
+      height: calc(var(--spacing) * 8);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:h-9 {
+      height: calc(var(--spacing) * 9);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:h-10 {
+      height: calc(var(--spacing) * 10);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:h-\[36px\] {
+      height: 36px;
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:h-\[var\(--bb-sidebar-row-height-coarse\)\] {
+      height: var(--bb-sidebar-row-height-coarse);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:w-5 {
+      width: calc(var(--spacing) * 5);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:w-9 {
+      width: calc(var(--spacing) * 9);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:w-10 {
+      width: calc(var(--spacing) * 10);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:w-\[36px\] {
+      width: 36px;
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:px-2\.5 {
+      padding-inline: calc(var(--spacing) * 2.5);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:py-1\.5 {
+      padding-block: calc(var(--spacing) * 1.5);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:pl-14 {
+      padding-left: calc(var(--spacing) * 14);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:text-base {
+      font-size: var(--text-base);
+      line-height: var(--tw-leading, var(--text-base--line-height));
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:text-sm {
+      font-size: var(--text-sm);
+      line-height: var(--tw-leading, var(--text-sm--line-height));
+    }
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-group-heading\]\]\:px-2 [cmdk-group-heading] {
+  padding-inline: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-group-heading\]\]\:py-1\.5 [cmdk-group-heading] {
+  padding-block: calc(var(--spacing) * 1.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-group-heading\]\]\:text-xs [cmdk-group-heading] {
+  font-size: var(--text-xs);
+  line-height: var(--tw-leading, var(--text-xs--line-height));
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-group-heading\]\]\:font-medium [cmdk-group-heading] {
+  --tw-font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-medium);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-group-heading\]\]\:text-muted-foreground [cmdk-group-heading] {
+  color: var(--text-muted);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-group\]\]\:px-2 [cmdk-group] {
+  padding-inline: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-group\]\:not\(\[hidden\]\)_\~\[cmdk-group\]\]\:pt-0 [cmdk-group]:not([hidden]) ~ [cmdk-group] {
+  padding-top: 0px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-input-wrapper\]_svg\]\:h-5 [cmdk-input-wrapper] svg {
+  height: calc(var(--spacing) * 5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-input-wrapper\]_svg\]\:w-5 [cmdk-input-wrapper] svg {
+  width: calc(var(--spacing) * 5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-input\]\]\:h-12 [cmdk-input] {
+  height: calc(var(--spacing) * 12);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-item\]\]\:px-2 [cmdk-item] {
+  padding-inline: calc(var(--spacing) * 2);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-item\]\]\:py-3 [cmdk-item] {
+  padding-block: calc(var(--spacing) * 3);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-item\]_svg\]\:h-5 [cmdk-item] svg {
+  height: calc(var(--spacing) * 5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_\[cmdk-item\]_svg\]\:w-5 [cmdk-item] svg {
+  width: calc(var(--spacing) * 5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_svg\]\:pointer-events-none svg {
+  pointer-events: none;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_svg\]\:size-3\.5 svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_svg\]\:size-4 svg {
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_svg\]\:size-\[13px\] svg {
+  width: 13px;
+  height: 13px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_svg\]\:size-\[16px\] svg {
+  width: 16px;
+  height: 16px;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&_svg\]\:shrink-0 svg {
+  flex-shrink: 0;
+}
+@media (width < 48rem) {
+  @media (pointer: coarse) {
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:\[\&_svg\]\:size-5 svg {
+      width: calc(var(--spacing) * 5);
+      height: calc(var(--spacing) * 5);
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:\[\&_svg\]\:size-\[16px\] svg {
+      width: 16px;
+      height: 16px;
+    }
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:\[\&_svg\]\:size-\[20px\] svg {
+      width: 20px;
+      height: 20px;
+    }
+  }
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&\>span\]\:line-clamp-1 > span {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&\>svg\]\:size-4 > svg {
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+}
+:where(.bb-tasks, [data-bb-plugin="tasks"]) .\[\&\>svg\]\:shrink-0 > svg {
+  flex-shrink: 0;
+}
+@media (width < 48rem) {
+  @media (pointer: coarse) {
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) .max-md\:pointer-coarse\:\[\&\>svg\]\:size-5 > svg {
+      width: calc(var(--spacing) * 5);
+      height: calc(var(--spacing) * 5);
+    }
+  }
+}
+.bb-tasks, [data-bb-plugin='tasks'] {
+  font-size: 13px;
+  color: var(--text-primary);
+  --background: var(--bg-panel);
+  --popover: var(--bg-elevated);
+  --radius: .5rem;
+}
+:where(.bb-tasks, [data-bb-plugin='tasks']) :where(*) {
+  box-sizing: border-box;
+  border-color: var(--border);
+  border-style: solid;
+  border-width: 0;
+}
+:where(.bb-tasks, [data-bb-plugin='tasks']) :where(button, input, select, textarea) {
+  font: inherit;
+  color: inherit;
+}
+:where(.bb-tasks, [data-bb-plugin='tasks']) :where(button) {
+  background-color: transparent;
+  cursor: pointer;
+}
+:where(.bb-tasks, [data-bb-plugin='tasks']) :where(select) {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.bb-tasks .ProseMirror {
+  outline: none;
+  min-height: 5rem;
+}
+.bb-tasks .ProseMirror p {
+  margin: .5em 0;
+}
+.bb-tasks .ProseMirror ul {
+  list-style: disc;
+  padding-left: 1.5em;
+}
+.bb-tasks .ProseMirror ol {
+  list-style: decimal;
+  padding-left: 1.5em;
+}
+.bb-tasks .ProseMirror img {
+  max-width: 100%;
+}
+@property --tw-translate-x {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-translate-y {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-translate-z {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-scale-x {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-scale-y {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-scale-z {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-rotate-x {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-rotate-y {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-rotate-z {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-skew-x {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-skew-y {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-pan-x {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-pan-y {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-pinch-zoom {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-space-y-reverse {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-space-x-reverse {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-divide-x-reverse {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-border-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
+@property --tw-divide-y-reverse {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-leading {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-font-weight {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-tracking {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ordinal {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-slashed-zero {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-numeric-figure {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-numeric-spacing {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-numeric-fraction {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-inset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-ring-inset {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-offset-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --tw-ring-offset-color {
+  syntax: "*";
+  inherits: false;
+  initial-value: #fff;
+}
+@property --tw-ring-offset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-outline-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
+@property --tw-blur {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-brightness {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-contrast {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-grayscale {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-hue-rotate {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-invert {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-opacity {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-saturate {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-sepia {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-drop-shadow {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-drop-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-drop-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-drop-shadow-size {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-blur {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-brightness {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-contrast {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-grayscale {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-hue-rotate {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-invert {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-opacity {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-saturate {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-sepia {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-duration {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-content {
+  syntax: "*";
+  initial-value: "";
+  inherits: false;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+@layer properties {
+  @supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
+    :where(.bb-tasks, [data-bb-plugin="tasks"]) *, :where(.bb-tasks, [data-bb-plugin="tasks"]) ::before, :where(.bb-tasks, [data-bb-plugin="tasks"]) ::after, :where(.bb-tasks, [data-bb-plugin="tasks"]) ::backdrop {
+      --tw-translate-x: 0;
+      --tw-translate-y: 0;
+      --tw-translate-z: 0;
+      --tw-scale-x: 1;
+      --tw-scale-y: 1;
+      --tw-scale-z: 1;
+      --tw-rotate-x: initial;
+      --tw-rotate-y: initial;
+      --tw-rotate-z: initial;
+      --tw-skew-x: initial;
+      --tw-skew-y: initial;
+      --tw-pan-x: initial;
+      --tw-pan-y: initial;
+      --tw-pinch-zoom: initial;
+      --tw-space-y-reverse: 0;
+      --tw-space-x-reverse: 0;
+      --tw-divide-x-reverse: 0;
+      --tw-border-style: solid;
+      --tw-divide-y-reverse: 0;
+      --tw-leading: initial;
+      --tw-font-weight: initial;
+      --tw-tracking: initial;
+      --tw-ordinal: initial;
+      --tw-slashed-zero: initial;
+      --tw-numeric-figure: initial;
+      --tw-numeric-spacing: initial;
+      --tw-numeric-fraction: initial;
+      --tw-shadow: 0 0 #0000;
+      --tw-shadow-color: initial;
+      --tw-shadow-alpha: 100%;
+      --tw-inset-shadow: 0 0 #0000;
+      --tw-inset-shadow-color: initial;
+      --tw-inset-shadow-alpha: 100%;
+      --tw-ring-color: initial;
+      --tw-ring-shadow: 0 0 #0000;
+      --tw-inset-ring-color: initial;
+      --tw-inset-ring-shadow: 0 0 #0000;
+      --tw-ring-inset: initial;
+      --tw-ring-offset-width: 0px;
+      --tw-ring-offset-color: #fff;
+      --tw-ring-offset-shadow: 0 0 #0000;
+      --tw-outline-style: solid;
+      --tw-blur: initial;
+      --tw-brightness: initial;
+      --tw-contrast: initial;
+      --tw-grayscale: initial;
+      --tw-hue-rotate: initial;
+      --tw-invert: initial;
+      --tw-opacity: initial;
+      --tw-saturate: initial;
+      --tw-sepia: initial;
+      --tw-drop-shadow: initial;
+      --tw-drop-shadow-color: initial;
+      --tw-drop-shadow-alpha: 100%;
+      --tw-drop-shadow-size: initial;
+      --tw-backdrop-blur: initial;
+      --tw-backdrop-brightness: initial;
+      --tw-backdrop-contrast: initial;
+      --tw-backdrop-grayscale: initial;
+      --tw-backdrop-hue-rotate: initial;
+      --tw-backdrop-invert: initial;
+      --tw-backdrop-opacity: initial;
+      --tw-backdrop-saturate: initial;
+      --tw-backdrop-sepia: initial;
+      --tw-duration: initial;
+      --tw-content: "";
+    }
+  }
+}

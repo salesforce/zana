@@ -3,7 +3,7 @@
   "sdkVersion": "0.1.0",
   "artifactFormatVersion": 1,
   "pluginId": "tasks",
-  "pluginVersion": "0.1.0",
+  "pluginVersion": "0.2.0",
   "builtWith": {
     "zccVersion": "2.2.2",
     "pluginSdkVersion": "0.1.0"

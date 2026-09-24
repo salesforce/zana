@@ -7,6 +7,7 @@ import {
   createConversationThread,
   createEnvironment,
   listThreadPlanRevisions,
+  getThreadPlanTask,
   openDatabase,
   updateConversationThreadTitle,
   updateThreadPlanTask,
@@ -20,7 +21,8 @@ import {
   markOwningThreadPlanTasksInterrupted,
   recordThreadExecutionMode,
   snapshotApprovedPlan,
-  syncPlanFromLatestEvents
+  syncPlanFromLatestEvents,
+  updateUserPlanTask
 } from './conversation-plan.js';
 
 let db: ZccDatabase | null = null;
@@ -388,5 +390,179 @@ describe('durable thread plan', () => {
         todosAssigned: 1
       }
     ]);
+  });
+});
+
+describe('BB provider plan snapshot semantics with the durable Plan display', () => {
+  it('uses the latest checklist source and clears explicit empty todo snapshots', () => {
+    const { thread } = setup();
+    completeItem(thread.id, { type: 'planSteps', steps: [{ step: 'Old native plan' }] });
+    completeItem(thread.id, { type: 'toolCall', arguments: { todos: [{ content: 'New todo', status: 'pending' }] } });
+    syncPlanFromLatestEvents(db!, thread.id);
+    expect(getDurableThreadPlanView(db!, thread.id)!.tasks.map(task => task.text)).toEqual(['New todo']);
+    completeItem(thread.id, { type: 'toolCall', arguments: { todos: [] } });
+    syncPlanFromLatestEvents(db!, thread.id);
+    expect(getDurableThreadPlanView(db!, thread.id)!.tasks).toEqual([]);
+  });
+  it('adds child references to an existing plan without removing another thread\'s steps', () => {
+    const { thread } = setup();
+    importProviderPlanSteps(db!, { threadId: thread.id, steps: [{ step: 'Parent task' }] });
+    const child = createConversationThread(db!, { projectId: thread.projectId, hostId: thread.hostId,
+      environmentId: thread.environmentId!, providerId: thread.providerId, parentThreadId: thread.id, title: 'Child' });
+    importProviderPlanSteps(db!, { threadId: child.id, steps: [{ step: 'Child task' }] });
+    const view = getDurableThreadPlanView(db!, thread.id)!;
+    expect(view.tasks.map(task => task.text).sort()).toEqual(['Child task', 'Parent task']);
+    expect(view.referencedBy).toContainEqual(expect.objectContaining({ threadId: child.id, role: 'Agent', todosAssigned: 1 }));
+  });
+  it('updates rewritten steps that share the provider key prefix', () => {
+    const { thread } = setup();
+    const prefix = 'A'.repeat(90);
+    importProviderPlanSteps(db!, { threadId: thread.id, steps: [{ step: `${prefix} first` }] });
+    importProviderPlanSteps(db!, { threadId: thread.id, steps: [{ step: `${prefix} revised` }] });
+    expect(getDurableThreadPlanView(db!, thread.id)!.tasks.map(task => task.text)).toEqual([`${prefix} revised`]);
+  });
+  it('rejects another plan\'s task before mutating it', () => {
+    const { thread } = setup();
+    const other = createConversationThread(db!, { projectId: thread.projectId, hostId: thread.hostId,
+      environmentId: thread.environmentId!, providerId: thread.providerId });
+    importProviderPlanSteps(db!, { threadId: thread.id, steps: [{ step: 'My task' }] });
+    importProviderPlanSteps(db!, { threadId: other.id, steps: [{ step: 'Their task' }] });
+    const task = getDurableThreadPlanView(db!, other.id)!.tasks[0]!;
+    expect(() => updateUserPlanTask({ db } as never, thread.id, task.id, { text: 'Wrong plan' })).toThrow('plan task is not registered');
+    expect(getThreadPlanTask(db!, task.id)).toMatchObject({ text: 'Their task', userEdited: false });
+  });
+  it('replaces stale steps, preserves reordered identities, and retains saved markdown', () => {
+    const { thread } = setup();
+    snapshotApprovedPlan(db!, { threadId: thread.id, markdown: '# The plan', source: 'approval' });
+    importProviderPlanSteps(db!, { threadId: thread.id, steps: [{ step: 'One' }, { step: 'Two' }] });
+    const before = getDurableThreadPlanView(db!, thread.id)!;
+    const two = before.tasks.find(task => task.text === 'Two')!.id;
+    importProviderPlanSteps(db!, { threadId: thread.id, steps: [{ step: 'Two', status: 'completed' }, { step: 'Three' }] });
+    const after = getDurableThreadPlanView(db!, thread.id)!;
+    expect(after.tasks.map(task => task.text)).toEqual(['Two', 'Three']);
+    expect(after.tasks[0]).toMatchObject({ id: two, status: 'completed' });
+    expect(after.markdown).toBe('# The plan');
+    expect(after.revision).toBe(before.revision);
+  });
+  it('clears provider rows on an empty snapshot, retaining user edits and other owners', () => {
+    const { thread } = setup();
+    importProviderPlanSteps(db!, { threadId: thread.id, steps: [{ step: 'Keep' }, { step: 'Remove' }] });
+    const plan = getDurableThreadPlanView(db!, thread.id)!;
+    updateThreadPlanTask(db!, plan.tasks[0]!.id, { text: 'User edit', userEdited: true });
+    completeItem(thread.id, { type: 'planSteps', steps: [] });
+    syncPlanFromLatestEvents(db!, thread.id);
+    expect(getDurableThreadPlanView(db!, thread.id)!.tasks.map(task => task.text)).toEqual(['User edit']);
+  });
+  it('handles repeated step labels without conflating distinct entries', () => {
+    const { thread } = setup();
+    importProviderPlanSteps(db!, { threadId: thread.id, steps: [{ step: 'Check' }, { step: 'Check' }] });
+    const before = getDurableThreadPlanView(db!, thread.id)!;
+    importProviderPlanSteps(db!, { threadId: thread.id, steps: [{ step: 'Check', status: 'completed' }, { step: 'Check', status: 'in_progress' }] });
+    const after = getDurableThreadPlanView(db!, thread.id)!;
+    expect(after.tasks.map(task => task.id)).toEqual(before.tasks.map(task => task.id));
+    expect(after.tasks.map(task => task.status)).toEqual(['completed', 'in_progress']);
+  });
+});
+
+
+describe('plain planning replies', () => {
+  function begin(threadId: string, turnId: string, mode = 'plan') {
+    appendConversationThreadEvent(db!, { threadId, type: 'client/turn/requested', payload: {
+      type: 'client/turn/requested', execution: { acpMode: mode }, input: [{ type: 'text', text: 'Write the plan', mentions: [] }]
+    } });
+    appendConversationThreadEvent(db!, { threadId, type: 'turn/started', payload: { type: 'turn/started', scope: { turnId } } });
+  }
+  function finish(threadId: string, turnId: string, status = 'completed') {
+    appendConversationThreadEvent(db!, { threadId, type: 'turn.completed', payload: { type: 'turn/completed', scope: { turnId }, status } });
+    syncPlanFromLatestEvents(db!, threadId);
+  }
+  it('captures a completed plain reply without a checklist, once, and saves later revisions', () => {
+    const { thread } = setup();
+    begin(thread.id, 'first');
+    completeItem(thread.id, { type: 'agentMessage', text: '# Draft one\n\nImplement a temperature converter.' }, 'first');
+    syncPlanFromLatestEvents(db!, thread.id);
+    expect(getDurableThreadPlanView(db!, thread.id)).toBeNull();
+    finish(thread.id, 'first');
+    expect(getDurableThreadPlanView(db!, thread.id)).toMatchObject({ markdown: '# Draft one\n\nImplement a temperature converter.', revision: 1, revisionSource: 'provider-draft', tasks: [] });
+    syncPlanFromLatestEvents(db!, thread.id);
+    expect(getDurableThreadPlanView(db!, thread.id)?.revision).toBe(1);
+    begin(thread.id, 'second');
+    completeItem(thread.id, { type: 'agentMessage', text: '# Draft two\n\nAlso support Kelvin.' }, 'second');
+    finish(thread.id, 'second');
+    const plan = getDurableThreadPlanView(db!, thread.id)!;
+    expect(plan).toMatchObject({ revision: 2, markdown: '# Draft two\n\nAlso support Kelvin.' });
+    expect(readFileSync(plan.filePath!, 'utf8')).toBe(plan.markdown);
+  });
+  it('does not anchor a new plain revision to an older checklist', () => {
+    const { thread } = setup();
+    begin(thread.id, 'first');
+    completeItem(thread.id, { type: 'agentMessage', text: '# Old draft' }, 'first');
+    completeItem(thread.id, { type: 'planSteps', steps: [{ step: 'Inspect', status: 'pending' }] }, 'first');
+    finish(thread.id, 'first');
+    begin(thread.id, 'second');
+    completeItem(thread.id, { type: 'agentMessage', text: '# Revised draft' }, 'second');
+    finish(thread.id, 'second');
+    expect(getDurableThreadPlanView(db!, thread.id)?.markdown).toBe('# Revised draft');
+  });
+  it.each(['agent', 'ask'])('does not capture ordinary %s replies after planning', mode => {
+    const { thread } = setup();
+    recordThreadExecutionMode(db!, { threadId: thread.id, requestedMode: 'plan' });
+    begin(thread.id, 'one', mode);
+    completeItem(thread.id, { type: 'agentMessage', text: '# Ordinary response' }, 'one');
+    finish(thread.id, 'one');
+    expect(getDurableThreadPlanView(db!, thread.id)?.markdown).toBeNull();
+  });
+  it.each(['interrupted', 'failed'])('does not capture a %s planning turn', status => {
+    const { thread } = setup();
+    begin(thread.id, 'one');
+    completeItem(thread.id, { type: 'agentMessage', text: '# Partial draft' }, 'one');
+    finish(thread.id, 'one', status);
+    expect(getDurableThreadPlanView(db!, thread.id)).toBeNull();
+  });
+  it('does not replay provider history over a user edit', () => {
+    const { thread } = setup();
+    completeItem(thread.id, { type: 'plan', text: '# Native draft' });
+    syncPlanFromLatestEvents(db!, thread.id);
+    snapshotApprovedPlan(db!, { threadId: thread.id, markdown: '# User correction', source: 'user' });
+    syncPlanFromLatestEvents(db!, thread.id);
+    expect(getDurableThreadPlanView(db!, thread.id)?.markdown).toBe('# User correction');
+  });
+  it('keeps the reviewed document when implementation emits checklist commentary', () => {
+    const { thread } = setup();
+    begin(thread.id, 'plan');
+    completeItem(thread.id, { type: 'agentMessage', text: '# Reviewed proposal' }, 'plan');
+    finish(thread.id, 'plan');
+    begin(thread.id, 'implementation', 'agent');
+    completeItem(thread.id, { type: 'planSteps', explanation: 'Finished implementation and tests.', steps: [{ step: 'Implement', status: 'completed' }] }, 'implementation');
+    finish(thread.id, 'implementation');
+    expect(getDurableThreadPlanView(db!, thread.id)).toMatchObject({ markdown: '# Reviewed proposal', revision: 1, progress: { completed: 1, total: 1 } });
+  });
+  it('allows an explicit new planning turn to revise a user document', () => {
+    const { thread } = setup();
+    snapshotApprovedPlan(db!, { threadId: thread.id, markdown: '# User draft', source: 'user' });
+    begin(thread.id, 'revision');
+    completeItem(thread.id, { type: 'agentMessage', text: '# Requested revision' }, 'revision');
+    finish(thread.id, 'revision');
+    expect(getDurableThreadPlanView(db!, thread.id)).toMatchObject({ markdown: '# Requested revision', revision: 2 });
+  });
+  it('ignores short answers and nested turns', () => {
+    const { thread } = setup();
+    begin(thread.id, 'one');
+    completeItem(thread.id, { type: 'agentMessage', text: 'Okay.' }, 'one');
+    finish(thread.id, 'one');
+    expect(getDurableThreadPlanView(db!, thread.id)).toBeNull();
+    appendConversationThreadEvent(db!, { threadId: thread.id, type: 'turn/started', payload: { type: 'turn/started', scope: { turnId: 'child' }, parentToolCallId: 'tool' } });
+    completeItem(thread.id, { type: 'agentMessage', text: '# Nested report' }, 'child');
+    finish(thread.id, 'child');
+    expect(getDurableThreadPlanView(db!, thread.id)).toBeNull();
+  });
+  it('prefers a native document after the checklist and excludes nested replies', () => {
+    const { thread } = setup();
+    begin(thread.id, 'one');
+    completeItem(thread.id, { type: 'planSteps', steps: [] }, 'one');
+    completeItem(thread.id, { type: 'plan', text: '# Native document' }, 'one');
+    completeItem(thread.id, { type: 'agentMessage', text: '# Child report', parentToolCallId: 'child' }, 'one');
+    finish(thread.id, 'one');
+    expect(getDurableThreadPlanView(db!, thread.id)?.markdown).toBe('# Native document');
   });
 });

@@ -9,7 +9,7 @@ const props = { editor: <iframe title="Script" />, children: <aside>Conversation
 describe('Agentforce studio resizing', () => {
   it('supports keyboard sizing, bounds, reset and persistence between workflows', () => {
     const { rerender } = render(<AgentforceStudioSplit {...props} />);
-    const divider = screen.getByRole('separator', { name: 'Resize editor and conversation' });
+    const divider = screen.getByRole('separator', { name: 'Resize editor and side panel' });
     expect(divider.getAttribute('aria-valuenow')).toBe('58');
     fireEvent.keyDown(divider, { key: 'ArrowLeft' });
     expect(divider.getAttribute('aria-valuenow')).toBe('54');

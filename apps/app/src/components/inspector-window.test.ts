@@ -24,13 +24,13 @@ import {
 } from './inspector-window.js';
 
 const viewport = { width: 1600, height: 1000 };
-const start = { left: 200, top: 80, width: 800, height: 600 };
+const start = { left: 400, top: 200, width: 800, height: 600 };
 
 describe('inspector window geometry', () => {
-  it('clamps a frame inside the viewport gutter and minimum size', () => {
+  it('centers the frame after clamping to the minimum size or viewport gutter', () => {
     expect(clampInspectorFrame({ left: -40, top: -20, width: 80, height: 50 }, viewport)).toEqual({
-      left: INSPECTOR_VIEWPORT_GUTTER,
-      top: INSPECTOR_VIEWPORT_GUTTER,
+      left: (viewport.width - INSPECTOR_MIN_WIDTH) / 2,
+      top: (viewport.height - INSPECTOR_MIN_HEIGHT) / 2,
       width: INSPECTOR_MIN_WIDTH,
       height: INSPECTOR_MIN_HEIGHT
     });
@@ -53,64 +53,37 @@ describe('inspector window geometry', () => {
     });
   });
 
-  it('resizes from each edge while keeping the opposite edge planted', () => {
-    expect(
-      inspectorFrameFromPointer({
-        start,
-        originX: 1000,
-        originY: 400,
-        clientX: 1100,
-        clientY: 430,
-        edge: 'e',
-        viewport
-      })
-    ).toMatchObject({ left: 200, width: 900, height: 600 });
-    expect(
-      inspectorFrameFromPointer({
-        start,
-        originX: 200,
-        originY: 400,
-        clientX: 140,
-        clientY: 400,
-        edge: 'w',
-        viewport
-      })
-    ).toMatchObject({ left: 140, width: 860 });
-    expect(
-      inspectorFrameFromPointer({
-        start,
-        originX: 600,
-        originY: 680,
-        clientX: 600,
-        clientY: 740,
-        edge: 's',
-        viewport
-      })
-    ).toMatchObject({ top: 80, height: 660 });
-    expect(
-      inspectorFrameFromPointer({
-        start,
-        originX: 600,
-        originY: 80,
-        clientX: 600,
-        clientY: 40,
-        edge: 'n',
-        viewport
-      })
-    ).toMatchObject({ top: 40, height: 640 });
-    const corner = inspectorFrameFromPointer({
-      start,
-      originX: 1000,
-      originY: 680,
-      clientX: 1080,
-      clientY: 760,
-      edge: 'se',
-      viewport
-    });
-    expect(corner).toMatchObject({ left: 200, top: 80, width: 880, height: 680 });
+  it.each(['e', 'w', 'n', 's', 'ne', 'nw', 'se', 'sw'] as const)(
+    'mirrors outward and inward drags from the %s handle around the center', (edge) => {
+      for (const distance of [60, -60]) {
+        const horizontal = edge.includes('e') || edge.includes('w');
+        const vertical = edge.includes('n') || edge.includes('s');
+        const frame = inspectorFrameFromPointer({
+          start, originX: 800, originY: 500,
+          clientX: 800 + (edge.includes('w') ? -distance : distance),
+          clientY: 500 + (edge.includes('n') ? -distance : distance),
+          edge, viewport
+        });
+        expect(frame).toEqual({
+          left: start.left - (horizontal ? distance : 0),
+          top: start.top - (vertical ? distance : 0),
+          width: start.width + (horizontal ? distance * 2 : 0),
+          height: start.height + (vertical ? distance * 2 : 0)
+        });
+      }
+    }
+  );
+
+  it.each(['se', 'sw', 'ne', 'nw'] as const)('stays centered at viewport limits from %s', (edge) => {
+    expect(inspectorFrameFromPointer({
+      start, originX: 0, originY: 0,
+      clientX: edge.includes('w') ? -4000 : 4000,
+      clientY: edge.includes('n') ? -4000 : 4000,
+      edge, viewport
+    })).toEqual({ left: 16, top: 16, width: 1568, height: 968 });
   });
 
-  it('stops shrinking at the minimum size without drifting the planted edge', () => {
+  it('stops shrinking at the minimum size without moving the center', () => {
     const west = inspectorFrameFromPointer({
       start,
       originX: 200,
@@ -121,7 +94,7 @@ describe('inspector window geometry', () => {
       viewport
     });
     expect(west.width).toBe(INSPECTOR_MIN_WIDTH);
-    expect(west.left + west.width).toBe(start.left + start.width);
+    expect(west.left + west.width / 2).toBe(viewport.width / 2);
     const south = inspectorFrameFromPointer({
       start,
       originX: 600,
@@ -132,14 +105,14 @@ describe('inspector window geometry', () => {
       viewport
     });
     expect(south.height).toBe(INSPECTOR_MIN_HEIGHT);
-    expect(south.top).toBe(start.top);
+    expect(south.top + south.height / 2).toBe(viewport.height / 2);
   });
 
   it('moves the frame from the keyboard and ignores unrelated keys', () => {
-    expect(inspectorFrameFromKey(start, 'ArrowRight', viewport)?.width).toBe(824);
-    expect(inspectorFrameFromKey(start, 'ArrowLeft', viewport)?.width).toBe(776);
-    expect(inspectorFrameFromKey(start, 'ArrowDown', viewport)?.height).toBe(624);
-    expect(inspectorFrameFromKey(start, 'ArrowUp', viewport)?.height).toBe(576);
+    expect(inspectorFrameFromKey(start, 'ArrowRight', viewport)).toMatchObject({ width: 824, left: 388 });
+    expect(inspectorFrameFromKey(start, 'ArrowLeft', viewport)).toMatchObject({ width: 776, left: 412 });
+    expect(inspectorFrameFromKey(start, 'ArrowDown', viewport)).toMatchObject({ height: 624, top: 188 });
+    expect(inspectorFrameFromKey(start, 'ArrowUp', viewport)).toMatchObject({ height: 576, top: 212 });
     expect(inspectorFrameFromKey(start, 'Home', viewport)).toMatchObject({
       width: INSPECTOR_MIN_WIDTH,
       height: INSPECTOR_MIN_HEIGHT
@@ -156,8 +129,8 @@ describe('inspector window geometry', () => {
   it('maps CSS for a custom frame and drops it while fullscreen', () => {
     expect(inspectorFrameStyle(start, false)).toEqual({
       position: 'absolute',
-      left: 200,
-      top: 80,
+      left: 400,
+      top: 200,
       width: 800,
       height: 600,
       maxHeight: 600,

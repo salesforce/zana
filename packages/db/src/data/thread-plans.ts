@@ -294,6 +294,11 @@ export function getThreadPlanTask(db: ZccDatabase, taskId: string): ThreadPlanTa
   return row ? toTask(row) : null;
 }
 
+/** Provider snapshots may remove their own, unedited rows; user work is retained. */
+export function deleteProviderThreadPlanTask(db: ZccDatabase, taskId: string): void {
+  db.sqlite.prepare("DELETE FROM thread_plan_tasks WHERE id = ? AND owner_kind = 'provider' AND user_edited = 0").run(taskId);
+}
+
 export function createThreadPlanTask(
   db: ZccDatabase,
   input: {

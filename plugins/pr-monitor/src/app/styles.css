@@ -25,13 +25,14 @@
   background: var(--bg-panel);
   color: var(--text-primary);
   font-size: 13px;
+  container-type: inline-size;
 }
 
 .prm-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--border);
   gap: 12px;
   flex-wrap: wrap;
@@ -92,8 +93,9 @@
   gap: 6px;
   line-height: 1.2;
   padding: 7px 12px;
-  border-radius: 8px;
-  background: var(--bg-elevated);
+  min-height: 30px;
+  border-radius: 6px;
+  background: var(--bg-panel);
   color: var(--text-primary);
   border: 1px solid var(--border-strong);
   font-size: 12px;
@@ -145,8 +147,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px;
-  border-radius: 4px;
+  padding: 4px;
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 5px;
   background: transparent;
   border: 0;
   color: var(--text-muted);
@@ -487,42 +491,70 @@
 
 /* ── Modal ──────────────────────────────────────────────────────────────── */
 
+.prm-modal-backdrop {
+  padding: 24px;
+  overscroll-behavior: contain;
+}
+
 .prm-modal {
-  width: min(440px, 90vw);
-  background: var(--bg-elevated);
-  border-radius: 8px;
+  width: min(480px, 100%);
+  max-height: min(800px, calc(100dvh - 48px));
+  min-height: 0;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  border-radius: 10px;
   border: 1px solid var(--border-strong);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  outline: none;
 }
 
 .prm-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  flex-shrink: 0;
+  gap: 16px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--border);
 }
 
 .prm-modal-header h3 {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  min-width: 0;
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.prm-modal-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
 }
 
 .prm-modal-body {
-  padding: 14px;
+  padding: 20px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
 }
 
 /* Help popup body — readable prose with a tidy bulleted list. */
 .prm-help-body {
   font-size: 13px;
   line-height: 1.5;
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 .prm-help-body p {
@@ -542,7 +574,10 @@
 }
 
 .prm-modal-footer {
-  padding: 10px 14px;
+  padding: 12px 20px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  background: var(--bg-elevated);
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: flex-end;
@@ -1536,17 +1571,19 @@
 /* ── Settings dialogs (Add / Suggested / Browse / Repo-settings / Test) ─────── */
 
 .prm-modal--wide {
-  width: min(600px, 92vw);
+  width: min(680px, 100%);
 }
 
 .prm-dialog-title {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .prm-dialog-tabs {
   display: flex;
+  flex-shrink: 0;
+  overflow-x: auto;
   gap: 4px;
   padding: 0 14px;
   border-bottom: 1px solid var(--border);
@@ -1645,7 +1682,7 @@
   padding: 6px 6px;
   border: none;
   background: none;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -1663,7 +1700,7 @@
 }
 
 .prm-browse-group-count {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-weight: 400;
 }
 
@@ -2042,7 +2079,7 @@
      yellow at 13px — the darker `--accent-gold` (#d4a017) muddies to grey at
      this size. Declared after the base `.prm-tile-icon-btn` rule so it wins
      the cascade at equal specificity. */
-  color: #f5b400;
+  color: var(--accent-gold);
 }
 
 /* Mute indicator (AC-LIST-18.3). */
@@ -2465,7 +2502,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10px;
-  color: var(--text-faint, var(--text-dim));
+  color: var(--text-muted);
 }
 
 .prm-board-card-wi {
@@ -2483,7 +2520,7 @@
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--text-faint, var(--text-dim));
+  color: var(--text-muted);
 }
 
 .prm-board-card-actions {
@@ -2559,8 +2596,7 @@
 /* ── PR detail modal (opened from a board card) ─────────────────────────── */
 
 .prm-modal--detail {
-  width: min(720px, 94vw);
-  max-height: 86vh;
+  width: min(840px, 100%);
   outline: none;
 }
 
@@ -2583,7 +2619,7 @@
 .prm-detail-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   overflow-y: auto;
   min-height: 0;
 }
@@ -2605,6 +2641,7 @@
 
 .prm-detail-heading {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
   gap: 8px;
   min-width: 0;
@@ -2612,7 +2649,7 @@
 
 .prm-detail-pr-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
   line-height: 1.35;
   color: var(--text-primary);
@@ -2633,7 +2670,7 @@
 
 .prm-detail-facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px 16px;
   margin: 0;
 }
@@ -2646,14 +2683,13 @@
 }
 
 .prm-detail-fact dt {
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-faint, var(--text-muted));
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
 }
 
 .prm-detail-fact dd {
+  overflow-wrap: anywhere;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2670,11 +2706,10 @@
 }
 
 .prm-detail-label {
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-faint, var(--text-muted));
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
 }
 
 .prm-detail-branch {
@@ -2687,7 +2722,7 @@
 .prm-detail-desc {
   font-size: 13px;
   line-height: 1.5;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -2730,4 +2765,113 @@
 
 .prm-detail-section .prm-reviewers {
   margin-top: 0;
+}
+
+/* Keep portaled surfaces on the same typography and focus treatment as the panel. */
+.prm-panel :is(button, input, select, textarea),
+.prm-modal :is(button, input, select, textarea),
+.prm-tile-menu :is(button, input) { font-family: inherit; }
+
+.prm-panel :is(button, input, select, textarea):focus-visible,
+.prm-modal :is(button, input, select, textarea):focus-visible,
+.prm-tile-menu :is(button, input):focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent-blue));
+  outline-offset: 2px;
+}
+
+.prm-modal .prm-input { width: 100%; min-width: 0; min-height: 34px; }
+.prm-modal .prm-row-icon-btn { flex-shrink: 0; }
+.prm-modal button:disabled { cursor: not-allowed; opacity: 0.5; }
+.prm-modal .prm-field:last-child { margin-bottom: 0; }
+.prm-modal-desc { line-height: 1.6; }
+
+.prm-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 200px;
+  gap: 24px;
+  align-items: start;
+}
+.prm-detail-main, .prm-detail-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+.prm-detail-sidebar { border-left: 1px solid var(--border); padding-left: 20px; }
+.prm-detail-main .prm-detail-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.prm-detail-main .prm-detail-section + .prm-detail-section { border-top: 1px solid var(--border); padding-top: 16px; }
+.prm-detail-main .prm-check-row { padding: 8px 0; align-items: baseline; }
+.prm-detail-main .prm-check-name { overflow-wrap: anywhere; white-space: normal; }
+.prm-detail-sidebar .prm-branch { white-space: normal; overflow-wrap: anywhere; }
+.prm-detail-sidebar .prm-reviewers-group { flex-wrap: wrap; }
+.prm-detail-sidebar .prm-reviewers-label { flex-basis: 100%; }
+.prm-detail-sidebar .prm-project-row { white-space: normal; text-align: left; min-height: 30px; }
+.prm-detail-description-link { white-space: normal; text-align: left; }
+.prm-text-btn {
+  border: 0;
+  background: transparent;
+  color: var(--settings-link, var(--accent-blue));
+  padding: 2px 0;
+  align-self: flex-start;
+  font-size: 12px;
+  cursor: pointer;
+}
+.prm-text-btn:hover { text-decoration: underline; }
+.prm-detail-hint { padding: 8px 12px; border-radius: 6px; background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.prm-detail-sync-error { flex-wrap: wrap; }
+.prm-detail-sync-error span { flex-basis: 200px; overflow-wrap: anywhere; }
+.prm-detail-fact .prm-avatar { flex-shrink: 0; }
+
+.prm-settings-nav { width: 184px; background: var(--bg-base); padding: 20px 10px; }
+.prm-settings-pane { padding: 24px; }
+.prm-area { margin-inline: auto; gap: 20px; }
+.prm-area-heading p { line-height: 1.6; margin-top: 4px; }
+.prm-subsection { padding-top: 16px; gap: 12px; }
+.prm-entity-title { overflow-wrap: anywhere; flex-wrap: wrap; }
+.prm-entity-side { flex-wrap: wrap; }
+.prm-nav-group-label { color: var(--text-muted); }
+.prm-nav-row { min-height: 32px; }
+
+@container (max-width: 640px) {
+  .prm-header { padding: 12px; }
+  .prm-header-actions { flex-wrap: wrap; }
+  .prm-settings-body { flex-direction: column; }
+  .prm-settings-nav { width: 100%; flex-direction: row; gap: 12px; padding: 8px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .prm-nav-group { flex-direction: row; }
+  .prm-nav-group-label { display: none; }
+  .prm-nav-row { white-space: nowrap; width: auto; }
+  .prm-settings-pane { padding: 16px; }
+  .prm-repo-top { flex-wrap: wrap; }
+}
+
+@media (max-width: 640px) {
+  .prm-modal-backdrop { padding: 12px; }
+  .prm-modal { max-height: calc(100dvh - 24px); }
+  .prm-modal-header, .prm-modal-body { padding: 16px; }
+  .prm-modal-footer { padding: 12px 16px; }
+  .prm-detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .prm-detail-sidebar { border-left: 0; padding-left: 0; border-top: 1px solid var(--border); padding-top: 16px; }
+  .prm-detail-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .prm-detail-footer-spacer { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prm-panel *, .prm-modal *, .prm-tile-menu * { transition: none !important; }
+  .prm-spin { animation: none !important; }
+}
+
+.prm-sync-filter, .prm-host-filter {
+  width: 300px;
+  min-width: 0;
+  max-width: calc(100vw - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.prm-detail-sidebar .prm-tip::after { left: auto; right: 0; transform: none; }
+.prm-detail-sync-error {
+  color: color-mix(in srgb, var(--accent-gold) 70%, var(--text-primary));
+  background: color-mix(in srgb, var(--accent-gold) 10%, var(--bg-panel));
 }

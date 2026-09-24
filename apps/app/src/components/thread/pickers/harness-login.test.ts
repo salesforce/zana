@@ -129,8 +129,18 @@ describe('harness login status', () => {
   it('asks to sign in with pi when that catalog is empty', () => {
     expect(emptyModelsHint('pi', null)).toBe('Sign in with pi');
     expect(emptyModelsHint('pi', undefined)).toBe('Sign in with pi');
-    expect(emptyModelsHint('pi', 'timeout')).toBe('No models available');
-    expect(emptyModelsHint('pi', 'failed')).toBe('No models available');
+    expect(emptyModelsHint('pi', 'timeout')).toBe('Timed out loading models');
+    expect(emptyModelsHint('pi', 'failed')).toBe('Could not load models');
+    expect(emptyModelsHint('pi', 'failed', 'Host is suspended')).toBe('Host is suspended');
     expect(emptyModelsHint('pi', 'auth_required')).toBe('Sign in with pi');
+  });
+
+  it('maps catalog failure codes onto operator-facing copy', () => {
+    expect(emptyModelsHint('codex', 'missing_executable')).toBe('CLI not found');
+    expect(emptyModelsHint('codex', 'timeout')).toBe('Timed out loading models');
+    expect(emptyModelsHint('codex', 'provider_unavailable')).toBe('Provider plugin failed to load');
+    expect(emptyModelsHint('codex', 'failed', 'bb could not find the Codex CLI on this machine.')).toBe(
+      'bb could not find the Codex CLI on this machine.'
+    );
   });
 });

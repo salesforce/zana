@@ -49,6 +49,16 @@ describe('connection manager', () => {
     vi.unstubAllEnvs();
   });
 
+  it.each([
+    { code: 1, stdout: '', stderr: 'PRIVATE_CLI_DETAILS' },
+    { code: 0, stdout: '{"status":1,"message":"PRIVATE_CLI_DETAILS"}', stderr: '' },
+    { code: 0, stdout: 'not json PRIVATE_CLI_DETAILS', stderr: '' },
+    { code: 0, stdout: '{"result":null}', stderr: '' },
+  ])('reports failed inventories separately from an empty roster: %j', async result => {
+    const manager = new ConnectionManager(deps({ exec: () => result }), async () => ({ defaultOrg: '', apiVersion: '62.0' }));
+    await expect(manager.listOrgs()).rejects.toMatchObject({ code: 'orgs_failed', message: 'Could not read Salesforce CLI connections. Check the CLI, then try again.' });
+  });
+
   it('uses the setting alias and caches org display', async () => {
     let displays = 0;
     const manager = new ConnectionManager(
@@ -69,6 +79,14 @@ describe('connection manager', () => {
     expect(publicOrgView(first)).not.toHaveProperty('accessToken');
     expect(JSON.stringify(publicOrgView(first))).not.toContain('TOKEN');
     expect(second.alias).toBe('dev');
+  });
+
+  it('requires a selection when CLI connections have no explicit default', async () => {
+    const exec = vi.fn((_args: string[]) => ({ code: 0, stdout: '{"status":0,"result":{"sandboxes":[{"alias":"first","username":"first@example.com"}]}}', stderr: '' }));
+    const manager = new ConnectionManager(deps({ exec }), async () => ({ defaultOrg: '', apiVersion: '62.0' }));
+    await expect(manager.resolveAlias()).resolves.toBeNull();
+    await expect(manager.connect()).rejects.toMatchObject({ code: 'no_org' });
+    expect(exec.mock.calls.every(([args]) => args[0] === 'org' && args[1] === 'list')).toBe(true);
   });
 
   it('connects a requested alias without using the default', async () => {
@@ -303,7 +321,7 @@ describe('connection manager', () => {
       }),
       async () => ({ defaultOrg: '', apiVersion: '62.0' })
     );
-    await expect(failedList.connect()).rejects.toMatchObject({ code: 'no_org' });
+    await expect(failedList.connect()).rejects.toMatchObject({ code: 'orgs_failed' });
   });
 
   it('reads a redacted org-display token from sf org auth show-access-token', async () => {

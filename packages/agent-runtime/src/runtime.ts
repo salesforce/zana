@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -143,6 +144,7 @@ interface FindReapableIdleProviderSessionArgs {
 }
 
 interface ResolveProviderProcessKeyArgs {
+  skillRoots?: readonly AgentRuntimeSkillRoot[];
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
   bridgeLaunch?: AgentRuntimeBridgeLaunch;
   providerId: string;
@@ -516,10 +518,11 @@ function createAgentRuntimeInternal(
       args.bridgeLaunch === undefined
         ? baseKey
         : `${baseKey}#bridge:${bridgeLaunchProcessKey(args.bridgeLaunch)}`;
-    if (args.acpLaunchSpec === undefined) {
-      return bridgeKey;
-    }
-    return `${bridgeKey}#acp:${fingerprintAcpLaunchSpec(args.acpLaunchSpec)}`;
+    const roots = skillRootsForProvider(args.providerId, args.skillRoots);
+    const skillKey = roots.length === 0 ? bridgeKey
+      : `${bridgeKey}#skills:${createHash("sha256").update(JSON.stringify(roots)).digest("hex")}`;
+    return args.acpLaunchSpec === undefined ? skillKey
+      : `${skillKey}#acp:${fingerprintAcpLaunchSpec(args.acpLaunchSpec)}`;
   }
 
   function requireProviderProcess(
@@ -788,10 +791,11 @@ function createAgentRuntimeInternal(
 
   function skillRootsForProvider(
     providerId: string,
+    selectedRoots: readonly AgentRuntimeSkillRoot[] = skillRoots,
   ): readonly AgentRuntimeSkillRoot[] {
     return filterSkillRootsForProvider({
       providerId,
-      skillRoots,
+      skillRoots: normalizeSkillRoots({ skillRoots: selectedRoots }),
     });
   }
 
@@ -1126,6 +1130,7 @@ function createAgentRuntimeInternal(
         : {}),
       providerThreadId,
       providerId: currentConfig.providerId,
+      skillRoots: currentConfig.skillRoots,
       options: args.options,
       ...(resumeInstructions !== undefined
         ? { instructions: resumeInstructions }
@@ -1166,6 +1171,7 @@ function createAgentRuntimeInternal(
     await providerProcesses.ensureProvider({
       processKey,
       providerId,
+      skillRoots: threadConfig?.skillRoots,
       ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
     });
     const proc = requireProviderProcess({ processKey, providerId });
@@ -1643,13 +1649,16 @@ function createAgentRuntimeInternal(
 
   const runtime: AgentRuntime = {
     async ensureProvider({
+      skillRoots: selectedSkillRoots,
       providerId,
       forThreadId,
       acpLaunchSpec,
       bridgeLaunch,
     }) {
       await providerProcesses.ensureProvider({
+        skillRoots: normalizeSkillRoots({ skillRoots: selectedSkillRoots ?? skillRoots }),
         processKey: resolveProviderProcessKey({
+          skillRoots: selectedSkillRoots,
           ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
           ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
           providerId,
@@ -1662,6 +1671,7 @@ function createAgentRuntimeInternal(
     },
 
     async startThread({
+      skillRoots: selectedSkillRoots,
       environmentId,
       threadId,
       projectId,
@@ -1683,12 +1693,14 @@ function createAgentRuntimeInternal(
         threadId,
         work: async () => {
           const processKey = resolveProviderProcessKey({
+            skillRoots: selectedSkillRoots,
             ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
             ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
             providerId,
             threadId,
           });
           await runtime.ensureProvider({
+            skillRoots: selectedSkillRoots,
             providerId,
             forThreadId: threadId,
             ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
@@ -1700,7 +1712,7 @@ function createAgentRuntimeInternal(
             adapter: proc.adapter,
             options: execOpts,
           });
-          const providerSkillRoots = skillRootsForProvider(providerId);
+          const providerSkillRoots = skillRootsForProvider(providerId, selectedSkillRoots);
           assertProviderSupportsExecutionOptions({
             adapter: proc.adapter,
             options: effectiveExecOpts,
@@ -1863,6 +1875,7 @@ function createAgentRuntimeInternal(
     },
 
     async prepareThreadRewind({
+      skillRoots: selectedSkillRoots,
       environmentId,
       threadId,
       leaseId,
@@ -1891,12 +1904,14 @@ function createAgentRuntimeInternal(
         threadId,
         work: async () => {
           const processKey = resolveProviderProcessKey({
+            skillRoots: selectedSkillRoots,
             ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
             ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
             providerId,
             threadId,
           });
           await runtime.ensureProvider({
+            skillRoots: selectedSkillRoots,
             providerId,
             forThreadId: threadId,
             ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
@@ -1908,7 +1923,7 @@ function createAgentRuntimeInternal(
               `Preparing a thread rewind is not supported by ${providerId}`,
             );
           }
-          const providerSkillRoots = skillRootsForProvider(providerId);
+          const providerSkillRoots = skillRootsForProvider(providerId, selectedSkillRoots);
           assertProviderSupportsExecutionOptions({
             adapter: proc.adapter,
             options: execOpts,
@@ -2050,6 +2065,7 @@ function createAgentRuntimeInternal(
     },
 
     async resumeThread({
+      skillRoots: selectedSkillRoots,
       environmentId,
       threadId,
       projectId,
@@ -2067,12 +2083,14 @@ function createAgentRuntimeInternal(
         threadId,
         work: async () => {
           const processKey = resolveProviderProcessKey({
+            skillRoots: selectedSkillRoots,
             ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
             ...(bridgeLaunch !== undefined ? { bridgeLaunch } : {}),
             providerId,
             threadId,
           });
           await runtime.ensureProvider({
+            skillRoots: selectedSkillRoots,
             providerId,
             forThreadId: threadId,
             ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
@@ -2084,7 +2102,7 @@ function createAgentRuntimeInternal(
             adapter: proc.adapter,
             options: execOpts,
           });
-          const providerSkillRoots = skillRootsForProvider(providerId);
+          const providerSkillRoots = skillRootsForProvider(providerId, selectedSkillRoots);
           assertProviderSupportsExecutionOptions({
             adapter: proc.adapter,
             options: effectiveExecOpts,

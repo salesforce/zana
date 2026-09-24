@@ -334,6 +334,7 @@ export default definePluginApp((app) => {
     icon: 'Cloud',
     order: 80,
     global: false,
+    header: 'custom',
     component: SalesforceProjectTab
   });
   app.slots.threadPanelAction({

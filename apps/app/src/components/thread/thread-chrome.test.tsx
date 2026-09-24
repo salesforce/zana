@@ -908,6 +908,8 @@ describe('expandable row and chips', () => {
     expect(stickyUser).toContain('top: 0;');
     expect(stickyUser).toContain('z-index: 4;');
     expect(stickyUser).toContain('background: var(--bg-base);');
+    expect(stickyUser).toContain('.thread-timeline-current-turn > .thread-timeline-item.is-user[data-sticky-prompt] {\n  position: sticky;');
+    expect(stickyUser.split('}')[0]).not.toContain('position: sticky;');
     const assistantBubble = css.slice(
       css.indexOf('.thread-timeline-row.is-assistant .thread-timeline-bubble {'),
       css.indexOf('.thread-timeline-row.is-user .thread-timeline-bubble {')

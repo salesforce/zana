@@ -62,8 +62,9 @@ import {
  * Conversation thread ids travel in the event payload, not envelope.threadId
  * (ZCC ids are not always UUIDs).
  * 27: bounded byte ranges on host.read_file for streaming video previews.
+ * 28: preserve service tier on thread.resume and turn.submit.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 27;
+export const HOST_RPC_PROTOCOL_VERSION = 28;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -329,6 +330,7 @@ export const ThreadStartCommandSchema = z.object({
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
+  serviceTier: z.enum(['default', 'fast']).optional(),
   acpMode: z.string().min(1).max(200).optional(),
   claudeCodePermissionMode: z.literal('plan').optional(),
   providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
@@ -366,6 +368,7 @@ export const ThreadPlanCancelCommandSchema = z.object({
 }).strict();
 
 export const ThreadResumeFieldsSchema = z.object({
+  serviceTier: z.enum(['default', 'fast']).optional(),
   projectId: z.string().min(1),
   providerId: z.string().min(1),
   providerThreadId: z.string().min(1),
@@ -384,6 +387,7 @@ export const ThreadResumeFieldsSchema = z.object({
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
 
 export const TurnSubmitCommandSchema = z.object({
+  serviceTier: z.enum(['default', 'fast']).optional(),
   type: z.literal('turn.submit'),
   threadId: UuidSchema,
   environmentId: UuidSchema,

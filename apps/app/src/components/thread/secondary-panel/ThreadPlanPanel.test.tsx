@@ -75,7 +75,7 @@ describe('ThreadPlanPanel', () => {
     expect(html).toContain('data-testid="thread-plan-status"');
     expect(html).toContain('Ready');
     expect(html).toContain('Referenced by 1 Agent');
-    expect(html).toContain('Untitled agent · Agent · 0 todos assigned');
+    expect(html).toContain('Untitled agent · Agent');
     expect(html).not.toContain('6e37a024-a39d-4cf4-8c91-108c0deb72db');
   });
 

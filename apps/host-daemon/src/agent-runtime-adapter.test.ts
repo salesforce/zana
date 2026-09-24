@@ -81,6 +81,35 @@ describe('agent runtime thread adapter', () => {
     adapter.dispose();
   });
 
+  it('cancels only the expected live plan and keeps the thread usable', async () => {
+    let active = 'plan-turn';
+    let stopThread: ReturnType<typeof vi.spyOn>;
+    let runTurn: ReturnType<typeof vi.spyOn>;
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined, dataDir: cwd,
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        vi.spyOn(runtime, 'getActiveTurnId').mockImplementation(() => active || null);
+        stopThread = vi.spyOn(runtime, 'stopThread').mockImplementation(async () => { active = ''; });
+        runTurn = vi.spyOn(runtime, 'runTurn');
+        return runtime;
+      },
+    });
+    const threadId = randomUUID();
+    await adapter.startWork({ threadId, environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: prompt('hello'), cwd });
+    expect(await adapter.cancelPlan!({ threadId: 'unknown', expectedTurnId: 'plan-turn' })).toBe(false);
+    expect(await adapter.cancelPlan!({ threadId, expectedTurnId: 'stale' })).toBe(false);
+    expect(stopThread!).not.toHaveBeenCalled();
+    expect(await adapter.cancelPlan!({ threadId, expectedTurnId: 'plan-turn' })).toBe(true);
+    expect(stopThread!).toHaveBeenCalledOnce();
+    await adapter.resumeWork({ threadId, environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', providerThreadId: 'prov-1', cwd });
+    await adapter.submitTurn({ threadId, input: prompt('continue') });
+    expect(runTurn!).toHaveBeenCalled();
+    active = 'unconfirmed'; stopThread!.mockImplementation(async () => undefined);
+    expect(await adapter.cancelPlan!({ threadId, expectedTurnId: 'unconfirmed' })).toBe(false);
+    adapter.dispose();
+  });
+
   it('forwards command mentions into AgentRuntime instead of wiping them', async () => {
     let startThread: ReturnType<typeof vi.spyOn>;
     let runTurn: ReturnType<typeof vi.spyOn>;
@@ -1294,6 +1323,10 @@ describe('agent runtime thread adapter', () => {
 });
 
 describe('threadExecutionOptions', () => {
+  it('preserves the selected service tier', () => {
+    expect(threadExecutionOptions({ serviceTier: 'fast' }).serviceTier).toBe('fast');
+    expect(threadExecutionOptions({ serviceTier: 'default' }).serviceTier).toBe('default');
+  });
   it('builds a valid permission policy for accept-edits and auto', () => {
     expect(threadExecutionOptions({ permissionMode: 'accept-edits' })).toMatchObject({
       permissionMode: 'accept-edits',

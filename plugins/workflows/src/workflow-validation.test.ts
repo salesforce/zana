@@ -91,7 +91,7 @@ describe("workflow validation", () => {
           loadModels: async () => ({
             models: [],
             selectedOnlyModels: [],
-            modelLoadError: { providerId: "codex", code: "auth_required" },
+            modelLoadError: { providerId: "codex", code: "auth_required" , detail: null },
           }),
         }),
       ),

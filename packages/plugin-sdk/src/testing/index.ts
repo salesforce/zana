@@ -338,6 +338,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     sdk: {
+      system: { defaultHost: async () => invokeSdk('system.defaultHost', async () => null, undefined) as Promise<{ id: string } | null> },
       hosts: {
         async list(args) {
           assertLive();
@@ -346,6 +347,9 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         }
       },
       threads: {
+        async search(args) {
+          return invokeSdk('threads.search', undefined, args) as ReturnType<ZccPluginApi['sdk']['threads']['search']>;
+        },
         async spawn(args) {
           if (!options?.spawnThread) {
             throw new Error('zcc.sdk is not available in this runtime');
@@ -476,6 +480,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         }
       },
       environments: {
+        pullRequest: async (args) => invokeSdk('environments.pullRequest', async () => ({ pullRequest: null }), args) as ReturnType<ZccPluginApi['sdk']['environments']['pullRequest']>,
         async get(args) {
           if (!options?.getEnvironment) {
             throw new Error('zcc.sdk is not available in this runtime');
@@ -484,6 +489,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         }
       },
       files: {
+        write: async (args) => { await invokeSdk('files.write', async () => undefined, args); },
         async read(args) {
           return invokeSdk(
             'files.read',
@@ -524,17 +530,17 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         }
       },
       experimental_desktopBrowsers: {
-        listInstances: (input) => invokeSdk('experimental_desktopBrowsers.listInstances', undefined, input),
-        listTabs: (input) => invokeSdk('experimental_desktopBrowsers.listTabs', undefined, input),
-        createTab: (input) => invokeSdk('experimental_desktopBrowsers.createTab', undefined, input),
-        acquireControl: (input) => invokeSdk('experimental_desktopBrowsers.acquireControl', undefined, input),
-        openConnection: (input) => invokeSdk('experimental_desktopBrowsers.openConnection', undefined, input),
-        releaseControl: (input) => invokeSdk('experimental_desktopBrowsers.releaseControl', undefined, input),
-        revealTab: (input) => invokeSdk('experimental_desktopBrowsers.revealTab', undefined, input),
-        closeTab: (input) => invokeSdk('experimental_desktopBrowsers.closeTab', undefined, input),
-        captureTab: (input) => invokeSdk('experimental_desktopBrowsers.captureTab', undefined, input),
-        listImportSources: (input) => invokeSdk('experimental_desktopBrowsers.listImportSources', undefined, input),
-        importCookies: (input) => invokeSdk('experimental_desktopBrowsers.importCookies', undefined, input),
+        listInstances: (input) => invokeSdk('experimental_desktopBrowsers.listInstances', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['listInstances']>,
+        listTabs: (input) => invokeSdk('experimental_desktopBrowsers.listTabs', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['listTabs']>,
+        createTab: (input) => invokeSdk('experimental_desktopBrowsers.createTab', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['createTab']>,
+        acquireControl: (input) => invokeSdk('experimental_desktopBrowsers.acquireControl', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['acquireControl']>,
+        openConnection: (input) => invokeSdk('experimental_desktopBrowsers.openConnection', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['openConnection']>,
+        releaseControl: (input) => invokeSdk('experimental_desktopBrowsers.releaseControl', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['releaseControl']>,
+        revealTab: (input) => invokeSdk('experimental_desktopBrowsers.revealTab', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['revealTab']>,
+        closeTab: (input) => invokeSdk('experimental_desktopBrowsers.closeTab', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['closeTab']>,
+        captureTab: (input) => invokeSdk('experimental_desktopBrowsers.captureTab', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['captureTab']>,
+        listImportSources: (input) => invokeSdk('experimental_desktopBrowsers.listImportSources', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['listImportSources']>,
+        importCookies: (input) => invokeSdk('experimental_desktopBrowsers.importCookies', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['importCookies']>,
         subscribe(input) {
           return invokeSdk('experimental_desktopBrowsers.subscribe', undefined, input) as { dispose(): void };
         }
@@ -570,12 +576,12 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       method(name, handler) {
         assertLive();
         if (!name.trim()) throw new Error('rpc method name is required');
-        rpc.set(name, handler);
+        rpc.set(name, handler as (args: unknown) => unknown);
       },
       register(_contract, handlers) {
         assertLive();
         for (const [name, handler] of Object.entries(handlers)) {
-          if (typeof handler === 'function') rpc.set(name, handler);
+          if (typeof handler === 'function') rpc.set(name, handler as (args: unknown) => unknown);
         }
       }
     },

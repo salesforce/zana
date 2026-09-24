@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { BRIDGE_JSON_RPC_ERRORS } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { PI_BRIDGE_ARGS_ENV, PI_BRIDGE_COMMAND_ENV } from "./rpc-child.js";
 import {
   type FakePiBridgeHarness,
@@ -78,6 +79,7 @@ it("reports not_installed when the launch command is missing", async () => {
     cwd: harness.workspaceDir,
   });
   expect(models.error).toMatchObject({
+    code: BRIDGE_JSON_RPC_ERRORS.MISSING_EXECUTABLE,
     message: expect.stringContaining("Could not find the pi CLI"),
   });
 });

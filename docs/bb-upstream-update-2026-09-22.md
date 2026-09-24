@@ -1,7 +1,7 @@
 # BB upstream update — September 22, 2026
 
-ZCC now has seven targeted changes derived from an independent review of the
-reported BB update. This is a source update in the existing ZCC checkout. It is
+ZCC now has the seven initial fixes plus the three deferred architectural changes
+from the independent review of the reported BB update. This is a source update in the existing ZCC checkout. It is
 not a merge of BB's main branch or a deployment to the installed application.
 
 ## Source and scope
@@ -34,22 +34,55 @@ not a merge of BB's main branch or a deployment to the installed application.
 | Codex writer handoff | Retries only the recognized active-writer refusal during thread construction, after 100/400/1000 ms (four attempts maximum). Other failures remain immediate. Covers stop, discard, settings rebuild, transient contention and exhausted retries. | [#3460](https://github.com/get-bb/bb/commit/48bc6a7e9c8819a62ff3d486c803ff186e3afe55) |
 | Provider CLI status | Shows “Latest unknown” when a latest-version lookup is missing, including the machine inventory summary, instead of claiming “Current” or “Up to date”. Existing update, unsupported, missing and externally managed states retain their precedence. | [#3985](https://github.com/get-bb/bb/commit/3a534b74f9b2436ee0bd695623a3b77fbad739f6) |
 
-## Changes evaluated but not imported
+## Follow-up implementation: previously missing parts
+
+The requested follow-up implements the three concrete gaps identified above
+(BB #3939 `d0a8cec4b`, #3986 `b1f94e079`, and the #4023–#4063 sidebar migration):
+
+- **Bundled thread list:** an ordinary, enabled-by-default plugin now supplies the
+  global and project sidebar thread lists. Its SDK hooks subscribe to live thread
+  and project changes and expose only display data. Pins, search, rename, unread
+  state, split opening/dragging, stop, archive and close with follow-up route through
+  the host's existing actions. Projects, CLI Agents and Job Teams retain their host
+  navigation. Disabling the plugin or choosing the host list restores the fallback.
+  ZCC's plugin engine version now comes from the package version; the stale 2.2.0
+  constant had prevented the new plugin from installing on 2.2.2.
+- **Durable queued-send recovery:** migration 19 persists attempt counts and retry
+  timestamps. A queued send is removed only after the host acknowledges acceptance.
+  Known pre-acceptance failures retry after 15 seconds, 1 minute and 5 minutes;
+  pauses, pending interactions, host availability, scheduling, archive state and
+  concurrency admission are checked again. Each sweep is bounded to 100 candidates,
+  never overlaps itself and rotates blocked work without spending an attempt.
+  Timeouts, disconnects after dispatch and interrupted server restarts remain manual
+  recovery cases because delivery is uncertain. Manual retry cannot steal an
+  in-flight send. The composer shows dispatch and scheduled-retry state.
+- **Fresh injected skills:** new, resumed and prepared-rewind sessions capture
+  immutable content-addressed snapshots of injected plugin/generated/builtin skill
+  trees, including referenced resources and executable modes. Provider-process
+  identity includes the selected roots, so live sessions retain their old catalog.
+  Main explicitly authorizes filtered builtin symlink targets; other links remain
+  confined. Snapshots are serialized, limited to 64 MiB / 10,000 entries / 64 roots
+  / depth 16 / 32 retained revisions, and released after runtime shutdown. Startup
+  cleans up catalogs from dead daemon processes. Provider-owned native skill roots
+  remain under the provider's own discovery behavior.
+
+These are ZCC-specific implementations of the upstream behavior. BB's protocol
+number, SDK release number and hosted Connect account quota remain separate
+contracts; no arbitrary parity version bump is needed.
+
+## Other changes evaluated but not imported
 
 | BB change family | ZCC finding / decision |
 | --- | --- |
-| Bundled thread-list plugin and sidebar migration (#4023–4029, #4031, #4035–4036, #4039, #4041, #4048, #4051, #4061, #4063) | A coordinated architectural migration, including new plugin DTOs, selection state, sections and loading behavior. ZCC's sidebar also owns Projects and CLI Agents. Importing the deletion of BB's built-in list would break ZCC; a dedicated migration design is required. |
-| Frontend `useSdk()` and Plugin SDK 0.5.8 (#4027, #4033) | BB's SDK version and public frontend API are not ZCC's compatibility contract. Only the required, tested server SDK host-list capability was added. |
+| Frontend `useSdk()` and Plugin SDK 0.5.8 (#4027, #4033) | BB's SDK version and public frontend API are not ZCC's compatibility contract. ZCC now exposes the required typed sidebar hooks and actions as well as the server SDK host-list capability; BB's SDK is not substituted for ZCC's. |
 | Protocol version 216 | BB's protocol numbering is independent of ZCC's. Copying the number does not implement the corresponding schema/daemon migration. No arbitrary version bump was made. |
 | Connect account limit 500 (#4002) | Belongs to BB's hosted account service. ZCC uses its own relay/account integration and does not contain the equivalent Connect service. |
-| Failed queued-message retries (#3939) | ZCC already persists failed deferred messages and exposes manual recovery. BB's automatic retry changes depend on different queue state, dispatch attempts and retry timestamps. Automatic retry remains a separate change requiring acknowledgement/deduplication rules to avoid duplicate agent work. |
-| Current skill snapshots on each new thread (#3986) | A real remaining difference: ZCC caches runtimes by environment/catalog and retains an existing runtime while it has threads. Proper adoption needs per-thread skill roots, provider-process identity and cleanup/retention changes; no superficial cache eviction was added. |
 | Active-start admission before readiness waits (#4038) | BB's dispatch-attempt machinery differs. ZCC has its own conversation admission/queue checks. The patch is not directly portable; this review does not claim exhaustive race-equivalence. |
 | Provider title generation (#3990, #3887) | ZCC already submits any nonempty prompt to its generator, without BB's word-count gate. Added regressions instead of duplicating the generator implementation. |
 | Claude dollar-skill normalization (#3952) | ZCC's structured skill trigger schema is slash-only. No reachable dollar-trigger case was found to justify changing the Claude bridge. |
 | Installed-plugin list truncation (#4053) | The bug is in BB's resource infinite-scroll sentinel/count pairing. ZCC's plugin hub uses a different list; the failing component pair is absent. |
 | Marketplace layout and install polish (#4056, #4057, #4052, #4050, #4047, #4045, #4042, #3647) | User-facing design changes target BB's plugin shelf/details routing. ZCC owns its plugin hub layout; these are candidates for a focused ZCC UX pass, not safe mechanical imports. The details/configuration rewrite (#3646) was itself reverted by #4032 within this range. |
-| Sidebar rename/archive/reorder, compose target and palette polish (#3975, #3982, #3989, #3945–3947, #3991, #4010, #4021, #3933, #3938, #4040) | Tied to BB sidebar state/components and its migration. Keep separate from ZCC's existing mixed navigation and concurrent board changes. |
+| Sidebar rename/archive/reorder, compose target and palette polish (#3975, #3982, #3989, #3945–3947, #3991, #4010, #4021, #3933, #3938, #4040) | The follow-up implements thread rename/archive, pins, scoped navigation, live state, search and split actions through ZCC's plugin surface. Other BB-specific reorder/palette/compose-target details were not mechanically copied. |
 | Mobile background resync / foreground notifications (#3997, #4001) | ZCC's product WebSocket and native-shell integration differ. Requires a ZCC lifecycle test and design rather than copying BB's WebSocketManager patch. Existing mobile work was preserved. |
 | Browser tab focus restoration (#4016) | BB's own host-tab restoration path; not the machine-selector defect addressed here. No broad browser lifecycle rewrite was imported. |
 | Remove parent permission clamping (#4018) | Not adopted as part of an upstream maintenance update. ZCC's main-authorized permission boundary remains its own design. |
@@ -58,7 +91,42 @@ not a merge of BB's main branch or a deployment to the installed application.
 | Grok Extra High (#3984), unified machine enrollment (#3940), automation-list run action (#3994), mobile plugin previews (#3871), reduced-motion runtime glyphs (#3923), model submenu height (#4003), unread divider (#4007) | These target different ZCC provider, machine, Scheduler, plugin, composer or timeline implementations. No blanket feature-parity claim is made; each needs a focused ZCC UI/runtime assessment. |
 | Contributor approval (#4004) | BB repository administration; no ZCC product change. |
 
-## Validation
+## Follow-up validation
+
+- Production `pnpm build` and TypeScript validation passed. The production `out/`
+  artifacts are current; the installed application bundle has not been replaced.
+- The final focused coverage run passed **125 tests across nine files**. Additional
+  sidebar, plugin loading, injected-root, adapter and process-lifecycle regressions
+  passed **135 tests across ten files**. Queue/database follow-up: 24 passed;
+  thread-list UI: 16 passed. These runs overlap.
+- Added-line V8 coverage in the six measured queue/snapshot/sidebar production
+  modules is **294/303 statements (97.0%) and 184/206 branches (89.3%)**. The whole
+  measured files are 86.96% statements / 77.56% branches, including unchanged legacy
+  queue paths. This is not a claim of whole-repository or every-file coverage.
+- Final production-artifact verification passed **all four tests** in
+  `e2e/bb-followup.spec.ts` and `e2e/codex-writer-lock.spec.ts` (2.6 minutes).
+  `e2e/bb-followup.spec.ts` covers: bundled plugin
+  auto-install, live rename/pin/search, project scoping, CLI Agent preservation,
+  disable/enable fallback, persisted safe retry and manual uncertain-delivery recovery.
+- The built Codex bridge skill test proves that a body change with identical skill
+  frontmatter reaches a newly created thread while the existing snapshot stays
+  unchanged. Writer-lock/large-output regression remains green. All five existing
+  `thread-lifecycle-status` Electron cases passed, covering grouped queue delivery,
+  pause/removal, child activity, hidden active threads and per-message Send now.
+- Attached `live:mode-reasoning` passed **54 active cases** (one gated skip), followed
+  by `live:memory` with **two active cases**, including real catalog retrieval (one
+  gated skip). As before, these target the running installed/dev instances; isolated
+  Electron tests validate this turn's source changes.
+- `git diff --check` passed. Concurrent history, plugin-authoring and other workers'
+  changes were preserved.
+
+The Electron checks exposed two integration defects missed by component tests:
+filtered builtin symlinks needed main-authorized targets for snapshots, and the
+stale host compatibility version rejected the bundled thread plugin. Both are fixed.
+A rename-menu timing assertion and an unstable bare-shell fixture were also corrected;
+the final navigation test uses a deterministic, persistent CLI Agent executable.
+
+## Initial update validation
 
 Isolated built-Electron tests exercise the changed source; attached live suites
 exercise the already-running installed/dev stacks and are reported separately.
@@ -115,6 +183,7 @@ discovery; subsequent runs explicitly selected their target. The same suites
 were invoked directly via the control SDK's Vitest command with
 `--disableConsoleIntercept` for the final Memory/Browser verification.
 
-The update has not been committed, pushed, published or installed into the live
-application. Existing and concurrent changes in this shared checkout remain
-separate from this report's scope.
+The initial seven changes are present in the checkout baseline. The follow-up
+changes remain in the working tree; they have not been pushed, published or
+installed into the running application. Existing and concurrent changes in this
+shared checkout remain separate from this report's scope.

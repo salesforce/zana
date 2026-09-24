@@ -242,7 +242,7 @@ export function createHostHub(
     clearTimeout(waiter.timer);
     pending.delete(`${hostId}:${message.requestId}`);
     if (!message.ok) {
-      waiter.reject(Object.assign(new Error(message.error.message), { code: message.error.code }));
+      waiter.reject(Object.assign(new Error(message.error.message), { code: message.error.code, delivery: 'rejected' }));
       return;
     }
     try {

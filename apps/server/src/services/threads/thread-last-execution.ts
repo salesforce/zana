@@ -1,5 +1,5 @@
-import { listConversationThreadEventsWindow } from '@zana-ai/zcc-db';
-import { permissionModeSchema, reasoningLevelSchema, type PermissionMode, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import { getThreadExecutionState, listConversationThreadEventsWindow } from '@zana-ai/zcc-db';
+import { isPlanExecutionMode, permissionModeSchema, reasoningLevelSchema, type PermissionMode, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
 
 const LAST_EXECUTION_SCAN_CAP = 80;
@@ -9,6 +9,7 @@ export interface ThreadLastExecution {
   reasoningLevel: ReasoningLevel | null;
   acpMode: string | null;
   permissionMode: PermissionMode | null;
+  serviceTier?: 'default' | 'fast';
 }
 
 export function readLastThreadExecution(
@@ -28,6 +29,7 @@ export function readLastThreadExecution(
   let newest: { model: string | null; reasoningLevel: ReasoningLevel | null } | null = null;
   let acpMode: string | null = null;
   let permissionMode: PermissionMode | null = null;
+  let serviceTier: 'default' | 'fast' | undefined;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const payload = rows[index]?.payload;
     if (!payload || typeof payload !== 'object' || !('type' in payload)) continue;
@@ -50,7 +52,18 @@ export function readLastThreadExecution(
       const parsed = permissionModeSchema.safeParse((execution as { permissionMode?: unknown }).permissionMode);
       if (parsed.success) permissionMode = parsed.data;
     }
-    if (newest && acpMode !== null && permissionMode !== null) break;
+    if (serviceTier === undefined) {
+      const tier = (execution as { serviceTier?: unknown }).serviceTier;
+      if (tier === 'default' || tier === 'fast') serviceTier = tier;
+    }
+    if (newest && acpMode !== null && permissionMode !== null && serviceTier !== undefined) break;
   }
-  return { model: newest?.model ?? null, reasoningLevel: newest?.reasoningLevel ?? null, acpMode, permissionMode };
+  // A confirmed Plan exit overrides the older native Plan selection. Otherwise
+  // an omitted mode on the next send/resume would silently re-enter Plan.
+  if (isPlanExecutionMode(acpMode)) {
+    const requestedMode = getThreadExecutionState(ctx.db, threadId)?.requestedMode;
+    if (requestedMode && !isPlanExecutionMode(requestedMode)) acpMode = null;
+  }
+  return { model: newest?.model ?? null, reasoningLevel: newest?.reasoningLevel ?? null, acpMode, permissionMode,
+    ...(serviceTier ? { serviceTier } : {}) };
 }

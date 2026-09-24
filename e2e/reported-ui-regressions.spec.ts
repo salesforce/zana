@@ -20,6 +20,64 @@ async function createThread(app: AppHandle, title: string) {
   return { threadId: created.value.id as string, projectId: project.value.id };
 }
 
+test('agent inspector stays centered when resizing from either side or a corner', async ({ app }) => {
+  const { window } = app;
+  const nativeWindow = await app.electron.browserWindow(window);
+  await nativeWindow.evaluate((win) => win.webContents.setZoomFactor(1));
+  await window.setViewportSize({ width: 1600, height: 1000 });
+  await createThread(app, 'Centered resize regression');
+  await window.getByTestId('nav-agents').click();
+  await window.locator('.agent-card[data-kind="thread"]').filter({ hasText: 'Centered resize regression' }).click();
+  const modal = window.getByTestId('thread-modal');
+  await expect(modal).toBeVisible();
+  const frame = () => modal.evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    return {
+      width: Math.round(rect.width), height: Math.round(rect.height),
+      centerX: Math.round(rect.left + rect.width / 2),
+      centerY: Math.round(rect.top + rect.height / 2)
+    };
+  });
+  const initial = { width: 1080, height: 940, centerX: 800, centerY: 500 };
+  await expect.poll(frame).toEqual(initial);
+  const keyboardHandle = modal.getByTestId('inspector-resize-se');
+  for (const edge of ['e', 'w', 's', 'se', 'sw']) {
+    for (const distance of [40, -40]) {
+      await keyboardHandle.press('Enter');
+      await expect.poll(frame).toEqual(initial);
+      const handle = modal.getByTestId(`inspector-resize-${edge}`);
+      const box = await handle.boundingBox();
+      if (!box) throw new Error(`Missing resize handle: ${edge}`);
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      await window.mouse.move(x, y);
+      await window.mouse.down();
+      await window.mouse.move(
+        x + (edge.includes('w') ? -distance : edge.includes('e') ? distance : 0),
+        y + (edge.includes('s') ? distance : 0),
+        { steps: 5 }
+      );
+      await window.mouse.up();
+      await expect.poll(frame).toEqual({
+        ...initial,
+        width: initial.width + (edge === 's' ? 0 : distance * 2),
+        height: edge.includes('s') ? Math.min(968, initial.height + distance * 2) : initial.height
+      });
+      await expect(modal).not.toHaveClass(/is-resizing/);
+    }
+  }
+  await keyboardHandle.press('Home');
+  await expect.poll(frame).toEqual({ width: 640, height: 400, centerX: 800, centerY: 500 });
+  await keyboardHandle.press('ArrowRight');
+  await expect.poll(frame).toEqual({ width: 664, height: 400, centerX: 800, centerY: 500 });
+  await keyboardHandle.press('End');
+  await expect.poll(frame).toEqual({ width: 1568, height: 968, centerX: 800, centerY: 500 });
+  await window.setViewportSize({ width: 900, height: 700 });
+  await expect.poll(frame).toEqual({ width: 868, height: 668, centerX: 450, centerY: 350 });
+  await keyboardHandle.press('Enter');
+  await expect.poll(frame).toEqual({ width: 846, height: 658, centerX: 450, centerY: 350 });
+});
+
 test('agent inspector exits fullscreen and keeps its window controls clickable (#181)', async ({ app }) => {
   const { window } = app;
   // The fixture deliberately hides windows and prevents focus. This native OS
@@ -42,18 +100,28 @@ test('agent inspector exits fullscreen and keeps its window controls clickable (
   await expect(modal).toBeVisible();
   await expect(modal.getByTestId('inspector-resize-se')).toBeVisible();
   const nativeFullScreen = () => window.evaluate(() => window.cc.app.isFullScreen());
+  // isFullScreen() and the optimistic renderer class can change before macOS
+  // finishes its animation. Wait for the native event before toggling again.
+  const clickAfterTransition = async (name: string, event: 'enter-full-screen' | 'leave-full-screen') => {
+    await Promise.all([
+      nativeWindow.evaluate((win, event) => new Promise<void>((resolve) => {
+        win.once(event, () => resolve());
+      }), event),
+      modal.getByRole('button', { name, exact: true }).click()
+    ]);
+  };
   await expect.poll(nativeFullScreen).toBe(false);
-  await modal.getByRole('button', { name: 'Full screen', exact: true }).click();
+  await clickAfterTransition('Full screen', 'enter-full-screen');
   await expect.poll(nativeFullScreen).toBe(true);
   await expect(modal).toHaveClass(/is-fullscreen/);
   await expect(modal.getByTestId('inspector-resize-se')).toHaveCount(0);
   // CDP clicks alone bypass native drag hit-testing. Check the actual exclusion
   // as well, so controls cannot sit in the shell's underlying draggable titlebar.
   expect(await modal.evaluate((node) => getComputedStyle(node).getPropertyValue('-webkit-app-region'))).toBe('no-drag');
-  await modal.getByRole('button', { name: 'Exit full screen', exact: true }).click();
+  await clickAfterTransition('Exit full screen', 'leave-full-screen');
   await expect.poll(nativeFullScreen).toBe(false);
   await expect(modal).not.toHaveClass(/is-fullscreen/);
-  await modal.getByRole('button', { name: 'Full screen', exact: true }).click();
+  await clickAfterTransition('Full screen', 'enter-full-screen');
   await expect.poll(nativeFullScreen).toBe(true);
   await modal.getByTestId('thread-modal-close').click();
   await expect(modal).toHaveCount(0);

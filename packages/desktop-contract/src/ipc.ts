@@ -223,6 +223,7 @@ export const IPC = {
     listSessions: 'opencode:listSessions'
   },
   history: {
+    transcript: 'history:transcript',
     start: 'history:start',
     refresh: 'history:refresh',
     page: 'history:page',

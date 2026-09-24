@@ -12,6 +12,9 @@ export function fakeProviderEnabled(env: NodeJS.ProcessEnv = process.env): boole
 export function createFakeAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
   return createAgentRuntimeWithAdapters({
     ...options,
-    adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
+    adapterFactory: () => {
+      const adapter = createFakeAdapter({ scriptPath: fakeProviderScriptPath });
+      return { ...adapter, capabilities: { ...adapter.capabilities, supportsServiceTier: true } };
+    }
   });
 }

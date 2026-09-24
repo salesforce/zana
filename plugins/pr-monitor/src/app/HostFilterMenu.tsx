@@ -10,8 +10,8 @@
  * escapes clipped/transformed ancestors.
  */
 
-import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
+import { useFilterPopover } from './useFilterPopover.js';
 import { portal } from './portal.js';
 
 interface Props {
@@ -36,24 +36,13 @@ export function HostFilterMenu({
   onSelectAll,
   shortHost,
 }: Props) {
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const { ref, position } = useFilterPopover(anchorRef, onClose, false);
 
-  useEffect(() => {
-    const el = anchorRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setPos({ top: r.bottom + 4, left: r.left });
-  }, [anchorRef]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
-  if (!pos || typeof document === 'undefined') return null;
+
+
+  if (typeof document === 'undefined') return null;
 
   const allSelected = selectedHosts.length === 0;
 
@@ -68,7 +57,9 @@ export function HostFilterMenu({
       />
       <div
         className="prm-tile-menu prm-host-filter"
-        style={{ position: 'fixed', top: pos.top, left: pos.left }}
+        ref={ref}
+        style={{ position: 'fixed', ...position }}
+        aria-label="Host filter"
         role="menu"
       >
         <div className="prm-sync-filter-header">

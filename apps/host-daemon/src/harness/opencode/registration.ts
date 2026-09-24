@@ -1,3 +1,4 @@
+import { createOpenCodeHistory } from './history.js';
 import type { HarnessRegistration } from '../registration.js';
 import { OpenCodeProvider } from './provider.js';
 import { OpenCodeTranscriptAdapter } from './session.js';
@@ -6,6 +7,8 @@ const implementation = new OpenCodeProvider();
 
 export const openCodeHarness: HarnessRegistration = {
   id: 'opencode',
+  createHistoryAdapter: createOpenCodeHistory,
+  historyIconId: 'acp-opencode',
   label: 'OpenCode',
   profiles: [
     { id: 'opencode', posture: 'default' },

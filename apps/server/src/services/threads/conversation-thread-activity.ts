@@ -1,14 +1,17 @@
 import {
   listConversationThreadEvents,
-  type ConversationThreadEventRow
+  type ConversationThreadEventRow,
+  type ConversationThreadRow
 } from '@zana-ai/zcc-db';
 import type { ThreadEvent, ThreadActivityState } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   EMPTY_THREAD_ACTIVITY,
+  extractThreadTimelineActivePlanTurn,
   threadActivityFromEvents,
   type ThreadEventWithMeta
 } from '@zana-ai/zcc-thread-view';
 import type { ProductHttpContext } from '../../http/product-context.js';
+import { planCommandForProvider } from './thread-provider-catalog.js';
 
 const ACTIVITY_CACHE_CAP = 256;
 const activityCache = new Map<string, { maxSeq: number; activity: ThreadActivityState }>();
@@ -58,19 +61,34 @@ function remember(
   return entry.activity;
 }
 
+function withActivePlanModeCount(
+  activity: ThreadActivityState,
+  events: readonly ThreadEventWithMeta[],
+  thread: Pick<ConversationThreadRow, 'providerId' | 'status'>
+): ThreadActivityState {
+  const planTurn = extractThreadTimelineActivePlanTurn({
+    events,
+    planCommand: planCommandForProvider(thread.providerId),
+    providerId: thread.providerId,
+    threadStatus: thread.status
+  });
+  const activePlanModeCount = planTurn ? 1 : 0;
+  if (activity.activePlanModeCount === activePlanModeCount) return activity;
+  return { ...activity, activePlanModeCount };
+}
+
 /** Cached activity rollup keyed by threadId + maxSeq. */
 export function threadActivityForConversation(
   ctx: ProductHttpContext,
-  threadId: string,
+  thread: Pick<ConversationThreadRow, 'id' | 'providerId' | 'status'>,
   maxSeq: number
 ): ThreadActivityState {
-  const cached = activityCache.get(threadId);
+  const cached = activityCache.get(thread.id);
   if (cached && cached.maxSeq === maxSeq) return cached.activity;
   if (maxSeq <= 0) {
-    return remember(threadId, { maxSeq, activity: EMPTY_THREAD_ACTIVITY });
+    return remember(thread.id, { maxSeq, activity: EMPTY_THREAD_ACTIVITY });
   }
-  const activity = threadActivityFromEvents(
-    eventsFromRows(listConversationThreadEvents(ctx.db, threadId))
-  );
-  return remember(threadId, { maxSeq, activity });
+  const events = eventsFromRows(listConversationThreadEvents(ctx.db, thread.id));
+  const activity = withActivePlanModeCount(threadActivityFromEvents(events), events, thread);
+  return remember(thread.id, { maxSeq, activity });
 }

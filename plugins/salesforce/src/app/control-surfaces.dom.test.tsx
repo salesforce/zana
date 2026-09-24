@@ -1,0 +1,106 @@
+/** @vitest-environment happy-dom */
+import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { useSalesforceControl } from './useSalesforceControl.js';
+import { AgentScriptPanel } from './AgentScriptPanel.js';
+import { SalesforceProjectTab } from './SalesforceProjectTab.js';
+import { SoqlExplorerPanel } from './soql/SoqlExplorerPanel.js';
+import { ApexPanel } from './panels/WorkbenchPanels.js';
+import { DeploymentsPanel } from './panels/DeploymentsPanel.js';
+import { OperationsPanel } from './panels/OperationsPanel.js';
+import { DebugLogsPanel } from './panels/DebugLogsPanel.js';
+import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
+const controls = vi.hoisted(() => new Map<string, Parameters<typeof useSalesforceControl>[0]>());
+vi.mock('./useSalesforceControl.js', async original => ({ ...await original<object>(), useSalesforceControl: (options: Parameters<typeof useSalesforceControl>[0]) => { controls.set(options.surface, options); } }));
+const rpc = vi.fn();
+const org = { alias: 'dev', kind: 'sandbox', orgId: '00D000000000001', username: 'test@example.com' };
+const props = { pluginId: 'salesforce', projectId: 'p', threadId: 'thread' };
+const operation = { id: 'op', kind: 'apex.test', title: 'Test', state: 'succeeded', org, at: Date.now(), projectId: 'p' };
+beforeEach(() => {
+  controls.clear(); localStorage.clear(); rpc.mockReset();
+  rpc.mockImplementation(async (_id, method, input) => {
+    if (method === 'status') return { ok: true, dxProject: true, defaultOrg: 'dev', orgs: [], projectRoot: '/proj' };
+    if (method === 'org') return { ok: true, org };
+    if (method === 'orgs') return { ok: true, orgs: [], selectedAlias: 'dev' };
+    if (method === 'agentFiles.list') return { ok: true, files: [{ path: 'Help.agent', apiName: 'Help', lines: 4 }] };
+    if (method === 'agentFiles.read') return input.path === 'missing' ? { ok: false } : { ok: true, file: { path: input.path, content: 'config:\n    agent_name: "Help"', sha256: 'a'.repeat(64) } };
+    if (method === 'soql.describeGlobal') return { ok: true, org, catalogs: { standard: [{ name: 'Account', label: 'Account' }], tooling: [] } };
+    if (method === 'soql.describeSObject') return { ok: true, describe: { name: input.sobject, fields: [], childRelationships: [] } };
+    if (method === 'soql.history.list') return { ok: true, recent: [], saved: [] };
+    if (method === 'soql.limits') return { ok: true, dailyApiRequests: { max: 10, remaining: 9 } };
+    if (method === 'records.get') return { ok: true, record: { Id: input.recordId, Name: 'Example' } };
+    if (method === 'query.result') return { ok: true, result: { records: [{ Id: 'record' }], done: true, totalSize: 1 } };
+    if (method === 'operations.list') return { ok: true, operations: [operation] };
+    if (method === 'apex.logs') return { ok: true, data: { records: [] } };
+    if (method === 'logs.get') return { ok: true, body: 'Log content' };
+    return { ok: true };
+  });
+  (globalThis as any).__ZCC_PLUGIN_HOST__ = { callRpc: rpc, getSettings: async () => ({ values: {} }) };
+  (globalThis as any).__ZCC_PLUGIN_RUNTIME__ = { useZccContext: () => ({ projectId: 'p', threadId: 'thread' }), useSettings: () => ({ values: {}, isLoading: false }), useZccNavigate: () => ({ toCompose: vi.fn(), openThreadPanel: vi.fn() }) };
+});
+afterEach(() => { cleanup(); delete (globalThis as any).__ZCC_PLUGIN_HOST__; delete (globalThis as any).__ZCC_PLUGIN_RUNTIME__; });
+async function execute(surface: string, command: string, input: Record<string, unknown> = {}) {
+  let result: unknown; await act(async () => { result = await controls.get(surface)!.execute({ id: 'cmd', command: command as any, input }); }); return result;
+}
+it('controls the real editor tool state and refuses invalid, missing and dirty opens', async () => {
+  const mounted = render(<AgentScriptPanel {...props} />);
+  await waitFor(() => expect(controls.has('agentforce')).toBe(true));
+  await execute('agentforce', 'file.open', { path: 'Help.agent' }); expect(controls.get('agentforce')!.state().path).toBe('Help.agent');
+  await execute('agentforce', 'panel.open', { tool: 'graph' }); expect(controls.get('agentforce')!.state().panels).toMatchObject({ active: 'graph', open: true });
+  await execute('agentforce', 'panel.hide'); expect(controls.get('agentforce')!.state().panels).toMatchObject({ open: false });
+  await execute('agentforce', 'panel.show'); await execute('agentforce', 'panel.close', { tool: 'graph' });
+  await execute('agentforce', 'file.filter', { query: 'Help' }); expect(controls.get('agentforce')!.state().filter).toBe('Help');
+  expect(await execute('agentforce', 'editor.reveal', { line: 3 })).toMatchObject({ revealedLine: 3 });
+  expect(await execute('agentforce', 'state', { includeSource: true })).toHaveProperty('source');
+  await execute('agentforce', 'state');
+  await expect(execute('agentforce', 'editor.reveal', { line: 0 })).rejects.toThrow('positive');
+  await expect(execute('agentforce', 'panel.open', { tool: 'other' })).rejects.toThrow('known');
+  await expect(execute('agentforce', 'file.open', { path: 'missing' })).rejects.toThrow('Could not open');
+  const frame = mounted.container.querySelector('iframe')!;
+  await act(async () => window.dispatchEvent(new MessageEvent('message', { source: frame.contentWindow, origin: location.origin, data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty', dirty: true } })));
+  await expect(execute('agentforce', 'file.open', { path: 'Help.agent' })).rejects.toThrow('Save the current');
+});
+it('switches Salesforce views by name and validates the destination', async () => {
+  render(<SalesforceProjectTab {...props} />);
+  await execute('workbench', 'state');
+  await execute('workbench', 'view.open', { view: 'deployments' }); expect(controls.get('workbench')!.state().view).toBe('deployments');
+  await expect(execute('workbench', 'view.open', { view: 'unknown' })).rejects.toThrow('Choose');
+});
+it('controls query, schema, filters and trusted results without overwriting changed text', async () => {
+  render(<SoqlExplorerPanel {...props} />);
+  await waitFor(() => expect(rpc).toHaveBeenCalledWith('salesforce', 'soql.describeGlobal', expect.anything()));
+  await execute('data', 'state');
+  await expect(execute('data', 'query.set', { query: 'SELECT Id FROM Account', expectedQuery: 'wrong' })).rejects.toThrow('expectedQuery');
+  await execute('data', 'query.set', { query: 'SELECT Id FROM Account LIMIT 1', expectedQuery: controls.get('data')!.state().query, useToolingApi: false, includeDeleted: false });
+  await expect(execute('data', 'object.select', { objectName: 'bad-name' })).rejects.toThrow('API name');
+  await expect(execute('data', 'object.select', { objectName: 'Account' })).rejects.toThrow('current query');
+  await execute('data', 'object.select', { objectName: 'Account', expectedQuery: controls.get('data')!.state().query });
+  expect(controls.get('data')!.state().objectName).toBe('Account');
+  await execute('data', 'filter.set', { target: 'schema', query: 'Acc' }); await execute('data', 'filter.set', { query: 'Example' });
+  await execute('data', 'record.open', { objectName: 'Account', recordId: '001000000000001' });
+  await execute('data', 'query.show', { resultId: 'result' }); expect(controls.get('data')!.state().rows).toBe(1);
+});
+it('protects Apex and deployment forms and controls operation/log selection', async () => {
+  const apex = render(<ApexPanel {...props} />);
+  await execute('apex', 'state');
+  await expect(execute('apex', 'view.open', { tab: 'bad' })).rejects.toThrow('Choose');
+  await expect(execute('apex', 'form.set', { className: 'Example' })).rejects.toThrow('current form');
+  await execute('apex', 'form.set', { expectedBody: '', expectedClassName: '', className: 'Example', body: 'System.debug(1);' });
+  await execute('apex', 'view.open', { tab: 'logs' }); expect(controls.get('apex')!.state().tab).toBe('logs');
+  await execute('logs', 'state');
+  await expect(execute('logs', 'log.open', { logId: 'bad' })).rejects.toThrow('valid log');
+  await execute('logs', 'log.open', { logId: '07L000000000001' });
+  await execute('logs', 'filter.set', { query: 'Apex' }); await execute('logs', 'filter.set', { target: 'body', query: 'ERROR' });
+  expect(controls.get('logs')!.state()).toMatchObject({ logId: '07L000000000001', filter: 'Apex', find: 'ERROR' });
+  apex.unmount();
+  render(<DeploymentsPanel {...props} />);
+  await execute('deployments', 'state');
+  await expect(execute('deployments', 'form.set', { tests: 'Test' })).rejects.toThrow('current selection');
+  await execute('deployments', 'form.set', { expectedComponents: '', expectedTests: '', components: 'ApexClass:Example', tests: 'ExampleTest' });
+  await execute('deployments', 'filter.set', { query: 'Example' });
+  expect(controls.get('deployments')!.state()).toMatchObject({ components: 'ApexClass:Example', tests: 'ExampleTest', filter: 'Example' });
+  await execute('operations', 'state');
+  await expect(execute('operations', 'operation.open', { operationId: 'missing' })).rejects.toThrow('not found');
+  await execute('operations', 'operation.open', { operationId: 'op' });
+  await execute('operations', 'filter.set', { query: 'Test' }); expect(controls.get('operations')!.state()).toMatchObject({ operationId: 'op', filter: 'Test' });
+});

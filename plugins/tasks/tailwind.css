@@ -1,0 +1,44 @@
+@import 'tailwindcss/theme.css';
+@import 'tailwindcss/utilities.css';
+@source './';
+@theme inline {
+  --color-background: var(--bg-panel);
+  --color-foreground: var(--text-primary);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+  --color-primary: var(--accent);
+  --color-primary-foreground: white;
+  --color-secondary: var(--bg-elevated);
+  --color-secondary-foreground: var(--text-primary);
+  --color-muted: var(--bg-hover);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent: var(--bg-hover);
+  --color-accent-foreground: var(--text-primary);
+  --color-popover: var(--bg-elevated);
+  --color-popover-foreground: var(--text-primary);
+  --color-card: var(--bg-panel);
+  --color-card-foreground: var(--text-primary);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: white;
+  --color-subtle-foreground: var(--text-muted);
+  --color-state-hover: var(--bg-hover);
+  --color-state-active: var(--bg-elevated);
+  --color-border-hairline: var(--border);
+  --color-surface-recessed-solid: var(--bg-input, var(--bg-panel));
+  --color-surface-selected: color-mix(in srgb, var(--accent) 14%, transparent);
+  --color-attention: var(--warning, #d4a72c);
+  --color-success: var(--success, #3fb950);
+  --color-pr-merged: #a371f7;
+  --radius: 0.5rem;
+}
+.bb-tasks, [data-bb-plugin='tasks'] { font-size: 13px; color: var(--text-primary); --background: var(--bg-panel); --popover: var(--bg-elevated); --radius: .5rem; }
+:where(.bb-tasks, [data-bb-plugin='tasks']) :where(*) { box-sizing: border-box; border-color: var(--border); border-style: solid; border-width: 0; }
+:where(.bb-tasks, [data-bb-plugin='tasks']) :where(button, input, select, textarea) { font: inherit; color: inherit; }
+:where(.bb-tasks, [data-bb-plugin='tasks']) :where(button) { background-color: transparent; cursor: pointer; }
+:where(.bb-tasks, [data-bb-plugin='tasks']) :where(select) { background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px; }
+.bb-tasks .ProseMirror { outline: none; min-height: 5rem; }
+.bb-tasks .ProseMirror p { margin: .5em 0; }
+.bb-tasks .ProseMirror ul { list-style: disc; padding-left: 1.5em; }
+.bb-tasks .ProseMirror ol { list-style: decimal; padding-left: 1.5em; }
+.bb-tasks .ProseMirror img { max-width: 100%; }

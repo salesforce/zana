@@ -47,6 +47,11 @@ describe('resolveConversationSendMode', () => {
     expect(() => resolveConversationSendMode({ ...idle, status: 'active' }, 'start')).toThrow(ThreadCreateError);
   });
 
+  it('retries an errored thread with conditional steering while strict steering still rejects', () => {
+    expect(resolveConversationSendMode({ ...idle, status: 'error' }, 'steer-if-active')).toBe('start');
+    expect(() => resolveConversationSendMode({ ...idle, status: 'error' }, 'steer')).toThrow(ThreadCreateError);
+  });
+
   it('drains queue-if-active onto an active thread as auto', () => {
     expect(resolveConversationSendMode({ ...idle, status: 'active' }, 'queue-if-active')).toBe('auto');
     expect(resolveConversationSendMode({ ...idle, status: 'starting' }, 'queue-if-active')).toBe('auto');

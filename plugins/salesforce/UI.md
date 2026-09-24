@@ -150,6 +150,11 @@ no Salesforce credentials or model spend.
 
 Agentforce actions live inside its file explorer. Related implementation tabs
 share the script area and preserve the draft plus the resizable conversation.
-Apex is syntax-highlighted and read-only; Flow has a connector map, step details,
-Fit/zoom controls and raw source. Project and named-org snapshots are explicit.
+Apex is syntax-highlighted and read-only. Flow uses Salesforce’s official Metadata
+Visualizer with collapsible branches, pan/zoom, element details and raw source.
+**Expand Flow** opens a modal canvas without unmounting the agent editor. Escape
+or **Close Flow** restores focus to the expand button. Project and named-org
+snapshots are explicit. The canvas follows the app theme; its loading state uses
+the shared Salesforce illustration. Parser, frame and timeout failures retain
+the basic map and Source.
 Graph nodes and Ctrl/Cmd-clicking a target line open the same scoped action tab.

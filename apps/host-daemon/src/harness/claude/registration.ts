@@ -1,4 +1,5 @@
 import type { HarnessRegistration } from '../registration.js';
+import { createClaudeHistory } from './history.js';
 import { ClaudeCodeProvider } from './provider.js';
 import { claudeTranscript } from './session.js';
 import { renderClaudeLifecycle } from './hooks.js';
@@ -8,6 +9,8 @@ const implementation = new ClaudeCodeProvider();
 export const claudeHarness: HarnessRegistration = {
   id: 'claude',
   label: 'Claude Code',
+  createHistoryAdapter: createClaudeHistory,
+  historyIconId: 'claude-code',
   profiles: [
     { id: 'claude', posture: 'default' },
     { id: 'claude-resume', posture: 'resume' },

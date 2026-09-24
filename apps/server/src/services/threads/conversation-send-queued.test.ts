@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   archiveConversationThread, createConversationThread, createDeferredThreadMessage, createEnvironment,
   getDeferredThreadMessage, listDeferredThreadMessages, markDeferredThreadMessageDispatching,
-  markDeferredThreadMessageFailed, openDatabase, upsertHost, type ZccDatabase
+  markDeferredThreadMessageFailed, openDatabase, upsertHost, updateConversationThreadStatus, type ZccDatabase
 } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
-import { sendDeferredConversationMessage } from './conversation-deferred-messages.js';
+import { sendDeferredConversationMessage, retryDueConversationSends, flushDeferredConversationMessages } from './conversation-deferred-messages.js';
 
 let db: ZccDatabase;
 let dir: string;
@@ -127,5 +127,42 @@ describe('send one queued message', () => {
     expect(markDeferredThreadMessageDispatching(db, { threadId, id: row.id })).toBe(true);
     markDeferredThreadMessageFailed(db, { threadId, id: row.id, reason: 'failed' });
     expect(markDeferredThreadMessageDispatching(db, { threadId, id: row.id })).toBe(false);
+  });
+});
+
+
+describe('automatic queue recovery', () => {
+  it('revives only due safe failures and deletes them after successful delivery', async () => {
+    const row = queue();
+    markDeferredThreadMessageFailed(db, { ...row, reason: 'busy', retryable: true, now: 1 });
+    const deliver = vi.fn(async () => undefined);
+    const flush = vi.fn(async id => { await flushDeferredConversationMessages(context, id, deliver); });
+    await retryDueConversationSends(context, flush, 15000);
+    expect(flush).not.toHaveBeenCalled();
+    await retryDueConversationSends(context, flush, 15001);
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(listDeferredThreadMessages(db, threadId)).toEqual([]);
+  });
+  it('rechecks the global concurrency cap between threads instead of stranding revived messages', async () => {
+    for (let i = 0; i < 7; i++) createConversationThread(db, { projectId: 'p', hostId: context.hostHub.connectedHostIds()[0], providerId: 'codex', status: 'active' });
+    const first = queue();
+    const second = queue({ threadId: otherThreadId });
+    for (const row of [first, second]) markDeferredThreadMessageFailed(db, { ...row, reason: 'busy', retryable: true, now: 1 });
+    const flush = vi.fn(async id => { updateConversationThreadStatus(db, id, 'active'); });
+    await retryDueConversationSends(context, flush, 20000);
+    expect(flush).toHaveBeenCalledTimes(1);
+    expect(getDeferredThreadMessage(db, second)).toMatchObject({ status: 'failed', retryAt: 25000, failureCount: 1 });
+  });
+  it.each(['paused', 'active', 'archived', 'offline', 'interaction', 'scheduled'])('does not revive a %s thread queue', async reason => {
+    const row = queue({ paused: reason === 'paused', sendAfter: reason === 'scheduled' ? 999999 : null });
+    markDeferredThreadMessageFailed(db, { ...row, reason: 'busy', retryable: true, now: 1 });
+    if (reason === 'active') updateConversationThreadStatus(db, threadId, 'active');
+    if (reason === 'archived') archiveConversationThread(db, threadId);
+    if (reason === 'offline') context.hostHub.connectedHostIds = () => [];
+    if (reason === 'interaction') context.pendingInteractions.hasPendingThreadInteraction = () => true;
+    const flush = vi.fn();
+    await retryDueConversationSends(context, flush, 20000);
+    expect(flush).not.toHaveBeenCalled();
+    expect(getDeferredThreadMessage(db, row)?.status).toBe('failed');
   });
 });

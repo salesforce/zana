@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, cleanup as cleanupDom } from '@testing-library/react';
 import type { ModuleHost } from './host.js';
 import { SettingsView } from './SettingsView.js';
 import { DEFAULT_PR_MONITOR_SETTINGS, type PrMonitorSettings } from '../../lib/types.js';
@@ -34,10 +34,10 @@ describe('SettingsView grouped nav shell', () => {
   });
 
   it('renders the left-nav shell without a duplicate Settings heading (R-SET-001)', () => {
-    const { container } = render(
+    const { baseElement: container } = render(
       <SettingsView settings={DEFAULT_PR_MONITOR_SETTINGS} onSave={() => {}} host={makeHost()} />
     );
-    cleanup = () => container.remove();
+    cleanup = cleanupDom;
 
     expect(container.querySelector('.prm-settings-head')).toBeNull();
     expect(Array.from(container.querySelectorAll('h2')).find((h) => h.textContent === 'Settings')).toBeFalsy();
@@ -46,10 +46,10 @@ describe('SettingsView grouped nav shell', () => {
   });
 
   it('renders all five nav rows under three group headers (R-SET-002/003)', () => {
-    const { container } = render(
+    const { baseElement: container } = render(
       <SettingsView settings={DEFAULT_PR_MONITOR_SETTINGS} onSave={() => {}} host={makeHost()} />
     );
-    cleanup = () => container.remove();
+    cleanup = cleanupDom;
 
     const groups = Array.from(container.querySelectorAll('.prm-nav-group-label')).map((g) => g.textContent);
     expect(groups).toEqual(['GITHUB', 'CONFIGURATION', 'SYSTEM']);
@@ -59,10 +59,10 @@ describe('SettingsView grouped nav shell', () => {
   });
 
   it('defaults active nav to Organizations', () => {
-    const { container } = render(
+    const { baseElement: container } = render(
       <SettingsView settings={DEFAULT_PR_MONITOR_SETTINGS} onSave={() => {}} host={makeHost()} />
     );
-    cleanup = () => container.remove();
+    cleanup = cleanupDom;
 
     const active = container.querySelector('.prm-nav-row.active');
     expect(active?.textContent).toContain('Organizations');
@@ -70,8 +70,8 @@ describe('SettingsView grouped nav shell', () => {
 
   it('honors persisted settingsActiveNav', () => {
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'notifications' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={makeHost()} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={makeHost()} />);
+    cleanup = cleanupDom;
 
     const active = container.querySelector('.prm-nav-row.active');
     expect(active?.textContent).toContain('Notifications');
@@ -80,7 +80,7 @@ describe('SettingsView grouped nav shell', () => {
 
   it('selecting a nav row persists settingsActiveNav via onSave', () => {
     let saved: PrMonitorSettings | null = null;
-    const { container } = render(
+    const { baseElement: container } = render(
       <SettingsView
         settings={DEFAULT_PR_MONITOR_SETTINGS}
         onSave={(next) => {
@@ -89,7 +89,7 @@ describe('SettingsView grouped nav shell', () => {
         host={makeHost()}
       />
     );
-    cleanup = () => container.remove();
+    cleanup = cleanupDom;
 
     const systemRow = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-nav-row')).find((r) =>
       r.textContent?.includes('System')
@@ -120,8 +120,8 @@ describe('SettingsView — Notifications area (R-NOTIF-*)', () => {
       ...overrides,
     };
     const res = render(<SettingsView settings={settings} onSave={onSave} host={makeHost()} />);
-    cleanup = () => res.container.remove();
-    return res;
+    cleanup = cleanupDom;
+    return { ...res, container: res.baseElement };
   }
 
   it('renders title and subtitle (AC-NOTIF-1.1)', () => {
@@ -184,10 +184,10 @@ describe('SettingsView — Organizations area (R-ORG-*)', () => {
         ],
       },
     });
-    const { container } = render(
+    const { baseElement: container } = render(
       <SettingsView settings={DEFAULT_PR_MONITOR_SETTINGS} onSave={() => {}} host={host} />
     );
-    cleanup = () => container.remove();
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-entity-card')).toBeTruthy());
     expect(container.textContent).toContain('my-org');
@@ -199,10 +199,10 @@ describe('SettingsView — Organizations area (R-ORG-*)', () => {
 
   it('shows empty state when no orgs', async () => {
     const host = makeHost({ listOrgs: { ok: true, orgs: [] } });
-    const { container } = render(
+    const { baseElement: container } = render(
       <SettingsView settings={DEFAULT_PR_MONITOR_SETTINGS} onSave={() => {}} host={host} />
     );
-    cleanup = () => container.remove();
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-area-empty')).toBeTruthy());
     expect(container.textContent).toContain('No organizations found');
@@ -238,8 +238,8 @@ describe('SettingsView — Repositories area (R-REPO-*)', () => {
       listOrgs: { ok: true, orgs: [] },
     });
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-repo-card')).toBeTruthy());
     // Should render a GitHub logo icon (not GitBranch) before owner/repo.
@@ -267,8 +267,8 @@ describe('SettingsView — Repositories area (R-REPO-*)', () => {
       listOrgs: { ok: true, orgs: [] },
     });
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-repo-quick')).toBeTruthy());
     const quick = container.querySelector('.prm-repo-quick')!;
@@ -323,8 +323,8 @@ describe('SettingsView — Repositories area (R-REPO-*)', () => {
       },
     } as unknown as ModuleHost;
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup2 = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup2 = cleanupDom;
     const restore = cleanup;
     cleanup = () => {
       cleanup2?.();
@@ -425,8 +425,8 @@ describe('SettingsView — Browse Repositories (R-REPO-009)', () => {
   function renderRepos(host: ModuleHost) {
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
     const res = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => res.container.remove();
-    return res;
+    cleanup = cleanupDom;
+    return { ...res, container: res.baseElement };
   }
 
   it('AC-REPO-9.1: loads all repos on open, grouped by owner with a count header', async () => {
@@ -579,8 +579,8 @@ describe('SettingsView — System area (R-SYS-*)', () => {
 
   it('renders Auto-Sync Scheduling with the fixed 4-option interval dropdown', () => {
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'system' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={makeHost()} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={makeHost()} />);
+    cleanup = cleanupDom;
 
     expect(container.textContent).toContain('Auto-Sync Scheduling');
     const select = container.querySelector('select.prm-input--select') as HTMLSelectElement;
@@ -591,7 +591,7 @@ describe('SettingsView — System area (R-SYS-*)', () => {
   it('changing the interval calls onSave with pollIntervalMinutes', () => {
     let saved: PrMonitorSettings | null = null;
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'system' };
-    const { container } = render(
+    const { baseElement: container } = render(
       <SettingsView
         settings={settings}
         onSave={(n) => {
@@ -600,7 +600,7 @@ describe('SettingsView — System area (R-SYS-*)', () => {
         host={makeHost()}
       />
     );
-    cleanup = () => container.remove();
+    cleanup = cleanupDom;
 
     const select = container.querySelector('select.prm-input--select') as HTMLSelectElement;
     select.value = '60';
@@ -625,8 +625,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       suggestRepositories: { ok: true, repos: [] },
     });
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-entity-card, .prm-area-empty')).toBeTruthy());
     const suggestedBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-btn')).find((b) =>
@@ -677,8 +677,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       },
     } as unknown as ModuleHost;
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-repo-card')).toBeTruthy());
     const testBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-btn')).find((b) =>
@@ -710,8 +710,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       },
     });
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'organizations' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-entity-card')).toBeTruthy());
     expect(container.textContent).toContain('broken-org');
@@ -741,8 +741,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       },
     });
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'author' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-author-card')).toBeTruthy());
     const expandBtn = container.querySelector('.prm-author-row') as HTMLButtonElement;
@@ -798,8 +798,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       },
     });
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-repo-card')).toBeTruthy());
     const editBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-btn')).find((b) =>
@@ -851,8 +851,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       listOrgs: { ok: true, orgs: [] },
     });
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-repo-card')).toBeTruthy());
     const editBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-btn')).find((b) =>
@@ -913,8 +913,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       },
     } as unknown as ModuleHost;
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-repo-card')).toBeTruthy());
     const editBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-btn')).find((b) =>
@@ -973,8 +973,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       },
     } as unknown as ModuleHost;
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'organizations' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     // Card initially resolves to Connected.
     await waitFor(() => expect(container.querySelector('.prm-conn-pill--connected')).toBeTruthy());
@@ -1019,8 +1019,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       },
     } as unknown as ModuleHost;
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-area-empty, .prm-entity-card')).toBeTruthy());
     const suggestedBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-btn')).find((b) =>
@@ -1050,8 +1050,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       suggestRepositories: { ok: true, repos: [] },
     });
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-area-empty, .prm-entity-card')).toBeTruthy());
     const suggestedBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-btn')).find((b) =>
@@ -1093,8 +1093,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       },
     });
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-area-empty, .prm-entity-card')).toBeTruthy());
     const suggestedBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-btn')).find((b) =>
@@ -1133,8 +1133,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       },
     });
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-area-empty, .prm-entity-card')).toBeTruthy());
     const suggestedBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-btn')).find((b) =>
@@ -1206,8 +1206,8 @@ describe('SettingsView — Traceability coverage (fabricated citations)', () => 
       },
     } as unknown as ModuleHost;
     const settings: PrMonitorSettings = { ...DEFAULT_PR_MONITOR_SETTINGS, settingsActiveNav: 'repositories' };
-    const { container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
-    cleanup = () => container.remove();
+    const { baseElement: container } = render(<SettingsView settings={settings} onSave={() => {}} host={host} />);
+    cleanup = cleanupDom;
 
     await waitFor(() => expect(container.querySelector('.prm-repo-card')).toBeTruthy());
     const testBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.prm-btn')).find((b) =>

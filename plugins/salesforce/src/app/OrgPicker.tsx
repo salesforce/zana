@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronDown, Cloud } from 'lucide-react';
 import { setPluginSettings } from '@zana-ai/zcc-plugin-sdk/app';
-import { orgOptionLabel, resolveListedSelection } from '../../lib/org-list.js';
+import { orgMatchesAlias, orgOptionLabel } from '../../lib/org-list.js';
 import { useSalesforceCall, requireResult } from './components/client.js';
 import { SALESFORCE_STYLES } from './components/styles.js';
 import type { PublicListedOrg } from '../../lib/types.js';
@@ -40,6 +41,7 @@ type OrgPickerProps = {
   pluginId: string;
   projectId?: string;
   compact?: boolean;
+  appearance?: 'toolbar';
   disabled?: boolean;
   loginRequest?: number;
   hideConnect?: boolean;
@@ -65,7 +67,8 @@ export function OrgPicker(props: OrgPickerProps) {
   const [loginBusy, setLoginBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const settingAlias = resolvedAlias ?? '';
-  const selected = resolveListedSelection(orgs, settingAlias, resolvedAlias);
+  const selectedOrg = orgs.find(org => orgMatchesAlias(org, settingAlias));
+  const selected = selectedOrg ? selectedOrg.alias || selectedOrg.username : settingAlias;
   useEffect(() => { if (props.loginRequest !== undefined) setLoginOpen(Boolean(props.loginRequest)); }, [props.loginRequest]);
 
   const refresh = useCallback(async () => {
@@ -172,29 +175,43 @@ export function OrgPicker(props: OrgPickerProps) {
   />;
 
   if (props.compact) {
-    return (
-      <>
-      {loginDialog}
-      <select
+    const disabled = props.disabled || busy || orgs.length === 0;
+    const description = selectedOrg ? orgOptionLabel(selectedOrg) : error || (busy ? 'Loading orgs…' : selected ? `${selected} (unavailable)` : orgs.length ? 'Choose an org' : 'No connected orgs');
+    const picker = <select
         className="sf-org-picker"
         aria-label="Salesforce org"
+        title={description}
         data-testid="salesforce-org-picker"
-        disabled={props.disabled || busy || orgs.length === 0}
+        disabled={disabled}
         value={selected}
         onChange={(event) => void select(event.target.value)}
       >
         {orgs.length === 0 ? (
           <option value="">{busy ? 'Loading orgs…' : error || 'No CLI orgs'}</option>
         ) : (
-          orgs.map((org) => (
+          <>{!selectedOrg && <option value={selected} disabled>{selected ? `${selected} (unavailable)` : 'Choose an org'}</option>}{orgs.map((org) => (
             <option key={org.alias || org.username} value={org.alias || org.username}>
               {orgOptionLabel(org)}
             </option>
-          ))
+          ))}</>
         )}
-      </select>
+      </select>;
+    return (
+      <>
+      {loginDialog}
+      {props.appearance === 'toolbar' ? (
+        <div className="sf-org-switcher" data-disabled={Boolean(disabled)} title={description}>
+          <span className="sf-org-switcher-label" aria-hidden="true">
+            <Cloud size={14} className="sf-org-switcher-icon" />
+            <span className="sf-org-switcher-name">{selectedOrg ? selectedOrg.alias || selectedOrg.username : busy ? 'Loading orgs…' : error ? 'Connection unavailable' : 'Select org'}</span>
+            {selectedOrg && <span className="sf-org-switcher-kind" data-kind={selectedOrg.kind}>{selectedOrg.kind}</span>}
+            <ChevronDown size={12} className="sf-org-switcher-chevron" />
+          </span>
+          {picker}
+        </div>
+      ) : picker}
       {notice && <p className="sf-connection-status" role="status">{notice}</p>}
-      {error && !loginOpen && <p className="sf-connection-status sf-error" role="alert">{error}</p>}
+      {error && !loginOpen && props.appearance !== 'toolbar' && <p className="sf-connection-status sf-error" role="alert">{error}</p>}
       </>
     );
   }

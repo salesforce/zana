@@ -76,3 +76,14 @@ Day-one host APIs that are implemented (not stubs): `settings.define` (persisted
 `agents.experimental_registerProvider` and `agents.experimental_registerPtyHarness` are experimental — see `docs/api_to_audit.md`.
 
 Provider bridges emit harness-native todo/plan updates as settled `planSteps` items (`item/completed` `{ type: "planSteps", steps: [{ step, status }] }` with `pending` / `active` / `completed`). Use `planStepsPresentation` from `@zana-ai/zcc-plugin-sdk/provider-bridge`. Durable thread plans stay in core — there is no `zcc.plans` plugin SDK.
+
+Product SDK delegation accepts `sdk.threads.spawn({ projectId, prompt, hostId?, environment?, serviceTier?, ... })`.
+`sdk.threads.search({ query, archived?, limit? })` searches visible saved titles and messages,
+including older and archived threads, newest first. Results are capped at 25.
+Provider capabilities advertise `supportsServiceTier` for execution pickers.
+Environment choices are validated by the server; omit the choice for the project default.
+`sdk.providers.models` discovers models on the selected host and reports discovery errors.
+`sdk.system.defaultHost`, confined `sdk.files.read` / `write`, and
+`sdk.environments.pullRequest` support task attachments and delegated worktrees.
+HTTP routes receive request `headers` and bounded `rawBody` (25 MiB maximum),
+plus parsed `body` for JSON. Response `body` accepts `Uint8Array` for binary downloads.

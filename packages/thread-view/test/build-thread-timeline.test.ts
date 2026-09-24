@@ -1126,6 +1126,87 @@ describe("buildThreadTimelineFromEvents", () => {
     ).toBeNull();
   });
 
+  it("treats an ACP session mode of plan as an active Plan turn without a slash command", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const requestId = "creq_acppanxxyz";
+    const events = fromRows([
+      event.clientTurnRequested({
+        requestId,
+        text: "Draft a converter plan",
+        execution: {
+          model: "gpt-5",
+          serviceTier: "default",
+          reasoningLevel: "medium",
+          permissionMode: "accept-edits",
+          source: "client/turn/requested",
+          acpMode: "plan",
+        },
+      }),
+      event.turnStarted({ turnId: "turn-acp-plan" }),
+      event.inputAccepted({
+        clientRequestId: requestId,
+        turnId: "turn-acp-plan",
+      }),
+    ]);
+
+    expect(
+      extractThreadTimelineActivePlanTurn({
+        events,
+        planCommand: null,
+        providerId: "acp-cursor",
+        threadStatus: "active",
+      }),
+    ).toEqual({
+      promptMode: {
+        mode: "plan",
+        providerId: "acp-cursor",
+        prompt: "Draft a converter plan",
+      },
+      turnId: "turn-acp-plan",
+    });
+    expect(
+      extractThreadTimelineActivePlanTurn({
+        events,
+        planCommand: null,
+        providerId: "acp-cursor",
+        threadStatus: "idle",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not treat an ordinary ACP agent session as Plan mode", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const requestId = "creq_acpagentxy";
+    const events = fromRows([
+      event.clientTurnRequested({
+        requestId,
+        text: "Implement the converter",
+        execution: {
+          model: "gpt-5",
+          serviceTier: "default",
+          reasoningLevel: "medium",
+          permissionMode: "accept-edits",
+          source: "client/turn/requested",
+          acpMode: "agent",
+        },
+      }),
+      event.turnStarted({ turnId: "turn-acp-agent" }),
+      event.inputAccepted({
+        clientRequestId: requestId,
+        turnId: "turn-acp-agent",
+      }),
+    ]);
+
+    expect(
+      extractThreadTimelineActivePlanTurn({
+        events,
+        planCommand: null,
+        providerId: "acp-opencode",
+        threadStatus: "active",
+      }),
+    ).toBeNull();
+  });
+
   it("projects active Claude plan mode from an accepted plan command pill", () => {
     const event = createTimelineEventFactory({ threadId: "thread-1" });
     const requestId = "creq_23456789ab";

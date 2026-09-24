@@ -205,6 +205,8 @@ export interface AgentRuntimeBridgeLaunch {
 }
 
 export interface EnsureProviderArgs {
+  /** Immutable skill catalog selected for this session. */
+  skillRoots?: readonly AgentRuntimeSkillRoot[];
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
   bridgeLaunch?: AgentRuntimeBridgeLaunch;
   /**
@@ -217,6 +219,8 @@ export interface EnsureProviderArgs {
 }
 
 export interface StartThreadArgs {
+  /** Immutable skill catalog selected for this session. */
+  skillRoots?: readonly AgentRuntimeSkillRoot[];
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
   bridgeLaunch?: AgentRuntimeBridgeLaunch;
   environmentId: string;
@@ -248,6 +252,8 @@ export interface StartThreadResult {
 }
 
 export interface PrepareThreadRewindArgs {
+  /** Immutable skill catalog selected for this session. */
+  skillRoots?: readonly AgentRuntimeSkillRoot[];
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
   bridgeLaunch?: AgentRuntimeBridgeLaunch;
   environmentId: string;
@@ -273,6 +279,8 @@ export interface DiscardThreadRewindArgs {
 }
 
 export interface ResumeThreadArgs {
+  /** Immutable skill catalog selected for this session. */
+  skillRoots?: readonly AgentRuntimeSkillRoot[];
   acpLaunchSpec?: HostDaemonAcpLaunchSpec;
   bridgeLaunch?: AgentRuntimeBridgeLaunch;
   environmentId: string;

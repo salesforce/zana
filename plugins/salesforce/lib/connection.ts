@@ -1,5 +1,6 @@
 import { DEFAULT_API_VERSION, type ResolvedOrg, type SalesforceDeps } from './types.js';
 import { envTargetOrg, resolveTargetOrgAlias } from './org-resolution.js';
+import { readJsonObject } from './dx-project.js';
 import {
   defaultCliAlias,
   isUsableAccessToken,
@@ -42,7 +43,10 @@ export class ConnectionManager {
     if (result.code === 127) {
       throw new ConnectionError('Salesforce CLI (sf) was not found on PATH.', 'cli_missing');
     }
-    if (result.code !== 0) return [];
+    const payload = readJsonObject(result.stdout);
+    if (result.code !== 0 || !payload?.result || typeof payload.result !== 'object' || (payload.status !== undefined && payload.status !== 0)) {
+      throw new ConnectionError('Could not read Salesforce CLI connections. Check the CLI, then try again.', 'orgs_failed');
+    }
     return parseOrgList(result.stdout);
   }
 
@@ -150,7 +154,7 @@ export class ConnectionManager {
 export class ConnectionError extends Error {
   constructor(
     message: string,
-    readonly code: 'no_org' | 'cli_missing' | 'org_display_failed'
+    readonly code: 'no_org' | 'cli_missing' | 'org_display_failed' | 'orgs_failed'
   ) {
     super(message);
     this.name = 'ConnectionError';

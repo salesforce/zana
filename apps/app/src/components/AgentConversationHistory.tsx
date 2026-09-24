@@ -1,11 +1,12 @@
+import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { product } from '../lib/product-client.js';
 import { useEffect, useRef, useState } from 'react';
-import { Clock, RefreshCw, Sparkles } from 'lucide-react';
+import { Clock, RefreshCw } from 'lucide-react';
 import type { ConversationHistorySnapshot } from '@zana-ai/zcc-domain/product';
+import { useConversationHistory } from './history/history-store.js';
 
 interface Props {
   projectId: string;
-  unavailableProviders: string[];
   onResumed: () => void;
 }
 
@@ -34,7 +35,7 @@ function initialSnapshot(): ConversationHistorySnapshot {
 }
 
 /** Generic, opaque native-history picker. Main alone owns native ids, paths, and resume argv. */
-export function AgentConversationHistory({ projectId, unavailableProviders, onResumed }: Props) {
+export function AgentConversationHistory({ projectId, onResumed }: Props) {
   const [snapshot, setSnapshot] = useState<ConversationHistorySnapshot>(initialSnapshot);
   const [resuming, setResuming] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -119,16 +120,17 @@ export function AgentConversationHistory({ projectId, unavailableProviders, onRe
         <button type="button" className="settings-btn" onClick={() => void load(true)}>
           <RefreshCw size={12} /> {refreshing ? 'Refreshing history' : 'Refresh history'}
         </button>
+        <button type="button" className="settings-btn" onClick={() => { onResumed(); useConversationHistory.getState().open(projectId, 'cli'); }}>Browse all history</button>
       </div>
       <div className="conversation-history-list" role="list">
-        {snapshot.rows.map((row) => (
+        {snapshot.rows.slice(0, 8).map((row) => (
           <div key={row.historyId} className="conversation-history-row" role="listitem">
-            <span className={`agents-row-icon tab-profile-icon profile-${row.source}`} aria-hidden="true"><Sparkles size={13} /></span>
+            <span className={`agents-row-icon tab-profile-icon profile-${row.source}`} aria-hidden="true"><ProviderIcon providerId={row.iconId} size={13} /></span>
             <span className="agents-row-text">
               <span className="agents-row-title" title={row.title}>{row.title}</span>
-              <span className="agents-row-meta"><span><Clock size={11} /> {timeAgo(row.lastActiveAt)}</span><span>{row.source === 'claude' ? 'Claude' : 'OpenCode'}</span></span>
+              <span className="agents-row-meta"><span><Clock size={11} /> {timeAgo(row.lastActiveAt)}</span><span>{row.sourceLabel}</span></span>
             </span>
-            {row.availability === 'available' ? (
+            {row.availability === 'available' && row.supportsExactResume ? (
               <button
                 type="button"
                 className="settings-btn"
@@ -142,7 +144,7 @@ export function AgentConversationHistory({ projectId, unavailableProviders, onRe
               >
                 Resume
               </button>
-            ) : <span className="conversation-history-unavailable">{row.unavailableReason ?? 'Unavailable'}</span>}
+            ) : <span className="conversation-history-unavailable">{row.unavailableReason ?? 'Read only'}</span>}
           </div>
         ))}
         {loading && <div className="sessions-empty">Updating recent conversations…</div>}
@@ -150,16 +152,12 @@ export function AgentConversationHistory({ projectId, unavailableProviders, onRe
       </div>
       <p className="conversation-history-coverage">
         {snapshot.coverage.map((entry) => {
-          if (entry.state === 'empty') return `${entry.source === 'claude' ? 'Claude' : 'OpenCode'}: no conversations`;
-          if (entry.state === 'failed' || entry.state === 'timed-out') return `${entry.source === 'claude' ? 'Claude' : 'OpenCode'} history unavailable`;
-          return `${entry.source === 'claude' ? 'Claude' : 'OpenCode'} history`;
+          if (entry.state === 'unsupported') return `${entry.sourceLabel}: history not supported`;
+          if (entry.state === 'empty') return `${entry.sourceLabel}: no conversations`;
+          if (entry.state === 'failed' || entry.state === 'timed-out') return `${entry.sourceLabel} history unavailable`;
+          return `${entry.sourceLabel} history`;
         }).join(' · ')}
       </p>
-      {unavailableProviders.length > 0 && (
-        <p className="conversation-history-coverage">
-          History is not available yet for {unavailableProviders.join(', ')}.
-        </p>
-      )}
     </section>
   );
 }

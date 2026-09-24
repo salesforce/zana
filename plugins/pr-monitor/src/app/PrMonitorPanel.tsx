@@ -234,15 +234,20 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
         // Older hosts return completed poll payloads directly.
         const ok = res.state === undefined || res.state === 'succeeded';
         if (ok && Array.isArray(res.prs)) {
-          setPrs(res.prs);
-          host.cache.set(MONITORED_PRS_CACHE_KEY, res.prs);
+          // Job results are historical snapshots. A favorite, read state, or
+          // project assignment may have changed while we awaited syncStatus.
+          const latestPrs = res.state === 'succeeded' ? await host.call<MonitoredPr[]>('listPrs') : res.prs;
+          if (!aliveRef.current) return;
+          if (!Array.isArray(latestPrs)) throw new Error('Could not refresh pull requests after syncing.');
+          setPrs(latestPrs);
+          host.cache.set(MONITORED_PRS_CACHE_KEY, latestPrs);
           // Keep the nav-badge inputs in lockstep with a manual Sync. Without
           // this, a Sync (pollNow) refreshes the PR list but never re-evaluates
           // the badge, so a fresh open + Sync leaves the badge on its cold-start
           // 'total' default even when badgeMode is 'unread' — the "toggle
           // Settings to fix it" bug. refreshBadge re-runs navBadge against the
           // already-seeded settings cache.
-          host.cache.set(MONITORED_COUNT_CACHE_KEY, res.prs.length);
+          host.cache.set(MONITORED_COUNT_CACHE_KEY, latestPrs.length);
           host.cache.refreshBadge?.();
           if (Array.isArray(res.deltas) && res.deltas.length > 0) {
             // A Sync can be clicked as hydration completes. Read durable settings
@@ -664,6 +669,8 @@ export default function PrMonitorPanel({ host }: { host: ModuleHost }) {
                   disabled={loading}
                   title="Sync & Filter — choose which repositories to show and sync"
                   aria-label="Open Sync & Filter picker"
+                  aria-haspopup="menu"
+                  aria-expanded={syncFilterOpen}
                 >
                   <ChevronDown size={13} />
                 </button>

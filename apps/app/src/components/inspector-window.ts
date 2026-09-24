@@ -38,14 +38,9 @@ export function clampInspectorFrame(
   const minHeight = Math.min(INSPECTOR_MIN_HEIGHT, maxHeight);
   const width = Math.min(maxWidth, Math.max(minWidth, Math.round(frame.width)));
   const height = Math.min(maxHeight, Math.max(minHeight, Math.round(frame.height)));
-  const left = Math.min(
-    viewport.width - INSPECTOR_VIEWPORT_GUTTER - width,
-    Math.max(INSPECTOR_VIEWPORT_GUTTER, Math.round(frame.left))
-  );
-  const top = Math.min(
-    viewport.height - INSPECTOR_VIEWPORT_GUTTER - height,
-    Math.max(INSPECTOR_VIEWPORT_GUTTER, Math.round(frame.top))
-  );
+  // Keep the backdrop's centered placement after switching to a custom size.
+  const left = (viewport.width - width) / 2;
+  const top = (viewport.height - height) / 2;
   return { left, top, width, height };
 }
 
@@ -69,31 +64,15 @@ export function inspectorFrameFromPointer(args: {
 }): InspectorFrame {
   const dx = args.clientX - args.originX;
   const dy = args.clientY - args.originY;
-  let left = args.start.left;
-  let top = args.start.top;
-  let right = args.start.left + args.start.width;
-  let bottom = args.start.top + args.start.height;
-  if (args.edge.includes('e')) right += dx;
-  if (args.edge.includes('w')) left += dx;
-  if (args.edge.includes('s')) bottom += dy;
-  if (args.edge.includes('n')) top += dy;
-
-  const maxWidth = Math.max(1, args.viewport.width - INSPECTOR_VIEWPORT_GUTTER * 2);
-  const maxHeight = Math.max(1, args.viewport.height - INSPECTOR_VIEWPORT_GUTTER * 2);
-  const minWidth = Math.min(INSPECTOR_MIN_WIDTH, maxWidth);
-  const minHeight = Math.min(INSPECTOR_MIN_HEIGHT, maxHeight);
-  const minLeft = INSPECTOR_VIEWPORT_GUTTER;
-  const minTop = INSPECTOR_VIEWPORT_GUTTER;
-  const maxRight = args.viewport.width - INSPECTOR_VIEWPORT_GUTTER;
-  const maxBottom = args.viewport.height - INSPECTOR_VIEWPORT_GUTTER;
-
-  if (args.edge.includes('w')) left = Math.min(right - minWidth, Math.max(minLeft, left));
-  if (args.edge.includes('e')) right = Math.max(left + minWidth, Math.min(maxRight, right));
-  if (args.edge.includes('n')) top = Math.min(bottom - minHeight, Math.max(minTop, top));
-  if (args.edge.includes('s')) bottom = Math.max(top + minHeight, Math.min(maxBottom, bottom));
+  let { width, height } = args.start;
+  // Each dragged edge follows the pointer while its opposite mirrors it.
+  if (args.edge.includes('e')) width += dx * 2;
+  if (args.edge.includes('w')) width -= dx * 2;
+  if (args.edge.includes('s')) height += dy * 2;
+  if (args.edge.includes('n')) height -= dy * 2;
 
   return clampInspectorFrame(
-    { left, top, width: right - left, height: bottom - top },
+    { ...args.start, width, height },
     args.viewport
   );
 }

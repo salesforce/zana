@@ -24,6 +24,17 @@ afterEach(() => {
 });
 
 describe('queued messages store', () => {
+  it('settles rejected edits without leaking an unhandled rejection or blocking the next write', async () => {
+    const dir = dataDir();
+    await expect(updateQueuedMessage(dir, 't1', 'missing', [], 0)).rejects.toMatchObject({ code: 'unknown-queued-message' });
+    const first = await createQueuedMessage(dir, 't1', [{ type: 'text', text: 'kept', mentions: [] }]);
+    await expect(updateQueuedMessage(dir, 't1', first.id, [], first.updatedAt - 1)).rejects.toMatchObject({ code: 'queued-message-conflict' });
+    await expect(reorderQueuedMessage(dir, 't1', 'missing', null)).rejects.toMatchObject({ code: 'unknown-queued-message' });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await createQueuedMessage(dir, 't1', [{ type: 'text', text: 'next', mentions: [] }]);
+    expect(listQueuedMessages(dir, 't1').map(queuedMessageText)).toEqual(['kept', 'next']);
+  });
+
   it('creates, lists, reorders, edits, and deletes a queued prompt', async () => {
     const dir = dataDir();
     const first = await createQueuedMessage(dir, 't1', [{ type: 'text', text: 'one', mentions: [] }]);

@@ -1,3 +1,9 @@
+import { join } from 'node:path';
+import { WorkbenchResults } from './workbench-results.js';
+import { WORKBENCH_ACTIONS, actionCatalog, actionInput, actionParameters, isWorkbenchAction, workbenchActionNames } from './workbench-actions.js';
+import { WorkbenchControl } from './workbench-control.js';
+import { createAgentDraft, draftDestination, DRAFT_PROJECT } from './agent-drafts.js';
+import type { AgentDraftInput } from './agent-draft-contract.js';
 import type { PluginAgentToolContext, PluginInteractionResult, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { randomUUID } from 'node:crypto';
 import {
@@ -56,6 +62,7 @@ import {
 } from './agent-files.js';
 import { parseAgentScriptSource } from './agent-script-parse.js';
 import { readOrgAction, readProjectAction } from './action-source.js';
+import { visualizeFlowSnapshot } from './flow-visualizer.js';
 import { isAgentScriptLspQuery, queryAgentScriptLsp } from './agent-script-lsp.js';
 import { AGENT_SCRIPT_EXAMPLES } from './agent-script-model.js';
 import { envelopeTitle, Guardrail } from './guardrail.js';
@@ -63,6 +70,7 @@ import { diagnoseLwc, findLwcComponent, inspectLwc, parseLwcInput, resolveJestBi
 import { createNodeDeps } from './node-deps.js';
 import { formatOrgRoster, orgRosterInstructions } from './org-list.js';
 import { OrgLoginService } from './org-login-service.js';
+import { OrgAgentService } from './org-agent-service.js';
 import { parseOrgLoginInput } from './org-login.js';
 import { applyLimit, parseSoqlInput, previewRecords } from './soql.js';
 import { SoqlExplorer } from './soql-explorer.js';
@@ -144,7 +152,9 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     kv: zcc.storage.kv,
     fs: deps
   });
+  const rpcHandlers = new Map<string, (args: unknown) => unknown>();
   const registerRpc = (name: string, handler: (args: unknown) => unknown) => {
+    rpcHandlers.set(name, handler);
     zcc.rpc.method(name, async (args) => {
       try { return await contexts.run(args, () => handler(args)); }
       catch (error) {
@@ -197,13 +207,6 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   registerRpc('lwc.scan', () => runLwc({ action: 'scan' }, deps, readSettings, artifacts));
   zcc.onDispose(() => workbench.dispose());
 
-  const applyStatus = async () => {
-    const snapshot = await readSettings();
-    if (!snapshot.defaultOrg) {
-      zcc.status.needsConfiguration('Pick a CLI-connected org under Plugins → Salesforce, or set a default org alias, then run zcc sf doctor.');
-    }
-  };
-
   const resolveAgentFilesRoot = async (
     args: unknown
   ): Promise<{ root: string; options?: { allowNonDx?: boolean } }> => {
@@ -229,7 +232,6 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   settings.onChange(() => {
     connections.invalidate();
     emitOrgChange();
-    void applyStatus();
   });
 
   registerRpc('doctor', async () => {
@@ -251,7 +253,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       agentScriptDialect: snapshot.agentScriptDialect,
       dxProject: isDxProject(snapshot.projectRoot, deps.exists),
       lastDoctor: contexts.current()?.projectId ? null : lastDoctor,
-      orgs: listed.orgs
+      orgs: listed.orgs,
+      orgsError: listed.error ?? null
     };
   };
   registerRpc('status', async (args) => {
@@ -377,13 +380,47 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       const data = origin === 'org'
         ? await readOrgAction(await connections.connect(), target, deps)
         : readProjectAction(sourceRoot, target, deps, rpcString(args, 'candidate') || undefined);
+      if (args && typeof args === 'object' && 'visualize' in args && args.visualize === true && target.startsWith('flow://') && data.status === 'ready') {
+        try { data.visualization = await visualizeFlowSnapshot(data); }
+        catch (error) { data.visualizationError = error instanceof Error ? error.message : 'The Flow visualizer is unavailable.'; }
+      }
       return { ok: true, data };
     } finally { actionReads--; }
+  });
+  const orgAgents = new OrgAgentService({ execSf: deps.execSf, connect: () => sdk.connect() });
+  zcc.onDispose(() => orgAgents.dispose());
+  registerRpc('agents.list', async () => ({ ok: true, data: await orgAgents.list() }));
+  registerRpc('agents.draft.destination', async args => {
+    const { root } = await resolveAgentFilesRoot(args);
+    const { directory, initializesProject } = draftDestination(root);
+    return { ok: true, directory, initializesProject };
+  });
+  registerRpc('agents.draft.create', async args => {
+    const { root } = await resolveAgentFilesRoot(args);
+    const file = createAgentDraft(root, args as AgentDraftInput);
+    zcc.realtime.publish('files.changed', { projectId: contexts.current()?.projectId });
+    return { ok: true, file };
+  });
+  registerRpc('agents.retrieve.start', async args => {
+    const { root } = await resolveAgentFilesRoot(args);
+    return { ok: true, ...await orgAgents.start(root, args) };
+  });
+  registerRpc('agents.retrieve.status', async args => {
+    const { root } = await resolveAgentFilesRoot(args);
+    return { ok: true, data: orgAgents.status(root, rpcString(args, 'jobId')) };
+  });
+  registerRpc('agents.retrieve.cancel', async args => {
+    const { root } = await resolveAgentFilesRoot(args);
+    orgAgents.cancel(root, rpcString(args, 'jobId'));
+    return { ok: true };
   });
   registerRpc('agentFiles.list', async (args) => {
     try {
       const resolved = await resolveAgentFilesRoot(args);
-      return { ok: true, files: listAgentFiles(resolved.root, deps, { ...resolved.options, bundlesOnly: rpcString(args, 'purpose') === 'preview' }) };
+      const preview = rpcString(args, 'purpose') === 'preview';
+      const child = preview && !isDxProject(resolved.root, deps.exists) ? dxProjectRoot({ ...await readSettings(), projectRoot: resolved.root }, deps) : undefined;
+      const files = listAgentFiles(child || resolved.root, deps, { ...resolved.options, bundlesOnly: preview });
+      return { ok: true, files: child ? files.map(file => ({ ...file, path: `${DRAFT_PROJECT}/${file.path}` })) : files };
     } catch (error) {
       return agentFilesFailure(error);
     }
@@ -495,7 +532,76 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     registerRpc(`sql.${name}`, handler);
   }
   zcc.onDispose(() => explorer.dispose());
-  await applyStatus();
+  const queryResults = new WorkbenchResults();
+  zcc.onDispose(() => queryResults.dispose());
+  registerRpc('query.execute', async args => {
+    const row = actionInput(args);
+    const parsed = parseSoqlInput({ ...row, action: 'query.run' });
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    const ctx = { projectId: contexts.current()?.projectId ?? '', threadId: rpcString(args, 'threadId'), signal: new AbortController().signal };
+    const { org, mediated } = await mediateOrgRead(ctx, sdk, 'Run a query and display its result', parsed.plan.envelope);
+    if (!mediated.approved) return { ok: false, code: 'refused', error: `Operator ${mediated.reason} query.` };
+    const result = await explorer.query({ soql: applyLimit(parsed.plan.query!, Math.min(parsed.plan.limit, 200)), useToolingApi: row.useToolingApi === true, includeDeleted: parsed.plan.allRows });
+    if (!result.ok) return result;
+    const resultId = queryResults.put(ctx.projectId, org.orgId, result);
+    return { ...result, resultId };
+  });
+  registerRpc('query.result', async args => ({ ok: true, result: queryResults.get(contexts.current()?.projectId ?? '', (await sdk.connect()).orgId, rpcString(args, 'resultId')) }));
+  const control = new WorkbenchControl();
+  zcc.onDispose(() => control.dispose());
+  const controlScope = () => contexts.current()?.projectId ?? 'global';
+  registerRpc('control.register', args => ({ ok: true, ...control.register(controlScope(), args, contexts.current()?.settings.defaultOrg ?? '') }));
+  registerRpc('control.poll', args => { control.assertTarget(controlScope(), rpcString(args, 'viewId'), contexts.current()?.settings.defaultOrg ?? ''); return { ok: true, ...control.poll(controlScope(), args) }; });
+  registerRpc('control.close', args => { control.close(controlScope(), rpcString(args, 'viewId')); return { ok: true }; });
+  registerRpc('control.ack', args => ({ ok: true, ...control.acknowledge(controlScope(), args) }));
+  registerRpc('control.views', () => ({ ok: true, views: control.list(controlScope()) }));
+  registerRpc('control.command', args => ({ ok: true, ...control.request(controlScope(), args) }));
+  registerRpc('control.result', args => ({ ok: true, ...control.result(controlScope(), rpcString(args, 'commandId')) }));
+
+  const invokeAction = async (action: string, input: unknown, ctx: PluginAgentToolContext): Promise<unknown> => {
+    try {
+      if (action === 'capabilities') return { ok: true, actions: actionCatalog() };
+      if (!ctx.projectId) return { ok: false, code: 'project_required', error: 'Choose a registered project for Salesforce actions.' };
+      if (!isWorkbenchAction(action)) return { ok: false, code: 'invalid_input', error: 'Unknown Salesforce action. Use capabilities.' };
+      const data = actionInput(input);
+      if (action === 'files.write' && (typeof data.expectedSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(data.expectedSha256))) throw Error('Read the file first and supply its expectedSha256 revision.');
+      if (action === 'project.create') {
+        if (typeof data.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(data.name)) throw Error('Choose a simple project name.');
+        data.outputDir = (await readSettings()).projectRoot;
+        if (deps.exists(join(String(data.outputDir), data.name))) throw Error('That project folder already exists.');
+      }
+      if (action === 'ui.command') control.assertTarget(ctx.projectId, String(data.viewId), (await readSettings()).defaultOrg);
+      const commandInput = data.input as Record<string, unknown> | undefined;
+      const uiReadsOrg = action === 'ui.command' && (['object.select', 'record.open', 'log.open'].includes(String(data.command)) || (data.command === 'view.open' && commandInput?.view !== 'agentforce') || (data.command === 'panel.open' && ['agents', 'org-preview'].includes(String(commandInput?.tool))));
+      const [method, policy] = WORKBENCH_ACTIONS[action];
+      if (policy === 'org' || uiReadsOrg || (policy === 'conditional' && data.origin === 'org')) {
+        const { mediated } = await mediateOrgRead(ctx, sdk, `Salesforce ${action}`);
+        if (!mediated.approved) return { ok: false, code: 'refused', error: `Operator ${mediated.reason} ${action}.` };
+      }
+      const result = await rpcHandlers.get(method)!({ ...data, projectId: ctx.projectId, threadId: ctx.threadId });
+      if (JSON.stringify(result).length > 750_000) throw Error('Result is too large. Narrow the selection.');
+      return result;
+    } catch (error) { return agentFilesFailure(error); }
+  };
+  const runFamily = (name: string, input: unknown, ctx: PluginAgentToolContext): Promise<unknown> => {
+    const action = rpcString(input, 'action');
+    if (isWorkbenchAction(action)) return invokeAction(action, (input as { input?: unknown }).input ?? input, ctx);
+    if (name === 'sf_agent') return runAgent(input, ctx, sdk, artifacts, deps, readSettings, evalEvidence);
+    if (name === 'sf_soql') return runSoql(input, ctx, sdk, artifacts);
+    if (name === 'sf_apex') return runApex(input, ctx, sdk, artifacts, deps, readSettings);
+    if (name === 'sf_lwc') return runLwc(input, deps, readSettings, artifacts);
+    return Promise.resolve({ ok: false, error: 'Unknown Salesforce tool.' });
+  };
+  registerRpc('actions.run', args => invokeAction(rpcString(args, 'action'), (args as { input?: unknown })?.input, { projectId: contexts.current()?.projectId ?? '', threadId: rpcString(args, 'threadId'), signal: new AbortController().signal }));
+  zcc.agents.registerTool({
+    name: 'sf_workbench',
+    description: 'Control the Salesforce project workbench. Use capabilities to discover semantic operations for local draft creation, org source retrieval, org selection, query history, deployment jobs and acknowledged UI controls. UI views are explicit and project-scoped. Local drafts work without an org.',
+    parameters: { ...actionParameters, properties: { ...actionParameters.properties, action: { type: 'string', enum: ['capabilities', ...workbenchActionNames] } } },
+    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => invokeAction(rpcString(input, 'action'), (input as { input?: unknown })?.input, ctx)),
+  });
+
+  // Local authoring is available without a shared org. Connection readiness is
+  // request/project-scoped and must not mark the entire plugin unavailable.
 
   zcc.cli.register({
     name: 'sf',
@@ -503,12 +609,25 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     commands: [
       { name: 'doctor', summary: 'Check Salesforce CLI, aliases, and the target org', usage: 'zcc sf doctor' },
       { name: 'org', summary: 'List CLI-connected orgs and the resolved target (no token)', usage: 'zcc sf org' },
+      { name: 'action', summary: 'Run a scoped workbench action; capabilities lists actions', usage: 'zcc sf action <action> --input <JSON> --json' },
+      { name: 'tool', summary: 'Run a Salesforce family tool with structured input', usage: 'zcc sf tool <sf_agent|sf_soql|sf_apex|sf_lwc> --input <JSON> --json' },
       { name: 'lint', summary: 'Lint a confined .agent file (or every bundle)', usage: 'zcc sf lint [path]' }
     ],
-    async run(argv) {
+    async run(argv, cliContext) {
+      const execute = async () => {
       const command = argv[0] ?? 'doctor';
       if (command === '--help' || command === '-h') {
-        return { exitCode: 0, stdout: 'zcc sf doctor\nzcc sf org\nzcc sf lint [path]\n' };
+        return { exitCode: 0, stdout: 'zcc sf doctor\nzcc sf org\nzcc sf lint [path]\nzcc sf action capabilities --json\nzcc sf action <action> --input <JSON> --json\nzcc sf tool <sf_agent|sf_soql|sf_apex|sf_lwc> --input <JSON> --json\n' };
+      }
+      if (command === 'action' || command === 'tool') {
+        const inputIndex = argv.indexOf('--input');
+        let input: unknown = {};
+        try { input = inputIndex === -1 ? {} : JSON.parse(argv[inputIndex + 1] ?? ''); }
+        catch { return { exitCode: 2, stderr: 'Provide valid JSON after --input.\n' }; }
+        const ctx = { projectId: cliContext.projectId ?? '', threadId: cliContext.threadId ?? '', signal: cliContext.signal ?? new AbortController().signal };
+        if (!ctx.projectId && argv[1] !== 'capabilities') return { exitCode: 2, stderr: 'Run in a registered project (or pass the ZCC project context).\n' };
+        const result = command === 'action' ? await invokeAction(argv[1] ?? '', input, ctx) : await runFamily(argv[1] ?? '', actionInput(input), ctx);
+        return { exitCode: (result as { ok?: boolean })?.ok === false ? 1 : 0, stdout: JSON.stringify(result) + '\n' };
       }
       const snapshot = await readSettings();
       if (command === 'doctor' || command === '') {
@@ -546,6 +665,9 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         return runAgentLint(deps, snapshot, argv.slice(1));
       }
       return { exitCode: 2, stderr: `unknown command: ${command}; run zcc sf --help\n` };
+      };
+      try { return await contexts.run({ projectId: cliContext.projectId }, execute); }
+      catch (error) { return { exitCode: 1, stderr: `${error instanceof Error ? error.message : String(error)}\n` }; }
     }
   });
 
@@ -555,12 +677,12 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       defaultOrg: contexts.current()?.targetSource === 'project' ? snapshot.defaultOrg : (await readSharedSettings()).defaultOrg,
       dxProject: isDxProject(snapshot.projectRoot, deps.exists)
     })) {
-      return {};
+      return ctx.projectId ? { tools: ['sf_workbench', 'sf_agent'], instructions: 'Salesforce local authoring is available: use sf_workbench capabilities, then draft.create. Org actions require selecting a connected org.' } : {};
     }
     const listed = await listOrgsSafe(sdk);
     return {
       instructions: CONSTITUTION_INSTRUCTIONS + `\nSalesforce project target: ${snapshot.defaultOrg || 'not selected'}.\n` + orgRosterInstructions(listed.orgs, listed.selectedAlias),
-      tools: ['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent'],
+      tools: ['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent', 'sf_workbench'],
       skills: ['salesforce-constitution', 'salesforce-dx']
     };
   }).catch(() => ({})));
@@ -572,7 +694,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['schema.search', 'schema.describe', 'query.validate', 'query.sample', 'query.run', 'query.export'] },
+        input: { type: 'object', description: 'Additional workbench action fields' },
+        action: { type: 'string', enum: ['schema.search', 'schema.describe', 'query.validate', 'query.sample', 'query.run', 'query.export', ...workbenchActionNames.filter(name => name.startsWith('query.') || name === 'records.get' || name === 'org.limits')] },
         query: { type: 'string' },
         sobject: { type: 'string' },
         term: { type: 'string' },
@@ -580,7 +703,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       },
       required: ['action']
     },
-    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => runSoql(input, ctx, sdk, artifacts))
+    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => runFamily('sf_soql', input, ctx))
   });
 
   zcc.agents.registerTool({
@@ -590,7 +713,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['diagnose', 'test.run', 'logs.fetch', 'anon.run'] },
+        input: { type: 'object', description: 'Additional workbench action fields' },
+        action: { type: 'string', enum: ['diagnose', 'test.run', 'logs.fetch', 'anon.run', 'logs.get'] },
         className: { type: 'string' },
         methodNames: { type: 'array', items: { type: 'string' } },
         body: { type: 'string' },
@@ -600,7 +724,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       },
       required: ['action']
     },
-    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => runApex(input, ctx, sdk, artifacts, deps, readSettings))
+    execute: (input, ctx) => contexts.run({ projectId: ctx.projectId }, () => runFamily('sf_apex', input, ctx))
   });
 
   zcc.agents.registerTool({
@@ -626,6 +750,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     parameters: {
       type: 'object',
       properties: {
+        input: { type: 'object', description: 'Fields for source, draft, files, studio and action operations; discover via sf_workbench capabilities' },
         action: {
           type: 'string',
           enum: [
@@ -638,7 +763,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
             'eval.run',
             'lifecycle.list',
             'lifecycle.publish',
-            'lifecycle.activate'
+            'lifecycle.activate',
+            ...workbenchActionNames.filter(name => /^(source|draft|files|studio|actions)\./.test(name))
           ]
         },
         apiName: { type: 'string' },
@@ -659,7 +785,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       required: ['action']
     },
     execute: (input, ctx) =>
-      contexts.run({ projectId: ctx.projectId }, () => runAgent(input, ctx, sdk, artifacts, deps, readSettings, evalEvidence))
+      contexts.run({ projectId: ctx.projectId }, () => runFamily('sf_agent', input, ctx))
   });
 }
 
@@ -1007,10 +1133,11 @@ async function requireDxRoot(
   snapshot: PluginSettingsValues,
   deps: SalesforceDeps
 ): Promise<{ ok: true; projectRoot: string } | ToolResult> {
-  if (!snapshot.projectRoot || !isDxProject(snapshot.projectRoot, deps.exists)) {
+  const projectRoot = dxProjectRoot(snapshot, deps);
+  if (!projectRoot) {
     return fail('not_configured', 'Set DX project root to a folder that contains sfdx-project.json.');
   }
-  return { ok: true, projectRoot: deps.realpath(snapshot.projectRoot) };
+  return { ok: true, projectRoot };
 }
 
 async function runAgentLocal(
@@ -1061,7 +1188,7 @@ async function runAgentLocal(
   }
   const alias = snapshot.defaultOrg.trim();
   if (!alias) {
-    return fail('not_configured', 'Set a default org alias under Plugins → Salesforce to compile with sf agent validate.');
+    return fail('not_configured', 'Select an org on this project’s Salesforce tab to compile with sf agent validate. Local editing and diagnostics remain available.');
   }
   const result = await sdk.execSf(validateArgs(loaded.bundle.apiName, alias), agentCliOpts(loaded.projectRoot));
   const parsedCli = parseSfJson(result.stdout);
@@ -1091,7 +1218,7 @@ async function runAgentDiagnose(
     const loaded = await loadAgentBundles(plan, snapshot, deps);
     if (!('projectRoot' in loaded)) return loaded;
     if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.apiName ?? plan.path}`);
-    const file = readAgentFile(snapshot.projectRoot, loaded.bundle.path, deps);
+    const file = readAgentFile(loaded.projectRoot, loaded.bundle.path, deps);
     const queried = queryAgentScriptLsp({
       source: file.content,
       dialect: snapshot.agentScriptDialect,
@@ -1133,16 +1260,24 @@ async function loadAgentBundles(
 > {
   const root = await requireDxRoot(snapshot, deps);
   if (!('projectRoot' in root)) return root;
+  let sourcePath: string | null = null;
   if (plan.path) {
-    const confined = resolveUnderRoot(root.projectRoot, plan.path, deps.realpath);
-    if (!confined) return fail('path_refused', 'Agentforce path must stay inside the configured DX project root.');
+    sourcePath = resolveUnderRoot(snapshot.projectRoot, plan.path, deps.realpath);
+    if (sourcePath && !resolveUnderRoot(root.projectRoot, sourcePath, deps.realpath)) return fail('path_refused', 'Select a source inside the Agentforce DX project.');
+    if (!sourcePath) return fail('path_refused', 'Agentforce path must stay inside the configured DX project root.');
   }
   const bundles = scanAgentBundles(root.projectRoot, deps);
+  // A supplied path identifies one exact source, even when other packages contain
+  // the same basename. Never fall back to an API name after a missing path.
+  const bundle = sourcePath
+    ? bundles.find(row => row.path === sourcePath) ?? null
+    : findAgentBundle(bundles, plan.apiName);
+  if (bundle && plan.apiName && bundle.apiName !== plan.apiName) return fail('invalid_input', 'The API name does not match the selected Agentforce source.');
   return {
     ok: true,
     projectRoot: root.projectRoot,
     bundles,
-    bundle: findAgentBundle(bundles, plan.apiName, plan.path)
+    bundle
   };
 }
 
@@ -1275,8 +1410,8 @@ async function runAgentEvalSpec(
 ): Promise<ToolResult> {
   const root = await requireDxRoot(snapshot, deps);
   if (!('projectRoot' in root)) return root;
-  const specFile = resolveUnderRoot(root.projectRoot, plan.specPath ?? '', deps.realpath);
-  if (!specFile) return fail('path_refused', 'Eval spec must stay inside the configured DX project root.');
+  const specFile = resolveUnderRoot(snapshot.projectRoot, plan.specPath ?? '', deps.realpath);
+  if (!specFile || !resolveUnderRoot(root.projectRoot, specFile, deps.realpath)) return fail('path_refused', 'Eval spec must stay inside the configured DX project root.');
   const specText = deps.readFile(specFile);
   if (specText === null) return fail('not_found', `Eval spec not found: ${plan.specPath}`);
   const { org, mediated } = await mediateOrgRead(
@@ -1424,6 +1559,8 @@ async function runAgentPublish(
   const apiName = loaded.bundle?.apiName ?? plan.apiName;
   if (!apiName) return fail('invalid_input', 'lifecycle.publish requires apiName or path.');
   if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${plan.apiName ?? plan.path}`);
+  const metadata = readConfinedFile(loaded.projectRoot, loaded.bundle.path.replace(/\.agent$/, '.bundle-meta.xml'), deps);
+  if (metadata && /<target(?:\s|>)/.test(metadata)) return fail('versioned_source', 'Create a new local draft from this source before publishing a retrieved version.');
   const { org, mediated } = await mediateOrgRead(
     ctx,
     sdk,
@@ -1499,8 +1636,10 @@ async function runAgentActivate(
 }
 
 function dxProjectRoot(snapshot: PluginSettingsValues, deps: SalesforceDeps): string | undefined {
-  if (!snapshot.projectRoot.trim() || !isDxProject(snapshot.projectRoot, deps.exists)) return undefined;
-  return deps.realpath(snapshot.projectRoot);
+  if (!snapshot.projectRoot.trim()) return undefined;
+  if (isDxProject(snapshot.projectRoot, deps.exists)) return deps.realpath(snapshot.projectRoot);
+  const child = resolveUnderRoot(snapshot.projectRoot, DRAFT_PROJECT, deps.realpath);
+  return child && isDxProject(child, deps.exists) ? child : undefined;
 }
 
 async function resolvePreviewIdentity(
@@ -1546,13 +1685,15 @@ function readConfinedFile(projectRoot: string, relativePath: string, deps: Sales
 
 async function listOrgsSafe(
   sdk: SalesforceSdk
-): Promise<{ orgs: Awaited<ReturnType<SalesforceSdk['listOrgs']>>; selectedAlias: string | null }> {
+): Promise<{ orgs: Awaited<ReturnType<SalesforceSdk['listOrgs']>>; selectedAlias: string | null; error?: string }> {
   try {
     const orgs = await sdk.listOrgs();
     const selectedAlias = await sdk.resolveAlias();
     return { orgs, selectedAlias };
-  } catch {
-    return { orgs: [], selectedAlias: null };
+  } catch (error) {
+    return { orgs: [], selectedAlias: null, error: error instanceof ConnectionError && error.code === 'cli_missing'
+      ? 'Salesforce CLI (sf) was not found on PATH. Install it, then check again.'
+      : 'Could not read Salesforce CLI connections. Check the CLI, then try again.' };
   }
 }
 
@@ -1575,10 +1716,10 @@ function runAgentLint(
   const target = argv[0]?.trim() ?? '';
   try {
     const files = target
-      ? [readAgentFile(snapshot.projectRoot, target, deps)]
-      : listAgentFiles(snapshot.projectRoot, deps).map((row) => readAgentFile(snapshot.projectRoot, row.path, deps));
+      ? [readAgentFile(snapshot.projectRoot, target, deps, { allowNonDx: true })]
+      : listAgentFiles(snapshot.projectRoot, deps, { allowNonDx: true }).map((row) => readAgentFile(snapshot.projectRoot, row.path, deps, { allowNonDx: true }));
     if (files.length === 0) {
-      return { exitCode: 0, stdout: 'No .agent bundles in the configured DX project.\n' };
+      return { exitCode: 0, stdout: 'No Agentforce sources in this project.\n' };
     }
     let failed = 0;
     const lines: string[] = [];

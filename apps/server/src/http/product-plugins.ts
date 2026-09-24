@@ -1,3 +1,5 @@
+import { bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
+import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { join } from 'node:path';
 import {
   createPluginService,
@@ -30,7 +32,7 @@ import type { ProductHttpContext } from './product-context.js';
 import { conversationThreadOutput } from '../plugins/thread-events.js';
 import { readHostFile } from './files-via-host.js';
 import type { PluginSdkThreadSummary } from '@zana-ai/zcc-plugin-sdk/server';
-import { pluginHostModelCatalog, resolvePluginDefaultExecutionOptions } from '../services/threads/thread-execution-options.js';
+import { pluginHostModelCatalog, resolvePluginDefaultExecutionOptions, classifyModelListError, modelListErrorDetail } from '../services/threads/thread-execution-options.js';
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 
 export async function productPushInbox(
@@ -56,6 +58,8 @@ export function productListProjects(
 
 function toPluginThreadSummary(row: {
   id: string;
+  title?: string | null;
+  updatedAt?: number;
   projectId: string;
   hostId: string;
   environmentId: string | null;
@@ -70,6 +74,10 @@ function toPluginThreadSummary(row: {
 }): PluginSdkThreadSummary {
   return {
     id: row.id,
+    title: row.title ?? null,
+    titleFallback: null,
+    updatedAt: row.updatedAt ?? row.createdAt ?? 0,
+    deletedAt: null,
     projectId: row.projectId,
     hostId: row.hostId,
     environmentId: row.environmentId,
@@ -180,13 +188,29 @@ export async function attachProductPluginService(
     listProviders: async () => {
       return listThreadProviders().map((provider) => ({
         id: provider.id,
+        displayName: provider.displayName,
         available: true,
         capabilities: {
-          permissionModes: [...(provider.capabilities.permissionModes ?? [])]
+          permissionModes: [...(provider.capabilities.permissionModes ?? [])],
+          supportsServiceTier: provider.capabilities.supportsServiceTier
         }
       }));
     },
-    loadProviderModels: async ({ providerId }) => fallbackModelCatalog(providerId),
+    loadProviderModels: async ({ providerId, hostId, environmentId }) => {
+      const environment = environmentId ? getEnvironment(ctx.db, environmentId) : null;
+      if (environmentId && !environment) throw new Error('unknown-environment');
+      if (environment && hostId && environment.hostId !== hostId) throw new Error('environment does not belong to host');
+      try {
+        return await ctx.hostHub.callHostOnlineRpc<ProviderListModelsResult>({
+          hostId: ctx.hostHub.resolveHostId(environment?.hostId ?? hostId), timeoutMs: 45_000,
+          command: { type: 'provider.list_models', providerId,
+            bridgeLaunch: bridgeLaunchForProvider(providerId, ctx.pluginHostArtifacts),
+            ...(environment?.path ? { cwd: environment.path } : {}) }
+        }).then(result => ({ ...result, modelLoadError: null }));
+      } catch (error) {
+        return { ...fallbackModelCatalog(providerId), modelLoadError: { providerId, code: classifyModelListError(error), detail: modelListErrorDetail(error) } };
+      }
+    },
     archiveThread: async ({ threadId }) => {
       const ok = await archiveConversation(ctx, threadId);
       if (!ok) throw new Error('unknown-thread');
@@ -210,20 +234,7 @@ export async function attachProductPluginService(
         archived,
         limit,
         offset
-      }).map((thread) => ({
-        id: thread.id,
-        projectId: thread.projectId,
-        hostId: thread.hostId,
-        environmentId: thread.environmentId,
-        providerId: thread.providerId,
-        status: thread.status,
-        originKind: thread.originKind,
-        originPluginId: thread.originPluginId,
-        visibility: thread.visibility,
-        archivedAt: thread.archivedAt,
-        createdAt: thread.createdAt,
-        parentThreadId: thread.parentThreadId
-      }));
+      }).map(toPluginThreadSummary);
     },
     listQueuedMessages: async ({ threadId }) => {
       return listQueuedMessages(ctx.dataDir, threadId).map((row) => ({ id: row.id }));
@@ -246,9 +257,12 @@ export async function attachProductPluginService(
       permissionMode,
       visibility,
       environment,
+      hostId,
+      serviceTier,
       pluginMetadata
     }) => {
       const providers = listThreadProviders();
+      if (providerId && !providers.some((row) => row.id === providerId)) throw new Error(`unknown thread provider: ${providerId}`);
       const resolvedProvider = providerId
         && providers.some((row) => row.id === providerId)
         ? providerId
@@ -263,7 +277,9 @@ export async function attachProductPluginService(
         parentThreadId,
         originPluginId: pluginId,
         ...(visibility ? { visibility } : {}),
-        ...(environment?.kind === 'reuse' ? { environment: { kind: 'reuse', environmentId: environment.environmentId } } : {}),
+        ...(environment ? { environment } : {}),
+        ...(hostId ? { hostId } : {}),
+        ...(serviceTier ? { serviceTier } : {}),
         ...(model ? { model } : {}),
         ...(reasoningLevel ? { reasoningLevel: reasoningLevel as never } : {}),
         ...(permissionMode ? { permissionMode } : {}),

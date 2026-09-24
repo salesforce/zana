@@ -78,10 +78,12 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
           path: string;
           query: Record<string, string>;
           body: unknown;
-        }) => { status?: number; json?: unknown; body?: string; headers?: Record<string, string> } | Promise<{
+          rawBody?: Uint8Array;
+          headers?: Record<string, string>;
+        }) => { status?: number; json?: unknown; body?: string | Uint8Array; headers?: Record<string, string> } | Promise<{
           status?: number;
           json?: unknown;
-          body?: string;
+          body?: string | Uint8Array;
           headers?: Record<string, string>;
         }>
       ): void;
@@ -211,7 +213,9 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
     };
     readonly status: { needsConfiguration(message: string): void };
     readonly sdk: {
+      system: { defaultHost(): Promise<{ id: string } | null> };
       threads: {
+        search(args: { query: string; archived?: boolean; limit?: number }): Promise<Array<NonNullable<Awaited<ReturnType<ZccPluginApi['sdk']['threads']['get']>>>>>;
         spawn(args: {
           projectId: string;
           prompt: string;
@@ -220,12 +224,18 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
           title?: string;
           model?: string;
           reasoningLevel?: string;
+          serviceTier?: 'default' | 'fast';
+          hostId?: string;
           permissionMode?: string;
           visibility?: 'visible' | 'hidden';
-          environment?: { kind: 'reuse'; environmentId: string };
+          environment?: { kind: 'reuse'; environmentId: string } | { kind: 'unmanaged' | 'personal' } | { kind: 'worktree'; branchSlug?: string; baseBranch?: string };
         }): Promise<{ id: string }>;
         get(args: { threadId: string }): Promise<{
           id: string;
+          title?: string | null;
+          titleFallback?: string | null;
+          updatedAt?: number;
+          deletedAt?: number | null;
           projectId: string;
           hostId: string;
           environmentId: string | null;
@@ -260,6 +270,10 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
         unarchive(args: { threadId: string }): Promise<{ id: string }>;
       };
       environments: {
+        pullRequest(args: { environmentId: string }): Promise<{
+          pullRequest: { number: number; title: string; url: string; state: string; isDraft: boolean; updatedAt: string | null; baseRefName: string; headRefName: string; reviewDecision: string | null; mergeStateStatus: string | null; mergeable: string | null } | null;
+          unavailableReason?: string;
+        }>;
         get(args: { environmentId: string }): Promise<{
           id: string;
           projectId: string;
@@ -268,22 +282,27 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
         }>;
       };
       files: {
-        read(args: { hostId: string; path: string; rootPath: string }): Promise<{
+        read(args: { hostId?: string; path: string; rootPath?: string }): Promise<{
           content: string;
           contentEncoding: 'utf8' | 'base64';
           sizeBytes: number;
         }>;
+        write(args: { hostId?: string; path: string; rootPath?: string; content: string; contentEncoding?: 'utf8' | 'base64'; createParents?: boolean }): Promise<void>;
       };
       providers: {
         list(args?: { environmentId?: string }): Promise<Array<{
           id: string;
           available: boolean;
-          capabilities?: { permissionModes?: string[] };
+          displayName?: string;
+          logoUrl?: string | null;
+          icon?: string | null;
+          strings?: { iconTint?: string | null };
+          capabilities?: { permissionModes?: string[]; supportsServiceTier?: boolean };
         }>>;
-        models(args: { providerId: string; environmentId?: string }): Promise<{
+        models(args: { providerId: string; environmentId?: string; hostId?: string }): Promise<{
           models: Array<{ id: string; model: string; supportedReasoningEfforts: Array<{ reasoningEffort: string }> }>;
           selectedOnlyModels: Array<{ id: string; model: string; supportedReasoningEfforts: Array<{ reasoningEffort: string }> }>;
-          modelLoadError: { providerId: string; code: string } | null;
+          modelLoadError: { providerId: string; code: string; detail?: string | null } | null;
         }>;
       };
       inbox: {

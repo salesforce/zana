@@ -1,3 +1,4 @@
+import { useSalesforceControl, controlText } from '../useSalesforceControl.js';
 import { useEffect, useState } from 'react';
 import type { SalesforceOperation } from '../../../lib/workbench-contract.js';
 import type { SalesforcePanelProps } from './WorkbenchPanels.js';
@@ -18,6 +19,18 @@ export function OperationsPanel(props: SalesforcePanelProps & { revision?: numbe
     if (props.revision) { setSelected(''); setSearch(''); }
     void state.refresh();
   }, [props.revision, state.refresh]);
+  useSalesforceControl({ pluginId: props.pluginId, projectId: props.projectId, orgAlias: props.orgAlias, threadId: props.threadId, surface: 'operations',
+    commands: ['state', 'operation.open', 'filter.set'], state: () => ({ operationId: selected, filter: search, scope: props.scope, error: state.error }),
+    execute: async ({ command, input }) => {
+      if (command === 'operation.open') {
+        const id = controlText(input, 'operationId', 80);
+        const data = requireResult<{ operations: SalesforceOperation[] }>(await call('operations.list'));
+        if (!data.operations.some(row => row.id === id)) throw Error('Operation not found in this project.');
+        await state.refresh(); setSelected(id); setAll(true); setSearch('');
+      }
+      if (command === 'filter.set') setSearch(controlText(input, 'query', 200));
+    },
+  });
   const running = state.data?.operations.some(row => row.state === 'running');
   useEffect(() => {
     if (!running) return;
@@ -49,7 +62,7 @@ export function OperationsPanel(props: SalesforcePanelProps & { revision?: numbe
       <input className="sf-input" aria-label="Search operations" placeholder="Search activity…" value={search} onChange={event => setSearch(event.target.value)} />
       {props.scope && <button className="sf-btn quiet" type="button" aria-label={all ? 'Show relevant activity' : 'Show all activity'} aria-pressed={all} onClick={() => setAll(value => !value)}>{all ? 'All activity' : props.scope === 'apex' ? 'Apex & LWC only' : 'Deployments only'}</button>}
     </div>
-    {state.busy && !state.data && <LoadingState />}
+    {state.busy && !state.data && <LoadingState compact art="deploy" label="Loading activity…" />}
     {operations.length ? <div className="sf-activity-body">
       <div className="sf-activity-list" role="group" aria-label="Recent operations">
         {operations.map(row => <button className="sf-activity-item" type="button" key={row.id} aria-pressed={operation?.id === row.id} onClick={() => { setSelected(row.id); setError(null); }}>
@@ -61,7 +74,7 @@ export function OperationsPanel(props: SalesforcePanelProps & { revision?: numbe
       <div className="sf-activity-detail" aria-busy={reportBusy}>
         {operation && <RunSummary operation={operation} onAddToPrompt={props.onAddToPrompt} onRefresh={operation.jobId ? () => void refreshReport() : undefined} refreshBusy={reportBusy} />}
       </div>
-    </div> : !state.busy && !state.error && <EmptyState title={search ? 'No matching activity' : 'No operations yet'}>
+    </div> : !state.busy && !state.error && <EmptyState compact art={search ? "search" : "deploy"} title={search ? 'No matching activity' : 'No operations yet'}>
       {search ? 'Try a component name, org, or status.' : 'Your results will appear here after a preview, validation, or test run.'}
     </EmptyState>}
   </section>;

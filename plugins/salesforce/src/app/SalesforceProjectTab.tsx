@@ -1,6 +1,7 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useSalesforceControl } from './useSalesforceControl.js';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Settings2, Plus } from 'lucide-react';
 import {
-  Cloud,
   Database,
   FlaskConical,
   Package,
@@ -14,12 +15,13 @@ import type {
   WorkbenchView,
 } from "../../lib/workbench-contract.js";
 import type { DoctorReport } from "../../lib/types.js";
+import { orgReadiness } from "./org-readiness.js";
+import { SalesforceState } from "./components/SalesforceState.js";
 import { OrgPicker } from "./OrgPicker.js";
 import { SALESFORCE_STYLES } from "./components/styles.js";
 import { requireResult, useSalesforceCall } from "./components/client.js";
 import { useResource } from "./components/use-resource.js";
 import {
-  EmptyState,
   ErrorState,
   LoadingState,
   OrgBadge,
@@ -31,7 +33,6 @@ import {
   OperationsPanel,
 } from "./panels/WorkbenchPanels.js";
 import { AgentforcePlaygroundPanel } from "./AgentScriptPanel.js";
-import { AgentforcePreviewPanel } from "./AgentforcePreviewPanel.js";
 
 import { SalesforceTabs } from "./components/Tabs.js";
 
@@ -46,6 +47,7 @@ const VIEWS: Array<[WorkbenchView, string]> = [
 export function SalesforceProjectTab(props: {
   pluginId: string;
   projectId: string;
+  headerActions?: ReactNode;
 }) {
   const panelId = useId();
   const navigate = useZccNavigate();
@@ -57,14 +59,12 @@ export function SalesforceProjectTab(props: {
   );
   const status = useResource<WorkbenchStatus>(call, "status");
   const [view, setView] = useState<WorkbenchView>("overview");
-  const [agentTool, setAgentTool] = useState<"playground" | "preview">(
-    "playground",
-  );
   const [orgsOpen, setOrgsOpen] = useState(false);
   const [loginRequest, setLoginRequest] = useState(0);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chosenTarget, setChosenTarget] = useState<{ projectId: string; alias: string } | null>(null);
   const doctorGeneration = useRef(0);
   useEffect(() => {
     setDoctor(null);
@@ -72,7 +72,18 @@ export function SalesforceProjectTab(props: {
     setOrgsOpen(false);
     setLoginRequest(0);
   }, [props.projectId]);
-  const alias = status.data?.selectedAlias || status.data?.defaultOrg || "";
+  const alias = chosenTarget?.projectId === props.projectId ? chosenTarget.alias : status.data?.selectedAlias || status.data?.defaultOrg || "";
+  useEffect(() => { setChosenTarget(null); }, [props.projectId, status.data]);
+  const selected = (alias: string) => setChosenTarget({ projectId: props.projectId, alias });
+  useSalesforceControl({ pluginId: props.pluginId, projectId: props.projectId, orgAlias: alias || undefined, threadId: context.threadId ?? undefined, surface: 'workbench',
+    commands: ['state', 'view.open'], state: () => ({ view, orgAlias: alias }),
+    execute: ({ command, input }) => {
+      if (command === 'state') return;
+      const next = VIEWS.find(([id]) => id === input.view);
+      if (!next) throw Error('Choose overview, data, apex, deployments or agentforce.');
+      setView(next[0]);
+    },
+  });
   useLayoutEffect(() => {
     doctorGeneration.current++;
     setDoctor(null);
@@ -82,9 +93,33 @@ export function SalesforceProjectTab(props: {
       doctorGeneration.current++;
     };
   }, [props.projectId, alias]);
+  const readiness = orgReadiness(status.data ? { ...status.data, selectedAlias: alias, defaultOrg: alias } : null, doctor);
   const org = status.data?.orgs?.find(
     (row) => row.alias === alias || row.username === alias,
   );
+  useEffect(() => {
+    const changed = (event: Event) => {
+      const projectId = (event as CustomEvent<{ projectId?: string }>).detail?.projectId;
+      if (projectId && projectId !== props.projectId) return;
+      doctorGeneration.current++;
+      setDoctor(null);
+      setChecking(false);
+      setError(null);
+      void status.refresh();
+    };
+    window.addEventListener('sf:context-changed', changed);
+    return () => window.removeEventListener('sf:context-changed', changed);
+  }, [props.projectId, status.refresh]);
+  const refreshConnection = () => window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId: props.projectId } }));
+  const connectionGuidance = <SalesforceState compact kind={readiness.kind === 'unavailable' ? 'error' : 'empty'} title={readiness.title}
+    action={<>
+      <button className="sf-btn primary" type="button" onClick={() => setLoginRequest(value => value + 1)}>Sign in to an org</button>
+      <button className="sf-btn" type="button" onClick={() => setOrgsOpen(true)}>Choose an existing org</button>
+      <button className="sf-btn quiet" type="button" disabled={status.busy} onClick={refreshConnection}>Check again</button>
+    </>}>
+    <p>{readiness.detail}</p>
+    <p>The target applies to this project. Other projects keep their own targets.</p>
+  </SalesforceState>;
   const scoped = {
     ...props,
     orgAlias: alias || undefined,
@@ -110,39 +145,49 @@ export function SalesforceProjectTab(props: {
     }
   }
   return (
-    <section className="sf-surface" data-testid="salesforce-workbench">
+    <section className="sf-surface sf-workbench" data-testid="salesforce-workbench">
       <style>{SALESFORCE_STYLES}</style>
-      <header className="sf-header">
-        <Cloud />
-        <strong>Salesforce</strong>
-        <span className="sf-muted sf-small">{status.data?.projectName}</span>
-        <span className="sf-grow" />
-        <OrgPicker
-          pluginId={props.pluginId}
-          projectId={props.projectId}
-          compact
-          key={props.projectId}
-          loginRequest={loginRequest}
-          onSelect={() => {
-            setDoctor(null);
-            void status.refresh();
-          }}
+      <header className="sf-workbench-toolbar">
+        <SalesforceTabs<WorkbenchView>
+          label="Salesforce tools"
+          items={VIEWS}
+          value={view}
+          onChange={setView}
+          panelId={panelId}
         />
-        <button
-          className="sf-btn primary"
-          type="button"
-          onClick={() => setLoginRequest(value => value + 1)}
-        >
-          Connect org
-        </button>
-        <button
-          className="sf-btn quiet"
-          type="button"
-          onClick={() => setOrgsOpen(value => !value)}
-          aria-expanded={Boolean(orgsOpen)}
-        >
-          Org details
-        </button>
+        <div className="sf-workbench-org">
+          <OrgPicker
+            pluginId={props.pluginId}
+            projectId={props.projectId}
+            compact
+            appearance="toolbar"
+            key={props.projectId}
+            loginRequest={loginRequest}
+            onSelect={selected}
+          />
+          <div className="sf-workbench-org-actions">
+          <button
+            className="icon-btn"
+            type="button"
+            title="Connect org"
+            aria-label="Connect org"
+            onClick={() => setLoginRequest(value => value + 1)}
+          >
+            <Plus size={15} aria-hidden="true" />
+          </button>
+          <button
+            className="icon-btn"
+            type="button"
+            title="Org details"
+            aria-label="Org details"
+            onClick={() => setOrgsOpen(value => !value)}
+            aria-expanded={Boolean(orgsOpen)}
+          >
+            <Settings2 size={15} aria-hidden="true" />
+          </button>
+          </div>
+          {props.headerActions}
+        </div>
       </header>
       {orgsOpen && (
         <div
@@ -154,17 +199,10 @@ export function SalesforceProjectTab(props: {
             pluginId={props.pluginId}
             projectId={props.projectId}
             hideConnect
-            onSelect={() => void status.refresh()}
+            onSelect={selected}
           />
         </div>
       )}
-      <SalesforceTabs<WorkbenchView>
-        label="Salesforce tools"
-        items={VIEWS}
-        value={view}
-        onChange={setView}
-        panelId={panelId}
-      />
       {(status.error || error) && (
         <ErrorState
           message={status.error || error!}
@@ -181,13 +219,13 @@ export function SalesforceProjectTab(props: {
         {view === "overview" && (
           <div className="sf-scroll sf-content">
             {status.busy && !status.data ? (
-              <LoadingState />
-            ) : (
+              <LoadingState hint="Preparing your project tools." />
+            ) : status.error ? null : (
               <>
                 <h2>
-                  {alias
+                  {readiness.kind === 'selected'
                     ? "Ready for your next change."
-                    : "Connect your Salesforce project."}
+                    : "Start building locally."}
                 </h2>
                 <p className="sf-muted">
                   Your org, source, and development tools in one project.
@@ -195,18 +233,15 @@ export function SalesforceProjectTab(props: {
                 <div className="sf-summary">
                   <CircleCheck />
                   <div className="sf-grow">
-                    <strong>{alias || "Choose an org to get started"}</strong>
+                    <strong>Local authoring ready</strong>
                     <div className="sf-muted sf-small">
                       {status.data?.dxProject
                         ? "Salesforce DX detected"
-                        : "No sfdx-project.json in this project"}{" "}
-                      ·{" "}
-                      {status.data?.targetSource === "project"
-                        ? "Project target"
-                        : "Inherited shared target"}
+                        : "Agentforce drafts stay in this project"}
+                      {alias && <> · {alias} · {status.data?.targetSource === "project" ? "Project target" : "Default target"}</>}
                     </div>
                   </div>
-                  <OrgBadge org={org ?? null} />
+                  {org && <OrgBadge org={org} />}
                   <button
                     className="sf-btn"
                     type="button"
@@ -228,23 +263,7 @@ export function SalesforceProjectTab(props: {
                     · {doctor.agentBundleCount} Agentforce bundles
                   </div>
                 )}
-                {!alias && (
-                  <EmptyState
-                    title="Pick a connected org"
-                    action={
-                      <button
-                        className="sf-btn primary"
-                        type="button"
-                        onClick={() => setOrgsOpen(true)}
-                      >
-                        Connect or select an org
-                      </button>
-                    }
-                  >
-                    The selected target applies to this project. Other projects
-                    keep their own targets.
-                  </EmptyState>
-                )}
+                {readiness.kind !== 'selected' && connectionGuidance}
                 <div className="sf-tasks">
                   {(
                     [
@@ -269,7 +288,7 @@ export function SalesforceProjectTab(props: {
                       [
                         "agentforce",
                         "Build an agent",
-                        "Playground and simulated Preview",
+                        "Create and edit local Agentforce drafts",
                         Bot,
                       ],
                     ] as const
@@ -296,7 +315,9 @@ export function SalesforceProjectTab(props: {
             )}
           </div>
         )}
-        {view === "data" && (
+        {view === "data" && status.busy && !status.data && <LoadingState label="Checking org connections…" />}
+        {view !== "overview" && view !== "agentforce" && readiness.kind !== 'selected' && !status.busy && !status.error && connectionGuidance}
+        {view === "data" && readiness.kind === 'selected' && (
           <SoqlExplorerPanel
             key={`${props.projectId}:${alias}`}
             {...scoped}
@@ -335,51 +356,9 @@ export function SalesforceProjectTab(props: {
           />
         )}
         {view === "agentforce" && (
-          <>
-            {agentTool === "preview" && <div className="sf-toolbar">
-              <button
-                className="sf-btn"
-                type="button"
-                onClick={() => setAgentTool("playground")}
-              >
-                <span aria-hidden="true">← </span>Back to studio
-              </button>
-              {context.threadId && (
-                <button
-                  className="sf-btn quiet"
-                  type="button"
-                  onClick={() =>
-                    navigate.openThreadPanel({
-                      actionId: agentTool,
-                      params: { projectId: props.projectId, orgAlias: alias },
-                    })
-                  }
-                >
-                  Open beside agent
-                </button>
-              )}
-            </div>}
-            {agentTool === "playground" ? (
-              <AgentforcePlaygroundPanel {...props} headerActions={<>
-                <button className="sf-as-save" type="button" onClick={() => setAgentTool("preview")}>Org preview</button>
-                {context.threadId && <button className="sf-as-save" type="button" onClick={() => navigate.openThreadPanel({ actionId: 'playground', params: { projectId: props.projectId, orgAlias: alias } })}>Open beside agent</button>}
-              </>} />
-            ) : (
-              <AgentforcePreviewPanel {...scoped} />
-            )}
-          </>
+          <AgentforcePlaygroundPanel pluginId={props.pluginId} projectId={props.projectId} orgPicker={false} headerActions={context.threadId && <button className="sf-as-save" type="button" onClick={() => navigate.openThreadPanel({ actionId: 'playground', params: { projectId: props.projectId, orgAlias: alias } })}>Open beside agent</button>} />
         )}
       </div>
-      <footer className="sf-footer">
-        <span>
-          {status.data?.targetSource === "project"
-            ? "Project target"
-            : "Shared fallback"}{" "}
-          · {alias || "No org selected"}
-        </span>
-        <span className="sf-grow" />
-        <span>{org?.kind ?? "Connection not checked"}</span>
-      </footer>
     </section>
   );
 }

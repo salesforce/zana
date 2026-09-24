@@ -1,28 +1,63 @@
 {
   "name": "@zcc-ext/tasks",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Linear-style task tracker: list and board views, keys, priorities, and zcc tasks.",
+  "description": "Track project work, delegate tasks to agents, and keep task context connected to worker threads.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
   "scripts": {
     "build": "node scripts/build-app.mjs",
-    "package": "node scripts/build-app.mjs"
+    "package": "node scripts/build-app.mjs",
+    "test": "vitest run --config vitest.config.ts"
   },
   "zcc": {
     "name": "Tasks",
-    "description": "Plan and track work in a list or board: keys, statuses, priorities, and `zcc tasks`.",
-    "branding": { "icon": "ListTodo" },
+    "description": "Project task tracker with agent delegation, comments, attachments, and zcc tasks.",
+    "branding": {
+      "icon": "ListTodo"
+    },
     "server": "./server.mjs",
     "app": "./app.js",
-    "skills": ["skills"]
+    "skills": [
+      "skills"
+    ]
   },
   "dependencies": {
-    "@zana-ai/zcc-ui": "workspace:*",
-    "lucide-react": "^1.35.0"
+    "@hugeicons/core-free-icons": "^4.1.3",
+    "@hugeicons/react": "^1.1.6",
+    "@radix-ui/react-dialog": "^1.1.19",
+    "@radix-ui/react-dropdown-menu": "^2.1.20",
+    "@radix-ui/react-slot": "^1.3.0",
+    "@tiptap/core": "^2.27.2",
+    "@tiptap/extension-bubble-menu": "^2.27.2",
+    "@tiptap/extension-image": "^2.27.2",
+    "@tiptap/extension-link": "^2.27.2",
+    "@tiptap/extension-placeholder": "^2.27.2",
+    "@tiptap/extension-table": "^2.27.2",
+    "@tiptap/extension-table-cell": "^2.27.2",
+    "@tiptap/extension-table-header": "^2.27.2",
+    "@tiptap/extension-table-row": "^2.27.2",
+    "@tiptap/extension-task-item": "^2.27.2",
+    "@tiptap/extension-task-list": "^2.27.2",
+    "@tiptap/pm": "^2.27.2",
+    "@tiptap/starter-kit": "^2.27.2",
+    "@tiptap/suggestion": "^2.27.2",
+    "tiptap-markdown": "^0.8.10",
+    "vaul": "^1.1.2",
+    "zod": "^4.3.6",
+    "@radix-ui/react-tabs": "^1.1.17",
+    "@radix-ui/react-popover": "^1.1.19",
+    "@radix-ui/react-tooltip": "^1.2.12",
+    "cmdk": "^1.1.1",
+    "lucide-react": "^1.23.0",
+    "class-variance-authority": "^0.7.1",
+    "@radix-ui/react-select": "^2.3.3",
+    "@radix-ui/react-context-menu": "^2.3.3",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
     "@zana-ai/zcc-plugin-build": "workspace:*",
@@ -32,6 +67,9 @@
     "@types/react-dom": "^19.2.4",
     "happy-dom": "^20.10.6",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "@tailwindcss/postcss": "^4.1.13",
+    "tailwindcss": "^4.1.13",
+    "postcss": "^8.5.6"
   }
 }

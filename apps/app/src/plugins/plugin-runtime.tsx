@@ -1,3 +1,4 @@
+import { useSidebarThreads, useSidebarThreadActions, useSidebarThreadSplit } from './sidebar-thread-hooks.js';
 import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
@@ -10,7 +11,6 @@ import type {
 import { callPluginRpc, getPluginSettings } from '@zana-ai/zcc-plugin-sdk/app';
 import { MarkdownContent } from '../components/MarkdownContent.js';
 import { useRouteState } from '../hooks/useRouteState.js';
-import { useThreads } from '../thread-store.js';
 import {
   getPluginDetailRoutePath,
   getProjectRoutePath,
@@ -224,24 +224,10 @@ export function installPluginRuntime(): void {
       },
       run: { isRunning: false, isSubmitting: false }
     },
-    experimental_useSidebarThreads: () => {
-      const threads = useThreads.getState().threads.map((thread) => ({
-        id: thread.id,
-        projectId: thread.projectId,
-        title: thread.title
-      }));
-      return { status: 'ready', threads, projects: [] };
-    },
-    experimental_useSidebarThreadActions: () => ({
-      open: (threadId: string) => {
-        appNavigate(getThreadRoutePath(threadId));
-      },
-      openNewThread: () => {
-        appNavigate(NEW_THREAD_ROUTE_PATH);
-      }
-    }),
+    experimental_useSidebarThreads: useSidebarThreads,
+    experimental_useSidebarThreadActions: useSidebarThreadActions,
     experimental_useSidebarThreadPullRequest: () => ({ isLoading: false, pullRequest: null }),
-    experimental_useSidebarThreadSplit: () => ({ isAvailable: false, splitProps: {}, layout: null }),
+    experimental_useSidebarThreadSplit: useSidebarThreadSplit,
     ThreadChat: ThreadChatImpl,
     Markdown: MarkdownImpl as ComponentType<{ content: string; className?: string }>,
     experimental_NewThreadComposer: NewThreadComposerImpl as never,

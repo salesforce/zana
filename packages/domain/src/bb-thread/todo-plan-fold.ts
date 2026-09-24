@@ -42,6 +42,7 @@ function normalizeTodoStatus(raw: string): FoldedTodoPlanStatus | null {
 function parseTodoItems(rawInput: unknown): ParsedTodoItem[] | null {
   const record = recordFromUnknown(rawInput);
   if (!record || !Array.isArray(record.todos)) return null;
+  if (record.todos.length === 0) return [];
   const items: ParsedTodoItem[] = [];
   for (const [index, entry] of record.todos.entries()) {
     const todo = recordFromUnknown(entry);

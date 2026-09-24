@@ -1,4 +1,4 @@
-export { collectTestPluginApp } from './app.ts';
+export { collectTestPluginApp } from './app.js';
 export {
   installTestPluginRuntime,
   loadPluginApp,
@@ -8,4 +8,4 @@ export {
   type RenderSlotOptions,
   type RenderedSlot,
   type RpcCall
-} from './app-render.ts';
+} from './app-render.js';

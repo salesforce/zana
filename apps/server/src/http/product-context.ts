@@ -6,6 +6,7 @@ import type { AppConfig, ProductTeamOps, Project, TerminalSession } from '@zana-
 import {
   getConversationThread,
   openDatabase,
+  recoverInterruptedDeferredThreadMessages,
   updateConversationThreadTitle,
   type ZccDatabase
 } from '@zana-ai/zcc-db';
@@ -28,6 +29,7 @@ import { createHostHub, type HostHub } from './host-hub.js';
 import { PendingInteractionLifecycle } from '../services/interactions/pending-interactions.js';
 import { prunePendingInteractionInboxCopies } from '../services/interactions/pending-interaction-attention.js';
 import { conversationThreadView } from '../services/threads/conversation-create.js';
+import { emitPluginThreadStatus } from '../plugins/thread-events.js';
 import { createThreadTitleNamer, type ThreadTitleNamer } from '../services/threads/thread-title-namer.js';
 import { createJoinCodeStore, type JoinCodeStore } from '../services/hosts/join-codes.js';
 import type { PluginService } from '../plugins/plugin-service.js';
@@ -40,6 +42,8 @@ import {
 import { applyLoggedConversationLifecycleEvent } from '../services/threads/conversation-lifecycle-outcome.js';
 import { healDisconnectedConversationThreadsForHost } from '../services/threads/conversation-host-recovery.js';
 import { HOST_ACTIVE_WORK_DISCONNECT_GRACE_MS } from '../services/threads/conversation-runtime-display.js';
+import { retryDueConversationSends } from '../services/threads/conversation-deferred-messages.js';
+import { startDeferredRetryLoop } from '../services/threads/deferred-retry-loop.js';
 import { disposeLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
@@ -124,6 +128,7 @@ export function createProductHttpContext(
   const saved = createSavedStore({ dir: join(dataDir, 'saved') });
   const hub = createProductHub();
   const db = openDatabase(join(dataDir, 'zcc.sqlite'));
+  recoverInterruptedDeferredThreadMessages(db);
   const terminalSessions = new Map<string, ProductTerminalRecord>();
   let pendingInteractions: PendingInteractionLifecycle;
   let ctx!: ProductHttpContext;
@@ -152,7 +157,8 @@ export function createProductHttpContext(
     },
     onConversationLifecycle: ({ threadId, event }) => {
       if (!ctx) return;
-      applyLoggedConversationLifecycleEvent(ctx, { threadId, event });
+      const outcome = applyLoggedConversationLifecycleEvent(ctx, { threadId, event });
+      if (outcome.applied) emitPluginThreadStatus(ctx, outcome.thread);
     },
     onHostDisconnected: (hostId) => {
       const existing = disconnectHealTimers.get(hostId);
@@ -305,6 +311,7 @@ export function createProductHttpContext(
     pluginHostArtifacts: new PluginHostArtifactRegistry(),
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
+      stopRetries();
       for (const timer of disconnectHealTimers.values()) clearTimeout(timer);
       disconnectHealTimers.clear();
       disposeLocalHostDaemon(ctx);
@@ -313,5 +320,7 @@ export function createProductHttpContext(
       ctx.plugins?.stop?.();
     }
   };
+  const stopRetries = startDeferredRetryLoop(() => retryDueConversationSends(ctx,
+    (threadId) => flushHeldConversationSends(ctx, threadId, { enforceConcurrencyCap: true })));
   return ctx;
 }

@@ -12,6 +12,7 @@ export const PLUGIN_CATALOG_CATEGORIES = PLUGIN_STORE_CATEGORY_NAMES;
 
 /** Auto-reconciled on startup. */
 export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
+  { name: 'thread-list', pluginId: 'thread-list', autoInstall: true, defaultEnabled: true, category: 'Agent interaction' },
   {
     name: 'docs',
     pluginId: 'docs',

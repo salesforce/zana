@@ -169,6 +169,16 @@ export function providerCliKeyForFamily(family: string): ProviderCliKey | null {
   return null;
 }
 
+/** Map a Modern thread provider id onto the host daemon CLI-status key. */
+export function providerCliKeyForProviderId(providerId: string): ProviderCliKey | null {
+  if (providerId === 'codex') return 'codex';
+  if (providerId === 'claude-code') return 'claudeCode';
+  if (providerId === 'pi') return 'pi';
+  if (providerId === 'acp-cursor' || providerId === 'cursor') return 'cursor';
+  if (providerId === 'acp-opencode' || providerId === 'opencode') return 'opencode';
+  return null;
+}
+
 export function providerCliInstallLogLines(events: ProviderCliInstallEvent[]): string[] {
   const lines: string[] = [];
   for (const event of events) {

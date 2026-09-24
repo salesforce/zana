@@ -15,6 +15,7 @@ const test = base.extend({
 });
 
 test('PR Monitor mouse clicks open details and nested actions keep their own focus', async ({ app, home }, testInfo) => {
+  test.setTimeout(120_000);
   const win = app.window;
   const install = await win.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'pr-monitor' }));
   expect(install).toMatchObject({ ok: true });
@@ -102,7 +103,17 @@ test('PR Monitor mouse clicks open details and nested actions keep their own foc
   await renamedProject.click();
   await expect(picker.getByRole('menuitem', { name: 'added-while-monitor-open', exact: true })).toBeVisible({ timeout: 10_000 });
   await win.keyboard.press('Escape');
-  await win.screenshot({ path: testInfo.outputPath('pr-details.png') });
+  await dialog.locator('.prm-modal-body').evaluate((element) => { element.scrollTop = 0; });
+  await expect(dialog.getByRole('button', { name: 'Expand preview' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Expand preview' }).click();
+  await expect(dialog.getByRole('button', { name: 'Collapse preview' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Collapse preview' }).click();
+  for (const theme of ['dark', 'light']) {
+    await win.evaluate((value) => document.documentElement.setAttribute('data-theme', value), theme);
+    await expect(dialog.getByRole('button', { name: 'Copy link' })).toHaveCSS('background-color', theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(30, 30, 30)');
+    await win.screenshot({ path: testInfo.outputPath(`pr-details-${theme}.png`) });
+  }
+  await win.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
   await win.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(card).toBeFocused();
@@ -123,4 +134,118 @@ test('PR Monitor mouse clicks open details and nested actions keep their own foc
   await close.click();
   await expect(dialog).toBeHidden();
   await win.screenshot({ path: testInfo.outputPath('pr-board.png') });
+  const add = win.getByRole('button', { name: 'Add PR', exact: true });
+  await add.click();
+  const addDialog = win.getByRole('dialog', { name: 'Add PR' });
+  await expect(addDialog).toBeFocused();
+  await expect(addDialog.getByText('No connected repositories.', { exact: false })).toBeVisible();
+  await expect(addDialog.getByRole('button', { name: 'Add', exact: true })).toBeDisabled();
+  await win.keyboard.press('Shift+Tab');
+  await expect(addDialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await win.screenshot({ path: testInfo.outputPath('pr-add-empty.png') });
+  await win.keyboard.press('Escape');
+  await expect(add).toBeFocused();
+  await card.locator('.prm-board-card-title').click();
+  await app.electron.evaluate(({ BrowserWindow }) => {
+    const main = BrowserWindow.getAllWindows().find((window) => !window.webContents.getURL().startsWith('devtools:'))!;
+    main.webContents.setZoomFactor(1);
+    main.setMinimumSize(480, 360);
+    main.setContentSize(620, 520);
+  });
+  await expect.poll(() => win.evaluate(() => innerWidth)).toBe(620);
+  await expect(close).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Open on GitHub', exact: true })).toBeVisible();
+  await expect(dialog.locator('.prm-modal-body')).toHaveCSS('overflow-x', 'hidden');
+  await win.screenshot({ path: testInfo.outputPath('pr-details-narrow.png') });
+  await win.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+});
+
+
+test('PR Monitor settings dialogs fit the window and share keyboard, theme, and scroll behavior', async ({ app }, testInfo) => {
+  test.setTimeout(150_000);
+  const win = app.window;
+  expect(await win.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'pr-monitor' }))).toMatchObject({ ok: true });
+  await expect.poll(() => win.evaluate(async () =>
+    (await window.cc.pluginApps.list()).find((plugin) => plugin.id === 'pr-monitor')?.status
+  )).toMatch(/running|needs-configuration/);
+  await win.evaluate(async (defaults) => {
+    await window.cc.pluginApps.callRpc('pr-monitor', 'storageSet', { key: 'settings', value: {
+      ...defaults, autoSyncEnabled: false, authorDiscovered: true, orgDiscovered: true,
+      organizations: [{ host: 'github.com', login: 'acme', apiBaseUrl: 'https://api.github.com' }],
+      repositories: [{ host: 'github.com', owner: 'acme', repo: 'long-repository-name', orgLogin: 'acme', active: true, createdAt: Date.now() }],
+    } });
+  }, DEFAULT_PR_MONITOR_SETTINGS);
+  const support = win.getByRole('dialog', { name: 'Support Zana' });
+  if (await support.isVisible()) await support.getByRole('button', { name: 'Dismiss' }).click();
+  await win.getByRole('button', { name: /^PR Monitor/ }).click();
+  await win.locator('.prm-header').getByRole('button', { name: 'Settings', exact: true }).click();
+  await win.locator('.prm-settings-nav').getByRole('button', { name: 'Repositories' }).click();
+  await expect(win.locator('.prm-repo-card')).toBeVisible();
+
+  const edit = win.getByRole('button', { name: 'Edit Repository', exact: true });
+  await edit.click();
+  const dialog = win.getByRole('dialog');
+  await expect(dialog).toHaveAccessibleName(/Repository Settings/);
+  await expect(dialog).toBeFocused();
+  // A real narrow Electron window exposes both clipping and host grid regressions.
+  await app.electron.evaluate(({ BrowserWindow }) => {
+    const main = BrowserWindow.getAllWindows().find((window) => !window.webContents.getURL().startsWith('devtools:'))!;
+    main.webContents.setZoomFactor(1);
+    main.setMinimumSize(480, 360);
+    main.setContentSize(620, 520);
+  });
+  await expect.poll(() => win.evaluate(() => innerWidth)).toBe(620);
+  for (const theme of ['dark', 'light']) {
+    await win.evaluate((value) => document.documentElement.setAttribute('data-theme', value), theme);
+    for (const section of ['General', 'Status', 'Notifications']) {
+      await dialog.getByRole('button', { name: section, exact: true }).click();
+      await expect(dialog.getByRole('button', { name: section, exact: true })).toHaveAttribute('aria-current', 'page');
+      await expect(dialog.getByRole('button', { name: 'Save Settings', exact: true })).toBeVisible();
+      const geometry = await dialog.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const body = element.querySelector('.prm-modal-body')!;
+        return { x: box.x, y: box.y, right: box.right, bottom: box.bottom, width: innerWidth, height: innerHeight,
+          overflow: element.scrollWidth > element.clientWidth, scroll: getComputedStyle(body).overflowY };
+      });
+      expect(geometry.x).toBeGreaterThanOrEqual(0);
+      expect(geometry.y).toBeGreaterThanOrEqual(0);
+      expect(geometry.right).toBeLessThanOrEqual(geometry.width);
+      expect(geometry.bottom).toBeLessThanOrEqual(geometry.height);
+      expect(geometry.overflow).toBe(false);
+      expect(geometry.scroll).toBe('auto');
+      await win.screenshot({ path: testInfo.outputPath(`repo-${section.toLowerCase()}-${theme}.png`) });
+    }
+  }
+  await win.keyboard.press('Escape');
+  await expect(edit).toBeFocused();
+  await app.electron.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows().find((window) => !window.webContents.getURL().startsWith('devtools:'))!.setContentSize(1200, 850);
+  });
+  await win.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+  await win.screenshot({ path: testInfo.outputPath('pr-repositories.png') });
+  for (const [trigger, title] of [
+    ['Add repository manually', 'Add repository'],
+    ['Suggested for you', 'Suggested for you'],
+    ['Browse Repositories', 'Browse repositories'],
+    ['Test Connection', 'Connection Test Results'],
+    ['Delete Repository', 'Delete repository?'],
+  ]) {
+    const button = win.getByRole('button', { name: trigger, exact: true });
+    await button.click();
+    await expect(dialog).toHaveAccessibleName(new RegExp(title.replace('?', '\\?'), 'i'));
+    await expect(dialog).toBeFocused();
+    await expect(dialog.locator('.prm-loading')).toHaveCount(0);
+    await win.screenshot({ path: testInfo.outputPath(`pr-${trigger.toLowerCase().replaceAll(' ', '-')}.png`) });
+    await win.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(button).toBeFocused();
+  }
+  await win.locator('.prm-settings-nav').getByRole('button', { name: 'Organizations' }).click();
+  await win.getByRole('button', { name: /How to add/ }).click();
+  await expect(dialog).toHaveAccessibleName('Adding & removing organizations');
+  await dialog.getByRole('button', { name: 'Got it' }).click();
+  await win.getByRole('button', { name: 'Delete organization', exact: true }).click();
+  await expect(dialog).toHaveAccessibleName('Delete organization?');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
 });

@@ -50,6 +50,7 @@ export interface ModelReasoningPickerProps {
   moreModelOptions?: readonly ModelPickerOption[];
   modelIsLoading?: boolean;
   modelLoadError?: string | null;
+  modelLoadErrorDetail?: string | null;
   /** Hide the model list (OpenCode native role pins its own model). */
   modelLockedLabel?: string;
   onModelChange: (value: string) => void;
@@ -65,6 +66,7 @@ export function ModelReasoningPicker({
   moreModelOptions = [],
   modelIsLoading = false,
   modelLoadError = null,
+  modelLoadErrorDetail = null,
   modelLockedLabel,
   onModelChange,
   disabled
@@ -95,7 +97,7 @@ export function ModelReasoningPicker({
       : stripModelBrandPrefix(
         selectedModel?.label
           ?? (modelValue
-            || (hasNoModels ? emptyModelsHint(selectedProviderId, modelLoadError) : 'Select model')),
+            || (hasNoModels ? emptyModelsHint(selectedProviderId, modelLoadError, modelLoadErrorDetail) : 'Select model')),
         selectedProviderId
       );
   const { base: triggerModelBase, tag: triggerModelTag } = splitModelLabelTag(triggerModelLabel);
@@ -335,7 +337,7 @@ export function ModelReasoningPicker({
               <ModelPickerLoadingRows />
             ) : navRows.length === 0 ? (
               <div className="model-reasoning-picker-hint">
-                {isSearching ? 'No matching models' : emptyModelsHint(selectedProviderId, modelLoadError)}
+                {isSearching ? 'No matching models' : emptyModelsHint(selectedProviderId, modelLoadError, modelLoadErrorDetail)}
               </div>
             ) : navRows.map((row, index) => {
               if (row.kind === 'more-toggle') {

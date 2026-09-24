@@ -10,8 +10,9 @@
  * handled main-side.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Loader2, GitPullRequest } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Loader2, GitPullRequest } from 'lucide-react';
+import { Dialog } from './Dialog.js';
 import type { ModuleHost } from './host.js';
 import type { MonitoredPr, MonitoredRepo, ConnectionState } from '../../lib/types.js';
 
@@ -31,7 +32,6 @@ export function PullPrModal({ host, onClose, onPulled }: Props) {
   const [number, setNumber] = useState('');
   const [pulling, setPulling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const numberRef = useRef<HTMLInputElement | null>(null);
 
   // Load connected + active repositories (AC-LIST-3.3). A disconnected host
   // can't be fetched, and main's pullPr rejects it — so offering it here would
@@ -55,27 +55,20 @@ export function PullPrModal({ host, onClose, onPulled }: Props) {
     };
   }, [host]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !pulling) onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, pulling]);
-
   const selectedRepo = useMemo(
     () => repos.find((r) => `${r.host}|${r.owner}/${r.repo}` === repoKey),
     [repos, repoKey]
   );
 
   const submit = async () => {
+    if (pulling) return;
     setError(null);
     const num = Number(number.trim());
     if (!selectedRepo) {
       setError('Select a repository.');
       return;
     }
-    if (!Number.isFinite(num) || num <= 0) {
+    if (!Number.isSafeInteger(num) || num <= 0) {
       setError('Enter a valid PR number.');
       return;
     }
@@ -99,22 +92,8 @@ export function PullPrModal({ host, onClose, onPulled }: Props) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={() => !pulling && onClose()}>
-      <div
-        className="modal prm-modal"
-        role="dialog"
-        aria-modal
-        aria-labelledby="prm-pull-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="prm-modal-header">
-          <h3 id="prm-pull-title">
-            <GitPullRequest size={14} aria-hidden /> Add PR
-          </h3>
-          <button type="button" className="prm-row-icon-btn" onClick={onClose} title="Close">
-            <X size={14} />
-          </button>
-        </header>
+    <Dialog title="Add PR" titleId="prm-pull-title" icon={<GitPullRequest size={16} />}
+      onClose={onClose} busy={pulling}>
         <div className="prm-modal-body">
           <p className="prm-modal-desc">Import a specific pull request by number.</p>
 
@@ -148,9 +127,11 @@ export function PullPrModal({ host, onClose, onPulled }: Props) {
           <label className="prm-field">
             <span className="prm-field-label">PR number</span>
             <input
-              ref={numberRef}
               type="number"
               min={1}
+              step={1}
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? "prm-pull-error" : undefined}
               value={number}
               placeholder="e.g. 42"
               className="prm-input"
@@ -168,10 +149,12 @@ export function PullPrModal({ host, onClose, onPulled }: Props) {
             />
           </label>
 
-          {error && <div className="prm-modal-error">{error}</div>}
+          {error && <div className="prm-modal-error" id="prm-pull-error" role="alert">{error}</div>}
         </div>
-        {/* Positive action on the LEFT, Cancel on the RIGHT (§8b button order). */}
         <footer className="prm-modal-footer">
+          <button type="button" className="prm-btn" onClick={onClose} disabled={pulling} title="Cancel without adding">
+            Cancel
+          </button>
           <button
             type="button"
             className="prm-btn prm-btn--primary"
@@ -182,11 +165,7 @@ export function PullPrModal({ host, onClose, onPulled }: Props) {
             {pulling ? <Loader2 size={13} className="prm-spin" /> : null}
             <span>Add</span>
           </button>
-          <button type="button" className="prm-btn" onClick={onClose} disabled={pulling} title="Cancel without adding">
-            Cancel
-          </button>
         </footer>
-      </div>
-    </div>
+    </Dialog>
   );
 }

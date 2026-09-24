@@ -1,3 +1,5 @@
+import { History } from 'lucide-react';
+import { useConversationHistory } from './history/history-store.js';
 import { navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
 import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import {
@@ -200,6 +202,9 @@ export function Sidebar() {
   };
 
   const items: SidebarRailItem[] = [
+    { kind: 'row', id: 'conversation-history', label: 'History', icon: <History size={16} />,
+      to: '#', testId: 'nav-conversation-history', active: false,
+      onClick: (event) => { event.preventDefault(); useConversationHistory.getState().open(undefined); } },
     toRow(homeNavItem),
     toRow(inboxNavItem),
     ...extraItems.map(toRow),

@@ -24,7 +24,7 @@ const FAKE_DECLARATION: PluginProviderDeclaration & { pluginId: string; hostEntr
   icon: './icons/pi.svg',
   hostEntry: 'src/bridge/bridge.ts',
   capabilities: {
-    supportsServiceTier: false,
+    supportsServiceTier: true,
     fork: 'checkpoint',
     supportsManualCompaction: true,
     supportsThreadArchive: false,

@@ -10,7 +10,7 @@ Turn a plan into tracked tasks, hand each task to an agent, and see the worker's
 
 ## How it works
 
-Link a tracker project to a ZCC project. Delegation then creates a worker thread there, attaches it to the task, and moves the task to `in_progress`. The worker receives the description, subtasks, attachments, recent comments, and a report-back contract.
+Link a tracker project to a Zana project. Delegation then creates a worker thread there, attaches it to the task, and moves the task to `in_progress`. The worker receives the description, subtasks, attachments, recent comments, and a report-back contract.
 
 Type `@` in the composer and choose **Tasks** to send a task as context. Agents see a `::task{key="PROD-1"}` card when they reference a task.
 

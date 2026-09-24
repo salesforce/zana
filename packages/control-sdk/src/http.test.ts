@@ -162,20 +162,28 @@ describe('threads and wait', () => {
             projectId: 'p1',
             visibility: 'hidden',
             origin: 'sdk',
-            acpMode: 'build'
+            acpMode: 'build',
+            reasoningLevel: 'high',
+            serviceTier: 'fast'
           });
           expect(String((body as { title: string }).title)).toContain('[zcc-live:');
           return { status: 201, body: { thread: { id: 'thr-1', status: 'starting', projectId: 'p1' } } };
         }
       },
       { method: 'GET', path: '/api/v1/threads/thr-1', handler: () => ({ body: { thread: { id: 'thr-1', status, projectId: 'p1' } } }) },
-      { method: 'GET', path: '/api/v1/threads/thr-1/interactions', body: { interactions: [] } }
+      { method: 'GET', path: '/api/v1/threads/thr-1/interactions', body: { interactions: [] } },
+      { method: 'POST', path: '/api/v1/threads/thr-1/send', handler: (_url, body) => {
+        expect(body).toMatchObject({ text: 'continue', reasoningLevel: 'low', serviceTier: 'default', permissionMode: 'full' });
+        return { body: { thread: { id: 'thr-1', status: 'active', projectId: 'p1' } } };
+      } }
     ]);
     const http = new ProductHttpClient(url);
     const handle = await spawnThread(http, {
       projectId: 'p1',
       prompt: 'ping',
-      acpMode: 'build'
+      acpMode: 'build',
+      reasoningLevel: 'high',
+      serviceTier: 'fast'
     }, { runId: 'run1', dataDir });
     expect(handle.id).toBe('thr-1');
     expect(readJournal(dataDir, 'run1')?.threadIds).toEqual(['thr-1']);
@@ -183,6 +191,7 @@ describe('threads and wait', () => {
     const waited = await handle.wait({ until: 'idle', timeoutMs: 2_000 });
     expect(waited.status).toBe('idle');
     expect(calls.some((call) => call.path === '/api/v1/threads')).toBe(true);
+    await handle.send('continue', { reasoningLevel: 'low', serviceTier: 'default', permissionMode: 'full' });
   });
 
   it('spawns an untagged operator thread without a live title or journal', async () => {

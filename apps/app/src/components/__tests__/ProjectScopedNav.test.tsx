@@ -69,6 +69,7 @@ vi.mock('../../modules', () => ({
   useProjectTabModules: () => h.modules
 }));
 vi.mock('../../plugins/plugin-slots', () => ({
+  listThreadLists: () => [],
   subscribePluginSlots: (listener: () => void) => {
     listener();
     return () => undefined;
@@ -90,11 +91,15 @@ vi.mock('../../lib/libraryPlugin', () => ({
   resolveProjectTabModule: () => undefined
 }));
 vi.mock('../listpane/project-session-rail', () => ({
-  ProjectSessionRail: () => (
-    <section className="sidebar-projects" data-testid="project-session-rail">
+  ProjectSessionRail: ({ hideThreads }: { hideThreads?: boolean }) => (
+    <section className="sidebar-projects" data-testid="project-session-rail" data-threads-hidden={hideThreads === true}>
       <span>Project</span>
     </section>
   )
+}));
+vi.mock('../../plugins/PluginExclusiveThreadList', () => ({
+  useActiveThreadList: () => ({ id: 'test-list' }),
+  PluginExclusiveThreadList: () => <div data-testid="detached-thread-list" />
 }));
 
 import { ProjectScopedNav } from '../ProjectScopedNav.js';
@@ -104,6 +109,12 @@ function renderNav(node: ReactElement) {
 }
 
 describe('ProjectScopedNav matches the global sidebar chrome', () => {
+  it('keeps threads in the project tree when a thread-list plugin is active', () => {
+    const markup = renderNav(<ProjectScopedNav project={project} variant="focus" />);
+    expect(markup).toContain('data-threads-hidden="false"');
+    expect(markup).not.toContain('data-testid="detached-thread-list"');
+  });
+
   it('uses titlebar history controls, a flat destination list, and the utility dock', () => {
     const markup = renderNav(
       <ProjectScopedNav project={project} variant="focus" onBack={() => undefined} />

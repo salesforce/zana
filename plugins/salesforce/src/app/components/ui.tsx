@@ -5,6 +5,7 @@ import type { SalesforceOperation } from "../../../lib/workbench-contract.js";
 import { SALESFORCE_STYLES } from "./styles.js";
 import { OperationResults } from "./OperationResults.js";
 import { OPERATION_LABELS, displayTime } from '../panels/workbench-presentation.js';
+export { EmptyState, LoadingState } from './SalesforceState.js';
 
 export function SalesforcePanelFrame({
   title,
@@ -84,23 +85,6 @@ export function OrgSwitcher({
     </select>
   );
 }
-export function EmptyState({
-  title,
-  children,
-  action,
-}: {
-  title: string;
-  children?: ReactNode;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="sf-empty">
-      <strong>{title}</strong>
-      {children && <div>{children}</div>}
-      {action}
-    </div>
-  );
-}
 export function ErrorState({
   message,
   retry,
@@ -116,17 +100,6 @@ export function ErrorState({
           Try again
         </button>
       )}
-    </div>
-  );
-}
-export function LoadingState({
-  label = "Loading Salesforce…",
-}: {
-  label?: string;
-}) {
-  return (
-    <div className="sf-empty" role="status">
-      {label}
     </div>
   );
 }
