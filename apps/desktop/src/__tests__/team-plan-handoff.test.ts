@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, lstat, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
@@ -92,6 +92,71 @@ describe('readAuthoredPlan / writeSourceMirror (filesystem)', () => {
     const body = await readFile(join(root, rel!), 'utf8');
     expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(MAX_HANDOFF_FILE_BYTES);
     expect(body).toContain('TRUNCATED');
+  });
+
+  it('keeps the truncated mirror within the byte cap on a multibyte boundary (no U+FFFD)', async () => {
+    // '𝕏' is a 4-byte UTF-8 sequence: a naive byte cut would split it and decode
+    // to the 3-byte replacement char, pushing content+marker back over the cap.
+    const rel = await writeSourceMirror(root, 'exec-mb', [{ extractedText: '𝕏'.repeat(MAX_HANDOFF_FILE_BYTES) }]);
+    const body = await readFile(join(root, rel!), 'utf8');
+    expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(MAX_HANDOFF_FILE_BYTES);
+    expect(body).toContain('TRUNCATED');
+    expect(body).not.toContain('�');
+  });
+
+});
+
+describe('handoff filesystem confinement (symlink-escape safe)', () => {
+  let root: string;
+  let outside: string;
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'zana-handoff-root-'));
+    outside = await mkdtemp(join(tmpdir(), 'zana-handoff-outside-'));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  });
+
+  it('writeSourceMirror refuses a symlinked .zana parent that escapes projectRoot', async () => {
+    // `.zana` is a symlink to a dir OUTSIDE the project — a lexical containment
+    // check passes but following the link would write outside projectRoot.
+    await symlink(outside, join(root, '.zana'), 'dir');
+    const rel = await writeSourceMirror(root, 'exec-1', [{ extractedText: 'poison' }]);
+    expect(rel).toBeUndefined();
+    await expect(readFile(join(outside, 'execution-source-exec-1.md'), 'utf8')).rejects.toThrow();
+  });
+
+  it('writeSourceMirror replaces a leaf symlink instead of clobbering its target', async () => {
+    await mkdir(join(root, '.zana'), { recursive: true });
+    await writeFile(join(outside, 'victim.md'), 'SECRET', 'utf8');
+    const leaf = join(root, sourceMirrorRelPath('exec-1'));
+    await symlink(join(outside, 'victim.md'), leaf, 'file');
+    const rel = await writeSourceMirror(root, 'exec-1', [{ extractedText: 'poison' }]);
+    expect(rel).toBe(sourceMirrorRelPath('exec-1'));
+    // The victim outside the project is untouched...
+    expect(await readFile(join(outside, 'victim.md'), 'utf8')).toBe('SECRET');
+    // ...and the leaf is now a regular confined file, not the symlink.
+    expect((await lstat(leaf)).isSymbolicLink()).toBe(false);
+    expect(await readFile(leaf, 'utf8')).toContain('poison');
+  });
+
+  it('cleanupHandoffFiles refuses a symlinked .zana parent that escapes projectRoot', async () => {
+    await symlink(outside, join(root, '.zana'), 'dir');
+    await writeFile(join(outside, 'execution-plan-exec-1.md'), 'VICTIM', 'utf8');
+    await writeFile(join(outside, 'execution-source-exec-1.md'), 'VICTIM2', 'utf8');
+    await cleanupHandoffFiles(root, 'exec-1');
+    expect(await readFile(join(outside, 'execution-plan-exec-1.md'), 'utf8')).toBe('VICTIM');
+    expect(await readFile(join(outside, 'execution-source-exec-1.md'), 'utf8')).toBe('VICTIM2');
+  });
+
+  it('readAuthoredPlan treats a leaf symlink as missing (no-follow)', async () => {
+    await mkdir(join(root, '.zana'), { recursive: true });
+    await writeFile(join(outside, 'victim-plan.md'), VALID_PLAN, 'utf8');
+    // resolveContainedReal realpaths the leaf out of the project → missing; even
+    // if it were in-project, O_NOFOLLOW refuses to open a leaf symlink.
+    await symlink(join(outside, 'victim-plan.md'), join(root, authoredPlanRelPath('exec-1')), 'file');
+    expect(await readAuthoredPlan(root, 'exec-1')).toEqual({ status: 'missing' });
   });
 });
 

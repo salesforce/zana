@@ -23,7 +23,15 @@ const REMOTE_LIST_LIMIT = 5;
  */
 async function resolveRemoteNativeId(session: TranscriptSessionRef): Promise<string | undefined> {
   if (!session.remote) return undefined;
-  const rows = await listRemoteOpenCodeSessions(session.remote, session.cwd, REMOTE_LIST_LIMIT);
+  // Contract: never throw. `listRemoteOpenCodeSessions` degrades an ssh failure
+  // to null today, but guard the await so a future change (or a down SSH path)
+  // can't reject resolve() and break transcript discovery for a remote worker.
+  let rows: Awaited<ReturnType<typeof listRemoteOpenCodeSessions>>;
+  try {
+    rows = await listRemoteOpenCodeSessions(session.remote, session.cwd, REMOTE_LIST_LIMIT);
+  } catch {
+    return undefined;
+  }
   if (!rows) return undefined;
   const floor = (session.createdAt ?? 0) - 5_000;
   let best: { id: string; created: number } | undefined;
@@ -69,7 +77,13 @@ export class OpenCodeTranscriptAdapter implements HarnessTranscriptAdapter {
     // over ssh via `opencode export`, never the owner's local db (which has no
     // row for this session and would report a zero-token `gap: 'missing'`).
     if (session.remote) {
-      return readSessionStatsOpenCodeRemote(session.remote, nativeId, { cwd: session.cwd });
+      // Match the local missing-session path: a transient SSH/remote-exec error
+      // degrades to null (a hard stats failure), never a thrown rejection.
+      try {
+        return await readSessionStatsOpenCodeRemote(session.remote, nativeId, { cwd: session.cwd });
+      } catch {
+        return null;
+      }
     }
     const dbPath = join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'opencode', 'opencode.db');
     return (await readSessionStatsOpenCode(nativeId, { dbPath, cwd: session.cwd }))

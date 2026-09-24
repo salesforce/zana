@@ -916,6 +916,11 @@ const executionStore = createExecutionStore({
 // production lease renews on a ~10s cadence.
 const WORKER_LEASE_MS = e2eTimingOverrideMs('ZCC_WORK_CLAIM_LEASE_MS') ?? WORK_CLAIM_LEASE_MS;
 const WORKER_LEASE_RENEW_THROTTLE_MS = Math.min(10_000, Math.max(250, Math.floor(WORKER_LEASE_MS / 4)));
+/** How long a non-cohort-worker session's "skip renew" verdict is cached. A hot,
+ * non-worker output stream short-circuits {@link maybeRenewWorkerLease} for this long
+ * without a repeat `getSession` lookup; long enough to matter, short enough that a
+ * session that later becomes a cohort worker is re-evaluated. */
+const NON_WORKER_LEASE_CACHE_TTL_MS = 3_600_000;
 /** Per-session next-allowed renew time (or a far-future sentinel for a non-worker session,
  * so a hot non-cohort stream short-circuits without a repeat `getSession` lookup). */
 const workerLeaseRenewAt = new Map<string, number>();
@@ -925,7 +930,7 @@ function maybeRenewWorkerLease(sessionId: string): void {
   if (next !== undefined && nowMs < next) return;
   const cohort = ptys.getSession(sessionId)?.cohort;
   if (!cohort?.executionId || cohort.role !== 'worker' || !cohort.slotId) {
-    workerLeaseRenewAt.set(sessionId, nowMs + 3_600_000); // not a cohort worker — skip cheaply
+    workerLeaseRenewAt.set(sessionId, nowMs + NON_WORKER_LEASE_CACHE_TTL_MS); // not a cohort worker — skip cheaply
     return;
   }
   workerLeaseRenewAt.set(sessionId, nowMs + WORKER_LEASE_RENEW_THROTTLE_MS);
@@ -4682,22 +4687,103 @@ async function collectHandoffSourceTexts(bundle: {
   sources: ReadonlyArray<{ id: string; name?: string }>;
 }): Promise<Array<{ name?: string; extractedText: string }>> {
   const expected = bundle.sources as ReadonlyArray<Omit<ExecutionSourceSnapshot, 'extractedText'>>;
+  // Read every source concurrently (each source's own pages stay sequential — a
+  // page's nextOffset is only known after the prior read). Each source is
+  // independently bounded to the whole-mirror cap so a single source cannot blow
+  // the budget; the CUMULATIVE budget is then applied in declared source order
+  // below, preserving the prior semantics (and writeSourceMirror truncates the
+  // assembled mirror once more on write).
+  const perSource = await Promise.all(
+    bundle.sources.map(async (meta) => {
+      let text = '';
+      let offset = 0;
+      for (;;) {
+        const page = await executionSources.read(bundle.contentRef, meta.id, { offset, maxBytes: 64 * 1024 }, expected);
+        text += page.content;
+        if (Buffer.byteLength(text, 'utf8') >= MAX_HANDOFF_FILE_BYTES || page.nextOffset === undefined) break;
+        offset = page.nextOffset;
+      }
+      return { name: meta.name, text };
+    })
+  );
   const out: Array<{ name?: string; extractedText: string }> = [];
   let budget = MAX_HANDOFF_FILE_BYTES;
-  for (const meta of bundle.sources) {
+  for (const { name, text } of perSource) {
     if (budget <= 0) break;
-    let text = '';
-    let offset = 0;
-    for (;;) {
-      const page = await executionSources.read(bundle.contentRef, meta.id, { offset, maxBytes: 64 * 1024 }, expected);
-      text += page.content;
-      if (Buffer.byteLength(text, 'utf8') >= budget || page.nextOffset === undefined) break;
-      offset = page.nextOffset;
+    if (text) {
+      out.push({ name, extractedText: text });
+      budget -= Buffer.byteLength(text, 'utf8');
     }
-    budget -= Buffer.byteLength(text, 'utf8');
-    if (text) out.push({ name: meta.name, extractedText: text });
   }
   return out;
+}
+
+/**
+ * Durable coordinator handoff preparation (Flow B/C). Mirror the captured
+ * (untrusted) source requirements into a project-confined `.zana/` file the
+ * coordinator can read natively, and compute the plan-file path it WRITES to —
+ * the sandbox-immune substitute for the blocked `execution.source.read` +
+ * `execution.plan.register` chain. Best-effort: a reconstruct/mirror-write
+ * failure just omits the source file, and the coordinator still authors from the
+ * goal + metadata. Always returns the plan-file path so the coordinator knows
+ * where to write.
+ */
+async function prepareCoordinatorHandoff(args: {
+  executionId: string;
+  projectId: string;
+  sourceBundle?: { contentRef: string; sources: ReadonlyArray<{ id: string; name?: string }> };
+}): Promise<{ planFilePath: string; sourceFilePath?: string }> {
+  const planFilePath = authoredPlanRelPath(args.executionId);
+  const handoffRoot = store.listProjects().find((candidate) => candidate.id === args.projectId)?.path;
+  const bundle = args.sourceBundle;
+  // The durable record carries only stripped metadata; reconstruct the raw
+  // requirement text host-side from the immutable content store so the mirror has
+  // real bodies to write (metadata alone would produce an empty file).
+  if (!(handoffRoot && bundle?.contentRef && bundle.sources.length)) return { planFilePath };
+  try {
+    const handoffSources = await collectHandoffSourceTexts({ contentRef: bundle.contentRef, sources: bundle.sources });
+    if (handoffSources.length) {
+      const sourceFilePath = await writeSourceMirror(handoffRoot, args.executionId, handoffSources);
+      return { planFilePath, sourceFilePath };
+    }
+  } catch (error) {
+    logMainError('[team-launch] source mirror write failed', error instanceof Error ? error : new Error(String(error)));
+  }
+  return { planFilePath };
+}
+
+/**
+ * Flow A seeded-plan kickoff: dispatch the pre-registered ready units host-side so
+ * the coordinator makes ZERO kickoff tool calls. Fully isolated and best-effort —
+ * the coordinator + workers are already launched, so NEITHER a rejected dispatch
+ * (an uncaught reject would fail launchTeam with a partially launched team) NOR a
+ * non-ok Result may disturb the successful launch: the Flow-A prompt guidance
+ * stays in place, the planless watchdog is never armed for a seeded plan, and the
+ * engine cascades re-dispatch as work completes.
+ */
+async function dispatchSeededPlanKickoff(args: {
+  executionId: string;
+  projectId: string;
+  slotId: string;
+  principalId: string;
+}): Promise<void> {
+  try {
+    const dispatched = await squadExecutionService.dispatchReady({
+      role: 'orchestrator',
+      slotId: args.slotId,
+      executionId: args.executionId,
+      projectId: args.projectId,
+      principalId: args.principalId
+    });
+    if (!dispatched.ok) {
+      logMainError('[team-launch] host kickoff dispatch failed', new Error(`${dispatched.code}: ${dispatched.message}`));
+    }
+  } catch (error) {
+    logMainError(
+      `[team-launch] host kickoff dispatch threw (execution ${args.executionId} slot ${args.slotId})`,
+      error instanceof Error ? error : new Error(String(error))
+    );
+  }
 }
 
 export async function launchTeam(
@@ -5121,34 +5207,16 @@ export async function launchTeam(
     const seededWorkUnits = seededRecord?.workUnits ?? [];
     const planReady = seededWorkUnits.length > 0;
     // Flow B/C file handoff: for a planless durable coordinator, mirror the
-    // captured (untrusted) source requirements into a project-confined `.zana/`
-    // file it can read natively, and hand it the plan-file path to WRITE to —
-    // the sandbox-immune substitute for execution.source.read + plan.register.
-    // Best-effort: a mirror-write failure just leaves the coordinator without
-    // the source file (it still authors from the goal + metadata).
-    let planFilePath: string | undefined;
-    let sourceFilePath: string | undefined;
-    if (durableCoordination && !planReady && structured?.executionId) {
-      planFilePath = authoredPlanRelPath(structured.executionId);
-      const handoffRoot = store.listProjects().find((candidate) => candidate.id === targetProjectId)?.path;
-      const handoffBundle = structured.jobContext?.sourceBundle;
-      // The durable record carries only stripped metadata; reconstruct the raw
-      // requirement text host-side from the immutable content store so the mirror
-      // has real bodies to write (metadata alone would produce an empty file).
-      if (handoffRoot && handoffBundle?.contentRef && handoffBundle.sources.length) {
-        try {
-          const handoffSources = await collectHandoffSourceTexts({
-            contentRef: handoffBundle.contentRef,
-            sources: handoffBundle.sources
-          });
-          if (handoffSources.length) {
-            sourceFilePath = await writeSourceMirror(handoffRoot, structured.executionId, handoffSources);
-          }
-        } catch (error) {
-          logMainError('[team-launch] source mirror write failed', error instanceof Error ? error : new Error(String(error)));
-        }
-      }
-    }
+    // captured source requirements + compute the plan-file path via the dedicated
+    // handoff-prep helper (the sandbox-immune substitute for execution.source.read
+    // + plan.register). Best-effort: a failure just omits the source file.
+    const { planFilePath, sourceFilePath } = durableCoordination && !planReady && structured?.executionId
+      ? await prepareCoordinatorHandoff({
+          executionId: structured.executionId,
+          projectId: targetProjectId,
+          sourceBundle: structured.jobContext?.sourceBundle
+        })
+      : { planFilePath: undefined as string | undefined, sourceFilePath: undefined as string | undefined };
     const orchestratorTask = durableCoordination && structured?.jobContext
       ? jobCoordinatorPrompt({
           team,
@@ -5196,23 +5264,18 @@ export async function launchTeam(
       workers.push({ sessionId: res.value.id, cohortId, slotId: orchestratorSlotId, personaId: orchestratorId!, projectId: targetProjectId, authorizationId });
       // Flow A (good plan provided): the seeded DAG is valid, so dispatch it
       // host-side — the coordinator makes ZERO kickoff tool calls. The engine
-      // assigns every ready unit to a free worker slot and cascades re-dispatch
-      // as work completes; idle-gated pushes are durable, so a still-booting
-      // worker receives its assignment when it goes idle. Best-effort: a dispatch
-      // failure just leaves the coordinator's Flow-A prompt guidance in place,
-      // and the planless watchdog is never armed for a seeded plan, so nothing
-      // FAILs the run spuriously.
+      // assigns every ready unit to a free worker slot and cascades re-dispatch as
+      // work completes; idle-gated pushes are durable, so a still-booting worker
+      // receives its assignment when it goes idle. Fully isolated + best-effort
+      // (see {@link dispatchSeededPlanKickoff}): a reject or non-ok Result never
+      // disturbs this successful launch.
       if (planReady && structured?.executionId) {
-        const dispatched = await squadExecutionService.dispatchReady({
-          role: 'orchestrator',
-          slotId: orchestratorSlotId,
+        await dispatchSeededPlanKickoff({
           executionId: structured.executionId,
           projectId: targetProjectId,
+          slotId: orchestratorSlotId,
           principalId: res.value.id
         });
-        if (!dispatched.ok) {
-          logMainError('[team-launch] host kickoff dispatch failed', new Error(`${dispatched.code}: ${dispatched.message}`));
-        }
       }
     } else {
       failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: res.message });

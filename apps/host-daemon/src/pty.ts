@@ -179,6 +179,11 @@ interface RemoteReap {
    *  the box at reap time and SIGKILLs it, then drops the session. Absent for a
    *  headless remote (which captures {@link pid} from the sentinel instead). */
   tmuxName?: string;
+  /** Bounded carry buffer: a trailing partial-sentinel prefix held back from the
+   *  forwarded output stream so a sentinel split across PTY chunks is still parsed
+   *  (see {@link trailingSentinelPartialLen}). Only ever set for a headless remote
+   *  before {@link pid} is captured; released once the pid arrives or on exit. */
+  pidCarry?: string;
 }
 
 /**
@@ -253,6 +258,41 @@ const REMOTE_PROBE_TIMEOUT_MS = 12_000;
  */
 const REMOTE_PID_SENTINEL_EMIT = `printf '\\033]6997;zcc-remote-pid=%s\\007' $$ ; `;
 const REMOTE_PID_SENTINEL_RE = /\x1b\]6997;zcc-remote-pid=(\d+)\x07/;
+/** Fixed head of the sentinel (everything before the variable `<pid>\x07`). */
+const REMOTE_PID_SENTINEL_HEAD = '\x1b]6997;zcc-remote-pid=';
+/**
+ * Upper bound on the per-session carry buffer for a straddling sentinel. A real
+ * pid is a handful of digits; cap the held partial at the head length plus a
+ * generous digit allowance so a pathological remote that streams the head then
+ * an unbounded digit run (never a BEL) can't grow the carry without limit
+ * (Rule 5) — past the cap we give up on that partial and forward it.
+ */
+const REMOTE_PID_SENTINEL_MAX_CARRY = REMOTE_PID_SENTINEL_HEAD.length + 20;
+
+/**
+ * Length of the trailing substring of `s` that could be the start of an
+ * as-yet-incomplete boot sentinel, so it must be CARRIED (held back from the
+ * forwarded output) and re-examined once the next chunk arrives — PTY chunk
+ * boundaries are arbitrary, so a split `\x1b]6997;zcc-remote-pid=<pid>\x07`
+ * would otherwise never be captured and would leak fragments into the terminal.
+ * Two forms of partial: (b) the full head followed by digits but no terminator
+ * yet, or (a) a proper prefix of the head as a suffix. Returns 0 when nothing
+ * trailing could extend into a sentinel. Bounded by REMOTE_PID_SENTINEL_MAX_CARRY.
+ */
+function trailingSentinelPartialLen(s: string): number {
+  // (b) full head + zero-or-more digits, terminator (BEL) not yet arrived.
+  const withDigits = s.match(/\x1b\]6997;zcc-remote-pid=\d*$/);
+  if (withDigits) {
+    const len = withDigits[0].length;
+    return len <= REMOTE_PID_SENTINEL_MAX_CARRY ? len : 0;
+  }
+  // (a) a proper prefix of the head appearing as a suffix of `s`.
+  const maxN = Math.min(s.length, REMOTE_PID_SENTINEL_HEAD.length - 1);
+  for (let n = maxN; n > 0; n--) {
+    if (s.endsWith(REMOTE_PID_SENTINEL_HEAD.slice(0, n))) return n;
+  }
+  return 0;
+}
 
 function remoteCommandExitCode(error: unknown): number | undefined {
   const code = (error as NodeJS.ErrnoException | null)?.code;
@@ -2492,18 +2532,49 @@ export class PtyManager extends EventEmitter {
       // login shell's `$$`, printed before the first `exec`, so it equals the
       // final agent PID across the exec chain). Record it on the reap recipe and
       // the session (durably ledgered by main), then STRIP the escape sequence so
-      // it never renders in the terminal. Only on the first spawn — a reattach
-      // re-attaches the existing tmux pane and never re-runs the inner command.
+      // it never renders in the terminal. Runs only until `pid` is captured; a
+      // reattach re-attaches an existing pane and never re-runs the inner command.
+      //
+      // PTY chunk boundaries are arbitrary, so the sentinel can straddle two
+      // chunks. A HEADLESS remote actually streams the sentinel, so we carry a
+      // trailing partial-sentinel prefix across the boundary (bounded — see
+      // `trailingSentinelPartialLen`) and re-examine it on the next chunk;
+      // otherwise a split sentinel is never captured and its fragments leak. A
+      // tmux-backed remote SWALLOWS the OSC (its `pid` never streams), so we must
+      // NOT hold back its TUI escapes — just strip any complete (injected /
+      // defensive) sentinel present in the chunk without carry.
       if (live?.remoteReap && live.remoteReap.pid === undefined) {
-        const m = data.match(REMOTE_PID_SENTINEL_RE);
-        if (m) {
-          const pid = Number(m[1]);
-          if (Number.isInteger(pid) && pid > 1) {
-            live.remoteReap.pid = pid;
-            live.session.remotePid = pid;
-            this.emit('sessionUpdated', live.session);
+        const reap = live.remoteReap;
+        const carryable = !reap.tmux;
+        const combined = carryable ? (reap.pidCarry ?? '') + data : data;
+        let capturedPid: number | undefined;
+        const stripped = combined.replace(
+          new RegExp(REMOTE_PID_SENTINEL_RE.source, 'g'),
+          (_full, digits: string) => {
+            if (capturedPid === undefined) {
+              const pid = Number(digits);
+              if (Number.isInteger(pid) && pid > 1) capturedPid = pid;
+            }
+            return '';
           }
-          data = data.replace(REMOTE_PID_SENTINEL_RE, '');
+        );
+        if (capturedPid !== undefined) {
+          reap.pid = capturedPid;
+          live.session.remotePid = capturedPid;
+          this.emit('sessionUpdated', live.session);
+        }
+        // Once the pid is captured we stop tracking the sentinel entirely (only
+        // one is ever emitted). Otherwise (headless only) carry the trailing
+        // partial-prefix so a split sentinel completes on the next chunk; forward
+        // everything else, in order.
+        const partialLen =
+          carryable && capturedPid === undefined ? trailingSentinelPartialLen(stripped) : 0;
+        if (partialLen > 0) {
+          reap.pidCarry = stripped.slice(stripped.length - partialLen);
+          data = stripped.slice(0, stripped.length - partialLen);
+        } else {
+          if (carryable) reap.pidCarry = undefined;
+          data = stripped;
         }
       }
       // Honest tunnel posture: if a reverse forward was requested and still reads
@@ -2528,6 +2599,9 @@ export class PtyManager extends EventEmitter {
       const signal = 'signal' in event && typeof event.signal === 'number' ? event.signal : undefined;
       const expected = this.expectedClose.delete(session.id);
       const live = this.live.get(session.id);
+      // Release any held sentinel-carry: the stream is ending, so a dangling
+      // partial can never complete and must not survive onto a reattached proc.
+      if (live?.remoteReap) live.remoteReap.pidCarry = undefined;
       if (live?.remoteTerminationInFlight) {
         // tmux teardown can close this SSH proxy before terminateSession calls
         // closeExpected(). Keep the close request as teardown owner, not reconnect.

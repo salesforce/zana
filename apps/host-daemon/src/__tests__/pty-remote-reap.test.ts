@@ -250,6 +250,148 @@ describe('PtyManager remote agent reap', () => {
     }
   });
 
+  describe('boot sentinel split across PTY chunk boundaries', () => {
+    it('captures the PID when the sentinel straddles two chunks and never leaks a fragment', () => {
+      const mgr = new PtyManager();
+      const emitted: string[] = [];
+      mgr.on('data', (_id: string, d: string) => emitted.push(d));
+      const session = makeRemoteAgent(mgr, { headless: true });
+
+      const full = `pre${sentinel(4242)}post`;
+      const cut = 6; // mid-way through the OSC escape
+      spawned[0].dataCb?.(full.slice(0, cut)); // trailing partial held back
+      expect(mgr.getSession(session.id)?.remotePid).toBeUndefined();
+      spawned[0].dataCb?.(full.slice(cut)); // completes the sentinel
+      expect(mgr.getSession(session.id)?.remotePid).toBe(4242);
+      expect(mgr.getRemoteReap(session.id)?.pid).toBe(4242);
+
+      mgr.close(session.id);
+      const stream = emitted.join('');
+      expect(stream).toBe('prepost');
+      expect(stream).not.toContain('zcc-remote-pid');
+      expect(stream).not.toContain('\x1b]6997');
+    });
+
+    it('captures the PID when the sentinel is streamed one byte at a time', () => {
+      const mgr = new PtyManager();
+      const emitted: string[] = [];
+      mgr.on('data', (_id: string, d: string) => emitted.push(d));
+      const session = makeRemoteAgent(mgr, { headless: true });
+
+      for (const ch of `A${sentinel(4242)}B`) spawned[0].dataCb?.(ch);
+      expect(mgr.getSession(session.id)?.remotePid).toBe(4242);
+
+      mgr.close(session.id);
+      const stream = emitted.join('');
+      expect(stream).toBe('AB');
+      expect(stream).not.toContain('zcc-remote-pid');
+    });
+
+    it('captures the first PID when two sentinels arrive in one chunk and strips both', () => {
+      const mgr = new PtyManager();
+      const emitted: string[] = [];
+      mgr.on('data', (_id: string, d: string) => emitted.push(d));
+      const session = makeRemoteAgent(mgr, { headless: true });
+
+      spawned[0].dataCb?.(`a${sentinel(111)}b${sentinel(222)}c`);
+      expect(mgr.getSession(session.id)?.remotePid).toBe(111);
+      expect(mgr.getRemoteReap(session.id)?.pid).toBe(111);
+
+      mgr.close(session.id);
+      const stream = emitted.join('');
+      expect(stream).toBe('abc');
+      expect(stream).not.toContain('zcc-remote-pid');
+    });
+
+    it('does not swallow real output when a sentinel-prefix-shaped run never completes', () => {
+      const mgr = new PtyManager();
+      const emitted: string[] = [];
+      mgr.on('data', (_id: string, d: string) => emitted.push(d));
+      const session = makeRemoteAgent(mgr, { headless: true });
+
+      // Chunk ends with a proper prefix of the head → held as a maybe-sentinel.
+      spawned[0].dataCb?.('hello\x1b]6997');
+      // …but the next bytes prove it was NOT a sentinel; the held run must be
+      // released back into the stream, not dropped.
+      spawned[0].dataCb?.('bar');
+      expect(mgr.getSession(session.id)?.remotePid).toBeUndefined();
+
+      mgr.close(session.id);
+      const stream = emitted.join('');
+      expect(stream).toContain('hello');
+      expect(stream).toContain('bar');
+      expect(stream).toContain('\x1b]6997bar');
+    });
+
+    it('releases the held partial on close so a dangling fragment never leaks', () => {
+      const mgr = new PtyManager();
+      const emitted: string[] = [];
+      mgr.on('data', (_id: string, d: string) => emitted.push(d));
+      const session = makeRemoteAgent(mgr, { headless: true });
+
+      // Head + digits but the terminating BEL never arrives before the stream ends.
+      spawned[0].dataCb?.('data\x1b]6997;zcc-remote-pid=42');
+      expect(mgr.getRemoteReap(session.id)?.pidCarry).toBe('\x1b]6997;zcc-remote-pid=42');
+      expect(mgr.getSession(session.id)?.remotePid).toBeUndefined();
+
+      mgr.close(session.id);
+      // Live entry gone (carry released with it); the never-completed partial was
+      // held back and never forwarded.
+      expect(mgr.getRemoteReap(session.id)).toBeUndefined();
+      const stream = emitted.join('');
+      expect(stream).toContain('data');
+      expect(stream).not.toContain('zcc-remote-pid');
+    });
+
+    it('holds a head + digit run at the carry cap boundary but forwards the preceding output', () => {
+      const mgr = new PtyManager();
+      const emitted: string[] = [];
+      mgr.on('data', (_id: string, d: string) => emitted.push(d));
+      const session = makeRemoteAgent(mgr, { headless: true });
+
+      // The head is 22 bytes and the cap allows 20 more, so a head + exactly 20
+      // digits (no terminating BEL yet) sits AT the bound and is still held as a
+      // maybe-sentinel; the ordinary output before it is forwarded immediately.
+      const atCap = '1'.repeat(20);
+      spawned[0].dataCb?.(`x\x1b]6997;zcc-remote-pid=${atCap}`);
+      expect(mgr.getRemoteReap(session.id)?.pidCarry).toBe(`\x1b]6997;zcc-remote-pid=${atCap}`);
+      expect(mgr.getSession(session.id)?.remotePid).toBeUndefined();
+
+      mgr.close(session.id);
+      // The 'x' before the head was forwarded; the held partial was released on
+      // close and never leaked into the stream.
+      const stream = emitted.join('');
+      expect(stream).toBe('x');
+    });
+
+    it('gives up (never grows the carry unbounded) on a head + digit run past the cap', () => {
+      const mgr = new PtyManager();
+      const emitted: string[] = [];
+      mgr.on('data', (_id: string, d: string) => emitted.push(d));
+      const session = makeRemoteAgent(mgr, { headless: true });
+
+      // A hostile/garbled stream that emits the head then an unbounded digit run
+      // and never a BEL must NOT grow the per-session carry buffer without limit
+      // (Rule 5): once past the cap the partial is given up and forwarded, so the
+      // carry stays empty and the bytes are not swallowed.
+      const overCap = '9'.repeat(64);
+      spawned[0].dataCb?.(`out\x1b]6997;zcc-remote-pid=${overCap}`);
+      expect(mgr.getSession(session.id)?.remotePid).toBeUndefined();
+      expect(mgr.getRemoteReap(session.id)?.pidCarry).toBeUndefined();
+
+      // Feed a genuine sentinel afterwards: the over-cap run was forwarded, not
+      // carried, so it cannot fuse with later bytes into a capture.
+      spawned[0].dataCb?.(sentinel(4242));
+      expect(mgr.getSession(session.id)?.remotePid).toBe(4242);
+
+      mgr.close(session.id);
+      const stream = emitted.join('');
+      expect(stream).toContain('out');
+      expect(stream).toContain(overCap);
+      expect(stream).not.toContain('zcc-remote-pid=4242');
+    });
+  });
+
   describe('reapRemoteProcess() validation', () => {
     it('rejects a missing / invalid pid without shelling out', async () => {
       const mgr = new PtyManager();

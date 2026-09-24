@@ -22,14 +22,10 @@ function formatCost(usd?: number): string {
 /** Events dumped are bounded to the newest N (Rule 5): a stuck run can have a long tail. */
 const JOB_DETAILS_EVENT_TAIL = 25;
 
-/**
- * Readable, copy-paste-friendly plain-text dump of the job details shown in this view.
- * Purpose is wedge diagnosis — dump every liveness / claim / usage / blocker signal the
- * projection carries so a stalled run can be pasted for analysis. Bounded (Rule 5): events
- * are a last-N tail; artifacts are name+mediaType+digest only (never bodies).
- */
-export function buildJobDetailsText(projectId: string, snapshot: ExecutionBoardSnapshot): string {
-  const execution = snapshot.execution;
+type ExecutionProjection = ExecutionBoardSnapshot['execution'];
+
+/** Identity / lifecycle header block. */
+function jobHeaderLines(projectId: string, execution: ExecutionProjection): string[] {
   const lines: string[] = [];
   lines.push(`Job: ${execution.jobTitle}`);
   lines.push(`Execution ID: ${execution.executionId}`);
@@ -47,9 +43,12 @@ export function buildJobDetailsText(projectId: string, snapshot: ExecutionBoardS
     lines.push(`Resource block: ${execution.resourceBlock.kind} · ${execution.resourceBlock.reason} (at ${formatTimestamp(execution.resourceBlock.blockedAt)})`);
   }
   lines.push(`Telemetry gap count: ${execution.usage?.gapCount ?? 0}`);
-  lines.push('');
+  return lines;
+}
 
-  const work = execution.work;
+/** Work units + per-assignment claim/churn lines. */
+function workUnitLines(work: ExecutionProjection['work']): string[] {
+  const lines: string[] = [];
   lines.push(`Work units: ${work?.completed ?? 0}/${work?.total ?? 0} complete`);
   if (work?.counts) lines.push(`  counts: ${Object.entries(work.counts).map(([state, count]) => `${state}=${count}`).join(' · ')}`);
   const assignments = work?.assignments ?? [];
@@ -62,21 +61,24 @@ export function buildJobDetailsText(projectId: string, snapshot: ExecutionBoardS
     if (assignment.dependencies?.length) lines.push(`      dependencies: ${assignment.dependencies.join(', ')}`);
     if (assignment.result) lines.push(`      result: ${assignment.result}`);
   }
-  lines.push('');
+  return lines;
+}
 
-  const usage = execution.usage;
-  lines.push('Usage:');
-  if (!usage) lines.push('  (unavailable)');
-  else {
-    lines.push(`  completeness: ${usage.completeness} · observations: ${usage.observationCount} · gaps: ${usage.gapCount}`);
-    lines.push(`  tokens: input ${usage.inputTokens ?? '—'} · output ${usage.outputTokens ?? '—'} · cacheRead ${usage.cacheReadTokens ?? '—'} · cacheWrite ${usage.cacheWriteTokens ?? '—'} · cost ${formatCost(usage.providerCostUsd)}`);
-    for (const role of usage.byRole) {
-      lines.push(`    ${role.role}: input ${role.inputTokens ?? '—'} · output ${role.outputTokens ?? '—'} · cacheRead ${role.cacheReadTokens ?? '—'} · cacheWrite ${role.cacheWriteTokens ?? '—'} · cost ${formatCost(role.providerCostUsd)}`);
-    }
+/** Aggregate + per-role token/cost usage. */
+function usageLines(usage: ExecutionProjection['usage']): string[] {
+  const lines: string[] = ['Usage:'];
+  if (!usage) { lines.push('  (unavailable)'); return lines; }
+  lines.push(`  completeness: ${usage.completeness} · observations: ${usage.observationCount} · gaps: ${usage.gapCount}`);
+  lines.push(`  tokens: input ${usage.inputTokens ?? '—'} · output ${usage.outputTokens ?? '—'} · cacheRead ${usage.cacheReadTokens ?? '—'} · cacheWrite ${usage.cacheWriteTokens ?? '—'} · cost ${formatCost(usage.providerCostUsd)}`);
+  for (const role of usage.byRole) {
+    lines.push(`    ${role.role}: input ${role.inputTokens ?? '—'} · output ${role.outputTokens ?? '—'} · cacheRead ${role.cacheReadTokens ?? '—'} · cacheWrite ${role.cacheWriteTokens ?? '—'} · cost ${formatCost(role.providerCostUsd)}`);
   }
-  lines.push('');
+  return lines;
+}
 
-  lines.push('Blockers:');
+/** Historical blockers + the current blocker's delivery state. */
+function blockerLines(execution: ExecutionProjection): string[] {
+  const lines: string[] = ['Blockers:'];
   const blockers = execution.blockers ?? [];
   if (blockers.length === 0 && !execution.currentBlocker) lines.push('  (none)');
   for (const blocker of blockers) {
@@ -92,63 +94,111 @@ export function buildJobDetailsText(projectId: string, snapshot: ExecutionBoardS
       lines.push(`      delivery: ${currentBlocker.delivery.state} · attempt ${currentBlocker.delivery.attempt}/${currentBlocker.delivery.maxAttempts}${currentBlocker.delivery.error ? ` · error: ${currentBlocker.delivery.error}` : ''} · retryEligible: ${currentBlocker.delivery.retryEligible}`);
     }
   }
-  lines.push('');
+  return lines;
+}
 
-  // Delivery strands (metadata only — payload text is never projected). A delivery
-  // stuck FAILED/PENDING at max attempts is the "answer never reached the worker" wedge.
-  const deliveries = execution.deliveries ?? [];
-  lines.push(`Deliveries (${deliveries.length}):`);
-  if (deliveries.length === 0) lines.push('  (none)');
-  for (const delivery of deliveries) {
+/**
+ * Delivery strands (metadata only — payload text is never projected). A delivery
+ * stuck FAILED/PENDING at max attempts is the "answer never reached the worker" wedge.
+ */
+function deliveryLines(deliveries: ExecutionProjection['deliveries']): string[] {
+  const list = deliveries ?? [];
+  const lines: string[] = [`Deliveries (${list.length}):`];
+  if (list.length === 0) lines.push('  (none)');
+  for (const delivery of list) {
     lines.push(`  - ${delivery.id} · ${delivery.state} · attempt ${delivery.attempt}/${delivery.maxAttempts}${delivery.manualRetryCount ? ` · manualRetries ${delivery.manualRetryCount}` : ''}`);
     lines.push(`      blocker ${delivery.blockerId} · unit ${delivery.workUnitId} · slot ${delivery.slotId} · updatedAt ${formatTimestamp(delivery.updatedAt)}${delivery.error ? ` · error: ${delivery.error}` : ''}`);
   }
-  lines.push('');
+  return lines;
+}
 
-  // Coordinator wakes — a repeated same-cause wake with nothing advancing is the
-  // orchestrator-side wedge. Count plus a bounded newest-first tail.
-  const wakes = execution.coordinatorWakes;
-  lines.push(`Coordinator wakes (${wakes?.total ?? 0}):`);
-  if (!wakes || wakes.recent.length === 0) lines.push('  (none)');
-  else for (const wake of wakes.recent) {
+/**
+ * Coordinator wakes — a repeated same-cause wake with nothing advancing is the
+ * orchestrator-side wedge. Count plus a bounded newest-first tail.
+ */
+function coordinatorWakeLines(wakes: ExecutionProjection['coordinatorWakes']): string[] {
+  const lines: string[] = [`Coordinator wakes (${wakes?.total ?? 0}):`];
+  if (!wakes || wakes.recent.length === 0) { lines.push('  (none)'); return lines; }
+  for (const wake of wakes.recent) {
     lines.push(`  - ${wake.cause}${wake.workUnitId ? ` · unit ${wake.workUnitId}` : ''} · stateOrClaimGeneration ${wake.stateOrClaimGeneration} · ${formatTimestamp(wake.createdAt)}`);
   }
-  lines.push('');
+  return lines;
+}
 
-  const assembled = execution.assembledResult;
-  lines.push('Assembled result:');
-  if (!assembled) lines.push('  (not assembled)');
-  else {
-    lines.push(`  outcome: ${assembled.outcome} · digest: ${assembled.digest}`);
-    lines.push(`  summary: ${assembled.summary}`);
-    for (const unit of assembled.units) lines.push(`    - ${unit.title} [${unit.id}] ${unit.state}${unit.failureCode ? ` · failureCode: ${unit.failureCode}` : ''}${unit.result ? ` · ${unit.result}` : ''}`);
-    for (const failure of assembled.failures) lines.push(`    failure: ${failure.workUnitId} · ${failure.code}`);
-    for (const check of assembled.verification) lines.push(`    verification: ${check.workUnitId} · ${check.checks.join(', ')}`);
-    if (assembled.policy) lines.push(`  policy: ${assembled.policy.status} · ${assembled.policy.summary}`);
-  }
-  lines.push('');
+/** Assembled roll-up: outcome, per-unit states, failures, verification, policy. */
+function assembledResultLines(assembled: ExecutionProjection['assembledResult']): string[] {
+  const lines: string[] = ['Assembled result:'];
+  if (!assembled) { lines.push('  (not assembled)'); return lines; }
+  lines.push(`  outcome: ${assembled.outcome} · digest: ${assembled.digest}`);
+  lines.push(`  summary: ${assembled.summary}`);
+  for (const unit of assembled.units) lines.push(`    - ${unit.title} [${unit.id}] ${unit.state}${unit.failureCode ? ` · failureCode: ${unit.failureCode}` : ''}${unit.result ? ` · ${unit.result}` : ''}`);
+  for (const failure of assembled.failures) lines.push(`    failure: ${failure.workUnitId} · ${failure.code}`);
+  for (const check of assembled.verification) lines.push(`    verification: ${check.workUnitId} · ${check.checks.join(', ')}`);
+  if (assembled.policy) lines.push(`  policy: ${assembled.policy.status} · ${assembled.policy.summary}`);
+  return lines;
+}
 
+/** Route-fit proposal (when present) + the final summary. */
+function routeAndFinalLines(execution: ExecutionProjection): string[] {
+  const lines: string[] = [];
   const routeFit = execution.routeFitProposal;
   if (routeFit) lines.push(`Route fit: ${routeFit.fit} · ${routeFit.reason} (evaluator ${routeFit.evaluatorVersion}, samples ${routeFit.samples})`);
   lines.push(`Final summary: ${execution.finalSummary ?? '—'}`);
-  lines.push('');
+  return lines;
+}
 
-  const events = snapshot.events ?? [];
-  const eventTail = events.slice(-JOB_DETAILS_EVENT_TAIL);
-  lines.push(`Events (last ${eventTail.length} of ${events.length}):`);
-  if (eventTail.length === 0) lines.push('  (none)');
-  for (const event of eventTail) {
+/** Bounded newest-N event tail (Rule 5). */
+function eventLines(events: ExecutionBoardSnapshot['events']): string[] {
+  const all = events ?? [];
+  const tail = all.slice(-JOB_DETAILS_EVENT_TAIL);
+  const lines: string[] = [`Events (last ${tail.length} of ${all.length}):`];
+  if (tail.length === 0) lines.push('  (none)');
+  for (const event of tail) {
     const meta = [event.producerRole, event.slotId, event.eventType].filter(Boolean).join(' · ');
     lines.push(`  - ${event.severity}: ${event.summary}${meta ? ` (${meta})` : ''}`);
   }
-  lines.push('');
+  return lines;
+}
 
-  const artifacts = snapshot.artifacts ?? [];
-  lines.push(`Artifacts (${artifacts.length}):`);
-  if (artifacts.length === 0) lines.push('  (none)');
-  for (const artifact of artifacts) lines.push(`  - ${artifact.name} · ${artifact.mediaType} · ${artifact.contentDigest}`);
+/** Artifact manifest — name + mediaType + digest only, never bodies. */
+function artifactLines(artifacts: ExecutionBoardSnapshot['artifacts']): string[] {
+  const list = artifacts ?? [];
+  const lines: string[] = [`Artifacts (${list.length}):`];
+  if (list.length === 0) lines.push('  (none)');
+  for (const artifact of list) lines.push(`  - ${artifact.name} · ${artifact.mediaType} · ${artifact.contentDigest}`);
+  return lines;
+}
 
-  return lines.join('\n');
+/**
+ * Readable, copy-paste-friendly plain-text dump of the job details shown in this view.
+ * Purpose is wedge diagnosis — dump every liveness / claim / usage / blocker signal the
+ * projection carries so a stalled run can be pasted for analysis. Bounded (Rule 5): events
+ * are a last-N tail; artifacts are name+mediaType+digest only (never bodies). Composed from
+ * per-section helpers joined by a blank line between sections (no trailing blank).
+ */
+export function buildJobDetailsText(projectId: string, snapshot: ExecutionBoardSnapshot): string {
+  const execution = snapshot.execution;
+  return [
+    ...jobHeaderLines(projectId, execution),
+    '',
+    ...workUnitLines(execution.work),
+    '',
+    ...usageLines(execution.usage),
+    '',
+    ...blockerLines(execution),
+    '',
+    ...deliveryLines(execution.deliveries),
+    '',
+    ...coordinatorWakeLines(execution.coordinatorWakes),
+    '',
+    ...assembledResultLines(execution.assembledResult),
+    '',
+    ...routeAndFinalLines(execution),
+    '',
+    ...eventLines(snapshot.events),
+    '',
+    ...artifactLines(snapshot.artifacts)
+  ].join('\n');
 }
 
 export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) {
@@ -215,6 +265,14 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     } finally { setBusy(false); }
   };
   const copyJobDetails = () => {
+    // buildJobDetailsText is SYNCHRONOUS — a null snapshot would throw before the
+    // promise chain, escaping the .catch below. The component early-returns on
+    // !snapshot above, so this is belt-and-suspenders against a future refactor that
+    // hoists this handler out of the narrowed scope.
+    if (!snapshot) {
+      useUi.getState().pushToast('No job details to copy', 'error');
+      return;
+    }
     void copyText(buildJobDetailsText(projectId, snapshot))
       .then(() => useUi.getState().pushToast('Job details copied', 'info'))
       .catch(() => useUi.getState().pushToast('Failed to copy job details', 'error'));

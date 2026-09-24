@@ -28,16 +28,71 @@ beforeEach(() => {
   execFileMock.mockReset();
 });
 
+/**
+ * Model what actually happens on the wire: OpenSSH concatenates every trailing
+ * operand (after the target) with single spaces into ONE remote command line,
+ * and the remote login shell parses that line ONCE. `shSplit` reproduces that
+ * single POSIX parse (single-quote runs, the `'\''` escape idiom, backslash
+ * escapes) so a regression that lets `remoteCmd` split on its own spaces — the
+ * exact bug this argv shape prevents — is caught here rather than only live.
+ */
+function shSplit(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let started = false;
+  let i = 0;
+  while (i < line.length) {
+    const c = line[i];
+    if (c === ' ' || c === '\t') {
+      if (started) { out.push(cur); cur = ''; started = false; }
+      i++;
+      continue;
+    }
+    started = true;
+    if (c === `'`) {
+      i++;
+      while (i < line.length && line[i] !== `'`) { cur += line[i]; i++; }
+      i++; // skip closing quote
+      continue;
+    }
+    if (c === '\\') {
+      i++;
+      if (i < line.length) { cur += line[i]; i++; }
+      continue;
+    }
+    cur += c;
+    i++;
+  }
+  if (started) out.push(cur);
+  return out;
+}
+
+/** The single remote command line ssh sends: everything after the ssh target. */
+function remoteCommandLine(args: string[]): string {
+  // options + target precede the invocation; the invocation is the final operand.
+  return args[args.length - 1];
+}
+
+describe('shSplit (test model of the remote shell parse)', () => {
+  it('collapses the `\'\\\'\'` escape idiom back to a literal quote', () => {
+    expect(shSplit(`a 'b'\\''c' d`)).toEqual(['a', `b'c`, 'd']);
+  });
+});
+
 describe('buildRemoteOpencodeSshArgs', () => {
   it('builds a login-shell ssh invocation for a host-only target', () => {
     const args = buildRemoteOpencodeSshArgs({ host: 'devbox' }, ['export', 'ses_abc']);
     expect(args).not.toBeNull();
     expect(args).toContain('BatchMode=yes');
-    // target immediately precedes the login-shell wrapper
-    const shellIdx = args!.indexOf('bash');
-    expect(args![shellIdx - 1]).toBe('devbox');
-    expect(args![shellIdx + 1]).toBe('-lc');
-    expect(args![shellIdx + 2]).toBe(`'opencode' 'export' 'ses_abc'`);
+    // target immediately precedes the single-operand login-shell invocation
+    expect(args![args!.length - 2]).toBe('devbox');
+    // after OpenSSH joins + the remote shell parses ONCE, bash -lc must receive
+    // the whole opencode command as its ONE command-string operand.
+    expect(shSplit(remoteCommandLine(args!))).toEqual([
+      'bash',
+      '-lc',
+      `'opencode' 'export' 'ses_abc'`
+    ]);
   });
 
   it('includes user and -J proxy jump', () => {
@@ -50,21 +105,33 @@ describe('buildRemoteOpencodeSshArgs', () => {
     expect(args).toContain('geoff@devbox');
   });
 
-  it('folds cwd into a cd prefix and single-quotes it', () => {
+  it('folds cwd into a cd prefix that survives the remote parse as one operand', () => {
     const args = buildRemoteOpencodeSshArgs({ host: 'h' }, ['session', 'list'], { cwd: '/srv/work' });
-    const cmd = args![args!.length - 1];
-    expect(cmd).toBe(`cd '/srv/work' && 'opencode' 'session' 'list'`);
+    // The cd + && + opencode args must reach bash -lc INTACT (single operand),
+    // not split into `bash -lc cd` then a stray `&& opencode …` in the login shell.
+    expect(shSplit(remoteCommandLine(args!))).toEqual([
+      'bash',
+      '-lc',
+      `cd '/srv/work' && 'opencode' 'session' 'list'`
+    ]);
   });
 
   it('escapes single quotes in the cwd (no shell breakout)', () => {
     const args = buildRemoteOpencodeSshArgs({ host: 'h' }, ['export', 'ses_x'], { cwd: `/a'/b` });
-    const cmd = args![args!.length - 1];
-    expect(cmd).toBe(`cd '/a'\\''/b' && 'opencode' 'export' 'ses_x'`);
+    expect(shSplit(remoteCommandLine(args!))).toEqual([
+      'bash',
+      '-lc',
+      `cd '/a'\\''/b' && 'opencode' 'export' 'ses_x'`
+    ]);
   });
 
   it('honors a custom binary path', () => {
     const args = buildRemoteOpencodeSshArgs({ host: 'h' }, ['export', 'ses_x'], { binary: '/opt/opencode' });
-    expect(args![args!.length - 1]).toBe(`'/opt/opencode' 'export' 'ses_x'`);
+    expect(shSplit(remoteCommandLine(args!))).toEqual([
+      'bash',
+      '-lc',
+      `'/opt/opencode' 'export' 'ses_x'`
+    ]);
   });
 
   it.each([

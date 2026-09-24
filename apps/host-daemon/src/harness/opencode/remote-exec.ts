@@ -61,6 +61,13 @@ export function buildRemoteOpencodeSshArgs(
   const remoteCmd = opts.cwd
     ? `cd ${shSingleQuote(opts.cwd)} && ${remoteParts.join(' ')}`
     : remoteParts.join(' ');
+  // OpenSSH concatenates EVERY trailing operand with single spaces and the
+  // remote login shell parses that one line ONCE. So `remoteCmd` must ride as a
+  // single POSIX-single-quoted operand of `bash -lc`; otherwise the login shell
+  // splits it on its own spaces — `bash -lc` would then receive only the first
+  // word (`cd` or the bare binary), and the rest (the cd target, the `&&`, the
+  // opencode args) would execute directly in the login shell, in the wrong cwd.
+  const remoteInvocation = `bash -lc ${shSingleQuote(remoteCmd)}`;
   return [
     '-o', 'BatchMode=yes',
     '-o', 'ConnectTimeout=10',
@@ -68,7 +75,7 @@ export function buildRemoteOpencodeSshArgs(
     '-o', 'ServerAliveCountMax=3',
     ...jumpOpts,
     sshTarget,
-    'bash', '-lc', remoteCmd
+    remoteInvocation
   ];
 }
 

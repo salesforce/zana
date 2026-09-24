@@ -40,6 +40,21 @@ export type ExecutionWorkUnitState = 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED'
 export type ExecutionCohortAuthority = { role: 'worker' | 'orchestrator'; slotId: string };
 export type ExecutionLaunchKind = 'team';
 
+/**
+ * A no-op *guard* rejection from a background recovery mutation (kickoff reassign /
+ * block, human escalation) — the requested transition simply does not apply
+ * (not in the required state, below a threshold, no untried slot, duplicate,
+ * already resolved/escalated). It is EXPECTED control flow the service caller
+ * swallows, and is deliberately DISTINCT from a real persistence/write failure
+ * (which is NOT this type and must surface). See `service.ts escalateKickoffFailures`.
+ */
+export class WorkUnitRecoveryGuardError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkUnitRecoveryGuardError';
+  }
+}
+
 /** Backend-neutral label captured with a durable execution request. */
 export interface ExecutionLaunchDisplayV1 {
   label: string;
@@ -91,6 +106,18 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
    * to a human ({@link blockKickoffFailure}) instead of silently re-dispatched.
    */
   kickoffFailures?: number;
+  /**
+   * The exact claim an engine sweep reclaimed while the unit was still CLAIMED,
+   * retained ONLY while the unit stays READY (still unclaimed). It authorizes a
+   * late completion from that same worker — the sanctioned reclaim→finish race
+   * where a worker was silent through a long tool phase, got reclaimed, and then
+   * finished. It is cleared the instant anything newer supersedes it (a new claim
+   * — even to the same slot, since slot ids are reused across worker restarts — a
+   * retry, or a fresh-slot reassignment), so a stale worker can NEVER overwrite a
+   * reassigned or re-claimed unit, nor resurrect a terminal one. See {@link
+   * completeWork}. Runtime-only (stripped by {@link stripWorkUnitState}).
+   */
+  reclaimedClaim?: { slotId: string; claimId: string; claimGeneration: number };
   attempt: number;
   failureCode?: ExecutionFailureCode;
   failure?: string;
@@ -1285,6 +1312,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
        unit.heartbeatAt = timestamp;
        unit.progressAt = timestamp;
        unit.turnCount = 0;
+       unit.reclaimedClaim = undefined; // a fresh claim supersedes any reclaimed-idle window
       unit.attempt += 1;
       unit.failureCode = undefined;
       unit.failure = undefined;
@@ -1481,38 +1509,50 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       }
       if (unit.state === 'COMPLETED') return;
 
-      // Non-destructive completion, authorized by SLOT IDENTITY — not the claim fence.
-      // A doc worker is routinely silent for a full lease window during a long think /
-      // tool phase, so the reconcile reclaims its (still-live) claim and re-dispatches
-      // to the SAME slot with a fresh generation. The worker then finishes and completes
-      // under its now-STALE claim. The old code (CLAIMED-by-this-slot + matching claim
-      // fence) threw that finished result away, and the unit churned reclaim→redispatch
-      // forever (runs b56e63f5, e531f415: `verify-upstream`, 4 generations, real result
-      // discarded each time). The MCP tool ALWAYS passes requireClaim=true, so the fence
-      // can't be the arbiter here — the generation churn is caused by OUR OWN reclaim of
-      // a live worker, not by worker misbehavior. What actually authorizes a completion
-      // is that the caller is the slot that holds (or last held) this unit's claim.
+      // Non-destructive completion for the sanctioned reclaim→finish race, WITHOUT
+      // letting a stale worker resurrect or clobber a unit. A doc worker is routinely
+      // silent for a full lease window during a long think / tool phase, so the
+      // reconcile reclaims its (still-live) claim; the worker then finishes and wants
+      // to complete under its now-STALE claim. The old CLAIMED-by-this-slot + fence
+      // code threw that finished result away and the unit churned reclaim→redispatch
+      // forever (runs b56e63f5, e531f415). We accept it — but ONLY the exact reclaimed
+      // claim, and ONLY while the unit is still READY (unclaimed). The moment anything
+      // newer supersedes it — a fresh claim (even to the SAME slot; slot ids are reused
+      // across worker restarts), a retry, or a fresh-slot reassignment — reclaimedClaim
+      // is cleared and the completion is rejected, so a stale generation can never
+      // overwrite a replacement worker (the claim-generation fence still governs a live
+      // CLAIMED unit) and a terminal / reassigned unit is never resurrected or stolen.
       const isWorker = authority.role === 'worker';
-      const liveHolderSlotId = unit.state === 'CLAIMED' ? unit.assignedSlotId : undefined;
       if (isWorker) {
-        if (liveHolderSlotId !== undefined && liveHolderSlotId !== authority.slotId) {
-          // A DIFFERENT slot holds the live claim now — it wins (it may be mid-edit).
+        if (unit.state === 'CLAIMED') {
+          // Live claim: only the current holder, with a matching fence, may complete.
           // (service maps 'another slot' → DENIED.)
-          throw new Error('work unit is assigned to another slot');
+          if (unit.assignedSlotId !== authority.slotId) throw new Error('work unit is assigned to another slot');
+          assertClaimFence(unit, claim, requireClaim);
+        } else if (unit.state === 'READY' && unit.reclaimedClaim) {
+          // Reclaimed-but-still-idle: accept the finished result from the exact claim
+          // we reclaimed, provided no reassignment has re-pointed the unit elsewhere.
+          const reclaimed = unit.reclaimedClaim;
+          if (reclaimed.slotId !== authority.slotId) throw new Error('work unit is not claimed');
+          if (unit.assignedSlotId !== undefined && unit.assignedSlotId !== authority.slotId) {
+            throw new Error('work unit is assigned to another slot');
+          }
+          if ((requireClaim || claim) && (!claim || claim.claimId !== reclaimed.claimId || claim.claimGeneration !== reclaimed.claimGeneration)) {
+            throw new Error('stale work claim');
+          }
+        } else {
+          // Not CLAIMED and not a reclaimed-idle unit (READY-reassigned, FAILED,
+          // BLOCKED, …): a stale worker must never resurrect or clobber it.
+          throw new Error('work unit is not claimed');
         }
-        // Prove this slot is the unit's current OR most-recent claim holder, so a
-        // forged / stray completion from a slot that never worked the unit is rejected.
-        const lastHolderSlotId = liveHolderSlotId ?? [...unit.history]
-          .reverse()
-          .find((entry) => (entry.action === 'claimed' || entry.action === 'released') && entry.slotId !== undefined)?.slotId;
-        if (lastHolderSlotId !== authority.slotId) throw new Error('work unit is not claimed');
       } else {
         // Owner / coordinator: keep the strict live-claim + fence contract.
         if (unit.state !== 'CLAIMED') throw new Error('work unit is not claimed');
         assertClaimFence(unit, claim, requireClaim);
       }
       unit.state = 'COMPLETED';
-      const slotId = unit.assignedSlotId ?? authority.slotId;
+      const slotId = unit.assignedSlotId ?? unit.reclaimedClaim?.slotId ?? authority.slotId;
+      unit.reclaimedClaim = undefined;
       clearClaim(unit);
       unit.result = string(result, 'work unit result');
       if (structuredResult !== undefined) unit.structuredResult = clone(structuredResult);
@@ -1551,6 +1591,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
       clearClaim(unit);
       unit.assignedSlotId = undefined;
+      unit.reclaimedClaim = undefined;
     }, `Work unit released: ${workUnitId}`);
   }
 
@@ -1645,6 +1686,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
         clearClaim(unit);
         unit.assignedSlotId = undefined;
+        unit.reclaimedClaim = undefined;
         released += 1;
       }
       if (released) {
@@ -1678,6 +1720,14 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         if ((unit.turnCount ?? 0) === 0) unit.kickoffFailures = (unit.kickoffFailures ?? 0) + 1;
         unit.state = 'READY';
         unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(claim.reason, 'claim recovery reason') });
+        // Durable evidence of the EXACT claim we just reclaimed. A worker that was
+        // mid-flight when we reclaimed its silent claim may still finish; completeWork
+        // accepts that late result ONLY from this recorded claim, and only while the
+        // unit stays READY (no newer claim/assignment supersedes it).
+        const holderSlotId = unit.assignedSlotId ?? unit.claimedBy?.slotId;
+        unit.reclaimedClaim = holderSlotId !== undefined && unit.claimId !== undefined && unit.claimGeneration !== undefined
+          ? { slotId: holderSlotId, claimId: unit.claimId, claimGeneration: unit.claimGeneration }
+          : undefined;
         clearClaim(unit);
         unit.assignedSlotId = undefined;
         reclaimed += 1;
@@ -1710,10 +1760,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   async function blockKickoffFailure(executionId: string, workUnitId: string): Promise<ExecutionRecord> {
     return mutateRecord(executionId, undefined, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
-      if (unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED') throw new Error('work unit is not blockable for kickoff failure');
-      if ((unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new Error('kickoff failures below block threshold');
+      if (unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED') throw new WorkUnitRecoveryGuardError('work unit is not blockable for kickoff failure');
+      if ((unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new WorkUnitRecoveryGuardError('kickoff failures below block threshold');
       const blockerId = `kickoff:${unit.id}:${unit.attempt}`;
-      if (record.blockers?.some((blocker) => blocker.id === blockerId)) throw new Error('duplicate kickoff blocker');
+      if (record.blockers?.some((blocker) => blocker.id === blockerId)) throw new WorkUnitRecoveryGuardError('duplicate kickoff blocker');
       const slotId = unit.assignedSlotId ?? 'engine';
       unit.state = 'BLOCKED';
       unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: 'kickoff delivery produced no worker turn' });
@@ -1747,16 +1797,17 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   async function reassignKickoffToFreshSlot(executionId: string, workUnitId: string): Promise<ExecutionRecord> {
     return mutateRecord(executionId, undefined, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
-      if (unit.state !== 'READY') throw new Error('work unit is not reassignable for kickoff failure');
-      if ((unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new Error('kickoff failures below block threshold');
+      if (unit.state !== 'READY') throw new WorkUnitRecoveryGuardError('work unit is not reassignable for kickoff failure');
+      if ((unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new WorkUnitRecoveryGuardError('kickoff failures below block threshold');
       const workerSlots = (record.authorizationContext?.slots ?? []).filter(
         (slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:')
       );
       const tried = new Set(unit.history.filter((entry) => entry.action === 'claimed' && entry.slotId).map((entry) => entry.slotId!));
       const fresh = workerSlots.find((slot) => !tried.has(slot.slotId));
-      if (!fresh) throw new Error('no untried worker slot for kickoff reassignment');
+      if (!fresh) throw new WorkUnitRecoveryGuardError('no untried worker slot for kickoff reassignment');
       unit.assignedSlotId = fresh.slotId;
       unit.kickoffFailures = undefined;
+      unit.reclaimedClaim = undefined; // re-homed to a different slot — the prior worker can no longer complete it
       unit.history.push({ action: 'retried', slotId: fresh.slotId, attempt: unit.attempt, at: timestamp, detail: 'kickoff reassigned to fresh worker slot' });
     }, `Work unit reassigned to fresh slot after kickoff failure: ${workUnitId}`);
   }
@@ -1785,6 +1836,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       unit.assignedSlotId = assignedSlotId ? string(assignedSlotId, 'assigned slot id') : undefined;
       unit.failureCode = undefined;
       unit.failure = undefined;
+      unit.reclaimedClaim = undefined; // a retry is a fresh assignment — drop any reclaimed-idle completion window
       // A human retry gives a fresh kickoff budget: they have (or will) fix the
       // worker, so a prior kickoff-churn block must not immediately re-block.
       unit.kickoffFailures = undefined;
@@ -1808,6 +1860,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (unit.state !== 'READY') throw new Error('work unit reassignment is not allowed');
       assertAuthorizedSlot(record, assignedSlotId);
       unit.assignedSlotId = string(assignedSlotId, 'assigned slot id');
+      unit.reclaimedClaim = undefined; // reassigned — the prior worker can no longer complete it
     }, `Work unit reassigned: ${workUnitId}`);
   }
 
@@ -2451,7 +2504,7 @@ function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false
 }
 
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
-  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, turnCount: _turnCount, kickoffFailures: _kickoffFailures, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, repairDigests: _repairDigests, history: _history, ...input } = unit;
+  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, progressAt: _progressAt, turnCount: _turnCount, kickoffFailures: _kickoffFailures, reclaimedClaim: _reclaimedClaim, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, repairDigests: _repairDigests, history: _history, ...input } = unit;
   return input;
 }
 

@@ -1277,6 +1277,68 @@ describe('SquadExecutionService', () => {
     expect(replyToSession).not.toHaveBeenCalled();
   }));
 
+  it('redispatchStalled isolates a per-run cascadeDispatch failure and still recovers the other runs', async () => fixture(async (filePath) => {
+    // Finding (per-execution isolation): the final per-record cascadeDispatch is wrapped
+    // so a rejection for ONE wedged run cannot abort the sweep and starve every later
+    // run behind it in the listActive() order. A persistently-failing first record must
+    // NOT block recovery of the rest.
+    let n = 0;
+    const logError = vi.fn();
+    const store = createExecutionStore({ filePath, id: () => `execution-${++n}` });
+    const replyToSession = vi.fn(() => false); // first delivery fails → unit released to READY, 0 CLAIMED
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession, logError,
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    // Two independent runs, each wedged to READY with 0 CLAIMED (no work edge to re-fire).
+    for (const executionId of ['execution-1', 'execution-2']) {
+      await service.start('owner', 'project-1', { ...request, launchRequestId: `request-${executionId}`, coordinationMode: 'job-team', workUnits: [{ id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }] });
+      await service.dispatchReady({ executionId, projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const });
+    }
+    // Now the sweep's final dispatch fails ONLY for execution-1.
+    const cascade = vi.spyOn(service as unknown as { cascadeDispatch: (id: string) => Promise<void> }, 'cascadeDispatch')
+      .mockImplementation(async (id: string) => { if (id === 'execution-1') throw new Error('cascade boom'); });
+    logError.mockClear();
+    await service.redispatchStalled();
+    expect(cascade).toHaveBeenCalledWith('execution-1'); // attempted (and threw)
+    expect(cascade).toHaveBeenCalledWith('execution-2'); // NOT starved by the first failure
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('stalled-redispatch dispatch failed for execution-1'), expect.any(Error));
+  }));
+
+  it('escalateKickoffFailures surfaces a real reassignment persistence failure and does NOT fall through to a human block', async () => fixture(async (filePath) => {
+    // Finding (typed-guard distinction): a no-op guard rejection from reassignment is
+    // EXPECTED (fall through to the human block); a genuine store/persistence failure is
+    // NOT — it must be surfaced as "FAILED (persistence)" and must NOT be masked by a
+    // block attempt on the same broken store (which would hide a unit left neither
+    // reassigned nor blocked). Only a WorkUnitRecoveryGuardError reaches the block half.
+    const clock = { t: 1_000 };
+    const now = () => clock.t;
+    const logError = vi.fn();
+    const replyToSession = vi.fn(() => true);
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now });
+    const service = new SquadExecutionService(wedgedClaimDeps(filePath, now, replyToSession, { store, logError }));
+    await startWedgedClaim(service);
+    // Reassignment fails with a PLAIN Error (a real store failure), not a no-op guard.
+    const reassignSpy = vi.spyOn(store, 'reassignKickoffToFreshSlot').mockRejectedValue(new Error('sqlite disk I/O error'));
+    const blockSpy = vi.spyOn(store, 'blockKickoffFailure');
+    for (let sweep = 0; sweep <= KICKOFF_FAILURE_BLOCK_THRESHOLD; sweep++) {
+      clock.t += 700_000; // past job-team maxClaimStallMs each pass → reclaim (climbs kickoffFailures)
+      await service.redispatchStalled();
+    }
+    expect(reassignSpy).toHaveBeenCalled();
+    expect(blockSpy).not.toHaveBeenCalled(); // real failure short-circuits BEFORE the human block
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('kickoff-failure reassignment FAILED (persistence) for execution-1/a'), expect.any(Error));
+    // It is a real failure, not a guard "skipped" no-op.
+    expect(logError).not.toHaveBeenCalledWith(expect.stringContaining('reassignment skipped for execution-1/a'), expect.anything());
+    // The unit is still not blocked (the escape hatch never fired on a broken store).
+    expect((await store.get('execution-1'))!.workUnits![0].state).not.toBe('BLOCKED');
+  }));
+
   it.each([
     ['SEMANTIC_CONFLICT', 'SEMANTIC_CONFLICT'],
     ['POLICY_ESCALATION', 'POLICY_ESCALATION']

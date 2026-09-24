@@ -56,6 +56,12 @@ describe('OpenCodeTranscriptAdapter remote dispatch', () => {
     expect(await adapter.resolve(ref)).toBeUndefined();
   });
 
+  it('never throws on a remote list rejection — resolve degrades to undefined (SSH down)', async () => {
+    listRemote.mockRejectedValue(new Error('ssh: connect to host devbox port 22: Connection refused'));
+    const ref = { id: 't1', profile: 'opencode', cwd: '/w', createdAt: 1500, remote: REMOTE };
+    await expect(adapter.resolve(ref)).resolves.toBeUndefined();
+  });
+
   it('prefers an already-stamped openCodeSessionId over a remote list call', async () => {
     const ref = { id: 't1', profile: 'opencode', cwd: '/w', openCodeSessionId: 'ses_known', remote: REMOTE };
     const resolved = await adapter.resolve(ref);
@@ -69,6 +75,14 @@ describe('OpenCodeTranscriptAdapter remote dispatch', () => {
     const stats = await adapter.readStats(ref, { nativeId: 'ses_abc' });
     expect(stats).toBe(STATS);
     expect(readStatsRemote).toHaveBeenCalledWith(REMOTE, 'ses_abc', { cwd: '/w' });
+    expect(readStatsLocalDb).not.toHaveBeenCalled();
+    expect(readStatsLocalExport).not.toHaveBeenCalled();
+  });
+
+  it('never throws on a remote stats rejection — readStats degrades to null (transient SSH error)', async () => {
+    readStatsRemote.mockRejectedValue(new Error('ssh timeout'));
+    const ref = { id: 't1', profile: 'opencode', cwd: '/w', remote: REMOTE };
+    await expect(adapter.readStats(ref, { nativeId: 'ses_abc' })).resolves.toBeNull();
     expect(readStatsLocalDb).not.toHaveBeenCalled();
     expect(readStatsLocalExport).not.toHaveBeenCalled();
   });

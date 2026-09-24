@@ -18,6 +18,83 @@ export function boundedWorkUnitDigest(units: ExecutionWorkUnitInput[], maxUnits 
 }
 
 /**
+ * Control/discovery tools the coordinator must not touch at kickoff, in either
+ * flow. Shared verbatim across the three kickoff arms.
+ */
+const KICKOFF_DENIALS = [
+  '- Do not call execution.status during normal kickoff.',
+  '- Do not call execution.list during normal kickoff.',
+  '- Do not call execution.events during normal kickoff.',
+  '- Do not call execution.resume_binding during normal kickoff.',
+  '- Do not call execution.mint_resume_grant during normal kickoff.',
+  '- Do not call execution.revoke_resume_grant during normal kickoff.',
+  '- Do not call get_team_launch during normal kickoff.',
+  '- Do not call `register_agent` during normal kickoff.',
+  '- Do not call `list_agents` during normal kickoff.',
+  '- Do not call `find_agent` during normal kickoff.'
+] as const;
+
+/**
+ * Flow A kickoff (good plan provided): the host has already registered AND
+ * dispatched the seeded DAG, so the coordinator makes ZERO kickoff tool calls and
+ * parks. A bounded seeded-unit digest is injected for a later wake.
+ */
+function planReadyKickoffLines(workUnits?: ExecutionWorkUnitInput[]): string[] {
+  return [
+    'Kickoff is host-managed — the plan is already registered and dispatched:',
+    '- The host has already dispatched every ready work unit to the workers; the engine AUTOMATICALLY re-dispatches newly-ready units as work completes.',
+    '- Do NOT call `execution.snapshot`, `execution.plan.register`, or `execution.work.dispatch_ready` at kickoff. The work is already running.',
+    '- Do NOT assign or delegate units yourself — no `execution.work.assign`, no per-unit `agent_send`. Never assign work to the orchestrator slot.',
+    ...(workUnits?.length
+      ? [`- For context if you are later woken, the registered units are:\n${boundedWorkUnitDigest(workUnits)}`]
+      : []),
+    '- End this turn and remain idle. Do not poll or synthesize routine progress. Wake only for an injected HUMAN_BLOCKER, SEMANTIC_CONFLICT, or POLICY_ESCALATION notification.',
+    ...KICKOFF_DENIALS
+  ];
+}
+
+/**
+ * Flow B/C file-handoff kickoff (sandbox-immune): the coordinator WRITES its
+ * authored plan to a project file; the host reads it and registers + schedules
+ * the DAG, so NO execution.* MCP call is on the critical path.
+ */
+function fileHandoffKickoffLines(input: { planFilePath: string; sourceFilePath?: string; hasSources: boolean }): string[] {
+  return [
+    'Kickoff: author the plan into a file; the host reads it and registers + schedules the DAG for you:',
+    `- No structured work units are registered yet.${
+      input.hasSources && input.sourceFilePath
+        ? ` The execution source requirements are mirrored to \`${input.sourceFilePath}\` — read that file with your file-read tool to gather requirements. Do NOT call \`execution.source.list\` or \`execution.source.read\`.`
+        : ' Derive bounded generic work units from the goal and available context; if that context cannot support a bounded plan, fail clearly without writing a speculative plan.'
+    }`,
+    `- Write your COMPLETE portable-executable plan to \`${input.planFilePath}\` with your file-write tool: one H3 \`id: Title <!-- executable-step -->\` heading per work unit, each carrying the fixed label bullets (Depends on, Execution class, Mode, Read scope, Write scope, Excludes, Work, Verification, Completion criteria, Stop conditions, Outputs / handoff). Every mutating unit needs a non-empty Write scope and Verification.`,
+    '- Then end your turn. The host reads that file, registers the DAG, and AUTOMATICALLY dispatches ready units (re-dispatching as work completes). Do NOT call `execution.plan.register`, `execution.work.dispatch_ready`, or `execution.work.assign`, and do not assign units yourself (no per-unit `agent_send`). Never assign work to the orchestrator slot.',
+    '- Do not poll or synthesize routine progress. Wake only for an injected HUMAN_BLOCKER, SEMANTIC_CONFLICT, or POLICY_ESCALATION notification.',
+    '- Do not call `execution.source.list` or `execution.source.read`.',
+    '- Do not call `execution.plan.register` during normal kickoff.',
+    ...KICKOFF_DENIALS
+  ];
+}
+
+/**
+ * Flow B/C legacy MCP kickoff (no plan-file handoff): the coordinator authors the
+ * plan with a single `execution.plan.register`; the host auto-dispatches on
+ * register. Kept for a harness that can reach the MCP bridge and for tests that
+ * predate the handoff.
+ */
+function legacyMcpKickoffLines(hasSources: boolean): string[] {
+  return [
+    'Kickoff: author the plan once, then the host takes over scheduling:',
+    `- No structured work units are registered yet.${hasSources ? ' Execution sources are attached (see metadata below).' : ''}`,
+    ...(hasSources
+      ? ['- Call `execution.source.list`, read each source fully with bounded `execution.source.read` pages, then derive bounded generic work units.']
+      : ['- Derive bounded generic work units from the goal and available context; if that context cannot support a bounded plan, fail clearly without registering a speculative plan.']),
+    '- Call `execution.plan.register` EXACTLY ONCE with the work DAG. The host AUTOMATICALLY dispatches ready units the instant the plan registers, and the engine re-dispatches as work completes. Do NOT call `execution.work.dispatch_ready`, and do NOT assign units yourself (no `execution.work.assign`, no per-unit `agent_send`). Never assign work to the orchestrator slot.',
+    '- After you register the plan, end this turn and remain idle. Do not poll or synthesize routine progress. Wake only for an injected HUMAN_BLOCKER, SEMANTIC_CONFLICT, or POLICY_ESCALATION notification.',
+    ...KICKOFF_DENIALS
+  ];
+}
+
+/**
  * Compose the durable job-team coordinator's opening prompt.
  *
  * The load-bearing design point is that the HOST owns the kickoff READ and
@@ -72,61 +149,14 @@ export function jobCoordinatorPrompt(input: {
   const sourceMetadata = JSON.stringify(sources.length ? sources : []);
   const rosterLines = input.roster.map((worker) => `- ${worker.label} — session \`${worker.sessionId}\`, slot \`${worker.slotId}\``);
   const hasSources = sources.length > 0;
-  // Shared kickoff denials: control/discovery tools the coordinator must not touch
-  // at kickoff, in either flow.
-  const kickoffDenials = [
-    '- Do not call execution.status during normal kickoff.',
-    '- Do not call execution.list during normal kickoff.',
-    '- Do not call execution.events during normal kickoff.',
-    '- Do not call execution.resume_binding during normal kickoff.',
-    '- Do not call execution.mint_resume_grant during normal kickoff.',
-    '- Do not call execution.revoke_resume_grant during normal kickoff.',
-    '- Do not call get_team_launch during normal kickoff.',
-    '- Do not call `register_agent` during normal kickoff.',
-    '- Do not call `list_agents` during normal kickoff.',
-    '- Do not call `find_agent` during normal kickoff.'
-  ];
+  // One of three kickoff arms, keyed on host-computed plan readiness then on
+  // whether a plan-file handoff path was provided. Each arm is a named helper; the
+  // emitted line set is byte-identical to the prior inline ternary.
   const planReadyLines = input.planReady
-    ? [
-        'Kickoff is host-managed — the plan is already registered and dispatched:',
-        '- The host has already dispatched every ready work unit to the workers; the engine AUTOMATICALLY re-dispatches newly-ready units as work completes.',
-        '- Do NOT call `execution.snapshot`, `execution.plan.register`, or `execution.work.dispatch_ready` at kickoff. The work is already running.',
-        '- Do NOT assign or delegate units yourself — no `execution.work.assign`, no per-unit `agent_send`. Never assign work to the orchestrator slot.',
-        ...(input.workUnits?.length
-          ? [`- For context if you are later woken, the registered units are:\n${boundedWorkUnitDigest(input.workUnits)}`]
-          : []),
-        '- End this turn and remain idle. Do not poll or synthesize routine progress. Wake only for an injected HUMAN_BLOCKER, SEMANTIC_CONFLICT, or POLICY_ESCALATION notification.',
-        ...kickoffDenials
-      ]
+    ? planReadyKickoffLines(input.workUnits)
     : input.planFilePath
-    ? [
-        // File-handoff kickoff: the host reads the authored plan file and
-        // registers it host-side, so NO execution.* MCP call is on the critical
-        // path — this is the sandbox-immune substitute for the blocked
-        // execution.source.read + execution.plan.register chain.
-        'Kickoff: author the plan into a file; the host reads it and registers + schedules the DAG for you:',
-        `- No structured work units are registered yet.${
-          hasSources && input.sourceFilePath
-            ? ` The execution source requirements are mirrored to \`${input.sourceFilePath}\` — read that file with your file-read tool to gather requirements. Do NOT call \`execution.source.list\` or \`execution.source.read\`.`
-            : ' Derive bounded generic work units from the goal and available context; if that context cannot support a bounded plan, fail clearly without writing a speculative plan.'
-        }`,
-        `- Write your COMPLETE portable-executable plan to \`${input.planFilePath}\` with your file-write tool: one H3 \`id: Title <!-- executable-step -->\` heading per work unit, each carrying the fixed label bullets (Depends on, Execution class, Mode, Read scope, Write scope, Excludes, Work, Verification, Completion criteria, Stop conditions, Outputs / handoff). Every mutating unit needs a non-empty Write scope and Verification.`,
-        '- Then end your turn. The host reads that file, registers the DAG, and AUTOMATICALLY dispatches ready units (re-dispatching as work completes). Do NOT call `execution.plan.register`, `execution.work.dispatch_ready`, or `execution.work.assign`, and do not assign units yourself (no per-unit `agent_send`). Never assign work to the orchestrator slot.',
-        '- Do not poll or synthesize routine progress. Wake only for an injected HUMAN_BLOCKER, SEMANTIC_CONFLICT, or POLICY_ESCALATION notification.',
-        '- Do not call `execution.source.list` or `execution.source.read`.',
-        '- Do not call `execution.plan.register` during normal kickoff.',
-        ...kickoffDenials
-      ]
-    : [
-        'Kickoff: author the plan once, then the host takes over scheduling:',
-        `- No structured work units are registered yet.${hasSources ? ' Execution sources are attached (see metadata below).' : ''}`,
-        ...(hasSources
-          ? ['- Call `execution.source.list`, read each source fully with bounded `execution.source.read` pages, then derive bounded generic work units.']
-          : ['- Derive bounded generic work units from the goal and available context; if that context cannot support a bounded plan, fail clearly without registering a speculative plan.']),
-        '- Call `execution.plan.register` EXACTLY ONCE with the work DAG. The host AUTOMATICALLY dispatches ready units the instant the plan registers, and the engine re-dispatches as work completes. Do NOT call `execution.work.dispatch_ready`, and do NOT assign units yourself (no `execution.work.assign`, no per-unit `agent_send`). Never assign work to the orchestrator slot.',
-        '- After you register the plan, end this turn and remain idle. Do not poll or synthesize routine progress. Wake only for an injected HUMAN_BLOCKER, SEMANTIC_CONFLICT, or POLICY_ESCALATION notification.',
-        ...kickoffDenials
-      ];
+    ? fileHandoffKickoffLines({ planFilePath: input.planFilePath, sourceFilePath: input.sourceFilePath, hasSources })
+    : legacyMcpKickoffLines(hasSources);
   return [
     `You are coordinator of Team "${input.team.name}"${input.executionId ? ` for execution \`${input.executionId}\`` : ''}. Your coordinator identity, execution binding, and worker roster are already host-bound. Do not discover, register, recover, or replace them during normal kickoff.`,
     `Workers are already running:\n${rosterLines.join('\n') || '- No workers.'}`,

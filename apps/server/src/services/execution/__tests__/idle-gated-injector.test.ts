@@ -192,6 +192,33 @@ describe('IdleGatedInjector.flushStale', () => {
     expect(reply).toHaveBeenCalledExactlyOnceWith('w1', 'for-w1');
     expect(injector.pendingCount('w2')).toBe(1);
   });
+
+  it('does NOT force-inject into an actively-working worker even past the bound (no mid-turn paste)', () => {
+    const { injector, reply, setState, advance } = makeInjector();
+    setState('w1', 'working'); // a genuine long turn — emits no deliverable edge while it runs
+    injector.deliver('w1', 'next assignment');
+    advance(STALE_MS * 3); // way past the bound
+    // Skipped: a working TUI must never be pasted into mid-turn. Item stays queued.
+    expect(injector.flushStale(STALE_MS)).toEqual([]);
+    expect(reply).not.toHaveBeenCalled();
+    expect(injector.pendingCount('w1')).toBe(1);
+    // Turn ends → worker leaves `working`. queuedAt was preserved (not re-stamped),
+    // so the very next sweep flushes immediately with no fresh wait window.
+    setState('w1', 'idle');
+    expect(injector.flushStale(STALE_MS)).toEqual(['w1']);
+    expect(reply).toHaveBeenCalledExactlyOnceWith('w1', 'next assignment');
+    expect(injector.pendingCount('w1')).toBe(0);
+  });
+
+  it('still force-flushes a silent `waiting` standby past the bound (escape hatch stays intact)', () => {
+    const { injector, reply, setState, advance } = makeInjector();
+    setState('w1', 'waiting'); // busy under the interactive contract, but never self-resolves to idle
+    injector.deliver('w1', 'task A');
+    advance(STALE_MS);
+    expect(injector.flushStale(STALE_MS)).toEqual(['w1']);
+    expect(reply).toHaveBeenCalledExactlyOnceWith('w1', 'task A');
+    expect(injector.pendingCount('w1')).toBe(0);
+  });
 });
 
 describe('IdleGatedInjector — headless worker (deliverableWhenSilent)', () => {

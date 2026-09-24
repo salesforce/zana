@@ -2216,6 +2216,17 @@ export interface AppConfig {
    */
   feedNoiseClassifierEnabled?: boolean;
   /**
+   * Allow terminal output to WRITE the system clipboard via OSC 52. When ON
+   * (default), an OSC 52 copy escape emitted by a local or remote process
+   * updates the operator's clipboard (a visible toast always fires). When OFF,
+   * the write is refused and the system clipboard is never touched — a
+   * clipboard-poisoning defense for operators who do not trust process output
+   * to silently replace copied commands/addresses. OSC 52 clipboard READS are
+   * refused unconditionally regardless of this setting. Default true (the OSC 52
+   * write path shipped on; this setting only lets a user disable it).
+   */
+  terminalClipboardWriteEnabled?: boolean;
+  /**
    * Enable the Zana Mobile gateway — the authenticated network edge in front of
    * the loopback product server that a paired phone connects through
    * (Settings → Phone). Default OFF: it opens a network listener (bound to this

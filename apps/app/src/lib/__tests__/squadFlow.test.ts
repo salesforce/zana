@@ -474,6 +474,25 @@ describe('buildSquadFlow — detached CLAIMED workers', () => {
     expect(detached!.claim).toEqual({ claimedAt: 2_000, leaseExpiresAt: 6_000 });
   });
 
+  it('synthesizes a detached node when the only session covering the slot has EXITED', () => {
+    // A crashed/closed worker PTY leaves an exited terminal bound to a still-CLAIMED
+    // slot. An exited terminal is NOT a live cover, so the live claim must surface as
+    // a detached node rather than being suppressed (stranded-claim regression).
+    const execution = detachedExecution({ claimedAt: 2_000, progressAt: 3_500, leaseExpiresAt: 6_000 });
+    const g = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'orch', handle: 'orch', role: 'orchestrator' })],
+      sessions: [
+        orchSession(),
+        session({ id: 'w', status: 'exited', cohort: { cohortId: 'launch-1', role: 'worker', executionId: 'execution-1', slotId: 'slot-w' } })
+      ],
+      executions: [execution]
+    }));
+    const detached = nodeMap(g!).get('detached:execution-1:slot-w');
+    expect(detached).toBeDefined();
+    expect(detached!.detached).toBe(true);
+    expect(detached!.claim).toEqual({ claimedAt: 2_000, progressAt: 3_500, leaseExpiresAt: 6_000 });
+  });
+
   it('does NOT synthesize when a live session already covers the CLAIMED slot', () => {
     const execution = detachedExecution({ claimedAt: 2_000, leaseExpiresAt: 6_000 });
     const g = buildSquadFlow(inputs({

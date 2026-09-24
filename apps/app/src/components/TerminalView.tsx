@@ -172,8 +172,32 @@ function TerminalViewImpl({ session, area }: Props) {
     // xterm won't fall back; a declined parse (read request / oversize / junk)
     // is still swallowed rather than painted. A `?` read request is refused by
     // parseOsc52 so a remote session can't exfiltrate the local clipboard.
+    // OSC 52 lets terminal OUTPUT overwrite the operator's system clipboard. That
+    // is a poisoning vector: a remote/untrusted agent can silently replace what the
+    // operator later pastes (e.g. swap a command or a wallet address). We do not let
+    // that happen silently — every successful write raises a VISIBLE toast so the
+    // operator knows the clipboard changed and by whom, and every failure is logged
+    // with the session id + surfaced (finding: no more silently-swallowed rejects).
+    // A full opt-in/trust GATE backs the mitigation: the `terminalClipboardWriteEnabled`
+    // AppConfig setting (Settings → Terminal → Clipboard; default ON, since the write
+    // path shipped on) is read LIVE at write time so toggling it takes effect on open
+    // terminals. When OFF we refuse the write — the system clipboard is never touched —
+    // and surface a visible "blocked" toast; the sequence is still claimed by
+    // registerOsc52Clipboard so the escape is never painted.
     const offOsc52 = registerOsc52Clipboard(term.parser, (text) => {
-      void copyText(text).catch(() => {});
+      if (useData.getState().terminalClipboardWriteEnabled === false) {
+        useUi.getState().pushToast('Blocked a clipboard write from terminal output (see Terminal settings)', 'info');
+        return;
+      }
+      void copyText(text)
+        .then(() => {
+          useUi.getState().pushToast('Clipboard updated by terminal output', 'info');
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[TerminalView] OSC52 clipboard write failed (session ${session.id}): ${message}`);
+          useUi.getState().pushToast('Terminal clipboard copy failed', 'error');
+        });
     });
 
     const offFinder = registerFinder(session.id, {

@@ -21,6 +21,7 @@
  */
 
 import type { AgentLiveness } from './launch-provider.js';
+import { shellQuote } from './shell-quote.js';
 
 export type { AgentLiveness };
 
@@ -52,21 +53,35 @@ export interface AgentLivenessProbeParams {
 
 /**
  * Probe a tmux-backed remote agent's inner-process liveness. Runs
- * `ssh <probeOpts> -o BatchMode=yes <target> tmux display-message -p -t <name>
- * '#{pane_current_command}'` and classifies the pane command. NEVER throws and
+ * `ssh <probeOpts> -o BatchMode=yes <target> "tmux display-message -p -t 'name'
+ * '#{pane_current_command}'"` and classifies the pane command. NEVER throws and
  * NEVER returns a false `dead`: any ssh failure/timeout, or an unrecognized pane
  * command, resolves to `unknown` (fail safe — an undecidable probe must not
  * reclaim a claim). A leading-dash `target` (readable as an ssh flag) short-
  * circuits to `unknown`, mirroring the reattach-probe guard.
+ *
+ * The tmux command is assembled as a SINGLE remote-command string with
+ * POSIX-single-quoted operands, NOT as separate trailing ssh argv elements.
+ * OpenSSH space-joins the trailing operands and hands the result to the remote
+ * login shell via `sh -c`, so a bare `#{pane_current_command}` operand would be
+ * eaten as a `#` comment — tmux would then print its default status format and
+ * the probe could never observe the real pane command (silently degrading to
+ * `unknown`). Quoting the format string and the session name keeps `#{…}` and
+ * any whitespace/metacharacters intact across that remote re-parse.
  */
 export function probeAgentLiveness(params: AgentLivenessProbeParams): Promise<AgentLiveness> {
   const { execFile, target, tmuxName, probeOpts, timeoutMs, classify } = params;
   if (target.startsWith('-')) return Promise.resolve('unknown');
+  // One quoted remote command — see the doc comment: ssh re-parses the trailing
+  // operands under a remote `sh -c`, so `#{…}` and the session name MUST be
+  // single-quoted or the `#` starts a comment and the format is lost.
+  const remoteCmd =
+    `tmux display-message -p -t ${shellQuote(tmuxName)} '#{pane_current_command}'`;
   const args = [
     ...probeOpts,
     '-o', 'BatchMode=yes', // never block on an auth prompt in a background probe
     target,
-    'tmux', 'display-message', '-p', '-t', tmuxName, '#{pane_current_command}'
+    remoteCmd
   ];
   return new Promise<AgentLiveness>((resolve) => {
     execFile('ssh', args, { timeout: timeoutMs }, (error, stdout) => {
@@ -97,13 +112,19 @@ interface LivenessCacheEntry {
  * round-trip per claim), so this caches the last DECISIVE verdict and refreshes
  * in the background:
  *
- *  - `get` returns the cached verdict only while FRESH; otherwise `unknown`, and
- *    kicks a deduped background probe so the NEXT tick has a fresh verdict. The
- *    reclaim therefore lands ~one reconcile interval (30 s) after the agent dies
- *    — bounded, and far tighter than the 10-min stall ceiling it replaces.
+ *  - `get` returns the cached verdict while FRESH (else `unknown`) and ALWAYS
+ *    kicks a deduped background probe — a PROACTIVE refresh, not only a stale
+ *    top-up. An agent that dies immediately after a successful probe would
+ *    otherwise stay `alive` for the whole freshness window (several ticks);
+ *    refreshing on every read means the flip is observed on the NEXT reconcile
+ *    tick (~one interval, 30 s) regardless of when in the window it died.
  *  - Only `alive`/`dead` are cached; an `unknown` probe result is NOT stored, so
  *    an undecidable session is re-probed every tick until it resolves (a
  *    telemetry-gap worker keeps being checked rather than pinned at `unknown`).
+ *  - `refresh` and the background refresh scheduled by `get` share ONE in-flight
+ *    probe per session (deduped via {@link inFlight}), so a concurrent
+ *    `refresh()` + `get()`-triggered probe can never store a stale verdict over
+ *    a newer one — both await the same result and `store` runs once.
  *  - `evict` drops a session on pty exit (Rule 3 — release per-session state).
  *
  * The probe is injected (in production, `PtyManager.probeAgentLiveness`, which
@@ -113,11 +134,27 @@ interface LivenessCacheEntry {
  */
 export class AgentLivenessCache {
   private readonly entries = new Map<string, LivenessCacheEntry>();
-  private readonly inFlight = new Set<string>();
+  /**
+   * The single in-flight probe per session, shared by `get`'s background
+   * refresh and an explicit `refresh()`. Keyed so both callers await the SAME
+   * promise instead of racing two probes whose `store()` order is decided by
+   * wall-clock rather than probe recency.
+   */
+  private readonly inFlight = new Map<string, Promise<AgentLiveness>>();
 
   constructor(
     private readonly probe: (sessionId: string) => Promise<AgentLiveness>,
-    private readonly options: { now?: () => number; staleMs?: number } = {}
+    private readonly options: {
+      now?: () => number;
+      staleMs?: number;
+      /**
+       * Telemetry sink for a background probe that unexpectedly REJECTS (the
+       * injected probe's contract is never-throws, so this is a defensive
+       * last resort). Receives the session id for diagnosis; the cache still
+       * fails safe to `unknown`. Defaults to a `console.warn`.
+       */
+      onProbeError?: (sessionId: string, error: unknown) => void;
+    } = {}
   ) {}
 
   private now(): number {
@@ -128,10 +165,22 @@ export class AgentLivenessCache {
     return this.options.staleMs ?? DEFAULT_LIVENESS_STALE_MS;
   }
 
+  private reportProbeError(sessionId: string, error: unknown): void {
+    if (this.options.onProbeError) {
+      this.options.onProbeError(sessionId, error);
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.warn(`[agent-liveness] background probe rejected for session ${sessionId}:`, error);
+  }
+
   get(sessionId: string): AgentLiveness {
     const entry = this.entries.get(sessionId);
     const fresh = entry !== undefined && this.now() - entry.at <= this.staleMs;
-    if (!fresh) this.scheduleRefresh(sessionId);
+    // Always kick a deduped background probe — even when the cached verdict is
+    // still fresh — so a verdict that flips mid-window is caught within ~one
+    // reconcile interval rather than after the whole freshness window.
+    this.scheduleRefresh(sessionId);
     return fresh ? entry!.verdict : 'unknown';
   }
 
@@ -142,20 +191,42 @@ export class AgentLivenessCache {
     else this.entries.set(sessionId, { verdict, at: this.now() });
   }
 
-  private scheduleRefresh(sessionId: string): void {
-    if (this.inFlight.has(sessionId)) return;
-    this.inFlight.add(sessionId);
-    void this.probe(sessionId)
-      .then((verdict) => this.store(sessionId, verdict))
-      .catch(() => { /* the injected probe never rejects; ignore defensively */ })
-      .finally(() => this.inFlight.delete(sessionId));
+  /**
+   * Run (or join) the one probe in flight for `sessionId`, store its result,
+   * and resolve to the verdict. A concurrent caller gets the SAME promise, so
+   * `store` runs exactly once and no later, staler probe can clobber it.
+   */
+  private runProbe(sessionId: string): Promise<AgentLiveness> {
+    const existing = this.inFlight.get(sessionId);
+    if (existing) return existing;
+    const pending = this.probe(sessionId)
+      .catch((error: unknown) => {
+        // Fail safe — an undecidable probe must never read as a false `dead` —
+        // but surface the rejection with session context (finding: silent swallow).
+        this.reportProbeError(sessionId, error);
+        return 'unknown' as const;
+      })
+      .then((verdict) => {
+        this.store(sessionId, verdict);
+        return verdict;
+      })
+      .finally(() => {
+        if (this.inFlight.get(sessionId) === pending) this.inFlight.delete(sessionId);
+      });
+    this.inFlight.set(sessionId, pending);
+    return pending;
   }
 
-  /** Await a probe now and cache the result — explicit warm (host boot / tests). */
+  private scheduleRefresh(sessionId: string): void {
+    void this.runProbe(sessionId);
+  }
+
+  /**
+   * Await a probe now and cache the result — explicit warm (host boot / tests).
+   * Joins an in-flight background probe rather than racing a second one.
+   */
   async refresh(sessionId: string): Promise<AgentLiveness> {
-    const verdict = await this.probe(sessionId).catch(() => 'unknown' as const);
-    this.store(sessionId, verdict);
-    return verdict;
+    return this.runProbe(sessionId);
   }
 
   /** Drop a session's cached verdict on pty exit (Rule 3 resource release). */

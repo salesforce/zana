@@ -361,24 +361,64 @@ describe('execution store', () => {
     expect(record.workUnits![0]).toMatchObject({ state: 'COMPLETED', result: 'done anyway' });
   }));
 
-  it('completeWork accepts a same-slot completion under a STALE claim generation (run e531f415)', async () => fixture(async (filePath) => {
-    // The reconcile reclaimed a still-live silent worker and re-dispatched to the SAME
-    // slot (fresh generation). The worker then finishes and completes under its now-stale
-    // claim (the MCP tool always passes requireClaim=true). Slot identity — not the claim
-    // fence — authorizes it: the generation churn is our own reclaim, and the finished
-    // result must be kept, not discarded into a reclaim→redispatch loop.
+  it('completeWork accepts a late completion of the EXACT reclaimed claim while the unit stays READY (run b56e63f5)', async () => fixture(async (filePath) => {
+    // The reconcile reclaimed a still-live silent worker; the unit sits READY and has
+    // NOT been re-claimed. The worker then finishes and completes under its reclaimed
+    // claim (the MCP tool always passes requireClaim=true). The recorded reclaimedClaim
+    // authorizes exactly this — the real result is kept, not discarded into a churn loop.
     const store = createExecutionStore({ filePath, id: () => 'execution' });
     let record = (await store.claim(request())).record;
     record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
     record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
     record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
     record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
-    const stale = record.workUnits![0]; // gen 1 claim the worker will complete under
-    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: stale.claimId!, claimGeneration: stale.claimGeneration!, reason: 'silent', force: true }]);
-    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // gen 2, same slot
-    expect(record.workUnits![0]).toMatchObject({ state: 'CLAIMED', claimGeneration: 2, assignedSlotId: 'worker-1' });
-    record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'verified', { claimId: stale.claimId!, claimGeneration: stale.claimGeneration! }, true);
+    const reclaimed = record.workUnits![0]; // gen 1 — the claim the worker completes under
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: reclaimed.claimId!, claimGeneration: reclaimed.claimGeneration!, reason: 'silent', force: true }]);
+    expect(record.workUnits![0].state).toBe('READY');
+    record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'verified', { claimId: reclaimed.claimId!, claimGeneration: reclaimed.claimGeneration! }, true);
     expect(record.workUnits![0]).toMatchObject({ state: 'COMPLETED', result: 'verified' });
+  }));
+
+  it('completeWork REJECTS a stale-generation completion once the unit was re-claimed on the SAME slot (slot reuse; run e531f415)', async () => fixture(async (filePath) => {
+    // Slot ids are reused across worker restarts: worker A is reclaimed, a replacement
+    // B starts in the SAME slot and re-claims (fresh generation), then zombie A finishes
+    // and tries to complete under its now-stale generation. Accepting it would clobber
+    // B's live, possibly mid-edit attempt — the claim-generation fence must reject it,
+    // and the unit must stay CLAIMED by B's generation.
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const stale = record.workUnits![0]; // gen 1 — the zombie's stale claim
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: stale.claimId!, claimGeneration: stale.claimGeneration!, reason: 'silent', force: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // gen 2, same slot, replacement worker
+    expect(record.workUnits![0]).toMatchObject({ state: 'CLAIMED', claimGeneration: 2, assignedSlotId: 'worker-1' });
+    await expect(store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'zombie result', { claimId: stale.claimId!, claimGeneration: stale.claimGeneration! }, true))
+      .rejects.toThrow('stale work claim');
+    const after = await store.get(record.id);
+    expect(after!.workUnits![0]).toMatchObject({ state: 'CLAIMED', claimGeneration: 2 });
+    expect(after!.workUnits![0].result).toBeUndefined();
+  }));
+
+  it('completeWork never resurrects a FAILED unit from a stale worker', async () => fixture(async (filePath) => {
+    // A worker whose claim was reclaimed and then FAILED (by the coordinator, or a
+    // fresh worker) must not be un-failed by a late stale completion.
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const stale = record.workUnits![0];
+    // fail the unit through a live re-claim so it is genuinely FAILED
+    record = await store.failWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'gave up', 'UNKNOWN', { claimId: stale.claimId!, claimGeneration: stale.claimGeneration! }, true);
+    expect(record.workUnits![0].state).toBe('FAILED');
+    await expect(store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'late done', { claimId: stale.claimId!, claimGeneration: stale.claimGeneration! }, true))
+      .rejects.toThrow('work unit is not claimed');
+    const after = await store.get(record.id);
+    expect(after!.workUnits![0]).toMatchObject({ state: 'FAILED', failure: 'gave up' });
   }));
 
   it('completeWork rejects recovery when a different slot has re-claimed the unit', async () => fixture(async (filePath) => {

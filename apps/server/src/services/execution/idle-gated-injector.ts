@@ -87,6 +87,14 @@ const BUSY_STATES = new Set(['working', 'blocked', 'waiting', 'unknown']);
  * lease expiry, live run 2cfc03e7: verify-upstream dispatched at spawn+2s, no
  * worker output for a full lease window, recovered only on the attempt-2
  * re-dispatch ~10 min later).
+ *
+ * NOTE the deliberate overlap with {@link BUSY_STATES}: `waiting` is a member of
+ * BOTH sets. For an INTERACTIVE session it is simultaneously a rest-PROOF (it
+ * proves the TUI booted, so it latches `booted`) AND a gating busy state (it
+ * still means "waiting on a person", so `onState`/`deliver` will NOT flush into
+ * it). Only a HEADLESS worker's narrowed {@link HEADLESS_BUSY_STATES} drops
+ * `waiting` from the busy set and makes that rest edge deliverable. The two-role
+ * split is the point: the latch is role-agnostic, the flush gate is not.
  */
 const REST_STATES = new Set(['idle', 'waiting', 'done']);
 
@@ -228,6 +236,22 @@ export class IdleGatedInjector {
     for (const [sessionId, queue] of [...this.pending]) {
       if (!queue.length) { this.pending.delete(sessionId); continue; }
       if (now - queue[0].queuedAt < maxWaitMs) continue;
+      // NEVER force-inject into a worker that is ACTIVELY `working`. A long turn
+      // emits no deliverable onState edge WHILE it runs, but it WILL resolve to a
+      // rest state when the turn ends, and `onState` flushes the queue safely
+      // then. Pasting mid-turn is the exact paste-during-work wedge this injector
+      // exists to prevent — the 45s bound must not jump ahead of a genuine turn.
+      // Skipping (not re-stamping) preserves `queuedAt`, so the moment the worker
+      // leaves `working` the next sweep flushes immediately with no fresh wait.
+      //
+      // `working` is the ONLY skip state on purpose: it is the sole busy state
+      // that both risks a mid-turn paste AND guarantees a future rest edge. The
+      // other busy states (`unknown`/`waiting` — a silent, no-telemetry standby
+      // worker that will NEVER emit an idle edge) are precisely the strand cases
+      // this escape hatch exists for (live runs c33a6715 / f0f44413), so they
+      // MUST still force-flush; gating on the full `busyStates()` set would
+      // neuter flushStale entirely.
+      if (this.deps.getState(sessionId) === 'working') continue;
       const [next, ...rest] = queue;
       this.deps.reply(sessionId, next.text);
       flushed.push(sessionId);

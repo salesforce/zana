@@ -121,7 +121,48 @@ describe('jobCoordinatorPrompt — self-heal (coordinator answers a coordinator-
   });
 });
 
+describe('jobCoordinatorPrompt — roster and plan-size edges', () => {
+  it('renders "- No workers." for an empty roster', () => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster: [], planReady: true });
+    expect(prompt).toContain('Workers are already running:\n- No workers.');
+  });
+
+  it('Flow A without workUnits omits the seeded-unit digest but keeps the park instruction', () => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: true });
+    expect(prompt).not.toContain('the registered units are:');
+    expect(prompt).toContain('End this turn and remain idle');
+  });
+
+  it('Flow A caps an oversized seeded plan in the injected digest', () => {
+    const many: ExecutionWorkUnitInput[] = Array.from({ length: 25 }, (_, i) => ({ id: `u${i}`, title: 'T', task: 't', dependencies: [] }));
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: true, workUnits: many });
+    expect(prompt).toContain('`u0`');
+    expect(prompt).toContain('`u19`');
+    expect(prompt).not.toContain('`u20`');
+    expect(prompt).toContain('…and 5 more unit(s).');
+  });
+
+  it('renders strict-JSON source metadata (no sources → empty array)', () => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: false });
+    expect(prompt).toContain('Metadata is strict JSON:\n[]');
+  });
+});
+
 describe('boundedWorkUnitDigest', () => {
+  it('returns an empty string for no units', () => {
+    expect(boundedWorkUnitDigest([])).toBe('');
+  });
+
+  it('honors a custom maxUnits bound and reports the correct remainder', () => {
+    const many: ExecutionWorkUnitInput[] = Array.from({ length: 10 }, (_, i) => ({ id: `u${i}`, title: 'T', task: 't', dependencies: [] }));
+    const digest = boundedWorkUnitDigest(many, 3);
+    expect(digest).toContain('`u0`');
+    expect(digest).toContain('`u2`');
+    expect(digest).not.toContain('`u3`');
+    expect(digest).toContain('…and 7 more unit(s).');
+  });
+
+
   it('caps the unit count and reports the remainder', () => {
     const many: ExecutionWorkUnitInput[] = Array.from({ length: 25 }, (_, i) => ({ id: `u${i}`, title: 'T', task: 't', dependencies: [] }));
     const digest = boundedWorkUnitDigest(many, 20);

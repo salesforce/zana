@@ -107,6 +107,19 @@ export function TerminalSettingsView({
       </Section>
 
       <Section
+        anchorId="terminal-clipboard"
+        title="Clipboard"
+        help="Control whether terminal output may change your system clipboard."
+      >
+        <CheckboxField
+          label="Allow terminal output to write the clipboard (OSC 52)"
+          help="When on (default), a program in a local or remote terminal can copy text to your system clipboard via the OSC 52 escape sequence (a visible notification always fires). Turn OFF to refuse these writes — a clipboard-poisoning defense so untrusted process output can’t silently replace a copied command or address. Clipboard reads by terminal programs are always refused, regardless of this setting."
+          checked={config.terminalClipboardWriteEnabled ?? true}
+          onChange={(v) => onUpdate({ terminalClipboardWriteEnabled: v })}
+        />
+      </Section>
+
+      <Section
         anchorId="terminal-tmux"
         title="tmux"
         help="Session durability backed by tmux."

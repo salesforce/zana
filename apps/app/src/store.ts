@@ -800,6 +800,7 @@ function mirroredConfigFlags(config: AppConfig) {
     classicSessionViewEnabled: config.classicSessionViewEnabled ?? false,
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
+    terminalClipboardWriteEnabled: config.terminalClipboardWriteEnabled ?? true,
     autoOpenThreadPlanPanel: config.autoOpenThreadPlanPanel ?? false,
     structuredQuestionsEnabled: config.structuredQuestionsEnabled ?? true,
     reviewerApprovalMode: config.reviewerApprovalMode ?? 'ask',
@@ -1567,6 +1568,11 @@ interface DataState {
    *  Settings toggle. Default off; when off, no classify call runs and every
    *  report stays inline. */
   feedNoiseClassifierEnabled: boolean;
+  /** Mirror of AppConfig.terminalClipboardWriteEnabled — gates OSC 52 clipboard
+   *  WRITES from terminal output (clipboard-poisoning defense). Hydrated on init,
+   *  kept live by the Settings toggle. Default TRUE (write path shipped on); when
+   *  off, terminal output can never touch the system clipboard. */
+  terminalClipboardWriteEnabled: boolean;
   /** Mirror of AppConfig.autoOpenThreadPlanPanel — experimental. When on, Plan
    *  mode (native ACP Plan, /plan, or a durable plan) opens the thread side
    *  panel on the Plan pin. Default off. Approvals still open the panel. */
@@ -1653,6 +1659,7 @@ interface DataState {
   setClassicSessionViewEnabled: (on: boolean) => void;
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
+  setTerminalClipboardWriteEnabled: (on: boolean) => void;
   setAutoOpenThreadPlanPanel: (on: boolean) => void;
   setSuggestionsEnabled: (on: boolean) => void;
   setStructuredQuestionsEnabled: (on: boolean) => void;
@@ -2013,6 +2020,7 @@ export const useData = create<DataState>((set, get) => ({
   classicSessionViewEnabled: false,
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
+  terminalClipboardWriteEnabled: true,
   autoOpenThreadPlanPanel: false,
   suggestionsEnabled: false,
   structuredQuestionsEnabled: true,
@@ -2090,6 +2098,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setFeedNoiseClassifierEnabled(on) {
     set({ feedNoiseClassifierEnabled: on });
+  },
+
+  setTerminalClipboardWriteEnabled(on) {
+    set({ terminalClipboardWriteEnabled: on });
   },
 
   setAutoOpenThreadPlanPanel(on) {

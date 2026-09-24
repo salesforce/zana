@@ -101,6 +101,30 @@ describe('ExecutionJobDetails copy job details', () => {
     expect(text).toContain('Coordinator wakes (0):');
   });
 
+  it('surfaces a failure toast when the clipboard write fails', async () => {
+    // Force BOTH copyText paths to fail: desktop write returns not-ok, web write rejects.
+    clipboardWriteText.mockResolvedValue({ ok: false });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(async () => { throw new Error('clipboard denied'); }) }
+    });
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    const copyButton = await screen.findByRole('button', { name: 'Copy details' });
+    fireEvent.click(copyButton);
+    await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.message === 'Failed to copy job details')).toBe(true));
+  });
+
+  it('renders the unavailable state with NO Copy button when the snapshot never loads (null guard)', async () => {
+    Object.defineProperty(window, 'cc', { configurable: true, value: { executionBoard: {
+      snapshot: vi.fn(async () => { throw new Error('boom'); }), stop: vi.fn(), retry: vi.fn(), retryWork: vi.fn(),
+      releaseWork: vi.fn(), reassignWork: vi.fn(), respond: vi.fn(), retryDelivery: vi.fn(), readArtifact: vi.fn(), relaunchMonitor: vi.fn()
+    }, clipboard: { writeText: clipboardWriteText } } });
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    expect(await screen.findByText('Squad details unavailable.')).toBeTruthy();
+    // The Copy details button (and its copyJobDetails handler) only mount once snapshot is non-null.
+    expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
+  });
+
   it('dumps delivery strands and coordinator wakes as metadata only — never payload text or wake message', () => {
     const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
     snapshot.execution.work!.assignments[0] = {

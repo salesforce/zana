@@ -186,4 +186,78 @@ describe('parsePortablePlan', () => {
     expect(result.units[0]).toMatchObject({ id: 'solo', dependencies: [], readOnly: true });
     expect(result.units[0].files).toBeUndefined();
   });
+
+  it('accepts UNINDENTED, non-bulleted top-level labels (`**Work:**` with no list marker)', () => {
+    // Backward-compat: the prior grammar made the list marker optional, so
+    // persisted / externally-generated plans use bare `**Label:**` at column 0.
+    // Requiring a marker regressed these to "missing Work".
+    const text = [
+      '### bare: Bare Labels <!-- executable-step -->',
+      '',
+      '**Depends on:** None',
+      '**Mode:** Read-only',
+      '**Work:** inspect only',
+      '**Verification:** Nothing to run.',
+      ''
+    ].join('\n');
+    const result = parsePortablePlan(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const unit = result.units[0];
+    expect(unit).toMatchObject({ id: 'bare', dependencies: [], readOnly: true });
+    expect(unit.task).toBe('inspect only');
+    expect(unit.verification).toEqual(['Nothing to run.']);
+  });
+
+  it('distinguishes an INDENTED sub-bold (continuation) from an unindented bare label', () => {
+    // An indented `**...:**` with no list marker is a continuation line folded
+    // into the current value; an unindented one opens a new field.
+    const text = [
+      '### mix: Mixed Label Shapes <!-- executable-step -->',
+      '',
+      '**Work:**',
+      '  Do the thing. Notes:',
+      '  **Nuance:** this indented sub-bold stays inside Work.',
+      '**Verification:** Bare label closes Work.',
+      ''
+    ].join('\n');
+    const result = parsePortablePlan(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const unit = result.units[0];
+    expect(unit.task).toContain('Do the thing');
+    expect(unit.task).toContain('Nuance:'); // indented sub-bold folded in, not a field
+    expect(unit.verification).toEqual(['Bare label closes Work.']);
+  });
+
+  it('does not close a ```-opened fence on a ~~~ line inside it (mixed delimiters)', () => {
+    // FENCE must track the OPENING delimiter: a ~~~ line inside a ```-opened
+    // fence is body text, not a fence close. If it wrongly closed the fence, the
+    // `- **Not a field:**` bullet after it would be mis-read as a real label
+    // (splitting Work) and the trailing `## Heading` inside the block would
+    // truncate the step.
+    const text = [
+      '### fence: Mixed Fence <!-- executable-step -->',
+      '',
+      '- **Mode:** Read-only',
+      '- **Work:**',
+      '  Proposed shape:',
+      '',
+      '  ```md',
+      '  Example doc with a tilde rule:',
+      '  ~~~',
+      '  - **Not a field:** this bullet is inside the code block.',
+      '  ## Not a heading either',
+      '  ```',
+      '- **Verification:** All good.',
+      ''
+    ].join('\n');
+    const result = parsePortablePlan(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const unit = result.units[0];
+    expect(unit.task).toContain('Not a field:'); // stayed inside the fenced Work body
+    expect(unit.task).toContain('Not a heading either');
+    expect(unit.verification).toEqual(['All good.']);
+  });
 });

@@ -264,12 +264,36 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export function makeJobTeamCoordinatorBinary(options: { scenario?: 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' } = {}): FakeAgentBinary {
-  const failedDag = options.scenario === 'failed-dag';
-  const stalled = options.scenario === 'stalled-worker';
-  const streaming = options.scenario === 'streaming-worker';
-  const churn = options.scenario === 'kickoff-churn';
-  const script = String.raw`#!/usr/bin/env node
+export type JobTeamScenario = 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn';
+
+/** The four boolean gates the generated coordinator script keys its behavior off. */
+interface JobTeamScenarioFlags {
+  failedDag: boolean;
+  stalled: boolean;
+  streaming: boolean;
+  churn: boolean;
+}
+
+/** Map a scenario name to the script's behavior flags (exactly one true, or none for 'success'). */
+function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags {
+  return {
+    failedDag: scenario === 'failed-dag',
+    stalled: scenario === 'stalled-worker',
+    streaming: scenario === 'streaming-worker',
+    churn: scenario === 'kickoff-churn'
+  };
+}
+
+/**
+ * Render the standalone `node` coordinator/worker/owner script for the given scenario
+ * flags. Kept a separate builder so {@link makeJobTeamCoordinatorBinary} stays a short
+ * compose-and-write step. The body is a single `String.raw` literal by necessity — a
+ * literal backtick anywhere in it would terminate the tag (see the BT note inside), so
+ * the scenario branches live as runtime `if`s in the generated script, not as
+ * template-time fragments.
+ */
+function renderCoordinatorScript(flags: JobTeamScenarioFlags): string {
+  return String.raw`#!/usr/bin/env node
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -297,18 +321,18 @@ const EXECUTION_ID = execMatch ? execMatch[1] : null;
 const IS_ORCHESTRATOR = /coordinator of Team/.test(PROMPT);
 const IS_WORKER = /worker standby/.test(PROMPT);
 const IS_OWNER = /E2E start Job Team/.test(PROMPT);
-const FAILED_DAG = ${JSON.stringify(failedDag)};
+const FAILED_DAG = ${JSON.stringify(flags.failedDag)};
 // Stuck-worker reclaim repro (run df216947): the worker claims its unit, goes
 // ✻ working (NON-restful), and holds forever — never completes/blocks/idles. The
 // only escape is the wall-clock backstop (owner sets a small maxClaimWallClockMs);
 // without it a lease-expired non-restful claim is never reclaimed => permanent freeze.
-const STALLED = ${JSON.stringify(stalled)};
+const STALLED = ${JSON.stringify(flags.stalled)};
 // Output-heartbeat repro (Part B): the worker claims its unit, goes ✻ working
 // (NON-restful, like STALLED) but then EMITS OUTPUT FOREVER. Each write is a PTY
 // 'data' event → the host renews the claim lease → the reconcile sweep must NEVER
 // reclaim this live worker. This is the discriminator vs STALLED (silent → reclaimed):
 // a streaming worker is healthy-long, not hung, so lease expiry must not fire.
-const STREAMING = ${JSON.stringify(streaming)};
+const STREAMING = ${JSON.stringify(flags.streaming)};
 // Kickoff-churn repro (WS1 reassign + WS3 human block): a two-WORKER team whose
 // sole unit lands on a worker that CLAIMS but never turns (turnCount stays 0,
 // identical stall behavior to STALLED). Each wall-clock reclaim bumps the unit's
@@ -317,7 +341,7 @@ const STREAMING = ${JSON.stringify(streaming)};
 // HUMAN_BLOCKER + inbox entry (WS3) instead of re-dispatching down the broken
 // path forever. Reuses stalledWorker(); the only differences from STALLED are the
 // 2-worker slot count (so a fresh peer exists) and the distinct jobTitle.
-const CHURN = ${JSON.stringify(churn)};
+const CHURN = ${JSON.stringify(flags.churn)};
 
 const ROLE = IS_ORCHESTRATOR ? 'ORCH' : IS_WORKER ? 'WORK' : IS_OWNER ? 'OWNR' : 'UNKN';
 // Progress goes to stderr (Playwright captures it on failure) and a per-process
@@ -716,6 +740,10 @@ async function worker() {
   } catch (e) { log('fatal', String((e && e.stack) || e)); await hold(); }
 })();
 `;
+}
+
+export function makeJobTeamCoordinatorBinary(options: { scenario?: JobTeamScenario } = {}): FakeAgentBinary {
+  const script = renderCoordinatorScript(resolveScenarioFlags(options.scenario));
   const dir = mkdtempSync(join(tmpdir(), 'zcc-fake-coordinator-'));
   const path = join(dir, 'claude-coordinator.js');
   writeFileSync(path, script);

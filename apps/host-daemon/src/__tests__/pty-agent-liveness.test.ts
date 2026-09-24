@@ -66,7 +66,9 @@ describe('PtyManager.probeAgentLiveness (real method wiring)', () => {
     const verdict = await ptys.probeAgentLiveness('sess');
 
     expect(verdict).toBe('dead');
-    // Proves the argv: probe opts + BatchMode + target + pane-command query.
+    // Proves the argv: probe opts + BatchMode + target + the pane-command query
+    // as a SINGLE single-quoted remote operand (ssh re-parses trailing operands
+    // under a remote `sh -c`; a bare `#{…}` would be swallowed as a comment).
     expect(execFileMock).toHaveBeenCalledTimes(1);
     const [cmd, args] = execFileMock.mock.calls[0];
     expect(cmd).toBe('ssh');
@@ -74,7 +76,7 @@ describe('PtyManager.probeAgentLiveness (real method wiring)', () => {
       '-o', 'ServerAliveInterval=5',
       '-o', 'BatchMode=yes',
       'user@box',
-      'tmux', 'display-message', '-p', '-t', 'cc-sess', '#{pane_current_command}'
+      "tmux display-message -p -t 'cc-sess' '#{pane_current_command}'"
     ]);
   });
 
