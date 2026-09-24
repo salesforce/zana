@@ -264,9 +264,36 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export function makeJobTeamCoordinatorBinary(options: { scenario?: 'success' | 'failed-dag' } = {}): FakeAgentBinary {
-  const failedDag = options.scenario === 'failed-dag';
-  const script = String.raw`#!/usr/bin/env node
+export type JobTeamScenario = 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn';
+
+/** The four boolean gates the generated coordinator script keys its behavior off. */
+interface JobTeamScenarioFlags {
+  failedDag: boolean;
+  stalled: boolean;
+  streaming: boolean;
+  churn: boolean;
+}
+
+/** Map a scenario name to the script's behavior flags (exactly one true, or none for 'success'). */
+function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags {
+  return {
+    failedDag: scenario === 'failed-dag',
+    stalled: scenario === 'stalled-worker',
+    streaming: scenario === 'streaming-worker',
+    churn: scenario === 'kickoff-churn'
+  };
+}
+
+/**
+ * Render the standalone `node` coordinator/worker/owner script for the given scenario
+ * flags. Kept a separate builder so {@link makeJobTeamCoordinatorBinary} stays a short
+ * compose-and-write step. The body is a single `String.raw` literal by necessity — a
+ * literal backtick anywhere in it would terminate the tag (see the BT note inside), so
+ * the scenario branches live as runtime `if`s in the generated script, not as
+ * template-time fragments.
+ */
+function renderCoordinatorScript(flags: JobTeamScenarioFlags): string {
+  return String.raw`#!/usr/bin/env node
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -294,7 +321,27 @@ const EXECUTION_ID = execMatch ? execMatch[1] : null;
 const IS_ORCHESTRATOR = /coordinator of Team/.test(PROMPT);
 const IS_WORKER = /worker standby/.test(PROMPT);
 const IS_OWNER = /E2E start Job Team/.test(PROMPT);
-const FAILED_DAG = ${JSON.stringify(failedDag)};
+const FAILED_DAG = ${JSON.stringify(flags.failedDag)};
+// Stuck-worker reclaim repro (run df216947): the worker claims its unit, goes
+// ✻ working (NON-restful), and holds forever — never completes/blocks/idles. The
+// only escape is the wall-clock backstop (owner sets a small maxClaimWallClockMs);
+// without it a lease-expired non-restful claim is never reclaimed => permanent freeze.
+const STALLED = ${JSON.stringify(flags.stalled)};
+// Output-heartbeat repro (Part B): the worker claims its unit, goes ✻ working
+// (NON-restful, like STALLED) but then EMITS OUTPUT FOREVER. Each write is a PTY
+// 'data' event → the host renews the claim lease → the reconcile sweep must NEVER
+// reclaim this live worker. This is the discriminator vs STALLED (silent → reclaimed):
+// a streaming worker is healthy-long, not hung, so lease expiry must not fire.
+const STREAMING = ${JSON.stringify(flags.streaming)};
+// Kickoff-churn repro (WS1 reassign + WS3 human block): a two-WORKER team whose
+// sole unit lands on a worker that CLAIMS but never turns (turnCount stays 0,
+// identical stall behavior to STALLED). Each wall-clock reclaim bumps the unit's
+// kickoffFailures; at the threshold the engine SELF-HEALS by reassigning to the
+// untried peer slot (WS1), then — after that slot also exhausts — surfaces a
+// HUMAN_BLOCKER + inbox entry (WS3) instead of re-dispatching down the broken
+// path forever. Reuses stalledWorker(); the only differences from STALLED are the
+// 2-worker slot count (so a fresh peer exists) and the distinct jobTitle.
+const CHURN = ${JSON.stringify(flags.churn)};
 
 const ROLE = IS_ORCHESTRATOR ? 'ORCH' : IS_WORKER ? 'WORK' : IS_OWNER ? 'OWNR' : 'UNKN';
 // Progress goes to stderr (Playwright captures it on failure) and a per-process
@@ -370,7 +417,13 @@ const FAILED_DAG_PLAN = [
   { id: 'dependent', title: 'Dependent', task: 'Must not run after fail-root fails', dependencies: ['fail-root'], readOnly: true, verification: ['state is skipped'] },
   { id: 'independent', title: 'Independent', task: 'Complete despite the failed sibling branch', dependencies: [], readOnly: true, verification: ['independent.txt present'] }
 ];
-const PLAN = FAILED_DAG ? FAILED_DAG_PLAN : SUCCESS_PLAN;
+const STALLED_PLAN = [
+  { id: 'stall-unit', title: 'Stall Unit', task: 'Claim this unit and stall (never completes) to exercise reclaim', dependencies: [], readOnly: true, verification: ['claim reclaimed by wall-clock backstop'] }
+];
+const STREAMING_PLAN = [
+  { id: 'stream-unit', title: 'Stream Unit', task: 'Claim this unit and emit output forever (never completes) to exercise the output-activity lease heartbeat', dependencies: [], readOnly: true, verification: ['claim NOT reclaimed while streaming'] }
+];
+const PLAN = FAILED_DAG ? FAILED_DAG_PLAN : (STALLED || CHURN) ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : SUCCESS_PLAN;
 
 async function owner() {
   log('owner start');
@@ -378,14 +431,30 @@ async function owner() {
     version: 1,
     teamId: 'e2e-job-team',
     launchRequestId: 'e2e-cli-agent-job-' + process.pid,
-    jobTitle: 'CLI Agent durable job',
+    jobTitle: CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : 'CLI Agent durable job',
     summary: 'Full Job Team route started by a CLI Agent owner.',
     workUnits: PLAN,
-    slots: [
-      { initialTask: 'Coordinate the durable execution.' },
-      { initialTask: 'Run assigned work from the durable execution.' },
-      { initialTask: 'Run assigned work from the durable execution.' }
-    ]
+    // Stalled repro shrinks the wall-clock ceiling so the backstop reclaims the
+    // stuck non-restful claim in bounded test time (paired with the E2E-only
+    // ZCC_WORK_CLAIM_LEASE_MS / ZCC_EXECUTION_RECONCILE_INTERVAL_MS host knobs).
+    // maxClaimWallClockMs is a top-level execution.start field (min 1000ms), NOT
+    // nested under policy — the start schema is strict and rejects unknown keys.
+    // NOTE: streaming deliberately sets NO maxClaimWallClockMs — the whole point is
+    // that the output-activity lease heartbeat keeps a live worker from being reclaimed,
+    // so no wall-clock ceiling may pre-empt it during the test window.
+    ...((STALLED || CHURN) ? { maxClaimWallClockMs: 1000 } : {}),
+    // CHURN deliberately falls to the else branch below (1 coordinator + 2 WORKER
+    // slots): the second worker slot is the untried peer WS1 reassigns onto.
+    slots: STALLED || STREAMING
+      ? [
+          { initialTask: 'Coordinate the durable execution.' },
+          { initialTask: 'Run assigned work from the durable execution.' }
+        ]
+      : [
+          { initialTask: 'Coordinate the durable execution.' },
+          { initialTask: 'Run assigned work from the durable execution.' },
+          { initialTask: 'Run assigned work from the durable execution.' }
+        ]
   });
   log('owner execution started', started && started.id);
   await hold();
@@ -412,6 +481,11 @@ async function orchestrator() {
     if (d.ok) { log('dispatch_ready ok'); break; }
     log('dispatch retry', d.error); await sleep(500);
   }
+  // Stalled repro: the sole unit's worker never completes, so there is nothing to
+  // finalize. Hand off to the engine's reclaim sweep and hold — the E2E asserts
+  // the wall-clock backstop reclaims + re-dispatches (claimGeneration climbs).
+  if (STALLED || CHURN) { log((CHURN ? 'churn' : 'stalled') + ': dispatched, holding for reclaim/escalation'); await hold(); }
+  if (STREAMING) { log('streaming: dispatched, holding while worker streams'); await hold(); }
   // Deliberately do NOT call execution.complete. This models a real orchestrator
   // (e.g. an external skill-driven coordinator) that dispatches the DAG but never
   // finalizes — the observed stall. The engine's auto-finalize safety net must
@@ -530,7 +604,54 @@ async function doUnit(unitId) {
 function setWorking() { try { process.stdout.write(ESC + ']2;' + '✻ working' + BEL); } catch (e) { /* best-effort */ } }
 function setIdle() { try { process.stdout.write(ESC + ']2;' + '✳ idle' + BEL); } catch (e) { /* best-effort */ } }
 
+// Stuck worker: idle to receive the kickoff push, then on the first assignment go
+// ✻ working and hold FOREVER — never complete, block, or return to idle. The
+// committed 'working' state is non-restful, so the restful reclaim gate can NEVER
+// fire; only the wall-clock backstop can reclaim this claim. Re-pushed assignments
+// after each reclaim are ignored (still holding), so claimGeneration keeps climbing.
+async function stalledWorker() {
+  log('stalled worker start', EXECUTION_ID);
+  const ASSIGN_RE = new RegExp('assigned work unit ' + BT + '([^' + BT + ']+)' + BT);
+  let working = false;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', function (chunk) {
+    if (working) return; // already stuck; ignore re-pushes after reclaim
+    if (ASSIGN_RE.test(String(chunk))) {
+      working = true; setWorking();
+      log('stalled: went working, will hold forever');
+    }
+  });
+  process.stdin.resume();
+  setIdle(); // announce ready-idle so the kickoff dispatch delivers the assignment
+  await new Promise(function () {}); // hold forever
+}
+
+// Streaming worker: idle to receive the kickoff push, then on the first assignment go
+// ✻ working (NON-restful, same as stalledWorker) and EMIT OUTPUT every 300ms forever.
+// Each write is a PTY 'data' event, so the host's output-activity heartbeat renews the
+// claim lease and the reconcile sweep must NEVER reclaim this live worker. The E2E asserts
+// NO 'expired work claim' event appears over a window far longer than the lease.
+async function streamingWorker() {
+  log('streaming worker start', EXECUTION_ID);
+  const ASSIGN_RE = new RegExp('assigned work unit ' + BT + '([^' + BT + ']+)' + BT);
+  let working = false;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', function (chunk) {
+    if (working) return; // already streaming; ignore any re-push
+    if (ASSIGN_RE.test(String(chunk))) {
+      working = true; setWorking();
+      log('streaming: went working, emitting output heartbeat');
+      setInterval(function () { try { process.stdout.write('.'); } catch (e) { /* best-effort */ } }, 300);
+    }
+  });
+  process.stdin.resume();
+  setIdle(); // announce ready-idle so the kickoff dispatch delivers the assignment
+  await new Promise(function () {}); // hold forever (interval keeps emitting)
+}
+
 async function worker() {
+  if (STALLED || CHURN) return stalledWorker();
+  if (STREAMING) return streamingWorker();
   log('worker start', EXECUTION_ID);
   // Engine-cascade model: the engine claims a unit to this slot and PUSHES the
   // task text on stdin. React to each 'assigned work unit <bt>id<bt>' message;
@@ -619,6 +740,10 @@ async function worker() {
   } catch (e) { log('fatal', String((e && e.stack) || e)); await hold(); }
 })();
 `;
+}
+
+export function makeJobTeamCoordinatorBinary(options: { scenario?: JobTeamScenario } = {}): FakeAgentBinary {
+  const script = renderCoordinatorScript(resolveScenarioFlags(options.scenario));
   const dir = mkdtempSync(join(tmpdir(), 'zcc-fake-coordinator-'));
   const path = join(dir, 'claude-coordinator.js');
   writeFileSync(path, script);

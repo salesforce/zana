@@ -451,7 +451,10 @@ export function registerTerminalsIpc(): void {
   );
   ctx.safeHandle(
     IPC.terminals.agentStatusSnapshot,
-    () => ctx.agentStatus.snapshot(),
+    // Seed the renderer with the DISPLAY state (an unreliable remote worker's
+    // resting guess decays to `unknown`), matching the live `onAgentStatus`
+    // emit so a reconnect can't show a state the live stream never would.
+    () => ctx.agentStatus.snapshot().map(([id, state]: [string, string]) => [id, ctx.displayAgentState(id, state)]),
     () => []
   );
   ctx.safeHandle(
@@ -459,7 +462,19 @@ export function registerTerminalsIpc(): void {
     (sinceSeq: number) => {
       // Validate sinceSeq in main (Rule 1) — coerce junk to 0 for a full replay/snapshot.
       if (!Number.isFinite(sinceSeq) || sinceSeq < 0) sinceSeq = 0;
-      return ctx.agentStatus.since(sinceSeq);
+      const replay = ctx.agentStatus.since(sinceSeq);
+      // Apply the same display decay to both replay events and snapshot pairs so
+      // the reconnect path is byte-consistent with the live `onAgentStatus` emit.
+      if (replay.mode === 'replay') {
+        return {
+          ...replay,
+          events: replay.events.map(([seq, id, state]: [number, string, string]) => [seq, id, ctx.displayAgentState(id, state)])
+        };
+      }
+      return {
+        ...replay,
+        snapshot: replay.snapshot.map(([id, state]: [string, string]) => [id, ctx.displayAgentState(id, state)])
+      };
     },
     () => ({ mode: 'snapshot' as const, snapshot: [], headSeq: 0 })
   );

@@ -15,6 +15,8 @@ import { createResizeSettleScheduler, resyncXtermAndPty } from '../lib/terminalR
 import { perfCount, perfTime } from '../lib/perfMark.js';
 import { resolveTerminalTheme } from '../lib/terminalThemes.js';
 import { openXtermHttpLink } from '../lib/xterm-http-link.js';
+import { registerOsc52Clipboard } from '../lib/osc52-clipboard.js';
+import { copyText } from '../lib/copy-text.js';
 import { useData, useUi } from '../store.js';
 
 type Area = 'a' | 'b' | 'c' | 'd';
@@ -161,6 +163,42 @@ function TerminalViewImpl({ session, area }: Props) {
     termRef.current = term;
     fitRef.current = fit;
     disposedRef.current = false;
+
+    // OSC 52 clipboard bridge. An agent (esp. a REMOTE one over ssh, which has
+    // no other channel to the operator's clipboard) copies by emitting
+    // `ESC ] 52 ; c ; <base64> BEL`; xterm knows OSC 52 but has no handler, so
+    // without this the "copied!" never reaches the system clipboard. Decode and
+    // route to main's clipboard (Rule 1). Returning true claims the sequence so
+    // xterm won't fall back; a declined parse (read request / oversize / junk)
+    // is still swallowed rather than painted. A `?` read request is refused by
+    // parseOsc52 so a remote session can't exfiltrate the local clipboard.
+    // OSC 52 lets terminal OUTPUT overwrite the operator's system clipboard. That
+    // is a poisoning vector: a remote/untrusted agent can silently replace what the
+    // operator later pastes (e.g. swap a command or a wallet address). We do not let
+    // that happen silently — every successful write raises a VISIBLE toast so the
+    // operator knows the clipboard changed and by whom, and every failure is logged
+    // with the session id + surfaced (finding: no more silently-swallowed rejects).
+    // A full opt-in/trust GATE backs the mitigation: the `terminalClipboardWriteEnabled`
+    // AppConfig setting (Settings → Terminal → Clipboard; default ON, since the write
+    // path shipped on) is read LIVE at write time so toggling it takes effect on open
+    // terminals. When OFF we refuse the write — the system clipboard is never touched —
+    // and surface a visible "blocked" toast; the sequence is still claimed by
+    // registerOsc52Clipboard so the escape is never painted.
+    const offOsc52 = registerOsc52Clipboard(term.parser, (text) => {
+      if (useData.getState().terminalClipboardWriteEnabled === false) {
+        useUi.getState().pushToast('Blocked a clipboard write from terminal output (see Terminal settings)', 'info');
+        return;
+      }
+      void copyText(text)
+        .then(() => {
+          useUi.getState().pushToast('Clipboard updated by terminal output', 'info');
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[TerminalView] OSC52 clipboard write failed (session ${session.id}): ${message}`);
+          useUi.getState().pushToast('Terminal clipboard copy failed', 'error');
+        });
+    });
 
     const offFinder = registerFinder(session.id, {
       findNext: (q, { caseSensitive }) => search.findNext(q, { caseSensitive }),
@@ -341,7 +379,7 @@ function TerminalViewImpl({ session, area }: Props) {
       const label = bad ? `[exited code ${code}]` : '[session exited]';
       term.write(`\r\n${sgr}${label}\x1b[0m\r\n`);
     });
-    offsRef.current = [offData, offExit, () => offScroll.dispose()];
+    offsRef.current = [offData, offExit, () => offScroll.dispose(), () => offOsc52.dispose()];
 
     const onInput = term.onData((data) => {
       void product.terminals.write(session.id, data).catch(() => {});

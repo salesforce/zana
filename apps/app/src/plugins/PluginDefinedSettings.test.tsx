@@ -145,6 +145,11 @@ describe('PluginDefinedSettings', () => {
     const agents = await screen.findByLabelText('Custom ACP agents');
     fireEvent.change(agents, { target: { value: '{}' } });
     fireEvent.blur(agents);
-    expect((await screen.findByRole('alert')).textContent).toContain('Custom agents must be a JSON array');
+    // blur → autosave rejects → error state → re-render with role=alert is a
+    // multi-tick async chain; the default 1000ms findBy budget can be exceeded
+    // under full-suite parallel load (observed 1013ms), so give it real room.
+    expect((await screen.findByRole('alert', {}, { timeout: 5_000 })).textContent).toContain(
+      'Custom agents must be a JSON array'
+    );
   });
 });

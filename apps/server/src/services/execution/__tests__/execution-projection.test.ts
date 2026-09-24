@@ -143,6 +143,20 @@ describe('projectExecutionProjection', () => {
     expect(verify).not.toHaveProperty('result'); // verify has no stored result
   });
 
+  it('exposes claim liveness timestamps on an assignment and omits them when unclaimed', () => {
+    const input = record();
+    input.workUnits = [
+      { id: 'claimed', title: 'Claimed', task: 'Work', dependencies: [], state: 'CLAIMED', assignedSlotId: 'slot-a', attempt: 1, claimedAt: 1_000, heartbeatAt: 1_500, leaseExpiresAt: 2_000, history: [] },
+      { id: 'pending', title: 'Pending', task: 'Later', dependencies: ['claimed'], state: 'PENDING', attempt: 0, history: [] }
+    ];
+    const assignments = projectExecutionProjection([input], [])[0].work!.assignments;
+    const claimed = assignments.find((a) => a.workUnitId === 'claimed')!;
+    const pending = assignments.find((a) => a.workUnitId === 'pending')!;
+    expect(claimed).toMatchObject({ claimedAt: 1_000, heartbeatAt: 1_500, leaseExpiresAt: 2_000 });
+    expect(pending).not.toHaveProperty('claimedAt');
+    expect(pending).not.toHaveProperty('leaseExpiresAt');
+  });
+
   it('does not claim an exited orchestrator as live', () => {
     const session = { id: 'orch', status: 'exited', cohort: { executionId: 'execution-1', role: 'orchestrator' } } as TerminalSession;
     expect(projectExecutionProjection([record()], [session])[0].orchestratorSessionId).toBeUndefined();
@@ -209,6 +223,15 @@ describe('projectExecutionProjection', () => {
     expect(projected.currentBlocker).toMatchObject({ id: 'newest', response: 'Yes' });
   });
 
+  it('projects blocker audience when set and omits it when absent (audience-aware UI)', () => {
+    const withAudience = record();
+    withAudience.blockers = [{ id: 'current', workUnitId: 'verify', slotId: 'reviewer', question: 'Which?', audience: 'coordinator', resolved: false, createdAt: 3 }];
+    expect(projectExecutionProjection([withAudience], [])[0].currentBlocker).toMatchObject({ id: 'current', audience: 'coordinator' });
+
+    // The base fixture's current blocker carries no audience → the field is omitted, not set to undefined.
+    expect(projectExecutionProjection([record()], [])[0].currentBlocker).not.toHaveProperty('audience');
+  });
+
   it.each([
     ['PENDING', 0, undefined, false],
     ['LEASED', 2, undefined, false],
@@ -243,6 +266,69 @@ describe('projectExecutionProjection', () => {
       { id: 'current', resolved: false, deliveryState: 'PENDING' },
       { id: 'newest', resolved: false, deliveryState: 'FAILED' }
     ]);
+  });
+
+  it('projects per-unit claim-churn diagnostics and omits the fence fields when never claimed', () => {
+    const input = record();
+    input.workUnits = [
+      { id: 'churny', title: 'Churny', task: 'Work', dependencies: [], state: 'CLAIMED', assignedSlotId: 'slot-a', attempt: 3, turnCount: 7, claimGeneration: 4, claimId: 'claim-xyz', claimedAt: 1_000, progressAt: 1_000, leaseExpiresAt: 9_999, history: [] },
+      { id: 'fresh', title: 'Fresh', task: 'Later', dependencies: ['churny'], state: 'PENDING', attempt: 0, history: [] }
+    ];
+    const assignments = projectExecutionProjection([input], [])[0].work!.assignments;
+    const churny = assignments.find((a) => a.workUnitId === 'churny')!;
+    const fresh = assignments.find((a) => a.workUnitId === 'fresh')!;
+    expect(churny).toMatchObject({ attempt: 3, turnCount: 7, claimGeneration: 4, claimId: 'claim-xyz' });
+    // A never-claimed unit carries the required attempt but no fence/turn diagnostics.
+    expect(fresh).toMatchObject({ attempt: 0 });
+    expect(fresh).not.toHaveProperty('turnCount');
+    expect(fresh).not.toHaveProperty('claimGeneration');
+    expect(fresh).not.toHaveProperty('claimId');
+  });
+
+  it('projects delivery strands as metadata only — never the payload text — newest-first and bounded', () => {
+    const input = record();
+    input.deliveries = Array.from({ length: 60 }, (_, index) => ({
+      id: `delivery-${index}`, clientRequestId: `client-${index}`, blockerId: 'current', workUnitId: 'verify', slotId: 'reviewer',
+      payload: { text: `secret answer ${index}` }, state: 'FAILED' as const, attempt: 8, manualRetryCount: 2,
+      lastError: 'apply failed', createdAt: index, updatedAt: index
+    }));
+    const projected = projectExecutionProjection([input], [])[0];
+    const deliveries = projected.deliveries!;
+    // Bounded to the newest 50 (Rule 5), newest-first by updatedAt.
+    expect(deliveries).toHaveLength(50);
+    expect(deliveries[0].id).toBe('delivery-59');
+    expect(deliveries[49].id).toBe('delivery-10');
+    expect(deliveries[0]).toEqual({
+      id: 'delivery-59', blockerId: 'current', workUnitId: 'verify', slotId: 'reviewer',
+      state: 'FAILED', attempt: 8, maxAttempts: 8, manualRetryCount: 2, updatedAt: 59, error: 'apply failed'
+    });
+    // Payload body must never reach the renderer projection (Rule 1).
+    expect(JSON.stringify(deliveries)).not.toContain('secret answer');
+    expect(deliveries[0]).not.toHaveProperty('payload');
+  });
+
+  it('omits deliveries and coordinatorWakes entirely when there are none', () => {
+    const projected = projectExecutionProjection([record()], [])[0];
+    expect(projected).not.toHaveProperty('deliveries');
+    expect(projected).not.toHaveProperty('coordinatorWakes');
+  });
+
+  it('projects a coordinator-wake total with a bounded newest-first tail and no free-text message', () => {
+    const input = record();
+    input.coordinatorWakes = Array.from({ length: 30 }, (_, index) => ({
+      version: 1 as const, id: `wake-${index}`, key: `key-${index}`,
+      cause: 'HUMAN_BLOCKER' as const, message: `secret wake reason ${index}`,
+      workUnitId: 'verify', stateOrClaimGeneration: `gen-${index}`, createdAt: index
+    }));
+    const wakes = projectExecutionProjection([input], [])[0].coordinatorWakes!;
+    expect(wakes.total).toBe(30);
+    expect(wakes.recent).toHaveLength(25);
+    expect(wakes.recent[0]).toEqual({
+      id: 'wake-29', cause: 'HUMAN_BLOCKER', workUnitId: 'verify', stateOrClaimGeneration: 'gen-29', createdAt: 29
+    });
+    // The free-text wake message is diagnostic-only main state; not projected.
+    expect(JSON.stringify(wakes)).not.toContain('secret wake reason');
+    expect(wakes.recent[0]).not.toHaveProperty('message');
   });
 
   it('surfaces a delivery error as a first-line message, never a multi-line stack trace', () => {

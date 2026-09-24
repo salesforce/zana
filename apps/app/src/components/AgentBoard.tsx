@@ -389,6 +389,7 @@ export function executionNeedsAttention(execution: ExecutionBoardProjection): bo
     execution.state === 'FAILED' ||
     execution.state === 'STOPPED'
   ) return false;
+  if (blocker.audience === 'coordinator') return false; // a coordinator self-heal ask is never a human "needs you"
   return blocker.delivery?.state !== 'PENDING' && blocker.delivery?.state !== 'LEASED';
 }
 

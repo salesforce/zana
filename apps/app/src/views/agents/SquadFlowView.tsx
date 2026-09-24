@@ -104,6 +104,45 @@ const STATE_VERB: Record<SquadFlowNode['state'], string> = {
   waiting: 'waiting'
 };
 
+/**
+ * Activity treatment for one node, split into tiers so the graph shows motion for
+ * ANY genuinely-working node even when it draws no edges (a single-worker linear DAG
+ * has zero handoffs — the "no arrows, looks dead" gap) WITHOUT ever fabricating motion
+ * for a node that is not actually working.
+ *
+ *  - `working` (→ static border accent + self-arc): the node is ACTUALLY doing work.
+ *    "Actually" means real liveness evidence — it is `streaming` (fresh output, below),
+ *    OR its live agent-mesh dot reads 'working'. A bare durable CLAIM is deliberately
+ *    NOT working: a claim is only an assignment, so a just-claimed / stranded slot whose
+ *    worker sits idle must not render a phantom self-arc (that is the exact wedge the
+ *    self-heal path — redispatchStalled / flushStale — exists to recover). Such a claim
+ *    surfaces as `claimed`.
+ *  - `streaming` (→ bright self-arc + live badge): the stronger, backend-grounded tier.
+ *    The node's CLAIMED unit produced real worker OUTPUT within {@link STREAMING_FRESH_MS}
+ *    (`progressAt`), advanced by the host ONLY from PTY output — never by the agent-state
+ *    lease renewal that keeps a stuck worker's `leaseExpiresAt` future, so a live lease
+ *    alone must NOT read as streaming. `streaming ⊆ working`.
+ *  - `claimed` (→ static neutral chip, NO arc): holds a durable claim but shows no
+ *    liveness (stale/absent `progressAt`, mesh dot not 'working'). Surfaced honestly as
+ *    "assigned, not confirmed emitting" — never as motion.
+ *
+ * A quiescent (all-exited) squad and any exited node get no treatment.
+ */
+export const STREAMING_FRESH_MS = 15_000;
+export function nodeActivity(node: SquadFlowNode, now: number): { working: boolean; streaming: boolean; claimed: boolean } {
+  if (node.exited) return { working: false, streaming: false, claimed: false };
+  // STREAMING requires FRESH output progress — not a bare live lease. `progressAt`
+  // advances only on real worker OUTPUT (byte-output renewal + worker turn), never on
+  // the agent-state lease renewal that keeps a stuck worker's `leaseExpiresAt` future.
+  const streaming = node.claim?.progressAt !== undefined && now - node.claim.progressAt < STREAMING_FRESH_MS;
+  // WORKING = real liveness ONLY: fresh output, OR a live agent dot reading 'working'.
+  // A bare claim (incl. a detached board-synth node with no fresh output) is NOT working
+  // — it reads as `claimed` so a stranded assignment can never render phantom motion.
+  const working = streaming || node.state === 'working';
+  const claimed = !working && node.claim !== undefined;
+  return { working, streaming, claimed };
+}
+
 /** Max child rows rendered in a node card before collapsing to "+N more". */
 const MAX_VISIBLE_CHILDREN = 4;
 
@@ -355,9 +394,32 @@ function FlowEdge({
   );
 }
 
+/**
+ * A self-loop arc drawn above a WORKING node. It gives a lone worker — one that
+ * hands off to nobody, so draws no outgoing edge — a visible directed arrow onto
+ * itself, reading as "actively working on its own unit". Chevron rides the arc under
+ * `animate` (reduced-motion / quiescent off); the arrowhead alone still conveys
+ * direction. `variant` mirrors the node tier: `streaming` (fresh output) is the bright,
+ * faster arc; `working` (live agent dot, no fresh output yet) is dimmer and slower —
+ * both convey motion, so a working lone worker is never invisible. */
+function SelfLoopArc({ cx, topY, animate, variant = 'streaming' }: { cx: number; topY: number; animate: boolean; variant?: 'streaming' | 'working' }) {
+  // Small arc bowing up out of the node's top edge, entering back down into it.
+  const path = `M${cx - 16},${topY} C${cx - 34},${topY - 46} ${cx + 34},${topY - 46} ${cx + 16},${topY}`;
+  return (
+    <g>
+      <path d={path} className={`squad-flow-self-loop ${variant === 'working' ? 'squad-flow-self-loop--working' : ''}`} markerEnd="url(#sf-arrow-self)" fill="none" />
+      {animate && (
+        <polygon points="0,-3.5 6.5,0 0,3.5" className={`squad-flow-chevron--self ${variant === 'working' ? 'squad-flow-chevron--self-working' : ''}`}>
+          <animateMotion dur={variant === 'working' ? '2.8s' : '1.8s'} repeatCount="indefinite" path={path} rotate="auto" />
+        </polygon>
+      )}
+    </g>
+  );
+}
+
 const DRAG_THRESHOLD = 4;
 
-function SquadGraph({ graph, onInspectExecution, pannable = true }: {
+export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
   graph: SquadFlowGraph;
   onInspectExecution?: (projectId: string, executionId: string) => void;
   pannable?: boolean;
@@ -518,6 +580,9 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
               <marker id="sf-arrow-hot" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto">
                 <path d="M0,0 L10,5 L0,10 z" className="squad-flow-arrowhead-hot" />
               </marker>
+              <marker id="sf-arrow-self" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+                <path d="M0,0 L9,4.5 L0,9 z" className="squad-flow-arrowhead-self" />
+              </marker>
             </defs>
             {routedEdges.map(({ edge: e, points }) => {
               const hot = !quiescent && e.lastTs === newestTs && newestTs > 0;
@@ -535,17 +600,43 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                 />
               );
             })}
+            {!quiescent &&
+              resolvedPlaced.map(({ node, x, y }) => {
+                const { working, streaming } = nodeActivity(node, now);
+                // Self-arc renders for ANY genuinely-working node (Plan 1), so a lone
+                // worker with no handoffs still shows motion. Bare/stranded claims are
+                // NOT working, so they draw no arc (no phantom motion).
+                return working ? (
+                  <SelfLoopArc
+                    key={`self:${node.sessionId}`}
+                    cx={x + bounds.offsetX + NODE_W / 2}
+                    topY={y + bounds.offsetY}
+                    animate={animateFlow}
+                    variant={streaming ? 'streaming' : 'working'}
+                  />
+                ) : null;
+              })}
           </svg>
 
           {resolvedPlaced.map(({ node, x, y }) => {
-            const verb = STATE_VERB[node.state];
-            const since = node.exited ? '' : sinceLabel(node.stateSince, now);
+            const { working, streaming, claimed } = nodeActivity(node, now);
+            // "working" = real liveness (fresh output OR the mesh reports working);
+            // "claimed" = a durable claim exists but no live signal — neither is
+            // fabricated into motion, so a stranded claim shows a static chip only.
+            const verb = node.exited
+              ? 'exited'
+              : working
+                ? 'working'
+                : claimed
+                  ? 'claimed'
+                  : STATE_VERB[node.state];
+            const since = node.exited ? '' : sinceLabel(node.claim?.claimedAt ?? node.stateSince, now);
             const isDragging = draggingId === node.sessionId;
             return (
               <button
                 key={node.sessionId}
                 type="button"
-                className={`squad-flow-node ${node.isOrchestrator ? 'squad-flow-node--orch' : ''} ${node.exited ? 'squad-flow-node--exited' : ''} ${isDragging ? 'squad-flow-node--dragging' : ''}`}
+                className={`squad-flow-node ${node.isOrchestrator ? 'squad-flow-node--orch' : ''} ${node.exited ? 'squad-flow-node--exited' : ''} ${working && !quiescent ? 'squad-flow-node--working' : ''} ${streaming && !quiescent ? 'squad-flow-node--streaming' : ''} ${claimed && !quiescent ? 'squad-flow-node--claimed' : ''} ${isDragging ? 'squad-flow-node--dragging' : ''}`}
                 style={{ left: x + bounds.offsetX, top: y + bounds.offsetY, width: NODE_W }}
                 onPointerDown={(e) => handlePointerDown(e, node, x, y)}
                 onPointerMove={handlePointerMove}
@@ -574,12 +665,30 @@ function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                       <span
                         className={`squad-flow-state-text agent-${node.exited ? 'done' : node.state}`}
                       >
-                        {node.exited ? 'exited' : verb}
+                        {verb}
                         {since ? ` · ${since}` : ''}
                       </span>
-                      {node.job?.needsAttention && node.job.blockerQuestion && (
+                      {streaming && (
+                        <span className="squad-flow-live" title="Emitting output — claim lease is live">
+                          live
+                        </span>
+                      )}
+                      {claimed && (
+                        <span
+                          className="squad-flow-claimed"
+                          title="Backend holds a work claim for this worker, but there is no live session and no recent output — resuming, remote, or stalled. No activity is being shown because none is confirmed."
+                        >
+                          claimed · no recent output
+                        </span>
+                      )}
+                      {node.job?.needsAttention && node.job.blockerAudience !== 'coordinator' && node.job.blockerQuestion && (
                         <span className="squad-flow-node-blocker" title={node.job.blockerQuestion}>
                           Needs you · {truncate(node.job.blockerQuestion, 56)}
+                        </span>
+                      )}
+                      {node.job?.blockerAudience === 'coordinator' && node.job.blockerQuestion && (
+                        <span className="squad-flow-node-coord" title={node.job.blockerQuestion}>
+                          Coordinator deciding · {truncate(node.job.blockerQuestion, 56)}
                         </span>
                       )}
                       {node.role && <span className="squad-flow-node-role">{node.role}</span>}

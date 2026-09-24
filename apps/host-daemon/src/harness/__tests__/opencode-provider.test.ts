@@ -4,6 +4,7 @@ import {
   OpenCodeAgentDiscoveryCache,
   OpenCodeAgentDiscoveryError,
   OpenCodeProvider,
+  classifyOpenCodePaneCommand,
   enrichOpenCodeAgentDescriptors,
   parseOpenCodeAgentDescriptors,
   parseOpenCodeAgentDebugOutput,
@@ -570,6 +571,20 @@ describe('OpenCodeProvider', () => {
     );
   });
 
+  it('exports remote MCP config INSIDE the login shell (survives profile re-source)', () => {
+    const url = 'http://127.0.0.1:45678/mcp/project/session/token';
+    const { cmd } = p.buildRemoteCommand({ profile: 'opencode', config: CONFIG, remote, remoteMcpUrl: url });
+    const configContent = JSON.stringify({ mcp: { 'zcc-inbox': { type: 'remote', url, enabled: true } } });
+    const inner = `export ${shellQuote(`OPENCODE_CONFIG_CONTENT=${configContent}`)}; exec ${shellQuoteArgv(['opencode'])}`;
+    expect(cmd).toBe(`cd '/home/sfwork/core' && exec 'bash' '-lic' ${shellQuote(inner)}`);
+    // The var is set INSIDE the -lic script (after profile sourcing), NOT as an
+    // outer `env KEY=… bash …` prefix — a login profile that configures opencode
+    // (Salesforce AI-Suite) re-sources over an outer `env` and clobbered zcc-inbox,
+    // leaving the worker with no execution.work.* tools (kickoff-churn root cause).
+    expect(cmd).not.toContain(`'env'`);
+    expect(cmd).toContain('zcc-inbox');
+  });
+
   it('remote command keeps resume and opening prompt inside the login shell argv', () => {
     const { cmd } = p.buildRemoteCommand({
       profile: 'opencode-resume',
@@ -851,4 +866,40 @@ describe.runIf(process.env.ZCC_LIVE_OPENCODE === '1')('OpenCodeProvider live dis
         .toEqual(expect.arrayContaining(['compaction', 'summary', 'title']));
     }
   }, 30_000);
+});
+
+describe('classifyOpenCodePaneCommand', () => {
+  it('classifies the agent binary / node runtime as alive', () => {
+    for (const cmd of ['opencode', 'node', 'bun', 'opencode-ai', 'OpenCode', '/usr/local/bin/opencode', ' node ']) {
+      expect(classifyOpenCodePaneCommand(cmd)).toBe('alive');
+    }
+  });
+
+  it('classifies a bare/login shell as dead (agent exited, wrapper survives)', () => {
+    for (const cmd of ['bash', 'zsh', 'sh', 'fish', 'dash', '-bash', '-zsh', '/bin/bash', 'BASH']) {
+      expect(classifyOpenCodePaneCommand(cmd)).toBe('dead');
+    }
+  });
+
+  it('classifies empty or unrecognized output as unknown (fail safe — never a false dead)', () => {
+    for (const cmd of ['', '   ', 'ssh', 'tmux', 'vim', 'python', 'unknown-thing']) {
+      expect(classifyOpenCodePaneCommand(cmd)).toBe('unknown');
+    }
+  });
+});
+
+describe('OpenCodeProvider agent-liveness capability', () => {
+  it('reports agent liveness and classifies via the shared classifier', () => {
+    const provider = new OpenCodeProvider();
+    expect(provider.reportsAgentLiveness).toBe(true);
+    expect(provider.classifyPaneCommand('bash')).toBe('dead');
+    expect(provider.classifyPaneCommand('opencode')).toBe('alive');
+  });
+
+  it('opts into a bracketed-paste envelope on injected replies', () => {
+    // OpenCode's Go TUI has no burst-paste heuristic, so a multi-line assignment
+    // must arrive bracketed or each embedded newline submits an early, truncated
+    // turn. Claude/shell keep the base default (false) — asserted below.
+    expect(new OpenCodeProvider().submitViaBracketedPaste).toBe(true);
+  });
 });

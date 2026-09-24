@@ -4004,7 +4004,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude · pers
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--permission-mode'\\'' '\\''acceptEdits'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep'\\'' '\\''--disallowedTools'\\'' '\\''Bash'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--permission-mode'\\'' '\\''acceptEdits'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep'\\'' '\\''--disallowedTools'\\'' '\\''Bash'\\'''",
   ],
 }
 `;
@@ -4022,7 +4022,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude · pers
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--permission-mode'\\'' '\\''acceptEdits'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep,Write'\\'' '\\''--disallowedTools'\\'' '\\''Bash,WebFetch'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--permission-mode'\\'' '\\''acceptEdits'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep,Write'\\'' '\\''--disallowedTools'\\'' '\\''Bash,WebFetch'\\'''",
   ],
 }
 `;
@@ -4040,7 +4040,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude · plai
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && CLAUDE_CODE_ENABLE_AUTO_MODE=1 ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--permission-mode'\\'' '\\''auto'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && CLAUDE_CODE_ENABLE_AUTO_MODE=1 ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--permission-mode'\\'' '\\''auto'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'''",
   ],
 }
 `;
@@ -4058,7 +4058,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude · proj
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Write'\\'' '\\''--disallowedTools'\\'' '\\''WebFetch'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Write'\\'' '\\''--disallowedTools'\\'' '\\''WebFetch'\\'''",
   ],
 }
 `;
@@ -4076,7 +4076,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude-resume 
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--resume'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--permission-mode'\\'' '\\''acceptEdits'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep'\\'' '\\''--disallowedTools'\\'' '\\''Bash'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--resume'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--permission-mode'\\'' '\\''acceptEdits'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep'\\'' '\\''--disallowedTools'\\'' '\\''Bash'\\'''",
   ],
 }
 `;
@@ -4094,7 +4094,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude-resume 
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--resume'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--permission-mode'\\'' '\\''acceptEdits'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep,Write'\\'' '\\''--disallowedTools'\\'' '\\''Bash,WebFetch'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--resume'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--permission-mode'\\'' '\\''acceptEdits'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep,Write'\\'' '\\''--disallowedTools'\\'' '\\''Bash,WebFetch'\\'''",
   ],
 }
 `;
@@ -4112,7 +4112,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude-resume 
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && CLAUDE_CODE_ENABLE_AUTO_MODE=1 ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--resume'\\'' '\\''--permission-mode'\\'' '\\''auto'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && CLAUDE_CODE_ENABLE_AUTO_MODE=1 ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--resume'\\'' '\\''--permission-mode'\\'' '\\''auto'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'''",
   ],
 }
 `;
@@ -4130,7 +4130,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude-resume 
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--resume'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Write'\\'' '\\''--disallowedTools'\\'' '\\''WebFetch'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--resume'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Write'\\'' '\\''--disallowedTools'\\'' '\\''WebFetch'\\'''",
   ],
 }
 `;
@@ -4148,7 +4148,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude-yolo ·
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--dangerously-skip-permissions'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep'\\'' '\\''--disallowedTools'\\'' '\\''Bash'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--dangerously-skip-permissions'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep'\\'' '\\''--disallowedTools'\\'' '\\''Bash'\\'''",
   ],
 }
 `;
@@ -4166,7 +4166,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude-yolo ·
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--dangerously-skip-permissions'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep,Write'\\'' '\\''--disallowedTools'\\'' '\\''Bash,WebFetch'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--dangerously-skip-permissions'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''You are a careful reviewer.'\\'' '\\''--add-dir'\\'' '\\''/extra/context'\\'' '\\''--model'\\'' '\\''opus'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Read,Grep,Write'\\'' '\\''--disallowedTools'\\'' '\\''Bash,WebFetch'\\'''",
   ],
 }
 `;
@@ -4184,7 +4184,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude-yolo ·
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--dangerously-skip-permissions'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--dangerously-skip-permissions'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'''",
   ],
 }
 `;
@@ -4202,7 +4202,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote claude-yolo ·
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--dangerously-skip-permissions'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Write'\\'' '\\''--disallowedTools'\\'' '\\''WebFetch'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && ZCC_NOTIFY_URL='\\''http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>'\\'' ZCC_SUBAGENT_URL='\\''http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>'\\'' ZCC_FIRSTPROMPT_URL='\\''http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>'\\'' exec '\\''claude'\\'' '\\''--dangerously-skip-permissions'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'' '\\''--append-system-prompt'\\'' '\\''Project house rules.'\\'' '\\''--add-dir'\\'' '\\''/project/docs'\\'' '\\''--model'\\'' '\\''sonnet'\\'' '\\''--verbose'\\'' '\\''--settings'\\'' '\\''{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); case \\"$ZCC_IN\\" in *'\\''\\'\\'''\\''\\"permission_prompt\\"'\\''\\'\\'''\\''*|*'\\''\\'\\'''\\''\\"elicitation_dialog\\"'\\''\\'\\'''\\''*) [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true;; esac; exit 0"}]}],"PreToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/blocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"Task","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_SUBAGENT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_SUBAGENT_URL/start\\" >/dev/null 2>&1 || true; exit 0"}]}],"PostToolUse":[{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]},{"matcher":"","hooks":[{"type":"command","command":"ZCC_IN=$(cat); [ -n \\"$ZCC_FIRSTPROMPT_URL\\" ] && printf \\"%s\\" \\"$ZCC_IN\\" | curl -s -m 5 -X POST --data-binary @- \\"$ZCC_FIRSTPROMPT_URL\\" >/dev/null 2>&1 || true; exit 0"}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_NOTIFY_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_NOTIFY_URL/unblocked\\" >/dev/null 2>&1 || true; exit 0"}]}],"SubagentStop":[{"matcher":"","hooks":[{"type":"command","command":"cat >/dev/null 2>&1; [ -n \\"$ZCC_SUBAGENT_URL\\" ] && curl -s -m 5 -X POST \\"$ZCC_SUBAGENT_URL/stop\\" >/dev/null 2>&1 || true; exit 0"}]}]}}'\\'' '\\''--allowedTools'\\'' '\\''Write'\\'' '\\''--disallowedTools'\\'' '\\''WebFetch'\\'''",
   ],
 }
 `;
@@ -4220,7 +4220,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex · perso
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
   ],
 }
 `;
@@ -4238,7 +4238,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex · perso
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
   ],
 }
 `;
@@ -4256,7 +4256,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex · plain
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'''",
   ],
 }
 `;
@@ -4274,7 +4274,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex · proje
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''sonnet'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''sonnet'\\'''",
   ],
 }
 `;
@@ -4292,7 +4292,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex-resume �
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''resume'\\'' '\\''--last'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''resume'\\'' '\\''--last'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
   ],
 }
 `;
@@ -4310,7 +4310,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex-resume �
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''resume'\\'' '\\''--last'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''resume'\\'' '\\''--last'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
   ],
 }
 `;
@@ -4328,7 +4328,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex-resume �
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''resume'\\'' '\\''--last'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''resume'\\'' '\\''--last'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'''",
   ],
 }
 `;
@@ -4346,7 +4346,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex-resume �
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''resume'\\'' '\\''--last'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''sonnet'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''resume'\\'' '\\''--last'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''sonnet'\\'''",
   ],
 }
 `;
@@ -4364,7 +4364,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex-yolo · 
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-approvals-and-sandbox'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-approvals-and-sandbox'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
   ],
 }
 `;
@@ -4382,7 +4382,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex-yolo · 
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-approvals-and-sandbox'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-approvals-and-sandbox'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''opus'\\'''",
   ],
 }
 `;
@@ -4400,7 +4400,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex-yolo · 
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-approvals-and-sandbox'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-approvals-and-sandbox'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'''",
   ],
 }
 `;
@@ -4418,7 +4418,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote codex-yolo · 
     "<PORT>:127.0.0.1:39999",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-approvals-and-sandbox'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''sonnet'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''codex'\\'' '\\''--dangerously-bypass-approvals-and-sandbox'\\'' '\\''--dangerously-bypass-hook-trust'\\'' '\\''-c'\\'' '\\''hooks.Stop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PermissionRequest=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PreToolUse=[{matcher="request_user_input",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/blocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.Interrupt=[{matcher="*",hooks=[{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.UserPromptSubmit=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/notify/proj1/<UUID>/unblocked\\""},{type="command",command="curl -sS -m 5 -o /dev/null -X POST --data-binary @- \\"http://127.0.0.1:<PORT>/hook/firstprompt/proj1/<UUID>\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStart=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/start\\""}]}]'\\'' '\\''-c'\\'' '\\''hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]'\\'' '\\''-m'\\'' '\\''sonnet'\\'''",
   ],
 }
 `;
@@ -4434,7 +4434,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor · pers
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'''",
   ],
 }
 `;
@@ -4450,7 +4450,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor · pers
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'''",
   ],
 }
 `;
@@ -4466,7 +4466,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor · plai
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'''",
   ],
 }
 `;
@@ -4482,7 +4482,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor · proj
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'''",
   ],
 }
 `;
@@ -4498,7 +4498,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor-resume 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--resume'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--resume'\\'''",
   ],
 }
 `;
@@ -4514,7 +4514,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor-resume 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--resume'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--resume'\\'''",
   ],
 }
 `;
@@ -4530,7 +4530,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor-resume 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--resume'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--resume'\\'''",
   ],
 }
 `;
@@ -4546,7 +4546,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor-resume 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--resume'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--resume'\\'''",
   ],
 }
 `;
@@ -4562,7 +4562,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor-yolo ·
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--force'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--force'\\'''",
   ],
 }
 `;
@@ -4578,7 +4578,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor-yolo ·
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--force'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--force'\\'''",
   ],
 }
 `;
@@ -4594,7 +4594,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor-yolo ·
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--force'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--force'\\'''",
   ],
 }
 `;
@@ -4610,7 +4610,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote cursor-yolo ·
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--force'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''cursor-agent'\\'' '\\''--force'\\'''",
   ],
 }
 `;
@@ -4626,7 +4626,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok · person
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -4642,7 +4642,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok · person
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -4658,7 +4658,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok · plain 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -4674,7 +4674,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok · projec
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -4690,7 +4690,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok-resume ·
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -4706,7 +4706,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok-resume ·
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -4722,7 +4722,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok-resume ·
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -4738,7 +4738,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok-resume ·
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -4754,7 +4754,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok-yolo · p
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -4770,7 +4770,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok-yolo · p
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -4786,7 +4786,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok-yolo · p
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -4802,7 +4802,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote grok-yolo · p
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''grok'\\'' '\\''--always-approve'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -4818,7 +4818,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode · 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
   ],
 }
 `;
@@ -4834,7 +4834,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode · 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
   ],
 }
 `;
@@ -4850,7 +4850,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode · 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
   ],
 }
 `;
@@ -4866,7 +4866,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode · 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'''",
   ],
 }
 `;
@@ -4882,7 +4882,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-res
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -4898,7 +4898,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-res
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -4914,7 +4914,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-res
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -4930,7 +4930,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-res
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''mastracode'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -4946,7 +4946,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-yol
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
   ],
 }
 `;
@@ -4962,7 +4962,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-yol
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
   ],
 }
 `;
@@ -4978,7 +4978,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-yol
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
   ],
 }
 `;
@@ -4994,7 +4994,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote mastracode-yol
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && env MASTRACODE_YOLO=1 exec '\\''mastracode'\\'''",
   ],
 }
 `;
@@ -5010,7 +5010,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode · pe
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5026,7 +5026,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode · pe
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5042,7 +5042,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode · pl
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5058,7 +5058,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode · pr
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5074,7 +5074,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode-resum
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--continue'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--continue'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5090,7 +5090,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode-resum
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--continue'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--continue'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5106,7 +5106,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode-resum
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--continue'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--continue'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5122,7 +5122,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode-resum
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--continue'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--continue'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5138,7 +5138,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode-yolo 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5154,7 +5154,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode-yolo 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5170,7 +5170,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode-yolo 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5186,7 +5186,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote opencode-yolo 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''bash'\\'' '\\''-lic'\\'' '\\''exec '\\''\\'\\'''\\''opencode'\\''\\'\\'''\\'' '\\''\\'\\'''\\''--auto'\\''\\'\\'''\\'''\\'''",
   ],
 }
 `;
@@ -5202,7 +5202,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote pi · persona 
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -5218,7 +5218,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote pi · persona+
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -5234,7 +5234,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote pi · plain 1`
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -5250,7 +5250,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote pi · projectS
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--session-id'\\'' '\\''<UUID>'\\'''",
   ],
 }
 `;
@@ -5266,7 +5266,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote pi-resume · p
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -5282,7 +5282,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote pi-resume · p
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -5298,7 +5298,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote pi-resume · p
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--continue'\\'''",
   ],
 }
 `;
@@ -5314,7 +5314,7 @@ exports[`golden command — remote buildRemoteCmd matrix > remote pi-resume · p
     "TCPKeepAlive=yes",
     "-t",
     "sfwork@devbox",
-    "'cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--continue'\\'''",
+    "'printf '\\''\\033]6997;zcc-remote-pid=%s\\007'\\'' $$ ; cd '\\''/home/sfwork/core'\\'' && exec '\\''pi'\\'' '\\''--continue'\\'''",
   ],
 }
 `;

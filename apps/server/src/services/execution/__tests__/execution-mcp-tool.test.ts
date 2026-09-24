@@ -79,6 +79,7 @@ function service() {
     ,ackDelivery: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } }))
     ,snapshotBound: vi.fn(async () => ({ execution: executionRecord, executions: [executionRecord], events: [], nextAfter: 0, truncated: false, artifacts: [], artifactsTruncated: false }))
     ,dispatchReady: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1' } }))
+    ,answerBlockerByCoordinator: vi.fn(async () => ({ ok: true as const, pending: true as const, notified: true, value: { id: 'execution-1' } }))
   };
 }
 
@@ -332,6 +333,70 @@ describe('execution MCP tools', () => {
     expect(payload.workUnits[0]).not.toHaveProperty('structuredResult');
     expect(payload).not.toHaveProperty('usageObservations');
     expect(payload).not.toHaveProperty('usageBaseline');
+  });
+
+  it('registers execution.work.answer for the coordinator self-heal path', () => {
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'coordinator', projectId: 'project-1', service: service() as never, validateRouteIdentity: () => true });
+    expect([...tools.keys()]).toContain('execution.work.answer');
+  });
+
+  it('passes a coordinator block audience through to the service', async () => {
+    const execution = service();
+    const binding = { executionId: 'execution-1', projectId: 'project-1', slotId: 'slot-1', role: 'worker' as const };
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'worker', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, resolveCohortBinding: () => binding });
+    await tools.get('execution.work.block')!({ executionId: 'execution-1', workUnitId: 'unit-1', blockerId: 'blocker-1', question: 'Which file?', audience: 'coordinator' });
+    expect(execution.blockWork).toHaveBeenCalledWith(binding, 'unit-1', expect.objectContaining({ id: 'blocker-1', question: 'Which file?', audience: 'coordinator' }), undefined, true);
+  });
+
+  it('routes execution.work.answer to answerBlockerByCoordinator with the bound coordinator', async () => {
+    const execution = service();
+    const binding = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'coordinator', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, resolveCohortBinding: () => binding });
+    const result = await tools.get('execution.work.answer')!({ executionId: 'execution-1', blockerId: 'blocker-1', answer: 'Write to a.txt.' });
+    expect(result.isError).toBeFalsy();
+    expect(execution.answerBlockerByCoordinator).toHaveBeenCalledWith(binding, 'blocker-1', 'Write to a.txt.');
+  });
+
+  it('denies execution.work.answer without an authorized bound route and forwards service rejections', async () => {
+    const execution = service();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // (1) Authorization denial: stale route identity → denied, service never touched.
+    const stale = fakeServer();
+    registerExecutionTools(stale.server as never, { sessionId: 'coordinator', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => false });
+    const unauthorized = await stale.tools.get('execution.work.answer')!({ executionId: 'execution-1', blockerId: 'blocker-1', answer: 'x' });
+    expect(unauthorized.isError).toBe(true);
+    expect(text(unauthorized)).toContain('session MCP is not authorized for this live session');
+
+    // (2) Missing binding: authorized route but no cohort binding → bound-denied, service never touched.
+    const unbound = fakeServer();
+    registerExecutionTools(unbound.server as never, { sessionId: 'coordinator', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, resolveCohortBinding: () => undefined });
+    const notBound = await unbound.tools.get('execution.work.answer')!({ executionId: 'execution-1', blockerId: 'blocker-1', answer: 'x' });
+    expect(notBound.isError).toBe(true);
+    expect(text(notBound)).toContain('not bound');
+    expect(execution.answerBlockerByCoordinator).not.toHaveBeenCalled();
+
+    const binding = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'coordinator', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, resolveCohortBinding: () => binding });
+
+    // (3) Service rejection (e.g. a human-audience blocker a coordinator may NOT answer) → error text forwarded verbatim.
+    execution.answerBlockerByCoordinator.mockResolvedValueOnce({ ok: false, code: 'DENIED', message: 'blocker is not coordinator-directed' } as never);
+    const rejected = await tools.get('execution.work.answer')!({ executionId: 'execution-1', blockerId: 'blocker-1', answer: 'x' });
+    expect(rejected.isError).toBe(true);
+    expect(text(rejected)).toContain('blocker is not coordinator-directed');
+    expect(execution.answerBlockerByCoordinator).toHaveBeenCalledWith(binding, 'blocker-1', 'x');
+
+    // (4) Internal throw → sanitized MCP error, no leak of the underlying message.
+    execution.answerBlockerByCoordinator.mockRejectedValueOnce(new Error('sensitive: internal token abc'));
+    const thrown = await tools.get('execution.work.answer')!({ executionId: 'execution-1', blockerId: 'blocker-1', answer: 'x' });
+    expect(thrown.isError).toBe(true);
+    expect(text(thrown)).toBe('execution.work.answer failed: internal error.');
+    expect(text(thrown)).not.toContain('sensitive');
+    errorSpy.mockRestore();
   });
 
   it('describes claim as worker-only despite shared Job Team preapproval', () => {

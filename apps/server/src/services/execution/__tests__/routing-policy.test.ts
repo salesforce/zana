@@ -29,8 +29,21 @@ describe('evaluateSlotEligibility', () => {
       .toMatchObject({ status: 'PASS' });
     expect(evaluateSlotEligibility({ version: 1, estimatedContextBytes: 10 }, { ...slot, provider: 'unknown', model: 'unknown' }, 200))
       .not.toHaveProperty('estimatedInputUsd');
+  });
+
+  it('treats slot health as advisory — stale or unknown health never blocks dispatch', () => {
+    // Stale (observedAt=100, maxAgeMs=1_000, now=2_000): out of window. Even a
+    // stale 'unavailable' reading must not block — it is no longer evidence.
     expect(evaluateSlotEligibility({ version: 1 }, { ...slot, health: 'unavailable' }, 2_000))
-      .toMatchObject({ status: 'UNKNOWN' });
+      .toMatchObject({ status: 'PASS' });
+    expect(evaluateSlotEligibility({ version: 1 }, { ...slot, health: 'available' }, 2_000))
+      .toMatchObject({ status: 'PASS' });
+    // Fresh but 'unknown' health: unresolved liveness, still advisory → PASS.
+    expect(evaluateSlotEligibility({ version: 1 }, { ...slot, health: 'unknown' }, 200))
+      .toMatchObject({ status: 'PASS' });
+    // Only fresh, positive 'unavailable' fails closed.
+    expect(evaluateSlotEligibility({ version: 1 }, { ...slot, health: 'unavailable' }, 200))
+      .toMatchObject({ status: 'FAIL' });
   });
 
   it('does not reject role-owned model unknown without a hard model requirement', () => {

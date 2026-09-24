@@ -496,7 +496,7 @@ export async function handleProductHttp(
 
     const projectOne = routeParams(path, '/api/v1/projects/:id');
     if (projectOne && method === 'PATCH') {
-      const patch = (await readJsonBody(request)) as { name?: string; color?: string; category?: string };
+      const patch = (await readJsonBody(request)) as { name?: string; color?: string; category?: string; remotePath?: string };
       const project = await ctx.projects.update(projectOne.id, patch);
       if (!project) {
         sendJson(response, 404, { error: 'project not found' });

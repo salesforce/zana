@@ -22,6 +22,7 @@ export interface IpcCtx {
   agentMessageLog: any;
   agentRegistry: any;
   agentStatus: any;
+  displayAgentState: any;
   autoCloseIdle: any;
   autonomousRuns: any;
   boundsControllers: any;

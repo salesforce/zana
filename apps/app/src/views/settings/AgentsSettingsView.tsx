@@ -312,8 +312,8 @@ export function AgentsSettingsView({
           </>
         )}
         <Field
-          label="Squad timeout (minutes, 0 = no timeout)"
-          help="How long Squad runs can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
+          label="Squad idle timeout (minutes, 0 = no timeout)"
+          help="How long a Squad run may go WITHOUT making progress before timing out. Worker output and heartbeats reset the clock, so a long but healthy run is never cut off — only a stalled one times out. Set to 0 to disable completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
         >
           <input
             type="number"

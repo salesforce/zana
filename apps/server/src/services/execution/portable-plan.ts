@@ -24,7 +24,51 @@ export type PortablePlanParse =
 const STEP_MARKER = /<!--\s*executable-step\s*-->/i;
 const HEADING = /^\s*###\s+(.*)$/;
 const SECTION_BREAK = /^\s*(#{1,3})\s+/; // next H1/H2/H3 ends a step block
-const LABEL = /^\s*[-*]?\s*\*\*([^:*]+):\*\*\s*(.*)$/;
+// Two shapes count as a field LABEL:
+//   (a) BULLET_LABEL — a leading list marker + space at any indent (`- **Work:**`,
+//       `  - **Work:**`).
+//   (b) BARE_LABEL — an UNINDENTED, non-bulleted top-level `**Work:**`. The prior
+//       grammar accepted this and real/persisted plans still use it (e.g.
+//       `**Work:** inspect only`); requiring a marker regressed those to
+//       "missing Work" and collapsed the whole plan to coordinator-derive.
+// An INDENTED `**...:**` with no list marker (`  **Purpose / why:**`) is NOT a
+// label: it is an inner sub-bold on a continuation line, folded into the current
+// label's multi-line value. Same for a `**bold**` inside prose (no `:` inside).
+const BULLET_LABEL = /^\s*[-*]\s+\*\*([^:*]+):\*\*\s*(.*)$/;
+const BARE_LABEL = /^\*\*([^:*]+):\*\*\s*(.*)$/;
+const FENCE = /^\s*(```|~~~)/; // fenced-code delimiter: freeze label detection inside
+
+/** Match a field-label line (bulleted at any indent, or an unindented bare label). */
+function matchLabel(raw: string): { key: string; rest: string } | null {
+  const bullet = BULLET_LABEL.exec(raw);
+  if (bullet) return { key: bullet[1].trim().toLowerCase(), rest: bullet[2] };
+  const bare = BARE_LABEL.exec(raw);
+  if (bare) return { key: bare[1].trim().toLowerCase(), rest: bare[2] };
+  return null;
+}
+
+/**
+ * Tracks fenced-code regions so label/heading detection can be frozen inside a
+ * code block. A fence is closed ONLY by the delimiter that opened it (``` closes
+ * ```, ~~~ closes ~~~), so a body mixing the two — a ~~~ line inside a ```-opened
+ * fence, or ``` for code and ~~~ elsewhere — cannot spuriously toggle the state.
+ * `step(line)` consumes one line and returns the fence state AFTER it, matching
+ * the prior `inFence = !inFence` timing where the delimiter line itself is part
+ * of the toggle.
+ */
+class FenceTracker {
+  private marker: '```' | '~~~' | null = null;
+  step(line: string): boolean {
+    const match = FENCE.exec(line);
+    if (match) {
+      const delim = match[1] as '```' | '~~~';
+      if (this.marker === null) this.marker = delim;
+      else if (this.marker === delim) this.marker = null;
+      // A non-matching delimiter while a fence is open is body text: ignore it.
+    }
+    return this.marker !== null;
+  }
+}
 
 const EXECUTION_CLASS_LEVEL: Record<string, 'low' | 'medium' | 'high'> = {
   routine: 'low',
@@ -55,6 +99,40 @@ interface PlanStepBlock {
   body: string[];
 }
 
+/**
+ * Accumulate MULTI-LINE label values from a step body. A label line opens a
+ * value; every following non-label line (continuation prose, indented sub-bold,
+ * fenced code) extends it until the next label or the body ends. This is why a
+ * real plan's `- **Work:**` with the body on the lines beneath it parses (the
+ * old single-line grammar read the empty inline remainder and rejected the step
+ * as "missing Work", collapsing the whole plan to the coordinator-derive path).
+ * Label detection is frozen inside fenced code (mixed-delimiter safe).
+ */
+function parseStepLabels(body: string[]): Map<string, string> {
+  const labels = new Map<string, string>();
+  const fence = new FenceTracker();
+  let current: string | null = null;
+  let buffer: string[] = [];
+  const flush = (): void => {
+    if (current !== null) labels.set(current, buffer.join('\n').trim());
+    current = null;
+    buffer = [];
+  };
+  for (const raw of body) {
+    const inFence = fence.step(raw);
+    const label = inFence ? null : matchLabel(raw);
+    if (label) {
+      flush();
+      current = label.key;
+      buffer = [label.rest];
+    } else if (current !== null) {
+      buffer.push(raw);
+    }
+  }
+  flush();
+  return labels;
+}
+
 /** Map one executable-step block onto a work unit, or explain why it is invalid. */
 function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInput } | { ok: false; reason: string } {
   const headingText = stripInlineComment(block.heading);
@@ -65,11 +143,7 @@ function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInp
   if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) return { ok: false, reason: `invalid step id: ${id}` };
   if (!title) return { ok: false, reason: `step ${id} missing title` };
 
-  const labels = new Map<string, string>();
-  for (const raw of block.body) {
-    const labelMatch = LABEL.exec(raw);
-    if (labelMatch) labels.set(labelMatch[1].trim().toLowerCase(), labelMatch[2].trim());
-  }
+  const labels = parseStepLabels(block.body);
 
   const task = labels.get('work');
   if (!task) return { ok: false, reason: `step ${id} missing Work` };
@@ -107,8 +181,15 @@ export function parsePortablePlan(text: string): PortablePlanParse {
     if (!headingMatch || !STEP_MARKER.test(lines[i])) continue;
     const body: string[] = [];
     let j = i + 1;
+    // Track fenced-code state while collecting so a `#`-prefixed line INSIDE a
+    // code block (e.g. a shell/BUILD comment) is not mistaken for the next
+    // heading. Without this the step block truncates mid-fence and drops every
+    // label after the code (Verification, Completion criteria, …), which then
+    // fails DAG completeness even though the plan is well-formed.
+    const fence = new FenceTracker();
     for (; j < lines.length; j += 1) {
-      if (SECTION_BREAK.test(lines[j])) break;
+      const inFence = fence.step(lines[j]);
+      if (!inFence && SECTION_BREAK.test(lines[j])) break;
       body.push(lines[j]);
     }
     blocks.push({ heading: headingMatch[1], body });

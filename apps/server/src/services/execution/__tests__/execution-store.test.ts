@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS } from '../store.js';
+import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
 import { usageRollup } from '../contracts.js';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../../launch/team-lifecycle-store.js';
 
@@ -17,6 +17,24 @@ function request() {
     requestDigest: 'digest-1', launchRequestId: 'request-1', resolvedModels: [],
     request: { version: 1 as const, slots: [{ initialTask: 'Run tests' }], resolvedModels: [] }
   };
+}
+
+/**
+ * Drive a work unit through `count` NEVER-TURNED claim→reclaim cycles — the
+ * kickoff-churn signature (worker accepts the assignment, never starts a turn,
+ * gets reclaimed). Returns the record with `kickoffFailures === count`, unit READY.
+ */
+async function accumulateKickoffFailures(store: ReturnType<typeof createExecutionStore>, count: number) {
+  let record = (await store.claim(request())).record;
+  record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+  record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+  record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+  for (let i = 0; i < count; i++) {
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const claim = record.workUnits![0];
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, reason: 'dead', force: true }]);
+  }
+  return record;
 }
 
 describe('execution store', () => {
@@ -186,9 +204,9 @@ describe('execution store', () => {
     expect(claim).toMatchObject({ claimGeneration: 1, claimedBy: { slotId: 'worker-1' }, heartbeatAt: now, turnCount: 0 });
     const noWrite = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, turnCount: 0 });
     expect(noWrite.stateVersion).toBe(record.stateVersion);
-    now += 60_000;
+    now += 270_000; // within HEARTBEAT_PERSIST_REMAINING_MS of the 300_000 lease expiry → renewal due
     const renewed = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, turnCount: 1 });
-    expect(renewed.workUnits![0]).toMatchObject({ heartbeatAt: now, turnCount: 1, leaseExpiresAt: now + 90_000 });
+    expect(renewed.workUnits![0]).toMatchObject({ heartbeatAt: now, turnCount: 1, leaseExpiresAt: now + 300_000 });
     await expect(store.heartbeatWork(renewed.id, renewed.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: 'stale', claimGeneration: 1 })).rejects.toThrow('stale work claim');
   }));
 
@@ -202,12 +220,362 @@ describe('execution store', () => {
     record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
     const unit = record.workUnits![0];
     expect((await store.listActiveClaims(undefined, 1)).records).toHaveLength(1);
-    now += 90_000;
+    now += 300_000; // past the default WORK_CLAIM_LEASE_MS lease window
     const unchanged = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: 'wrong', claimGeneration: unit.claimGeneration!, reason: 'dead' }]);
     expect(unchanged.workUnits![0].state).toBe('CLAIMED');
     const reclaimed = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'dead' }]);
     expect(reclaimed.workUnits![0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
     expect(reclaimed.workUnits![0]).not.toHaveProperty('claimId');
+  }));
+
+  it('honors an injected workClaimLeaseMs when stamping a claim lease', async () => fixture(async (filePath) => {
+    // The lease TTL is injectable (default WORK_CLAIM_LEASE_MS=300_000) so the
+    // built-Electron reclaim E2E can drive the real backstop in seconds.
+    const now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now, workClaimLeaseMs: 2_000 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const unit = record.workUnits![0];
+    expect(unit.claimedAt).toBe(1_000);
+    expect(unit.leaseExpiresAt).toBe(3_000); // claimedAt + injected 2_000, NOT the 300_000 default
+  }));
+
+  it('rejects a non-positive workClaimLeaseMs option', async () => fixture(async (filePath) => {
+    expect(() => createExecutionStore({ filePath, workClaimLeaseMs: 0 })).toThrow('invalid execution work claim lease');
+    expect(() => createExecutionStore({ filePath, workClaimLeaseMs: -5 })).toThrow('invalid execution work claim lease');
+    expect(() => createExecutionStore({ filePath, workClaimLeaseMs: 1.5 })).toThrow('invalid execution work claim lease');
+  }));
+
+  it('renewWorkerLease renews the active claim lease from observed worker output', async () => fixture(async (filePath) => {
+    // Host wires this off PTY output activity: a live worker refreshes its lease so the
+    // reconcile sweep never reclaims it as silent. Uses a short 2_000ms lease for clarity.
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now, workClaimLeaseMs: 2_000 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // lease→3_000
+    now += 1_500; // now=2_500, remaining 500ms is within HEARTBEAT_PERSIST_REMAINING_MS
+    const renewed = await store.renewWorkerLease(record.id, 'worker-1');
+    expect(renewed?.workUnits![0]).toMatchObject({ heartbeatAt: 2_500, leaseExpiresAt: 4_500 }); // now + 2_000
+  }));
+
+  it('renewWorkerLease is a no-op when no unit is claimed by the slot', async () => fixture(async (filePath) => {
+    const now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now });
+    const record = (await store.claim(request())).record; // claimed but no plan/work claim yet
+    expect(await store.renewWorkerLease(record.id, 'worker-1')).toBeUndefined();
+    expect(await store.renewWorkerLease('missing', 'worker-1')).toBeUndefined();
+  }));
+
+  it('claimWork stamps progressAt at the claim time', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 4_200, workClaimLeaseMs: 2_000 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    expect(record.workUnits![0].progressAt).toBe(4_200);
+  }));
+
+  it('renewWorkerLease WITHOUT advanceProgress renews the lease but does NOT advance progressAt', async () => fixture(async (filePath) => {
+    // The agent-state renewal path (reconcileActive) keeps a silent worker's lease
+    // alive without touching progressAt, so the stall ceiling can still reclaim it.
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now, workClaimLeaseMs: 2_000 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // progressAt=1_000, lease→3_000
+    now += 1_500; // now=2_500, within HEARTBEAT_PERSIST_REMAINING_MS of expiry
+    const renewed = await store.renewWorkerLease(record.id, 'worker-1'); // advanceProgress defaults off
+    expect(renewed?.workUnits![0]).toMatchObject({ leaseExpiresAt: 4_500, progressAt: 1_000 }); // lease moved, progress frozen
+  }));
+
+  it('renewWorkerLease WITH advanceProgress advances progressAt (real worker output)', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now, workClaimLeaseMs: 2_000 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // lease→3_000
+    now += 1_500; // now=2_500
+    const renewed = await store.renewWorkerLease(record.id, 'worker-1', { advanceProgress: true });
+    expect(renewed?.workUnits![0]).toMatchObject({ leaseExpiresAt: 4_500, progressAt: 2_500 });
+  }));
+
+  it('heartbeatWork advances progressAt when it mutates (a cohort worker turn is real progress)', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // progressAt=1_000
+    const claim = record.workUnits![0];
+    now += 5_000; // now=6_000
+    const beat = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, turnCount: 1 });
+    expect(beat.workUnits![0].progressAt).toBe(6_000); // a turnCount bump mutates → progress advances
+  }));
+
+  it('reclaimExpiredClaims honors force to reclaim a still-fresh lease (wall-clock backstop)', async () => fixture(async (filePath) => {
+    // The state-agnostic wall-clock ceiling must reclaim even a claim whose lease is fresh
+    // (a worker that streams output forever, renewing its lease, yet never completes). The
+    // lease-expiry floor otherwise blocks it; `force` bypasses that floor.
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => now });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // lease→301_000
+    const unit = record.workUnits![0];
+    now += 10_000; // now=11_000, lease still fresh (< 301_000)
+    const kept = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'ceiling' }]);
+    expect(kept.workUnits![0].state).toBe('CLAIMED'); // floor blocks reclaim of a fresh lease
+    const forced = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'ceiling', force: true }]);
+    expect(forced.workUnits![0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
+  }));
+
+  it('completeWork recovers a finished worker whose claim was reclaimed (non-destructive)', async () => fixture(async (filePath) => {
+    // Run b56e63f5: a worker finished but a reconcile had already reclaimed its
+    // silent claim, so the unit sat READY. The old code discarded the finished
+    // result ('work unit is not claimed') → churn. Now the last claim holder can
+    // still complete a reclaimed-but-idle unit and its real result is kept.
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const unit = record.workUnits![0];
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'dead', force: true }]);
+    expect(record.workUnits![0].state).toBe('READY');
+    record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'done anyway');
+    expect(record.workUnits![0]).toMatchObject({ state: 'COMPLETED', result: 'done anyway' });
+  }));
+
+  it('completeWork accepts a late completion of the EXACT reclaimed claim while the unit stays READY (run b56e63f5)', async () => fixture(async (filePath) => {
+    // The reconcile reclaimed a still-live silent worker; the unit sits READY and has
+    // NOT been re-claimed. The worker then finishes and completes under its reclaimed
+    // claim (the MCP tool always passes requireClaim=true). The recorded reclaimedClaim
+    // authorizes exactly this — the real result is kept, not discarded into a churn loop.
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const reclaimed = record.workUnits![0]; // gen 1 — the claim the worker completes under
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: reclaimed.claimId!, claimGeneration: reclaimed.claimGeneration!, reason: 'silent', force: true }]);
+    expect(record.workUnits![0].state).toBe('READY');
+    record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'verified', { claimId: reclaimed.claimId!, claimGeneration: reclaimed.claimGeneration! }, true);
+    expect(record.workUnits![0]).toMatchObject({ state: 'COMPLETED', result: 'verified' });
+  }));
+
+  it('completeWork REJECTS a stale-generation completion once the unit was re-claimed on the SAME slot (slot reuse; run e531f415)', async () => fixture(async (filePath) => {
+    // Slot ids are reused across worker restarts: worker A is reclaimed, a replacement
+    // B starts in the SAME slot and re-claims (fresh generation), then zombie A finishes
+    // and tries to complete under its now-stale generation. Accepting it would clobber
+    // B's live, possibly mid-edit attempt — the claim-generation fence must reject it,
+    // and the unit must stay CLAIMED by B's generation.
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const stale = record.workUnits![0]; // gen 1 — the zombie's stale claim
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: stale.claimId!, claimGeneration: stale.claimGeneration!, reason: 'silent', force: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit'); // gen 2, same slot, replacement worker
+    expect(record.workUnits![0]).toMatchObject({ state: 'CLAIMED', claimGeneration: 2, assignedSlotId: 'worker-1' });
+    await expect(store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'zombie result', { claimId: stale.claimId!, claimGeneration: stale.claimGeneration! }, true))
+      .rejects.toThrow('stale work claim');
+    const after = await store.get(record.id);
+    expect(after!.workUnits![0]).toMatchObject({ state: 'CLAIMED', claimGeneration: 2 });
+    expect(after!.workUnits![0].result).toBeUndefined();
+  }));
+
+  it('completeWork never resurrects a FAILED unit from a stale worker', async () => fixture(async (filePath) => {
+    // A worker whose claim was reclaimed and then FAILED (by the coordinator, or a
+    // fresh worker) must not be un-failed by a late stale completion.
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const stale = record.workUnits![0];
+    // fail the unit through a live re-claim so it is genuinely FAILED
+    record = await store.failWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'gave up', 'UNKNOWN', { claimId: stale.claimId!, claimGeneration: stale.claimGeneration! }, true);
+    expect(record.workUnits![0].state).toBe('FAILED');
+    await expect(store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'late done', { claimId: stale.claimId!, claimGeneration: stale.claimGeneration! }, true))
+      .rejects.toThrow('work unit is not claimed');
+    const after = await store.get(record.id);
+    expect(after!.workUnits![0]).toMatchObject({ state: 'FAILED', failure: 'gave up' });
+  }));
+
+  it('completeWork rejects recovery when a different slot has re-claimed the unit', async () => fixture(async (filePath) => {
+    // Reclaimed then re-dispatched to another worker: the new holder wins (may be
+    // mid-edit); the old worker's late completion must NOT clobber it.
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'orchestrator:lead' }, 'unit', 'worker-1');
+    const unit = record.workUnits![0];
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'dead', force: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'orchestrator:lead' }, 'unit', 'worker-2');
+    await expect(store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', 'late')).rejects.toThrow('work unit is assigned to another slot');
+  }));
+
+  it('completeWork rejects recovery from a slot that never held the unit', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const unit = record.workUnits![0];
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason: 'dead', force: true }]);
+    await expect(store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-9' }, 'unit', 'nope')).rejects.toThrow('work unit is not claimed');
+  }));
+
+  it('counts a never-turned reclaim as a kickoff failure (churn signature; run 47823553)', async () => fixture(async (filePath) => {
+    // A worker that repeatedly accepts the unit but never starts a turn is stuck at
+    // DELIVERY, not making progress. Each reclaim of a turnCount-0 claim bumps the
+    // counter (captured before clearClaim wipes turnCount) so the engine can escape.
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    const record = await accumulateKickoffFailures(store, 2);
+    expect(record.workUnits![0]).toMatchObject({ state: 'READY', kickoffFailures: 2 });
+  }));
+
+  it('does NOT count a reclaim of a unit that already turned (mid-work stall is not kickoff churn)', async () => fixture(async (filePath) => {
+    // Once a worker reports turnCount > 0 the kickoff succeeded; a later stall/reclaim
+    // is genuine mid-work loss, NOT the never-started signature, so it must never bump
+    // kickoffFailures (which would let a normal reclaim trip the human-block escape hatch).
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const claim = record.workUnits![0];
+    record = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, turnCount: 1 });
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, reason: 'dead', force: true }]);
+    expect(record.workUnits![0]).toMatchObject({ state: 'READY' });
+    expect(record.workUnits![0].kickoffFailures).toBeUndefined();
+  }));
+
+  it('a real worker turn clears an accumulated kickoffFailures (kickoff proven succeeded)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    let record = await accumulateKickoffFailures(store, 2); // kickoffFailures = 2, unit READY
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const claim = record.workUnits![0];
+    expect(claim.kickoffFailures).toBe(2); // survives the re-claim (clearClaim preserves it)
+    record = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit', { claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, turnCount: 1 });
+    expect(record.workUnits![0]).toMatchObject({ turnCount: 1 });
+    expect(record.workUnits![0].kickoffFailures).toBeUndefined(); // the turn cleared it
+  }));
+
+  it('blockKickoffFailure blocks to a human at the threshold and is a guarded no-op otherwise', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    // Below threshold → refuses (never spuriously blocks a still-recoverable unit).
+    const below = await accumulateKickoffFailures(store, KICKOFF_FAILURE_BLOCK_THRESHOLD - 1);
+    await expect(store.blockKickoffFailure(below.id, 'unit')).rejects.toThrow('kickoff failures below block threshold');
+    // One more never-turned reclaim reaches the threshold → block to a human.
+    let record = await store.claimWork(below.id, below.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'unit');
+    const claim = record.workUnits![0];
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, reason: 'dead', force: true }]);
+    expect(record.workUnits![0].kickoffFailures).toBe(KICKOFF_FAILURE_BLOCK_THRESHOLD);
+    const blocked = await store.blockKickoffFailure(record.id, 'unit');
+    expect(blocked.workUnits![0]).toMatchObject({ state: 'BLOCKED' });
+    expect(blocked.workUnits![0].assignedSlotId).toBeUndefined();
+    expect(blocked.workUnits![0]).not.toHaveProperty('claimId');
+    expect(blocked.state).toBe('BLOCKED');
+    const blocker = blocked.blockers?.find((entry) => entry.workUnitId === 'unit');
+    expect(blocker).toMatchObject({ audience: 'human', resolved: false });
+    expect(blocker?.question).toContain('never started a turn');
+    // Idempotent: escalating an already-blocked unit refuses (no dup blocker / no churn).
+    await expect(store.blockKickoffFailure(record.id, 'unit')).rejects.toThrow('work unit is not blockable for kickoff failure');
+  }));
+
+  it('retryWork restores a kickoff-blocked unit to READY with a fresh kickoff budget', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    let record = await accumulateKickoffFailures(store, KICKOFF_FAILURE_BLOCK_THRESHOLD);
+    record = await store.blockKickoffFailure(record.id, 'unit');
+    expect(record.workUnits![0].state).toBe('BLOCKED');
+    record = await store.retryWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'unit');
+    expect(record.workUnits![0]).toMatchObject({ state: 'READY' });
+    expect(record.workUnits![0].kickoffFailures).toBeUndefined(); // human fixed the worker → fresh budget
+  }));
+
+  it('reassignKickoffToFreshSlot re-homes a churned unit onto an untried worker slot with a fresh budget', async () => fixture(async (filePath) => {
+    // SELF-HEAL: a unit that churned to the block threshold on ONE worker slot is
+    // re-homed onto a DIFFERENT authorized worker slot it has not run on yet, with a
+    // fresh kickoff budget — a wedged / mis-wired worker may simply not recur on a peer.
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.setAuthorizationContext(record.id, record.stateVersion, {
+      version: 1, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+        { slotId: 'orchestrator', personaId: 'lead', authorizationIdDigest: 'o' },
+        { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1' },
+        { slotId: 'slot-2', personaId: 'worker', authorizationIdDigest: 'w2' }
+      ]
+    }, 'authorization-digest');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    // Churn on slot-1 to the block threshold (worker accepts each claim, never turns).
+    for (let i = 0; i < KICKOFF_FAILURE_BLOCK_THRESHOLD; i++) {
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+      const claim = record.workUnits![0];
+      record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, reason: 'dead', force: true }]);
+    }
+    expect(record.workUnits![0].kickoffFailures).toBe(KICKOFF_FAILURE_BLOCK_THRESHOLD);
+    record = await store.reassignKickoffToFreshSlot(record.id, 'unit');
+    // Pinned to the untried worker slot (never the orchestrator), still READY, fresh budget.
+    expect(record.workUnits![0]).toMatchObject({ state: 'READY', assignedSlotId: 'slot-2' });
+    expect(record.workUnits![0].kickoffFailures).toBeUndefined();
+    expect(record.workUnits![0].history.at(-1)).toMatchObject({ action: 'retried', slotId: 'slot-2' });
+  }));
+
+  it('reassignKickoffToFreshSlot throws (→ caller blocks) below threshold, when every slot was tried, and when not READY', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.setAuthorizationContext(record.id, record.stateVersion, {
+      version: 1, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+        { slotId: 'orchestrator', personaId: 'lead', authorizationIdDigest: 'o' },
+        { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1' }
+      ]
+    }, 'authorization-digest');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+    // Below threshold → refuses (unit still recoverable in place, no spurious re-home).
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    let claim = record.workUnits![0];
+    record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, reason: 'dead', force: true }]);
+    await expect(store.reassignKickoffToFreshSlot(record.id, 'unit')).rejects.toThrow('kickoff failures below block threshold');
+    // Churn the ONLY worker slot the rest of the way to threshold; it is now the sole tried slot.
+    for (let i = 1; i < KICKOFF_FAILURE_BLOCK_THRESHOLD; i++) {
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+      claim = record.workUnits![0];
+      record = await store.reclaimExpiredClaims(record.id, [{ workUnitId: 'unit', claimId: claim.claimId!, claimGeneration: claim.claimGeneration!, reason: 'dead', force: true }]);
+    }
+    expect(record.workUnits![0].kickoffFailures).toBe(KICKOFF_FAILURE_BLOCK_THRESHOLD);
+    await expect(store.reassignKickoffToFreshSlot(record.id, 'unit')).rejects.toThrow('no untried worker slot for kickoff reassignment');
+    // Not READY (already blocked) → the state guard refuses before the threshold check.
+    record = await store.blockKickoffFailure(record.id, 'unit');
+    expect(record.workUnits![0].state).toBe('BLOCKED');
+    await expect(store.reassignKickoffToFreshSlot(record.id, 'unit')).rejects.toThrow('work unit is not reassignable for kickoff failure');
   }));
 
   it('propagates failed dependencies as skipped and restores them on retry', async () => fixture(async (filePath) => {
@@ -439,6 +807,52 @@ describe('execution store', () => {
     await expect(store.enqueueBlockerDelivery(record.id, enqueued.record.stateVersion, { clientRequestId: 'client-3', blockerId: 'blocker-1', text: '😀'.repeat(4097) })).rejects.toThrow('delivery payload exceeds 16384 bytes');
   }));
 
+  it('escalates a coordinator-audience blocker to human exactly once (a second sweep is a no-op)', async () => fixture(async (filePath) => {
+    let now = 100;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'a', title: 'A', task: 'A', dependencies: [], files: ['a.txt'], verification: ['check a'] }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'a', 'slot-1');
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'a', { id: 'blocker-1', question: 'Which?', audience: 'coordinator' });
+
+    now = 200;
+    // A background sweep runs with no caller stateVersion (undefined skips the CAS), so it survives concurrent writes.
+    const escalated = await store.escalateBlockerToHuman(record.id, 'blocker-1');
+    expect(escalated.blockers?.find((blocker) => blocker.id === 'blocker-1')).toMatchObject({ audience: 'human', escalatedAt: 200, resolved: false });
+
+    // The audience flip is itself the idempotency guard: a re-escalate now sees a human blocker and refuses.
+    now = 300;
+    await expect(store.escalateBlockerToHuman(record.id, 'blocker-1')).rejects.toThrow('only a coordinator-audience blocker');
+    expect((await store.get(record.id))?.blockers?.find((blocker) => blocker.id === 'blocker-1')?.escalatedAt).toBe(200); // not re-stamped
+  }));
+
+  it('refuses to escalate a human-audience blocker, a missing blocker, or a resolved one', async () => fixture(async (filePath) => {
+    let id = 0;
+    const store = createExecutionStore({ filePath, id: () => id++ === 0 ? 'execution-1' : `delivery-${id}` });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.registerPlan(record.id, record.stateVersion, [
+      { id: 'a', title: 'A', task: 'A', dependencies: [], files: ['a.txt'], verification: ['check a'] },
+      { id: 'b', title: 'B', task: 'B', dependencies: [], files: ['b.txt'], verification: ['check b'] }
+    ]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'a', 'slot-1');
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'a', { id: 'human-blocker', question: 'Owner?' }); // no audience → human lane
+
+    await expect(store.escalateBlockerToHuman(record.id, 'human-blocker')).rejects.toThrow('only a coordinator-audience blocker');
+    await expect(store.escalateBlockerToHuman(record.id, 'missing')).rejects.toThrow('execution blocker not found');
+
+    // Resolve a coordinator blocker on a second unit via a delivered answer, then confirm a resolved blocker can't escalate.
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'b', 'slot-2');
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-2' }, 'b', { id: 'coord-blocker', question: 'Which?', audience: 'coordinator' });
+    record = (await store.enqueueBlockerDelivery(record.id, record.stateVersion, { clientRequestId: 'client-1', blockerId: 'coord-blocker', text: 'Answer' })).record;
+    const leased = await store.pullBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-2', role: 'worker' });
+    await store.ackBlockerDelivery({ executionId: record.id, projectId: 'project-1', slotId: 'slot-2', role: 'worker' }, leased!.id, leased!.leaseId!, { delivered: true });
+    await expect(store.escalateBlockerToHuman(record.id, 'coord-blocker')).rejects.toThrow('is resolved');
+  }));
+
   it('rejects a work retry while a human answer is in flight and keeps the delivery deliverable', async () => fixture(async (filePath) => {
     let id = 0;
     const store = createExecutionStore({ filePath, id: () => id++ === 0 ? 'execution-1' : `id-${id}` });
@@ -503,22 +917,6 @@ describe('execution store', () => {
     expect((await store.dispatchReady(record.id)).assignments).toEqual([]);
     const completed = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'claimed', 'done', claim, true);
     expect(completed.workUnits).toContainEqual(expect.objectContaining({ id: 'claimed', state: 'COMPLETED' }));
-  }));
-
-  it('fails active delivery when blocker resolves through alternate response path', async () => fixture(async (filePath) => {
-    let id = 0;
-    const store = createExecutionStore({ filePath, id: () => id++ === 0 ? 'execution-1' : `id-${id}` });
-    let record = (await store.claim(request())).record;
-    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
-    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
-    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'a', title: 'A', task: 'A', dependencies: [], files: ['a.txt'], verification: ['check a'] }]);
-    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'a', 'slot-1');
-    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'a', { id: 'blocker-1', question: 'Q?' });
-    record = (await store.enqueueBlockerDelivery(record.id, record.stateVersion, { clientRequestId: 'client-1', blockerId: 'blocker-1', text: 'Queued answer' })).record;
-    record = await store.respondToBlocker(record.id, record.stateVersion, 'blocker-1', 'Direct answer');
-    record = await store.resumeBlocker(record.id, record.stateVersion, 'blocker-1');
-    expect(record.blockers?.[0]).toMatchObject({ resolved: true, response: 'Direct answer' });
-    expect(record.deliveries?.[0]).toMatchObject({ state: 'FAILED', lastError: 'blocker resolved through alternate path' });
   }));
 
   it('retains delivered records for 30 days without evicting active deliveries', async () => fixture(async (filePath) => {
@@ -843,7 +1241,7 @@ describe('execution store', () => {
     });
   }));
 
-  it('durably blocks, responds, and resumes exact work and slot with version fencing', async () => fixture(async (filePath) => {
+  it('durably blocks a claimed unit with exact work, slot, and options', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const claimed = await store.claim(request());
     if (claimed.outcome !== 'claimed') throw new Error('expected claim');
@@ -855,11 +1253,6 @@ describe('execution store', () => {
       id: 'blocker-1', question: 'Choose?', options: ['A', 'B']
     });
     expect(blocked).toMatchObject({ state: 'BLOCKED', blockers: [{ id: 'blocker-1', workUnitId: 'a', slotId: 'slot-1', question: 'Choose?', options: ['A', 'B'] }] });
-    await expect(store.respondToBlocker(blocked.id, record.stateVersion, 'blocker-1', 'A')).rejects.toThrow('stale execution state');
-    const responded = await store.respondToBlocker(blocked.id, blocked.stateVersion, 'blocker-1', 'A');
-    expect(responded.blockers?.[0]).toMatchObject({ response: 'A', resolved: false });
-    const resumed = await store.resumeBlocker(responded.id, responded.stateVersion, 'blocker-1');
-    expect(resumed).toMatchObject({ state: 'RUNNING', blockers: [{ resolved: true }], workUnits: [{ state: 'CLAIMED', assignedSlotId: 'slot-1' }] });
   }));
 
   it('rejects early completion and persists the full final summary', async () => fixture(async (filePath) => {

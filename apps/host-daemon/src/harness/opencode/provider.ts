@@ -50,6 +50,7 @@
 
 import type { AppConfig, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import type {
+  AgentLiveness,
   RemoteCommandInput,
   RemoteCommandResult,
   ResolvedLaunch
@@ -525,6 +526,42 @@ function discoverOpenCodeModels(context: { cwd: string; config: AppConfig }): Pr
   return modelDiscoveryCache.discover(command, context.cwd, () => runOpenCodeModelDiscovery(command, context.cwd));
 }
 
+/**
+ * Pane commands that mean the OpenCode agent is RUNNING. The CLI is an npm
+ * (`opencode-ai`) node binary, so a remote tmux pane running it reports either
+ * the wrapper name `opencode` or the underlying `node`/`bun` runtime, depending
+ * on how the install execs. Membership is generous ON PURPOSE: a false `alive`
+ * only ever UNDER-reclaims (a real zombie shows a bare shell, never a runtime),
+ * whereas a false `dead` would kill a live agent — so the bias is correct.
+ */
+const OPENCODE_AGENT_PANE_COMMANDS = new Set(['opencode', 'node', 'bun', 'opencode-ai']);
+
+/**
+ * Bare login/interactive shells that mean the inner agent has EXITED and only
+ * its wrapper shell survives (the remote-opencode zombie). The remote launch is
+ * `bash -lic 'exec …'`, so the surviving process after the agent dies is a login
+ * shell; tmux may report it with a leading `-` (login-shell marker), which the
+ * classifier strips.
+ */
+const LOGIN_SHELL_PANE_COMMANDS = new Set(['bash', 'zsh', 'sh', 'fish', 'dash', 'ksh', 'ash', 'tcsh', 'csh']);
+
+/**
+ * Classify a tmux `#{pane_current_command}` for an OpenCode remote worker into an
+ * agent-liveness verdict. Pure + exported for unit test. Trims, lowercases,
+ * strips a login-shell leading `-` and any directory path, then matches the two
+ * sets above. An empty or unrecognized command is `unknown` (fail safe — never a
+ * false `dead`). Rule 6: the concrete command names live only here.
+ */
+export function classifyOpenCodePaneCommand(command: string): AgentLiveness {
+  const raw = command.trim().toLowerCase();
+  if (!raw) return 'unknown';
+  // tmux may prefix a login shell with `-`; commands may carry a dir path.
+  const base = raw.replace(/^-/, '').split('/').pop() ?? raw;
+  if (OPENCODE_AGENT_PANE_COMMANDS.has(base)) return 'alive';
+  if (LOGIN_SHELL_PANE_COMMANDS.has(base)) return 'dead';
+  return 'unknown';
+}
+
 export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
   readonly adapter = OPENCODE_ADAPTER;
@@ -534,6 +571,19 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   // session / exit 64) on any install whose provider inventory differs from the
   // shipped snapshot. So a resolved native role suppresses the injected model.
   readonly nativeRolePinsModel = true;
+  // OpenCode's remote pane runs a nameable agent binary (opencode/node), distinct
+  // from the `bash -lic` wrapper shell that survives when the agent exits — so
+  // PtyManager can tell a live agent from a zombie. See classifyPaneCommand.
+  readonly reportsAgentLiveness = true;
+  // OpenCode's Go TUI has no burst-paste heuristic (unlike Claude Code), so an
+  // injected multi-line reply must be wrapped in a bracketed-paste envelope or
+  // each embedded `\n` submits early — a worker assignment would land only its
+  // truncated first line and never turn. See PtyManager.reply.
+  readonly submitViaBracketedPaste = true;
+
+  classifyPaneCommand(command: string): AgentLiveness {
+    return classifyOpenCodePaneCommand(command);
+  }
 
   dynamicRoleEvidenceTarget(target: { id: string; label: string; scope: readonly ('local' | 'remote')[] }, _installedVersion: string) {
     return { ...target, id: 'opencode.role.discovery', scope: [...target.scope], evidenceVersion: OPENCODE_MIN_VERSION };
@@ -808,8 +858,27 @@ export class OpenCodeProvider extends BaseLaunchProvider {
       ...(execution.contribution.args || []),
       ...remoteExtra
     ];
+    const mcpEnv = input.remoteMcpUrl
+      ? Object.entries(this.mcpEnv(effectiveProfile, input.remoteMcpUrl)).map(([key, value]) => `${key}=${value}`)
+      : [];
+    // Set the MCP env INSIDE the login shell (after profile sourcing), NOT as an
+    // outer `env KEY=… bash -lic` prefix. `bash -lic` re-sources the remote user's
+    // login+interactive profile AFTER an outer `env` seeds the value but BEFORE
+    // `exec opencode` — so on a box whose profile configures opencode (the
+    // Salesforce AI-Suite global `~/.config/opencode`) the injected value was
+    // clobbered and the worker booted with the box's MCP set (mcp-adaptor) but
+    // WITHOUT zcc-inbox. With no zcc-inbox server it has NO `execution.work.*`
+    // tools, so it can never heartbeat/complete and churns to a kickoff block
+    // (observed live: doc-execute remote workers, turnCount stuck 0). `export`ing
+    // inside the -lic script runs AFTER profile sourcing, so zcc-inbox wins.
+    // OpenCode-only: it carries MCP as env (no `--mcp-config` flag); claude remote
+    // injects a robust `--mcp-config` ARG and is unaffected.
+    const exportPrefix = mcpEnv.map((entry) => `export ${shellQuote(entry)}`).join('; ');
+    const loginArgv = [
+      'bash', '-lic', `${exportPrefix ? `${exportPrefix}; ` : ''}exec ${shellQuoteArgv(argv)}`
+    ];
     return {
-      cmd: `${remoteCdPrefix(startPath)}exec 'bash' '-lic' ${shellQuote(`exec ${shellQuoteArgv(argv)}`)}`
+      cmd: `${remoteCdPrefix(startPath)}exec ${shellQuoteArgv(loginArgv)}`
     };
   }
 

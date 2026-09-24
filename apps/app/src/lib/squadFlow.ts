@@ -88,6 +88,78 @@ function labelFor(handle: string | undefined, displayName: string | undefined, s
 }
 
 /**
+ * Bounded claim payload for a CLAIMED assignment — only the liveness timestamps
+ * the Flow view reads, each omitted when absent. Returns `undefined` when the
+ * assignment carries no claim anchor at all (no `claimedAt` and no
+ * `leaseExpiresAt`), so a node with no live claim signal gets no `claim` field.
+ * Shared by the live-node ({@link buildSquadFlow}'s makeNode) and the
+ * detached-node synthesis so the projection is byte-identical at both sites.
+ */
+function pickClaim(assignment: {
+  claimedAt?: number;
+  heartbeatAt?: number;
+  progressAt?: number;
+  leaseExpiresAt?: number;
+}): SquadFlowNode['claim'] | undefined {
+  if (assignment.claimedAt === undefined && assignment.leaseExpiresAt === undefined) return undefined;
+  return {
+    ...(assignment.claimedAt !== undefined ? { claimedAt: assignment.claimedAt } : {}),
+    ...(assignment.heartbeatAt !== undefined ? { heartbeatAt: assignment.heartbeatAt } : {}),
+    ...(assignment.progressAt !== undefined ? { progressAt: assignment.progressAt } : {}),
+    ...(assignment.leaseExpiresAt !== undefined ? { leaseExpiresAt: assignment.leaseExpiresAt } : {})
+  };
+}
+
+/**
+ * Synthesize a worker node straight from the durable board for any CLAIMED slot
+ * that NO live renderer session covers (CLI/headless resume, app restart mid-run,
+ * remote spawn, or a crashed local PTY wrapper whose terminal has since exited).
+ * The durable board is the liveness source of truth, but a live renderer session
+ * is what normally builds a worker node — without this a stranded claim would
+ * show as "no workers working" despite a live claim. Gated to executions already
+ * represented by an in-scope node so a launch filter never re-admits another
+ * squad's workers. Mutates `bySession` in place.
+ */
+function synthesizeDetachedClaimedNodes(
+  executions: readonly ExecutionBoardProjection[],
+  ctx: {
+    inScopeExecutionIds: ReadonlySet<string>;
+    sessionByExecutionSlot: ReadonlyMap<string, string>;
+    bySession: Map<string, SquadFlowNode>;
+  }
+): void {
+  const { inScopeExecutionIds, sessionByExecutionSlot, bySession } = ctx;
+  for (const execution of executions) {
+    if (!inScopeExecutionIds.has(execution.executionId)) continue;
+    for (const assignment of execution.work?.assignments ?? []) {
+      if (assignment.state !== 'CLAIMED' || !assignment.slotId) continue;
+      if (sessionByExecutionSlot.has(`${execution.executionId}\0${assignment.slotId}`)) continue; // a live session already covers this slot
+      const syntheticId = `detached:${execution.executionId}:${assignment.slotId}`;
+      if (bySession.has(syntheticId)) continue;
+      const claim = pickClaim(assignment);
+      bySession.set(syntheticId, {
+        sessionId: syntheticId,
+        // The slot id is the only identity a detached node has, so surface it directly.
+        label: assignment.slotId,
+        role: 'worker',
+        // A synthesized detached node has NO live signal of its own — its only
+        // liveness is the durable claim. Leave it 'unknown' so nodeActivity()
+        // shows motion (self-arc + streaming) ONLY when the claim carries a fresh
+        // progressAt; a stranded claim renders as a static "claimed" chip, never
+        // fabricated "working" activity.
+        state: 'unknown',
+        liveSubagents: 0,
+        exited: false,
+        isOrchestrator: false,
+        detached: true,
+        job: { executionId: execution.executionId, needsAttention: false },
+        ...(claim ? { claim } : {})
+      });
+    }
+  }
+}
+
+/**
  * Fold Job Team durable work dependencies into worker→worker edges. Job dispatch
  * bypasses the agent message log, so a durable DAG would otherwise show no
  * handoffs. Mutates `edgeByKey`/`outDegree` in place; out-degree counts each
@@ -149,6 +221,7 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
   const executionIdBySession = new Map<string, string>();
   const cohortRoleBySession = new Map<string, string>();
   const cohortIdBySession = new Map<string, string>();
+  const slotIdBySession = new Map<string, string>();
   const sessionByExecutionSlot = new Map<string, string>();
   for (const s of input.sessions) {
     exitedBySession.set(s.id, s.status === 'exited');
@@ -156,7 +229,12 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     if (s.cohort?.executionId) executionIdBySession.set(s.id, s.cohort.executionId);
     if (s.cohort?.role) cohortRoleBySession.set(s.id, s.cohort.role);
     if (s.cohort?.cohortId) cohortIdBySession.set(s.id, s.cohort.cohortId);
-    if (s.cohort?.executionId && s.cohort.slotId) {
+    if (s.cohort?.slotId) slotIdBySession.set(s.id, s.cohort.slotId);
+    // Only a LIVE session covers an execution slot. An exited terminal bound to a
+    // still-CLAIMED slot must NOT suppress the detached-node synthesis below — the
+    // durable claim is still live even though its renderer session died, so the
+    // slot must read as uncovered and get a synthesized node that surfaces it.
+    if (s.cohort?.executionId && s.cohort.slotId && s.status !== 'exited') {
       sessionByExecutionSlot.set(`${s.cohort.executionId}\0${s.cohort.slotId}`, s.id);
     }
   }
@@ -177,7 +255,17 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     const execution = (executionId ? executionByExecutionId.get(executionId) : undefined) ?? executionByOrchestrator.get(sessionId);
     const terminal = execution?.state === 'COMPLETED' || execution?.state === 'FAILED' || execution?.state === 'STOPPED';
     const needsAttention = !!execution?.currentBlocker && !terminal &&
+      execution.currentBlocker.audience !== 'coordinator' &&
       execution.currentBlocker.delivery?.state !== 'PENDING' && execution.currentBlocker.delivery?.state !== 'LEASED';
+    // Durable claim liveness: when THIS node's session is the assigned slot of a
+    // CLAIMED work unit, surface the lease the host renews from PTY output. The
+    // Flow view treats `leaseExpiresAt > builtAt` as "streaming / live" — grounded
+    // in the backend's own liveness truth, not the sometimes-stale agent dot.
+    const slotId = slotIdBySession.get(sessionId);
+    const claimAssignment = slotId
+      ? (execution?.work?.assignments ?? []).find((a) => a.slotId === slotId && a.state === 'CLAIMED')
+      : undefined;
+    const claim = claimAssignment ? pickClaim(claimAssignment) : undefined;
     return {
       sessionId,
       label: labelFor(handle, displayName, sessionId),
@@ -194,8 +282,12 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
       ...(execution ? { job: {
         executionId: execution.executionId,
         needsAttention,
-        ...(execution.currentBlocker ? { blockerQuestion: execution.currentBlocker.question } : {})
-      } } : {})
+        ...(execution.currentBlocker ? {
+          blockerQuestion: execution.currentBlocker.question,
+          blockerAudience: execution.currentBlocker.audience
+        } : {})
+      } } : {}),
+      ...(claim ? { claim } : {})
     };
   };
 
@@ -228,6 +320,20 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     if (!inScope(s.cohort?.cohortId)) continue;
     bySession.set(s.id, makeNode(s.id, s.cohort?.slotLabel, s.cohort?.slotLabel ?? s.title, undefined, undefined));
   }
+
+  // Detached CLAIMED workers: synthesize a node straight from the durable board
+  // for any CLAIMED slot no live session covers (see synthesizeDetachedClaimedNodes).
+  // In-scope = every execution already represented by a live node here.
+  const inScopeExecutionIds = new Set<string>();
+  for (const sessionId of bySession.keys()) {
+    const execId = executionIdBySession.get(sessionId) ?? executionByOrchestrator.get(sessionId)?.executionId;
+    if (execId) inScopeExecutionIds.add(execId);
+  }
+  synthesizeDetachedClaimedNodes(input.executions ?? [], {
+    inScopeExecutionIds,
+    sessionByExecutionSlot,
+    bySession
+  });
 
   if (bySession.size === 0) return null;
 

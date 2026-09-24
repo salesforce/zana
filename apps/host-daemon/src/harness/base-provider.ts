@@ -194,6 +194,22 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
   readonly nativeRolePinsModel: boolean = false;
 
   /**
+   * No provider distinguishes a live inner agent from a surviving wrapper shell
+   * by default (OpenCode overrides). When false, `PtyManager.probeAgentLiveness`
+   * returns `unknown`, so a worker is never liveness-reclaimed — pre-existing
+   * behavior. See {@link LaunchProvider.reportsAgentLiveness}.
+   */
+  readonly reportsAgentLiveness: boolean = false;
+
+  /**
+   * No provider needs a bracketed-paste envelope on an injected reply by default
+   * (Claude's TUI buffers a fast burst as a paste on its own). OpenCode overrides
+   * true — its TUI has no burst-paste heuristic, so a multi-line reply must be
+   * bracketed to avoid each `\n` submitting early. See {@link LaunchProvider.submitViaBracketedPaste}.
+   */
+  readonly submitViaBracketedPaste: boolean = false;
+
+  /**
    * No provider accepts snapshot-absent model ids by default (Claude overrides
    * so the thread catalog's versioned ids can launch as `--model`).
    */

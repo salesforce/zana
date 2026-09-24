@@ -315,4 +315,29 @@ describe('createProjectStore', () => {
       remote: { host: 'devbox', user: 'me', remotePath: '/home/me/app' }
     });
   });
+
+  it('updates and clears an SSH project remote start path', async () => {
+    const home = makeDir();
+    const placeholderRoot = join(home, 'remote-projects');
+    const placeholder = join(placeholderRoot, 'remote-1');
+    mkdirSync(placeholder, { recursive: true });
+    const projectsFile = join(home, '.zcc', 'projects.json');
+    mkdirSync(join(home, '.zcc'));
+    writeFileSync(projectsFile, JSON.stringify({
+      version: 1,
+      projects: [{
+        id: 'remote-1', name: 'Remote', path: placeholder,
+        createdAt: 1, lastActiveAt: 1, remote: { host: 'devbox' }
+      }]
+    }));
+    const store = createProjectStore({ projectsFile, remotePlaceholderRoot: placeholderRoot });
+
+    await expect(store.update('remote-1', { remotePath: '/opt/workspace/core-public' })).resolves.toMatchObject({
+      remote: { host: 'devbox', remotePath: '/opt/workspace/core-public' }
+    });
+    await expect(store.update('remote-1', { remotePath: '' })).resolves.toMatchObject({
+      remote: { host: 'devbox' }
+    });
+    await expect(store.update('remote-1', { remotePath: 'relative/path' })).rejects.toThrow('remotePath must be an absolute path');
+  });
 });

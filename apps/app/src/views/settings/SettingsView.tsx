@@ -307,6 +307,9 @@ export function SettingsView() {
       if (typeof patch.feedNoiseClassifierEnabled === 'boolean') {
         useData.getState().setFeedNoiseClassifierEnabled(patch.feedNoiseClassifierEnabled);
       }
+      if (typeof patch.terminalClipboardWriteEnabled === 'boolean') {
+        useData.getState().setTerminalClipboardWriteEnabled(patch.terminalClipboardWriteEnabled);
+      }
       if (typeof patch.structuredQuestionsEnabled === 'boolean') {
         useData.getState().setStructuredQuestionsEnabled(patch.structuredQuestionsEnabled);
       }

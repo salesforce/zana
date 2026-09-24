@@ -76,6 +76,10 @@ vi.mock('../test-tap.js', () => ({
 
 const { goalExecutionSourcePaths } = await import('../host.js');
 
+// `jobWorkerPrompt` has its own dedicated, focused suite —
+// see job-worker-prompt.test.ts (assignment, audience selection, delivery
+// instructions).
+
 describe('goalExecutionSourcePaths', () => {
   it('returns an empty list instead of throwing when home does not resolve (remote/nonexistent project root)', async () => {
     const missingHome = join(tmpdir(), `zcc-missing-home-${Date.now()}`);

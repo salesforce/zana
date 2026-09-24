@@ -536,6 +536,47 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
     expect(remoteCmd).not.toContain('ZCC_OVERSEER_URL=');
   });
 
+  it('forwards execution MCP to a headless remote durable Team worker', () => {
+    const session = ptys.create({
+      projectId: 'proj-remote',
+      profile: 'opencode',
+      config: cfg({ tmuxScope: 'off' }),
+      remote: { host: 'devbox', user: 'svc', remotePath: '/work/p1' },
+      headless: true,
+      cohort: {
+        cohortId: 'cohort-1',
+        teamId: 'team-1',
+        teamName: 'Team',
+        role: 'worker',
+        slotId: 'worker-1',
+        executionId: 'execution-1',
+        coordinationMode: 'structured'
+      },
+      ...dims
+    });
+    const args = spawned[0].args;
+    const rIdx = args.indexOf('-R');
+    expect(rIdx).toBeGreaterThanOrEqual(0);
+    const remotePort = Number((args[rIdx + 1] as string).split(':')[0]);
+    const remoteCmd = args.at(-1) as string;
+    expect(remoteCmd).toContain('OPENCODE_CONFIG_CONTENT=');
+    expect(remoteCmd).toContain(`http://127.0.0.1:${remotePort}/mcp/proj-remote/${session.id}/`);
+    expect(remoteCmd).not.toContain('ZCC_NOTIFY_URL=');
+  });
+
+  it('keeps unrelated headless remote OpenCode sessions MCP-cut-off by default', () => {
+    ptys.create({
+      projectId: 'proj-remote',
+      profile: 'opencode',
+      config: cfg({ tmuxScope: 'off' }),
+      remote: { host: 'devbox', remotePath: '/work/p1' },
+      headless: true,
+      ...dims
+    });
+    expect(spawned[0].args).not.toContain('-R');
+    expect(spawned[0].args.at(-1) as string).not.toContain('OPENCODE_CONFIG_CONTENT=');
+  });
+
   it('does not wire remote hooks when the MCP server is not up', () => {
     ptys.setMcpBaseUrl(null);
     ptys.create({

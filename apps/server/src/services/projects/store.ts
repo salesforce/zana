@@ -1000,6 +1000,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.feedNoiseClassifierEnabled === 'boolean') {
     normalized.feedNoiseClassifierEnabled = input.feedNoiseClassifierEnabled;
   }
+  if (typeof input.terminalClipboardWriteEnabled === 'boolean') {
+    normalized.terminalClipboardWriteEnabled = input.terminalClipboardWriteEnabled;
+  }
   if (typeof input.mobileGatewayEnabled === 'boolean') {
     normalized.mobileGatewayEnabled = input.mobileGatewayEnabled;
   }
